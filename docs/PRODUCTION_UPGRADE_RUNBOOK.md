@@ -1615,12 +1615,11 @@ event, not a recurring one.
 ### 3.1a Confirm the environment role reads *production* (#3034)
 
 Open **Admin > Setup** and read the **Production Or Non-Production** step. It
-must say **production**, and **read the message rather than the tick**: a
-*non-production* installation also shows a green tick there, because both are
-validly configured states and the checklist cannot know which one this
-installation is meant to be. The tick means "answered"; the message means "which
-answer". **Admin > Setup & Configuration > Environment Safety**
-(`/admin/environment`) says the same in more detail.
+must say **production**, with a green tick. A deployment that declares
+*non-production* shows an amber warning there instead (#4980), saying members are
+getting no email and Xero contact addresses are being replaced, until an
+administrator acknowledges it as a real copy. **Admin > Setup & Configuration >
+Environment Safety** (`/admin/environment`) says the same in more detail.
 
 If it says anything else, member email and writes into the club's Xero
 organisation are being held back. Fix `APP_ENVIRONMENT_ROLE` in the production

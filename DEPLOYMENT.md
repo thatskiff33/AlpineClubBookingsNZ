@@ -663,6 +663,10 @@ Start from `.env.example` and the configuration reference:
 cp .env.example .env
 ```
 
+The template declares `APP_ENVIRONMENT_ROLE=non-production`. On the club's live
+site, change it to `APP_ENVIRONMENT_ROLE=production` (see "Environment safety"
+below).
+
 See `CONFIGURATION.md` for every supported environment variable and
 `config/club.json` field.
 
@@ -693,7 +697,10 @@ Minimum production categories:
   brought up yourself needs the line by hand.
   `scripts/run-production-blue-green-deploy.sh` refuses to run without exactly
   `production` — at step 3 of 20, before the migration and long before the
-  cutover — so a live deployment cannot reach UNKNOWN through the supported path.
+  cutover — and First Bootstrap runs the same check
+  (`bash scripts/check-environment-role.sh`) before its first `docker compose up`,
+  so neither supported way of standing up the live site starts it as UNKNOWN or
+  as a copy.
   **It is not `APP_RUNTIME_ROLE`**, which sits beside it in the same Compose
   environment, names which container *slot* a process is (`web-blue`,
   `web-green`, `cron-leader`, `staging`), and is never read to decide whether
@@ -855,11 +862,19 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    `DB_PASSWORD`, then `APP_DB_PASSWORD`, `MIGRATION_DB_PASSWORD` and
    `AUDIT_RETENTION_DB_PASSWORD`. Hex passwords need no URL encoding in the
    connection strings below. Set a strong `AUTH_SECRET` too. **Leave `APP_DB_USER`, `MIGRATION_DB_USER` and
-   `AUDIT_RETENTION_DATABASE_URL` blank until step 6.**
+   `AUDIT_RETENTION_DATABASE_URL` blank until step 6.** Change the template's
+   existing `APP_ENVIRONMENT_ROLE=non-production` line to the live-site
+   declaration rather than adding a second line, which the step 3 check refuses
+   (see below for why):
 
-3. **Start only PostgreSQL**:
+   ```dotenv
+   APP_ENVIRONMENT_ROLE=production
+   ```
+
+3. **Check the environment role, then start only PostgreSQL**:
 
    ```bash
+   bash scripts/check-environment-role.sh
    docker compose up -d --build postgres
    ```
 
@@ -923,6 +938,19 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    providers or enrolling authenticator apps. `pnpm run setup:check` shows the
    same checks for its own shell connection; the database-role warning never
    blocks an existing deployment.
+
+**Set `APP_ENVIRONMENT_ROLE=production` before the first `docker compose up`,
+and run `bash scripts/check-environment-role.sh` first.** `.env.example` ships
+`APP_ENVIRONMENT_ROLE=non-production`, which is right for a laptop and wrong
+here: a live site started from the template unchanged believes it is a copy, so
+it emails no member (confirmations, receipts, password resets) and replaces the
+email addresses on the club's real Xero contacts. The check refuses anything but
+exactly `production` before any container starts, and names the variable. It is
+the same check the blue/green deploy script runs at its own step 3
+(`scripts/lib/environment-role-check.sh`), and needs only `bash`. A staging site
+or rehearsal copy does not use First Bootstrap; it uses
+`docker-compose.staging.yml`, which declares `non-production` itself. See
+`docs/guides/environment-role.md`.
 
 To validate the production image alone (without Compose), build it locally:
 

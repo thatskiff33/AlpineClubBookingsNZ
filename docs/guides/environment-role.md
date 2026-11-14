@@ -61,7 +61,12 @@ able to declare itself the live site.
    APP_ENVIRONMENT_ROLE=production
    ```
 
-3. Deploy, or restart the app. `/admin/environment` and the setup checklist will
+3. On a brand-new install, run `bash scripts/check-environment-role.sh` from the
+   repository root before the first `docker compose up` (DEPLOYMENT.md →
+   "First Bootstrap" lists it). It refuses anything but exactly `production`, so
+   a `.env` copied from `.env.example` unchanged stops here, before any container
+   starts. It is the same check the production deploy runs at step 3.
+4. Deploy, or restart the app. `/admin/environment` and the setup checklist will
    then both report **Production**.
 
 ### Declare a copy
@@ -468,25 +473,45 @@ That check asks the app rather than re-reading the container's settings, on
 purpose: a second copy of the rule is a second thing that can drift away from the
 first, and this one is the check that has to be right when the file check is not.
 
+**A brand-new live site gets the same file check.** First Bootstrap in
+`DEPLOYMENT.md` starts the live site with `docker compose up` rather than through
+the deploy script, so it runs `bash scripts/check-environment-role.sh` first.
+That is not a copy of the step-3 check: both source
+`scripts/lib/environment-role-check.sh`, so they refuse exactly the same files
+with exactly the same words.
+
 **And the app says so loudly if an undeclared installation ever does come up** —
-for example on a deployment brought up by hand with `docker compose up` rather
-than through that script, which runs none of the checks above. Start-up logs an
+for example on a deployment brought up by hand with `docker compose up` without
+running either check. Start-up logs an
 error explaining the specific cause, and the setup checklist reports the
 **Production Or Non-Production** step as blocked. An installation that comes up
 as a *copy* says so at start-up too, and names which of the two sources decided
 it, so an operator who did not expect it can tell whether to look at the `.env`
 or at this page.
 
-### After the deploy, read the message and not the tick
+### After the deploy, read the setup step
 
-Open **Admin → Setup** and look at the **Production Or Non-Production** step. It
-must say **production**.
+Open **Admin → Setup** and look at the **Production Or Non-Production** step. On
+the club's live site it must say **production**, with a green tick.
 
-This is worth spelling out because a *non-production* installation also shows a
-green tick there — both are validly configured states, and the checklist cannot
-know which one your installation is supposed to be. So the tick only tells you
-that the question has been answered; the step's message is what tells you *which
-answer*, and on the club's live site the only correct one is production.
+An installation whose deployment declares **non-production** shows an amber
+**warning** there instead, saying: "If this is the club's live site, members are
+getting no email and Xero contact addresses are being replaced. Set
+APP_ENVIRONMENT_ROLE=production and restart." The checklist cannot know whether
+a copy is the right answer, and the likeliest way to reach that state on the
+live site is a `.env` copied from `.env.example`. On a real copy — staging, a
+restore rehearsal, a laptop — press **Acknowledge** on the step. It stays
+amber but is marked **Acknowledged** and no longer counts as unfinished setup.
+
+An acknowledgement belongs to the step, not to the role. One made earlier, even
+while the step was green, carries over, and so does one in a database restored
+from another site. If this step reads **Acknowledged** on a site you did not mean
+to mark as a copy, press **Reopen** to bring the warning back.
+
+A copy forced by the **safer override** stays complete without acknowledgement:
+an administrator switched that on, on purpose, inside this application, so it
+cannot have come from a copied template. If the deployment *also* declares
+non-production, the declaration decided the answer and the warning still shows.
 `/admin/environment` says the same thing in more detail.
 
 ## Settings reference
@@ -509,7 +534,8 @@ answer*, and on the club's live site the only correct one is production.
 | Our copy emailed real members even though the log said it reached nobody | The defect fixed in this release: capture mode inherited the relay host unchecked | Upgrade. Then check `EMAIL_SERVER_HOST` on every copy — see [`UPGRADING.md`](../UPGRADING.md) |
 | The deploy aborted at step 3 saying the entry must be exactly `production` | Working as designed — the declaration is missing, or it says `non-production` on the live site | Set `APP_ENVIRONMENT_ROLE=production` in `.env` on the server and run the deploy again. Nothing was migrated or switched |
 | The deploy refused a `.env` I copied from `.env.example` | That template holds `non-production`, which is right for a laptop and wrong for the live site | Change the value to `production`. The template is not meant to be copied wholesale into a live deployment |
-| The setup step shows a green tick but members still get no email | The tick means "declared", not "declared production" — read the message | If it says non-production, set `APP_ENVIRONMENT_ROLE=production` and restart |
+| The setup step shows an amber warning saying members are getting no email | The deployment declares `non-production` — commonly a live `.env` copied from `.env.example` unchanged | On the live site, set `APP_ENVIRONMENT_ROLE=production` and restart. On a real copy, press **Acknowledge** on the step |
+| `scripts/check-environment-role.sh` refused, during First Bootstrap | `.env` does not say exactly `production` — usually the template's `non-production` | Set `APP_ENVIRONMENT_ROLE=production` in `.env` and run it again. No container had started |
 | The page says the override **could not be read** | The database migration for this release has not been applied here | Run `prisma migrate deploy` (or `pnpm run db:migrate` in development) and reload |
 | It says **Production** but this is a copy | The copy inherited the live `.env` | Set `APP_ENVIRONMENT_ROLE=non-production` on the copy, and switch the safer override on now if you need it safe immediately |
 | It says **Not configured**, but the line is clearly there in `.env` | Something else is overriding it: another `APP_ENVIRONMENT_ROLE` line further down the file, or a value set in the shell or service manager that starts the app. Both beat the line you edited | Search the whole file for `APP_ENVIRONMENT_ROLE` and leave one line; then check the shell or systemd unit that starts the stack |

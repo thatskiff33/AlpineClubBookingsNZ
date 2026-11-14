@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { bashFixturePath, bashGateArgs } from "@/lib/__tests__/helpers/bash-fixture-path";
 import { readRepoFile } from "@/lib/__tests__/helpers/compose";
-import { DEPLOY_SCRIPT, shellFunctionSource } from "@/lib/__tests__/helpers/deploy-script";
+import { DEPLOY_SCRIPT, deployShellSource, shellFunctionSource } from "@/lib/__tests__/helpers/deploy-script";
 
 /**
  * The #3413 gate variables reach the app containers from `.env` alone (#4027).
@@ -37,6 +37,8 @@ import { DEPLOY_SCRIPT, shellFunctionSource } from "@/lib/__tests__/helpers/depl
  */
 
 const SCRIPT = readRepoFile(DEPLOY_SCRIPT);
+/** The script with the libraries it sources, for lifting functions (#4980). */
+const SHELL = deployShellSource();
 const STOPPED = "BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED";
 const PENDING = "PENDING_SCHOOL_ADULTS_ENABLED";
 const STOPPED_DEFAULT = `${STOPPED}="\${${STOPPED}:-0}"`;
@@ -188,7 +190,7 @@ describe(`${PENDING} exported in the shell must agree with .env (#4027)`, () => 
       "strip_matching_quotes",
       "compose_env_file_value",
       "require_exported_value_matches_env_file",
-    ].map((name) => shellFunctionSource(SCRIPT, name)),
+    ].map((name) => shellFunctionSource(SHELL, name)),
     `require_exported_value_matches_env_file ${PENDING}`,
     "docker compose up -d app_green",
   ];
@@ -263,7 +265,7 @@ describe(`a shell ${STOPPED}=1 that .env lacks is called out at step 3 (#4027)`,
       "strip_matching_quotes",
       "compose_env_file_value",
       NOTE,
-    ].map((name) => shellFunctionSource(SCRIPT, name)),
+    ].map((name) => shellFunctionSource(SHELL, name)),
     NOTE,
     "echo DONE",
   ];

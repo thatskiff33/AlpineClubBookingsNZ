@@ -150,6 +150,11 @@ pnpm install --frozen-lockfile && pnpm exec prisma generate
 pnpm run setup:check                               # guided: pnpm run setup:wizard
 ```
 
+The copied `.env` declares `APP_ENVIRONMENT_ROLE=non-production`, which is right
+for a laptop. The club's live site sets `APP_ENVIRONMENT_ROLE=production`
+instead; [`DEPLOYMENT.md` → "First Bootstrap"](DEPLOYMENT.md#first-bootstrap)
+checks it before anything starts.
+
 Boot a full production-style stack (app + PostgreSQL) with Docker only:
 
 ```bash

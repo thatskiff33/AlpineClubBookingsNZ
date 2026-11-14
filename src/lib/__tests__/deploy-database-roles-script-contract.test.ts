@@ -14,7 +14,7 @@
  * `database-roles.realdb.test.ts`.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,9 +22,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DEPLOY_GRANTS_CHECK_SQL } from "@/lib/database-roles";
 
-import { DEPLOY_SCRIPT, shellFunctionSource } from "./helpers/deploy-script";
+import { deployShellSource, shellFunctionSource } from "./helpers/deploy-script";
 
-const script = readFileSync(path.join(process.cwd(), DEPLOY_SCRIPT), "utf8");
+// The deploy script with the `.env` readers it sources (#4980).
+const script = deployShellSource();
 const code = script
   .split("\n")
   .filter((line) => !line.trim().startsWith("#"))

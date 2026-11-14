@@ -17,7 +17,12 @@ import {
   NON_APP_COMPOSE_SERVICES,
   readRepoFile,
 } from "@/lib/__tests__/helpers/compose";
-import { DEPLOY_SCRIPT, shellFunctionSource } from "@/lib/__tests__/helpers/deploy-script";
+import {
+  DEPLOY_SCRIPT,
+  DEPLOY_SCRIPT_LIBRARIES,
+  deployShellSource,
+  shellFunctionSource,
+} from "@/lib/__tests__/helpers/deploy-script";
 
 /**
  * The production-upgrade path for the environment declaration (ENV-SAFETY 1,
@@ -74,6 +79,13 @@ const ROOT = process.cwd();
 const E2E_STAGING_ENV_WRITER = "scripts/ci/write-e2e-staging-env.sh";
 
 const script = readRepoFile(DEPLOY_SCRIPT);
+/**
+ * Where the shared `.env` readers and the role check are DEFINED since #4980:
+ * libraries the deploy script sources, so First Bootstrap's
+ * `scripts/check-environment-role.sh` runs the same code. The ORDER cases below
+ * still read the deploy script, which is where the check is CALLED.
+ */
+const [readersLibrary, roleCheckLibrary] = DEPLOY_SCRIPT_LIBRARIES.map(readRepoFile);
 const compose = readRepoFile(BASE_COMPOSE);
 const stagingCompose = readRepoFile("docker-compose.staging.yml");
 const envExample = readRepoFile(".env.example");
@@ -93,23 +105,36 @@ const instrumentation = readRepoFile("src/instrumentation.node.ts");
  * assertions passed against that mutant. A docblock saying THE ORDER IS THE
  * POINT does not make a test discriminate order.
  */
-function functionBounds(name: string): { start: number; end: number } {
-  const start = script.indexOf(`${name}() {`);
-  expect(start, `${name} must be defined in the deploy script`).toBeGreaterThan(0);
-  const end = script.indexOf("\n}\n", start);
+function functionBounds(
+  name: string,
+  source: string = script,
+): { start: number; end: number } {
+  const start = source.indexOf(`${name}() {`);
+  expect(start, `${name} must be defined in the file read`).toBeGreaterThan(0);
+  const end = source.indexOf("\n}\n", start);
   expect(end, `${name} must have a closing brace`).toBeGreaterThan(start);
   return { start, end };
 }
 
 /** {@link functionBounds}, as the text between them. */
-function functionBody(name: string): string {
-  const { start, end } = functionBounds(name);
-  return script.slice(start, end);
+function functionBody(name: string, source: string = script): string {
+  const { start, end } = functionBounds(name, source);
+  return source.slice(start, end);
+}
+
+/** A shared `.env` reader's body, from the library that defines it. */
+function readerBody(name: string): string {
+  return functionBody(name, readersLibrary);
+}
+
+/** A role-check helper's body, from the library that defines it. */
+function roleCheckBody(name: string): string {
+  return functionBody(name, roleCheckLibrary);
 }
 
 /** The role validator's own body — five cases below read it. */
 function validatorBody(): string {
-  return functionBody("require_environment_role_env_key");
+  return roleCheckBody("require_environment_role_env_key");
 }
 
 /**
@@ -141,11 +166,13 @@ describe("the deploy refuses an undeclared production release", () => {
     // Defined AND invoked. A helper nothing calls is a comment — and a helper
     // invoked from some LATER function is worse than a comment, because it reads
     // as protection while running after the migration.
-    const definition = functionBounds("require_environment_role_env_key");
+    // Defined in the library the deploy script sources (#4980), not in the
+    // script, so First Bootstrap's gate is the same function rather than a copy.
+    expect(roleCheckLibrary).toMatch(/^require_environment_role_env_key\(\) \{$/m);
+    expect(script).not.toContain("require_environment_role_env_key() {");
     const contract = functionBounds("validate_env_contract");
     const invocation = soleValidatorInvocation();
 
-    expect(contract.start).toBeGreaterThan(definition.start);
     // The bound that does the work: strictly inside the contract validator's
     // body. This is what the previous unbounded search let through.
     expect(invocation).toBeGreaterThan(contract.start);
@@ -313,7 +340,7 @@ describe("the deploy refuses an undeclared production release", () => {
     expect(body).toContain("return 1");
     // Scoped to this key. `get_env_file_value` is shared by every other
     // `require_*_env_key` and is deliberately not changed.
-    expect(script).toContain("count_environment_role_env_assignments() {");
+    expect(roleCheckLibrary).toContain("count_environment_role_env_assignments() {");
   });
 
   it("counts EVERY assignment shape Compose honours, not just an exact field", () => {
@@ -331,7 +358,7 @@ describe("the deploy refuses an undeclared production release", () => {
       RUN, shape by shape, in the describe block below; what this case pins is
       the wiring, so a second spelling cannot quietly reappear.
     */
-    const pattern = functionBody("env_assignment_pattern");
+    const pattern = readerBody("env_assignment_pattern");
     expect(pattern).toContain("^[[:space:]]*");
     expect(pattern).toContain("(export[[:space:]]+)?");
     expect(pattern).toContain("[[:space:]]*[=:]");
@@ -339,14 +366,15 @@ describe("the deploy refuses an undeclared production release", () => {
     expect(pattern).toContain("(%s)");
     // Defined at column 0, where `shellFunctionSource` (and a fork copying it the
     // same way) can lift it; it is not nested in another reader.
-    expect(script).toMatch(/^env_assignment_pattern\(\) \{$/m);
+    expect(readersLibrary).toMatch(/^env_assignment_pattern\(\) \{$/m);
     // The role check's pattern delegates rather than restating the grammar.
-    const rolePattern = functionBody("environment_role_env_pattern");
+    const rolePattern = roleCheckBody("environment_role_env_pattern");
     expect(rolePattern).toContain('env_assignment_pattern "$1"');
     expect(rolePattern).not.toContain("[[:space:]]");
-    // And it is the ONLY place the grammar is spelled in the script.
-    expect(script.split("(export[[:space:]]+)?").length - 1).toBe(1);
-    expect(functionBody("count_environment_role_env_assignments")).toContain(
+    // And it is the ONLY place the grammar is spelled in the script or the
+    // libraries it sources.
+    expect(deployShellSource().split("(export[[:space:]]+)?").length - 1).toBe(1);
+    expect(roleCheckBody("count_environment_role_env_assignments")).toContain(
       "grep -cE",
     );
   });
@@ -361,10 +389,10 @@ describe("the deploy refuses an undeclared production release", () => {
     */
     // The role check's reader is the shared Compose-semantics reader (#4027),
     // which the PENDING_SCHOOL_ADULTS_ENABLED agreement check also uses.
-    expect(functionBody("environment_role_env_value")).toContain(
+    expect(roleCheckBody("environment_role_env_value")).toContain(
       'compose_env_file_value "$1"',
     );
-    const reader = functionBody("compose_env_file_value");
+    const reader = readerBody("compose_env_file_value");
     expect(reader).toContain('env_assignment_pattern "$key"');
     // Last-wins, matching Compose rather than the first-match reader every other
     // key uses.
@@ -374,7 +402,7 @@ describe("the deploy refuses an undeclared production release", () => {
     // One layer of matching surrounding quotes, by the helper the rendered
     // Compose readers share (#4275).
     expect(reader).toContain('strip_matching_quotes "$(trim_whitespace "$value")"');
-    expect(functionBody("strip_matching_quotes")).toContain(`[ "$first" = "$last" ]`);
+    expect(readerBody("strip_matching_quotes")).toContain(`[ "$first" = "$last" ]`);
 
     // And the validator uses it instead of the shared first-match reader, which
     // is what makes the three shapes above stop aborting.
@@ -420,8 +448,8 @@ describe("the deploy refuses an undeclared production release", () => {
       the terminal of the person reading the refusal. A shell echoing the raw
       value reopens that hole one layer out.
     */
-    expect(script).toContain("printable_deploy_value() {");
-    const sanitizer = functionBody("printable_deploy_value");
+    expect(readersLibrary).toContain("printable_deploy_value() {");
+    const sanitizer = readerBody("printable_deploy_value");
     // Control characters become `?` rather than being deleted, so the operator
     // can SEE something is in there, and the result is capped like the app's.
     expect(sanitizer).toContain("tr -c");
@@ -471,7 +499,7 @@ describe("every .env assignment shape Compose accepts is counted and read", () =
     harnessPath,
     [
       "set -Eeuo pipefail",
-      ...LIFTED.map((name) => shellFunctionSource(script, name)),
+      ...LIFTED.map((name) => shellFunctionSource(deployShellSource(), name)),
       'cd "$ENV_DIR"',
       'if [ "$ENTRY" = "pattern" ]; then',
       '  env_assignment_pattern $KEYS',

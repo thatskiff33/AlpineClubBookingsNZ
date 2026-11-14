@@ -2,17 +2,23 @@
 set -Eeuo pipefail
 
 # ---------------------------------------------------------------------------
-# Readers shared by the wrapper and the engine (#4275)
+# Readers shared by the wrapper and the engine, and the live-site role check
 # ---------------------------------------------------------------------------
 #
-# Every other helper is defined inside `run_production_wrapper` or
-# `run_internal_blue_green_deploy`, so it exists only in the process that runs
-# that function — and the two run in different processes (the wrapper re-enters
-# this file with `--internal-blue-green-deploy`). These are the readers both
-# halves need, so they are defined once, at file level, rather than twice in two
-# grammars that drift apart: the wrapper's first image-repository reader kept
-# quotes, missed `export KEY=` and took the FIRST duplicate, while Compose
-# unquotes, honours `export` and takes the LAST.
+# Sourced, not defined here (#4980), so First Bootstrap's role gate
+# (scripts/check-environment-role.sh) runs the same code this script runs at
+# step 3 rather than a copy. Resolved from this file's own location, which holds
+# in the source repository (the wrapper) and in the `git archive` workspace the
+# engine re-enters from, because both are checkouts of the whole tree.
+DEPLOY_SCRIPT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+# shellcheck source=scripts/lib/compose-env-file.sh
+. "$DEPLOY_SCRIPT_LIB_DIR/compose-env-file.sh"
+# shellcheck source=scripts/lib/environment-role-check.sh
+. "$DEPLOY_SCRIPT_LIB_DIR/environment-role-check.sh"
+
+# The Caddy image helpers below are deploy-only, not `.env` readers, so they stay
+# in this file rather than the shared library; they are at file level because
+# both the wrapper (slot seeding) and the engine (Caddy validation) call them.
 
 # Extract only the requested image; a compose render can contain secrets.
 compose_service_image_ref() {
@@ -45,163 +51,6 @@ resolve_caddy_image_ref() {
   image_ref="$(compose_service_image_ref "$rendered" "$CADDY_SERVICE")" || return 1
   [[ "$image_ref" =~ ^[^[:space:]@]+@sha256:[a-fA-F0-9]{64}$ ]] || return 1
   printf '%s' "$image_ref"
-}
-
-trim_whitespace() {
-  local value="$1"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  printf '%s' "$value"
-}
-
-# A deployment-supplied value made safe to echo at an operator's terminal.
-#
-# The application deliberately reduces this same string to printable ASCII before
-# it reaches a log line or a page (`sanitizeEnvironmentRoleRawValue` in
-# src/lib/environment-role-declaration.ts), for the plain reason that a value
-# holding a newline or an escape sequence must not be able to write a second line
-# into — or repaint — the terminal of the person reading the refusal. A shell that
-# echoed the raw value would be the hole that module closes, reopened one layer
-# out. Control characters become `?` rather than being deleted, so the operator
-# can SEE that something is in there; the cap matches the app's 64 characters
-# including the `...` marker, so the whole result is printable ASCII.
-printable_deploy_value() {
-  local sanitized
-
-  sanitized="$(printf '%s' "$1" | tr -c ' -~' '?')"
-  if [ "${#sanitized}" -gt 64 ]; then
-    printf '%s...' "${sanitized:0:61}"
-  else
-    printf '%s' "$sanitized"
-  fi
-}
-
-# Every shape Docker Compose's `.env` parser accepts as an assignment of any of
-# the given keys, as one extended regular expression (#4026).
-#
-#   env_assignment_pattern KEY [KEY...]
-#
-# THE ONE SPELLING OF THIS GRAMMAR. Every reader in this script that must agree
-# with Compose about whether a line assigns a key builds its pattern here, in
-# the wrapper and the engine alike. Sourcing this script starts the production
-# wrapper, so nothing outside can CALL it. A
-# downstream fork's own deploy guard instead lifts the definition out of this
-# file, the way the contract tests do (`shellFunctionSource` in
-# src/lib/__tests__/helpers/deploy-script.ts), rather than keeping a hand-made
-# copy pinned equal by a test of its own.
-#
-# THE SHAPE WAS THE FINDING, twice. The first version of the #3034 check counted
-# with `awk -F=` and `$1 == key`, which needs the key to be the WHOLE first
-# `=`-field — so three shapes Compose honours slipped past it, measured against
-# real `docker compose v5.3.1`: an INDENTED line, an `export `-prefixed line, and
-# spaces around the `=`. Then #4026 measured `docker compose config` on Compose
-# v5.6.0 and found its parser also takes a YAML-style COLON as the separator:
-# `KEY: value`, `KEY:value`, `KEY : value` and `export KEY: value`. Any of those
-# appearing a SECOND time further down a .env whose first line is correct passed
-# the duplicate check and handed every container the second value. Appending to a
-# .env by hand, or from a rehearsal script, produces exactly those shapes.
-#
-# What it matches, mirroring Compose's dotenv parser: optional leading
-# whitespace; an optional `export` followed by whitespace; the key exactly; then
-# optional whitespace and an `=` or a `:`. A comment line cannot match, because a
-# `#` before the key fails the anchor, and a longer name sharing the prefix
-# (`KEY_EXTRA=`) cannot either, because only whitespace may sit between the key
-# and its separator.
-#
-# CAPTURE GROUPS ARE FIXED so a `sed -E` caller can append its own value group:
-# group 1 is the `export` prefix, group 2 is the key that matched, and a caller's
-# first group after the pattern is `\3`. The keys are literal environment-variable
-# names from this script ([A-Za-z_][A-Za-z0-9_]*); none of them holds a regex or
-# `sed` delimiter character, and a name that did would be refused below rather
-# than silently matching something else.
-env_assignment_pattern() {
-  local alternation=""
-  local key
-
-  for key in "$@"; do
-    case "$key" in
-      '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*)
-        echo "env_assignment_pattern: not a plain variable name: $(printable_deploy_value "$key")" >&2
-        return 1
-        ;;
-    esac
-    alternation="${alternation:+$alternation|}$key"
-  done
-  if [ -z "$alternation" ]; then
-    echo "env_assignment_pattern: needs at least one key" >&2
-    return 1
-  fi
-
-  printf '^[[:space:]]*(export[[:space:]]+)?(%s)[[:space:]]*[=:]' "$alternation"
-}
-
-# One layer of matching surrounding quotes, removed (#4275: shared by the `.env`
-# reader above and the rendered-Compose readers below, which meet the same
-# quoting from two directions). Compose's dotenv parser unquotes `KEY="value"`,
-# and `docker compose config` writes a string that YAML would otherwise read as
-# a boolean, a number or nothing back WITH quotes (`USE_AWS_SES: "true"`,
-# `EMAIL_SERVER_HOST: ""`). Compared character by character rather than by a
-# `case` pattern, because a pattern holding both quote characters inside a
-# single-quoted shell word is unreadable and easy to get subtly wrong.
-strip_matching_quotes() {
-  local value="$1"
-  local first
-  local last
-
-  if [ "${#value}" -ge 2 ]; then
-    first="${value%"${value#?}"}"
-    last="${value#"${value%?}"}"
-    if [ "$first" = "$last" ] && { [ "$first" = '"' ] || [ "$first" = "'" ]; }; then
-      value="${value#?}"
-      value="${value%?}"
-    fi
-  fi
-
-  printf '%s' "$value"
-}
-
-# The value Compose would resolve for this key from an env file (#3034; shared
-# since #4027 by every reader that must agree with the containers).
-#
-#   compose_env_file_value KEY [FILE]
-#
-# FILE defaults to `.env` in the working directory, which is the engine's
-# project `.env`. The wrapper passes the SOURCE repository's `.env` (#4275), so
-# the image-repository settings it reads there follow the same grammar as every
-# value Compose hands a container, rather than a second reader's.
-#
-# LAST-WINS, matching Compose dotenv parsing rather than the first-match reader
-# used for every other `require_*_env_key`. A duplicate is refused before this matters, but if
-# that refusal is ever relaxed this reader agrees with the containers instead of
-# disagreeing with them, which is the safer default of the two.
-#
-# It then undoes what Compose undoes: an `export ` prefix, whitespace around the
-# `=` or `:`, an inline comment (the same `[[:space:]]+#` rule `get_env_file_value`
-# applies for every other key), and ONE layer of matching surrounding quotes.
-# Those last three are why `APP_ENVIRONMENT_ROLE = production`,
-# `export APP_ENVIRONMENT_ROLE=production` and `APP_ENVIRONMENT_ROLE="production"`
-# no longer abort a deploy Compose would have resolved to `production` — and in
-# particular why the first two are no longer reported as a MISSING entry for a key
-# plainly present in the file, which is what gets an operator editing the wrong
-# line under deploy pressure.
-#
-# One place it stays narrower than Compose: a `#` INSIDE a quoted value is treated
-# as an inline comment and truncated. That can only shorten a value, so it can only
-# turn an accepted value into a refused one — never the reverse — and the refusal
-# names the sanitized value it read.
-compose_env_file_value() {
-  local key="$1"
-  local file="${2:-.env}"
-  local pattern
-  local value
-
-  pattern="$(env_assignment_pattern "$key")" || return 1
-  value="$(
-    sed -nE "s/${pattern}[[:space:]]*(.*)$/\3/p" "$file" |
-      tail -n 1
-  )"
-  value="$(printf '%s' "$value" | sed -E 's/[[:space:]]+#.*$//')"
-  strip_matching_quotes "$(trim_whitespace "$value")"
 }
 
 run_production_wrapper() {
@@ -1261,34 +1110,6 @@ drop_shadow_database() {
 trap fail ERR
 trap 'drop_shadow_database; rm -f "${CADDY_VALIDATION_ENV_FILE:-}"' EXIT
 
-# The #3034 check's pattern for one key: the shared grammar above, for exactly
-# that key. Deliberately scoped to the role check rather than by changing
-# `get_env_file_value`, which every other `require_*_env_key` shares and which is
-# not this issue to change.
-environment_role_env_pattern() {
-  env_assignment_pattern "$1"
-}
-
-# How many lines in .env assign this key.
-#
-# `grep -c` prints 0 and EXITS 1 when nothing matches, which under `set -e` would
-# abort inside the assignment, so the status is discarded and the count kept.
-count_environment_role_env_assignments() {
-  local key="$1"
-  local pattern
-
-  # Built first and checked, so a refused key aborts rather than handing `grep`
-  # an empty pattern, which matches every line.
-  pattern="$(environment_role_env_pattern "$key")" || return 1
-  grep -cE "$pattern" .env || true
-}
-
-# The #3034 role check's reader: the shared one above, kept under the name the
-# role check and its contract test use.
-environment_role_env_value() {
-  compose_env_file_value "$1"
-}
-
 get_env_file_value() {
   local key="$1"
 
@@ -1822,165 +1643,6 @@ require_http_url_env_key() {
     echo ".env entry must be a valid http(s) URL: $key" >&2
     return 1
   fi
-}
-
-# The deployment's declaration of what this installation IS (ENV-SAFETY 1, #3034;
-# epic #2986; INV-CONFIG-003).
-#
-# THIS SCRIPT DEPLOYS THE CLUB'S LIVE SITE AND NOTHING ELSE, so it requires
-# exactly `production`. That is narrower than the application parser, which
-# accepts `production` OR `non-production`, and the difference is the whole point.
-# There is no staging mode here, no `--env` switch and no alternate path: a
-# non-production stack goes through `docker-compose.staging.yml` and
-# `scripts/e2e-stack.sh`, which declare `non-production` themselves. A script
-# whose only job is the live site accepting a declaration that says "this is a
-# copy" would be accepting the one value it can prove is wrong.
-#
-# THAT IS NOT A THEORETICAL HOLE, it is the likeliest operator error. `.env.example`
-# ships `APP_ENVIRONMENT_ROLE=non-production` — correct there, because it is a
-# local-development template and a template that shipped `production` would have a
-# developer's laptop declaring itself live. But `.env.example` is ALSO the file an
-# operator diffs against their real `.env` when upgrading, and "a new key appeared
-# in the template, copy it across" is the normal upgrade move. Following that
-# through: the deploy passes, the migration runs, the new colour boots and resolves
-# NON_PRODUCTION, and then every confirmation, payment notice, waitlist offer and
-# renewal reminder for the club's REAL members is safety-suppressed — and every
-# application-managed contact on the club's REAL Xero organisation has its email
-# address rewritten to a non-deliverable one (INV-CONFIG-005). Destructive edits to
-# live accounting, made confidently, by the very mechanism this epic added to keep
-# members safe.
-#
-# So the safe-looking value is the unsafe outcome HERE, and only here. The correct
-# pairing is `non-production` in the template (safe by default on a laptop) and
-# `production` required at the one place that knows it is deploying production.
-#
-# WHY IT IS A HARD REFUSAL AND WHY IT RUNS IN THE PREFLIGHT. From this release on,
-# an installation that has not declared itself resolves UNKNOWN, and UNKNOWN fails
-# closed: nothing whose safety depends on knowing whether these are the club's real
-# members goes out. An existing production install upgrading into this release has
-# no declaration, so without this check the upgrade would succeed and then quietly
-# stop sending mail — the outcome epic #2986 explicitly forbids shipping. Refusing
-# at step 3 of 20 means the old colour is still serving, the migration has not run
-# (step 13) and nothing has been switched (step 17): the operator fixes one line in
-# .env and re-runs. `deploy-environment-role-contract.test.ts` pins that ORDER, not
-# merely this function's existence, because moving the check after step 13 or step
-# 14 brings the forbidden outcome straight back.
-#
-# The comparison is case-folded after trimming, exactly as
-# `src/lib/environment-role-declaration.ts` folds it, so the deploy gate and the
-# application cannot disagree about what counts as declared. A near miss is
-# refused rather than guessed at: `prod`, `staging`, `true` and APP_RUNTIME_ROLE's
-# own values are all rejected, because guessing is how a typo becomes "production".
-require_environment_role_env_key() {
-  local key="APP_ENVIRONMENT_ROLE"
-  local value
-  local normalised
-  local occurrences
-  local exported_normalised
-
-  # NOT `require_env_key` and NOT `get_env_file_value`, which is the fix for a
-  # second review finding rather than a refactor. Those read the first line whose
-  # whole first `=`-field is the key, so an indented or `export `-prefixed entry
-  # was reported as a MISSING .env entry for a key plainly present in the file —
-  # and a quoted value was refused as unrecognised — while Compose resolved all
-  # three to `production`. All three were fail-closed, but "missing" for a visible
-  # key is what gets an operator editing the wrong line under deploy pressure.
-  occurrences="$(count_environment_role_env_assignments "$key")"
-  if [ "$occurrences" -eq 0 ]; then
-    echo "Missing required .env entry: $key" >&2
-    echo "It declares whether this installation is the club's live site or a copy," >&2
-    echo "and nothing infers it: an undeclared installation resolves UNKNOWN and" >&2
-    echo "holds back member email and Xero writes until it is declared." >&2
-    echo "Add APP_ENVIRONMENT_ROLE=production to this deployment's .env, then re-run." >&2
-    echo "See docs/guides/environment-role.md." >&2
-    echo "This is NOT APP_RUNTIME_ROLE, which names the container slot (web-blue, cron-leader)." >&2
-    return 1
-  fi
-
-  # A DUPLICATED KEY IS REFUSED, because Compose and any first-match reader would
-  # take different lines: Compose's dotenv parsing is LAST-WINS. A duplicate is
-  # always an operator mistake, so it is refused outright rather than silently
-  # resolved in either direction — taking last-wins here would agree with Compose
-  # but would also quietly bless a file that says two different things about the
-  # most consequential setting in it. The count above sees every shape Compose
-  # accepts, including the indented and `export `-prefixed ones a `-F=` field
-  # comparison missed.
-  if [ "$occurrences" -gt 1 ]; then
-    echo ".env entry $key appears $occurrences times. Leave exactly one." >&2
-    echo "Docker Compose resolves the LAST one, so a file that says production" >&2
-    echo "on one line and non-production on another hands every container the" >&2
-    echo "value — which is how a live site would come up believing it is a copy." >&2
-    return 1
-  fi
-
-  value="$(environment_role_env_value "$key")"
-  if [ -z "$value" ]; then
-    echo ".env entry $key is present but empty, so Compose would hand the" >&2
-    echo "containers an empty value and the app would resolve UNKNOWN." >&2
-    echo "Set APP_ENVIRONMENT_ROLE=production in this deployment's .env, then re-run." >&2
-    return 1
-  fi
-  normalised="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
-
-  # A SHELL-EXPORTED VALUE BEATS THE FILE IN COMPOSE'S OWN PRECEDENCE, so a stale
-  # `export APP_ENVIRONMENT_ROLE=non-production` left in the invoking shell, a
-  # systemd unit or a restore-rehearsal script would override a correct .env and
-  # this gate would never see it. That is not hypothetical for this script: it
-  # already exports GIT_COMMIT_SHA / KNOWLEDGE_BUNDLE_OBSERVED_AT / RELEASE_ID
-  # for compose to forward, and it does not sanitise the caller's environment.
-  #
-  # Compared case-folded and trimmed, the same fold the file value gets, so a
-  # harmless `PRODUCTION` in the shell is not reported as a disagreement. Both
-  # values are named in the refusal, because "they disagree" without saying which
-  # said what is not something an operator can act on.
-  if [ -n "${APP_ENVIRONMENT_ROLE+x}" ]; then
-    exported_normalised="$(
-      printf '%s' "$(trim_whitespace "${APP_ENVIRONMENT_ROLE:-}")" |
-        tr '[:upper:]' '[:lower:]'
-    )"
-    if [ "$exported_normalised" != "$normalised" ]; then
-      echo "$key disagrees between this shell and .env, and Docker Compose would" >&2
-      echo "take the SHELL value. Refusing rather than deploying the one you did" >&2
-      echo "not edit." >&2
-      echo "  exported in this shell: $(printable_deploy_value "${APP_ENVIRONMENT_ROLE:-}")" >&2
-      echo "  in .env:                $(printable_deploy_value "$value")" >&2
-      echo "Run 'unset $key' in this shell (and remove it from whatever exported" >&2
-      echo "it — a systemd unit, a wrapper script, a restore rehearsal), then" >&2
-      echo "re-run so the .env is the only source." >&2
-      return 1
-    fi
-  fi
-
-  if [ "$normalised" != "production" ]; then
-    echo ".env entry $key must be exactly production for this script (got: $(printable_deploy_value "$value"))" >&2
-    echo "This script deploys the club's LIVE site. There is no staging mode here." >&2
-    if [ "$normalised" = "non-production" ]; then
-      echo "The value says this installation is a COPY. Deploying it would suppress" >&2
-      echo "real members' email and, once Xero containment lands, rewrite the email" >&2
-      echo "addresses on the club's real accounting contacts. Refusing." >&2
-      echo "If you copied this line from .env.example, that template is for a local" >&2
-      echo "checkout: production deployments set production here." >&2
-    else
-      echo "It declares whether this installation is the club's live site or a copy," >&2
-      echo "and nothing infers it: an undeclared installation resolves UNKNOWN and" >&2
-      echo "holds back member email and Xero writes until it is declared." >&2
-    fi
-    echo "Set APP_ENVIRONMENT_ROLE=production in this deployment's .env, then re-run." >&2
-    echo "Non-production stacks use docker-compose.staging.yml, which declares" >&2
-    echo "non-production itself. See docs/guides/environment-role.md." >&2
-    echo "This is NOT APP_RUNTIME_ROLE, which names the container slot (web-blue, cron-leader)." >&2
-    return 1
-  fi
-
-  # The canonical, validated answer, for the step-3 checks that depend on it
-  # (the email transport's capture refusal) — so none re-reads or re-folds it.
-  VALIDATED_ENVIRONMENT_ROLE="$normalised"
-
-  # Belt and braces now that the two agree: drop the variable from this shell so
-  # the .env is the ONLY source Compose can read it from. Nothing else in this
-  # script reads it, and the value is re-verified from each container's own
-  # self-report at step 14 (`assert_runtime_identity`), before the cutover.
-  unset APP_ENVIRONMENT_ROLE
 }
 
 # A gate value the app compares EXACTLY must reach the containers from .env

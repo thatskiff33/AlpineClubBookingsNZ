@@ -2016,15 +2016,20 @@ resolve `UNKNOWN`. Four things stop that becoming a silent outage:
    checklist's **Production Or Non-Production** step reports `blocked` with the
    repair. A boot that resolves non-production says that too, at info level, and
    names which source decided it.
-4. **Confirm the answer after the deploy, from the message rather than the
-   tick.** On `/admin/setup` the **Production Or Non-Production** step must read
-   *production*. A non-production installation shows a green tick there too, since
-   both are validly configured states and the checklist cannot know which one this
-   installation is meant to be — so the tick means "answered", and the message
-   means "which answer".
+4. **Confirm the answer after the deploy.** On `/admin/setup` the **Production
+   Or Non-Production** step must read *production*, with a green tick. A
+   deployment that declares non-production shows an amber warning there instead
+   (#4980) — "If this is the club's live site, members are getting no email and
+   Xero contact addresses are being replaced." — until an administrator
+   acknowledges it as a real copy. A copy forced by the safer override alone stays
+   complete, because an administrator chose it inside the app.
 
 For a deployment brought up by hand rather than through the deploy script, set
-`APP_ENVIRONMENT_ROLE` in the Compose `.env` before starting the app. The base
+`APP_ENVIRONMENT_ROLE` in the Compose `.env` before starting the app. For the
+club's live site, `DEPLOYMENT.md` → "First Bootstrap" runs
+`bash scripts/check-environment-role.sh` before the first `docker compose up`; it
+sources the same `scripts/lib/environment-role-check.sh` the deploy runs at step
+3, and refuses anything but exactly `production` (#4980). The base
 `docker-compose.yml` passes it through with **no default** on purpose: a default
 would be exactly the silent inference this design removes.
 `docker-compose.staging.yml` hard-codes `non-production`, so a staging or E2E
