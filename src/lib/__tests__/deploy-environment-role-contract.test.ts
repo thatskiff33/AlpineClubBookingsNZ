@@ -744,8 +744,22 @@ describe("every service that runs the app is given the declaration", () => {
     }
   });
 
+  it("gives the first-install seed service the role, because it runs app code (#4977)", () => {
+    // Not through the anchor (the seed takes none of the app's provider
+    // settings), so it must name the variable itself, with no default.
+    const seed = composeServices(BASE_COMPOSE).get("seed");
+    expect(seed, "docker-compose.yml has no `seed` service").toBeDefined();
+    expect(seed).toContain(
+      `${ENVIRONMENT_ROLE_ENV_VAR}: \${${ENVIRONMENT_ROLE_ENV_VAR}}`,
+    );
+  });
+
   it("leaves the migrate service without it, and says why", () => {
-    const migrateBlock = compose.slice(compose.indexOf("\n  migrate:"));
+    // Up to the next service: the `seed` service after it does run app code.
+    const fromMigrate = compose.slice(compose.indexOf("\n  migrate:") + 1);
+    const nextService = fromMigrate.slice(1).search(/\n {2}[A-Za-z0-9_.-]+:\s*$/m);
+    const migrateBlock =
+      nextService === -1 ? fromMigrate : fromMigrate.slice(0, nextService + 1);
     expect(migrateBlock).not.toContain(
       `${ENVIRONMENT_ROLE_ENV_VAR}: \${${ENVIRONMENT_ROLE_ENV_VAR}}`,
     );
@@ -814,6 +828,7 @@ describe("EVERY compose file that runs the app declares the role", () => {
       "caddy",
       "migrate",
       "postgres",
+      "seed",
     ]);
     // Anchors and trailing comments on a key are accepted as keys.
     for (const line of ["  app: &app", "  app: # the cron leader", "    app:"]) {

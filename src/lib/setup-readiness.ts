@@ -16,6 +16,7 @@ import {
 import { usableClubCurrencyCode } from "@/lib/club-format";
 import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
 import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
+import { SEED_COMMAND_DETAILS } from "@/lib/seed-commands";
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
@@ -1338,11 +1339,11 @@ function buildSeedAdminCheck(
       message:
         adminCount > 0
           ? `${adminCount} administrator account${adminCount === 1 ? "" : "s"} found.`
-          : "Run the seed command after setting SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD.",
+          : "Run the seed command after setting SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD.",
       details:
         adminCount > 0
           ? ["Admin login is available."]
-          : ["Command: pnpm run db:seed"],
+          : [...SEED_COMMAND_DETAILS],
       href: adminHref("members"),
     },
     progress,

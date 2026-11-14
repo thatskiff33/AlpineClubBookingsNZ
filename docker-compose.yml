@@ -618,6 +618,68 @@ services:
       DATABASE_URL: postgresql://${MIGRATION_DB_USER:-tac}:${MIGRATION_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10&options=-c%20lock_timeout%3D${MIGRATION_LOCK_TIMEOUT_MS:-5000}
     command: ./node_modules/.bin/prisma migrate deploy
 
+  # FIRST INSTALL ONLY (#4977, INV-OPS-019). `docker compose run --rm seed`
+  # runs prisma/seed.ts once, after `run --rm migrate` and before the app
+  # starts: it creates the first admin, the lodge kiosk account and the starter
+  # data on an empty database. Nothing runs it on an upgrade, and the profile
+  # keeps `docker compose up` from ever starting it. Every step is
+  # create-if-missing, so running it twice adds nothing and changes no value;
+  # only the built-in lobby display designs are refreshed from code, which moves
+  # their `updatedAt` (src/lib/lodge-display/built-in-seeds.ts).
+  #
+  # The app image cannot do this: the runner stage ships the compiled site and
+  # no source, and the seed imports ~25 modules from src/. So it runs in the
+  # migrate image — the builder stage, full source — and its `image:` and
+  # `build:` are migrate's, line for line (first-install-seed-contract holds
+  # them equal). A production adopter who sets MIGRATE_IMAGE to the published
+  # image therefore seeds from that image and builds nothing.
+  seed:
+    image: ${MIGRATE_IMAGE:-${COMPOSE_PROJECT_NAME:-tacbookings}-migrate:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+      args:
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+        # AID-3 (#2372): mirror the app image's bundle build metadata.
+        GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:-}
+        KNOWLEDGE_BUNDLE_OBSERVED_AT: ${KNOWLEDGE_BUNDLE_OBSERVED_AT:-}
+        # The builder stage runs `next build` here too, so the BUILD-only Node
+        # flags must reach it exactly as they reach the app build above (#3824).
+        NODE_OPTIONS: ${NODE_BUILD_OPTIONS:-}
+    profiles: ["seed"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TZ: Pacific/Auckland
+      # Unlike migrate, the seed imports application code, so it takes the
+      # environment role the way the app services do — same source, same
+      # deliberate absence of a default (ENV-SAFETY 1, #3034).
+      APP_ENVIRONMENT_ROLE: ${APP_ENVIRONMENT_ROLE}
+      # Runtime environment only, never build args, so no seed credential is in
+      # any image layer; and from .env, never `-e` on the command line, so none
+      # is in shell history. Empty when unset, so the seed's own check names
+      # the missing variable and stops before writing anything.
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_ADMIN_FIRST_NAME: ${SEED_ADMIN_FIRST_NAME:-}
+      SEED_ADMIN_LAST_NAME: ${SEED_ADMIN_LAST_NAME:-}
+      SEED_LODGE_PASSWORD: ${SEED_LODGE_PASSWORD:-}
+      SEED_THEME_COMPLETE: ${SEED_THEME_COMPLETE:-}
+      # The kiosk login and the committee role addresses are created at the
+      # club's own domain, taken from NEXTAUTH_URL exactly as the app does
+      # (x-app-environment above); without it they would be @example.org.
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      # The APP role, not the migration role: the seed writes rows the way the
+      # app does and changes no schema, so it needs the app's grants and no
+      # more. A pool of 2 like migrate's, so a seed run beside a live stack
+      # still fits the connection budget on x-app-environment: 25 steady + 2
+      # here (+ migrate's 2 in a deploy window) <= max_connections=40.
+      DATABASE_URL: postgresql://${APP_DB_USER:-tac}:${APP_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10
+    # The same invocation as `pnpm run db:seed` and the prisma.config.ts seed hook.
+    command: ./node_modules/.bin/tsx --conditions=react-server prisma/seed.ts
+
 volumes:
   postgres_data:
   # Default destination for local database backups when BACKUP_LOCAL_HOST_DIR

@@ -76,6 +76,17 @@ export const CHANGE_SCOPES = {
       /^docker-compose[^/]*\.yml$/,
       /^\.dockerignore$/,
       /^\.trivyignore$/,
+      // The first-install smoke this job also runs (#4977): its harness, the
+      // seed it runs inside the builder-stage image with the prisma/ files that
+      // seed imports, the .env.example it copies for Compose to parse, the
+      // DEPLOYMENT.md "First Bootstrap" it reads its commands from, and the
+      // role-provisioning script that doc's step 5 runs. A doc-only change can
+      // break the first install, so it must run the smoke (INV-OPS-019).
+      /^scripts\/ci\/first-install-smoke\.mjs$/,
+      /^prisma\/(?:seed|seed-data|starter-page-content|starter-site-content)\.ts$/,
+      /^\.env\.example$/,
+      /^DEPLOYMENT\.md$/,
+      /^scripts\/provision-database-roles\.ts$/,
       ...WORKFLOW_AND_CLASSIFIER,
     ],
   },

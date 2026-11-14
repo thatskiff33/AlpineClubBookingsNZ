@@ -15,8 +15,10 @@ runbook: `DEPLOYMENT.md` → "Config Bundle Auto-Import On Boot (DR / clone)".
 
 The original motivation for this feature family was seeding a fresh install
 from a known-good configuration instead of hand-configuring. The base seed
-(`prisma/seed.ts`, invoked via the `prisma.config.ts` seed hook during
-`migrate deploy`) is create-if-missing and env-driven. A fresh site today is
+(`prisma/seed.ts`) is create-if-missing and env-driven. It is a separate
+one-shot step after `migrate deploy`, never part of it: `docker compose run
+--rm seed` on a Docker-only install, `pnpm run db:seed` on a developer
+machine (#4977). A fresh site today is
 bootstrapped by: migrations → base seed → manual configuration. With the
 config-transfer importer available, "manual configuration" can be replaced
 by importing a bundle.

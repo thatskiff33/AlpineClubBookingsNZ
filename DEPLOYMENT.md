@@ -38,6 +38,7 @@ Postgres `max_connections=40`:
 | `app_blue` / `app_green` | web slots | 10 each |
 | `app` | cron leader + warm fallback web | 5 |
 | `migrate` | deploy-window migrations | 2 |
+| `seed` | first-install seed, one-shot, never on an upgrade | 2 |
 | `app` (cron leader), `AUDIT_RETENTION_DATABASE_URL` | nightly audit retention, only when set (#4453) | 2 |
 
 The ceiling holds per container because `src/lib/prisma.ts` shares one client
@@ -854,7 +855,11 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    Generate four different passwords with `openssl rand -hex 24`: the operator's
    `DB_PASSWORD`, then `APP_DB_PASSWORD`, `MIGRATION_DB_PASSWORD` and
    `AUDIT_RETENTION_DB_PASSWORD`. Hex passwords need no URL encoding in the
-   connection strings below. Set a strong `AUTH_SECRET` too. **Leave `APP_DB_USER`, `MIGRATION_DB_USER` and
+   connection strings below. Set a strong `AUTH_SECRET` too. Set `NEXTAUTH_URL`
+   to the club's public address and `APP_ENVIRONMENT_ROLE` to `production` or
+   `non-production`. Set the first administrator's `SEED_ADMIN_EMAIL` and
+   `SEED_ADMIN_PASSWORD`, and the shared lodge kiosk account's
+   `SEED_LODGE_PASSWORD`, for step 7. **Leave `APP_DB_USER`, `MIGRATION_DB_USER` and
    `AUDIT_RETENTION_DATABASE_URL` blank until step 6.**
 
 3. **Start only PostgreSQL**:
@@ -911,14 +916,32 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    checkout tools such as `setup:check`, point their `DATABASE_URL` at the app
    role, using the host/port reachable from that shell.
 
-7. **Start the web slots, Caddy and cron leader**:
+7. **Create the first administrator** with the seed service, which needs nothing
+   on the server but Docker:
+
+   ```bash
+   docker compose run --rm seed
+   ```
+
+   It creates the first admin, the shared lodge kiosk account and the starter
+   data (access roles, membership types, starter pages) on the empty database.
+   It runs `prisma/seed.ts` in the same image as `migrate`, so with
+   `MIGRATE_IMAGE` set to the published image it builds nothing, and it connects
+   as the application role from step 6. It reads the three `SEED_*` values from
+   `.env`; if one is missing it stops, names it, and writes nothing. Run it once,
+   on the first install only: upgrades never run it (see "Config Self-Heal On
+   Boot"), and `docker compose up` never starts it. CI runs steps 3 to 7 as
+   written here, on an empty database (`scripts/ci/first-install-smoke.mjs`,
+   `INV-OPS-019`), so keep each command in its own fenced block.
+
+8. **Start the web slots, Caddy and cron leader**:
 
    ```bash
    docker compose up -d --build app app_blue app_green caddy
    docker compose ps
    ```
 
-8. **Open Admin → Setup** after seeding the intended admin (below). Confirm
+9. **Open Admin → Setup** after seeding the intended admin (step 7). Confirm
    **Data Encryption Key** and **Database role** are complete before connecting
    providers or enrolling authenticator apps. `pnpm run setup:check` shows the
    same checks for its own shell connection; the database-role warning never
@@ -931,8 +954,8 @@ docker build -t tacbookings:local .
 ```
 
 Club identity, capacity, age tiers, seasons, and rates are configured **in the
-database**, not in a file. After the migrate/seed steps, sign in as the seeded
-admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
+database**, not in a file. Once the seed step above has run, sign in as the
+seeded admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
 seasons/rates, email, Stripe, Xero). Optionally run `pnpm run setup:wizard`
 against the migrated database to bootstrap the club identity, capacity, and age
 tiers from the CLI — it writes those database settings rows (no `config/club.json`
@@ -941,14 +964,16 @@ is written). `config/club.json` remains an optional seed/fallback only: copy
 a boot-time fallback, but it is no longer required.
 
 Create or seed accounts only for the intended environment. The first admin
-from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
+from `prisma/seed.ts` (`docker compose run --rm seed` on a Docker-only install,
+`pnpm run db:seed` on a machine with Node and pnpm) is controlled by `SEED_ADMIN_EMAIL` and
 `SEED_ADMIN_PASSWORD` (optionally `SEED_ADMIN_FIRST_NAME` and
 `SEED_ADMIN_LAST_NAME`), and the shared lodge kiosk account by
 `SEED_LODGE_PASSWORD`. The seeded admin can log in immediately and is forced
 to change password on first login; change all seed credentials before any
 shared environment is exposed. The seed is create-if-missing throughout, so
-re-running it against an existing database changes nothing; committee and
-chore placeholders are only inserted when those tables are empty.
+re-running it against an existing database adds nothing and changes no value
+you set; only the built-in lobby display designs are refreshed from code.
+Committee and chore placeholders are only inserted when those tables are empty.
 
 ## Routine Production Deploy
 
@@ -1667,7 +1692,7 @@ To seed a fresh instance — disaster recovery, or standing up a replacement /
 clone — from a known-good configuration instead of hand-configuring it, drop the
 club's exported **config-transfer bundle** on disk and point
 `CONFIG_BUNDLE_IMPORT_PATH` at it. On the next Node boot — **after** migrations,
-the base seed, and the C2 self-heal — the app applies that bundle
+the base seed (`docker compose run --rm seed`), and the C2 self-heal — the app applies that bundle
 **non-interactively**, through the same validated import pipeline the admin
 Export & Import page uses (`src/lib/config-transfer/bootstrap-import.ts`,
 implementing ADR-003).
@@ -1675,7 +1700,7 @@ implementing ADR-003).
 The whole provisioning flow becomes:
 
 ```text
-deploy env + bundle file  →  prisma migrate deploy  →  base seed  →  boot auto-import  →  operational site
+deploy env + bundle file  →  run --rm migrate  →  run --rm seed  →  boot auto-import  →  operational site
 ```
 
 ### Placement and enabling
@@ -1821,6 +1846,8 @@ docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml run --rm migrate
+docker compose --env-file .env.staging -p tacbookings-staging \
+  -f docker-compose.yml -f docker-compose.staging.yml run --rm seed
 ```
 
 See `docs/STAGING_ACCESSIBILITY.md` for route coverage and Lighthouse guidance.
