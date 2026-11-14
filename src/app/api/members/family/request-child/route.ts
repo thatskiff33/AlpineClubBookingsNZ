@@ -14,6 +14,7 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendChildRequestSubmittedEmail, sendAdminFamilyGroupRequestAlert } from "@/lib/email";
 import { nameField } from "@/lib/zod-helpers";
+import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
 
 const requestChildSchema = z.object({
   familyGroupId: z.string().min(1, "Family group ID required"),
@@ -22,7 +23,7 @@ const requestChildSchema = z.object({
   dateOfBirth: z
     .string({ error: "Date of birth is required" })
     .min(1, "Date of birth is required")
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD format"),
+    .pipe(dateOfBirthStringSchema),
 });
 
 /**
