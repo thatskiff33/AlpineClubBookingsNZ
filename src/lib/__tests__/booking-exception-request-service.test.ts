@@ -13,12 +13,14 @@ const mocks = vi.hoisted(() => ({
   nbCreate: vi.fn(),
   nbUpdateMany: vi.fn(),
   nbFindMany: vi.fn(),
+  nbCount: vi.fn(),
   nbFindUnique: vi.fn(),
   nbFindFirst: vi.fn(),
   bcrFindFirst: vi.fn(),
   bcrCreate: vi.fn(),
   bcrUpdateMany: vi.fn(),
   bcrFindMany: vi.fn(),
+  bcrCount: vi.fn(),
   bcrFindUnique: vi.fn(),
   bookingUpdate: vi.fn(),
   bookingCreate: vi.fn(),
@@ -131,12 +133,14 @@ vi.mock("@/lib/prisma", () => {
         create: (...a: unknown[]) => mocks.nbCreate(...a),
         updateMany: (...a: unknown[]) => mocks.nbUpdateMany(...a),
         findMany: (...a: unknown[]) => mocks.nbFindMany(...a),
+        count: (...a: unknown[]) => mocks.nbCount(...a),
         findFirst: (...a: unknown[]) => mocks.nbFindFirst(...a),
       },
       bookingChangeRequest: {
         create: (...a: unknown[]) => mocks.bcrCreate(...a),
         updateMany: (...a: unknown[]) => mocks.bcrUpdateMany(...a),
         findMany: (...a: unknown[]) => mocks.bcrFindMany(...a),
+        count: (...a: unknown[]) => mocks.bcrCount(...a),
         findUnique: (...a: unknown[]) => mocks.bcrFindUnique(...a),
         findFirst: (...a: unknown[]) => mocks.bcrFindFirst(...a),
       },
@@ -1643,6 +1647,9 @@ describe("readUnifiedExceptionQueue (merges both sources)", () => {
       },
     ]);
 
+    mocks.nbCount.mockResolvedValue(1);
+    mocks.bcrCount.mockResolvedValue(1);
+
     const result = await readUnifiedExceptionQueue({ status: "REQUESTED", page: 1, pageSize: 25 });
 
     expect(result.total).toBe(2);
@@ -1659,6 +1666,97 @@ describe("readUnifiedExceptionQueue (merges both sources)", () => {
     const all = await readUnifiedExceptionQueue({ status: "ALL", page: 1, pageSize: 25 });
     expect(all.data.map((item) => item.id)).toEqual(["bcr-1", "nb-1"]);
     expect(mocks.nbFindMany.mock.calls[1][0].orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+  });
+
+  // INV-OPS-019 (#4960): the total is each source's own row count and every row
+  // is reachable. The read used to stop at 500 rows a source, so a club with more
+  // decided requests than that saw a total capped at 1000 and could not reach the
+  // older ones.
+  describe("a queue larger than any fixed read cap", () => {
+    function requestRow(id: string, createdAt: string) {
+      return {
+        id,
+        status: "APPROVED",
+        createdAt: new Date(createdAt),
+        updatedAt: new Date(createdAt),
+        lodgeId: "lodge_1",
+        bookingId: "booking-1",
+        requestedBy: { id: "m1", firstName: "Ada", lastName: "Lovelace", email: "a@x.nz" },
+        reviewedBy: null,
+        reviewedAt: null,
+        memberMessage: null,
+        proposalHash: "a".repeat(64),
+        aggregateCapacityMode: "HOLD",
+        frozenEvidence: { reasonCodes: [], affectedNights: [] },
+        attemptCount: 1,
+        conflictCount: 0,
+        lastConflictAt: null,
+        lastConflictReason: null,
+        supersededByRequestId: null,
+        requestedChanges: null,
+      };
+    }
+
+    it("reports the true total from the counts, not from the rows it read", async () => {
+      mocks.nbCount.mockResolvedValue(900);
+      mocks.bcrCount.mockResolvedValue(700);
+      mocks.nbFindMany.mockResolvedValue([requestRow("nb-1", "2026-07-02T00:00:00Z")]);
+      mocks.bcrFindMany.mockResolvedValue([requestRow("bcr-1", "2026-07-01T00:00:00Z")]);
+
+      const result = await readUnifiedExceptionQueue({ status: "APPROVED", page: 1, pageSize: 25 });
+
+      expect(result).toMatchObject({ total: 1600, page: 1, pageSize: 25, totalPages: 64 });
+      // Each source is read only to the end of the window asked for.
+      expect(mocks.nbFindMany.mock.calls.at(-1)![0].take).toBe(25);
+      expect(mocks.bcrFindMany.mock.calls.at(-1)![0].take).toBe(25);
+    });
+
+    it("reaches a page past 500 rows a source: the window grows with the page", async () => {
+      mocks.nbCount.mockResolvedValue(900);
+      mocks.bcrCount.mockResolvedValue(700);
+      mocks.nbFindMany.mockResolvedValue([]);
+      mocks.bcrFindMany.mockResolvedValue([]);
+
+      await readUnifiedExceptionQueue({ status: "APPROVED", page: 40, pageSize: 25 });
+
+      // Page 40 starts at row 975 and ends at 1000: each source needs its first 1000
+      // rows at most, never past its own count.
+      expect(mocks.nbFindMany.mock.calls.at(-1)![0].take).toBe(900);
+      expect(mocks.bcrFindMany.mock.calls.at(-1)![0].take).toBe(700);
+    });
+
+    it("slices the merged order at the page's offset", async () => {
+      mocks.nbCount.mockResolvedValue(3);
+      mocks.bcrCount.mockResolvedValue(2);
+      // Newest first (APPROVED): the merged order is nb-3, bcr-2, nb-2, bcr-1, nb-1.
+      mocks.nbFindMany.mockResolvedValue([
+        requestRow("nb-3", "2026-07-05T00:00:00Z"),
+        requestRow("nb-2", "2026-07-03T00:00:00Z"),
+        requestRow("nb-1", "2026-07-01T00:00:00Z"),
+      ]);
+      mocks.bcrFindMany.mockResolvedValue([
+        requestRow("bcr-2", "2026-07-04T00:00:00Z"),
+        requestRow("bcr-1", "2026-07-02T00:00:00Z"),
+      ]);
+
+      const second = await readUnifiedExceptionQueue({ status: "APPROVED", page: 2, pageSize: 2 });
+
+      expect(second.data.map((item) => item.id)).toEqual(["nb-2", "bcr-1"]);
+      expect(second.total).toBe(5);
+    });
+
+    it("reads no rows for a page past the last one", async () => {
+      mocks.nbCount.mockResolvedValue(3);
+      mocks.bcrCount.mockResolvedValue(2);
+      mocks.nbFindMany.mockClear();
+      mocks.bcrFindMany.mockClear();
+
+      const result = await readUnifiedExceptionQueue({ status: "APPROVED", page: 9, pageSize: 25 });
+
+      expect(result).toMatchObject({ data: [], total: 5, totalPages: 1 });
+      expect(mocks.nbFindMany).not.toHaveBeenCalled();
+      expect(mocks.bcrFindMany).not.toHaveBeenCalled();
+    });
   });
 });
 
