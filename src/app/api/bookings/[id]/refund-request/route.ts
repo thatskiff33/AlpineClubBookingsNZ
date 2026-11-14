@@ -15,6 +15,7 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
 import { clubFormat } from "@/lib/club-format-server";
 import { organiserCardAppealCeilingFor } from "@/lib/organiser-child-refund";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import { ORGANISER_CARD_APPEAL_PENDING_MEMBER_NOTE } from "@/lib/group-organiser-paid";
 
 const createSchema = z.object({
@@ -170,7 +171,8 @@ export async function POST(
   const organiserCardCeiling = organiserCard?.ceilingCents ?? null;
   const maxRefundable =
     organiserCardCeiling ??
-    getRemainingRefundableCentsNetOf(booking.payment, await refundAppealHandedBackCents(prisma, booking.payment));
+    getRemainingRefundableCentsNetOf(booking.payment, await refundAppealHandedBackCents(prisma, booking.payment) + // #4872: less the hold-back, as approved
+      (await readSupersededCaptureHeldBack(prisma, booking.payment.id)).totalCents);
   if (organiserCardCeiling !== null && maxRefundable <= 0) {
     return NextResponse.json(
       {

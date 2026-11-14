@@ -18,7 +18,7 @@ import {
   MEMBER_AGE_TIER_FILTER_LABELS,
   MEMBER_AGE_TIER_FILTER_VALUES,
   isAppliedMemberAgeTier,
-} from "@/app/(admin)/admin/members/_age-tier-filter-values";
+} from "@/app/(admin)/admin/membership/members/_age-tier-filter-values";
 import {
   APPLIED_PAYMENT_STATUS_VALUES,
   APPLIED_PAYMENTS_SEARCH_MAX_CHARS,

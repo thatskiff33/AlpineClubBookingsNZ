@@ -138,6 +138,8 @@ describe("cancelBooking split cascade (#738)", () => {
               updateMany: mocks.bookingUpdateMany,
             },
             payment: { update: vi.fn() },
+            // #4909: the claim releases the booking's promo uses on this tx.
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
           });
         }
         return Promise.all(fnOrActions as Array<Promise<unknown>>);

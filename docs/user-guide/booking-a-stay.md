@@ -41,6 +41,10 @@ full booking state machine is in
    below it: **Available** (more than 15 beds free), **Filling** (6–15 beds),
    **Nearly full** (1–5 beds), and **Full**. A small season marker (e.g. "W
    Winter 2026") shows which season's rates apply — rates differ by season.
+   A night marked **?** has not loaded its availability yet. If a month could
+   not be loaded — usually a weak signal — the calendar says so above the dates
+   with a **Try again** button. You can still pick **?** nights; the lodge is
+   re-checked when you submit, and nothing is booked or charged until then.
 4. If the nights you want are **Full**, you can join the waitlist instead of
    booking — see [The waitlist & offers](waitlist-and-offers.md).
 
@@ -114,7 +118,16 @@ full booking state machine is in
 ### 3. Review, confirm, and the hold policies
 
 Step 3, **Review & Confirm**, shows your nights, your party, and the quote in
-dollars before you commit. What happens to any **non-member guests** depends on
+dollars before you commit. Just above the Confirm / **Continue to Payment**
+button, a **Cancellation and refunds** box shows the club's current
+cancellation schedule for your lodge and check-in: how much of what you pay
+comes back if you later cancel, depending on how close to check-in you cancel.
+The exact amount is shown when you start a cancellation, and the schedule is the
+club's current one, so if the club changes it later, a later cancellation uses
+the new terms. If the schedule cannot be loaded, the box says to ask the club
+instead; you can still book.
+
+What happens to any **non-member guests** depends on
 which of two booking policies your club runs. Operators call these policies
 *First Paid, First In* and *Members First*, but you will **not** see those names
 anywhere in the wizard — you only see their effect:
@@ -155,6 +168,14 @@ accepted their place, your club only tells them, or an officer added them); you
 will then see them when you edit the booking. You only ever see a code and what
 it gives.
 
+**If the club can't take the booking as it stands**, pressing the button moves
+the page up to a message saying why, with a button to fix it where there is one
+(complete a guest's details, open the clashing booking, pay a subscription). If
+a Booking Officer could allow it, the message links down to the request form.
+If the lodge filled up while you were reviewing, you are taken to an offer to
+join the waitlist instead. The same happens when Continue is stopped on the
+guests step, for example because a guest has no name yet.
+
 ### 4. Pay (or wait for review)
 
 - If money is due and you are paying by card, the **Pay** step takes payment
@@ -176,7 +197,11 @@ Paying by card versus by internet banking is covered in
 ### After you book: My Bookings
 
 Your bookings live at **My Bookings** (`/bookings`), sortable by start date and
-filterable by status.
+filterable by status. If your club has more than one lodge, each booking shows
+its lodge under the dates, as the dashboard's Next Stay, draft and Recent
+Bookings rows do; in a one-lodge club the lists look as before, except that a
+booking still at a lodge the club has stopped using shows that lodge's name. The
+booking's own page always names its lodge.
 
 Emails about one of your bookings take you straight to that booking's detail
 page when you are signed in and allowed to open it. If an email is sent to a

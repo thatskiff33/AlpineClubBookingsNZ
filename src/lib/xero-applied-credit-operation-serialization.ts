@@ -5,7 +5,10 @@ import {
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
 } from "./xero-operation-outbox-payload";
 import { asRecord, readString } from "./xero-json";
-import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "./xero-operation-error-codes";
+import {
+  GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE,
+  XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE,
+} from "./xero-operation-error-codes";
 
 /**
  * #3635 (orchestrator decision 1, `INV-INT-025`): an applied-credit allocation
@@ -88,6 +91,24 @@ export class XeroAppliedCreditDeallocationEventualConsistencyError extends XeroA
   constructor(message: string) {
     super(message);
     this.name = "XeroAppliedCreditDeallocationEventualConsistencyError";
+  }
+}
+
+/**
+ * #4919: a group settlement's combined invoice is raised, but its email fence
+ * committed with the email owed. The outbox returns the row to PENDING under
+ * the deferred code, marker kept, rather than failing it. It lives beside its
+ * base rather than in the widely imported group outbox module, so importing
+ * that module never subclasses at load time.
+ */
+export class GroupSettlementInvoiceEmailDeferredError extends XeroAppliedCreditOperationBusyError {
+  constructor(settlementId: string, invoiceId: string) {
+    super(
+      `The combined invoice ${invoiceId} for group settlement ${settlementId} is raised but its email was not sent; the outbox asks Xero again shortly`,
+      null,
+      GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE,
+    );
+    this.name = "GroupSettlementInvoiceEmailDeferredError";
   }
 }
 

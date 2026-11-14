@@ -4,17 +4,17 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { RoomTable } from "@/app/(admin)/admin/bed-allocation/_components/room-table";
+import { RoomTable } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/room-table";
 import {
   BED_ALLOCATION_COLUMN_WIDTH_CLASS,
   BED_ALLOCATION_COLUMN_WIDTH_REM,
   BED_ALLOCATION_LABEL_COLUMN_WIDTH_CLASS,
   BED_ALLOCATION_LABEL_COLUMN_WIDTH_REM,
-} from "@/app/(admin)/admin/bed-allocation/_components/board-cell";
+} from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/board-cell";
 import type {
   DashboardAllocation,
   DashboardRoom,
-} from "@/app/(admin)/admin/bed-allocation/_components/types";
+} from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
 
 vi.mock("@dnd-kit/core", () => ({
   useDroppable: () => ({
@@ -34,7 +34,7 @@ vi.mock("@/components/club-identity-provider", () => ({
 // cell layout (how many occupants render, the #1701 partner marker) without
 // dnd-kit draggable / dropdown-menu internals.
 vi.mock(
-  "@/app/(admin)/admin/bed-allocation/_components/allocation-chip",
+  "@/app/(admin)/admin/booking-desk/bed-allocation/_components/allocation-chip",
   () => ({
     AllocationChip: ({ allocation }: { allocation: DashboardAllocation }) => (
       <div data-testid="allocation-chip">{allocation.guestName}</div>

@@ -10,7 +10,7 @@ import { LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE } from "@/lib/late-capture-kept-xe
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
-import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
+import { readAdditionalCaptureReceiptPayload, XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { SUPPLEMENTARY_INVOICE_PAYMENT_ROLE } from "@/lib/xero-inbound/object-links";
@@ -26,23 +26,23 @@ type ReceiptLinkStore = Pick<Prisma.TransactionClient, "paymentTransaction" | "x
  * #3953: the Xero invoice a capture's receipt's payment link names, on the
  * capture's `PaymentTransaction` (null while none is linked). The one read of
  * that link: the refund paths and (#4324) the late-capture receipt verdict
- * build on it.
+ * build on it. Several legs (#4434): the link naming leg 0, the invoice that
+ * bills the capture, else the oldest.
  */
 export async function readAdditionalCaptureReceiptLinkedInvoiceId(
   paymentTransactionId: string,
   store: Pick<Prisma.TransactionClient, "xeroObjectLink"> = prisma,
 ): Promise<string | null> {
-  const link = await store.xeroObjectLink.findFirst({
-    where: {
-      localModel: "PaymentTransaction",
-      localId: paymentTransactionId,
-      xeroObjectType: "PAYMENT",
-      role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
-      active: true,
-    },
-    orderBy: { createdAt: "desc" },
-    select: { metadata: true },
-  });
+  const where = {
+    localModel: "PaymentTransaction",
+    localId: paymentTransactionId,
+    xeroObjectType: "PAYMENT",
+    role: ADDITIONAL_CAPTURE_PAYMENT_ROLE,
+    active: true,
+  } satisfies Prisma.XeroObjectLinkWhereInput;
+  const link =
+    (await store.xeroObjectLink.findFirst({ where: { ...where, metadata: { path: ["leg"], equals: 0 } }, select: { metadata: true } })) ??
+    (await store.xeroObjectLink.findFirst({ where, orderBy: { createdAt: "asc" }, select: { metadata: true } }));
   const linked = asRecord(link?.metadata)?.invoiceId;
   return typeof linked === "string" && linked.length > 0 ? linked : null;
 }
@@ -52,7 +52,7 @@ export async function readAdditionalCaptureReceiptLinkedInvoiceId(
  * payment link, or - review round 1 (L) - the invoice its receipt row has
  * already decided on and is sending to (the plan stored before the Xero call).
  * Null otherwise. The refund paths read it, so a refund of that capture names
- * the invoice the capture paid.
+ * the first invoice the capture paid (#4434).
  */
 export async function findAdditionalCaptureReceiptInvoiceId(
   paymentIntentId: string,
@@ -75,8 +75,8 @@ export async function findAdditionalCaptureReceiptInvoiceId(
     orderBy: { createdAt: "desc" },
     select: { requestPayload: true },
   });
-  const planned = asRecord(asRecord(pending?.requestPayload)?.plan)?.invoiceId;
-  return typeof planned === "string" && planned.length > 0 ? planned : null;
+  // The one plan reader (`INV-SSOT`): its top-level invoice is leg 0 by construction.
+  return readAdditionalCaptureReceiptPayload(pending?.requestPayload)?.plan?.invoiceId ?? null;
 }
 
 /** The reason an officer's review charge carries, less its change: `buildEditFinancialReviewChargeReason`'s one spelling. */

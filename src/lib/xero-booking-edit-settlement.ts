@@ -14,6 +14,7 @@ import {
   enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroModificationAccountCreditNoteOperation,
   enqueueXeroModificationCreditNoteOperation,
+  enqueueXeroRefundCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation,
@@ -67,6 +68,16 @@ type XeroBookingEditFinancialAction =
        * #3809: applied credit the same edit gave back, which the deallocation
        * reopened the invoice by: an invoice-ALLOCATED note of its own beside
        * the unallocated one for the minted credit.
+       */
+      allocatedGiveBackCents: number;
+      reason: string;
+    }
+  | {
+      type: "refund-credit-note";
+      refundAmountCents: number;
+      /**
+       * #3809: applied credit given back beside the card refund. Still its own
+       * allocated modification note. The card cash is the refund note above.
        */
       allocatedGiveBackCents: number;
       reason: string;
@@ -183,6 +194,12 @@ export interface QueueXeroBookingEditSettlementInput
    * its own. Absent on every edit's own settlement.
    */
   reviewTaskId?: string;
+  /**
+   * The payment the Stripe refund was recorded on (#3993). A card refund note
+   * is queued on it. Without it that cash is not queued, and it is not turned
+   * into a modification note.
+   */
+  paymentId?: string | null;
 }
 
 // test seam
@@ -267,18 +284,36 @@ export function classifyXeroBookingEditSettlement(
         ? undefined
         : (input.refundMethod ??
           refundMethodForSettlementMethod(input.settlementMethod, input.refundedThroughStripe));
-      financialAction = {
-        type: "modification-credit-note",
-        refundAmountCents,
-        ...(refundMethod ? { refundMethod } : {}),
-        ...(input.handedBackInCash
-          ? { noteWording: "cash" as const }
-          : correctsUnpaidInvoice
-            ? { noteWording: "invoice-correction" as const }
-            : {}),
-        allocatedGiveBackCents: giveBackCents,
-        reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
-      };
+      // #3993: the document follows the money. A card refund cannot allocate
+      // against an invoice the card already paid, so it is the payment's
+      // refund note. Bank, cash, and invoice-correction notes stay here.
+      // `handedBackInCash` stays a modification note even if a caller also
+      // passed a card method. An account-credit share passes `refundMethod:
+      // "account-credit"` and is not this branch.
+      const cardRefund =
+        refundAmountCents > 0 && refundMethod === "card" && !input.handedBackInCash;
+      if (cardRefund) {
+        financialAction = {
+          type: "refund-credit-note",
+          refundAmountCents,
+          allocatedGiveBackCents: giveBackCents,
+          reason:
+            "Negative booking-edit delta refunded to the card needs the payment's refund credit note, not a modification note against the paid invoice.",
+        };
+      } else {
+        financialAction = {
+          type: "modification-credit-note",
+          refundAmountCents,
+          ...(refundMethod ? { refundMethod } : {}),
+          ...(input.handedBackInCash
+            ? { noteWording: "cash" as const }
+            : correctsUnpaidInvoice
+              ? { noteWording: "invoice-correction" as const }
+              : {}),
+          allocatedGiveBackCents: giveBackCents,
+          reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
+        };
+      }
     }
   } else {
     financialAction = {
@@ -463,6 +498,31 @@ export async function queueXeroBookingEditSettlement(
       await kickQueuedXeroOperation(queued);
     }
     await queueGiveBackNote(input, decision.financialAction.allocatedGiveBackCents);
+  } else if (decision.financialAction.type === "refund-credit-note") {
+    // The enqueue caps at cash already recorded and dedupes on the payment's
+    // refund-note watermark, the same key the nightly check uses. No new key.
+    if (!input.paymentId) {
+      logger.error(
+        {
+          bookingId: input.bookingId,
+          bookingModificationId: input.bookingModificationId,
+          refundAmountCents: decision.financialAction.refundAmountCents,
+        },
+        "Card refund of a booking edit has no payment id, so no Xero refund credit note was queued",
+      );
+    } else {
+      const queued = await enqueueXeroRefundCreditNoteOperation(
+        input.paymentId,
+        decision.financialAction.refundAmountCents,
+        {
+          refundMethod: "card",
+          createdByMemberId: input.createdByMemberId,
+          ...(input.reviewTaskId ? { reviewTaskId: input.reviewTaskId } : {}),
+        },
+      );
+      await kickQueuedXeroOperation(queued);
+    }
+    await queueGiveBackNote(input, decision.financialAction.allocatedGiveBackCents);
   } else if (decision.financialAction.type === "modification-account-credit-note") {
     const queued = await enqueueXeroModificationAccountCreditNoteOperation(
       {
@@ -594,8 +654,8 @@ export interface CompleteDeferredXeroSupplementaryInvoiceInput {
  *
  * A NON-POSITIVE NET RETURNS BEFORE THE DISPATCHER, and that guard is the point
  * of this paragraph rather than an aside. Handed a reduction, the dispatcher does
- * not do nothing - it classifies `modification-credit-note` and queues a REFUND
- * to the member. A function called "complete the deferred supplementary invoice",
+ * not do nothing: a card refund is a refund note, and a bank, cash, or
+ * invoice-correction reduction is a modification note. A function called "complete the deferred supplementary invoice",
  * reached only from a replay whose whole subject is money the member OWES, must
  * not be able to issue one; today no caller can reach it with a reduction, and
  * making that unrepresentable is cheaper than a rule saying they must not
