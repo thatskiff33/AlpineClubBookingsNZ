@@ -4,6 +4,7 @@ import {
   readHiddenCalendarStatuses,
   writeHiddenCalendarStatuses,
 } from "@/lib/admin-calendar-status-preference";
+import { BOOKING_STATUSES_IN_LIFECYCLE_ORDER } from "@/lib/booking-status";
 
 // A map-backed stand-in for localStorage, so the preference rules run in node.
 function fakeStorage(initial: Record<string, string> = {}) {
@@ -64,6 +65,15 @@ describe("admin calendar status preference (#4923)", () => {
   it("prefers the new key over a legacy key left beside it", () => {
     const storage = fakeStorage({ [HIDDEN]: "[]", [LEGACY]: '["PAID"]' });
     expect(readHiddenCalendarStatuses(storage).size).toBe(0);
+  });
+
+  // Deliberate: an admin who hides every status keeps that choice (the pills
+  // stay on screen to switch back on). Only the legacy enabled list used to fall
+  // back to the defaults when nothing in it was valid, and that path is kept.
+  it("keeps a saved choice to hide every status instead of restoring the defaults", () => {
+    const storage = fakeStorage();
+    writeHiddenCalendarStatuses(storage, new Set(BOOKING_STATUSES_IN_LIFECYCLE_ORDER));
+    expect(readHiddenCalendarStatuses(storage)).toEqual(new Set(BOOKING_STATUSES_IN_LIFECYCLE_ORDER));
   });
 
   it("writes the hidden list and removes the legacy key", () => {

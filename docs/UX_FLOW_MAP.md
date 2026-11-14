@@ -244,7 +244,7 @@ Journey: Choose a queue tab, open a request, inspect the proposed stay, and use 
 
 Screen: `/admin/bookings`.
 
-Shows: A filterable booking list and calendar with status pills, including Awaiting Review. New statuses appear by default; saved hidden statuses stay hidden. Booking detail holds the stay, party, status and next actions.
+Shows: A filterable booking list and calendar with status pills; booking detail holds the stay, party, status and next actions.
 
 Journey: Filter the list, open a booking, and inspect its dates, guests and status before acting.
 

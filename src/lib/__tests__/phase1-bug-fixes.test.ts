@@ -116,7 +116,7 @@ import { GET as getAdminBookings } from "@/app/api/admin/bookings/route";
 
 const mockedAuth = vi.mocked(auth);
 
-describe("P1.5: Admin bookings API VALID_STATUSES", () => {
+describe("P1.5: Admin bookings API accepts every booking status", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any);
