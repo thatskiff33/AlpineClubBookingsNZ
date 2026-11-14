@@ -484,7 +484,7 @@ export async function POST(request: NextRequest) {
       return { type: "hostingCoverageRetry" as const };
     }
     // The card intent may already be retired above, so the member checks the
-    // status rather than reading "nothing was saved" (INV-LOCK-005).
+    // status rather than reading "nothing was saved" (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Internet Banking switch contended for the lock(1) budget",

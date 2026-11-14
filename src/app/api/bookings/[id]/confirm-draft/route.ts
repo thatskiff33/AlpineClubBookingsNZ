@@ -352,7 +352,7 @@ export async function POST(
     });
   }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
-    // The draft's one transaction rolled back (INV-LOCK-005).
+    // The draft's one transaction rolled back (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Draft confirmation contended for the lock(1) budget",

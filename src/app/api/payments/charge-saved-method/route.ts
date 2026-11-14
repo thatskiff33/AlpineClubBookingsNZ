@@ -678,7 +678,7 @@ export async function POST(request: NextRequest) {
 
     // Never after a capture (answered above). Only a contended claim saved
     // nothing; once it committed, or the card was tried, the status may have
-    // moved (INV-LOCK-005).
+    // moved (INV-LOCK-006).
     const contended = transactionContendedResponse(
       error,
       "Saved-method charge contended for the lock(1) budget",

@@ -546,7 +546,7 @@ async function runAssignBedRangeAttempt(input: {
 //           too, the admin gets a plain-English 409.
 //   P2034 — the database aborted this transaction to break a write conflict or
 //           deadlock. If the retry loses too, it is transaction contention and
-//           escapes to the shared retryable 503 (INV-LOCK-005), like P2028.
+//           escapes to the shared retryable 503 (INV-LOCK-006), like P2028.
 const RETRYABLE_RANGE_WRITE_CODES: ReadonlySet<string> = new Set(["P2002", "P2034"]);
 
 const BED_NIGHT_COLLISION_MESSAGE =
@@ -608,7 +608,7 @@ export async function assignBedRange(
 
   // The scan, the writes and the audit row share one transaction so the refusal
   // report, the rows written from it and the record of both describe the same
-  // instant. It runs on the shared lock(1) budget (`INV-LOCK-005`) rather than
+  // instant. It runs on the shared lock(1) budget (`INV-LOCK-006`) rather than
   // the default 5s interactive timeout because the statement
   // count is fixed (see runAssignBedRangeAttempt) but a 366-night createMany is
   // a big single statement — generous headroom, not a licence to grow the

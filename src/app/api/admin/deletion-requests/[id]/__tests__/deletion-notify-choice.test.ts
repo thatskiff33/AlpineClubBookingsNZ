@@ -1595,7 +1595,7 @@ describe("POST /api/admin/deletion-requests/[id] -- the future-stay cut-off is t
   });
 });
 
-// INV-LOCK-005: the anonymisation transaction runs on the lock(1) budget. The
+// INV-LOCK-006: the anonymisation transaction runs on the lock(1) budget. The
 // approval's claim may already have committed, so a spent budget asks the admin
 // to check the status; once a booking cancellation committed, the partial-cleanup
 // recovery contract wins instead.

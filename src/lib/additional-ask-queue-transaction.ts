@@ -26,7 +26,7 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * The budget every carrying-ask queue transaction runs on (#4442 review C-F1):
- * the shared lock(1) budget (`INV-LOCK-005`), under the name its three openers
+ * the shared lock(1) budget (`INV-LOCK-006`), under the name its three openers
  * share. It waits on the global key; queued behind a long holder of it,
  * Prisma's 5s default would fail a mint whose intent Stripe already holds.
  */

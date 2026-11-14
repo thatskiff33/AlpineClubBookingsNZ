@@ -49,7 +49,7 @@ export async function POST(
       version: resolved.version,
     });
   } catch (err) {
-    // `INV-LOCK-005`: the naming's one transaction rolled back.
+    // `INV-LOCK-006`: the naming's one transaction rolled back.
     const contended = transactionContendedResponse(
       err,
       "School pending-adult naming contended for the lock(1) budget",

@@ -3,7 +3,7 @@ import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes"
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
- * #4933 (`INV-LOCK-005`): both booking-create transactions wait for
+ * #4933 (`INV-LOCK-006`): both booking-create transactions wait for
  * `pg_advisory_xact_lock(1)`, and Prisma counts that wait against the
  * transaction's budget. On the 2 s / 5 s defaults any long holder of the key
  * (bed-range assignment, group settlement) aborted the create, so each one it

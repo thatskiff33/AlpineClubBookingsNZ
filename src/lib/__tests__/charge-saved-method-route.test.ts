@@ -1234,9 +1234,9 @@ describe("POST /api/payments/charge-saved-method", () => {
     });
   });
 
-  // INV-LOCK-005: a contended lock(1) transaction answers a retryable 503, but
+  // INV-LOCK-006: a contended lock(1) transaction answers a retryable 503, but
   // never after a capture, where the payment-received recovery wins.
-  describe("lock(1) transaction contention (INV-LOCK-005)", () => {
+  describe("lock(1) transaction contention (INV-LOCK-006)", () => {
     function contention(code: "P2028" | "P2034" | "P2002") {
       return new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" });
     }

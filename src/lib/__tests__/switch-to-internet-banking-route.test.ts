@@ -1044,9 +1044,9 @@ describe("POST /api/payments/switch-to-internet-banking — the card payment mus
   });
 });
 
-// INV-LOCK-005: the card intent is retired before the lock(1) switch, so a
+// INV-LOCK-006: the card intent is retired before the lock(1) switch, so a
 // contended switch asks the member to check the status before retrying.
-describe("POST /api/payments/switch-to-internet-banking — lock(1) contention (INV-LOCK-005)", () => {
+describe("POST /api/payments/switch-to-internet-banking — lock(1) contention (INV-LOCK-006)", () => {
   it.each(["P2028", "P2034"] as const)(
     "maps %s to a retryable 503 with the status-check wording and raises no invoice",
     async (code) => {

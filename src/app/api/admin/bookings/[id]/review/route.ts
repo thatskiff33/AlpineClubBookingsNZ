@@ -64,7 +64,7 @@ async function loadPendingReviewUnderEligibilityLocks(
 // matches the area the route-area matrix already infers for /api/admin/bookings
 // (#1997), pairing the queue's view-only UI gating with a route-level guard.
 /**
- * `INV-LOCK-005`: a review claim that ran out of its lock(1) budget rolled back
+ * `INV-LOCK-006`: a review claim that ran out of its lock(1) budget rolled back
  * with nothing recorded, so it answers the shared retryable 503.
  */
 function reviewClaimContended(err: unknown, bookingId: string): NextResponse {

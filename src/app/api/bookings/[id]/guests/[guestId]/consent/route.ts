@@ -158,7 +158,7 @@ export async function POST(
     return NextResponse.json({ outcome: outcome.outcome });
   } catch (err) {
     // The answer commits before its post-commit reprice settles, so a
-    // contended lock(1) transaction (INV-LOCK-005) asks for a status check.
+    // contended lock(1) transaction (INV-LOCK-006) asks for a status check.
     const contended = transactionContendedResponse(
       err,
       "Member-guest consent answer contended for the lock(1) budget",

@@ -298,7 +298,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
   // `server-only` is a bare throw outside the `react-server` condition.
   const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
 
-  // The wait for lock(1) counts against this budget (`INV-LOCK-005`); on the
+  // The wait for lock(1) counts against this budget (`INV-LOCK-006`); on the
   // defaults any long holder of the key aborted the draft.
   const newBooking = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -802,7 +802,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     // and the per-lodge capacity lock; the `acquireLodgeCapacityLock` below then
     // re-enters that same per-lodge key (a no-op) so the lock order holds either
     // way. The lock(1) budget applies only to the transaction opened here; a
-    // caller's `tx` keeps its opener's budget (`INV-LOCK-005`).
+    // caller's `tx` keeps its opener's budget (`INV-LOCK-006`).
     booking = await withOptionalTransaction(input.tx, async (tx) => {
       if (!input.tx) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;

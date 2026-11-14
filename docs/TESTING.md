@@ -1816,11 +1816,11 @@ when a change adds or edits a numeric input.
 ### The lock(1) transaction-budget census
 
 [`lock1-transaction-budget-census.test.ts`](../src/lib/__tests__/lock1-transaction-budget-census.test.ts)
-polices `INV-LOCK-005`. It starts from the INV-LOCK-003 site list, follows each
+polices `INV-LOCK-006`. It starts from the INV-LOCK-003 site list, follows each
 `pg_advisory_xact_lock(1)` wait out through named helpers to the transaction that
 opens it, and fails on an opener whose options are not the shared budget, a
-plain alias of it, the budget spread with `isolationLevel` alone, or an
-`INV-LOCK-005 exception:` comment with a reason. Like the others it enumerates
+plain alias of it, or an
+`INV-LOCK-006 exception:` comment with a reason. Like the others it enumerates
 rather than counts, and it fails if the reader finds too few openers to be
 reading at all. It reads source from disk, so run it by name when a change adds a
 lock(1) site, a helper that takes the key, or a transaction that calls one; it is

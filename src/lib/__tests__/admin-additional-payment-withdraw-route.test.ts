@@ -119,7 +119,7 @@ describe("admin additional-payment withdraw route", () => {
     expect(JSON.stringify(body)).not.toContain("ECONNREFUSED");
   });
 
-  // INV-LOCK-005: the PaymentIntent is cancelled before the ledger transaction,
+  // INV-LOCK-006: the PaymentIntent is cancelled before the ledger transaction,
   // so an exhausted budget answers with the status-check wording.
   it.each(["P2028", "P2034"])(
     "answers %s contention with a retryable 503 and the status-check wording",

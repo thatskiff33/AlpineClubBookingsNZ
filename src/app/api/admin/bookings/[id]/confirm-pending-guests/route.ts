@@ -385,7 +385,7 @@ export async function POST(
       try {
         await reconcileBedAllocationsForBooking({ bookingId, previousRange });
       } catch (err) {
-        // `INV-LOCK-005`: the move to PAYMENT_PENDING has already committed.
+        // `INV-LOCK-006`: the move to PAYMENT_PENDING has already committed.
         const contended = transactionContendedResponse(
           err,
           "Admin confirm-pending-guests bed reconcile contended for the lock(1) budget",

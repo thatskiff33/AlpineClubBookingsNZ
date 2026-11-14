@@ -286,7 +286,7 @@ describe("POST /api/admin/booking-requests/[id]/correct", () => {
     });
   });
 
-  // INV-LOCK-005: the claim is the correction's first write, so a spent budget
+  // INV-LOCK-006: the claim is the correction's first write, so a spent budget
   // saved nothing; once the correction committed, the committed shape wins.
   describe("a correction that ran out of lock(1) budget", () => {
     const contention = (code: string) =>

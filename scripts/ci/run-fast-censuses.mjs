@@ -91,7 +91,7 @@ export const FAST_CENSUS_SUITES = [
   },
   {
     path: "src/lib/__tests__/lock1-transaction-budget-census.test.ts",
-    why: "every lock(1) site's transaction runs on the shared budget (INV-LOCK-005); a site main adds is judged here",
+    why: "every lock(1) site's transaction runs on the shared budget (INV-LOCK-006); a site main adds is judged here",
   },
   {
     path: "src/lib/__tests__/club-time-escape-hatch-census.test.ts",

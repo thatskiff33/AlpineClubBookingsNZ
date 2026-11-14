@@ -26,7 +26,7 @@ async function requireRoomRequestsEnabled() {
 
 function errorResponse(error: unknown, bookingId: string) {
   const mapped = requestedRoomWriteErrorResponse(error);
-  // The write is one lock(1) transaction (INV-LOCK-005): retryable. A write
+  // The write is one lock(1) transaction (INV-LOCK-006): retryable. A write
   // conflict keeps the sentence `requested-room-write.ts` gives it.
   const contended = transactionContendedResponse(
     error,

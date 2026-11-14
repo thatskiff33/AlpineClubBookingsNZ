@@ -78,7 +78,7 @@ export async function PATCH(
         : await reopenGroupBooking(code, session.user.id);
     return NextResponse.json({ status: group.status });
   } catch (err) {
-    // The join-status write is one lock(1) transaction (INV-LOCK-005).
+    // The join-status write is one lock(1) transaction (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Group booking close/reopen contended for the lock(1) budget",

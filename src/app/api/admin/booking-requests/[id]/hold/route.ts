@@ -81,7 +81,7 @@ export async function POST(
       reused: result.reused,
     });
   } catch (err) {
-    // `INV-LOCK-005`: the hold rolled back, but a stale hold pointer may
+    // `INV-LOCK-006`: the hold rolled back, but a stale hold pointer may
     // already have been detached, so the officer checks rather than assumes.
     const contended = transactionContendedResponse(
       err,

@@ -2595,10 +2595,10 @@ describe("generic-catch error-message leak (F31 #1888)", () => {
   });
 });
 
-// INV-LOCK-005: a lock(1) transaction that runs out of its budget (P2028) or
+// INV-LOCK-006: a lock(1) transaction that runs out of its budget (P2028) or
 // loses a write conflict (P2034) is a retryable 503 before any capture is seen,
 // and never displaces the captured-payment recovery answer after one.
-describe("lock(1) transaction contention (INV-LOCK-005)", () => {
+describe("lock(1) transaction contention (INV-LOCK-006)", () => {
   function contention(code: "P2028" | "P2034" | "P2002") {
     return new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" });
   }

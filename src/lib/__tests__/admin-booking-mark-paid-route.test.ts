@@ -486,7 +486,7 @@ describe("POST /api/admin/bookings/[id]/mark-paid — the outstanding extra (#23
   });
 });
 
-describe("POST /api/admin/bookings/[id]/mark-paid — lock(1) budget contention (INV-LOCK-005)", () => {
+describe("POST /api/admin/bookings/[id]/mark-paid — lock(1) budget contention (INV-LOCK-006)", () => {
   const paid = {
     direction: "paid",
     confirmed: true,

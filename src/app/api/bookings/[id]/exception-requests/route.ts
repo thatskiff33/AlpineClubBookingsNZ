@@ -307,7 +307,7 @@ export async function POST(
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
-    // The request is created in one lock(1) transaction (INV-LOCK-005).
+    // The request is created in one lock(1) transaction (INV-LOCK-006).
     const contended = transactionContendedResponse(
       error,
       "Modification exception request create contended for the lock(1) budget",

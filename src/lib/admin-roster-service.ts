@@ -815,7 +815,7 @@ export async function updateAdminRosterForDate(params: {
     }
   }
   } catch (err) {
-    // INV-LOCK-005: contention is the route's retryable 503, not a failure.
+    // INV-LOCK-006: contention is the route's retryable 503, not a failure.
     if (isTransactionContention(err)) throw err
     logger.error({ err }, "Error processing roster action")
     const failures = {

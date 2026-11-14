@@ -50,7 +50,7 @@ export async function POST(request: Request) {
       action: "XERO_SYNC_NOW", category: "xero", memberId: guard.session.user.id,
       targetId, entityType, entityId, outcome: "failure", summary: message, metadata: { scope: scope.scope },
     });
-    // INV-LOCK-005: after the failure is audited, contention is a retryable 503.
+    // INV-LOCK-006: after the failure is audited, contention is a retryable 503.
     const contended = transactionContendedResponse(
       error,
       "Xero sync-now contended for the lock(1) budget",

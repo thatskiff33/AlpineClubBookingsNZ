@@ -132,7 +132,7 @@ export async function DELETE(
       notifyMember: parsedBody.data.notifyMember,
     });
   } catch (err) {
-    // INV-LOCK-005: the removal's transaction is the first write.
+    // INV-LOCK-006: the removal's transaction is the first write.
     const contended = transactionContendedResponse(
       err,
       "Admin partner link removal contended for the lock(1) budget",

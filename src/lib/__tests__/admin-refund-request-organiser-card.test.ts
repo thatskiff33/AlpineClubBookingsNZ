@@ -466,7 +466,7 @@ describe("approving a refund appeal on a booking the group organiser paid for by
     expect(mocks.sendGroupOrganiserJoinerRefundEmail).not.toHaveBeenCalled();
   });
 
-  // INV-LOCK-005: the claim transaction is the approval's first write, so a spent
+  // INV-LOCK-006: the claim transaction is the approval's first write, so a spent
   // budget rolls everything back and the admin is told nothing was saved.
   it.each(["P2028", "P2034"])(
     "answers %s contention on the claim with a retryable 503, refunding and emailing nothing",

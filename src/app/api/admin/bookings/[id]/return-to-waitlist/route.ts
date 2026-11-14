@@ -39,7 +39,7 @@ import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
  * tree, such as `assignBedRange`, run on the shared lock(1) budget.
  *
  * So this runs on the shared lock(1) budget, `LOCK1_HOLDER_TRANSACTION_BUDGET`
- * (`INV-LOCK-005`), the one `assignBedRange` holds the key under. The member
+ * (`INV-LOCK-006`), the one `assignBedRange` holds the key under. The member
  * offer release is tighter on purpose (a member is watching the request); an
  * officer pressing a recovery button can wait out the worst contender, and a
  * repair that fails safely is still a repair that did not happen.

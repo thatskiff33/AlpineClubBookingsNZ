@@ -393,7 +393,7 @@ export async function withdrawAdditionalPaymentAsk(params: {
 
     return { xeroOperations: xeroOperations.count };
   },
-  // The shared lock(1) budget (`INV-LOCK-005`): queued behind a long holder of
+  // The shared lock(1) budget (`INV-LOCK-006`): queued behind a long holder of
   // the global key, the default 5s would turn a legitimate wait into a failure
   // after the intent is already dead at Stripe.
   LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err) => {

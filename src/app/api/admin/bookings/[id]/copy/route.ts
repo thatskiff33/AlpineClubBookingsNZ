@@ -50,7 +50,7 @@ export async function POST(
     });
     return NextResponse.json(result);
   } catch (error) {
-    // `INV-LOCK-005`: the draft's one transaction rolled back.
+    // `INV-LOCK-006`: the draft's one transaction rolled back.
     const contended = transactionContendedResponse(
       error,
       "Admin booking copy contended for the lock(1) budget",

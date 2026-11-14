@@ -432,7 +432,7 @@ export async function DELETE(
     });
   } catch (err) {
     // The removal commits before its refund and additional-ask steps, so a
-    // contended lock(1) transaction (INV-LOCK-005) asks for a status check.
+    // contended lock(1) transaction (INV-LOCK-006) asks for a status check.
     const contended = transactionContendedResponse(
       err,
       "Guest removal contended for the lock(1) budget",

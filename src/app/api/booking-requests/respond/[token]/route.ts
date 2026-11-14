@@ -79,7 +79,7 @@ export async function POST(
     });
     return NextResponse.json(result);
   } catch (err) {
-    // Each response action commits in one lock(1) transaction (INV-LOCK-005).
+    // Each response action commits in one lock(1) transaction (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Booking request quote response contended for the lock(1) budget",

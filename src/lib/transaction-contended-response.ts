@@ -5,7 +5,7 @@ import { isTransactionContention } from "@/lib/prisma-errors";
 
 /**
  * The HTTP answer to a transaction that ran out of its lock(1) budget
- * (`INV-LOCK-005`) or lost a write conflict: Prisma's P2028 / P2034, judged by
+ * (`INV-LOCK-006`) or lost a write conflict: Prisma's P2028 / P2034, judged by
  * `isTransactionContention`. Prisma rolls such a transaction back, so the
  * honest answer is a retryable 503 with `Retry-After`, not a 500 or the 400 of
  * a generic fallback. The raw Prisma message stays in the log only (#1888).

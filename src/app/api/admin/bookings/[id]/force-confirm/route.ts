@@ -365,7 +365,7 @@ export async function POST(
       unpaidFinishedStay,
     });
   } catch (err) {
-    // `INV-LOCK-005`: the force-confirm's one transaction rolled back.
+    // `INV-LOCK-006`: the force-confirm's one transaction rolled back.
     const contended = transactionContendedResponse(
       err,
       "Force-confirm contended for the lock(1) budget",

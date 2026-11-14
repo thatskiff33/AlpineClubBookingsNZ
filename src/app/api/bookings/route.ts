@@ -238,7 +238,7 @@ const createBookingSchema = z.object({
 });
 
 /**
- * A create that ran out of its lock(1) budget (`INV-LOCK-005`) or lost a write
+ * A create that ran out of its lock(1) budget (`INV-LOCK-006`) or lost a write
  * conflict: the shared retryable 503 (`transaction-contended-response.ts`).
  * Nothing was committed - the booking, its guests, payment rows and any credit
  * roll back together and no provider call runs before commit - so its default

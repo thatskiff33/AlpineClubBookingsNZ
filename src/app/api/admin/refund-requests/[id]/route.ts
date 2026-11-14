@@ -313,7 +313,7 @@ export async function PUT(
       if (err instanceof OrganiserChildRefundRefusedError || err instanceof GroupCancelInProgressError) {
         return { kind: "organiserCardRefused" as const, message: err.message };
       }
-      // INV-LOCK-005: the claim is the first write and rolled back whole.
+      // INV-LOCK-006: the claim is the first write and rolled back whole.
       const contended = transactionContendedResponse(
         err,
         "Refund appeal approval claim contended for the lock(1) budget",

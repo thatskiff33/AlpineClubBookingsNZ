@@ -416,7 +416,7 @@ export async function POST(
       bedAllocationReconcile: result.bedAllocationReconcile,
     });
   } catch (err) {
-    // `INV-LOCK-005`: the toggle's one transaction rolled back.
+    // `INV-LOCK-006`: the toggle's one transaction rolled back.
     const contended = transactionContendedResponse(
       err,
       "Exclusive whole-lodge hold toggle contended for the lock(1) budget",

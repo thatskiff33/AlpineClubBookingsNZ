@@ -81,7 +81,7 @@ export async function POST(
         { status: err.status },
       );
     }
-    // `INV-LOCK-005`: the decline's claim rolled back; the hold release after
+    // `INV-LOCK-006`: the decline's claim rolled back; the hold release after
     // it reports through the committed shape above.
     const contended = transactionContendedResponse(
       err,

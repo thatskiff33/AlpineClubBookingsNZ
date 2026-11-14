@@ -1463,7 +1463,7 @@ export async function POST(
       );
     }
     // The add commits before its notifications and additional-ask steps, so a
-    // contended lock(1) transaction (INV-LOCK-005) asks for a status check.
+    // contended lock(1) transaction (INV-LOCK-006) asks for a status check.
     const contended = transactionContendedResponse(
       err,
       "Guest add contended for the lock(1) budget",

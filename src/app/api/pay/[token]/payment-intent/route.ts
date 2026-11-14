@@ -85,7 +85,7 @@ export async function POST(
     }
     // After the captured-payment answers above: a stale intent may already be
     // queued for cancellation or a fresh one minted before the lock(1) attach
-    // (INV-LOCK-005).
+    // (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Payment link intent contended for the lock(1) budget",

@@ -112,7 +112,7 @@ export async function PUT(
       dietaryGrant,
     });
   } catch (err) {
-    // INV-LOCK-005: the member update's transaction is the first write.
+    // INV-LOCK-006: the member update's transaction is the first write.
     const contended = transactionContendedResponse(
       err,
       "Admin member update contended for the lock(1) budget",

@@ -1438,5 +1438,5 @@ export async function applyBedAllocationMove(input: {
       promotedRowCount: authoritative.promotionRows.length,
       affectedNights,
     };
-  }, LOCK1_HOLDER_TRANSACTION_BUDGET); // `INV-LOCK-005`
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET); // `INV-LOCK-006`
 }

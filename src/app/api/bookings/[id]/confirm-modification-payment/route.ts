@@ -230,7 +230,7 @@ export async function POST(
     return NextResponse.json({ success: true });
   } catch (err) {
     // Stripe may already hold the capture when recording it runs out of its
-    // lock(1) budget (INV-LOCK-005): never "nothing was saved". A retry, or the
+    // lock(1) budget (INV-LOCK-006): never "nothing was saved". A retry, or the
     // payment_intent.succeeded webhook, records it.
     const contended = transactionContendedResponse(
       err,

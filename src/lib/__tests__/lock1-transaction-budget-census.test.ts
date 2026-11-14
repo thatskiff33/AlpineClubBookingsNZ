@@ -1,12 +1,12 @@
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-import { readNonTestSources } from "./support/advisory-lock-scan";
+import { lockCensusSources } from "./support/advisory-lock-source";
 import { scanLock1Transactions, type TransactionOpener } from "./support/lock1-transaction-scan";
 import { stripComments } from "./support/strip-comments";
 
 /**
- * `INV-LOCK-005`: every interactive transaction that waits for
+ * `INV-LOCK-006`: every interactive transaction that waits for
  * `pg_advisory_xact_lock(1)` runs on `LOCK1_HOLDER_TRANSACTION_BUDGET`
  * (`src/lib/db-transaction.ts`). Prisma counts the advisory wait against the
  * transaction's budget, so a writer left on the 2 s / 5 s defaults fails with
@@ -17,17 +17,17 @@ import { stripComments } from "./support/strip-comments";
  * named helpers and the modules that import them. This census then accepts an
  * opener's options only as:
  *
- * - the constant itself, or a `const` that is exactly the constant;
- * - `{ ...LOCK1_HOLDER_TRANSACTION_BUDGET, isolationLevel: ... }`, so a writer
- *   that needs an isolation level keeps the budget and cannot override it;
+ * - the constant itself, or a `const` that is exactly the constant (no
+ *   spread: `INV-LOCK-005` leaves advisory-lock transactions on READ COMMITTED,
+ *   so there is no isolation level to add, and nothing else may be overridden);
  * - an explicit exception: a comment inside the options argument reading
- *   `INV-LOCK-005 exception:` followed by the reason.
+ *   `INV-LOCK-006 exception:` followed by the reason.
  *
  * The classified list is `docs/audits/lock1-transaction-budgets.md`.
  */
 
 const CONSTANT = "LOCK1_HOLDER_TRANSACTION_BUDGET";
-const EXCEPTION_MARKER = /INV-LOCK-005 exception:(.*)$/;
+const EXCEPTION_MARKER = /INV-LOCK-006 exception:(.*)$/;
 /** A reason shorter than this is a placeholder, not a reason. */
 const MIN_EXCEPTION_REASON_LENGTH = 40;
 
@@ -41,7 +41,7 @@ const UNREACHED_ALLOWED: Readonly<Record<string, string>> = {
     "Joins its caller's transaction and refuses the root client; no edit path calls it yet, so whichever caller lands is scanned then.",
 };
 
-const sources = readNonTestSources();
+const sources = lockCensusSources();
 const scan = scanLock1Transactions(sources);
 
 function withoutComments(text: string): string {
@@ -87,15 +87,13 @@ function classifyOptions(options: string | null, aliases: ReadonlySet<string>): 
   }
   const code = withoutComments(options);
   if (aliases.has(code)) return "budget";
-  const spread = /^\{ ?\.\.\.([A-Z][A-Z0-9_]*), isolationLevel: [^,{}]+,? ?\}$/.exec(code);
-  if (spread && aliases.has(spread[1])) return "budget";
   return `options other than the shared budget: ${code}`;
 }
 
 const describeOpener = (opener: TransactionOpener) =>
   `${opener.rel}:${opener.line} ${opener.opener} via ${opener.via.join(" <- ")}`;
 
-describe("INV-LOCK-005: every lock(1) waiter runs on the shared transaction budget", () => {
+describe("INV-LOCK-006: every lock(1) waiter runs on the shared transaction budget", () => {
   const aliases = budgetAliases();
 
   it("finds the lock(1) transactions it is meant to police", () => {
@@ -142,30 +140,29 @@ describe("INV-LOCK-005: every lock(1) waiter runs on the shared transaction budg
 describe("the census's option classifier", () => {
   const aliases = new Set([CONSTANT, "ALIAS"]);
 
-  it("accepts the constant, an alias and the isolation-level spread", () => {
+  it("accepts the constant and an alias", () => {
     expect(classifyOptions(CONSTANT, aliases)).toBe("budget");
     expect(classifyOptions("// why\n    ALIAS", aliases)).toBe("budget");
-    expect(classifyOptions(`{ ...${CONSTANT}, isolationLevel: "Serializable" }`, aliases)).toBe("budget");
   });
 
-  it("refuses defaults, copied literals and overrides in the spread", () => {
+  it("refuses defaults, copied literals and any spread of the budget", () => {
     expect(classifyOptions(null, aliases)).not.toMatch(/^budget$|^exception$/);
     expect(classifyOptions("{ maxWait: 10_000, timeout: 30_000 }", aliases)).not.toMatch(/^budget$|^exception$/);
     expect(classifyOptions(`{ ...${CONSTANT}, timeout: 5_000 }`, aliases)).not.toMatch(/^budget$|^exception$/);
-    expect(
-      classifyOptions(`{ ...${CONSTANT}, isolationLevel: "Serializable", maxWait: 1 }`, aliases),
-    ).not.toMatch(/^budget$|^exception$/);
+    expect(classifyOptions(`{ ...${CONSTANT}, isolationLevel: "Serializable" }`, aliases)).not.toMatch(
+      /^budget$|^exception$/,
+    );
     expect(classifyOptions("OTHER_OPTIONS", aliases)).not.toMatch(/^budget$|^exception$/);
   });
 
   it("accepts an exception only with a substantive reason", () => {
     expect(
       classifyOptions(
-        "// INV-LOCK-005 exception: Stripe's delivery timeout caps this webhook\n    // handler below the shared budget.\n    { maxWait: 5_000, timeout: 10_000 }",
+        "// INV-LOCK-006 exception: Stripe's delivery timeout caps this webhook\n    // handler below the shared budget.\n    { maxWait: 5_000, timeout: 10_000 }",
         aliases,
       ),
     ).toBe("exception");
-    expect(classifyOptions("// INV-LOCK-005 exception: tbd\n    { timeout: 1 }", aliases)).toBe(
+    expect(classifyOptions("// INV-LOCK-006 exception: tbd\n    { timeout: 1 }", aliases)).toBe(
       "exception without a reason",
     );
   });
@@ -233,5 +230,22 @@ describe("tracing a lock wait to its transaction budget", () => {
 
     expect(result.openers).toEqual([]);
     expect(result.unreached).toEqual(["src/lib/writer.ts::write"]);
+  });
+
+  it("does not read a type that names a writer as a call to it", () => {
+    const result = scanLock1Transactions([
+      { rel: "src/lib/writer.ts", text: `export async function write(tx) { ${lock} }` },
+      {
+        rel: "src/lib/service.ts",
+        text: `import { write } from "./writer";
+          type Written = Awaited<ReturnType<typeof write>>;
+          export async function run() {
+            return prisma.$transaction(async tx => write(tx), LOCK1_HOLDER_TRANSACTION_BUDGET);
+          }`,
+      },
+    ]);
+
+    expect(result.unreached).toEqual([]);
+    expect(result.openers.map(({ options }) => options)).toEqual([CONSTANT]);
   });
 });

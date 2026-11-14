@@ -192,7 +192,7 @@ export async function GET(
     });
   } catch (err) {
     // The currency re-issue mints its intent at Stripe before its lock(1)
-    // queue transaction (INV-LOCK-005), so the member checks before retrying.
+    // queue transaction (INV-LOCK-006), so the member checks before retrying.
     const contended = transactionContendedResponse(
       err,
       "Additional payment secret re-issue contended for the lock(1) budget",

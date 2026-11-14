@@ -1361,7 +1361,7 @@ describe("confirmWaitlistOffer", () => {
     expect(mockBookingUpdateMany).not.toHaveBeenCalled();
   });
 
-  // INV-LOCK-005: contention reaches the route's retryable 503 instead of the
+  // INV-LOCK-006: contention reaches the route's retryable 503 instead of the
   // generic failure result; any other claim error still becomes that result.
   it.each(["P2028", "P2034"] as const)(
     "rethrows %s transaction contention from the offer claim",

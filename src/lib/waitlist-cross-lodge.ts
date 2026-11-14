@@ -682,7 +682,7 @@ export async function confirmCrossLodgeWaitlistOffer(
       };
     }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
-    // Nothing committed (INV-LOCK-005): the route answers its retryable 503.
+    // Nothing committed (INV-LOCK-006): the route answers its retryable 503.
     if (isTransactionContention(err)) throw err;
     logger.error({ err, bookingId }, "Failed to validate cross-lodge waitlist confirm");
     return { success: false, error: "An error occurred while confirming your booking" };
@@ -771,7 +771,7 @@ export async function confirmCrossLodgeWaitlistOffer(
     });
   } catch (err) {
     // The create rolled back and the validation above wrote nothing on its way
-    // here (INV-LOCK-005): the route answers its retryable 503.
+    // here (INV-LOCK-006): the route answers its retryable 503.
     if (isTransactionContention(err)) throw err;
     if (isHostingCoverageParticipantRetry(err)) {
       return {

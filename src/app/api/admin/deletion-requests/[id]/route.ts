@@ -1301,7 +1301,7 @@ export async function POST(
         { status: err.statusCode },
       );
     }
-    // INV-LOCK-005: an exhausted lock(1) budget is a retryable 503 — but only
+    // INV-LOCK-006: an exhausted lock(1) budget is a retryable 503 — but only
     // when no booking was cancelled short of anonymisation, because that case
     // keeps the partial-cleanup recovery contract below.
     if (!(completedBookingCancellations > 0 && !memberAnonymised)) {

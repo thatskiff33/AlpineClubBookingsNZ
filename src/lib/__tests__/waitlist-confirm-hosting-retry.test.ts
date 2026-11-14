@@ -442,9 +442,9 @@ describe("zero-dollar waitlist participant contention (#2597)", () => {
   });
 });
 
-// INV-LOCK-005: phase one (`confirmWaitlistOffer`) now rethrows contention
+// INV-LOCK-006: phase one (`confirmWaitlistOffer`) now rethrows contention
 // instead of folding it into a generic failure; the route answers the 503.
-describe("waitlist offer acceptance contention (INV-LOCK-005)", () => {
+describe("waitlist offer acceptance contention (INV-LOCK-006)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue({ user: { id: "member-1" } });

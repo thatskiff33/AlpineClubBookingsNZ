@@ -10,6 +10,7 @@ import {
 } from "@/lib/booking-review-price-rebase";
 import type { ClubFormat } from "@/lib/club-format";
 import type { CalendarDate } from "@/lib/club-time";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import { prisma } from "@/lib/prisma";
 import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-store";
@@ -220,7 +221,7 @@ export async function editReviewHeadlineRebase({
       };
       if (!commit) throw new HeadlineDryRun(rebased);
       return rebased;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (error) {
     if (error instanceof HeadlineDryRun) return error.result;
     if (error instanceof ManualBookingPaymentError) {

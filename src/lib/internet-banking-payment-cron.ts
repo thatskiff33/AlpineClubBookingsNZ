@@ -363,7 +363,7 @@ function releaseOneHold(
       };
     },
     // The enqueue adds a handful of reads under the club-wide advisory lock;
-    // the shared lock(1) budget (`INV-LOCK-005`) gives the wait headroom over
+    // the shared lock(1) budget (`INV-LOCK-006`) gives the wait headroom over
     // Prisma's defaults so lock contention alone cannot abort a release mid-flight.
     LOCK1_HOLDER_TRANSACTION_BUDGET,
   );

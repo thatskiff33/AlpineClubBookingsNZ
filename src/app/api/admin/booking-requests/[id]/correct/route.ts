@@ -174,7 +174,7 @@ export async function POST(
         { status: err.status },
       );
     }
-    // `INV-LOCK-005`: the correction's claim rolled back; a failure after it
+    // `INV-LOCK-006`: the correction's claim rolled back; a failure after it
     // is the committed shape above.
     const contended = transactionContendedResponse(
       err,

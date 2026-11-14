@@ -208,7 +208,7 @@ export async function POST(
       paymentLinkExpiresAt: result.paymentLinkExpiresAt.toISOString(),
     });
   } catch (err) {
-    // `INV-LOCK-005`: the approval's one transaction rolled back.
+    // `INV-LOCK-006`: the approval's one transaction rolled back.
     const contended = transactionContendedResponse(err, "Booking request approval contended for the lock(1) budget", {
       context: { requestId: id },
     });

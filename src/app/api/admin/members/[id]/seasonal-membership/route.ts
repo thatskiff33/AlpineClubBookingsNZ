@@ -67,7 +67,7 @@ export async function PATCH(
       request: getAuditRequestContext(request),
     });
   } catch (err) {
-    // INV-LOCK-005: the assignment's transaction is the first write.
+    // INV-LOCK-006: the assignment's transaction is the first write.
     const contended = transactionContendedResponse(
       err,
       "Seasonal membership assignment contended for the lock(1) budget",

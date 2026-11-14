@@ -356,7 +356,7 @@ describe("confirmCrossLodgeWaitlistOffer in-transaction duplicate-stay guard (M2
     );
   });
 
-  // INV-LOCK-005: the create rolled back and nothing earlier committed, so
+  // INV-LOCK-006: the create rolled back and nothing earlier committed, so
   // contention reaches the route's retryable 503 rather than the generic result.
   it.each(["P2028", "P2034"] as const)(
     "rethrows %s transaction contention from the replacement create",

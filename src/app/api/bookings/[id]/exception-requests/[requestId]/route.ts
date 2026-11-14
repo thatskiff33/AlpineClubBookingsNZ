@@ -52,7 +52,7 @@ export async function PATCH(
       requestedByMemberId: session.user.id,
     });
   } catch (err) {
-    // The claim is one lock(1) transaction (INV-LOCK-005).
+    // The claim is one lock(1) transaction (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Exception request cancel contended for the lock(1) budget",

@@ -85,7 +85,7 @@ export async function POST(
       options: parseBookingRequestQuoteOptions(quote.options),
     });
   } catch (err) {
-    // `INV-LOCK-005`: sending holds the beds in one transaction and claims the
+    // `INV-LOCK-006`: sending holds the beds in one transaction and claims the
     // quote in another, so the hold may already stand.
     const contended = transactionContendedResponse(
       err,

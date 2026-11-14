@@ -1230,7 +1230,7 @@ export async function confirmWaitlistOffer(
       return { success: true, newStatus };
     }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
-    // The claim rolled back (INV-LOCK-005): the route answers its retryable 503.
+    // The claim rolled back (INV-LOCK-006): the route answers its retryable 503.
     if (isTransactionContention(err)) throw err;
     if (isHostingCoverageParticipantRetry(err)) {
       return {

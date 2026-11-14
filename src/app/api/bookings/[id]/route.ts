@@ -95,7 +95,7 @@ export async function DELETE(
       { status: result.status }
     );
   } catch (error) {
-    // The delete is one lock(1) transaction (INV-LOCK-005); its Stripe
+    // The delete is one lock(1) transaction (INV-LOCK-006); its Stripe
     // clean-up runs only after it commits.
     const contended = transactionContendedResponse(
       error,

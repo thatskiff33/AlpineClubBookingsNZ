@@ -23,7 +23,7 @@ async function requireRoomRequestsEnabled() {
 }
 
 function errorResponse(error: unknown, bookingId: string) {
-  // `INV-LOCK-005`: the write's one transaction rolled back.
+  // `INV-LOCK-006`: the write's one transaction rolled back.
   const contended = transactionContendedResponse(
     error,
     "Admin requested-room write contended for the lock(1) budget",

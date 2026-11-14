@@ -1,9 +1,10 @@
 import path from "path";
 import ts from "typescript";
 
-import { collectAdvisoryLockSites, maskedSource } from "./advisory-lock-scan";
+import { collectAdvisoryLockSites } from "./advisory-lock-scan";
+import { ADVISORY_LOCK_CALL, maskedSource } from "./advisory-lock-source";
 
-// The reader behind `lock1-transaction-budget-census.test.ts` (`INV-LOCK-005`):
+// The reader behind `lock1-transaction-budget-census.test.ts` (`INV-LOCK-006`):
 // for every `pg_advisory_xact_lock(1)` site, the interactive transaction that
 // waits for it and the options that transaction is opened with.
 //
@@ -137,11 +138,15 @@ function localNamesOf(file: ParsedFile, name: string, definingRel: string): stri
   return names;
 }
 
-/** Every identifier in `file` spelled `local`, bar declarations and import bindings. */
+/**
+ * Every identifier in `file` spelled `local`, bar declarations, import bindings
+ * and type positions: `ReturnType<typeof fn>` names the function without
+ * running it, so it is not a place the lock(1) wait can happen.
+ */
 function referencesTo(file: ParsedFile, local: string): ts.Identifier[] {
   const found: ts.Identifier[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node)) return;
+    if (ts.isImportDeclaration(node) || ts.isTypeNode(node)) return;
     if (ts.isIdentifier(node) && node.text === local) {
       const parent = node.parent;
       const declares =
@@ -229,7 +234,7 @@ export function scanLock1Transactions(
     const lineStart = file.source.getPositionOfLineAndCharacter(site.line - 1, 0);
     const lineEnd = file.text.indexOf("\n", lineStart);
     const maskedLine = maskedOf(file).slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
-    const column = maskedLine.search(/pg_(?:try_)?advisory_xact_lock\(/);
+    const column = maskedLine.search(ADVISORY_LOCK_CALL);
     walkOut(file, deepestNodeAt(file.source, lineStart + Math.max(column, 0)), [site.qualifiedKey]);
   }
 

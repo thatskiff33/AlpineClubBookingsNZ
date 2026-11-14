@@ -343,7 +343,7 @@ export async function POST(
     );
     if (hostingRetry) return hostingRetry;
     // Before any capture is observed, a contended lock(1) transaction
-    // (INV-LOCK-005) is retryable; after it, the payment-received answer below wins.
+    // (INV-LOCK-006) is retryable; after it, the payment-received answer below wins.
     if (!succeededPaymentIntentObserved) {
       const contended = transactionContendedResponse(
         err,

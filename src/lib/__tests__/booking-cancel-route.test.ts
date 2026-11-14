@@ -257,7 +257,7 @@ describe("POST /api/bookings/[id]/cancel", () => {
     );
   });
 
-  // INV-LOCK-005: a cancel commits in steps, so a contended lock(1) budget asks
+  // INV-LOCK-006: a cancel commits in steps, so a contended lock(1) budget asks
   // the member to check the status before retrying.
   it.each(["P2028", "P2034"] as const)(
     "maps %s transaction contention to a retryable 503 with the status-check wording",

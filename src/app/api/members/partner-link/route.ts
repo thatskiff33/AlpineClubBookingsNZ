@@ -208,7 +208,7 @@ export async function DELETE(req: NextRequest) {
       linkId,
     });
   } catch (err) {
-    // The removal and its share sweep are one lock(1) transaction (INV-LOCK-005).
+    // The removal and its share sweep are one lock(1) transaction (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Partner link removal contended for the lock(1) budget",

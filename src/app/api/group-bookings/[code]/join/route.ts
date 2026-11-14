@@ -120,7 +120,7 @@ export async function POST(
     );
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
-    // The join's booking create is one lock(1) transaction (INV-LOCK-005).
+    // The join's booking create is one lock(1) transaction (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Group booking join contended for the lock(1) budget",

@@ -104,7 +104,7 @@ export async function POST(
   } catch (err) {
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
-    // `INV-LOCK-005`: `cancelBooking` commits in more than one transaction, so
+    // `INV-LOCK-006`: `cancelBooking` commits in more than one transaction, so
     // the officer checks the hold rather than being told nothing changed.
     const contended = transactionContendedResponse(
       err,

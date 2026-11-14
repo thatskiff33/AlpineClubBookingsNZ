@@ -154,7 +154,7 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    // The write is one lock(1) transaction (INV-LOCK-005).
+    // The write is one lock(1) transaction (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Lodge roster confirm contended for the lock(1) budget",

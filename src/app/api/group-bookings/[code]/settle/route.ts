@@ -81,7 +81,7 @@ export async function POST(
   } catch (err) {
     // Settling commits the children, mints a Stripe intent, then attaches it in
     // a second lock(1) transaction, so an earlier step may have landed
-    // (INV-LOCK-005).
+    // (INV-LOCK-006).
     const contended = transactionContendedResponse(
       err,
       "Group settlement contended for the lock(1) budget",

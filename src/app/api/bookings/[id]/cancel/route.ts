@@ -153,7 +153,7 @@ export async function POST(
   } catch (error) {
     // A cancel commits in steps - Stripe intent cancels before its lock(1)
     // claim, card refunds and linked-child cancels after it - so a contended
-    // transaction (INV-LOCK-005) asks the member to check before retrying.
+    // transaction (INV-LOCK-006) asks the member to check before retrying.
     const contended = transactionContendedResponse(
       error,
       "Booking cancel contended for the lock(1) budget",

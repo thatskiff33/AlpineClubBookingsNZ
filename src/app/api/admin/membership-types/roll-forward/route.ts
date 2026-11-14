@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       request: getAuditRequestContext(request),
     });
   } catch (err) {
-    // INV-LOCK-005: only the copy transaction (the first write) can surface
+    // INV-LOCK-006: only the copy transaction (the first write) can surface
     // contention; the later lock(1) reconcile chunks are isolated and logged.
     const contended = transactionContendedResponse(
       err,

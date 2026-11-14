@@ -1,10 +1,10 @@
-# Lock(1) transaction budgets: the INV-LOCK-005 census
+# Lock(1) transaction budgets: the INV-LOCK-006 census
 
 Audit for the follow-up to #4933, run 14 Nov 2026 on branch `alp-592`. It lists
 every interactive transaction that waits for the global key
 `pg_advisory_xact_lock(1)`, the budget each ran on before the follow-up (the tree
 at `c0b8bf5f7`, #4933 merged) and the budget it runs on now. The rule is
-[`INV-LOCK-005`](../invariants/operations.md#inv-lock-005); the guide is
+[`INV-LOCK-006`](../invariants/operations.md#inv-lock-006); the guide is
 [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md#the-lock1-transaction-budget-4933).
 
 ## How the list was produced
@@ -22,9 +22,7 @@ passes anything other than:
 
 - `LOCK1_HOLDER_TRANSACTION_BUDGET`, or a `const` that is exactly it
   (`ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS`, `LINKED_MOVE_TRANSACTION_BUDGET`);
-- `{ ...LOCK1_HOLDER_TRANSACTION_BUDGET, isolationLevel: ... }`, with no other
-  key, so a writer keeps its isolation level and cannot override the budget;
-- a comment inside the options argument reading `INV-LOCK-005 exception:` and a
+- a comment inside the options argument reading `INV-LOCK-006 exception:` and a
   reason.
 
 One function waits for the key but has no caller yet,
@@ -33,23 +31,28 @@ holds it on a reasoned allowlist that fails once a caller appears.
 
 ## Summary
 
-151 openers (an opener reached by two routes is counted twice).
+154 openers (an opener reached by two routes is counted twice). Rebasing onto
+main on 14 Nov 2026 brought four the first run did not see: three new writers
+on Prisma's defaults, now on the constant, and the #4919 group-invoice email
+fence, which moved to `xero-group-settlement-invoice-email.ts` with its own
+options and is now the fourth exception.
 
 | Before the follow-up | Openers | Now |
 | --- | ---: | --- |
-| Prisma defaults (`maxWait` 2 s / `timeout` 5 s) | 129 | constant |
+| Prisma defaults (`maxWait` 2 s / `timeout` 5 s) | 131 | constant |
 | 10 s / 30 s written out as literals | 4 | constant |
 | 10 s / 30 s under a local name | 4 | constant, or an alias of it |
 | `timeout` 30 s with the default `maxWait` | 4 | constant |
-| `timeout` 15 s only | 2 | constant (`privacy-retention-jobs` spreads it with `Serializable`) |
+| `timeout` 15 s only | 2 | constant (`privacy-retention-jobs` now READ COMMITTED, `INV-LOCK-005`) |
 | The #4933 constant or its alias | 5 | unchanged |
 | Deliberately different | 3 | unchanged, each with an exception comment |
+| #4919's email fence (10 s / 10 s), from main | 1 | unchanged, with an exception comment |
 
 `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS` (`src/lib/payment-transactions.ts`) is not
 on the list: no transaction it governs waits for lock(1), so it stays a separate
 budget for row-lock waits.
 
-## The three exceptions
+## The four exceptions
 
 - `src/lib/deleted-booking-modification-payment.ts` (5 s / 10 s). A Stripe
   webhook handler. Stripe's delivery timeout caps it; 30 s here would trade a lost
@@ -61,6 +64,10 @@ budget for row-lock waits.
 - `src/lib/booking-ledger-back-post.ts` (30 s / 120 s). An operator-run back-post
   of a whole booking's history does more work under the key than any request, and
   nobody waits on it.
+- `src/lib/xero-group-settlement-invoice-email.ts` (10 s / 10 s,
+  `XERO_EMAIL_FENCE_TRANSACTION_OPTIONS`). The one Xero call held inside lock(1)
+  is bounded by its own deadline, and the timeout is sized to it, so a slow
+  answer defers the email rather than outliving the transaction (#4919).
 
 ## How contention is answered
 
@@ -179,6 +186,8 @@ the opener's callback.
 | `lib/card-intent-attach.ts` | \$transaction | `attachMintedCardIntent#1` | direct | defaults | budget |
 | `lib/card-refund-dead-row-actions.ts` | \$transaction | `lockDeadCardRefundRow#1` | `lockDeadCardRefundRow` | defaults | budget |
 | `lib/card-refund-dead-row-actions.ts` | \$transaction | `lockDeadCardRefundRow#1` | `lockDeadCardRefundRow` | defaults | budget |
+| `lib/card-refund-group-paid-another-way.ts` | \$transaction | `lockDeadCardRefundRow#1` | `lockDeadCardRefundRow` | defaults (from main) | budget |
+| `lib/card-refund-group-try-again.ts` | \$transaction | `lockDeadCardRefundRow#1` | `lockDeadCardRefundRow` | defaults (from main) | budget |
 | `lib/card-refund-paid-another-way.ts` | \$transaction | `lockDeadCardRefundRow#1` | `lockDeadCardRefundRow` | defaults | budget |
 | `lib/credit-release-ask-close.ts` | \$transaction | `closeCreditReleaseAsksPaidInXero#1` | direct | 10 s / 30 s literal | budget |
 | `lib/credit-release-ask-close.ts` | \$transaction | `recordReleasePaidInXeroCash#1` | direct | 10 s / 30 s literal | budget |
@@ -193,6 +202,7 @@ the opener's callback.
 | `lib/cron-waitlist.ts` | \$transaction | `processWaitlistCronOnce#1` | direct | defaults | budget |
 | `lib/deleted-booking-modification-payment.ts` | \$transaction | `raiseDeletedBookingModificationRefundTask#1` | direct | defaults | budget |
 | `lib/deleted-booking-modification-payment.ts` | \$transaction | `recordAutomaticCancelledBookingRefundTask#1` | direct | 5 s / 10 s | exception |
+| `lib/edit-review-cleanup-headline.ts` | \$transaction | `editReviewHeadlineRebase#1` | direct | defaults (from main) | budget |
 | `lib/group-booking.ts` | \$transaction | `setGroupBookingJoinStatus#1` | direct | defaults | budget |
 | `lib/group-cancel.ts` | \$transaction | `settleGroupBookingOnOrganiserCancel#1` | direct | defaults | budget |
 | `lib/group-cancel.ts` | \$transaction | `settleGroupBookingOnOrganiserCancel#2` | direct | defaults | budget |
@@ -226,7 +236,7 @@ the opener's callback.
 | `lib/payment-reconciliation.ts` | \$transaction | `settleBookingPaymentInTransaction#1` | `settleBookingPaymentInTransaction` → `settleAndPostBookingReceipts` | defaults | budget |
 | `lib/payment-reconciliation.ts` | \$transaction | `settleBookingPaymentInTransaction#1` | `settleBookingPaymentInTransaction` → `settleAndPostBookingReceipts` | defaults | budget |
 | `lib/payment-recovery.ts` | \$transaction | `lockAdditionalAskQueue#1` | `lockAdditionalAskQueue` | 10 s / 30 s, named copy | alias |
-| `lib/privacy-retention-jobs.ts` | \$transaction | `anonymiseFormerMember#1` | `anonymiseFormerMember` | timeout 15 s only, Serializable | budget (with isolation level) |
+| `lib/privacy-retention-jobs.ts` | \$transaction | `anonymiseFormerMember#1` | `anonymiseFormerMember` | timeout 15 s only | budget |
 | `lib/requested-room-write.ts` | \$transaction | `writeRequestedRoom#1` | direct | defaults | budget |
 | `lib/school-booking-request.ts` | \$transaction | `approveSchoolBookingRequest#1` | direct | defaults | budget |
 | `lib/school-booking-request.ts` | \$transaction | `approveMemberWholeLodgeRequest#1` | direct | defaults | budget |
@@ -246,7 +256,7 @@ the opener's callback.
 | `lib/xero-applied-credit-spent-outside-app.ts` | \$transaction | `convergeCreditNoteSpentOutsideApp#1` | direct | defaults | budget |
 | `lib/xero-group-settlement-invoice-lines.ts` | \$transaction | `releaseUninvoiceableGroupSettlement#1` | direct | defaults | budget |
 | `lib/xero-group-settlement-invoices.ts` | \$transaction | `createXeroInvoiceForGroupSettlement#1` | direct | defaults | budget |
-| `lib/xero-group-settlement-invoices.ts` | \$transaction | `createXeroInvoiceForGroupSettlement#2` | direct | defaults | budget |
+| `lib/xero-group-settlement-invoice-email.ts` | \$transaction | `runGroupInvoiceEmailFence#1` | direct | 10 s / 10 s (#4919, from main) | exception |
 | `lib/xero-group-settlement-invoices.ts` | \$transaction | `bindCreatedGroupSettlementInvoice#1` | `bindCreatedGroupSettlementInvoice` | defaults | budget |
 | `lib/xero-inbound/invoice-paid-effects.ts` | \$transaction | `syncInternetBankingPaymentsForPaidInvoice#1` | direct | defaults | budget |
 | `lib/xero-resolve-refund-note.ts` | \$transaction | `claimResolveRecordingRefundNote#1` | direct | timeout 30 s only (maxWait default) | budget |

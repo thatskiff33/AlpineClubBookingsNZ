@@ -57,7 +57,7 @@ export async function POST(
       retired: result.retired,
     });
   } catch (err) {
-    // `INV-LOCK-005`: the card request was already cancelled at the provider
+    // `INV-LOCK-006`: the card request was already cancelled at the provider
     // before the ledger transaction rolled back, so the officer checks.
     const contended = transactionContendedResponse(
       err,

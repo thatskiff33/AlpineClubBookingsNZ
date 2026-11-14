@@ -1604,7 +1604,7 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
     });
   });
 
-  // INV-LOCK-005: a spent lock(1) budget before any charge saved nothing; after
+  // INV-LOCK-006: a spent lock(1) budget before any charge saved nothing; after
   // a capture the captured-payment recovery answer wins; after the no-card move
   // committed the admin is asked to check the status.
   describe("lock(1) budget contention", () => {

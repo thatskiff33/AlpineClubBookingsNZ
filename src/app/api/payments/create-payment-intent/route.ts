@@ -892,7 +892,7 @@ export async function POST(request: NextRequest) {
     }
     // After the captured-payment answers above. The pay step commits its draft
     // transition, queues stale-intent cancellations and mints an intent before
-    // the lock(1) attach, so an earlier step may have landed (INV-LOCK-005).
+    // the lock(1) attach, so an earlier step may have landed (INV-LOCK-006).
     const contended = transactionContendedResponse(
       error,
       "Payment intent creation contended for the lock(1) budget",

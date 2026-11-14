@@ -508,7 +508,7 @@ async function runFinishedStayApproval(
       format,
     });
     if (refusal) return refusal;
-    // `INV-LOCK-005`: the executor's one transaction rolled back; the request
+    // `INV-LOCK-006`: the executor's one transaction rolled back; the request
     // is still pending and nothing was saved.
     const contended = transactionContendedResponse(
       error,

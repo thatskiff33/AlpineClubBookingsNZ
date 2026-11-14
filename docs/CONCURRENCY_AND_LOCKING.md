@@ -86,7 +86,7 @@ bed-range assignment and group settlement are each allowed 30 s. The loser rolls
 back cleanly, but before #4933 booking create then answered a member with a 400
 "Failed to create booking", which reads as "your request was wrong".
 
-The rule (`INV-LOCK-005`): a transaction that waits for lock(1) passes
+The rule (`INV-LOCK-006`): a transaction that waits for lock(1) passes
 `LOCK1_HOLDER_TRANSACTION_BUDGET` (`src/lib/db-transaction.ts`, `maxWait` 10 s /
 `timeout` 30 s) - the one definition, so a writer can outlast the longest holder
 it queues behind - and its route maps P2028 / P2034 through
@@ -95,9 +95,9 @@ budget as an optional third argument and applies it only to the transaction it
 opens; a caller-supplied `tx` keeps its opener's budget, and in tx-mode the
 service takes neither lock(1) nor options. Every lock(1) opener in the tree is
 on the constant, an alias of it, or a commented exception: the follow-up to
-#4933 moved the 129 still on Prisma's defaults and the copied or partial
+#4933 moved the 131 still on Prisma's defaults and the copied or partial
 literals, and `lock1-transaction-budget-census.test.ts` now fails on a new one.
-The classified list, with the three exceptions and their reasons, is
+The classified list, with the four exceptions and their reasons, is
 [`audits/lock1-transaction-budgets.md`](audits/lock1-transaction-budgets.md).
 Interactive routes answer contention through `transactionContendedResponse`
 (`src/lib/transaction-contended-response.ts`): 503, `Retry-After: 2`, and a

@@ -229,7 +229,7 @@ export async function PUT(
     return NextResponse.json(result);
   } catch (err) {
     // The move commits before its refund and additional-ask steps, so a
-    // contended lock(1) transaction (INV-LOCK-005) asks for a status check.
+    // contended lock(1) transaction (INV-LOCK-006) asks for a status check.
     // The linked move answers its own LINKED_MOVE_CONTENDED 503 below.
     const contended = transactionContendedResponse(
       err,
