@@ -12,7 +12,8 @@ decides what leaves this application for Google, the log/Sentry redactor and wha
 it strips out, or the `category` an audit writer records — which decides both the
 admin permissions a reader needs and whether the subject member sees the row.
 Read it too before anything reads, writes, exports or logs a member's
-dietary/allergy information (`INV-PRIV-022`, `INV-PRIV-023`).
+dietary/allergy information (`INV-PRIV-022`, `INV-PRIV-023`), and before
+adding an outside party that receives personal data (`INV-PRIV-024`).
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -912,3 +913,27 @@ club setting, default 30 days, shipped ON.
 - Proof: `booking-dietary-retention.realdb.test.ts`,
   `privacy-retention-dietary-cutoff.test.ts` (the club-date boundary) and
   `privacy-retention.test.ts`.
+
+## INV-PRIV-024
+
+Every outside party that can receive members' personal information is listed
+once, in [`docs/PRIVACY_RECIPIENTS.md`](../PRIVACY_RECIPIENTS.md), with what is
+sent, what turns the flow on and off, and where it is processed (#4918). A
+feature that sends personal data somewhere new adds its register row in the
+same change.
+
+- **Code is the source.** `PRIVACY_RECIPIENTS` in
+  `src/lib/privacy-recipient-classification.ts` holds each entry; the doc table
+  must equal it row for row.
+- **Credential namespaces are typed once.** `INTEGRATION_CREDENTIAL_NAMESPACES`
+  in `src/lib/integration-credential-namespaces.ts` is the only list the
+  encrypted store accepts; each namespace maps to a register entry, and the
+  provider list in `docs/SECURITY-ATTACK-SURFACE.md` must equal it.
+- **Outbound hosts are classified.** A literal `https://` host in server-capable
+  source is either a register entry's host or on `NON_RECIPIENT_HTTPS_HOSTS`
+  with a one-line reason.
+- **No guessed locations.** A row never asserts a provider's data-centre
+  country; the hosting row points to the club's own hosting settings.
+- Other docs link the register rather than repeating it (`INV-SSOT`).
+- Proof: `privacy-recipient-census.test.ts` and
+  `integration-credential-namespaces.test.ts`.

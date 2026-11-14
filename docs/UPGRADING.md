@@ -165,6 +165,26 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Privacy-incident guide and hosting disclosure settings (#4918)
+
+This release adds the [privacy-incident guide](guides/privacy-incidents.md), the
+[recipient register](PRIVACY_RECIPIENTS.md), and **Where members' data is held**
+on **Admin → Setup & Configuration → Site Appearance & Content → Club Identity**.
+Fill in **Hosting provider** and **Where your data is held** now, including both
+locations when database and backups differ. The optional `{{data-hosting}}`
+page-body token publishes these values, with fallback wording for blanks.
+
+**This change does not alter your published privacy policy or the starter
+privacy text.** The separate starter-policy correction (#4914) has
+[its own note](#correct-the-starter-privacy-policy-4914). A later release will
+update unedited starter policies to use the token, only after a published
+release contains #4918. Continue upgrading one release at a time.
+
+Rollback is code-only; the additive settings table can stay. If you manually
+insert `{{data-hosting}}` into a page and then roll back to an earlier release
+that does not know the token, visitors see the raw `{{data-hosting}}` braces.
+Replace the token with reviewed plain text before such a rollback.
+
 ### Old stays' dietary notes are cleared on the first night after upgrading (#4916)
 
 **What changes.** A new nightly job clears each stay's dietary/allergy note
