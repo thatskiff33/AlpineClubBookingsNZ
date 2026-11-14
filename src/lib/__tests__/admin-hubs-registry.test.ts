@@ -2176,6 +2176,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/membership/induction/page.tsx": "C9: the settings link is adminHref",
     "src/app/(admin)/admin/membership/induction/settings/page.tsx":
       "C9: the back link is adminHref, and its words stay Induction Register",
+    "src/app/(admin)/admin/membership/member-applications/page.tsx":
+      "C9: router.replace of its own address (filter and page) uses adminHref",
     "src/app/(admin)/admin/membership/member-fields/page.tsx": "C9: its back link is adminLink",
     "src/app/(admin)/admin/membership/members/[id]/_components/member-dependents-card.tsx":
       "C9: the dependent link is adminHref",

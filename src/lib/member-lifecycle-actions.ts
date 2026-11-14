@@ -30,6 +30,7 @@ import {
 import logger from "@/lib/logger";
 import { journalRowsNamingDebtor } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
+import { adminListPage, adminQueueCreatedOrder } from "@/lib/admin-list-page";
 import { retireInheritedEmailCopies } from "@/lib/member-email-inheritance";
 import {
   EMPTY_ORPHANED_FAMILY_LINKS,
@@ -729,12 +730,14 @@ export async function getAdminMemberLifecycleRequests({
           action,
           status,
         };
+  // INV-OPS-019: pending archive requests read oldest first; deletion (outside #4960) keeps newest first.
+  const direction = adminQueueCreatedOrder(action === MemberLifecycleAction.ARCHIVE && status === MemberLifecycleActionRequestStatus.REQUESTED);
 
   const [requests, total, pendingCount] = await Promise.all([
     prisma.memberLifecycleActionRequest.findMany({
       where,
       include: lifecycleActionRequestInclude,
-      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
+      orderBy: [{ requestedAt: direction }, { id: direction }],
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
@@ -762,10 +765,7 @@ export async function getAdminMemberLifecycleRequests({
       ),
     ),
     pendingCount,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
+    ...adminListPage({ page, pageSize, total }),
   };
 }
 

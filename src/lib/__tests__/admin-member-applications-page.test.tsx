@@ -25,6 +25,13 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
+// #4960: the page mirrors its filter and page into the URL.
+const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: navigation.replace, push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(navigation.search),
+}));
+
 import MemberApplicationsPage from "@/app/(admin)/admin/membership/member-applications/page";
 
 const fetchMock = vi.fn();
@@ -93,6 +100,7 @@ function listResponse() {
 describe("MemberApplicationsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    navigation.search = "";
     global.fetch = fetchMock as typeof fetch;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "PUT") {
@@ -308,5 +316,176 @@ describe("MemberApplicationsPage", () => {
     expect(
       screen.getByRole("button", { name: /Reject application/i })
     ).toBeTruthy();
+  });
+});
+
+/*
+  #4960 / INV-OPS-019: the route returns 25 applications a page. The worked
+  example: 40 pending applications after an open day. The list says so, and
+  the next page holds the other 15.
+*/
+describe("MemberApplicationsPage paging (#4960)", () => {
+  let listUrls: URL[];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    navigation.search = "";
+    listUrls = [];
+    global.fetch = fetchMock as typeof fetch;
+    fetchMock.mockImplementation((input: string) => {
+      const url = new URL(input, "http://localhost");
+      if (url.pathname === "/api/admin/member-applications") {
+        listUrls.push(url);
+        const page = Number(url.searchParams.get("page"));
+        const pageRows = page === 1 ? 25 : 15;
+        const applications = Array.from({ length: pageRows }, (_, index) =>
+          baseApplication({
+            id: `app-${page}-${index}`,
+            applicantFirstName: `Applicant${page}x${index}`,
+            status: "PENDING_ADMIN",
+          }),
+        );
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            data: applications,
+            applications,
+            pendingCount: 40,
+            page,
+            pageSize: 25,
+            total: 40,
+            totalPages: 2,
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+  });
+
+  it("shows 25 of 40, reaches the other 15, and restarts at page 1 on a filter change", async () => {
+    render(<MemberApplicationsPage />);
+
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeTruthy();
+    expect(listUrls[0].searchParams.get("status")).toBe("PENDING_ADMIN");
+    expect(listUrls[0].searchParams.get("page")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeTruthy();
+    expect(listUrls.at(-1)!.searchParams.get("page")).toBe("2");
+    expect(screen.getAllByText(/Applicant2x14/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/Applicant1x0/)).toHaveLength(0);
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenLastCalledWith(
+        "/admin/member-applications?page=2",
+        { scroll: false },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeTruthy();
+    expect(listUrls.at(-1)!.searchParams.get("page")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByText("Showing 26–40 of 40");
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    await waitFor(() => expect(listUrls.at(-1)!.searchParams.has("status")).toBe(false));
+    expect(listUrls.at(-1)!.searchParams.get("page")).toBe("1");
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenLastCalledWith(
+        "/admin/member-applications?status=ALL",
+        { scroll: false },
+      ),
+    );
+  });
+
+  it("opens on the filter and page the URL names", async () => {
+    navigation.search = "status=APPROVED&page=2";
+    render(<MemberApplicationsPage />);
+
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeTruthy();
+    expect(listUrls[0].searchParams.get("status")).toBe("APPROVED");
+    expect(listUrls[0].searchParams.get("page")).toBe("2");
+  });
+
+  /*
+    The page-2 read is held while the officer goes back to page 1. Its late
+    answer must not put page 2's rows under page 1's pager (INV-OPS-019), and
+    the pager is the same focused button through the load.
+  */
+  it("keeps the pager focused through a load and ignores a slower read for a page left", async () => {
+    const slow: { release?: () => void } = {};
+    fetchMock.mockImplementation(async (input: string) => {
+      const url = new URL(input, "http://localhost");
+      if (url.pathname !== "/api/admin/member-applications") {
+        return { ok: true, json: async () => ({}) };
+      }
+      const page = Number(url.searchParams.get("page"));
+      if (page === 2) {
+        await new Promise<void>((resolve) => {
+          slow.release = resolve;
+        });
+      }
+      const applications = [
+        baseApplication({ id: `app-${page}`, applicantFirstName: `Applicant${page}x0`, status: "PENDING_ADMIN" }),
+      ];
+      return {
+        ok: true,
+        json: async () => ({ applications, pendingCount: 100, page, pageSize: 25, total: 100, totalPages: 4 }),
+      };
+    });
+    render(<MemberApplicationsPage />);
+    expect(await screen.findByText("Showing 1–25 of 100")).toBeTruthy();
+
+    const next = screen.getByRole("button", { name: "Next page" });
+    next.focus();
+    fireEvent.click(next);
+    await waitFor(() => expect(slow.release).toBeDefined());
+    expect(screen.getByRole("button", { name: "Next page" })).toBe(next);
+    expect(document.activeElement).toBe(next);
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect((await screen.findAllByText(/Applicant1x0/)).length).toBeGreaterThan(0);
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryAllByText(/Applicant2x0/)).toHaveLength(0);
+    expect(screen.getAllByText(/Applicant1x0/).length).toBeGreaterThan(0);
+    expect(screen.getByText("Showing 1–25 of 100")).toBeTruthy();
+  });
+
+  it("never lets a slower failed read for a page left show its error", async () => {
+    const slow: { release?: () => void } = {};
+    fetchMock.mockImplementation(async (input: string) => {
+      const url = new URL(input, "http://localhost");
+      if (url.pathname !== "/api/admin/member-applications") {
+        return { ok: true, json: async () => ({}) };
+      }
+      const page = Number(url.searchParams.get("page"));
+      if (page === 2) {
+        await new Promise<void>((resolve) => {
+          slow.release = resolve;
+        });
+        return { ok: false, json: async () => ({ error: "Stale read failed" }) };
+      }
+      const applications = [
+        baseApplication({ id: "app-1", applicantFirstName: "Applicant1x0", status: "PENDING_ADMIN" }),
+      ];
+      return {
+        ok: true,
+        json: async () => ({ applications, pendingCount: 100, page, pageSize: 25, total: 100, totalPages: 4 }),
+      };
+    });
+    render(<MemberApplicationsPage />);
+    await screen.findByText("Showing 1–25 of 100");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(slow.release).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect((await screen.findAllByText(/Applicant1x0/)).length).toBeGreaterThan(0);
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Stale read failed")).toBeNull();
+    expect(screen.getAllByText(/Applicant1x0/).length).toBeGreaterThan(0);
   });
 });

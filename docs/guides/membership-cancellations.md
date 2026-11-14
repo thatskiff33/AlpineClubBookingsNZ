@@ -52,6 +52,13 @@ allocated Xero credit note.
    Completed, Rejected, Withdrawn, All), **Reset**, and a separate **Refresh**
    button. Reset restores Open; Refresh reloads the current filtered queues.
 
+   Each queue shows 25 requests a page, with its own total line such as
+   "Showing 1–25 of 40" and previous and next arrows with page numbers when
+   there is more than one page. **Open** lists the oldest request first; the other filters
+   list the newest first. Changing the filter returns the cancellation queue to
+   page 1, and the filter and both pages stay in the address. If approving the
+   last request on a page empties it, the queue steps back a page.
+
    ![Cancellation Requests page: the status filter, the Archive Review Queue, and the Cancellation Review Queue](../images/admin/admin-membership-cancellations.png)
 
 ### Approve or reject a cancellation

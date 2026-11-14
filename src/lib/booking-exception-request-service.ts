@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { adminListPage, adminQueueCreatedOrder, type AdminListPage } from "@/lib/admin-list-page";
 import { addDaysDateOnly, parseDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
@@ -2031,9 +2032,6 @@ export interface UnifiedExceptionQueueItem {
   summary: string | null;
 }
 
-/** Bounded read: the review queue holds a small, bounded set of live requests. */
-const UNIFIED_QUEUE_SOURCE_CAP = 500;
-
 function frozenReasonCodes(value: unknown): PolicyExceptionReasonCode[] {
   if (value && typeof value === "object" && "reasonCodes" in value) {
     const codes = (value as { reasonCodes?: unknown }).reasonCodes;
@@ -2145,37 +2143,48 @@ function summaryFromRequestedChanges(value: unknown): string | null {
 /**
  * The single officer-facing read of every policy-exception request, merging the
  * new-booking table and the POLICY_EXCEPTION BookingChangeRequest rows into one
- * age-ordered list. Rows are fetched per source (bounded), mapped to a common
- * shape, merge-sorted newest-first, then paged in memory — correct across two
- * tables, which a single SQL OFFSET cannot be. Returns the same
- * `{ data, page, pageSize, total }` envelope as the existing change-request
- * queue so the officer UI reads one shape.
+ * age-ordered list (REQUESTED oldest first, others newest first). A single SQL
+ * OFFSET cannot page across two tables, so each source is read up to the end of
+ * the requested window (offset plus page size, never past its own row count),
+ * mapped to a common shape, merge-sorted, and sliced. The total is each
+ * source's own `count`, so it is exact and every row is reachable however many
+ * decided requests the club holds (INV-OPS-019); the read grows with the page
+ * asked for, not with a fixed cap. Returns the same `adminListPage` envelope as
+ * the other officer queues so the officer UI reads one shape.
  */
 export async function readUnifiedExceptionQueue(input: {
   status: ExceptionQueueStatusFilter;
   page: number;
   pageSize: number;
-}): Promise<{
-  data: UnifiedExceptionQueueItem[];
-  page: number;
-  pageSize: number;
-  total: number;
-}> {
+}): Promise<{ data: UnifiedExceptionQueueItem[] } & AdminListPage> {
   const statusWhere =
     input.status === "ALL" ? {} : { status: input.status };
+  const modificationWhere = { kind: "POLICY_EXCEPTION" as const, ...statusWhere };
+  const direction = adminQueueCreatedOrder(input.status === "REQUESTED");
+
+  const [newBookingTotal, modificationTotal] = await Promise.all([
+    prisma.newBookingPolicyExceptionRequest.count({ where: statusWhere }),
+    prisma.bookingChangeRequest.count({ where: modificationWhere }),
+  ]);
+  const total = newBookingTotal + modificationTotal;
+  const start = (input.page - 1) * input.pageSize;
+  const envelope = adminListPage({ page: input.page, pageSize: input.pageSize, total });
+  // A page past the last row reads nothing.
+  if (start >= total) return { data: [], ...envelope };
+  const windowEnd = start + input.pageSize;
 
   const [newBookingRows, modificationRows] = await Promise.all([
     prisma.newBookingPolicyExceptionRequest.findMany({
       where: statusWhere,
       include: { requestedBy: ACTOR_SELECT, reviewedBy: ACTOR_SELECT },
-      orderBy: { createdAt: "desc" },
-      take: UNIFIED_QUEUE_SOURCE_CAP,
+      orderBy: [{ createdAt: direction }, { id: direction }],
+      take: Math.min(windowEnd, newBookingTotal),
     }),
     prisma.bookingChangeRequest.findMany({
-      where: { kind: "POLICY_EXCEPTION", ...statusWhere },
+      where: modificationWhere,
       include: { requestedBy: ACTOR_SELECT, reviewedBy: ACTOR_SELECT },
-      orderBy: { createdAt: "desc" },
-      take: UNIFIED_QUEUE_SOURCE_CAP,
+      orderBy: [{ createdAt: direction }, { id: direction }],
+      take: Math.min(windowEnd, modificationTotal),
     }),
   ]);
 
@@ -2252,13 +2261,10 @@ export async function readUnifiedExceptionQueue(input: {
     ),
   ];
 
-  items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  const sign = direction === "asc" ? 1 : -1;
+  items.sort((a, b) => sign * (a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)));
 
-  const total = items.length;
-  const start = (input.page - 1) * input.pageSize;
-  const data = items.slice(start, start + input.pageSize);
-
-  return { data, page: input.page, pageSize: input.pageSize, total };
+  return { data: items.slice(start, windowEnd), ...envelope };
 }
 
 // ---------------------------------------------------------------------------

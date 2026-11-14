@@ -437,6 +437,24 @@ describe("GET /api/admin/booking-requests — the list path (#2342)", () => {
     // status=ALL is the filter that surfaced the bug: it must widen past QUEUE.
     expect(db.bookingRequest.findMany.mock.calls[0][0].where).toBeUndefined();
   });
+
+  it("reads the officer queue oldest first and ALL newest first (INV-OPS-019)", async () => {
+    db.bookingRequest.findMany.mockResolvedValue([]);
+    db.bookingRequest.count.mockResolvedValue(0);
+
+    await listRequests(new NextRequest("http://localhost/api/admin/booking-requests"));
+    await listRequests(
+      new NextRequest("http://localhost/api/admin/booking-requests?status=ALL&requestId=req-9"),
+    );
+
+    const [queueCall, focusedCall] = db.bookingRequest.findMany.mock.calls.map(
+      (call) => call[0],
+    );
+    expect(queueCall.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    expect(queueCall.where.status.in).toContain("VERIFIED");
+    expect(focusedCall.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+    expect(focusedCall.where).toEqual({ id: "req-9" });
+  });
 });
 
 describe("POST /api/admin/booking-requests/[id]/price — the detail path (#2342)", () => {

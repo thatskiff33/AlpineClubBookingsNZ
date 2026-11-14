@@ -13,6 +13,9 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
+import { Pagination } from "@/components/admin/admin-pagination"
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page"
+import { parseAdminListPageParam } from "@/lib/admin-list-page"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -178,6 +181,12 @@ export default function RefundRequestsPage() {
   const [filter, setFilter] = useState<ReviewFilter>(
     isReviewFilter(initialFilter) ? initialFilter : "PENDING"
   )
+  // INV-OPS-019: refund appeals are capped per page; credit approvals are not.
+  const refundPage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  })
+  const { page, setPage, receive, beginLoad } = refundPage
   const [reviewingRefundId, setReviewingRefundId] = useState<string | null>(null)
   const [reviewingCreditId, setReviewingCreditId] = useState<string | null>(null)
   const [adminNotes, setAdminNotes] = useState("")
@@ -197,7 +206,9 @@ export default function RefundRequestsPage() {
   const rejectingAppeal = notifyChoice?.status === "REJECTED"
   const currentParams = new URLSearchParams(searchParams.toString())
   currentParams.delete("status")
+  currentParams.delete("page")
   if (filter !== "PENDING") currentParams.set("status", filter)
+  if (page > 1) currentParams.set("page", String(page))
   const currentQuery = currentParams.toString()
   const currentRefundRequestsPath = currentQuery
     ? `${REFUND_REQUESTS_HREF}?${currentQuery}`
@@ -208,12 +219,15 @@ export default function RefundRequestsPage() {
   }, [currentRefundRequestsPath, router])
 
   const fetchRequests = useCallback(async () => {
+    // A slower read for a page or filter the officer has left never replaces
+    // the list now shown, nor its error or loading end (INV-OPS-019).
+    const isCurrent = beginLoad()
     setLoading(true)
     setError("")
 
     try {
       const [refundRes, creditRes] = await Promise.all([
-        fetch(`/api/admin/refund-requests?status=${filter}`),
+        fetch(`/api/admin/refund-requests?status=${filter}&page=${page}`),
         fetch(`/api/admin/credit-approvals?status=${filter}`),
       ])
 
@@ -225,23 +239,24 @@ export default function RefundRequestsPage() {
         refundRes.json(),
         creditRes.json(),
       ])
+      if (!isCurrent()) return
 
-      setRefundRequests(
-        Array.isArray(refundData)
-          ? refundData
-          : Array.isArray(refundData?.data)
-            ? refundData.data
-            : []
-      )
+      const refundRows: RefundRequestData[] = Array.isArray(refundData)
+        ? refundData
+        : Array.isArray(refundData?.data)
+          ? refundData.data
+          : []
+      setRefundRequests(refundRows)
+      receive(refundData, refundRows.length)
       setCreditApprovals(Array.isArray(creditData) ? creditData : [])
     } catch {
-      setError("Failed to load review queue")
+      if (isCurrent()) setError("Failed to load review queue")
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [filter, setCreditApprovals, setError, setLoading, setRefundRequests])
+  }, [beginLoad, filter, page, receive, setCreditApprovals, setError, setLoading, setRefundRequests])
 
   useEffect(() => {
     fetchRequests()
@@ -475,427 +490,434 @@ export default function RefundRequestsPage() {
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === "PENDING"}
-          onReset={() => setFilter("PENDING")}
+          disabled={filter === "PENDING" && page === 1}
+          onReset={() => { setFilter("PENDING"); setPage(1); }}
         />
       </div>
 
-      {loading ? (
-        <div className="text-center py-8">Loading...</div>
-      ) : totalItems === 0 ? (
-        <div className="text-center py-8 text-muted-foreground">
-          No {filter === "ALL" ? "" : filter.toLowerCase() + " "}refund appeals or credit approvals found.
-        </div>
-      ) : (
-        <div className="space-y-8">
-          {refundRequests.length > 0 && (
-            <section className="space-y-4">
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-semibold">Refund Appeals</h2>
-                <Badge variant="secondary">{refundRequests.length}</Badge>
-              </div>
+      {/* One wrapper in every state keeps the appeals pager at the same place
+          through a load, so a keyboard user's focus survives a page change
+          (INV-OPS-019). */}
+      <div className="space-y-8">
+        {loading ? (
+          <div className="text-center py-8">Loading...</div>
+        ) : totalItems === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            No {filter === "ALL" ? "" : filter.toLowerCase() + " "}refund appeals or credit approvals found.
+          </div>
+        ) : null}
 
-              <div className="space-y-4">
-                {refundRequests.map((req) => {
-                  const payment = req.booking.payment
-                  const settlement = payment
-                    ? getCancellationSettlementBreakdown(
-                        payment.refundedAmountCents,
-                        req.booking.creditsFromCancellation
-                      )
-                    : null
-                  const maxRefundable = appealCeiling(req)
-                  const isReviewing = reviewingRefundId === req.id
+        {!loading && refundRequests.length > 0 && (
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-semibold">Refund Appeals</h2>
+              <Badge variant="secondary">{refundPage.total ?? refundRequests.length}</Badge>
+            </div>
 
-                  return (
-                    <Card key={req.id}>
-                      <CardHeader>
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-lg">
-                            {req.member.firstName} {req.member.lastName}
-                          </CardTitle>
-                          <Badge
-                            variant={
-                              req.status === "PENDING"
-                                ? "outline"
-                                : req.status === "APPROVED"
-                                  ? "default"
-                                  : "destructive"
-                            }
-                          >
-                            {req.status}
-                          </Badge>
+            <div className="space-y-4">
+              {refundRequests.map((req) => {
+                const payment = req.booking.payment
+                const settlement = payment
+                  ? getCancellationSettlementBreakdown(
+                      payment.refundedAmountCents,
+                      req.booking.creditsFromCancellation
+                    )
+                  : null
+                const maxRefundable = appealCeiling(req)
+                const isReviewing = reviewingRefundId === req.id
+
+                return (
+                  <Card key={req.id}>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-lg">
+                          {req.member.firstName} {req.member.lastName}
+                        </CardTitle>
+                        <Badge
+                          variant={
+                            req.status === "PENDING"
+                              ? "outline"
+                              : req.status === "APPROVED"
+                                ? "default"
+                                : "destructive"
+                          }
+                        >
+                          {req.status}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">Check-in:</span>{" "}
+                          {formatStayDateOrNull(req.booking.checkIn, format) ?? "—"}
                         </div>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                          <div>
-                            <span className="text-muted-foreground">Check-in:</span>{" "}
-                            {formatStayDateOrNull(req.booking.checkIn, format) ?? "—"}
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Check-out:</span>{" "}
-                            {formatStayDateOrNull(req.booking.checkOut, format) ?? "—"}
-                          </div>
-                          {payment && (
+                        <div>
+                          <span className="text-muted-foreground">Check-out:</span>{" "}
+                          {formatStayDateOrNull(req.booking.checkOut, format) ?? "—"}
+                        </div>
+                        {payment && (
+                          <>
+                            {/* #3372: GROSS - captured before any refund - so
+                                the label says so. "Remaining refundable" is
+                                `refundAppealCeilingParts` (#3827). */}
+                            <div>
+                              <span className="text-muted-foreground">Gross paid:</span>{" "}
+                              {formatCents(payment.amountCents, format)}
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Remaining refundable:</span>{" "}
+                              {req.booking.organiserCardCombinedRefundPending
+                                ? "Waiting for the group refund"
+                                : formatCents(maxRefundable, format)}
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">To card:</span>{" "}
+                              {formatCents(settlement?.refundToOriginalMethodCents ?? 0, format)}
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">As credit:</span>{" "}
+                              {formatCents(settlement?.accountCreditCents ?? 0, format)}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {settlement && settlement.restoredAppliedCreditCents > 0 && (
+                        <p className="text-sm text-muted-foreground">
+                          Restored prior credit:{" "}
+                          {formatCents(settlement.restoredAppliedCreditCents, format)}
+                        </p>
+                      )}
+
+                      {req.requestedAmountCents && (
+                        <p className="text-sm">
+                          <span className="text-muted-foreground">Requested amount:</span>{" "}
+                          <strong>{formatCents(req.requestedAmountCents, format)}</strong>
+                        </p>
+                      )}
+
+                      <div className="bg-muted rounded-md p-3">
+                        <p className="text-sm font-medium mb-1">Reason:</p>
+                        <p className="text-sm whitespace-pre-wrap">{req.reason}</p>
+                      </div>
+
+                      <p className="text-xs text-muted-foreground">
+                        Submitted {formatDateTime(clubTime, req.createdAt)}
+                      </p>
+
+                      {req.status !== "PENDING" && (
+                        <div className="border-t pt-3 mt-3">
+                          {req.approvedAmountCents != null && req.approvedAmountCents > 0 && (
                             <>
-                              {/* #3372: GROSS - captured before any refund - so
-                                  the label says so. "Remaining refundable" is
-                                  `refundAppealCeilingParts` (#3827). */}
-                              <div>
-                                <span className="text-muted-foreground">Gross paid:</span>{" "}
-                                {formatCents(payment.amountCents, format)}
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">Remaining refundable:</span>{" "}
-                                {req.booking.organiserCardCombinedRefundPending
-                                  ? "Waiting for the group refund"
-                                  : formatCents(maxRefundable, format)}
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">To card:</span>{" "}
-                                {formatCents(settlement?.refundToOriginalMethodCents ?? 0, format)}
-                              </div>
-                              <div>
-                                <span className="text-muted-foreground">As credit:</span>{" "}
-                                {formatCents(settlement?.accountCreditCents ?? 0, format)}
-                              </div>
+                              <p className="text-sm">
+                                <span className="text-muted-foreground">Refunded:</span>{" "}
+                                <strong>
+                                  {formatCents(
+                                    approvedAppealRefundedCents(req.approvedAmountCents, req),
+                                    format,
+                                  )}
+                                </strong>
+                              </p>
+                              {refundAppealOutstandingLines(req, (cents) => formatCents(cents, format)).map((line) => (
+                                <p key={line} className="text-sm text-muted-foreground">
+                                  {line}
+                                </p>
+                              ))}
                             </>
                           )}
+                          {req.adminNotes && (
+                            <p className="text-sm mt-1">
+                              <span className="text-muted-foreground">Admin notes:</span>{" "}
+                              {req.adminNotes}
+                            </p>
+                          )}
+                          {req.reviewedAt && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Reviewed {formatDateTime(clubTime, req.reviewedAt)}
+                            </p>
+                          )}
                         </div>
+                      )}
 
-                        {settlement && settlement.restoredAppliedCreditCents > 0 && (
-                          <p className="text-sm text-muted-foreground">
-                            Restored prior credit:{" "}
-                            {formatCents(settlement.restoredAppliedCreditCents, format)}
-                          </p>
-                        )}
-
-                        {req.requestedAmountCents && (
-                          <p className="text-sm">
-                            <span className="text-muted-foreground">Requested amount:</span>{" "}
-                            <strong>{formatCents(req.requestedAmountCents, format)}</strong>
-                          </p>
-                        )}
-
-                        <div className="bg-muted rounded-md p-3">
-                          <p className="text-sm font-medium mb-1">Reason:</p>
-                          <p className="text-sm whitespace-pre-wrap">{req.reason}</p>
+                      {req.status === "PENDING" && !isReviewing && (
+                        <div className="flex gap-2 pt-2">
+                          <ViewOnlyActionButton
+                            canEdit={canEditFinance}
+                            describeReason={false}
+                            size="sm"
+                            onClick={() => startRefundReview(req)}
+                          >
+                            Review
+                          </ViewOnlyActionButton>
                         </div>
+                      )}
 
-                        <p className="text-xs text-muted-foreground">
-                          Submitted {formatDateTime(clubTime, req.createdAt)}
-                        </p>
-
-                        {req.status !== "PENDING" && (
-                          <div className="border-t pt-3 mt-3">
-                            {req.approvedAmountCents != null && req.approvedAmountCents > 0 && (
-                              <>
-                                <p className="text-sm">
-                                  <span className="text-muted-foreground">Refunded:</span>{" "}
-                                  <strong>
-                                    {formatCents(
-                                      approvedAppealRefundedCents(req.approvedAmountCents, req),
-                                      format,
-                                    )}
-                                  </strong>
+                      {isReviewing && (
+                        <div className="border-t pt-4 mt-3 space-y-3">
+                          <div className="space-y-2">
+                            <Label htmlFor="approvedAmount">Refund Amount ($)</Label>
+                            <MoneyInput
+                              id="approvedAmount"
+                              value={approvedAmount}
+                              onValueChange={setApprovedAmount}
+                              disabled={!canEditFinance}
+                              title={
+                                !canEditFinance
+                                  ? ADMIN_VIEW_ONLY_ACTION_REASON
+                                  : undefined
+                              }
+                              className="w-40"
+                              aria-describedby="approvedAmountLimits"
+                            />
+                            {req.booking.organiserCardCombinedRefundPending ? (
+                              <p className="text-xs text-muted-foreground">
+                                {ORGANISER_CARD_APPEAL_PENDING_ADMIN_NOTE}
+                              </p>
+                            ) : (
+                              <div id="approvedAmountLimits" className="space-y-2">
+                                <p className="text-xs text-muted-foreground">
+                                  Max refundable: {formatCents(maxRefundable, format)}
                                 </p>
-                                {refundAppealOutstandingLines(req, (cents) => formatCents(cents, format)).map((line) => (
-                                  <p key={line} className="text-sm text-muted-foreground">
-                                    {line}
+                                {req.booking.organiserCardMaxRefundableCents != null && (
+                                  <p className="text-xs text-muted-foreground">
+                                    {ORGANISER_CARD_APPEAL_CEILING_NOTE}
                                   </p>
-                                ))}
-                              </>
-                            )}
-                            {req.adminNotes && (
-                              <p className="text-sm mt-1">
-                                <span className="text-muted-foreground">Admin notes:</span>{" "}
-                                {req.adminNotes}
-                              </p>
-                            )}
-                            {req.reviewedAt && (
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Reviewed {formatDateTime(clubTime, req.reviewedAt)}
-                              </p>
+                                )}
+                                {req.booking.organiserCardMaxRefundableCents == null && req.booking.appealCardRefundOwedCents > 0 && <p className="text-xs text-muted-foreground">{appealCardRefundOwedOfficerNote(formatCents(req.booking.appealCardRefundOwedCents, format))}</p>}
+                              </div>
                             )}
                           </div>
-                        )}
-
-                        {req.status === "PENDING" && !isReviewing && (
-                          <div className="flex gap-2 pt-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="adminNotes">Admin Notes (optional)</Label>
+                            <textarea
+                              id="adminNotes"
+                              value={adminNotes}
+                              onChange={(e) => setAdminNotes(e.target.value)}
+                              disabled={!canEditFinance}
+                              title={
+                                !canEditFinance
+                                  ? ADMIN_VIEW_ONLY_ACTION_REASON
+                                  : undefined
+                              }
+                              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                              rows={3}
+                              placeholder="Notes visible to the member..."
+                            />
+                          </div>
+                          <div className="flex gap-2">
                             <ViewOnlyActionButton
                               canEdit={canEditFinance}
                               describeReason={false}
                               size="sm"
-                              onClick={() => startRefundReview(req)}
+                              onClick={() => startRefundNotifyChoice(req.id, "APPROVED")}
+                              disabled={processingRefund}
                             >
-                              Review
+                              {processingRefund ? "Processing..." : "Approve & Refund"}
                             </ViewOnlyActionButton>
+                            <ViewOnlyActionButton
+                              canEdit={canEditFinance}
+                              describeReason={false}
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => startRefundNotifyChoice(req.id, "REJECTED")}
+                              disabled={processingRefund}
+                            >
+                              Reject
+                            </ViewOnlyActionButton>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setReviewingRefundId(null)}
+                              disabled={processingRefund}
+                            >
+                              Cancel
+                            </Button>
                           </div>
-                        )}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
-                        {isReviewing && (
-                          <div className="border-t pt-4 mt-3 space-y-3">
-                            <div className="space-y-2">
-                              <Label htmlFor="approvedAmount">Refund Amount ($)</Label>
-                              <MoneyInput
-                                id="approvedAmount"
-                                value={approvedAmount}
-                                onValueChange={setApprovedAmount}
-                                disabled={!canEditFinance}
-                                title={
-                                  !canEditFinance
-                                    ? ADMIN_VIEW_ONLY_ACTION_REASON
-                                    : undefined
-                                }
-                                className="w-40"
-                                aria-describedby="approvedAmountLimits"
-                              />
-                              {req.booking.organiserCardCombinedRefundPending ? (
-                                <p className="text-xs text-muted-foreground">
-                                  {ORGANISER_CARD_APPEAL_PENDING_ADMIN_NOTE}
-                                </p>
-                              ) : (
-                                <div id="approvedAmountLimits" className="space-y-2">
-                                  <p className="text-xs text-muted-foreground">
-                                    Max refundable: {formatCents(maxRefundable, format)}
-                                  </p>
-                                  {req.booking.organiserCardMaxRefundableCents != null && (
-                                    <p className="text-xs text-muted-foreground">
-                                      {ORGANISER_CARD_APPEAL_CEILING_NOTE}
-                                    </p>
-                                  )}
-                                  {req.booking.organiserCardMaxRefundableCents == null && req.booking.appealCardRefundOwedCents > 0 && <p className="text-xs text-muted-foreground">{appealCardRefundOwedOfficerNote(formatCents(req.booking.appealCardRefundOwedCents, format))}</p>}
-                                </div>
-                              )}
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="adminNotes">Admin Notes (optional)</Label>
-                              <textarea
-                                id="adminNotes"
-                                value={adminNotes}
-                                onChange={(e) => setAdminNotes(e.target.value)}
-                                disabled={!canEditFinance}
-                                title={
-                                  !canEditFinance
-                                    ? ADMIN_VIEW_ONLY_ACTION_REASON
-                                    : undefined
-                                }
-                                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                rows={3}
-                                placeholder="Notes visible to the member..."
-                              />
-                            </div>
-                            <div className="flex gap-2">
-                              <ViewOnlyActionButton
-                                canEdit={canEditFinance}
-                                describeReason={false}
-                                size="sm"
-                                onClick={() => startRefundNotifyChoice(req.id, "APPROVED")}
-                                disabled={processingRefund}
+        {refundPage.pagination && refundRequests.length > 0 ? (
+          <Pagination {...refundPage.pagination} aria-label="Refund appeal pages" />
+        ) : null}
+
+        {!loading && creditApprovals.length > 0 && (
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-semibold">Manual Credit Approvals</h2>
+              <Badge variant="secondary">{creditApprovals.length}</Badge>
+            </div>
+
+            <div className="space-y-4">
+              {creditApprovals.map((request) => {
+                const isOwnRequest = session?.user?.id === request.requestedBy.id
+                const isReviewing = reviewingCreditId === request.id
+                const accountMissing = request.amountCents > 0 && !request.grantAccount
+                const creditLedgerHref = buildHrefWithReturnTo(
+                  `${adminHref("member-detail", { id: request.member.id })}#account-credit`,
+                  currentRefundRequestsPath
+                )
+
+                return (
+                  <Card key={request.id}>
+                    <CardHeader>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <CardTitle className="text-lg">
+                            <Link
+                              href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: request.member.id })}`, currentRefundRequestsPath)}
+                              className="hover:underline"
+                            >
+                              {request.member.firstName} {request.member.lastName}
+                            </Link>
+                          </CardTitle>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {request.member.email}
+                          </p>
+                        </div>
+                        <Badge
+                          variant={
+                            request.status === "PENDING"
+                              ? "outline"
+                              : request.status === "APPROVED"
+                                ? "default"
+                                : "destructive"
+                          }
+                        >
+                          {request.status}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-4">
+                        <div>
+                          <span className="text-muted-foreground">Amount:</span>{" "}
+                          <span
+                            className={
+                              request.amountCents > 0
+                                ? "font-medium text-success-11"
+                                : "font-medium text-danger-11"
+                            }
+                          >
+                            {request.amountCents > 0 ? "+" : ""}
+                            {formatCents(request.amountCents, format)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Requested by:</span>{" "}
+                          {formatAdminName(request.requestedBy)}
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Requested:</span>{" "}
+                          {formatDateTime(clubTime, request.createdAt)}
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Member:</span>{" "}
+                          <Link
+                            href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: request.member.id })}`, currentRefundRequestsPath)}
+                            className="text-info-11 hover:underline"
+                          >
+                            Open member
+                          </Link>
+                        </div>
+                      </div>
+
+                      <div className="bg-muted rounded-md p-3">
+                        <p className="text-sm font-medium mb-1">Reason:</p>
+                        <p className="text-sm whitespace-pre-wrap">
+                          {request.description}
+                        </p>
+                        {request.amountCents > 0 && (
+                          <p className="text-sm mt-2">
+                            <span className="text-muted-foreground">Xero account: </span>
+                            {request.grantAccount
+                              ? adminCreditGrantAccountLabel(request.grantAccount)
+                              : GRANT_ACCOUNT_MISSING_MESSAGE}
+                          </p>
+                        )}
+                      </div>
+
+                      {request.status !== "PENDING" && (
+                        <div className="border-t pt-3 mt-3 text-sm space-y-1">
+                          <p>
+                            <span className="text-muted-foreground">Reviewed by:</span>{" "}
+                            {formatAdminName(request.reviewedBy)}
+                          </p>
+                          {request.reviewedAt && (
+                            <p>
+                              <span className="text-muted-foreground">Reviewed:</span>{" "}
+                              {formatDateTime(clubTime, request.reviewedAt)}
+                            </p>
+                          )}
+                          {request.approvedCredit && (
+                            <p>
+                              <span className="text-muted-foreground">Applied credit:</span>{" "}
+                              <Link
+                                href={creditLedgerHref}
+                                className="text-info-11 hover:underline"
                               >
-                                {processingRefund ? "Processing..." : "Approve & Refund"}
-                              </ViewOnlyActionButton>
+                                View credit ledger
+                              </Link>
+                              {request.approvedCredit.createdAt && (
+                                <span className="text-muted-foreground">
+                                  {" "}
+                                  ({formatDateTime(clubTime, request.approvedCredit.createdAt)})
+                                </span>
+                              )}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {request.status === "PENDING" && (
+                        <div className="border-t pt-3 mt-3 flex flex-wrap items-center gap-2">
+                          {isOwnRequest ? (
+                            <span className="text-sm text-warning-11">
+                              Needs another admin to approve this request.
+                            </span>
+                          ) : (
+                            <>
+                              {!accountMissing && (
+                                <ViewOnlyActionButton
+                                  canEdit={canEditFinance}
+                                  describeReason={false}
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={isReviewing}
+                                  onClick={() => handleCreditReview(request, "APPROVE")}
+                                >
+                                  {isReviewing ? "Working..." : "Approve"}
+                                </ViewOnlyActionButton>
+                              )}
                               <ViewOnlyActionButton
                                 canEdit={canEditFinance}
                                 describeReason={false}
                                 size="sm"
                                 variant="destructive"
-                                onClick={() => startRefundNotifyChoice(req.id, "REJECTED")}
-                                disabled={processingRefund}
+                                disabled={isReviewing}
+                                onClick={() => handleCreditReview(request, "REJECT")}
                               >
                                 Reject
                               </ViewOnlyActionButton>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setReviewingRefundId(null)}
-                                disabled={processingRefund}
-                              >
-                                Cancel
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  )
-                })}
-              </div>
-            </section>
-          )}
-
-          {creditApprovals.length > 0 && (
-            <section className="space-y-4">
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-semibold">Manual Credit Approvals</h2>
-                <Badge variant="secondary">{creditApprovals.length}</Badge>
-              </div>
-
-              <div className="space-y-4">
-                {creditApprovals.map((request) => {
-                  const isOwnRequest = session?.user?.id === request.requestedBy.id
-                  const isReviewing = reviewingCreditId === request.id
-                  const accountMissing = request.amountCents > 0 && !request.grantAccount
-                  const creditLedgerHref = buildHrefWithReturnTo(
-                    `${adminHref("member-detail", { id: request.member.id })}#account-credit`,
-                    currentRefundRequestsPath
-                  )
-
-                  return (
-                    <Card key={request.id}>
-                      <CardHeader>
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <CardTitle className="text-lg">
-                              <Link
-                                href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: request.member.id })}`, currentRefundRequestsPath)}
-                                className="hover:underline"
-                              >
-                                {request.member.firstName} {request.member.lastName}
-                              </Link>
-                            </CardTitle>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              {request.member.email}
-                            </p>
-                          </div>
-                          <Badge
-                            variant={
-                              request.status === "PENDING"
-                                ? "outline"
-                                : request.status === "APPROVED"
-                                  ? "default"
-                                  : "destructive"
-                            }
-                          >
-                            {request.status}
-                          </Badge>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-4">
-                          <div>
-                            <span className="text-muted-foreground">Amount:</span>{" "}
-                            <span
-                              className={
-                                request.amountCents > 0
-                                  ? "font-medium text-success-11"
-                                  : "font-medium text-danger-11"
-                              }
-                            >
-                              {request.amountCents > 0 ? "+" : ""}
-                              {formatCents(request.amountCents, format)}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Requested by:</span>{" "}
-                            {formatAdminName(request.requestedBy)}
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Requested:</span>{" "}
-                            {formatDateTime(clubTime, request.createdAt)}
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Member:</span>{" "}
-                            <Link
-                              href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: request.member.id })}`, currentRefundRequestsPath)}
-                              className="text-info-11 hover:underline"
-                            >
-                              Open member
-                            </Link>
-                          </div>
-                        </div>
-
-                        <div className="bg-muted rounded-md p-3">
-                          <p className="text-sm font-medium mb-1">Reason:</p>
-                          <p className="text-sm whitespace-pre-wrap">
-                            {request.description}
-                          </p>
-                          {request.amountCents > 0 && (
-                            <p className="text-sm mt-2">
-                              <span className="text-muted-foreground">Xero account: </span>
-                              {request.grantAccount
-                                ? adminCreditGrantAccountLabel(request.grantAccount)
-                                : GRANT_ACCOUNT_MISSING_MESSAGE}
-                            </p>
+                            </>
                           )}
                         </div>
-
-                        {request.status !== "PENDING" && (
-                          <div className="border-t pt-3 mt-3 text-sm space-y-1">
-                            <p>
-                              <span className="text-muted-foreground">Reviewed by:</span>{" "}
-                              {formatAdminName(request.reviewedBy)}
-                            </p>
-                            {request.reviewedAt && (
-                              <p>
-                                <span className="text-muted-foreground">Reviewed:</span>{" "}
-                                {formatDateTime(clubTime, request.reviewedAt)}
-                              </p>
-                            )}
-                            {request.approvedCredit && (
-                              <p>
-                                <span className="text-muted-foreground">Applied credit:</span>{" "}
-                                <Link
-                                  href={creditLedgerHref}
-                                  className="text-info-11 hover:underline"
-                                >
-                                  View credit ledger
-                                </Link>
-                                {request.approvedCredit.createdAt && (
-                                  <span className="text-muted-foreground">
-                                    {" "}
-                                    ({formatDateTime(clubTime, request.approvedCredit.createdAt)})
-                                  </span>
-                                )}
-                              </p>
-                            )}
-                          </div>
-                        )}
-
-                        {request.status === "PENDING" && (
-                          <div className="border-t pt-3 mt-3 flex flex-wrap items-center gap-2">
-                            {isOwnRequest ? (
-                              <span className="text-sm text-warning-11">
-                                Needs another admin to approve this request.
-                              </span>
-                            ) : (
-                              <>
-                                {!accountMissing && (
-                                  <ViewOnlyActionButton
-                                    canEdit={canEditFinance}
-                                    describeReason={false}
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={isReviewing}
-                                    onClick={() => handleCreditReview(request, "APPROVE")}
-                                  >
-                                    {isReviewing ? "Working..." : "Approve"}
-                                  </ViewOnlyActionButton>
-                                )}
-                                <ViewOnlyActionButton
-                                  canEdit={canEditFinance}
-                                  describeReason={false}
-                                  size="sm"
-                                  variant="destructive"
-                                  disabled={isReviewing}
-                                  onClick={() => handleCreditReview(request, "REJECT")}
-                                >
-                                  Reject
-                                </ViewOnlyActionButton>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  )
-                })}
-              </div>
-            </section>
-          )}
-        </div>
-      )}
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+          </section>
+        )}
+      </div>
 
       {/* #1792: per-action member-email choice, mirroring the #1695/#1705/#1769a
           pattern. The refund decision is applied either way; the choice is

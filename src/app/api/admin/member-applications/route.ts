@@ -5,14 +5,18 @@ import {
 } from "@/lib/nomination";
 import { NOMINATION_AUTOMATIC_REMINDER_LIMIT } from "@/lib/nomination-token-policy";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  adminListPage,
+  adminQueueCreatedOrder,
+  adminListPageQueryFields,
+} from "@/lib/admin-list-page";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
 
 const querySchema = z.object({
   status: z.enum(["PENDING_NOMINATORS", "PENDING_ADMIN", "APPROVED", "REJECTED"]).optional(),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 });
 
 export async function GET(req: NextRequest) {
@@ -29,11 +33,13 @@ export async function GET(req: NextRequest) {
 
   const { status, page, pageSize } = parsed.data;
   const where = status ? { status } : undefined;
+  // The officer's pending queue reads oldest first (INV-OPS-019).
+  const direction = adminQueueCreatedOrder(status === "PENDING_ADMIN");
 
   const [applications, total, pendingCount] = await Promise.all([
     prisma.memberApplication.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: direction }, { id: direction }],
       take: pageSize,
       skip: (page - 1) * pageSize,
     }),
@@ -191,8 +197,6 @@ export async function GET(req: NextRequest) {
     data,
     applications: data,
     pendingCount,
-    page,
-    pageSize,
-    total,
+    ...adminListPage({ page, pageSize, total }),
   });
 }

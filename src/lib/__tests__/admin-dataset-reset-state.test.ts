@@ -149,6 +149,23 @@ describe("admin dataset reset state", () => {
     },
   )
 
+  it("keeps a later queue page in the URL and drops page 1 (INV-OPS-019)", () => {
+    const build = (page: number) =>
+      buildBookingRequestDatasetPath({
+        basePath: "/admin/booking-requests",
+        currentSearch: "tab=public&page=4",
+        fixedSearchParams: { tab: "public" },
+        status: "QUEUE",
+        defaultStatus: "QUEUE",
+        recordKey: "requestId",
+        recordId: null,
+        page,
+      })
+
+    expect(build(3)).toBe("/admin/booking-requests?tab=public&page=3")
+    expect(build(1)).toBe("/admin/booking-requests?tab=public")
+  })
+
   it("resets only the Xero Operations dataset and preserves its section, sibling, and unknown state", () => {
     const params = resetXeroOperationsDatasetSearchParams(
       "section=inbound&opStatus=FAILED&opPage=4&inStatus=RECEIVED&inPage=2&futureContext=keep",

@@ -114,6 +114,9 @@ export default function BookingRequestsPage() {
     const params = new URLSearchParams(searchParams.toString());
 
     params.set("tab", nextTab);
+    // Each tab's queue pages on its own (INV-OPS-019); a page from one tab
+    // means nothing on another.
+    params.delete("page");
 
     if (nextTab === "approvals") {
       params.delete("requestId");

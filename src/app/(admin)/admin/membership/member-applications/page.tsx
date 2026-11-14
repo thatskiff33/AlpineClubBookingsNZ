@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { adminHref } from "@/lib/admin-hubs";
+import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -101,6 +106,17 @@ const filters: Array<{ label: string; value: string }> = [
   { label: "All", value: "" },
 ];
 
+const DEFAULT_FILTER = "PENDING_ADMIN";
+const MEMBER_APPLICATIONS_HREF = adminHref("member-applications");
+
+/** The filter a `?status=` value names; `ALL` is the unfiltered list. */
+function filterFromStatusParam(value: string | null): string {
+  if (value === "ALL") return "";
+  return filters.some((option) => option.value === value && value !== "")
+    ? (value as string)
+    : DEFAULT_FILTER;
+}
+
 /**
  * Submission, confirmation, review and token-expiry stamps — real INSTANTS,
  * projected through the club's persisted zone (CT-4, #2870; INV-CONFIG-002).
@@ -153,7 +169,18 @@ export default function MemberApplicationsPage() {
   // Approve/decline/refresh/replace all write membership-area routes; a
   // view-only membership admin browses applications but cannot act (#1997).
   const canEditMembership = useAdminAreaEditAccess("membership");
-  const [filter, setFilter] = useState("PENDING_ADMIN");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [filter, setFilter] = useState(() =>
+    filterFromStatusParam(searchParams.get("status")),
+  );
+  // INV-OPS-019: the route caps each read at one page; the page and filter
+  // are mirrored into the URL so a refresh or shared link keeps the place.
+  const queuePage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
+  const { page, setPage, receive, beginLoad } = queuePage;
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -170,7 +197,24 @@ export default function MemberApplicationsPage() {
   const [reviewChoice, setReviewChoice] = useState<ReviewChoice | null>(null);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
 
+  const currentParams = new URLSearchParams(searchParams.toString());
+  currentParams.delete("status");
+  currentParams.delete("page");
+  if (filter !== DEFAULT_FILTER) currentParams.set("status", filter || "ALL");
+  if (page > 1) currentParams.set("page", String(page));
+  const currentQuery = currentParams.toString();
+  const currentPath = currentQuery
+    ? `${MEMBER_APPLICATIONS_HREF}?${currentQuery}`
+    : MEMBER_APPLICATIONS_HREF;
+
+  useEffect(() => {
+    router.replace(currentPath, { scroll: false });
+  }, [currentPath, router]);
+
   async function loadApplications(nextFilter = filter) {
+    // A slower read for a page or filter the officer has left must not replace
+    // the list now shown, nor its error or loading end (INV-OPS-019).
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
 
@@ -179,15 +223,19 @@ export default function MemberApplicationsPage() {
       if (nextFilter) {
         params.set("status", nextFilter);
       }
+      params.set("page", String(page));
       const response = await fetch(`/api/admin/member-applications?${params.toString()}`);
       const data = await response.json();
+      if (!isCurrent()) return;
 
       if (!response.ok) {
         setError(data.error || "Could not load member applications.");
         return;
       }
 
-      setApplications(data.applications || []);
+      const rows: ApplicationRecord[] = data.applications || [];
+      setApplications(rows);
+      receive(data, rows.length);
       setPendingCount(data.pendingCount || 0);
       setNotes((prev) => {
         const next = { ...prev };
@@ -199,16 +247,16 @@ export default function MemberApplicationsPage() {
         return next;
       });
     } catch {
-      setError("Could not load member applications.");
+      if (isCurrent()) setError("Could not load member applications.");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
   useEffect(() => {
     loadApplications(filter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter]);
+  }, [filter, page]);
 
   // #1786/E10: the approval panel validates the joining-fee decision + mapping
   // payload and hands it here; this opens the notify-choice dialog. The
@@ -555,8 +603,8 @@ export default function MemberApplicationsPage() {
             </Button>
           ))}
           <DatasetResetButton
-            disabled={filter === "PENDING_ADMIN"}
-            onReset={() => setFilter("PENDING_ADMIN")}
+            disabled={filter === DEFAULT_FILTER && page === 1}
+            onReset={() => { setFilter(DEFAULT_FILTER); setPage(1); }}
           />
         </div>
       </div>
@@ -759,6 +807,10 @@ export default function MemberApplicationsPage() {
           ))}
         </div>
       )}
+
+      {queuePage.pagination ? (
+        <Pagination {...queuePage.pagination} aria-label="Member application pages" />
+      ) : null}
 
       {/* #1786: per-action applicant-email choice, mirroring the #1769a pattern.
           The applicant approved/rejected email always sends (the applicant email

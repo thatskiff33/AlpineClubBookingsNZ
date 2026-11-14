@@ -1460,6 +1460,38 @@ describe("membership cancellation admin review", () => {
       ]);
     }
 
+    it("reads the pending queue oldest first and ALL newest first (INV-OPS-019)", async () => {
+      seedQueue(adminRequest());
+
+      const pending = await getAdminMembershipCancellationRequests({
+        viewerCanApprove: false,
+      });
+      await getAdminMembershipCancellationRequests({
+        status: "ALL",
+        page: 2,
+        pageSize: 10,
+        viewerCanApprove: false,
+      });
+
+      expect(mocks.requestFindMany).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
+          skip: 0,
+          take: 25,
+        }),
+      );
+      expect(mocks.requestFindMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          orderBy: [{ submittedAt: "desc" }, { id: "desc" }],
+          skip: 10,
+          take: 10,
+        }),
+      );
+      expect(pending).toMatchObject({ page: 1, pageSize: 25, total: 1, totalPages: 1 });
+    });
+
     it("spends no Xero call for a view-only admin, and says so on the row", async () => {
       seedQueue(adminRequest());
 

@@ -18,17 +18,14 @@ import { loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
+import { adminListPage, adminListPageQueryFields, adminQueueCreatedOrder, adminQueueFocusIdField } from "@/lib/admin-list-page";
 
-const statusFilterValues = [
-  ...Object.values(BookingRequestStatus),
-  "QUEUE",
-  "ALL",
-] as const;
+const statusFilterValues = [...Object.values(BookingRequestStatus), "QUEUE", "ALL"] as const;
 
 const querySchema = z.object({
   status: z.enum(statusFilterValues).optional().default("QUEUE"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
+  requestId: adminQueueFocusIdField,
 });
 
 export async function GET(req: NextRequest) {
@@ -43,13 +40,16 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const { status, page, pageSize } = parsed.data;
-  const where = buildBookingRequestListWhere(status);
+  const { status, page, pageSize, requestId } = parsed.data;
+  const statusWhere = buildBookingRequestListWhere(status);
+  const where = requestId ? { ...statusWhere, id: requestId } : statusWhere;
+  // The officer queue reads oldest first (INV-OPS-019).
+  const direction = adminQueueCreatedOrder(status === "QUEUE");
 
   const [requests, total] = await Promise.all([
     prisma.bookingRequest.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: direction }, { id: direction }],
       take: pageSize,
       skip: (page - 1) * pageSize,
       // Lodge name for the queue display; null lodgeId means the club's
@@ -243,7 +243,7 @@ export async function GET(req: NextRequest) {
   });
 
   return NextResponse.json({
-    data, page, pageSize, total,
+    data, ...adminListPage({ page, pageSize, total }),
     memberWholeLodgeChoosesPaymentMethod: memberWholeLodgeChoosesPaymentMethod(await loadEffectiveModuleFlags()),
   });
 }
