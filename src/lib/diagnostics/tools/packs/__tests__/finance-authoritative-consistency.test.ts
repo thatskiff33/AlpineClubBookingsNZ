@@ -56,6 +56,8 @@ const { prismaMock } = vi.hoisted(() => {
     xeroObjectLink: { findFirst: vi.fn(), findMany: vi.fn() },
     paymentRecoveryOperation: { findMany: vi.fn() },
     manualRefundTask: { count: vi.fn(), findMany: vi.fn(async (): Promise<unknown[]> => []) },
+    // #4911: no payment on the page is disputed.
+    stripeDispute: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     refundRequest: { count: vi.fn() },
   };
   const txMock = { ...models, $executeRaw: vi.fn().mockResolvedValue(0) };
