@@ -82,6 +82,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "each captured row is judged on its own (its line, its event, its amount); the findings are a set, not a sequence.",
   "src/lib/payment-reconciliation.ts > settleBookingPaymentInTransaction":
     "the ids of the rows the officer settle is about to write, a set the receipt hook selects by membership (`includes`).",
+  // #4993 (INV-PAY-155): the stale saved-card claim recovery's locked re-read.
+  "src/lib/saved-card-charge-claim.ts > recoverStaleSavedCardClaims":
+    "reads only each row's status and asks whether ANY row on the payment is captured (`.some`); a captured row anywhere skips the recovery, whatever the order.",
   "src/lib/xero-inbound/invoice-paid-effects.ts > syncInternetBankingPaymentsForPaidInvoice":
     "the ids of the PRIMARY bank rows this delivery moves to captured, a set the receipt hook selects by membership (`includes`).",
   "src/lib/additional-ask-reissue.ts > foldWaitingAsks":

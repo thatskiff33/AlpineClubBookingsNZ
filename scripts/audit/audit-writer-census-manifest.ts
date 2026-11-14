@@ -765,7 +765,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // 542 -> 543 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
   // two-factor policy save, `tx.auditLog.create` in the route's transaction like the
   // password-policy writer beside it, `security`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 543,
+  // 543 -> 545 (#4993): `booking.saved_card_claim_release_failed`, the shared saved-card
+  // claim release's final failure, and `booking.saved_card_claim_recovered`, the cron's
+  // recovery of a stale claim (`saved-card-charge-claim.ts`); both awaited `createAuditLog`,
+  // both `payment`, `critical`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 545,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -992,7 +996,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
     // 174 -> 176 (#4368): the two dead card refund settlements.
     // 176 -> 177 (#4916): the after-stay dietary clear's count row. 177 -> 179 (#4851): the group organiser's close and re-arm.
-    createAuditLog: { total: 179, uncategorised: 0 },
+    // 179 -> 181 (#4993): the saved-card claim release failure and stale-claim recovery rows.
+    createAuditLog: { total: 181, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1212,7 +1217,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 67 -> 69 (#4516): a refused card refund reservation, and its OPERATOR release - read by the same people.
     // 69 -> 71 (#4368): a dead card refund closed with nothing left owed, and one put back to try the card.
     // 71 -> 73 (#4851): a group organiser's dead card refund paid another way (one site, both kinds) or tried again.
-    payment: 73,
+    // 73 -> 75 (#4993): a saved-card claim release that failed, and a stale claim recovered - read by the same people.
+    payment: 75,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.

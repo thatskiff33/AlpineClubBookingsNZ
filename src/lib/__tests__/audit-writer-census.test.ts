@@ -1500,7 +1500,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 412 -> 413 unpinned (#4618): the officer two-factor policy save, `security`.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 413 });
+    // 413 -> 415 unpinned (#4993): the saved-card claim release failure and stale-claim recovery, `payment`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    ).toEqual({ pinned: 130, unpinned: 415 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
