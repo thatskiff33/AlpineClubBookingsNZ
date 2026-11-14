@@ -12,6 +12,8 @@ import {
   getDefaultLodgeCapacity,
   getLodgeCapacity,
 } from "@/lib/lodge-capacity";
+import { getPrivacyRetentionSettings } from "@/lib/privacy-retention-settings";
+import { describeEmailLogRetention } from "@/lib/privacy-retention-shared";
 import logger from "@/lib/logger";
 import { deriveAltFromImageSrc } from "@/lib/image-alt";
 import { extractImageDimensions } from "@/lib/media-image";
@@ -277,6 +279,9 @@ export async function resolveTextTokens(
   // DB-first club identity (E3 #1929): pre-resolve once (the replace callback is
   // synchronous) so {{club-name}}/{{hut-leader}} render the admin-editable values.
   const clubIdentity = await getClubIdentity();
+  const emailLogRetention = matches.some(
+    (match) => (match[1] ?? match[3] ?? "").toLowerCase() === "email-log-retention",
+  ) ? describeEmailLogRetention(await getPrivacyRetentionSettings()) : "";
 
   return contentHtml.replace(
     TEXT_TOKEN_REGEX,
@@ -301,6 +306,8 @@ export async function resolveTextTokens(
           );
           return escapeHtmlText(value?.address ?? "");
         }
+        case "email-log-retention":
+          return escapeHtmlText(emailLogRetention);
         case "club-name":
           return escapeHtmlText(clubIdentity.name);
         case "hut-leader":
