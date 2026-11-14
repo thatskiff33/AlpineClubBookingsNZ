@@ -424,6 +424,8 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
       "admin-unrecognised-stripe-payment",
       // #4624: a member was charged and the booking does not show it.
       "admin-unmatched-app-stripe-payment",
+      // #4911: Stripe took the money back outside the app and nothing reaches Xero.
+      "admin-stripe-dispute",
     ] as const) {
       const definition = getEmailTemplateDefinition(name);
       if (!definition) throw new Error(`missing ${name}`);

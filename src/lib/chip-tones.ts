@@ -74,3 +74,22 @@ export const CHIP_TONE_CLASSES: Record<ChipTone, string> = {
   cat5: "bg-cat5-3 text-cat5-11",
   cat6: "bg-cat6-3 text-cat6-11",
 };
+
+/** Tone -> solid `bg-<scale>-9` swatch fill, for TEXT-FREE marks only: legend
+ *  swatches, a bar's status stripe, a list dot (#4466). Step-9 is not an AA text
+ *  background, so a mark that carries text takes `CHIP_TONE_CLASSES` instead;
+ *  `brand-color-source-contract.test.ts` rejects a step-9 fill paired with a text
+ *  utility. `neutral` has no numbered scale, so it takes the theme's `bg-muted`. */
+export const CHIP_TONE_SWATCH_CLASSES: Record<ChipTone, string> = {
+  neutral: "bg-muted",
+  info: "bg-info-9",
+  success: "bg-success-9",
+  warning: "bg-warning-9",
+  danger: "bg-danger-9",
+  cat1: "bg-cat1-9",
+  cat2: "bg-cat2-9",
+  cat3: "bg-cat3-9",
+  cat4: "bg-cat4-9",
+  cat5: "bg-cat5-9",
+  cat6: "bg-cat6-9",
+};

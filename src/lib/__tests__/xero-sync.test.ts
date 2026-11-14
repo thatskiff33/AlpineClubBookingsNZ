@@ -1412,6 +1412,23 @@ describe("startXeroSyncOperation", () => {
     }));
   });
 
+  it("rethrows the unique violation, reading no winner, when the caller will not share another attempt's row (INV-INT-038)", async () => {
+    mocks.operationCreate.mockRejectedValueOnce({ code: "P2002" });
+    mocks.operationFindFirst.mockResolvedValue({ id: "op_abandoned", status: "RUNNING", correlationKey: "xero-event-1" });
+
+    await expect(
+      startXeroSyncOperation({
+        direction: "INBOUND",
+        entityType: "INVOICE",
+        operationType: "WEBHOOK_RECONCILE",
+        correlationKey: "xero-event-1",
+        shareActiveOperation: false,
+      }),
+    ).rejects.toMatchObject({ code: "P2002" });
+    expect(mocks.operationFindFirst).not.toHaveBeenCalled();
+    expect(mocks.operationCreate).toHaveBeenCalledTimes(1);
+  });
+
   it("returns the winner's active row when the partial unique index rejects a lost concurrent enqueue (#1354)", async () => {
     mocks.operationCreate.mockRejectedValueOnce({ code: "P2002" });
     mocks.operationFindFirst.mockResolvedValue({

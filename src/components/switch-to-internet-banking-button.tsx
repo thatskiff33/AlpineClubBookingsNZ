@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useConfirm } from "@/components/confirm-dialog";
 import { getDefaultBookingMessages } from "@/lib/booking-message-definitions";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 // Only reached when no caller passes the club's wording (unit tests); the
 // booking page always renders the club's own message for this key (#4958).
@@ -84,9 +85,11 @@ export function SwitchToInternetBankingButton({
       <Button variant="outline" onClick={switchToInternetBanking} disabled={busy}>
         {busy ? "Switching..." : "Pay by internet banking instead"}
       </Button>
-      {error ? (
-        <p className="mt-2 text-sm text-destructive">{error}</p>
-      ) : null}
+      <FocusedActionError
+        id={`switch-to-internet-banking-${bookingId}-error`}
+        error={error}
+        className="mt-2"
+      />
     </div>
   );
 }
