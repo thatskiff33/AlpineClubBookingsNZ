@@ -15,7 +15,7 @@ reason: the guard has to run inside `CONFIRM_ANNUAL_BATCH` and `RETRY_CHARGE`
   Splitting the route's actions out would change far more than this fix needs.
 
 file: src/lib/nomination.ts
-lines: 2671
+lines: 2675
 reason: the joining-fee decision must be read before the approval transaction
   and turned into a recorded SKIP right next to the decision it replaces. The
   approval warnings are assembled in this function, so they live here too.
@@ -28,7 +28,7 @@ reason: `queueApprovedMembershipSubscriptionCharges` must return before it
   has to sit on the mapping check it skips.
 
 file: src/lib/xero-operation-retry.ts
-lines: 2134
+lines: 2213
 reason: the subscription branch of the generic retry refuses in place, beside
   the requeue it stops. Two imports and a five-line check.
 
