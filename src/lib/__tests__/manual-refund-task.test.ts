@@ -4293,6 +4293,34 @@ describe("#3194 - a review raised before the member paid still refunds to their 
     expect(result.stripeRefundId).toBe("re_test");
   });
 
+  it("MUTATION #4879: plans the card refund around a live superseded capture, read under the payment row", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ paymentId: null, payment: null, booking: paidBooking() })
+    );
+    const heldBack = new Map([["txn-superseded", 6_500]]);
+    mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: heldBack, totalCents: 6_500 });
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the August card receipt.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 7300,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-9");
+    expect(mocks.readSupersededCaptureHeldBack).toHaveBeenCalledWith(tx, "payment-9");
+    expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment-9", heldBackByTransaction: heldBack })
+    );
+    const lockOrder = mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder;
+    const readOrder = mocks.readSupersededCaptureHeldBack.mock.invocationCallOrder[0]!;
+    expect(lockOrder.some((order) => order < readOrder)).toBe(true);
+    expect(readOrder).toBeLessThan(mocks.planStripeRefundAllocation.mock.invocationCallOrder[0]!);
+  });
+
   it("persists the refund debt against that same payment, inside the transaction", async () => {
     // The crash-safety half. A refund routed by a re-read must persist its debt
     // against the payment it will actually refund, or the recovery cron replays
