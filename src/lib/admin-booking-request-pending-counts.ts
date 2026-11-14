@@ -1,5 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { buildBookingRequestListWhere } from "@/lib/booking-request";
+import {
+  buildBookingReviewListWhere,
+  buildLockedPeriodChangeRequestListWhere,
+  buildModificationExceptionQueueWhere,
+  buildNewBookingExceptionQueueWhere,
+} from "@/lib/booking-request-queue-where";
 
 /**
  * The four queues behind the Booking Requests page, one per tab (#4969), each
@@ -30,10 +36,11 @@ export type BookingRequestPendingCounts = {
  * sidebar badges (through `getAdminPendingCounts`) and the admin dashboard card
  * alike (#4969), so neither can count a queue its own way.
  *
- * ponytail: each count mirrors the where-clause of the list its tab shows —
- * booking-reviews, booking-change-requests (LOCKED_PERIOD only),
- * `readUnifiedExceptionQueue` (both exception sources) and booking-requests
- * (QUEUE); update both together if a queue definition changes.
+ * Each count builds its query from the same where-builder the list its tab
+ * shows uses (`booking-request-queue-where.ts` for booking-reviews,
+ * booking-change-requests and `readUnifiedExceptionQueue`;
+ * `buildBookingRequestListWhere` for booking-requests), so a list and its badge
+ * cannot be narrowed apart.
  */
 export async function getBookingRequestPendingCounts(): Promise<BookingRequestPendingCounts> {
   const [
@@ -43,17 +50,15 @@ export async function getBookingRequestPendingCounts(): Promise<BookingRequestPe
     newBookingPolicyExceptionRequests,
     publicBookingRequests,
   ] = await Promise.all([
-    prisma.booking.count({
-      where: { deletedAt: null, adminReviewStatus: "PENDING" },
+    prisma.booking.count({ where: buildBookingReviewListWhere("PENDING") }),
+    prisma.bookingChangeRequest.count({
+      where: buildLockedPeriodChangeRequestListWhere("REQUESTED"),
     }),
     prisma.bookingChangeRequest.count({
-      where: { kind: "LOCKED_PERIOD", status: "REQUESTED" },
-    }),
-    prisma.bookingChangeRequest.count({
-      where: { kind: "POLICY_EXCEPTION", status: "REQUESTED" },
+      where: buildModificationExceptionQueueWhere("REQUESTED"),
     }),
     prisma.newBookingPolicyExceptionRequest.count({
-      where: { status: "REQUESTED" },
+      where: buildNewBookingExceptionQueueWhere("REQUESTED"),
     }),
     prisma.bookingRequest.count({
       where: buildBookingRequestListWhere("QUEUE"),

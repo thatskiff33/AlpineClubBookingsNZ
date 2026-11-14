@@ -18,13 +18,14 @@ import { PolicyExceptionRequestsPanel } from "@/components/admin/booking-request
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
+  BOOKING_REQUEST_PENDING_COUNTS_PATH,
   BOOKING_REQUESTS_TABS,
   bookingRequestsTabCounts,
   firstBookingRequestsTabWithWork,
+  readBookingRequestPendingCounts,
   type BookingRequestsTab,
   type BookingRequestsTabCounts,
 } from "@/lib/admin-booking-requests-path";
-import type { BookingRequestPendingCounts } from "@/lib/admin-booking-request-pending-counts";
 
 const APPROVALS_SEARCH_PARAMS = { tab: "approvals" } satisfies Record<
   string,
@@ -50,20 +51,17 @@ function parseBookingRequestsTab(value: string | null): BookingRequestsTab {
     : "approvals";
 }
 
-const PENDING_COUNT_KEYS = [
-  "bookingReviews",
-  "lockedPeriodChangeRequests",
-  "policyExceptionRequests",
-  "publicBookingRequests",
-] as const satisfies readonly (keyof BookingRequestPendingCounts)[];
-
-function readPendingCounts(data: unknown): BookingRequestPendingCounts | null {
-  if (!data || typeof data !== "object") return null;
-  const record = data as Record<string, unknown>;
-  return PENDING_COUNT_KEYS.every((key) => typeof record[key] === "number")
-    ? (record as BookingRequestPendingCounts)
-    : null;
-}
+/**
+ * The tab triggers, rendered by walking BOOKING_REQUESTS_TABS, so the order an
+ * officer sees is the order the landing rule ("the first tab with work") reads.
+ * Typed over the tab union, so a new tab cannot be added without a label.
+ */
+const TAB_LABELS: Record<BookingRequestsTab, string> = {
+  approvals: "Approvals",
+  changes: "Changes",
+  exceptions: "Policy Exceptions",
+  public: "Public Requests",
+};
 
 /**
  * Whether the URL already says where to open: a tab (other than `allowedTab`,
@@ -100,10 +98,10 @@ export default function BookingRequestsPage() {
   const activeTab = parseBookingRequestsTab(searchParams.get("tab"));
   const canEditBookings = useAdminAreaEditAccess("bookings");
 
-  // One pending count per tab, from the same payload the sidebar badge adds up
-  // (#4969), so the four tab badges always sum to it. Null until loaded, and
-  // left null if the read fails: the badges are best-effort, and a page with no
-  // counts behaves exactly as before (Approvals, no badges).
+  // One pending count per tab, from the same helper the sidebar badge adds up
+  // (#4969), so the four tab badges are counted exactly as it is. Null until
+  // loaded, and left null if the read fails: the badges are best-effort, and a
+  // page with no counts behaves exactly as before (Approvals, no badges).
   const [tabCounts, setTabCounts] = useState<BookingRequestsTabCounts | null>(
     null,
   );
@@ -122,12 +120,17 @@ export default function BookingRequestsPage() {
     setPublicRequestUrl(`${window.location.origin}/booking-requests`);
   }, []);
 
+  // Read on mount and again whenever the tab changes, so a badge catches up
+  // with what an officer did on the tab they just left. A response that
+  // arrives after the tab has changed again is dropped, so an older read never
+  // overwrites a newer one. It does not follow an action taken on the current
+  // tab: that badge updates when the officer switches tab or reloads.
   useEffect(() => {
     let active = true;
-    fetch("/api/admin/pending-counts")
+    fetch(BOOKING_REQUEST_PENDING_COUNTS_PATH)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        const counts = readPendingCounts(data);
+        const counts = readBookingRequestPendingCounts(data);
         if (active && counts) {
           setTabCounts(bookingRequestsTabCounts(counts));
         }
@@ -138,14 +141,18 @@ export default function BookingRequestsPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeTab]);
 
-  // A bare link to this page (the sidebar's, a bookmark) opens on the first
-  // tab with work (#4969), so an officer who followed the sidebar badge never
-  // lands on an empty Approvals while the work sits on another tab. Decided
-  // once per mount, when the counts arrive, and only for a link that named no
+  // A link that opens this page with no tab (the sidebar's from another page,
+  // the dashboard card's, a typed address) opens on the first tab with work
+  // (#4969), so an officer who followed the sidebar badge never lands on an
+  // empty Approvals while the work sits on another tab. Decided once per
+  // mount, when the counts first arrive, and only for a link that named no
   // tab, record (bookingId/requestId) or status filter — a status filter
-  // belongs to the tab it was set on and means nothing on another.
+  // belongs to the tab it was set on and means nothing on another. Once the
+  // page has opened, the address names the tab (a bookmark taken from it keeps
+  // that tab), and the sidebar link followed from this same page goes to
+  // Approvals as it always has, with the tab badges showing where the work is.
   //
   // The link is judged as it was opened, not as it reads when the counts
   // arrive: the Approvals panel mounts at once and writes `?tab=approvals`
@@ -225,22 +232,12 @@ export default function BookingRequestsPage() {
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="grid w-full grid-cols-2 sm:w-auto sm:grid-cols-4">
-          <TabsTrigger value="approvals" className="gap-2">
-            Approvals
-            <TabCountBadge count={tabCounts?.approvals} />
-          </TabsTrigger>
-          <TabsTrigger value="changes" className="gap-2">
-            Changes
-            <TabCountBadge count={tabCounts?.changes} />
-          </TabsTrigger>
-          <TabsTrigger value="exceptions" className="gap-2">
-            Policy Exceptions
-            <TabCountBadge count={tabCounts?.exceptions} />
-          </TabsTrigger>
-          <TabsTrigger value="public" className="gap-2">
-            Public Requests
-            <TabCountBadge count={tabCounts?.public} />
-          </TabsTrigger>
+          {BOOKING_REQUESTS_TABS.map((tabValue) => (
+            <TabsTrigger key={tabValue} value={tabValue} className="gap-2">
+              {TAB_LABELS[tabValue]}
+              <TabCountBadge count={tabCounts?.[tabValue]} />
+            </TabsTrigger>
+          ))}
         </TabsList>
         <TabsContent value="approvals" className="mt-6">
           {activeTab === "approvals" && canEditBookings !== undefined ? (

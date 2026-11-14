@@ -1,7 +1,11 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  BOOKING_REQUEST_PENDING_COUNTS_PATH,
   bookingRequestsTabCounts,
   firstBookingRequestsTabWithWork,
+  readBookingRequestPendingCounts,
   totalBookingRequestsPending,
   type BookingRequestsTab,
   type BookingRequestsTabCounts,
@@ -91,5 +95,53 @@ describe("bookingRequestsTabCounts (#4969)", () => {
 
   it("adds the tab counts up to the sidebar badge total", () => {
     expect(totalBookingRequestsPending(pending)).toBe(10);
+  });
+});
+
+describe("readBookingRequestPendingCounts (#4969)", () => {
+  const pending = {
+    bookingReviews: 1,
+    lockedPeriodChangeRequests: 2,
+    policyExceptionRequests: 3,
+    publicBookingRequests: 4,
+  };
+
+  it("reads the four counts and drops everything else in the payload", () => {
+    expect(
+      readBookingRequestPendingCounts({ ...pending, issueReports: 9 }),
+    ).toEqual(pending);
+  });
+
+  it.each(Object.keys(pending))("rejects a payload missing %s", (field) => {
+    const payload: Record<string, unknown> = { ...pending };
+    delete payload[field];
+    expect(readBookingRequestPendingCounts(payload)).toBeNull();
+  });
+
+  it.each(Object.keys(pending))("rejects a payload whose %s is not a number", (field) => {
+    expect(
+      readBookingRequestPendingCounts({ ...pending, [field]: "3" }),
+    ).toBeNull();
+  });
+
+  it.each([null, undefined, "counts", 4, []])("rejects %j", (payload) => {
+    expect(readBookingRequestPendingCounts(payload)).toBeNull();
+  });
+});
+
+describe("BOOKING_REQUEST_PENDING_COUNTS_PATH (#4969)", () => {
+  it("is a bookings-area API route that exists", () => {
+    // The page fetches this path; the route file is the only place that
+    // answers it, so a rename of either side fails here, not in a browser.
+    expect(BOOKING_REQUEST_PENDING_COUNTS_PATH).toMatch(
+      /^\/api\/admin\/booking-requests\//,
+    );
+    const routeFile = path.join(
+      process.cwd(),
+      "src/app",
+      BOOKING_REQUEST_PENDING_COUNTS_PATH,
+      "route.ts",
+    );
+    expect(fs.existsSync(routeFile)).toBe(true);
   });
 });

@@ -5,8 +5,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// #4969: every tab shows its pending count, from the one payload the sidebar
-// badge adds up, and a bare link opens on the first tab with work.
+// #4969: every tab shows its pending count, from the one helper the sidebar
+// badge adds up, and a link with no tab opens on the first tab with work.
 
 const nav = vi.hoisted(() => {
   let query = "";
@@ -102,7 +102,10 @@ vi.mock(
 );
 
 import BookingRequestsPage from "@/app/(admin)/admin/booking-desk/booking-requests/page";
-import { totalBookingRequestsPending } from "@/lib/admin-booking-requests-path";
+import {
+  BOOKING_REQUESTS_TABS,
+  totalBookingRequestsPending,
+} from "@/lib/admin-booking-requests-path";
 
 const ZERO_COUNTS = {
   bookingReviews: 0,
@@ -113,11 +116,16 @@ const ZERO_COUNTS = {
 
 const fetchMock = vi.fn();
 
+// The bookings-area route, NOT the overview-area `/api/admin/pending-counts`
+// aggregate: a role holding bookings but not overview must still get its
+// badges. Written out here rather than imported so changing the page's URL
+// fails this file.
+const COUNTS_URL = "/api/admin/booking-requests/pending-counts";
+
 function serveCounts(counts: Partial<typeof ZERO_COUNTS>) {
-  // The real endpoint's payload carries every sidebar queue; the page must
-  // pick out only its four.
+  // Whatever else a payload carries, the page picks out only its four.
   fetchMock.mockImplementation(async (url: string) =>
-    url === "/api/admin/pending-counts"
+    url === COUNTS_URL
       ? Response.json({ ...ZERO_COUNTS, issueReports: 7, ...counts })
       : new Response(null, { status: 404 }),
   );
@@ -128,9 +136,7 @@ function tab(name: RegExp) {
 }
 
 async function countsLoaded() {
-  await waitFor(() =>
-    expect(fetchMock).toHaveBeenCalledWith("/api/admin/pending-counts"),
-  );
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(COUNTS_URL));
   // Let the fetch chain and any landing-tab replace settle.
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -246,11 +252,13 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
   );
 
   it("keeps a tab the officer chose while the counts were loading", async () => {
-    let respond: (response: Response) => void = () => {};
-    fetchMock.mockReturnValue(
-      new Promise<Response>((resolve) => {
-        respond = resolve;
-      }),
+    // Each read is its own pending promise, answered by hand.
+    const answers: Array<(response: Response) => void> = [];
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          answers.push(resolve);
+        }),
     );
     render(<BookingRequestsPage />);
     await waitFor(() => expect(nav.query).toBe("tab=approvals"));
@@ -259,7 +267,9 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
     await waitFor(() => expect(nav.query).toBe("tab=changes"));
 
     await act(async () => {
-      respond(Response.json({ ...ZERO_COUNTS, publicBookingRequests: 2 }));
+      answers.forEach((answer) =>
+        answer(Response.json({ ...ZERO_COUNTS, publicBookingRequests: 2 })),
+      );
     });
     await waitFor(() =>
       expect(tab(/^Public Requests/)).toHaveTextContent("Public Requests2"),
@@ -267,6 +277,86 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
     await countsLoaded();
     expect(nav.query).toBe("tab=changes");
     expect(tab(/^Changes/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("reads the counts again when the officer changes tab", async () => {
+    serveCounts({ bookingReviews: 1 });
+    render(<BookingRequestsPage />);
+    await waitFor(() => expect(tab(/^Approvals/)).toHaveTextContent("Approvals1"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The officer clears the last review, then moves to another tab.
+    serveCounts({ bookingReviews: 0, lockedPeriodChangeRequests: 2 });
+    fireEvent.mouseDown(tab(/^Changes/), { button: 0 });
+
+    await waitFor(() =>
+      expect(tab(/^Approvals/)).toHaveTextContent(/^Approvals$/),
+    );
+    expect(tab(/^Changes/)).toHaveTextContent("Changes2");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a read that arrives after a newer one", async () => {
+    const answers: Array<(response: Response) => void> = [];
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          answers.push(resolve);
+        }),
+    );
+    render(<BookingRequestsPage />);
+    await waitFor(() => expect(answers).toHaveLength(1));
+    fireEvent.mouseDown(tab(/^Changes/), { button: 0 });
+    await waitFor(() => expect(answers).toHaveLength(2));
+
+    // The newer read answers first; the older one then arrives late.
+    await act(async () => {
+      answers[1](Response.json({ ...ZERO_COUNTS, publicBookingRequests: 5 }));
+    });
+    await waitFor(() =>
+      expect(tab(/^Public Requests/)).toHaveTextContent("Public Requests5"),
+    );
+    await act(async () => {
+      answers[0](Response.json({ ...ZERO_COUNTS, publicBookingRequests: 1 }));
+    });
+    await countsLoaded();
+    expect(tab(/^Public Requests/)).toHaveTextContent("Public Requests5");
+  });
+
+  it("decides the landing tab once: the sidebar link followed from this page opens Approvals", async () => {
+    serveCounts({ publicBookingRequests: 2 });
+    render(<BookingRequestsPage />);
+    await waitFor(() =>
+      expect(tab(/^Public Requests/)).toHaveAttribute("aria-selected", "true"),
+    );
+
+    // Already on the page, the officer follows the sidebar entry: a bare
+    // address again. The page does not land a second time; the tab counts
+    // (Public 2) show where the work is, as the guide says.
+    act(() => nav.setQuery(""));
+    await waitFor(() =>
+      expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true"),
+    );
+    await countsLoaded();
+    expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
+    expect(tab(/^Public Requests/)).toHaveTextContent("Public Requests2");
+  });
+
+  it("lists the tabs in the order the landing rule reads them", async () => {
+    serveCounts({});
+    render(<BookingRequestsPage />);
+    await countsLoaded();
+
+    // Stated here, not derived from the page's own label table.
+    const label = {
+      approvals: "Approvals",
+      changes: "Changes",
+      exceptions: "Policy Exceptions",
+      public: "Public Requests",
+    } as const;
+    expect(
+      screen.getAllByRole("tab").map((trigger) => trigger.textContent),
+    ).toEqual(BOOKING_REQUESTS_TABS.map((value) => label[value]));
   });
 
   it("stays on Approvals with no badges when nothing is waiting", async () => {

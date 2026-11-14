@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { buildBookingReviewListWhere } from "@/lib/booking-request-queue-where";
 import {
   bookingReviewReasonCodes,
   bookingReviewReasonSentences,
@@ -26,10 +27,8 @@ export async function GET(req: NextRequest) {
   }
 
   const { status, page, pageSize } = parsed.data;
-  const where = {
-    deletedAt: null,
-    ...(status === "ALL" ? { adminReviewStatus: { not: null } } : { adminReviewStatus: status }),
-  } as const;
+  // Shared with the Approvals tab's pending badge (#4969).
+  const where = buildBookingReviewListWhere(status);
 
   const [rows, total] = await Promise.all([
     prisma.booking.findMany({

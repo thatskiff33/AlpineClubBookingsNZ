@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { buildModificationExceptionQueueWhere, buildNewBookingExceptionQueueWhere } from "@/lib/booking-request-queue-where";
 import { addDaysDateOnly, parseDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
@@ -2161,18 +2162,15 @@ export async function readUnifiedExceptionQueue(input: {
   pageSize: number;
   total: number;
 }> {
-  const statusWhere =
-    input.status === "ALL" ? {} : { status: input.status };
-
   const [newBookingRows, modificationRows] = await Promise.all([
     prisma.newBookingPolicyExceptionRequest.findMany({
-      where: statusWhere,
+      where: buildNewBookingExceptionQueueWhere(input.status),
       include: { requestedBy: ACTOR_SELECT, reviewedBy: ACTOR_SELECT },
       orderBy: { createdAt: "desc" },
       take: UNIFIED_QUEUE_SOURCE_CAP,
     }),
     prisma.bookingChangeRequest.findMany({
-      where: { kind: "POLICY_EXCEPTION", ...statusWhere },
+      where: buildModificationExceptionQueueWhere(input.status),
       include: { requestedBy: ACTOR_SELECT, reviewedBy: ACTOR_SELECT },
       orderBy: { createdAt: "desc" },
       take: UNIFIED_QUEUE_SOURCE_CAP,

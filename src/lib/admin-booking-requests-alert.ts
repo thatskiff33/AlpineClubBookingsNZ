@@ -10,12 +10,11 @@ function countPhrase(count: number, noun: string): string | null {
   return count > 0 ? `${count} ${noun}${count === 1 ? "" : "s"}` : null;
 }
 
-/** "a", "a and b", "a, b and c". */
-function joinWithAnd(parts: readonly string[]): string {
-  return parts.length <= 1
-    ? (parts[0] ?? "")
-    : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-}
+/** "a", "a and b", "a, b and c" (no serial comma, as NZ English writes it). */
+const QUEUE_LIST = new Intl.ListFormat("en-NZ", {
+  style: "long",
+  type: "conjunction",
+});
 
 /**
  * The admin dashboard's Booking Requests card (#4969): null when no queue has
@@ -36,6 +35,6 @@ export function describeBookingRequestsAlert(
   if (phrases.length === 0) return null;
   return {
     href: buildBookingRequestsHref(firstBookingRequestsTabWithWork(tabCounts)),
-    summary: joinWithAnd(phrases),
+    summary: QUEUE_LIST.format(phrases),
   };
 }
