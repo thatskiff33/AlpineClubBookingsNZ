@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const mocks = vi.hoisted(() => ({
+  releaseBookingPromoRedemptions: vi.fn(async () => 0),
   paymentFindMany: vi.fn(),
   transaction: vi.fn(),
   txExecuteRaw: vi.fn(),
@@ -42,6 +43,12 @@ const mocks = vi.hoisted(() => ({
   paymentFindUnique: vi.fn(),
   sendAdminInternetBankingHoldKeptAlert: vi.fn(),
   sendAdminInternetBankingHoldStartedStayAlert: vi.fn(),
+}));
+
+// Promo arithmetic is exercised against PostgreSQL in cancelled-booking-promo-release.realdb.test.ts.
+vi.mock("@/lib/promo", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/promo")),
+  releaseBookingPromoRedemptions: mocks.releaseBookingPromoRedemptions,
 }));
 
 // #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
@@ -555,6 +562,13 @@ describe("releaseExpiredInternetBankingHolds credit-note durability (#1357)", ()
     expect(emailCall[8]).toBe(2000);
     // #3792: an expired hold is not the member's cancel, so no policy wording.
     expect(emailCall[10]).toBe("in-full");
+  });
+
+  it("releases the expired booking's promo uses on the release transaction, once (#4909)", async () => {
+    const result = await releaseExpiredInternetBankingHolds(NOW);
+
+    expect(result.released).toBe(1);
+    expect(mocks.releaseBookingPromoRedemptions.mock.calls).toEqual([[txRef.current, "booking_ib_1"]]);
   });
 
   it("#3611: posts the released booking's reversals, nothing kept, on the release transaction", async () => {
