@@ -15,6 +15,7 @@ export * from "./admin-alerts-internet-banking";
 export * from "./admin-alerts-late-capture";
 export * from "./admin-alerts-settlement";
 export * from "./admin-alerts-unrecognised-stripe-payment";
+export * from "./admin-alerts-stripe-dispute";
 export * from "./admin-alerts-ops";
 export * from "./admin-alerts-group-joiner-started-stay";
 export * from "./admin-alerts-internet-banking-started-stay";
