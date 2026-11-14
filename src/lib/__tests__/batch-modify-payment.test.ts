@@ -68,6 +68,7 @@ const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queue
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
+const mockEnqueueXeroRefundCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_refund_credit_note", message: "queued" });
 const mockEnqueueXeroModificationAccountCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_account_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
@@ -325,6 +326,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
+  enqueueXeroRefundCreditNoteOperation: mockEnqueueXeroRefundCreditNoteOperation,
   enqueueXeroModificationAccountCreditNoteOperation: mockEnqueueXeroModificationAccountCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
@@ -3057,18 +3059,13 @@ describe("PUT /api/bookings/[id]/modify", () => {
       });
 
       await Promise.resolve();
-      expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-        {
-          bookingId: "bk1",
-          refundAmountCents: 5000,
-          bookingModificationId: "mod_1",
-          // `INV-PAY-101`: a member's ordinary edit refunds the card.
-          refundMethod: "card",
-        },
-        {
-          createdByMemberId: "m1",
-        }
-      );
+      // #3993: a card refund of a price cut is the payment's refund note, not a
+      // modification note the card-paid invoice cannot take.
+      expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_1", 5000, {
+        refundMethod: "card",
+        createdByMemberId: "m1",
+      });
+      expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -3184,10 +3181,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
       expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
 
       await Promise.resolve();
-      expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-        expect.objectContaining({ bookingId: "bk1", refundAmountCents: 5000 }),
-        expect.anything(),
-      );
+      // #3993: the card refund is the payment's refund note.
+      expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_1", 5000, expect.objectContaining({ refundMethod: "card" }));
+      expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
       expect(sendBookingModifiedEmail).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -4069,18 +4065,13 @@ describe("PUT /api/bookings/[id]/modify", () => {
     );
 
     await Promise.resolve();
-    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-      {
-        bookingId: "bk1",
-        refundAmountCents: 4000,
-        bookingModificationId: "mod_1",
-        // `INV-PAY-101`: a member's ordinary edit refunds the card.
-        refundMethod: "card",
-      },
-      {
-        createdByMemberId: "m1",
-      }
-    );
+    // #3993: a card refund of a price cut is the payment's refund note, not a
+    // modification note the card-paid invoice cannot take.
+    expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay_1", 4000, {
+      refundMethod: "card",
+      createdByMemberId: "m1",
+    });
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 
   it("rejects paid reductions without a settlement method", async () => {
