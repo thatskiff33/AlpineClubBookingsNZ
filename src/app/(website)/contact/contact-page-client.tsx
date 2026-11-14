@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Mail, MapPin, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
@@ -196,7 +197,7 @@ export function ContactPageClient({
                     : undefined
                 }
               >
-                <div role="status">
+                <StatusRegion visible={status === "sent"}>
                   {status === "sent" ? (
                     <>
                       <h3 className="font-semibold text-success-11 mb-1">
@@ -208,7 +209,7 @@ export function ContactPageClient({
                       </p>
                     </>
                   ) : null}
-                </div>
+                </StatusRegion>
                 {status === "sent" ? (
                   <Button
                     ref={sendAnotherRef}
