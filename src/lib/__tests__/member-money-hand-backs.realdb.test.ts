@@ -1,6 +1,7 @@
+import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
-import { postBookingReceipts, postHandBackObligation } from "@/lib/member-money/doors";
+import { postBookingReceipts, postHandBackObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
 import { memberMoneyEventKeys, postMemberMoneyEvent } from "@/lib/member-money";
 import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/application-read";
 import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@/lib/member-money/internal/application-state";
@@ -10,12 +11,18 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
+import { raceSession } from "./support/race-session-double";
 
 /**
  * #4516 (Ledger M4d, owner decision 14 Nov 2026, Q6): a bank or cash hand-back the journal holds as a debt cannot be
  * dismissed until the four-way dismissal ships. Proved on PostgreSQL through the real `resolveManualRefundTask`: the
  * refused dismissal leaves the task OPEN and its R05 open, writes no journal batch and no audit row, and a later
  * "Mark paid" posts R14 applied to that same R05.
+ *
+ * And (#4516 review A, B) each raise through its real door posts one R05 for the task's cents, which Mark paid then
+ * pays: the cash cancellation (`cancelBooking`), a card shortfall's bank part and part to check
+ * (`raiseCancelCardShortfallHandBack`), and an approved appeal's bank part (`PUT /api/admin/refund-requests/[id]`),
+ * which posts its concession against goodwill so the member owes nothing once it is paid.
  *
  * DATABASE_URL must point at the race database before any import builds the Prisma client (#4516 review).
  */
@@ -29,6 +36,7 @@ vi.hoisted(() => {
 vi.mock("@/lib/stripe", async (importOriginal) =>
   (await import("./support/stripe-race-double")).stripeRaceDouble(await importOriginal()),
 );
+vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")).raceAuthDouble());
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const PREFIX = "race-m4d-";
@@ -89,7 +97,52 @@ const resolve = (taskId: string, outcome: "completed" | "dismissed") => outcome 
     direction: "REFUND_TO_MEMBER", handedBackInCash: false, recordedNightPrices: null }, CLUB_FORMAT_TEST);
 const state = (id: string) => db.$transaction((tx) => readMemberMoneyApplicationState(tx, id));
 const family = async (id: string, key: string) => memberMoneyApplicationTotals(await state(id)).families.get(key) ?? { funded: 0, paid: 0, reserved: 0 };
+const ADMIN = `${PREFIX}admin`;
+/** Signed balance (debit positive) of one account on the booking's journal lines. */
+const balance = async (bookingId: string, account: string) => (await db.memberMoneyLine.findMany({ where: { bookingId, account: account as never }, select: { side: true, amountCents: true } }))
+  .reduce((sum, l) => sum + (l.side === "DEBIT" ? 1 : -1) * l.amountCents, 0);
+/** Every R05 batch posted for one hand-back task: its face, and whether it is still live. */
+const handBackDebts = async (taskId: string) => db.memberMoneyObligation.findMany({ where: { obligationKey: { startsWith: memberMoneyEventKeys.refundObligation("hand-back", taskId) } }, select: { obligationKey: true, faceCents: true } });
+const markPaid = (taskId: string) => resolution.resolveManualRefundTask({ taskId, resolution: "completed", note: null, actingMemberId: names.officerId, confirmedAmountCents: null,
+  direction: "REFUND_TO_MEMBER", handedBackInCash: false, recordedNightPrices: null }, CLUB_FORMAT_TEST);
+const r14Lines = async (taskId: string) => (await eventOf(memberMoneyEventKeys.handBackPaid(taskId)))?.journal?.lines.map((l) => `${l.side} ${l.account} ${l.amountCents}`).sort();
+const r14Applied = async (taskId: string) => (await eventOf(memberMoneyEventKeys.handBackPaid(taskId)))?.journal?.applications.reduce((sum, a) => sum + a.amountCents, 0);
+
+/** A booking whose R01 is in the journal and whose charges are collected: one row per [source, cents]. */
+async function chargedBooking(charges: ReadonlyArray<["STRIPE" | "INTERNET_BANKING", number]>, cancelled = true) {
+  const id = `${PREFIX}${++sequence}`;
+  const total = charges.reduce((sum, [, cents]) => sum + cents, 0);
+  const where = { bookingId: id, lodgeId: names.lodgeId };
+  await createHistoryBooking(db, names, id, { payment: { amountCents: total, source: charges[0]![0] } });
+  await db.$transaction((tx) => postMemberMoneyEvent(tx, context, {
+    kind: "CHARGE", eventKey: memberMoneyEventKeys.bookingCharge(id), origin: "APP", source: { kind: "BOOKING", id, version: "1" }, reason: "Synthetic R01",
+    obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId: names.memberId }, faceCents: total, evidence: {} }],
+    legs: [
+      { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: total, booking: where, debtor: { kind: "MEMBER", memberId: names.memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: total, booking: where, chargeIdentity: `booking:${id}:test`, evidence: {} },
+    ] }));
+  const rows = [];
+  for (const [source, cents] of charges) {
+    rows.push(await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source, kind: "PRIMARY", status: "SUCCEEDED", amountCents: cents,
+      stripePaymentIntentId: source === "STRIPE" ? `pi_${id}_${rows.length}` : null } }));
+  }
+  await db.$transaction(async (tx) => {
+    await tx.payment.update({ where: { id: `${id}-payment` }, data: { status: "SUCCEEDED", ...(charges[0]![0] === "STRIPE" ? { stripePaymentIntentId: `pi_${id}_0` } : {}) } });
+    await syncBookingLedgerSettlements({ paymentId: `${id}-payment`, store: tx });
+    await postBookingReceipts(tx, context, { paymentId: `${id}-payment`, decision: { transactionIds: rows.map((r) => r.id), collect: true } });
+    if (cancelled) await tx.booking.update({ where: { id }, data: { status: "CANCELLED" } });
+  });
+  return id;
+}
+
 const eventOf = (eventKey: string) => db.memberMoneyEvent.findUnique({ where: { eventKey }, include: { journal: { include: { reversedBy: true, applications: true, lines: true } } } });
+
+async function cleanup() {
+  await cleanHistories(db, PREFIX);
+  await db.auditLog.deleteMany({ where: { OR: [{ actorMemberId: ADMIN }, { memberId: ADMIN }] } });
+  await db.memberAccessRole.deleteMany({ where: { memberId: ADMIN } });
+  await db.member.deleteMany({ where: { id: ADMIN } });
+}
 
 (RUN ? describe : describe.skip)("M4d bank and cash hand-backs on PostgreSQL: dismissal refused for now (#4516)", { timeout: 60_000 }, () => {
   beforeAll(async () => {
@@ -98,12 +151,14 @@ const eventOf = (eventKey: string) => db.memberMoneyEvent.findUnique({ where: { 
     process.env.DATABASE_URL = url;
     ({ prisma: db } = await import("@/lib/prisma"));
     resolution = await import("@/lib/manual-refund-task-resolution");
-    await cleanHistories(db, PREFIX);
+    await cleanup();
     await seedHistoryFixtures(db, PREFIX);
+    await db.member.create({ data: { id: ADMIN, email: `${ADMIN}@example.invalid`, passwordHash: "not-a-real-password", firstName: "M4d", lastName: "Admin", ageTier: "ADULT",
+      role: "ADMIN", canLogin: true, accessRoles: { create: { role: "ADMIN" } } } });
   }, 60_000);
   afterAll(async () => {
     if (!db) return;
-    await cleanHistories(db, PREFIX);
+    await cleanup();
   }, 60_000);
 
   it("a refused dismissal leaves the task OPEN and its R05 open, writing nothing; Mark paid then posts R14 applied to that R05", async () => {
@@ -131,6 +186,106 @@ const eventOf = (eventKey: string) => db.memberMoneyEvent.findUnique({ where: { 
     expect(r14?.journal?.applications.reduce((sum, a) => sum + a.amountCents, 0)).toBe(8_000);
     expect(await family(id, r05)).toMatchObject({ paid: 8_000 });
     expect((await eventOf(r05))?.journal?.reversedBy).toBeNull();
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+  it("MUTATION (review B): a cash cancellation through the real cancelBooking posts one R05 for its task's cents; Mark paid applies R14 to it", async () => {
+    const id = `${PREFIX}${++sequence}`;
+    await createHistoryBooking(db, names, id, { payment: { amountCents: 20_000, source: "INTERNET_BANKING" } });
+    const { markBookingPaymentManuallySettled } = await import("@/lib/payment-reconciliation");
+    await markBookingPaymentManuallySettled({ bookingId: id, actingAdminMemberId: names.officerId, note: "cash at the lodge", expectedAmountCents: 20_000, notifyMember: false, format: CLUB_FORMAT_TEST });
+    expect(await eventOf(memberMoneyEventKeys.bookingCharge(id))).not.toBeNull(); // the settle posted R01: the booking is in the population
+    const { cancelBooking } = await import("@/lib/booking-cancel");
+    expect((await cancelBooking(id, names.officerId, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card")).status).toBe(200);
+    const task = await db.manualRefundTask.findFirstOrThrow({ where: { bookingId: id }, select: { id: true, amountCents: true } });
+    expect(task.amountCents).toBe(10_000);
+    expect(await handBackDebts(task.id)).toEqual([{ obligationKey: memberMoneyEventKeys.refundObligation("hand-back", task.id), faceCents: 10_000 }]);
+
+    await markPaid(task.id);
+    expect(await r14Lines(task.id)).toEqual(["CREDIT BANK 10000", "DEBIT REFUND_PAYABLE 10000"]);
+    expect(await r14Applied(task.id)).toBe(10_000);
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  it("MUTATION (review B): a card shortfall's bank part and part to check each post one R05 for their cents at the raise; Mark paid applies R14 to each", async () => {
+    const id = await chargedBooking([["STRIPE", 14_000], ["INTERNET_BANKING", 6_000]]);
+    const { raiseCancelCardShortfallHandBack } = await import("@/lib/cancel-card-refund-shortfall");
+    const shortfall = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      return raiseCancelCardShortfallHandBack(tx, { bookingId: id, paymentId: `${id}-payment`, refundAmountCents: 20_000, plannedCardRefundCents: 0, format: CLUB_FORMAT_TEST, journal: context, actorMemberId: names.officerId });
+    });
+    const bank = shortfall!.bank!;
+    const check = shortfall!.check!;
+    expect([bank.cents, check.cents]).toEqual([6_000, 14_000]);
+    expect(await handBackDebts(bank.taskId)).toEqual([{ obligationKey: memberMoneyEventKeys.refundObligation("hand-back", bank.taskId), faceCents: 6_000 }]);
+    expect(await handBackDebts(check.taskId)).toEqual([{ obligationKey: memberMoneyEventKeys.refundObligation("hand-back", check.taskId), faceCents: 14_000 }]);
+
+    await markPaid(bank.taskId);
+    await markPaid(check.taskId);
+    expect(await r14Applied(bank.taskId)).toBe(6_000);
+    expect(await r14Applied(check.taskId)).toBe(14_000);
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  it("MUTATION (review A): an appeal approved by bank through the real route posts its concession; once paid the member owes nothing, goodwill carries it, refund payable is clear", async () => {
+    const id = await chargedBooking([["INTERNET_BANKING", 10_000]]); // cancelled with nothing refunded
+    expect(await balance(id, "MEMBER_RECEIVABLE")).toBe(0);
+    const requestId = `${id}-appeal`;
+    await db.refundRequest.create({ data: { id: requestId, bookingId: id, memberId: names.memberId, reason: "race m4d appeal", requestedAmountCents: 10_000 } });
+    const email = await import("@/lib/email");
+    const spy = vi.spyOn(email, "sendEmail").mockResolvedValue(undefined as never);
+    raceSession.current = { user: { id: ADMIN, role: "ADMIN" } };
+    try {
+      const { PUT } = await import("@/app/api/admin/refund-requests/[id]/route");
+      const response = await PUT(new NextRequest(`http://localhost/api/admin/refund-requests/${requestId}`, {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "APPROVED", approvedAmountCents: 10_000, notifyMember: false }),
+      }), { params: Promise.resolve({ id: requestId }) });
+      expect(response.status).toBe(200);
+    } finally {
+      raceSession.current = null;
+      spy.mockRestore();
+    }
+    const task = await db.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: `refund-request-hand-back:${requestId}` }, select: { id: true, amountCents: true } });
+    expect(task.amountCents).toBe(10_000);
+    expect(await handBackDebts(task.id)).toEqual([{ obligationKey: memberMoneyEventKeys.refundObligation("hand-back", task.id), faceCents: 10_000 }]);
+    expect(await balance(id, "GOODWILL")).toBe(10_000);
+
+    await markPaid(task.id);
+    expect(await balance(id, "MEMBER_RECEIVABLE")).toBe(0);
+    expect(await balance(id, "GOODWILL")).toBe(10_000);
+    expect(await balance(id, "REFUND_PAYABLE")).toBe(0);
+    expect(await r14Lines(task.id)).toEqual(["CREDIT BANK 10000", "DEBIT REFUND_PAYABLE 10000"]);
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  it("(review A) a released appeal approval reverses the bank part's concession with its R05; the re-approval's new task posts it once again", async () => {
+    const id = await chargedBooking([["INTERNET_BANKING", 10_000]]);
+    const { raiseRefundRequestHandBack } = await import("@/lib/edit-refund-hand-back");
+    const { refundRequestHandBackOccurrenceKey } = await import("@/lib/manual-refund-task-settlement-rules");
+    const requestId = `${id}-appeal`;
+    await db.refundRequest.create({ data: { id: requestId, bookingId: id, memberId: names.memberId, reason: "race m4d appeal", requestedAmountCents: 10_000 } });
+    const approve = () => db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const booking = await tx.booking.findUniqueOrThrow({ where: { id }, include: { payment: true } });
+      await raiseRefundRequestHandBack(tx, { bookingId: id, paymentId: `${id}-payment`, refundRequestId: requestId, amountCents: 10_000, booking, journal: context, actorMemberId: ADMIN });
+      return (await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: refundRequestHandBackOccurrenceKey(requestId) }, select: { id: true } })).id;
+    });
+    const first = await approve();
+    // The release, as `release_claim` runs it: the OPEN task deleted, its R05 withdrawn, under lock(1).
+    await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await tx.manualRefundTask.deleteMany({ where: { occurrenceKey: refundRequestHandBackOccurrenceKey(requestId), status: "OPEN" } });
+      expect(await withdrawRefundObligation(tx, context, { bookingId: id, scope: "hand-back", id: first, actorMemberId: ADMIN, reason: "release", senderKeyPrefix: `refund_request_refund_${requestId}` })).toBe(true);
+    });
+    expect(await balance(id, "GOODWILL")).toBe(0);
+    expect(await balance(id, "REFUND_PAYABLE")).toBe(0);
+    expect(await balance(id, "MEMBER_RECEIVABLE")).toBe(0);
+
+    const second = await approve();
+    expect(second).not.toBe(first);
+    expect(await handBackDebts(second)).toEqual([{ obligationKey: memberMoneyEventKeys.refundObligation("hand-back", second), faceCents: 10_000 }]);
+    expect(await balance(id, "GOODWILL")).toBe(10_000);
+    expect(await balance(id, "REFUND_PAYABLE")).toBe(-10_000);
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
   });
 });

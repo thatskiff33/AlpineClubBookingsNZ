@@ -569,10 +569,16 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
       paidBy("INTERNET_BANKING");
       stripePlans(0);
+      mocks.manualRefundTaskFindUniqueOrThrow.mockResolvedValueOnce({ id: "hand-back-1", amountCents: 2500 });
 
       const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
 
       expect(response.status).toBe(200);
+      // #4516 (M4d review A): MUTATION - the bank part's R05 posts in the approval's transaction, as a concession
+      // like the card part's (Dr goodwill), so the member's receivable is left at zero once it is paid.
+      const { postHandBackObligation } = await import("@/lib/member-money/doors");
+      expect(vi.mocked(postHandBackObligation)).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.anything(), expect.objectContaining({
+        bookingId: "booking_1", taskId: "hand-back-1", amountCents: 2500, concession: true, debtorRead: "booking-row", actorMemberId: "admin_1" }));
       expect(mocks.manualRefundTaskCreateMany).toHaveBeenCalledTimes(1);
       expect(mocks.manualRefundTaskCreateMany).toHaveBeenCalledWith({
         data: [
@@ -694,6 +700,8 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
       mocks.enqueueRefundRequestRefundRecovery.mockRejectedValue(new Error("db unavailable"));
 
+      mocks.manualRefundTaskFindFirst.mockResolvedValueOnce({ id: "hand-back-1" } as never);
+
       const response = await PUT(approveFor(2500), { params: Promise.resolve({ id: "refund_1" }) });
 
       expect(response.status).toBe(500);
@@ -711,9 +719,12 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
         mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0],
       );
       // MUTATION (#4516, M4c probe 10): the approval's R05 is withdrawn in that same transaction, after the release.
-      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledTimes(1);
+      // MUTATION (#4516, M4d): and so is the bank part's hand-back R05, its concession with it.
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledTimes(2);
       expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
         scope: "refund-request", id: "refund_1", actorMemberId: "admin_1" }));
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({
+        scope: "hand-back", id: "hand-back-1", actorMemberId: "admin_1" }));
       expect(mocks.manualRefundTaskDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(withdrawRefundObligation).mock.invocationCallOrder[0]!);
     });
 

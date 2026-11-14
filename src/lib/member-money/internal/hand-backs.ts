@@ -41,8 +41,13 @@ type Db = Prisma.TransactionClient;
 type Account = "BANK" | "CASH";
 
 const HAND_BACK_OWED = "Refund owed, to be paid by bank or in cash";
+const APPEAL_HAND_BACK_OWED = "Refund owed: an approved appeal's concession, to be paid by bank or in cash";
 
-/** R05 for one hand-back task. Returns the obligation's key, or null when nothing posts. */
+/**
+ * R05 for one hand-back task. Returns the obligation's key, or null when nothing posts. `concession` is an approved
+ * appeal's bank part: its give-back posts against approved goodwill first, by the same rule as the appeal's card
+ * part (`postRefundObligation`'s concession legs, design R05), so the member's receivable is left at zero once paid.
+ */
 export async function postHandBackObligation(tx: Db, context: BookingJournalContext, input: {
   bookingId: string;
   taskId: string;
@@ -50,10 +55,12 @@ export async function postHandBackObligation(tx: Db, context: BookingJournalCont
   origin: MemberMoneyOrigin;
   actorMemberId?: string | null;
   debtorRead: "booking-row" | "plain";
+  concession?: boolean;
 }): Promise<MemberMoneyEventKey | null> {
   return postRefundObligation(tx, context, {
     bookingId: input.bookingId, scope: "hand-back", id: input.taskId, amountCents: input.amountCents,
-    origin: input.origin, actorMemberId: input.actorMemberId, debtorRead: input.debtorRead, reason: HAND_BACK_OWED,
+    origin: input.origin, actorMemberId: input.actorMemberId, debtorRead: input.debtorRead,
+    concession: input.concession, reason: input.concession ? APPEAL_HAND_BACK_OWED : HAND_BACK_OWED,
   });
 }
 

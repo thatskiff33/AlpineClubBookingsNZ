@@ -198,7 +198,8 @@ export async function raiseRefundRequestHandBack(
   if (params.journal) {
     const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: refundRequestHandBackOccurrenceKey(refundRequestId) }, select: { id: true, amountCents: true } });
     if (task.amountCents) {
-      await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "OFFICER", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row" });
+      // An appeal's give-back is a concession, as the card part's is (refund-requests/[id]/route.ts, design R05).
+      await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "OFFICER", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row", concession: true });
     }
   }
   return raised.count;

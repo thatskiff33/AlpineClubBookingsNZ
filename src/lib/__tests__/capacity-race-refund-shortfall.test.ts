@@ -31,6 +31,9 @@ vi.mock("@/lib/logger", () => ({ default: log }));
 vi.mock("@/lib/email", () => ({ sendAdminManualRefundTaskAlert: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("server-only", () => ({}));
+// #4516 (M4d review B): the part's R05 is the journal's (`member-money-hand-backs.test.ts`); here, that the raise asks for it.
+const handBackDoor = vi.hoisted(() => ({ postHandBackObligation: vi.fn(async () => null) }));
+vi.mock("@/lib/member-money/doors", () => handBackDoor);
 
 import {
   alertCapacityRaceRefundShortfall,
@@ -151,6 +154,18 @@ describe("the capacity race's refund shortfall task (#4154, INV-PAY-135)", () =>
     expect(task.reason).toContain("If it is owed, mark this paid back first, once the card refund has gone through, then pay it by bank transfer straight after the app accepts");
     expect(task.reason).not.toMatch(/pay it by bank transfer and mark/i);
     expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4516 review B): with the void's journal context, the part's R05 posts beside it for its cents; without one, none", async () => {
+    const store = claimTx();
+    const journal = { inactive: "unusable-currency", detail: "a stand-in context; the door is a double here" } as const;
+    expect(await raiseCapacityRaceRefundShortfallTask(store as never, { bookingId: "booking-1", paymentId: "payment-1", paymentIntentId: "pi_1", chargedCents: 10000, plannedRefundCents: 8000, format: CLUB_FORMAT_TEST, journal })).toBe(true);
+    expect(handBackDoor.postHandBackObligation).toHaveBeenCalledExactlyOnceWith(store, journal, expect.objectContaining({
+      bookingId: "booking-1", taskId: store.rows[CHECK_KEY]!.id, amountCents: 2000, debtorRead: "booking-row" }));
+
+    vi.clearAllMocks();
+    await raiseTask(claimTx(), 8000);
+    expect(handBackDoor.postHandBackObligation).not.toHaveBeenCalled();
   });
 
   it("the reason fits its limit at its longest, so nothing is cut", () => {

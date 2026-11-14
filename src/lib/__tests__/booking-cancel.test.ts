@@ -2931,6 +2931,9 @@ describe("cancelBooking credit refunds", () => {
         data: [expect.objectContaining({ amountCents: 5000, raisedAmountCents: 5000, occurrenceKey: "cancel-card-shortfall:booking_1:check" })],
         skipDuplicates: true,
       });
+      // #4516 (M4d review B): MUTATION - the part to check's R05 posts with it, for exactly its cents.
+      expect(receiptDoors.postHandBackObligation).toHaveBeenCalledExactlyOnceWith(mocks.lastTx, expect.anything(), expect.objectContaining({
+        bookingId: "booking_1", taskId: "task_shortfall", amountCents: 5000, debtorRead: "booking-row" }));
       // Nothing went to the card, so nothing is recorded as refunded to it.
       expect(mocks.recordBookingEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "REFUNDED" }));
       // Nothing holds it, so no bank transfer is promised.
@@ -2980,6 +2983,9 @@ describe("cancelBooking credit refunds", () => {
           ],
           skipDuplicates: true,
         });
+        // #4516 (M4d review B): MUTATION - the bank part's R05 posts with it, for exactly its cents.
+        expect(receiptDoors.postHandBackObligation).toHaveBeenCalledExactlyOnceWith(mocks.lastTx, expect.anything(), expect.objectContaining({
+          bookingId: "booking_1", taskId: "task_shortfall", amountCents: 2000, debtorRead: "booking-row" }));
         // On the claim's own transaction client, so it commits with the CANCELLED flip.
         expect(mocks.txManualRefundTaskCreateMany.mock.invocationCallOrder[0]).toBeLessThan(
           mocks.refundPaymentTransactions.mock.invocationCallOrder[0],
@@ -3091,6 +3097,9 @@ describe("cancelBooking credit refunds", () => {
         expect(result).toMatchObject({ status: 200, data: { refundMethod: "manual" } });
         expect(mocks.txManualRefundTaskCreate).toHaveBeenCalledTimes(1);
         expect(mocks.txManualRefundTaskCreateMany).not.toHaveBeenCalled();
+        // #4516 (M4d review B): MUTATION - the cash hand-back's R05 posts beside its task, on the claim's client, once.
+        expect(receiptDoors.postHandBackObligation).toHaveBeenCalledExactlyOnceWith(mocks.lastTx, expect.anything(), expect.objectContaining({
+          bookingId: "booking_1", taskId: "task_cash", amountCents: mocks.txManualRefundTaskCreate.mock.calls[0][0].data.amountCents, debtorRead: "booking-row" }));
         expect(mocks.sendAdminManualRefundTaskAlert).toHaveBeenCalledTimes(1);
         expect(mocks.sendAdminManualRefundTaskAlert.mock.calls[0][0].situation).toBeUndefined();
       });

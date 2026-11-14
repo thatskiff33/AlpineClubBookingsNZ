@@ -90,7 +90,7 @@ export async function postRefundObligation(tx: Db, context: BookingJournalContex
   ];
   await postMemberMoneyEvent(tx, context, { kind: "REFUND_OBLIGATION", eventKey: chain.next, origin: door.origin,
     actorMemberId: door.actorMemberId ?? null, source: { kind: "BOOKING", id: door.bookingId, version: chain.next },
-    reason: door.concession ? "Refund owed: an approved appeal's concession and its card refund" : (door.reason ?? "Refund owed by card"),
+    reason: door.reason ?? (door.concession ? "Refund owed: an approved appeal's concession and its card refund" : "Refund owed by card"),
     obligations: [{ key: chain.next, kind: "REFUND", debtor, faceCents: door.amountCents, evidence }], legs });
   return chain.next;
 }

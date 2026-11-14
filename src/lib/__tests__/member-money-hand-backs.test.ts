@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from "vitest";
 import logger from "@/lib/logger";
 import { memberMoneyEventKeys as keys, postMemberMoneyEvent, type MemberMoneyDebtor } from "@/lib/member-money";
-import { postBookingReceipts, postHandBackObligation, postHandBackPayment, postKeptCapture, reverseKeptCapture } from "@/lib/member-money/doors";
+import { postBookingReceipts, postHandBackObligation, postHandBackPayment, postKeptCapture, reverseKeptCapture, withdrawRefundObligation } from "@/lib/member-money/doors";
 import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@/lib/member-money/internal/application-state";
 import { MemberMoneyMemoryDb } from "./support/member-money-memory-db";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
@@ -140,6 +140,51 @@ describe("R14 when a hand-back is marked paid", () => {
     t.db.seed("booking", { id: "outside", lodgeId: LODGE, memberId: A });
     expect(await postHandBackPayment(t.db.tx, context, { bookingId: "outside", taskId: "t-out", cents: 1, account: "BANK", fundingTransactionIds: [], actorMemberId: OFFICER, debtorRead: "plain" })).toBe(0);
     expect(t.event(keys.handBackPaid(TASK))).toBeNull();
+  });
+});
+
+describe("an approved appeal's bank part (#4516 review A)", () => {
+  /** Signed balance (debit positive) of one account across the booking's lines. */
+  const balance = (t: Awaited<ReturnType<typeof setup>>, account: string) => t.db.rows("memberMoneyLine", { bookingId: t.id, account })
+    .reduce((sum, l) => sum + (l.side === "DEBIT" ? 1 : -1) * Number(l.amountCents), 0);
+  const appeal = (t: Awaited<ReturnType<typeof setup>>, taskId: string, concession: boolean) =>
+    postHandBackObligation(t.db.tx, context, { bookingId: t.id, taskId, amountCents: 10_000, origin: "OFFICER", actorMemberId: OFFICER, debtorRead: "booking-row", concession });
+
+  it("MUTATION: posts the concession against goodwill, so once paid the member owes nothing and refund payable is clear", async () => {
+    const t = await setup();
+    const row = await t.capture(10_000); // paid in full; the cancellation (not modelled) refunded nothing
+    expect(balance(t, "MEMBER_RECEIVABLE")).toBe(0);
+    const root = await appeal(t, "appeal-task", true);
+    expect(t.linesOf(root!)).toEqual(["CREDIT MEMBER_RECEIVABLE 10000", "CREDIT REFUND_PAYABLE 10000", "DEBIT GOODWILL 10000", "DEBIT MEMBER_RECEIVABLE 10000"]);
+    await postHandBackPayment(t.db.tx, context, { bookingId: t.id, taskId: "appeal-task", cents: 10_000, account: "BANK", fundingTransactionIds: [row.id], actorMemberId: OFFICER, debtorRead: "booking-row" });
+    expect(balance(t, "MEMBER_RECEIVABLE")).toBe(0);
+    expect(balance(t, "GOODWILL")).toBe(10_000);
+    expect(balance(t, "REFUND_PAYABLE")).toBe(0);
+    expect(t.linesOf(keys.handBackPaid("appeal-task"))).toEqual(["CREDIT BANK 10000", "DEBIT REFUND_PAYABLE 10000"]);
+    expect(t.caps()).toEqual([]);
+  });
+
+  it("CONTROL: without the concession the member would be left owing the whole appeal", async () => {
+    const t = await setup();
+    const row = await t.capture(10_000);
+    await appeal(t, "appeal-task", false);
+    await postHandBackPayment(t.db.tx, context, { bookingId: t.id, taskId: "appeal-task", cents: 10_000, account: "BANK", fundingTransactionIds: [row.id], actorMemberId: OFFICER, debtorRead: "booking-row" });
+    expect(balance(t, "MEMBER_RECEIVABLE")).toBe(10_000);
+  });
+
+  it("a released approval reverses the concession with its debt, and a re-approval's new task posts it again once", async () => {
+    const t = await setup();
+    await t.capture(10_000);
+    await appeal(t, "appeal-task", true);
+    t.db.globalLockHeld = true; // release_claim holds lock(1)
+    expect(await withdrawRefundObligation(t.db.tx, context, { bookingId: t.id, scope: "hand-back", id: "appeal-task", reason: "release_claim", senderKeyPrefix: "refund_request_refund_x" })).toBe(true);
+    expect(balance(t, "GOODWILL")).toBe(0);
+    expect(balance(t, "REFUND_PAYABLE")).toBe(0);
+    expect(balance(t, "MEMBER_RECEIVABLE")).toBe(0);
+    await appeal(t, "appeal-task-2", true); // the re-approval raises a new task
+    expect(balance(t, "GOODWILL")).toBe(10_000);
+    expect(balance(t, "REFUND_PAYABLE")).toBe(-10_000);
+    expect(t.caps()).toEqual([]);
   });
 });
 
