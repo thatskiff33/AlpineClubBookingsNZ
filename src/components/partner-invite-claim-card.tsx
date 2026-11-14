@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 
 export function PartnerInviteClaimCard(props: {
   token: string;
@@ -44,16 +46,14 @@ export function PartnerInviteClaimCard(props: {
 
   return (
     <div className="space-y-3">
-      {message && (
-        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
-          {message}
-        </div>
-      )}
-      {error && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {/* #4949: mounted before the request, so the outcome is announced. */}
+      <StatusRegion
+        visible={Boolean(message)}
+        visibleClassName="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11"
+      >
+        {message}
+      </StatusRegion>
+      <FocusedActionError id="partner-invite-claim-error" error={error} className="px-4 py-3" />
       {joined ? (
         <Button onClick={() => router.push("/profile")}>Go to your profile</Button>
       ) : (

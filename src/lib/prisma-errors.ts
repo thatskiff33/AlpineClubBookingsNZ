@@ -66,7 +66,8 @@ export function isPostgresLockNotAvailable(
  *
  * The one reading (#4656): the linked date move, the refund-note create's
  * record, `waitlist-confirm/route.ts`, `admin/site-style/route.ts`, the
- * deletion release and the return to the waitlist all ask it. Four writers
+ * deletion release, the return to the waitlist and the group invoice email
+ * fence (#4919) all ask it. Four writers
  * keep their own set - `admin/club-time-zone/route.ts`,
  * `admin/club-format/route.ts`, `admin/ai-spend-currency/route.ts` and
  * `environment-safety-override-write.ts` - because theirs also carries

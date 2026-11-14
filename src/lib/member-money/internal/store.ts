@@ -19,7 +19,7 @@ import { MemberMoneyPlanError, type BuiltBatch, type MemberMoneyJournalToReverse
 
 /**
  * THE ONLY PRISMA WRITER OF THE MEMBER-MONEY TABLES (#4626, Ledger M3a).
- * `member-money-journal-inert-census.test.ts` holds that no other file creates
+ * `member-money-journal-writer-census.test.ts` holds that no other file creates
  * a journal row. It writes one built batch in the order the database's
  * immediate foreign keys need: event, journal header, source links,
  * obligations, legs, then the bridge's source postings. The deferred checks
@@ -435,7 +435,10 @@ export interface MemberMoneyReservationPlan {
   fundingJournalId: string;
 }
 
-/** Inert M4a primitive: the caller posts funding in this transaction before reserving. */
+/**
+ * M4a primitive used by the live card-refund reservation door.
+ * The caller posts funding in this transaction before reserving.
+ */
 export async function reserveMemberMoneyRefund(db: Db, plan: MemberMoneyReservationPlan): Promise<{ id: string; replayed: boolean }> {
   await lockMemberMoneyPayment(db, plan.bookingId);
   const prior = await db.memberMoneyRefundReservation.findUnique({ where: { attemptKey: plan.attemptKey }, include: { obligation: true } });
