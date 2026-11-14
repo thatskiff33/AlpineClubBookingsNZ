@@ -1,20 +1,20 @@
 /**
- * #4866 (`INV-PAY-150`): WHAT OF A PAYMENT'S CAPTURED CHARGES A CANCELLATION
+ * #4866 (`INV-PAY-150`): WHAT OF A PAYMENT'S CAPTURED CHARGES A REFUND DOOR
  * LEAVES TO THE SUPERSEDED-INTENT MACHINERY.
  *
  * A superseded intent captured anyway is returned whole by its own refund row
  * (`REFUND_SUPERSEDED_PAYMENT`, R). With no stored plan R sizes its one request
  * on its charge's ledger (#4699, `processRefundSupersededPaymentOperation`), so
- * any other refund of that charge counts as R's progress. A cancellation that
- * refunded part of the charge for the booking (its newest-first card plan,
- * `planCardRefundFromLedger`, or its credit allocation,
+ * any other refund of that charge counts as R's progress. A door that refunded
+ * part of the charge for the booking (its newest-first card plan,
+ * `planCardRefundFromLedger`, or its credit or hand-back allocation,
  * `applyLocalRefundAllocation`) therefore shrank R's request by as much, and R
- * closed with the member short; and where the booking's own money did not
- * reach the policy's cap, the cancellation tiered R's money as if paid for the
- * booking. So the cancellation counts none of what the machinery still owns:
- * it is taken off the money it treats as paid (with the open hand-backs,
- * `INV-PAY-117`), and neither its card plan nor its credit allocation takes any
- * of it, on the claim and (card) on the preview alike.
+ * closed with the member short; and where a door works out what the booking
+ * paid, it could count that capture as paid for the booking. So those doors
+ * count none of what the machinery still owns: it is taken off the money they
+ * treat as paid (with the open hand-backs, `INV-PAY-117`), and neither a card
+ * plan nor a local allocation takes any of it. Read under the caller's Payment
+ * row, in the same transaction as the plan or allocation it feeds.
  *
  * Who owns a capture is the Xero reading's rule, read through its one home
  * (`readSupersededCaptureOwnership`, `superseded-intent-ownership.ts`). Per

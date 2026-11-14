@@ -63,6 +63,8 @@ import {
 } from "@/lib/email/admin-alerts-unrecognised-stripe-payment";
 import { UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
+import { sendAdminStripeDisputeAlert } from "@/lib/email/admin-alerts-stripe-dispute";
+import { STRIPE_DISPUTE_HOLD_NOTE, STRIPE_DISPUTE_NEXT_STEP } from "@/lib/stripe-dispute-note";
 import {
   sendAdminBankTransferSettlementFigureAlert,
   sendAdminSecondInstrumentSettlementConflictAlert,
@@ -565,6 +567,53 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     expect(args.requirement).toEqual({ area: "finance", level: "edit" });
     expect(mocks.sendToAdmins).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { stage: "opened" as const, outcome: "open", status: "OPEN" as const, subject: "Card payment disputed by the cardholder - respond in Stripe: $120.00" },
+    { stage: "closed" as const, outcome: "lost", status: "LOST" as const, subject: "Card payment dispute closed (lost): $120.00" },
+  ])(
+    "admin-stripe-dispute ($stage): {{disputeNextStep}}, {{disputeHoldNote}} and {{disputeSubjectLabel}} say which alert it is and what to do (#4911)",
+    async ({ stage, outcome, status, subject }) => {
+      await sendAdminStripeDisputeAlert({
+        stage,
+        outcome,
+        amount: "$120.00",
+        reason: "fraudulent",
+        openedAt: "1 Jul 2026, 9:00 am",
+        bookingId: "booking_disputed_1",
+        bookingOwner: "Sam Member",
+        disputeId: "dp_1",
+        paymentIntentId: "pi_disputed_1",
+        chargeId: "ch_disputed_1",
+        disputeNextStep: STRIPE_DISPUTE_NEXT_STEP[status],
+        stripeDashboardUrl: "https://dashboard.stripe.com/payments/pi_disputed_1",
+      });
+
+      const data = capturedUnmuteableTemplateData();
+      expect(data.disputeHoldNote).toBe(STRIPE_DISPUTE_HOLD_NOTE);
+      const rendered = renderDefaultBody("admin-stripe-dispute", data);
+      expect(rendered).toContain(STRIPE_DISPUTE_NEXT_STEP[status]);
+      expect(rendered).toContain("the app issues no card refund and no account credit for this payment");
+      expect(rendered).toContain(`Status: ${outcome}`);
+      expect(rendered).toContain("Amount: $120.00");
+      expect(rendered).toContain("Reason: fraudulent");
+      expect(rendered).toContain("Booking: booking_disputed_1");
+      expect(rendered).toContain("Booked by: Sam Member");
+      expect(rendered).toContain("Dispute: dp_1");
+      expect(rendered).toContain("Stripe payment: pi_disputed_1");
+      expect(rendered).toContain("Charge: ch_disputed_1");
+      expect(rendered).toContain("Open in Stripe: https://dashboard.stripe.com/payments/pi_disputed_1");
+      const [args] = mocks.sendUnmuteableAdminAlert.mock.calls[0] as [
+        { subject: string; templateName: string; requirement: unknown },
+      ];
+      // The shipped default subject, rendered with the sender's own data, is the sender's subject.
+      expect(renderTemplateString(EMAIL_AUDIT_DEFAULTS["admin-stripe-dispute"].defaultSubject, data)).toBe(subject);
+      expect(args.subject).toBe(subject);
+      expect(args.templateName).toBe("admin-stripe-dispute");
+      expect(args.requirement).toEqual({ area: "finance", level: "edit" });
+      expect(mocks.sendToAdmins).not.toHaveBeenCalled();
+    },
+  );
 
   it("admin-manual-refund-task: {{handBackNote}} and {{handBackLabel}} say which hand-back it is (#4042)", async () => {
     const send = async (situation?: "group-organiser-internet-banking" | "joiner-cancel-organiser") => {

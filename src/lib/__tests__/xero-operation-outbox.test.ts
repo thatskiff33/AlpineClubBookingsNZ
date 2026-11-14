@@ -64,6 +64,7 @@ const mocks = vi.hoisted(() => ({
   updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
   createXeroKeptLateCaptureInvoice: vi.fn(),
+  createXeroCardRefundReversalInvoice: vi.fn(),
   recordAdditionalCaptureReceipt: vi.fn(),
   createAdminGrantCreditNote: vi.fn(),
   enqueueAdditionalCaptureReceiptOperation: vi.fn(),
@@ -265,6 +266,9 @@ vi.mock("@/lib/xero-supplementary-invoices", () => ({
 vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({
   createXeroKeptLateCaptureInvoice: mocks.createXeroKeptLateCaptureInvoice,
 }));
+vi.mock("@/lib/xero-card-refund-reversal-invoice", () => ({
+  createXeroCardRefundReversalInvoice: mocks.createXeroCardRefundReversalInvoice,
+}));
 vi.mock("@/lib/xero-admin-grant-credit-note", () => ({
   createAdminGrantCreditNote: mocks.createAdminGrantCreditNote,
 }));
@@ -357,7 +361,7 @@ import {
   queueXeroBookingEditSettlement,
 } from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
-import { XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError, XeroRefundCreditNoteUnrecordedError } from "@/lib/xero-applied-credit-operation-serialization";
+import { GroupSettlementInvoiceEmailDeferredError, XeroAppliedCreditOperationBusyError, XeroRefundCreditNoteInFlightError, XeroRefundCreditNoteUnrecordedError } from "@/lib/xero-applied-credit-operation-serialization";
 import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-error-codes";
 import { REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS } from "@/lib/xero-refund-note-in-flight";
 import { matchesWhere } from "./support/prisma-where";
@@ -2524,17 +2528,19 @@ describe("processQueuedXeroOutboxOperations", () => {
       status: "PENDING",
       direction: "OUTBOUND",
       queueType: { in: [...XERO_OUTBOX_QUEUE_TYPES] },
-      // #3954 round 8, #3953 round 3 and #4692 review: rows waiting their turn are spaced out.
+      // #3954 round 8, #3953 round 3, #4692 review, #4431 and #4919: rows waiting their turn are spaced out.
       AND: [
+        expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
         expect.objectContaining({ OR: expect.any(Array) }),
       ],
     });
-    // #4299 and #4431: the pinned types, the organiser extra, and the admin grant note.
-    expect(args.where.queueType.in).toHaveLength(20);
+    // #4299, #4369 and #4431: the pinned types, the organiser extra, the reversal, and the admin grant note.
+    expect(args.where.queueType.in).toHaveLength(21);
     expect(args.where.queueType.in).toContain("ORGANISER_EXTRA_ADJUSTMENT");
+    expect(args.where.queueType.in).toContain("CARD_REFUND_REVERSAL_INVOICE");
     expect(args.where.queueType.in).toContain("ADMIN_GRANT_CREDIT_NOTE");
     // The legacy `requestPayload->>'queueType'` OR predicate is gone.
     expect(args.where.OR).toBeUndefined();
@@ -2645,7 +2651,8 @@ describe("processQueuedXeroOutboxOperations", () => {
     const { BILLED_OFFSET_AWAITING_OWN_NOTE_CODE, BILLED_OFFSET_OWN_NOTE_RECHECK_MS } = await import("@/lib/unpaid-ask-billed-offset-order");
     const { ADDITIONAL_CAPTURE_RECEIPT_RECHECK_MS, ADDITIONAL_CAPTURE_RECEIPT_WAITING_CODE } = await import("@/lib/additional-capture-receipt-gate");
     const { ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS } = await import("@/lib/admin-grant-credit-note");
-    const { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE } = await import("@/lib/xero-operation-error-codes");
+    const { ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE, GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } = await import("@/lib/xero-operation-error-codes");
+    const { GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS } = await import("@/lib/xero-group-settlement-invoice-outbox");
     mocks.findManyOperations.mockResolvedValue([
       {
         id: "op_dealloc_waiting",
@@ -2698,6 +2705,14 @@ describe("processQueuedXeroOutboxOperations", () => {
           { lastErrorCode: null },
           { lastErrorCode: { not: ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE } },
           { updatedAt: { lte: new Date(Date.now() - ADMIN_GRANT_NOTE_AWAITING_RETRY_RECHECK_MS) } },
+        ],
+      },
+      // #4919: a group invoice whose email is owed is asked for again a minute on.
+      {
+        OR: [
+          { lastErrorCode: null },
+          { lastErrorCode: { not: GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } },
+          { updatedAt: { lte: new Date(Date.now() - GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_RECHECK_MS) } },
         ],
       },
     ]);
@@ -2898,6 +2913,40 @@ describe("processQueuedXeroOutboxOperations", () => {
         syncOperation: xeroClaim("op_settle_1"),
       }
     );
+  });
+
+  it("MUTATION (#4919): hands a group invoice whose email is owed back to PENDING under its wait code, never FAILED", async () => {
+    const { GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE } = await import("@/lib/xero-operation-error-codes");
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_settle_1",
+        localId: "settle_1",
+        localModel: "GroupBookingSettlement",
+        createdByMemberId: null,
+        requestPayload: { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: "settle_1" },
+      },
+    ]);
+    mocks.createXeroInvoiceForGroupSettlement.mockRejectedValue(
+      new GroupSettlementInvoiceEmailDeferredError("settle_1", "xinv_1"),
+    );
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toMatchObject({
+      processed: 1,
+      failed: 0,
+      skipped: 1,
+    });
+
+    // Only the run's own claim; `responsePayload` (the owed-email marker) untouched.
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: { id: "op_settle_1", status: "RUNNING", startedAt: TEST_XERO_CLAIMED_AT, ...NOT_A_XERO_REPAIR_CLAIM },
+      data: {
+        status: "PENDING",
+        startedAt: null,
+        lastErrorCode: GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE,
+        lastErrorMessage: expect.stringContaining("email was not sent"),
+      },
+    });
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   it("claims and processes queued booking invoice update operations", async () => {
@@ -3775,6 +3824,24 @@ describe("processQueuedXeroOutboxOperations dispatch domain (#1272)", () => {
         },
       },
       handler: mocks.createXeroKeptLateCaptureInvoice,
+    },
+    // #4369: a failed card refund's money back in the Stripe account.
+    CARD_REFUND_REVERSAL_INVOICE: {
+      op: {
+        id: "op_card_refund_reversal_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "CARD_REFUND_REVERSAL_INVOICE",
+          bookingId: "booking_1",
+          paymentId: "payment_1",
+          closeTaskId: "task_close_1",
+          amountCents: 8000,
+          closedOn: "2026-07-01",
+        },
+      },
+      handler: mocks.createXeroCardRefundReversalInvoice,
     },
     // #3953: a change's card capture nothing waited on, anchored on its ledger row.
     ADDITIONAL_CAPTURE_RECEIPT: {

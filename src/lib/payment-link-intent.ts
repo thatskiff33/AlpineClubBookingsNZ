@@ -48,6 +48,7 @@ import { BELOW_STRIPE_MINIMUM_CODE, BELOW_STRIPE_MINIMUM_MEMBER_MESSAGE, BelowSt
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import { staleIntentAction } from "@/lib/stale-intent-action";
 import {
+  BOOKING_ALREADY_PAID_CODE,
   PAYMENT_PROCESSING_CODE,
   PAYMENT_PROCESSING_MESSAGE,
   SUPERSEDED_PAYMENT_PROCESSING_MESSAGE,
@@ -149,7 +150,7 @@ export async function createPaymentIntentForPaymentLink(
   const booking = link.booking;
 
   if (isPaidLikeStatus(booking.status)) {
-    throw new PaymentLinkError(USED_LINK_MESSAGE, 410);
+    throw new PaymentLinkError(USED_LINK_MESSAGE, 410, BOOKING_ALREADY_PAID_CODE);
   }
 
   if (!isPayableByLink(booking.status)) {

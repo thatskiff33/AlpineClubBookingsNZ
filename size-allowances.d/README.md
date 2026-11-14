@@ -76,6 +76,29 @@ reason: the new sparse-night branch is four lines of policy inside an
   it across indented continuation lines as above. A reviewer weighs this, so a
   bare "needed" is refused.
 
+### Function allowances
+
+The same file carries `function:` entries for the function-length ratchet
+(#4927), which judges functions over 300 lines the way the file-size ratchet
+judges files (the figure below is illustrative):
+
+```markdown
+function: src/lib/booking-cancel.ts#performBookingCancellation
+lines: 2114
+reason: the guard belongs inside the claim it protects until #4516 splits the
+  cancellation into its phases.
+```
+
+- `function:` — `<path>#<name>`, the name as `pnpm run quality:budget` prints it:
+  `name`, `Class.method`, `Class.constructor`, `Class.get x`, `Class.set x`,
+  `Class.#private`, or `default`; a repeated name in one file carries ` (2)`. One entry per function.
+- `lines:` — the function's real length after this change, from its first token
+  to its closing one, leading comment excluded.
+- `reason:` — as for a file.
+
+Every rule below applies to it as to a file: it may let a function already over
+300 lines grow, never a new function or one crossing 300 for the first time.
+
 ## What an allowance may and may not do
 
 It may let a file that was **already over its budget** on the base ref grow.
@@ -143,4 +166,5 @@ not enough — check when the diff changes.)
 ## Where the rules live
 
 [`docs/MAINTENANCE.md`](../docs/MAINTENANCE.md) → "File-size budget ratchet" is
-the canonical description of the gate, its budgets and this escape.
+the canonical description of the gate, its budgets and this escape;
+"Function-length ratchet" in the same file describes the function gate.
