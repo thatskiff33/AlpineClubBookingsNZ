@@ -23,16 +23,19 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/finance-booking-metrics", () => ({
-  getFinanceBookingMetrics: mockGetFinanceBookingMetrics,
-  getFinanceBookingMetricsWindowDayCount: (from: string, to: string) =>
-    Math.round(
-      (new Date(`${to}T00:00:00.000Z`).getTime() -
-        new Date(`${from}T00:00:00.000Z`).getTime()) /
-        86_400_000
-    ) + 1,
-  MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS: 366,
-}));
+vi.mock("@/lib/finance-booking-metrics", async () => {
+  // The real window rule, not a hand-written copy of it: a copy that never
+  // throws on a non-day hid the route's window-span check from this file (#5075).
+  const { getFinanceBookingMetricsWindowDayCount } = (await vi.importActual(
+    "@/lib/finance-booking-metric-calculations"
+  )) as typeof import("@/lib/finance-booking-metric-calculations");
+
+  return {
+    getFinanceBookingMetrics: mockGetFinanceBookingMetrics,
+    getFinanceBookingMetricsWindowDayCount,
+    MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS: 366,
+  };
+});
 
 import { GET as getFinanceBookingMetricsRoute } from "@/app/api/finance/bookings/metrics/route";
 import { DATE_ONLY_INVALID_MESSAGE } from "@/lib/date-only-schema";
@@ -369,9 +372,11 @@ describe("finance booking metrics route", () => {
     expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
   });
 
-  // ALP-567: the query was a shape-only regex, so `realizedCutoff=2026-02-30`
+  // #5075: the query was a shape-only regex, so `realizedCutoff=2026-02-30`
   // reached the metrics loader, which threw on it and the route answered 500.
-  // Every date field is now refused as a 400 before anything is loaded.
+  // Every date field is now refused as a 400 before anything is loaded, and
+  // the bad field is the only error: the window-span check does not add a
+  // second, vaguer one for the same mistake.
   it.each([
     ["realizedFrom", "realizedFrom=2026-02-30&realizedTo=2026-03-10"],
     ["realizedTo", "realizedFrom=2026-02-01&realizedTo=2026-02-30"],
@@ -387,6 +392,7 @@ describe("finance booking metrics route", () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.details.fieldErrors[field]).toEqual([DATE_ONLY_INVALID_MESSAGE]);
+    expect(Object.keys(body.details.fieldErrors)).toEqual([field]);
     expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
   });
 

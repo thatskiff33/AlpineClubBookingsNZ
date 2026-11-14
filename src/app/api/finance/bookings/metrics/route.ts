@@ -21,6 +21,15 @@ function validateWindowSpan(
     return;
   }
 
+  // A non-day is already refused on its own field by `dateOnlyStringSchema`;
+  // measuring the span too would add a second, vaguer error for one mistake.
+  if (
+    !dateOnlyStringSchema.safeParse(input.from).success ||
+    !dateOnlyStringSchema.safeParse(input.to).success
+  ) {
+    return;
+  }
+
   try {
     const dayCount = getFinanceBookingMetricsWindowDayCount(
       input.from,
@@ -44,7 +53,7 @@ function validateWindowSpan(
 
 // Every date is a real calendar day, not just its shape: a bare regex let
 // `realizedCutoff=2026-02-30` through to the metrics loader, which threw on it
-// and answered 500 (ALP-567).
+// and answered 500 (#5075).
 const financeBookingMetricsQuerySchema = z
   .object({
     realizedFrom: dateOnlyStringSchema.optional(),
