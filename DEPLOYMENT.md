@@ -863,7 +863,11 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    `AUDIT_RETENTION_DB_PASSWORD`. Hex passwords need no URL encoding in the
    connection strings below. Set a strong `AUTH_SECRET` too. **Leave `APP_DB_USER`, `MIGRATION_DB_USER` and
    `AUDIT_RETENTION_DATABASE_URL` blank until step 6.** Set the live-site
-   declaration `APP_ENVIRONMENT_ROLE=production` (see below).
+   declaration (see below for why):
+
+   ```dotenv
+   APP_ENVIRONMENT_ROLE=production
+   ```
 
 3. **Check the environment role, then start only PostgreSQL**:
 

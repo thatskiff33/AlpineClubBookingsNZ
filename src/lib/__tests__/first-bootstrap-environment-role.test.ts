@@ -117,8 +117,10 @@ describe("DEPLOYMENT.md's First Bootstrap sets the role and checks it first", ()
   const deployment = readFileSync(path.join(ROOT, "DEPLOYMENT.md"), "utf8");
   const sectionStart = deployment.indexOf("\n## First Bootstrap\n");
   const section = deployment.slice(sectionStart, deployment.indexOf("\n## ", sectionStart + 1));
-  const block = /```bash\n([\s\S]*?)```/.exec(section)?.[1] ?? "";
-  const lines = block.split("\n");
+  // First Bootstrap is numbered steps, each with its own indented command block
+  // (#5046), so the order is read across every block in the section, in order.
+  const blocks = [...section.matchAll(/```(?:bash|dotenv)\n([\s\S]*?)```/g)].map((match) => match[1]);
+  const lines = blocks.join("\n").split("\n").map((line) => line.trim());
   const indexOf = (predicate: (line: string) => boolean) => lines.findIndex(predicate);
 
   it("has a First Bootstrap command block", () => {
@@ -127,12 +129,16 @@ describe("DEPLOYMENT.md's First Bootstrap sets the role and checks it first", ()
   });
 
   it("names APP_ENVIRONMENT_ROLE=production as an explicit step", () => {
-    expect(block).toContain(`${ENVIRONMENT_ROLE_ENV_VAR}=production`);
+    const copy = indexOf((line) => line.startsWith("cp .env.example .env"));
+    const role = indexOf((line) => line === `${ENVIRONMENT_ROLE_ENV_VAR}=production`);
+    const gate = indexOf((line) => line === `bash ${BOOTSTRAP_GATE}`);
+    expect(role).toBeGreaterThan(copy);
+    expect(gate).toBeGreaterThan(role);
   });
 
   it("runs the gate after copying the template and before the first docker compose", () => {
     const copy = indexOf((line) => line.startsWith("cp .env.example .env"));
-    const gate = indexOf((line) => line.trim() === `bash ${BOOTSTRAP_GATE}`);
+    const gate = indexOf((line) => line === `bash ${BOOTSTRAP_GATE}`);
     const firstCompose = indexOf((line) => line.startsWith("docker compose"));
     expect(copy).toBeGreaterThanOrEqual(0);
     expect(gate).toBeGreaterThan(copy);
