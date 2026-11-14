@@ -595,7 +595,7 @@ export function BookingApprovalsPanel({
           })}
         </div>
       )}
-      {!loading && queuePage.pagination ? (
+      {queuePage.pagination ? (
         <Pagination {...queuePage.pagination} aria-label="Booking approvals pages" />
       ) : null}
 

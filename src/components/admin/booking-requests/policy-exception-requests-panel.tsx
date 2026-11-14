@@ -1018,7 +1018,7 @@ export function PolicyExceptionRequestsPanel({
             })}
           </div>
         )}
-        {!loading && !loadFailed && loadedFilter === filter && queuePage.pagination ? (
+        {!loadFailed && loadedFilter === filter && queuePage.pagination ? (
           <Pagination {...queuePage.pagination} aria-label="Policy exception request pages" />
         ) : null}
       </div>

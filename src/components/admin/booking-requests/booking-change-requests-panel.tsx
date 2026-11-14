@@ -693,7 +693,7 @@ export function BookingChangeRequestsPanel({
           })}
         </div>
       )}
-      {!loading && pagination ? <Pagination {...pagination} aria-label="Booking change request pages" /> : null}
+      {pagination ? <Pagination {...pagination} aria-label="Booking change request pages" /> : null}
       </div>
     </div>
   );

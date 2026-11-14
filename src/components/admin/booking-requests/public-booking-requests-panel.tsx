@@ -2696,7 +2696,7 @@ export function PublicBookingRequestsPanel({
           })}
         </div>
       )}
-      {!loading && queuePage.pagination ? (
+      {queuePage.pagination ? (
         <Pagination {...queuePage.pagination} aria-label="Booking request pages" />
       ) : null}
 

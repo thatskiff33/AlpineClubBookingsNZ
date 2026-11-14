@@ -53,8 +53,8 @@ allocated Xero credit note.
    button. Reset restores Open; Refresh reloads the current filtered queues.
 
    Each queue shows 25 requests a page, with its own total line such as
-   "Showing 1–25 of 40" and **Previous** / **Next** buttons when there is more
-   than one page. **Open** lists the oldest request first; the other filters
+   "Showing 1–25 of 40" and previous and next arrows with page numbers when
+   there is more than one page. **Open** lists the oldest request first; the other filters
    list the newest first. Changing the filter returns the cancellation queue to
    page 1, and the filter and both pages stay in the address. If approving the
    last request on a page empties it, the queue steps back a page.

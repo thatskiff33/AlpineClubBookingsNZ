@@ -1355,4 +1355,68 @@ describe("refund appeal paging (#4960)", () => {
     expect(await screen.findByText("Showing 26–40 of 40")).toBeInTheDocument();
     expect(refundUrls[0].searchParams.get("page")).toBe("2");
   });
+
+  /*
+    The page-2 read is held while the officer goes back to page 1. Its late
+    answer must not put page 2's rows under page 1's pager or end the loading
+    state of the read now shown, and the pager is the same focused button
+    through the load (INV-OPS-019).
+  */
+  function serveSlowSecondPage(outcome: "rows" | "failure") {
+    const slow: { release?: () => void } = {};
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/admin/credit-approvals") {
+        return { ok: true, json: async () => [] };
+      }
+      const page = Number(url.searchParams.get("page"));
+      if (page === 2) {
+        await new Promise<void>((resolve) => {
+          slow.release = resolve;
+        });
+        if (outcome === "failure") return { ok: false, json: async () => ({}) };
+      }
+      const row = { ...appeal, id: `refund-${page}`, member: { ...appeal.member, firstName: `Page${page}` } };
+      return { ok: true, json: async () => ({ data: [row], page, pageSize: 25, total: 100, totalPages: 4 }) };
+    });
+    return slow;
+  }
+
+  it("keeps the pager focused through a load and ignores a slower read for a page left", async () => {
+    const slow = serveSlowSecondPage("rows");
+    render(<RefundRequestsPage />);
+    expect(await screen.findByText("Showing 1–25 of 100")).toBeInTheDocument();
+
+    const next = screen.getByRole("button", { name: "Next page" });
+    next.focus();
+    fireEvent.click(next);
+    await waitFor(() => expect(slow.release).toBeDefined());
+    expect(screen.getByRole("button", { name: "Next page" })).toBe(next);
+    expect(document.activeElement).toBe(next);
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText(/Page1 Doe/)).toBeInTheDocument();
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText(/Page2 Doe/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Page1 Doe/)).toBeInTheDocument();
+    expect(screen.getByText("Showing 1–25 of 100")).toBeInTheDocument();
+  });
+
+  it("never lets a slower failed read for a page left show its error", async () => {
+    const slow = serveSlowSecondPage("failure");
+    render(<RefundRequestsPage />);
+    await screen.findByText("Showing 1–25 of 100");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(slow.release).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText(/Page1 Doe/)).toBeInTheDocument();
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Failed to load review queue")).not.toBeInTheDocument();
+    expect(screen.getByText(/Page1 Doe/)).toBeInTheDocument();
+  });
 });

@@ -35,8 +35,8 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
    preserving unrelated URL context.
 
    **Refund Appeals** shows 25 appeals a page, with a total line such as
-   "Showing 1–25 of 40" and **Previous** / **Next** buttons when there is more
-   than one page. **Pending** lists the oldest appeal first; the other filters
+   "Showing 1–25 of 40" and previous and next arrows with page numbers when
+   there is more than one page. **Pending** lists the oldest appeal first; the other filters
    list the newest first. Changing the filter returns to page 1, and the page
    stays in the address. **Manual Credit Approvals** is not paged.
 

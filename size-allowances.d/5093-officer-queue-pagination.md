@@ -12,13 +12,13 @@ entries further down are the same growth measured per component, because the
 size gate now also judges functions over 300 lines (#4927).
 
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
-lines: 982
+lines: 984
 reason: the refund appeal list gains its page state, its page in the URL
   and a pager inside its own section, while the credit approvals list on the
   same screen stays unpaged; moving one list out is a screen split of its own.
 
 file: src/app/(admin)/admin/membership/member-applications/page.tsx
-lines: 866
+lines: 856
 reason: the screen kept its filter only in memory; paging needs the filter
   and page read from and written to the URL, and that wiring belongs beside
   the filter state it mirrors rather than in a second module.
@@ -35,34 +35,34 @@ reason: the fixed 100-row read becomes a paged read with the shared pager;
   the change is the panel's own load and render wiring.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2765
+lines: 2747
 reason: the public queue gains paging and the pinned deep-linked request
   inside its existing load and list render; splitting this panel is a
   refactor of its own, well beyond this change.
 
 function: src/app/(admin)/admin/finance/refund-requests/page.tsx#RefundRequestsPage
-lines: 806
+lines: 815
 reason: the officer queue pager, its page state and its URL wiring; those
   lines sit inside the function `RefundRequestsPage`, which was already over
   its limit before this change, and lifting it apart is a refactor of its own,
   not part of this fix.
 
 function: src/app/(admin)/admin/membership/member-applications/page.tsx#MemberApplicationsPage
-lines: 693
+lines: 690
 reason: the officer queue pager, its page state and its URL wiring; those
   lines sit inside the function `MemberApplicationsPage`, which was already
   over its limit before this change, and lifting it apart is a refactor of its
   own, not part of this fix.
 
 function: src/app/(admin)/admin/membership/membership-cancellations/page.tsx#MembershipCancellationRequests
-lines: 921
+lines: 928
 reason: the officer queue pager, its page state and its URL wiring; those
   lines sit inside the function `MembershipCancellationRequests`, which was
   already over its limit before this change, and lifting it apart is a
   refactor of its own, not part of this fix.
 
 function: src/components/admin/booking-requests/booking-approvals-panel.tsx#BookingApprovalsPanel
-lines: 556
+lines: 555
 reason: the officer queue pager, its page state and its URL wiring; those
   lines sit inside the function `BookingApprovalsPanel`, which was already
   over its limit before this change, and lifting it apart is a refactor of its
@@ -83,8 +83,28 @@ reason: the officer queue pager, its page state and its URL wiring; those
   refactor of its own, not part of this fix.
 
 function: src/components/admin/booking-requests/public-booking-requests-panel.tsx#PublicBookingRequestsPanel
-lines: 2332
+lines: 2321
 reason: the officer queue pager, its page state and its URL wiring; those
   lines sit inside the function `PublicBookingRequestsPanel`, which was
   already over its limit before this change, and lifting it apart is a
   refactor of its own, not part of this fix.
+
+file: src/app/(admin)/admin/finance/payments/page.tsx
+lines: 1486
+reason: its pager summary now comes from the shared formatAdminListRange,
+  which costs the one import line; the file was already over its limit before
+  this change, and splitting the payments screen is a refactor of its own.
+
+file: src/app/(admin)/admin/finance/subscriptions/page.tsx
+lines: 892
+reason: its pager summary now comes from the shared formatAdminListRange,
+  which costs the one import line; the file was already over its limit before
+  this change, and splitting the subscriptions screen is a refactor of its
+  own.
+
+file: src/lib/booking-exception-request-service.ts
+lines: 2493
+reason: the policy exception queue now counts each source and reads each only
+  to the end of the page asked for, replacing a fixed 500-row read per source,
+  so its total is exact; the file was already over its limit before this
+  change, and splitting the service is a refactor of its own.

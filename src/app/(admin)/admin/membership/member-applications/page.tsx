@@ -180,7 +180,7 @@ export default function MemberApplicationsPage() {
     filterKey: filter,
     initialPage: parseAdminListPageParam(searchParams.get("page")),
   });
-  const { page, setPage, receive } = queuePage;
+  const { page, setPage, receive, beginLoad } = queuePage;
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -212,6 +212,9 @@ export default function MemberApplicationsPage() {
   }, [currentPath, router]);
 
   async function loadApplications(nextFilter = filter) {
+    // A slower read for a page or filter the officer has left must not replace
+    // the list now shown, nor its error or loading end (INV-OPS-019).
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
 
@@ -223,6 +226,7 @@ export default function MemberApplicationsPage() {
       params.set("page", String(page));
       const response = await fetch(`/api/admin/member-applications?${params.toString()}`);
       const data = await response.json();
+      if (!isCurrent()) return;
 
       if (!response.ok) {
         setError(data.error || "Could not load member applications.");
@@ -243,9 +247,9 @@ export default function MemberApplicationsPage() {
         return next;
       });
     } catch {
-      setError("Could not load member applications.");
+      if (isCurrent()) setError("Could not load member applications.");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
@@ -599,8 +603,8 @@ export default function MemberApplicationsPage() {
             </Button>
           ))}
           <DatasetResetButton
-            disabled={filter === "PENDING_ADMIN" && page === 1}
-            onReset={() => { setFilter("PENDING_ADMIN"); setPage(1); }}
+            disabled={filter === DEFAULT_FILTER && page === 1}
+            onReset={() => { setFilter(DEFAULT_FILTER); setPage(1); }}
           />
         </div>
       </div>
@@ -804,7 +808,7 @@ export default function MemberApplicationsPage() {
         </div>
       )}
 
-      {!loading && queuePage.pagination ? (
+      {queuePage.pagination ? (
         <Pagination {...queuePage.pagination} aria-label="Member application pages" />
       ) : null}
 

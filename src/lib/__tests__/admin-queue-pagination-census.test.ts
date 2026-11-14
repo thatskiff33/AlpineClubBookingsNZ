@@ -45,6 +45,15 @@ const NOT_A_QUEUE_LIST: Record<string, string> = {
     "the deletion queue already pages with its own pager; outside #4960's scope",
 };
 
+/**
+ * Queue lists that guard against a slower read themselves rather than through
+ * the hook's `beginLoad`, with how.
+ */
+const OWN_STALE_READ_GUARD: Record<string, string> = {
+  "src/components/admin/booking-requests/policy-exception-requests-panel.tsx":
+    "numbers each read (loadRequestIdRef) and checks the filter, for page changes too",
+};
+
 const SHARED_HOOK = "@/components/admin/use-admin-queue-page";
 const SHARED_PAGER = "@/components/admin/admin-pagination";
 
@@ -88,14 +97,30 @@ function queueReaders(): Map<string, string[]> {
   return readers;
 }
 
-/** What a queue list must do to reach every row; empty when it does. */
-function queuePagingGaps(code: string): string[] {
+/**
+ * What a queue list must do to reach every row; empty when it does. Besides
+ * paging and rendering the pager, a list must not let a slower read for a page
+ * or filter the officer has left replace the one now shown (it calls the hook's
+ * `beginLoad`, unless it is named in `OWN_STALE_READ_GUARD`), and must not
+ * unmount its pager while a read is in flight, which drops a keyboard user's
+ * focus to the page body on every page change.
+ */
+function queuePagingGaps(code: string, ownStaleReadGuard = false): string[] {
   const gaps: string[] = [];
   if (!code.includes(`"${SHARED_HOOK}"`) || !/\buseAdminQueuePage\s*\(/.test(code)) {
     gaps.push("pages through useAdminQueuePage");
   }
   if (!code.includes(`"${SHARED_PAGER}"`) || !/<Pagination\b/.test(code)) {
     gaps.push("renders the shared Pagination");
+  }
+  // One `beginLoad()` call per hook, so a screen paging two queues guards both.
+  const hookCalls = (code.match(/\buseAdminQueuePage\s*\(/g) ?? []).length;
+  const guardCalls = (code.match(/\bbegin\w*Load\s*\(\s*\)/g) ?? []).length;
+  if (!ownStaleReadGuard && guardCalls < hookCalls) {
+    gaps.push("guards a list read with beginLoad");
+  }
+  if (/!\s*\w*[lL]oading\s*&&\s*[\w.]*[pP]agination\b/.test(code)) {
+    gaps.push("keeps the pager mounted through a read");
   }
   return gaps;
 }
@@ -126,9 +151,18 @@ describe("row-capped officer queues page through every row (INV-OPS-019)", () =>
       .filter((file) => !(file in NOT_A_QUEUE_LIST))
       .flatMap((file) => {
         const code = stripComments(readFileSync(path.join(ROOT, file), "utf8"));
-        return queuePagingGaps(code).map((gap) => `${file}: ${gap}`);
+        return queuePagingGaps(code, file in OWN_STALE_READ_GUARD).map((gap) => `${file}: ${gap}`);
       });
     expect(failures).toEqual([]);
+  });
+
+  it("each own-guard exemption is a queue list that really numbers its reads", () => {
+    for (const [file, how] of Object.entries(OWN_STALE_READ_GUARD)) {
+      expect(readers.has(file) && !(file in NOT_A_QUEUE_LIST), `${file} is not a queue list`).toBe(true);
+      const code = stripComments(readFileSync(path.join(ROOT, file), "utf8"));
+      expect(code, `${file} no longer numbers its reads; drop its exemption`).toMatch(/loadRequestIdRef/);
+      expect(how.trim().length).toBeGreaterThan(0);
+    }
   });
 
   it("each exemption still reads a capped route and gives a reason", () => {
@@ -163,5 +197,21 @@ describe("row-capped officer queues page through every row (INV-OPS-019)", () =>
     expect(queuePagingGaps(panel.replace(/\buseAdminQueuePage\s*\(/g, "useState("))).toEqual([
       "pages through useAdminQueuePage",
     ]);
+  });
+
+  it("the gap check fails a list that lets a stale read land or unmounts its pager (mutation canary)", () => {
+    const panel = stripComments(
+      readFileSync(
+        path.join(SRC, "components/admin/booking-requests/booking-approvals-panel.tsx"),
+        "utf8",
+      ),
+    );
+    expect(queuePagingGaps(panel)).toEqual([]);
+    expect(queuePagingGaps(panel.replace(/\bbeginLoad\s*\(/g, "begunLoad("))).toEqual([
+      "guards a list read with beginLoad",
+    ]);
+    expect(
+      queuePagingGaps(panel.replace("{queuePage.pagination ? (", "{!loading && queuePage.pagination ? (")),
+    ).toEqual(["keeps the pager mounted through a read"]);
   });
 });

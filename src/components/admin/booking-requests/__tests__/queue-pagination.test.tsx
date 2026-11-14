@@ -489,3 +489,48 @@ describe("PolicyExceptionRequestsPanel paging", () => {
     expect(pageOf(fetches.reads(route).at(-1)!)).toBe("1");
   });
 });
+
+/**
+ * A pager that unmounts while the next page loads drops a keyboard or
+ * screen-reader user's focus to the page body on every page change, on lists
+ * of tall cards. Each queue keeps the one `Pagination` in place through a load.
+ */
+describe("every booking queue keeps its pager mounted through a page change", () => {
+  const cases: Array<[string, string, () => ReactNode, unknown]> = [
+    ["booking approvals", "/api/admin/booking-reviews", () => <BookingApprovalsPanel />, booking],
+    ["change requests", "/api/admin/booking-change-requests", () => <BookingChangeRequestsPanel />, changeRequest()],
+    ["public requests", "/api/admin/booking-requests", () => <PublicBookingRequestsPanel />, publicRequest],
+    ["policy exceptions", "/api/admin/booking-exception-requests", () => <PolicyExceptionRequestsPanel />, exceptionItem()],
+  ];
+
+  it.each(cases)("%s: Next page stays the same focused button while the next page loads", async (_name, route, panel, row) => {
+    const slow: { release?: () => void } = {};
+    global.fetch = vi.fn(async (input: unknown) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname !== route) return jsonResponse({});
+      if (pageOf(url) === "2") {
+        await new Promise<void>((resolve) => {
+          slow.release = resolve;
+        });
+        return jsonResponse(envelope([row], 2, 100));
+      }
+      return jsonResponse(envelope([row], 1, 100));
+    }) as unknown as typeof fetch;
+    render(panel());
+    await screen.findByText("Showing 1–25 of 100");
+
+    const next = screen.getByRole("button", { name: "Next page" });
+    next.focus();
+    fireEvent.click(next);
+    await waitFor(() => expect(slow.release).toBeDefined());
+
+    // The page-2 read is still out: the pager is the same element, still focused.
+    expect(screen.getByRole("button", { name: "Next page" })).toBe(next);
+    expect(document.activeElement).toBe(next);
+
+    slow.release!();
+    expect(await screen.findByText("Showing 26–50 of 100")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next page" })).toBe(next);
+    expect(document.activeElement).toBe(next);
+  });
+});

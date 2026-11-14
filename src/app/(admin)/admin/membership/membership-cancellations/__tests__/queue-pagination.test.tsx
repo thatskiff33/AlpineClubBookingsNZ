@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChangeEvent, ReactNode } from "react";
 
@@ -58,7 +58,7 @@ function cancellationRequest(id: string) {
   return {
     id,
     status: "COMPLETED",
-    reason: "Moving overseas",
+    reason: `Moving overseas (${id})`,
     adminNote: null,
     submittedAt: "2026-06-01T00:00:00.000Z",
     reviewedAt: null,
@@ -75,7 +75,7 @@ function archiveRequest(id: string) {
     memberId: `member-${id}`,
     action: "ARCHIVE",
     status: "REQUESTED",
-    reason: "Duplicate record",
+    reason: `Duplicate record (${id})`,
     reviewNote: null,
     requestedAt: "2026-06-01T00:00:00.000Z",
     reviewedAt: null,
@@ -162,5 +162,93 @@ describe("membership cancellation queue paging (#4960)", () => {
     expect(await screen.findByText("Showing 51–60 of 60")).toBeInTheDocument();
     expect(await screen.findByText("Showing 26–30 of 30")).toBeInTheDocument();
     expect(cancellationUrls[0].searchParams.get("status")).toBe("COMPLETED");
+  });
+});
+
+/*
+  The page-2 read of one queue is held while the officer goes back to page 1.
+  Its late answer must not put page 2's rows under page 1's pager, and the pager
+  is the same focused button through the load (INV-OPS-019). Each queue has its
+  own guard, so each is proved on its own.
+*/
+describe("membership queue paging under a slow read (#4960)", () => {
+  const queues = [
+    {
+      name: "cancellation",
+      path: "/api/admin/membership-cancellation-requests",
+      pager: "Cancellation request pages",
+      row: (page: number) => cancellationRequest(`c${page}`),
+      reason: (page: number) => new RegExp(`Moving overseas \\(c${page}\\)`),
+      pendingCount: 0,
+    },
+    {
+      name: "archive",
+      path: "/api/admin/member-lifecycle-action-requests",
+      pager: "Archive request pages",
+      row: (page: number) => archiveRequest(`a${page}`),
+      reason: (page: number) => new RegExp(`Duplicate record \\(a${page}\\)`),
+      pendingCount: 100,
+    },
+  ];
+
+  function serveSlowSecondPage(path: string, row: (page: number) => unknown, pendingCount: number, failure: boolean) {
+    const slow: { release?: () => void } = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), "http://localhost");
+        const page = Number(url.searchParams.get("page"));
+        if (url.pathname === path && page === 2) {
+          await new Promise<void>((resolve) => {
+            slow.release = resolve;
+          });
+          if (failure) return { ok: false, json: async () => ({ error: "Stale read failed" }) };
+        }
+        const isArchive = url.pathname === "/api/admin/member-lifecycle-action-requests";
+        const rowFor = url.pathname === path ? row(page) : isArchive ? archiveRequest(`a${page}`) : cancellationRequest(`c${page}`);
+        return { ok: true, json: async () => envelope([rowFor], page, 100, pendingCount) };
+      }),
+    );
+    return slow;
+  }
+
+  it.each(queues)("$name queue: keeps its pager focused through a load and ignores a slower read for a page left", async ({ path, pager, row, reason, pendingCount }) => {
+    const slow = serveSlowSecondPage(path, row, pendingCount, false);
+    render(<MembershipCancellationsPage />);
+    const nav = await screen.findByRole("navigation", { name: pager });
+    await waitFor(() => expect(within(nav).getByText("Showing 1–25 of 100")).toBeInTheDocument());
+
+    const next = within(nav).getByRole("button", { name: "Next page" });
+    next.focus();
+    fireEvent.click(next);
+    await waitFor(() => expect(slow.release).toBeDefined());
+    expect(within(screen.getByRole("navigation", { name: pager })).getByRole("button", { name: "Next page" })).toBe(next);
+    expect(document.activeElement).toBe(next);
+
+    fireEvent.click(within(screen.getByRole("navigation", { name: pager })).getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText(reason(1))).toBeInTheDocument();
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText(reason(2))).not.toBeInTheDocument();
+    expect(screen.getByText(reason(1))).toBeInTheDocument();
+    expect(within(screen.getByRole("navigation", { name: pager })).getByText("Showing 1–25 of 100")).toBeInTheDocument();
+  });
+
+  it.each(queues)("$name queue: a slower failed read for a page left shows no error", async ({ path, pager, row, reason, pendingCount }) => {
+    const slow = serveSlowSecondPage(path, row, pendingCount, true);
+    render(<MembershipCancellationsPage />);
+    const nav = await screen.findByRole("navigation", { name: pager });
+    await waitFor(() => expect(within(nav).getByText("Showing 1–25 of 100")).toBeInTheDocument());
+
+    fireEvent.click(within(nav).getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(slow.release).toBeDefined());
+    fireEvent.click(within(screen.getByRole("navigation", { name: pager })).getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText(reason(1))).toBeInTheDocument();
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Stale read failed")).not.toBeInTheDocument();
+    expect(screen.getByText(reason(1))).toBeInTheDocument();
   });
 });

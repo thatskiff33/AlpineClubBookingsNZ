@@ -52,7 +52,9 @@ export interface PaginationProps {
   summary?: React.ReactNode
   /**
    * Render the summary even when everything fits on one page, so a capped
-   * list always states its total (INV-OPS-019).
+   * list always states its total (INV-OPS-019). The summary is then also a
+   * polite live region, so a screen-reader user hears the new range when a
+   * page changes while focus stays on the pager button.
    */
   showSummaryOnSinglePage?: boolean
 
@@ -72,7 +74,8 @@ export interface PaginationProps {
  *
  * Renders nothing when there is a single page (or none) and no page-size
  * selector — matching the long-standing behaviour of the admin lists — unless
- * `showSummaryOnSinglePage` asks for the summary line alone.
+ * `showSummaryOnSinglePage` asks for the summary line alone, which renders as a
+ * plain block rather than a labelled navigation landmark.
  */
 export function Pagination({
   page,
@@ -121,18 +124,26 @@ export function Pagination({
     )
   }
 
-  const Wrapper = as
+  // A summary with no controls is a line of text, not a navigation landmark:
+  // an empty "navigation" region is noise for a screen-reader user.
+  const summaryOnly = totalPages <= 1 && !showPageSize
+  const Wrapper = summaryOnly ? "div" : as
   const summaryText = summary ?? `Page ${page} of ${totalPages}`
 
   return (
     <Wrapper
-      aria-label={ariaLabel}
+      aria-label={summaryOnly ? undefined : ariaLabel}
       className={cn(
         "mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between",
         className,
       )}
     >
-      <p className="text-sm text-muted-foreground">{summaryText}</p>
+      <p
+        className="text-sm text-muted-foreground"
+        aria-live={showSummaryOnSinglePage ? "polite" : undefined}
+      >
+        {summaryText}
+      </p>
 
       <div className="flex flex-wrap items-center gap-3">
         {showPageSize ? (

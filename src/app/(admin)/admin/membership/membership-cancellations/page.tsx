@@ -380,8 +380,12 @@ function MembershipCancellationRequests() {
     filterKey: "REQUESTED",
     initialPage: parseAdminListPageParam(searchParams.get("archivePage")),
   });
-  const { page, setPage, receive } = cancellationPage;
-  const { page: archivePageNumber, receive: receiveArchive } = archivePage;
+  const { page, setPage, receive, beginLoad } = cancellationPage;
+  const {
+    page: archivePageNumber,
+    receive: receiveArchive,
+    beginLoad: beginArchiveLoad,
+  } = archivePage;
   const [data, setData] = useState<CancellationResponse | null>(null);
   const [archiveData, setArchiveData] = useState<ArchiveResponse | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -431,12 +435,6 @@ function MembershipCancellationRequests() {
     return `${parts.join(" and ")} awaiting review`;
   }, [archiveData?.pendingCount, data?.pendingCount]);
 
-  /**
-   * Reload the cancellation queue. Returns the failure message when the reload
-   * itself failed, and null when it succeeded — because a caller that is about
-   * to set an error of its own has to know it is overwriting one (#2392 review,
-   * residual 5).
-   */
   const queueParams = new URLSearchParams(searchParams.toString());
   for (const key of QUEUE_SEARCH_KEYS) queueParams.delete(key);
   if (filter !== "REQUESTED") queueParams.set("status", filter);
@@ -450,7 +448,17 @@ function MembershipCancellationRequests() {
     router.replace(queueHref, { scroll: false });
   }, [queueHref, router]);
 
+  /**
+   * Reload the cancellation queue. Returns the failure message when the reload
+   * itself failed, and null when it succeeded — because a caller that is about
+   * to set an error of its own has to know it is overwriting one (#2392 review,
+   * residual 5).
+   */
   const loadRequests = useCallback(async (): Promise<string | null> => {
+    // A slower read for a page or filter the officer has left never replaces
+    // the list now shown, nor its error or loading end (INV-OPS-019). It has
+    // no failure of its own to report: a newer read owns the list.
+    const isCurrent = beginLoad();
     setLoading(true);
     setError("");
 
@@ -460,6 +468,7 @@ function MembershipCancellationRequests() {
         `/api/admin/membership-cancellation-requests?${params.toString()}`,
       );
       const body = await response.json();
+      if (!isCurrent()) return null;
       if (!response.ok) {
         throw new Error(body.error || "Could not load cancellation requests.");
       }
@@ -467,6 +476,7 @@ function MembershipCancellationRequests() {
       receive(body, Array.isArray(body?.requests) ? body.requests.length : 0);
       return null;
     } catch (err) {
+      if (!isCurrent()) return null;
       const failure =
         err instanceof Error
           ? err.message
@@ -474,11 +484,13 @@ function MembershipCancellationRequests() {
       setError(failure);
       return failure;
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [filter, page, receive]);
+  }, [beginLoad, filter, page, receive]);
 
   const loadArchiveRequests = useCallback(async () => {
+    // As for the cancellation queue: only the newest archive read lands.
+    const isCurrent = beginArchiveLoad();
     setArchiveLoading(true);
     setError("");
 
@@ -492,19 +504,21 @@ function MembershipCancellationRequests() {
         `/api/admin/member-lifecycle-action-requests?${params.toString()}`,
       );
       const body = await response.json();
+      if (!isCurrent()) return;
       if (!response.ok) {
         throw new Error(body.error || "Could not load archive requests.");
       }
       setArchiveData(body);
       receiveArchive(body, Array.isArray(body?.requests) ? body.requests.length : 0);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(
         err instanceof Error ? err.message : "Could not load archive requests.",
       );
     } finally {
-      setArchiveLoading(false);
+      if (isCurrent()) setArchiveLoading(false);
     }
-  }, [archivePageNumber, receiveArchive]);
+  }, [archivePageNumber, beginArchiveLoad, receiveArchive]);
 
   const refreshQueues = useCallback(async () => {
     await Promise.all([loadRequests(), loadArchiveRequests()]);
@@ -928,7 +942,7 @@ function MembershipCancellationRequests() {
               })}
             </div>
           )}
-          {!archiveLoading && archivePage.pagination ? (
+          {archivePage.pagination ? (
             <Pagination
               {...archivePage.pagination}
               aria-label="Archive request pages"
@@ -1221,7 +1235,7 @@ function MembershipCancellationRequests() {
               })}
             </div>
           )}
-          {!loading && cancellationPage.pagination ? (
+          {cancellationPage.pagination ? (
             <Pagination
               {...cancellationPage.pagination}
               aria-label="Cancellation request pages"
