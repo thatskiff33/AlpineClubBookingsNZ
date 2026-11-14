@@ -68,10 +68,7 @@ import {
   shouldShowMemberOnboarding,
 } from "@/lib/member-onboarding";
 import { prisma } from "@/lib/prisma";
-import {
-  buildTwoFactorGatePath,
-  isTwoFactorSessionBlocked,
-} from "@/lib/two-factor-gate";
+import { factorGateRedirect } from "@/lib/two-factor-gate";
 
 /** The member shape this guard reads. Exactly the onboarding gate's select. */
 type GuardedMember = NonNullable<
@@ -175,16 +172,16 @@ export async function guardAdminLayout(
     return { outcome: "redirect", destination: "/change-password" };
   }
 
-  // 5. TWO-FACTOR GATE.
-  if (isTwoFactorSessionBlocked({ sessionUser: session.user, member })) {
-    return {
-      outcome: "redirect",
-      destination: buildTwoFactorGatePath({
-        sessionUser: session.user,
-        member,
-        callbackPath: requestedPath,
-      }),
-    };
+  // 5. TWO-FACTOR GATE. The club-wide challenge, then the officer enrolment
+  // gate. An allowlisted path (profile, enrolment) proceeds.
+  const factorGate = factorGateRedirect({
+    sessionUser: session.user,
+    member,
+    callbackPath: requestedPath,
+    pathname: requestedPath,
+  });
+  if (factorGate) {
+    return { outcome: "redirect", destination: factorGate };
   }
 
   // 6. AREA PERMISSION FOR THE REQUESTED PATH.

@@ -34,6 +34,7 @@ export const ACCESS_ROLE_DEFINITION_SELECT = {
   lodgeLevel: true,
   contentLevel: true,
   supportLevel: true,
+  requiresTwoFactor: true,
   sortOrder: true,
 } as const;
 
@@ -100,6 +101,8 @@ export type AccessRoleDefinitionSummary = {
   description: string;
   sortOrder: number;
   permissions: AdminPermissionMatrix;
+  /** null is Default, true Required, false Not required (#4618). */
+  requiresTwoFactor: boolean | null;
 };
 
 export function serializeAccessRoleDefinition(
@@ -113,6 +116,7 @@ export function serializeAccessRoleDefinition(
     description: definition.description,
     sortOrder: definition.sortOrder,
     permissions: matrixFromAccessRoleDefinition(definition),
+    requiresTwoFactor: definition.requiresTwoFactor ?? null,
   };
 }
 

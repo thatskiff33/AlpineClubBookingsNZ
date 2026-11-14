@@ -6,6 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
+import { AdminLoadError } from "@/components/admin/admin-load-error";
+import { ADMIN_LOAD_FAILED_ERROR, ADMIN_LOAD_NETWORK_ERROR } from "@/lib/admin-query-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import {
   TableBody,
   TableCell,
@@ -121,6 +124,11 @@ export default function HutLeadersPage() {
   const [eligibleMembers, setEligibleMembers] = useState<EligibleMember[]>([]);
   const [unassignedDates, setUnassignedDates] = useState<UnassignedDate[]>([]);
   const [loading, setLoading] = useState(true);
+  // #4961: why each read failed, or null. A failed read used to render as "No
+  // assignments yet" and as no amber card, which reads as "every night is
+  // covered". Written only for the lodge that asked, like the data itself.
+  const [assignmentsLoadError, setAssignmentsLoadError] = useState<string | null>(null);
+  const [unassignedLoadError, setUnassignedLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [resettingPinId, setResettingPinId] = useState<string | null>(null);
@@ -273,10 +281,16 @@ export default function HutLeadersPage() {
   const fetchAssignments = useCallback(async () => {
     if (!lodgeScopeReady) {
       setAssignments([]);
+      setAssignmentsLoadError(null);
       setLoading(false);
       return;
     }
     const requestedLodgeId = scopedLodgeId;
+    const failed = (message: string) => {
+      if (activeLodgeIdRef.current !== requestedLodgeId) return;
+      setAssignments([]);
+      setAssignmentsLoadError(message);
+    };
     setLoading(true);
     try {
       const res = await fetch(`/api/admin/hut-leaders?lodgeId=${encodeURIComponent(requestedLodgeId)}`);
@@ -285,8 +299,13 @@ export default function HutLeadersPage() {
         if (activeLodgeIdRef.current === requestedLodgeId) {
           setAssignments(Array.isArray(data?.assignments) ? data.assignments : []);
           setBedAllocationOn(data?.bedAllocationEnabled === true);
+          setAssignmentsLoadError(null);
         }
+      } else {
+        failed(await apiErrorMessageFromResponse(res, ADMIN_LOAD_FAILED_ERROR));
       }
+    } catch {
+      failed(ADMIN_LOAD_NETWORK_ERROR);
     } finally {
       if (activeLodgeIdRef.current === requestedLodgeId) setLoading(false);
     }
@@ -297,9 +316,15 @@ export default function HutLeadersPage() {
   const fetchUnassignedDates = useCallback(async () => {
     if (!lodgeScopeReady) {
       setUnassignedDates([]);
+      setUnassignedLoadError(null);
       return;
     }
     const requestedLodgeId = scopedLodgeId;
+    const failed = (message: string) => {
+      if (activeLodgeIdRef.current !== requestedLodgeId) return;
+      setUnassignedDates([]);
+      setUnassignedLoadError(message);
+    };
     try {
       const res = await fetch(`/api/admin/hut-leaders/unassigned-dates?lodgeId=${encodeURIComponent(requestedLodgeId)}`);
       if (res.ok) {
@@ -308,10 +333,13 @@ export default function HutLeadersPage() {
           setUnassignedDates(
             Array.isArray(data?.unassignedDates) ? data.unassignedDates : [],
           );
+          setUnassignedLoadError(null);
         }
+      } else {
+        failed(await apiErrorMessageFromResponse(res, ADMIN_LOAD_FAILED_ERROR));
       }
     } catch {
-      // ignore
+      failed(ADMIN_LOAD_NETWORK_ERROR);
     }
   }, [lodgeScopeReady, scopedLodgeId]);
 
@@ -347,7 +375,12 @@ export default function HutLeadersPage() {
         }
       }
     } catch {
-      // non-essential overlay
+      // Non-essential overlay, and deliberately left silent (#4961 decision): a
+      // month whose read fails simply gets no red or covered shading. The
+      // authoritative "are the upcoming nights covered?" answer is the amber
+      // card (or its "could not be checked" error) from fetchUnassignedDates,
+      // which does say when it failed. Saying it here too would put one outage
+      // in two places for a month the officer has only scrolled to.
     }
     try {
       const res = await fetch(`/api/admin/occupancy?month=${monthKey}&lodgeId=${encodeURIComponent(requestedLodgeId)}`);
@@ -383,6 +416,8 @@ export default function HutLeadersPage() {
     // prevent a late Lodge A request from repopulating the Lodge B workspace.
     setAssignments([]);
     setUnassignedDates([]);
+    setAssignmentsLoadError(null);
+    setUnassignedLoadError(null);
     setEligibleMembers([]);
     setRedDatesByMonth({});
     setGuestNightsByMonth({});
@@ -854,8 +889,12 @@ export default function HutLeadersPage() {
       nights,
       fills,
       conflicts,
+      // #4961: a failed assignments read leaves `assignments` empty, so the
+      // overlap check above finds nothing. Say so in the preview rather than
+      // let "no warning" read as "no clash"; the POST route still re-checks.
+      overlapCheckUnavailable: Boolean(assignmentsLoadError),
     };
-  }, [target, selection.startDate, selection.endDate, assignments, redDatesByMonth]);
+  }, [target, selection.startDate, selection.endDate, assignments, assignmentsLoadError, redDatesByMonth]);
 
   // The club's day decides whether a coverage block reads as active or past —
   // not the build's `NEXT_PUBLIC_TZ`, which is fixed at compile time rather than
@@ -926,7 +965,18 @@ export default function HutLeadersPage() {
         </div>
       )}
 
-      {lodgeScopeReady && unassignedDates.length > 0 && (
+      {/* #4961: a failed check is said, never shown as no card — no card
+          means every upcoming night is covered. */}
+      {lodgeScopeReady && unassignedLoadError ? (
+        <AdminLoadError
+          title={`Upcoming nights with no ${hutLeaderLabel.toLowerCase()} staying could not be checked`}
+          message={unassignedLoadError}
+          onRetry={fetchUnassignedDates}
+          data-testid="hut-leaders-unassigned-load-error"
+        />
+      ) : null}
+
+      {lodgeScopeReady && !unassignedLoadError && unassignedDates.length > 0 && (
         <Card className="border-warning/20 bg-warning-muted">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base text-warning">
@@ -1225,10 +1275,21 @@ export default function HutLeadersPage() {
         </Card>
       )}
 
-      {loading ? (
+      {/* #4961: "Loading..." never replaces a load error. Try again's own re-read
+          sets `loading`, and swapping the error for "Loading..." would unmount
+          its button and drop the keyboard focus on it. The error clears only
+          when a read succeeds. */}
+      {loading && !assignmentsLoadError ? (
         <div className="rounded-lg border border-border bg-card p-6 text-center text-muted-foreground">
           Loading...
         </div>
+      ) : assignmentsLoadError ? (
+        <AdminLoadError
+          title={`${hutLeaderLabel} assignments could not be loaded`}
+          message={assignmentsLoadError}
+          onRetry={fetchAssignments}
+          data-testid="hut-leaders-assignments-load-error"
+        />
       ) : assignments.length === 0 ? (
         <div className="rounded-lg border border-border bg-card p-6 text-center text-muted-foreground">
           No {hutLeaderLabel.toLowerCase()} assignments yet.

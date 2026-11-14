@@ -111,6 +111,72 @@ describe("use-scroll-to-feedback", () => {
     expect(alert.style.scrollMarginTop).toBe("");
   });
 
+  describe("a centred alert that is taller than the viewport (#4945)", () => {
+    // jsdom has no layout, so the height is stubbed; its window is 768px tall,
+    // and 5rem of header clearance at each end leaves 608px to centre in.
+    function alertOfHeight(height: number) {
+      const alert = document.createElement("div");
+      alert.scrollIntoView = vi.fn();
+      alert.getBoundingClientRect = () => ({ height }) as DOMRect;
+      document.body.append(alert);
+      return alert;
+    }
+
+    it("is revealed from its top edge, so the sentence that explains it is not cut off", () => {
+      // Centred, a 900px box in a 768px window loses 66px at each end, and its
+      // first line (the summary above several guests' cards) is the half that
+      // matters. The top edge goes under the sticky header's clearance instead.
+      const alert = alertOfHeight(900);
+
+      scrollToError(alert, { block: "center" });
+
+      expect(alert.scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "start",
+      });
+      expect(alert.style.scrollMarginTop).toBe("5rem");
+    });
+
+    it("is still centred when it fits with the header's clearance at both ends", () => {
+      const alert = alertOfHeight(600);
+
+      scrollToError(alert, { block: "center" });
+
+      expect(alert.scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "center",
+      });
+      expect(alert.style.scrollMarginTop).toBe("");
+    });
+
+    it("takes its own clearance back off when the same alert next fits", () => {
+      // The member-booking error box is permanently mounted, so one element is
+      // revealed many times. A margin left over from a tall one would shift the
+      // next, shorter one 2.5rem above the centre it asked for.
+      const alert = alertOfHeight(900);
+      scrollToError(alert, { block: "center" });
+      expect(alert.style.scrollMarginTop).toBe("5rem");
+
+      alert.getBoundingClientRect = () => ({ height: 300 }) as DOMRect;
+      scrollToError(alert, { block: "center" });
+
+      expect(alert.scrollIntoView).toHaveBeenLastCalledWith({
+        behavior: "smooth",
+        block: "center",
+      });
+      expect(alert.style.scrollMarginTop).toBe("");
+    });
+
+    it("never removes a clearance the surface declared for itself", () => {
+      const alert = alertOfHeight(300);
+      alert.style.scrollMarginTop = "6rem";
+
+      scrollToError(alert, { block: "center" });
+
+      expect(alert.style.scrollMarginTop).toBe("6rem");
+    });
+  });
+
   it("leaves a clearance the surface declared in a CLASS alone", () => {
     // `element.style.scrollMarginTop` reads only the INLINE declaration, so the
     // old guard saw nothing on a class-styled element and overwrote its choice

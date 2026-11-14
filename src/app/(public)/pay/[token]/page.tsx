@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Clock } from "lucide-react";
+import { AlertTriangle, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import StripeProvider from "@/components/stripe/StripeProvider";
@@ -23,17 +23,21 @@ import { useClubFormat } from "@/components/club-format-provider";
 // file's header for why an allowance was not the answer.
 import {
   CardPaymentUnavailableNotice,
+  CheckingPaymentCard,
   FinancialReviewNotice,
   formatLinkExpiry,
   internetBankingHeading,
   NarrativeCard,
   paymentRecoveryForRefusal,
+  RedirectFailedNotice,
   toneForState,
   type Narrative,
   type PaymentLinkContext,
   type PaymentRecovery,
 } from "./pay-link-presentation";
-import { checkCardSuccess } from "./card-success-check";
+import { checkCardSuccess, type CardConfirmation } from "./card-success-check";
+import { takeStripeReturn } from "./stripe-return";
+import { FreshLinkCard } from "./fresh-link-card";
 import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 /*
   #3194 (epic #2797): the sentences a member reads when their saved change is
@@ -69,10 +73,7 @@ export default function PayByLinkPage() {
   const [paymentComplete, setPaymentComplete] = useState(false);
   const [previousPaymentRefunding, setPreviousPaymentRefunding] = useState(false); // #4300
   const [checkingPayment, setCheckingPayment] = useState(false); // #4300: never the pay buttons after a success
-  const [refreshState, setRefreshState] = useState<"idle" | "sending" | "sent">(
-    "idle"
-  );
-  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [redirectFailed, setRedirectFailed] = useState(false); // #4955: the provider declined or was cancelled
   const [bookingMessages, setBookingMessages] = useState<Record<string, string>>({});
   // #2919 review: the club-level values this page's message tokens resolve to.
   // Without them an operator's {{CLUB_LODGE_NAME}} reached the member as
@@ -90,7 +91,8 @@ export default function PayByLinkPage() {
         if (!res.ok) {
           setLoadError(data.error || "This payment link is not valid.");
         } else {
-          setContext(data);
+          // #4955: a return check that has already read the context wins.
+          setContext((current) => current ?? data);
         }
       })
       .catch(() => {
@@ -104,6 +106,15 @@ export default function PayByLinkPage() {
       cancelled = true;
     };
   }, [token]);
+
+  // #4955: the redirect exit of a Stripe confirmation. Declared after the
+  // context fetch, so that fetch is already in flight when the check starts.
+  useEffect(() => {
+    const stripeReturn = takeStripeReturn();
+    if (stripeReturn.kind === "check") void afterCardSuccess(stripeReturn.intentId, stripeReturn.confirmation);
+    else if (stripeReturn.kind === "failed") setRedirectFailed(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per page load; the URL is read and cleared
+  }, []);
 
   useEffect(() => {
     fetch("/api/booking-messages")
@@ -121,6 +132,7 @@ export default function PayByLinkPage() {
   async function startCardPayment() {
     setIntentLoading(true);
     setIntentError(null);
+    setRedirectFailed(false); // the returned failure is answered by this attempt
     try {
       const res = await fetch(`/api/pay/${encodeURIComponent(token)}/payment-intent`, {
         method: "POST",
@@ -150,12 +162,19 @@ export default function PayByLinkPage() {
   }
 
   // #4300: after a card success, ask the server what it did (`checkCardSuccess`).
-  async function afterCardSuccess(paidIntentId: string) {
+  // #4955: also a `processing` result and a redirect return - both exits.
+  async function afterCardSuccess(paidIntentId: string, confirmation: CardConfirmation) {
     setCheckingPayment(true);
-    const outcome = await checkCardSuccess(token, paidIntentId);
+    const outcome = await checkCardSuccess(token, paidIntentId, confirmation);
     if (outcome.kind === "paid") {
-      if (outcome.context) setContext(outcome.context);
-      setPaymentComplete(true);
+      const settled = outcome.context;
+      if (settled) setContext(settled);
+      // #3194: a paid booking under review reads as its review state, and the
+      // server's narrative (the `!context.payable` branch) confirms the payment
+      // with the review beside it. Composing a card here would drop the amount.
+      const paidUnderReview =
+        settled?.financialReviewPending === true && !settled.payable && !settled.canRequestFreshLink;
+      if (!paidUnderReview) setPaymentComplete(true);
     } else if (outcome.kind === "fresh") {
       // The refreshed context: "Amount due" and the form match the new intent.
       if (outcome.context) setContext(outcome.context);
@@ -165,37 +184,7 @@ export default function PayByLinkPage() {
     setCheckingPayment(false);
   }
 
-  async function requestFreshLink() {
-    setRefreshState("sending");
-    setRefreshError(null);
-    try {
-      const res = await fetch(`/api/pay/${encodeURIComponent(token)}/refresh`, {
-        method: "POST",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Unable to send a new link right now.");
-      }
-      if (data.emailed === false) {
-        // The link was re-issued but nothing was delivered — either the address
-        // previously bounced or complained (#1885), or the club has this booking
-        // set to receive no email (#2258). Never claim an email is on the way,
-        // and never say WHICH: the wording stays neutral so it is honest in both
-        // cases and never reveals the per-booking switch to the member.
-        setRefreshState("idle");
-        setRefreshError(
-          `We weren't able to email the link. Please contact ${club.lodgeName} and we'll help you complete payment.`
-        );
-        return;
-      }
-      setRefreshState("sent");
-    } catch (err) {
-      setRefreshState("idle");
-      setRefreshError(
-        err instanceof Error ? err.message : "Unable to send a new link right now."
-      );
-    }
-  }
+  if (checkingPayment) return <CheckingPaymentCard />;
 
   if (loading) {
     return (
@@ -205,7 +194,8 @@ export default function PayByLinkPage() {
     );
   }
 
-  if (loadError) {
+  // #4955: a context the return check read outranks a failed page-load fetch.
+  if (loadError && !context) {
     return (
       <Card className="w-full max-w-lg">
         <CardHeader>
@@ -235,6 +225,23 @@ export default function PayByLinkPage() {
     this page that can reach a member without telling them.
   */
   const financialReviewPending = context.financialReviewPending === true;
+
+  // #4300 / #4955: what a payment just made did, when the server says it is not
+  // (yet) settled. Never answered with another payment.
+  const recoveryNotice = (
+    <FocusedActionError
+      id="payment-link-recovery-error"
+      error={paymentRecovery?.message ?? ""}
+      heading={paymentRecovery?.heading}
+      action={
+        paymentRecovery ? (
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            Reload payment status
+          </Button>
+        ) : undefined
+      }
+    />
+  );
 
   // A completed card payment lands here before the page is re-fetched.
   if (paymentComplete || context.state === "paid") {
@@ -284,6 +291,29 @@ export default function PayByLinkPage() {
   }
 
   /*
+    #4955: a redirect return reads a fresh context, which may no longer be
+    payable - the link expired while the payer was at their bank, say. The
+    answer about the payment just made still comes first: not "email me a new
+    link", and never the pay buttons. #3194: a booking under review still says
+    so, as on every branch.
+  */
+  if (paymentRecovery && (context.canRequestFreshLink || !context.payable)) {
+    return (
+      <Card className="w-full max-w-lg">
+        <CardHeader>
+          <CardTitle>Your Payment</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {recoveryNotice}
+          {financialReviewPending ? (
+            <FinancialReviewNotice note={financialReviewNote({ moneyAlreadyMoved: false })} />
+          ) : null}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  /*
     #3194: `canRequestFreshLink`, not `state === "expired_payable"`. On a booking
     under review the state is the WORDING state (`financial_review_pending`)
     while the link is still expired-but-payable, and the member still needs the
@@ -293,27 +323,7 @@ export default function PayByLinkPage() {
     sentences.
   */
   if (context.canRequestFreshLink) {
-    return (
-      <NarrativeCard narrative={context.narrative} tone="info">
-        {refreshState === "sent" ? (
-          <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
-            <CheckCircle2 className="h-5 w-5 shrink-0" />
-            <p>We&apos;ve emailed you a fresh payment link. Please check your inbox.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Button onClick={requestFreshLink} disabled={refreshState === "sending"}>
-              {refreshState === "sending" ? "Sending..." : "Email me a new link"}
-            </Button>
-            {refreshError ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {refreshError}
-              </div>
-            ) : null}
-          </div>
-        )}
-      </NarrativeCard>
-    );
+    return <FreshLinkCard token={token} narrative={context.narrative} />;
   }
 
   /*
@@ -352,6 +362,10 @@ export default function PayByLinkPage() {
   }
 
   const payable = context.payable;
+  const confirmed = (confirmation: CardConfirmation) => (paidIntentId: string) => {
+    setClientSecret(null);
+    void afterCardSuccess(paidIntentId, confirmation);
+  };
 
   return (
     <Card className="w-full max-w-lg">
@@ -360,7 +374,11 @@ export default function PayByLinkPage() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
-          <p>
+          {/* INV-CAP-039: the booking's OWN lodge, so the guest knows what the
+              money is for. Never `club.lodgeName`: with no lodge on the wire
+              the line is left out rather than naming the club default. */}
+          {context.lodgeName ? <p>Lodge: {context.lodgeName}</p> : null}
+          <p className={context.lodgeName ? "mt-1" : undefined}>
             Dates: {formatStayDateOrNull(payable.checkIn, format) ?? payable.checkIn} to{" "}
             {formatStayDateOrNull(payable.checkOut, format) ?? payable.checkOut}
           </p>
@@ -403,18 +421,7 @@ export default function PayByLinkPage() {
           />
         ) : null}
 
-        <FocusedActionError
-          id="payment-link-recovery-error"
-          error={paymentRecovery?.message ?? ""}
-          heading={paymentRecovery?.heading}
-          action={
-            paymentRecovery ? (
-              <Button variant="outline" onClick={() => window.location.reload()}>
-                Reload payment status
-              </Button>
-            ) : undefined
-          }
-        />
+        {recoveryNotice}
 
         <PreviousPaymentRefundingNotice show={!paymentRecovery && previousPaymentRefunding} />
         {paymentRecovery ? null : clientSecret ? (
@@ -424,17 +431,14 @@ export default function PayByLinkPage() {
               returnUrl={typeof window !== "undefined" ? window.location.href : ""}
               // #4300: the server says what the payment did - settled, or (an
               // intent an edit superseded) going back with a fresh one to pay.
-              onSuccess={(paidIntentId) => {
-                setClientSecret(null);
-                void afterCardSuccess(paidIntentId);
-              }}
+              onSuccess={confirmed("succeeded")}
+              onProcessing={confirmed("processing")}
               onError={() => undefined}
             />
           </StripeProvider>
-        ) : checkingPayment ? (
-          <p className="text-sm text-muted-foreground">Checking your payment...</p>
         ) : (
           <div className="space-y-3">
+            {redirectFailed ? <RedirectFailedNotice /> : null}
             {payable.cardPaymentAvailable !== false ? (
               <Button onClick={startCardPayment} disabled={intentLoading}>
                 {intentLoading ? "Preparing..." : "Pay by card"}

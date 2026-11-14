@@ -24,10 +24,10 @@
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
+import { XERO_CRON_JOB_NAMES } from "./xero-cron-jobs";
 import {
   clearCreditNoteMirrorRecheck,
   CREDIT_NOTE_MIRROR_CURSOR_RESOURCE,
-  CREDIT_NOTE_MIRROR_JOB_NAME,
   creditNoteMirrorEvidenceFrom,
   dueCreditNoteMirrorRechecks,
   mirrorCreditNoteOutsideSpend,
@@ -195,7 +195,7 @@ export async function runCreditNoteMirrorSweep(deps: CreditNoteMirrorSweepDeps =
       minPassIntervalMs > 0
         ? await db.cronJobRun.findFirst({
             where: {
-              jobName: CREDIT_NOTE_MIRROR_JOB_NAME,
+              jobName: XERO_CRON_JOB_NAMES["credit-note-mirror"],
               status: "SUCCESS",
               startedAt: { gte: new Date(now.getTime() - minPassIntervalMs) },
             },
