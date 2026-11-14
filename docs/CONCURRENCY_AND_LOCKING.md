@@ -8444,7 +8444,8 @@ operator's copy of that is
 
 Scheduled and whole-club manual inbound syncs share one database-held claim
 through `runXeroCronTaskList` and
-`withCronRunClaim("xero-inbound-reconcile", ...)`. The HTTP cron and standalone
+`withCronRunClaim(XERO_CRON_JOB_NAMES.inbound, ...)` (recorded as
+`xero-inbound-reconcile`). The HTTP cron and standalone
 mirror participate too. A competing cron or manual caller reports “A sync is
 already running” and performs no provider or domain work.
 
