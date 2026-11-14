@@ -602,7 +602,7 @@
   },
   "src/app/(lodge)/lodge/kiosk/page.tsx": {
     "design-system/no-raw-button": {
-      "count": 11
+      "count": 9
     },
     "design-system/no-raw-input": {
       "count": 1
