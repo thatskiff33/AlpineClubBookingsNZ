@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BookingApprovalsPanel } from "@/components/admin/booking-requests/booking-approvals-panel";
@@ -496,7 +496,7 @@ describe("PolicyExceptionRequestsPanel paging", () => {
  * of tall cards. Each queue keeps the one `Pagination` in place through a load.
  */
 describe("every booking queue keeps its pager mounted through a page change", () => {
-  const cases: Array<[string, string, () => ReactNode, unknown]> = [
+  const cases: Array<[string, string, () => ReactElement, unknown]> = [
     ["booking approvals", "/api/admin/booking-reviews", () => <BookingApprovalsPanel />, booking],
     ["change requests", "/api/admin/booking-change-requests", () => <BookingChangeRequestsPanel />, changeRequest()],
     ["public requests", "/api/admin/booking-requests", () => <PublicBookingRequestsPanel />, publicRequest],
