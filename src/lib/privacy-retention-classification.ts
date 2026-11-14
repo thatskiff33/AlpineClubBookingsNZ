@@ -133,6 +133,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   LodgeSettings: "personal",
   EmailMessageSetting: "personal",
   ClubIdentitySettings: "personal",
+  PrivacyHostingSettings: "personal",
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
   ClubTaxSettings: "non-personal",
