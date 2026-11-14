@@ -39,9 +39,9 @@ const CAPPED_QUEUE_ROUTES: Record<string, readonly string[]> = {
 
 /** Client files that read a capped queue route without listing its rows. */
 const NOT_A_QUEUE_LIST: Record<string, string> = {
-  "src/app/(admin)/admin/booking-requests/page.tsx":
+  "src/app/(admin)/admin/booking-desk/booking-requests/page.tsx":
     "reads `total` with pageSize=1 for the tab badges; the panels list the rows",
-  "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx":
+  "src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx":
     "the deletion queue already pages with its own pager; outside #4960's scope",
 };
 
