@@ -145,7 +145,9 @@ export default function AdminModulesPage() {
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
 
-  async function loadModules(refreshLayout = false) {
+  // Resolves true only when the reload succeeded, so a caller can act on a
+  // good reload without a failed one ever doing so.
+  async function loadModules(): Promise<boolean> {
     setLoading(true);
     setError("");
     setSavedMessage("");
@@ -160,11 +162,12 @@ export default function AdminModulesPage() {
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
-      if (refreshLayout) router.refresh();
+      return true;
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : "Failed to load modules",
       );
+      return false;
     } finally {
       setLoading(false);
     }
@@ -173,6 +176,13 @@ export default function AdminModulesPage() {
   useEffect(() => {
     void loadModules();
   }, []);
+
+  // The Refresh button also refreshes the server layout, which holds the admin
+  // menus, but only after a successful reload. It stays out of loadModules so
+  // the mount effect above does not depend on the router.
+  async function refreshModules() {
+    if (await loadModules()) router.refresh();
+  }
 
   // Failure wins, success positions at the top, and neither runs for a
   // passive re-render — the shared action-attention rule (#2934).
@@ -288,7 +298,7 @@ export default function AdminModulesPage() {
           <Button
             type="button"
             variant="outline"
-            onClick={() => void loadModules(true)}
+            onClick={() => void refreshModules()}
             disabled={loading || saving}
           >
             <RefreshCw className="mr-2 h-4 w-4" />
