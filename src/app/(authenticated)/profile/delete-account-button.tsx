@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,10 +18,24 @@ import { StatusRegion } from "@/components/status-region";
 import { AlertTriangle } from "lucide-react";
 import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 
+/** The member's open deletion request, its date already in club time. */
+export interface PendingDeletionRequest {
+  requestedOn: string;
+}
+
 /**
  * F-COMP-04: Request Account Deletion button with confirmation modal.
+ *
+ * #4956: while the member has an open request (read by the profile page through
+ * `OPEN_DELETION_REQUEST_STATUSES`), a lasting notice replaces the button, so a
+ * reload never offers the irreversible-action dialog again.
  */
-export function DeleteAccountButton() {
+export function DeleteAccountButton({
+  pendingRequest = null,
+}: {
+  pendingRequest?: PendingDeletionRequest | null;
+}) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -44,11 +59,35 @@ export function DeleteAccountButton() {
       }
       setSubmitted(true);
       setOpen(false);
+      // Brings the server-read state in line for the rest of the page.
+      router.refresh();
     } catch {
       setError("Failed to submit request. Please try again.");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // #4956: an open request read by the server, and none made in this view. A
+  // static, server-read notice, not a live region: it is shown on load, so
+  // there is nothing to announce. "May", not "will": an admin can reject without
+  // emailing the member (`notifyMember: false`), and this notice now outlives
+  // the page view.
+  //
+  // `!submitted` is what keeps the confirmation below the only live region.
+  // After a submission here, `router.refresh()` brings `pendingRequest` in; if
+  // that swapped the confirmation for this notice, the status region would be
+  // replaced under the member's focus, and a changed or second `role="status"`
+  // could be read a second time. The confirmation instead stays as it is, with
+  // its text unchanged and its focus kept, and the dated notice takes over from
+  // the next server render (a reload, or a return to the page).
+  if (pendingRequest && !submitted) {
+    return (
+      <p className="text-sm text-info-11 bg-info-3 border border-info-6 rounded-md px-3 py-2">
+        You asked for your account to be deleted on {pendingRequest.requestedOn}.
+        An admin will review it and may contact you by email.
+      </p>
+    );
   }
 
   // #4949: the confirmation fills a status region mounted with the button, so
@@ -63,7 +102,7 @@ export function DeleteAccountButton() {
         visibleClassName="text-sm text-success-11 bg-success-3 border border-success-6 rounded-md px-3 py-2"
       >
         {submitted
-          ? "Your deletion request has been submitted. An admin will review it and contact you by email."
+          ? "Your deletion request has been submitted. An admin will review it and may contact you by email."
           : null}
       </StatusRegion>
       {submitted ? null : (
