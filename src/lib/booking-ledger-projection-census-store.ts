@@ -37,6 +37,7 @@ import { readApprovedAppealOutcomes } from "@/lib/refund-appeal-outcome";
 import { approvedAppealRefundedCents } from "@/lib/refund-request-card-refund-copy";
 import { isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
 import { buildGroupSettlementRefundRecoveryIdempotencyKey } from "@/lib/payment-recovery-keys";
+import { legacyGroupRefundPaidByBank } from "@/lib/group-settlement-refund-plan";
 
 const ASC = { id: "asc" } as const;
 
@@ -251,7 +252,7 @@ const CREDIT_SELECT = {
 export function toCensusRow(
   booking: StoredCensusBooking,
   credits: BookingLedgerCensusRow["credits"],
-  inFlightGroupRefundSettlementIds: ReadonlySet<string> = new Set(),
+  groupRefunds: GroupRefundRecoveryStates = { inFlight: new Set(), paidByBank: new Set() },
   groupChildren: ReadonlyMap<string, NonNullable<BookingLedgerCensusRow["groupChild"]>> = new Map(),
   appeals: ReadonlyMap<string, BookingLedgerCensusRow["appeals"]> = new Map(),
   journal: ReadonlyMap<string, BookingJournalCharges> = new Map(),
@@ -298,7 +299,11 @@ export function toCensusRow(
     cancellation: cancellationOf(booking),
     appeals: appeals.get(booking.id) ?? [],
     groupSettlement: settlement
-      ? { ...settlement, refundRecoveryInFlight: inFlightGroupRefundSettlementIds.has(settlement.id) }
+      ? {
+          ...settlement,
+          refundRecoveryInFlight: groupRefunds.inFlight.has(settlement.id),
+          refundPaidByBank: groupRefunds.paidByBank.has(settlement.id),
+        }
       : null,
     groupChild: groupChildren.get(booking.id) ?? null,
     lines: booking.ledgerLines,
@@ -387,24 +392,35 @@ async function approvedAppeals(
   return appeals;
 }
 
-/** #3854: which of a page's group settlements have their one pre-#3653 refund-plan retry still in flight. */
-async function inFlightGroupRefunds(tx: CensusReadStore, page: readonly StoredCensusBooking[]): Promise<Set<string>> {
+/** A page's group settlements by the state of their one pre-#3653 refund-plan row. */
+type GroupRefundRecoveryStates = { inFlight: ReadonlySet<string>; paidByBank: ReadonlySet<string> };
+
+/**
+ * #3854: which of a page's group settlements have their one pre-#3653
+ * refund-plan retry still in flight; #4851: which had it closed on Stuck
+ * States as paid by bank, so their refund lines are bank refunds.
+ */
+async function groupRefundRecoveries(tx: CensusReadStore, page: readonly StoredCensusBooking[]): Promise<GroupRefundRecoveryStates> {
   const settlementIds = [
     ...new Set(page.flatMap((booking) => {
       const id = booking.parentBooking?.groupBookingAsOrganiser?.settlement?.id;
       return booking.organiserSettled && id ? [id] : [];
     })),
   ];
-  if (settlementIds.length === 0) return new Set();
+  if (settlementIds.length === 0) return { inFlight: new Set(), paidByBank: new Set() };
   const operations = await tx.paymentRecoveryOperation.findMany({
     where: { idempotencyKey: { in: settlementIds.map(buildGroupSettlementRefundRecoveryIdempotencyKey) } },
     orderBy: ASC,
-    select: { idempotencyKey: true, status: true, attempts: true, nextRetryAt: true },
+    select: { idempotencyKey: true, status: true, attempts: true, nextRetryAt: true, lastError: true },
   });
   // In flight as the runner reads it (K1): a FAILED retry still scheduled
   // counts; an exhausted one does not, so its plan's money holds the gate.
   const inFlight = new Set(operations.filter(isPaymentRecoveryOperationInFlight).map((operation) => operation.idempotencyKey));
-  return new Set(settlementIds.filter((id) => inFlight.has(buildGroupSettlementRefundRecoveryIdempotencyKey(id))));
+  const paidByBank = new Set(operations.filter(legacyGroupRefundPaidByBank).map((operation) => operation.idempotencyKey));
+  return {
+    inFlight: new Set(settlementIds.filter((id) => inFlight.has(buildGroupSettlementRefundRecoveryIdempotencyKey(id)))),
+    paidByBank: new Set(settlementIds.filter((id) => paidByBank.has(buildGroupSettlementRefundRecoveryIdempotencyKey(id)))),
+  };
 }
 
 /**
@@ -418,15 +434,15 @@ async function censusRows(
   page: readonly StoredCensusBooking[],
   creditsOf: (bookingId: string) => BookingLedgerCensusRow["credits"],
 ): Promise<BookingLedgerCensusRow[]> {
-  const inFlight = await inFlightGroupRefunds(tx, page);
+  const groupRefunds = await groupRefundRecoveries(tx, page);
   const appeals = await approvedAppeals(tx, page);
   // #4627: the journal's charges for the page, read in the same snapshot.
   const journal = await readBookingJournalCharges(tx, page.map((booking) => booking.id));
-  const rows = page.map((booking) => toCensusRow(booking, creditsOf(booking.id), inFlight, new Map(), appeals, journal));
+  const rows = page.map((booking) => toCensusRow(booking, creditsOf(booking.id), groupRefunds, new Map(), appeals, journal));
   const candidates = page.filter((_, index) => rows[index]!.groupSettlement !== null && isGroupSettlementOffLedger(rows[index]!));
   if (candidates.length === 0) return rows;
   const groupChildren = await groupChildEvidence(tx, candidates);
-  return page.map((booking) => toCensusRow(booking, creditsOf(booking.id), inFlight, groupChildren, appeals, journal));
+  return page.map((booking) => toCensusRow(booking, creditsOf(booking.id), groupRefunds, groupChildren, appeals, journal));
 }
 
 /**

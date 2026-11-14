@@ -1,0 +1,1 @@
+- **New installs set up restricted database roles and a separate encryption key before first use (#4904).** First Bootstrap now walks the operator through both steps. Setup warns when its database connection has superuser rights, and the setup wizard reminds the operator when the data key is missing. Existing installations keep working with their current settings.
