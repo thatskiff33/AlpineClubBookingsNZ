@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { privacyHostingSchema, dataHostingSentence } from "@/lib/privacy-hosting";
 import { HTML_TOKEN_CATALOGUE, tokensForContext } from "@/lib/token-catalogue";
-import { starterPageContent } from "../../../prisma/starter-page-content";
 
 describe("privacy hosting disclosure", () => {
   it.each([
@@ -22,8 +21,5 @@ describe("privacy hosting disclosure", () => {
     expect(HTML_TOKEN_CATALOGUE.find(t => t.token === "data-hosting")).toMatchObject({ kind: "text", contexts: ["page-content-body"] });
     expect(tokensForContext("site-footer").some(t => t.token === "data-hosting")).toBe(false);
     expect(tokensForContext("lodge-instructions").some(t => t.token === "data-hosting")).toBe(false);
-  });
-  it("keeps release 1 starter text free of the new token", () => {
-    expect(JSON.stringify(starterPageContent)).not.toContain("{{data-hosting}}");
   });
 });

@@ -226,10 +226,12 @@ when hosting changes. These are public plain-text disclosures, never credentials
 The optional `{{data-hosting}}` page-body token uses these settings; blanks use
 role-only fallback wording. Review your club's actual privacy page against the
 [recipient register](../PRIVACY_RECIPIENTS.md), including optional features.
-This change leaves published and starter privacy-policy text unchanged (the
-separate #4914 correction has its own upgrade note); the
-[upgrade note](../UPGRADING.md#privacy-incident-guide-and-hosting-disclosure-settings-4918)
-explains the later policy update and rollback limit.
+The starter privacy policy's section 5 lists the register's member-facing
+services and names the host through the token; an unedited privacy page is moved
+to it by a one-off migration, and an edited one is left for you to check
+([upgrade note](../UPGRADING.md#starter-privacy-policy-lists-its-recipients-and-names-your-host-5007)).
+The [#4918 note](../UPGRADING.md#privacy-incident-guide-and-hosting-disclosure-settings-4918)
+explains the rollback limit.
 
 ## Related links
 
