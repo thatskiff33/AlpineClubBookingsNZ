@@ -130,6 +130,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "account-deletion-rejected": "accountDeletionRejectedTemplate",
   "admin-password-reset": "adminPasswordResetTemplate",
   "email-change-notification": "emailChangeNotificationTemplate",
+  "officer-factor-reset": "officerFactorResetTemplate",
   "email-change-verification": "emailChangeVerificationTemplate",
   "email-verification": "emailVerificationTemplate",
   "magic-link-login": "magicLinkLoginTemplate",

@@ -4215,6 +4215,11 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
      row on the anchor it holds; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
+  its WEBHOOK_RECONCILE row is this attempt's own (INV-INT-038): an INBOUND
+  row left RUNNING past the stale threshold by a dead attempt is re-claimed
+  in place under a fresh startedAt (one guarded write, one winner; the dead
+  attempt's late outcome refused); a live one fails this attempt as in
+  flight -> event FAILED, retried after its backoff
 failure -> retry/backoff/admin visibility
 FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   never retried, requeued or re-minted beside (INV-INT-025)
@@ -5169,6 +5174,35 @@ refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
 concurrent consumes, one success), `confirm-its-you-dialog.test.tsx` (the
 replay is once, body unchanged), and `webauthn.realdb.test.ts` (one of two
 challenge claims, and one of two counter updates).
+
+## Officer two-factor (#4618)
+
+Who must hold an authenticator app or a passkey (`INV-AUTH-012`). The
+requirement is recomputed on every session refresh. Nothing here runs until
+#4620 sets `OFFICER_SIGN_IN_ENFORCED`.
+
+```text
+not required -> required: becomes Full Admin, gains a role that requires it, or the club turns the policy on
+required, no app or passkey, no grace stamp -> in grace (twoFactorGraceStartedAt = NOW(), set once)
+in grace -> gated: club midnight after (first club date + grace days); 0 days gates at once
+gated -> only /login/enroll, /login/verify, /profile, sign-out and the enrolment APIs answer
+in grace or gated -> enrolled: authenticator app or passkey saved (an emailed code does not count)
+enrolled -> enrolled: removing the last app or passkey is refused with 400
+enrolled -> reset: another Full Admin after step-up, or `auth:reset-factors`
+  factors cleared, sessions ended, factorsResetAt = NOW(), member emailed;
+  a required officer's missing grace stamp is set to the same NOW()
+reset -> gated: the next sign-in of a required officer; no new grace period
+reset -> in grace: a member reset before the rule reached them, on first exposure
+reset -> enrolled: enrolment from a session issued after the reset; an older session gets 409
+required -> not required: the role or policy goes, or the member can no longer sign in
+```
+
+To verify: `officer-two-factor-required.test.ts` (who is required, grace on the
+club calendar at 0, 14 and 60 days, no grace after a reset, first grace for a
+member reset before promotion),
+`officer-two-factor-gate-callers.test.ts` (the allowlist and every gate
+caller), `officer-factor-reset-route.test.ts` (each refusal of the reset
+route), and `webauthn.test.ts` (the last passkey is kept, under the member lock).
 
 ## Password Sign-In Throttle (#4609)
 

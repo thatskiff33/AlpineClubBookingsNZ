@@ -235,6 +235,20 @@ describe("method choice is announced, not only shaded (#4952)", () => {
     await screen.findByLabelText("Email code");
   });
 
+  // #4618 review: an emailed code never satisfies the officer rule, so the
+  // officer branch of /login/enroll offers the app alone.
+  it("offers only the app when the panel is app-only", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => response(setup)));
+    render(<TwoFactorEnrollPanel callbackUrl={deepLink} appOnly />);
+    const group = screen.getByRole("group", { name: "Verification method" });
+    expect(within(group).getByRole("button", { name: "App" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(within(group).queryByRole("button", { name: "Email" })).toBeNull();
+    await screen.findByText(setup.secret);
+  });
+
   it("names the sign-in group and moves pressed to Recovery", () => {
     render(<TwoFactorVerifyPanel callbackUrl={deepLink} enrolledMethod="EMAIL" hasPasskey />);
     const group = screen.getByRole("group", { name: "Verification method" });

@@ -952,6 +952,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-035` | An unrecorded refund note holds its payment's refund notes until recorded |
 | `INV-INT-036` | An account-credit note stamps the one member credit it was raised for |
 | `INV-INT-037` | A manual grant queues one Xero note at approval |
+| `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
 
 ## Operations
 
@@ -1050,3 +1051,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-009` | A passkey enrols; its challenge lasts two minutes |
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
+| `INV-AUTH-012` | Officers use an app or passkey after grace |
