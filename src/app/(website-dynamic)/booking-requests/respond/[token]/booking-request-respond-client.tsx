@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion, useFocusOnOutcome } from "@/components/status-region";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirm } from "@/components/confirm-dialog";
 import { Label } from "@/components/ui/label";
@@ -113,6 +114,12 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
   // #4949: every outcome replaces the form, so it is also spoken from a status
   // region mounted with the card rather than appearing silently.
   const [announcement, setAnnouncement] = useState("");
+  // #4949: sending a reply replaces the whole form, and the button that had
+  // focus with it, by the outcome panel. The panel takes focus once; the
+  // announcement region below is what reads it out.
+  const outcomeRef = useRef<HTMLDivElement>(null);
+  const [outcomeCount, setOutcomeCount] = useState(0);
+  useFocusOnOutcome(outcomeRef, outcomeCount);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,6 +218,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
           declinedAt: null,
         } : current);
         setAnnouncement(QUOTE_ACCEPTED);
+        setOutcomeCount((count) => count + 1);
       } else {
         const outcome =
           data.outcome === "cancelled"
@@ -220,6 +228,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
               : "Question sent. The booking team will reply or send an updated quote.";
         setResult(outcome);
         setAnnouncement(outcome);
+        setOutcomeCount((count) => count + 1);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to send your response.");
@@ -263,13 +272,13 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
             <p>{error || "Unable to load this quote right now."}</p>
           </div>
         ) : result ? (
-          <div className="flex gap-3 text-success-11">
+          <div ref={outcomeRef} tabIndex={-1} className="flex gap-3 text-success-11 outline-none">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
             <p className="font-medium">{result}</p>
           </div>
         ) : context.accepted ? (
           <>
-            <div className="flex gap-3 text-success-11">
+            <div ref={outcomeRef} tabIndex={-1} className="flex gap-3 text-success-11 outline-none">
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
               <div>
                 <p className="font-medium">{context.declinedAfterAcceptance ? "The booking team could not approve this request." : QUOTE_ACCEPTED}</p>
@@ -409,9 +418,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
             </div>
           </>
         )}
-        <p role="status" className="sr-only">
-          {announcement}
-        </p>
+        <StatusRegion>{announcement}</StatusRegion>
       </CardContent>
       {confirmDialog}
     </Card>

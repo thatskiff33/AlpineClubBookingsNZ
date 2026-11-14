@@ -8,7 +8,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { expectRecoveryAlertToHoldFocus, expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 const stripe = {
   confirmPayment: vi.fn(),
@@ -83,6 +83,8 @@ describe("PaymentForm announcements (#4949)", () => {
       "Payment successful!Your payment of $125.00 has been processed.",
     );
     expect(screen.queryByRole("button", { name: /Pay Now/ })).toBeNull();
+    // Pay Now is gone, so the success takes its focus rather than leaving it on <body>.
+    await expectToHoldFocus(status, "the payment success");
   });
 
   it("gives two forms on one page distinct alert ids", () => {

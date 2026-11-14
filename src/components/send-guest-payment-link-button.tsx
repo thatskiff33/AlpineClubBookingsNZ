@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 
 /**
  * Split-booking guest-portion affordance (#1967). Shown with the
@@ -84,9 +85,9 @@ export function SendGuestPaymentLinkButton({ bookingId }: { bookingId: string })
             : "Email me a payment link for my guests"}
       </Button>
       {/* #4949: mounted before the request, so the confirmation is announced. */}
-      <p role="status" className={done ? "mt-2 text-sm text-success-11" : "sr-only"}>
+      <StatusRegion visible={Boolean(done)} visibleClassName="mt-2 text-sm text-success-11">
         {done}
-      </p>
+      </StatusRegion>
       <FocusedActionError
         id={`send-guest-payment-link-${bookingId}-error`}
         error={error}

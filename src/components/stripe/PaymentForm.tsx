@@ -9,6 +9,7 @@ import {
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 
 interface PaymentFormProps {
   bookingId?: string;
@@ -115,13 +116,14 @@ export default function PaymentForm({
   };
 
   // #4949: the status region is mounted with the form, so the success that
-  // replaces the form is announced rather than inserted already filled.
+  // replaces the form is announced rather than inserted already filled, and it
+  // takes the focus the form's Pay Now button held.
   return (
     <>
-      <div
-        role="status"
-        aria-atomic="true"
-        className={isPaid ? "rounded-md bg-success-3 p-4 text-sm text-success-11" : "sr-only"}
+      <StatusRegion
+        visible={isPaid}
+        visibleClassName="rounded-md bg-success-3 p-4 text-sm text-success-11"
+        outcomeKey={isPaid}
       >
         {isPaid ? (
           <>
@@ -129,7 +131,7 @@ export default function PaymentForm({
             <p className="mt-1">Your payment of {formattedAmount} has been processed.</p>
           </>
         ) : null}
-      </div>
+      </StatusRegion>
       {isPaid ? null : (
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="rounded-lg border border-border p-4">

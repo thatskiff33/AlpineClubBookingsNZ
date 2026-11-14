@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Clock } from "lucide-react";
@@ -17,7 +17,7 @@ import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDateOrNull } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
-import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
+import { StatusRegion } from "@/components/status-region";
 import { useClubFormat } from "@/components/club-format-provider";
 // The presentation layer this page renders through, split out when the club-time
 // migration carried this file past its 500-line route-page budget. See that
@@ -74,12 +74,6 @@ export default function PayByLinkPage() {
     "idle"
   );
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  // #4949: "Email me a new link" unmounts once the link is sent, so focus moves
-  // to the confirmation that replaces it rather than dropping to the page.
-  const refreshStatusRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (refreshState === "sent") focusAndKeepInView(refreshStatusRef.current);
-  }, [refreshState]);
   const [bookingMessages, setBookingMessages] = useState<Record<string, string>>({});
   // #2919 review: the club-level values this page's message tokens resolve to.
   // Without them an operator's {{CLUB_LODGE_NAME}} reached the member as
@@ -304,14 +298,16 @@ export default function PayByLinkPage() {
       <NarrativeCard narrative={context.narrative} tone="info">
         {/* #4949: both outcomes land in regions mounted before the request. */}
         <div className="space-y-2">
-          <div ref={refreshStatusRef} tabIndex={-1} role="status" className="outline-none">
+          {/* "Email me a new link" unmounts once the link is sent, so the
+              confirmation that replaces it takes focus. */}
+          <StatusRegion visible={refreshState === "sent"} outcomeKey={refreshState === "sent"}>
             {refreshState === "sent" ? (
               <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
                 <CheckCircle2 aria-hidden className="h-5 w-5 shrink-0" />
                 <p>We&apos;ve emailed you a fresh payment link. Please check your inbox.</p>
               </div>
             ) : null}
-          </div>
+          </StatusRegion>
           {refreshState === "sent" ? null : (
             <Button onClick={requestFreshLink} disabled={refreshState === "sending"}>
               {refreshState === "sending" ? "Sending..." : "Email me a new link"}
@@ -428,9 +424,15 @@ export default function PayByLinkPage() {
         />
 
         <PreviousPaymentRefundingNotice show={!paymentRecovery && previousPaymentRefunding} />
-        <p id="payment-link-check-status" role="status" className={checkingPayment ? "text-sm text-muted-foreground" : "sr-only"}>
+        {/* A card success unmounts the form that had focus, so the check takes it. */}
+        <StatusRegion
+          id="payment-link-check-status"
+          visible={checkingPayment}
+          visibleClassName="text-sm text-muted-foreground"
+          outcomeKey={checkingPayment}
+        >
           {checkingPayment ? "Checking your payment..." : null}
-        </p>
+        </StatusRegion>
         {paymentRecovery ? null : clientSecret ? (
           <StripeProvider key={clientSecret} clientSecret={clientSecret}>
             <PaymentForm

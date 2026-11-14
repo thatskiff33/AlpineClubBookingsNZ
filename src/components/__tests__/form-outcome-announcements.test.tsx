@@ -9,7 +9,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { expectRecoveryAlertToHoldFocus, expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 const nav = vi.hoisted(() => ({ search: "" }));
 vi.mock("next/navigation", () => ({
@@ -21,7 +21,7 @@ vi.mock("next-auth/react", () => ({ signOut: vi.fn() }));
 import ForgotPasswordPage from "@/app/(public)/forgot-password/page";
 import ChangePasswordPage from "@/app/(public)/change-password/page";
 import ResetPasswordPage from "@/app/(public)/reset-password/page";
-import { TwoFactorVerifyPanel } from "@/app/(public)/login/two-factor-panels";
+import { TwoFactorEnrollPanel, TwoFactorVerifyPanel } from "@/app/(public)/login/two-factor-panels";
 import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { BookingRequestRespondClient } from "@/app/(website-dynamic)/booking-requests/respond/[token]/booking-request-respond-client";
 import type { ClubIdentity } from "@/config/club-identity-types";
@@ -125,6 +125,19 @@ describe("password and sign-in failures land in a recovery alert that takes focu
     type(/Two-factor code/, "000000");
     await press(/^Verify$/);
     await expectFailureAnnounced("two-factor-verify-error");
+  });
+
+  it("two-factor enrolment", async () => {
+    // The setup key loads on mount (a GET); only the enrolment itself fails.
+    installFetch(
+      { ok: false, body: { error: FAILURE } },
+      { secret: "TESTSETUPKEY", otpauthUrl: "otpauth://totp/Test?secret=TESTSETUPKEY", issuer: "Test", label: "Test" },
+    );
+    render(<TwoFactorEnrollPanel callbackUrl="/dashboard" />);
+    await screen.findByText("TESTSETUPKEY");
+    type(/Authenticator code/, "000000");
+    await press(/^Enroll$/);
+    await expectFailureAnnounced("two-factor-enroll-error");
   });
 });
 
@@ -247,5 +260,13 @@ describe("booking-request reply (#4949)", () => {
 
     expect(screen.getByRole("status")).toBe(status);
     expect(status).toHaveTextContent(text);
+    // The form and the button that had focus are gone: the visible outcome
+    // panel takes focus (the status region is what reads it out), never <body>.
+    const panel = screen
+      .getAllByText(text, { exact: false })
+      .map((element) => element.closest("[tabindex='-1']"))
+      .find((element) => element && !status.contains(element));
+    expect(panel).toBeTruthy();
+    await expectToHoldFocus(panel as Element, "the reply outcome");
   });
 });

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 
 export function NominationConfirmCard(props: {
   token: string;
@@ -14,6 +15,9 @@ export function NominationConfirmCard(props: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState(props.initialMessage ?? "");
+  // #4949: once the confirmation is recorded the page re-renders without the
+  // button that had focus, so the recorded outcome takes it.
+  const [confirmedCount, setConfirmedCount] = useState(0);
 
   async function handleConfirm() {
     setLoading(true);
@@ -37,6 +41,7 @@ export function NominationConfirmCard(props: {
           ? "Your confirmation has been recorded. Both nominators are now complete and the application has moved to committee review."
           : "Your confirmation has been recorded."
       );
+      setConfirmedCount((count) => count + 1);
       router.refresh();
     } catch {
       setError("Could not confirm nomination right now.");
@@ -48,16 +53,13 @@ export function NominationConfirmCard(props: {
   return (
     <div className="space-y-3">
       {/* #4949: mounted before the request, so the outcome is announced. */}
-      <div
-        role="status"
-        className={
-          message
-            ? "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11"
-            : "sr-only"
-        }
+      <StatusRegion
+        visible={Boolean(message)}
+        visibleClassName="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11"
+        outcomeKey={confirmedCount}
       >
         {message}
-      </div>
+      </StatusRegion>
       <FocusedActionError id="nomination-confirm-error" error={error} className="px-4 py-3" />
       {props.canConfirm && (
         <Button onClick={handleConfirm} disabled={loading}>

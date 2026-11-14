@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Mail, MapPin, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
@@ -65,13 +66,14 @@ export function ContactPageClient({
   // "Send Another Message"; pressing that unmounts it in turn, so focus moves
   // to the Name field. Neither step drops focus to the top of the page.
   const sendAnotherRef = useRef<HTMLButtonElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
   const wasSent = useRef(false);
 
   useEffect(() => {
     if (status === "sent") {
-      sendAnotherRef.current?.focus();
+      focusAndKeepInView(sendAnotherRef.current);
     } else if (wasSent.current) {
-      document.getElementById("name")?.focus();
+      focusAndKeepInView(nameRef.current);
     }
     wasSent.current = status === "sent";
   }, [status]);
@@ -244,6 +246,7 @@ export function ContactPageClient({
                     <Label htmlFor="name">Name</Label>
                     <Input
                       id="name"
+                      ref={nameRef}
                       required
                       value={form.name}
                       onChange={(e) =>

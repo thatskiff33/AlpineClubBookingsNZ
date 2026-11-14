@@ -13,6 +13,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 import { AlertTriangle } from "lucide-react";
 import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 
@@ -25,7 +26,7 @@ export function DeleteAccountButton() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const statusRef = useRef<HTMLParagraphElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
 
   async function handleSubmit() {
     setSubmitting(true);
@@ -56,20 +57,15 @@ export function DeleteAccountButton() {
   // instead of Radix's restore dropping it on the page.
   return (
     <>
-      <p
+      <StatusRegion
         ref={statusRef}
-        tabIndex={-1}
-        role="status"
-        className={
-          submitted
-            ? "text-sm text-success-11 bg-success-3 border border-success-6 rounded-md px-3 py-2"
-            : "sr-only"
-        }
+        visible={submitted}
+        visibleClassName="text-sm text-success-11 bg-success-3 border border-success-6 rounded-md px-3 py-2"
       >
         {submitted
           ? "Your deletion request has been submitted. An admin will review it and contact you by email."
           : null}
-      </p>
+      </StatusRegion>
       {submitted ? null : (
         <Button
           variant="outline"

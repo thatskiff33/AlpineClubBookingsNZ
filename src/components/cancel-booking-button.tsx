@@ -15,7 +15,11 @@ import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import { CancelBookingSuccessPanel, type CancelResult } from "@/components/cancel-booking-success-panel";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
-import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
+import {
+  HostingCoverageOverridePrompt,
+  hostingOverrideReasonId,
+} from "@/components/hosting-coverage-override-prompt";
+import { StatusRegion } from "@/components/status-region";
 import {
   hostingCoverageMutationSignature,
   readHostingCoverageOverridePrompt,
@@ -176,6 +180,7 @@ export function CancelBookingButton({
   // override reason, the control the person has to fill next, below the
   // prompt's alert. The error step is focused by its `FocusedActionError` itself.
   const idPrefix = `cancel-booking-${bookingId}`;
+  const hostingOverrideIdPrefix = `${idPrefix}-hosting-override`;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
   const previewHeadingRef = useRef<HTMLParagraphElement>(null);
@@ -187,7 +192,9 @@ export function CancelBookingButton({
     focusedStepRef.current = step;
     if (step === "preview" && hostingOverrideRequestedRef.current) {
       hostingOverrideRequestedRef.current = false;
-      focusAndKeepInView(document.getElementById(`${idPrefix}-hosting-override-reason`));
+      focusAndKeepInView(
+        document.getElementById(hostingOverrideReasonId(hostingOverrideIdPrefix)),
+      );
       return;
     }
     const target = {
@@ -199,7 +206,7 @@ export function CancelBookingButton({
       error: null,
     }[step];
     if (target) focusAndKeepInView(target.current);
-  }, [idPrefix, step]);
+  }, [hostingOverrideIdPrefix, step]);
 
   function renderWithHostingOverrideRegion(content: ReactNode) {
     const busy = step === "loading" || step === "cancelling";
@@ -221,25 +228,20 @@ export function CancelBookingButton({
           reason={hostingOverrideReason}
           disabled={busy}
           busy={busy}
-          idPrefix={`${idPrefix}-hosting-override`}
+          idPrefix={hostingOverrideIdPrefix}
           onConfirmedChange={setHostingOverrideConfirmed}
           onReasonChange={setHostingOverrideReason}
         />
-        <div
+        <StatusRegion
           ref={statusRef}
           id={`${idPrefix}-status`}
-          role="status"
-          tabIndex={-1}
-          className={
-            statusText
-              ? "rounded-md border border-border bg-card p-4 outline-none"
-              : "sr-only"
-          }
+          visible={Boolean(statusText)}
+          visibleClassName="rounded-md border border-border bg-card p-4"
         >
           {statusText ? (
             <p className="text-sm text-muted-foreground">{statusText}</p>
           ) : null}
-        </div>
+        </StatusRegion>
         <FocusedActionError
           id={`${idPrefix}-error`}
           error={step === "error" ? errorMsg : ""}

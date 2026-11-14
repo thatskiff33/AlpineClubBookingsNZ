@@ -6,11 +6,11 @@
 // confirmation through a status region mounted before the request.
 
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { act, fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { expectRecoveryAlertToHoldFocus, expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ token: "public-token" }),
@@ -150,6 +150,8 @@ describe("the pay-link page announces its outcomes (#4949)", () => {
 
     expect(document.getElementById("payment-link-check-status")).toBe(status);
     expect(status).toHaveTextContent("Checking your payment...");
+    // The card form that had focus is gone, so the check takes it.
+    await expectToHoldFocus(status, "the post-card check");
     await act(async () => {
       resolveCardCheck({ kind: "paid", context: null });
     });
@@ -194,6 +196,6 @@ describe("the pay-link page announces its outcomes (#4949)", () => {
       "We've emailed you a fresh payment link. Please check your inbox.",
     );
     // The button is gone, so focus moves to the confirmation, not the page.
-    await waitFor(() => expect(document.activeElement).toBe(status));
+    await expectToHoldFocus(status, "the fresh-link confirmation");
   });
 });

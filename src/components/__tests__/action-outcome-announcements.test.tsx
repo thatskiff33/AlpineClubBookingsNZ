@@ -5,11 +5,11 @@
 // request. One case per surface the issue names.
 
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { act, fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { expectRecoveryAlertToHoldFocus, expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn() }),
@@ -182,6 +182,10 @@ const successes: Array<{
   trigger: RegExp;
   reply: unknown;
   text: string;
+  // Where focus is once the outcome lands. A result that REPLACES the control
+  // that had focus takes it; one that leaves the control in place leaves it
+  // there. Neither may drop it to <body>.
+  focus: "status" | "control";
 }> = [
   {
     surface: "guest payment link",
@@ -189,6 +193,7 @@ const successes: Array<{
     trigger: /Email me a payment link/,
     reply: { sent: 1 },
     text: "We've emailed you a secure link to pay for your guests.",
+    focus: "control",
   },
   {
     surface: "membership-cancellation confirmation",
@@ -196,6 +201,7 @@ const successes: Array<{
     trigger: /Confirm Inclusion/,
     reply: { message: "Your response has been recorded." },
     text: "Your response has been recorded.",
+    focus: "status",
   },
   {
     surface: "nomination confirmation",
@@ -203,6 +209,7 @@ const successes: Array<{
     trigger: /Agree to Nominate/,
     reply: {},
     text: "Your confirmation has been recorded.",
+    focus: "status",
   },
   {
     surface: "partner invite claim",
@@ -210,11 +217,12 @@ const successes: Array<{
     trigger: /Join Riley family/,
     reply: {},
     text: "You have joined Riley family.",
+    focus: "control",
   },
 ];
 
 describe("action results fill a status region mounted before the request (#4949)", () => {
-  it.each(successes)("$surface", async ({ ui, trigger, reply, text }) => {
+  it.each(successes)("$surface", async ({ ui, trigger, reply, text, focus }) => {
     installFetch({ ok: true, body: reply });
     render(ui);
     const status = screen.getByRole("status");
@@ -224,6 +232,11 @@ describe("action results fill a status region mounted before the request (#4949)
 
     expect(screen.getByRole("status")).toBe(status);
     expect(status).toHaveTextContent(text);
+    if (focus === "status") {
+      await expectToHoldFocus(status, "the recorded outcome");
+    } else {
+      await expectToHoldFocus(screen.getByRole("button"), "the control that stayed");
+    }
   });
 
   it("account deletion request", async () => {
@@ -238,6 +251,6 @@ describe("action results fill a status region mounted before the request (#4949)
     expect(screen.getByRole("status")).toBe(status);
     expect(status).toHaveTextContent("Your deletion request has been submitted.");
     // The trigger is gone, so the dialog hands focus to the confirmation.
-    await waitFor(() => expect(document.activeElement).toBe(status));
+    await expectToHoldFocus(status, "the confirmation");
   });
 });
