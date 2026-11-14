@@ -91,6 +91,20 @@ never deadlock. Writers that compose several *same-family* locks (multiple
 per-lodge locks, or multiple per-member locks) acquire them in **sorted key
 order** for the same reason. (`INV-LOCK-002`.)
 
+### Fresh reads after waiting on locks
+
+Lock, re-read, claim requires READ COMMITTED (`INV-LOCK-005`). Leave Prisma's
+`isolationLevel` unset on advisory-lock transactions: Serializable and Repeatable
+Read keep the snapshot from the first statement, including a settings read before
+lock acquisition. A credit, refund request or family link committed while the
+former-member anonymisation job waits must be visible to its blocker checks.
+The job retains global → lifecycle → credit → Member row order and its guarded
+claim; each failed member is logged and counted as blocked before continuing,
+and any such failure records the run FAILURE and reports it once (counts only).
+The lease is released in `finally`. Member merge relies on the same fresh-read
+rule. The isolation census shares the inventory's raw-lock matcher and derives
+helper reachability from source instead of keeping another list of lock names.
+
 ### Status-guarded claims (defense in depth)
 
 Every status-transition write in the cluster is a **status-guarded
@@ -1124,7 +1138,7 @@ amount of retrying can clear.
 That guarantee is scoped to the acquire seam, and deliberately so: the module's second
 proof-minting export, `proveMemberMergeHostingCoverageParticipants`, takes no lock of
 its own. It exists because member merge acquires its participants separately, through
-`lockMemberMergeHostingCoverageParticipants`, and then attests to that acquisition. Both
+`withMemberMergeParticipantRows`, and then attests to that acquisition. Both
 sides pass plain `readonly string[]`, so **nothing at the type level ties the attested
 ids to the ids actually locked** — on that half the invariant is a convention its one
 caller (`member-merge.ts`) currently keeps, not a structural guarantee. A second
@@ -1237,7 +1251,11 @@ own `timeout: 120_000` allowed.
 
 **Since #4855 merge never waits for one of these rows while holding another, and
 since #4876 it never waits for one while holding any row that attempt wrote**
-("Merge never holds a Member row while waiting for another (#4855)" below). Each
+("Merge never holds a Member row while waiting for another (#4855)" below).
+Since #4860 the attempt is no longer Member-only: a wait for one of the
+duplicate's bookings spends this same 10s budget
+("Merge never holds one of the duplicate's bookings while waiting for another
+(#4860)" below). Each
 attempt opens a savepoint, runs the moves and the plan, then one sorted
 `SELECT 1 … FOR UPDATE SKIP LOCKED`, counted rather than read (`INV-OPS-001`).
 When it locks every id, the savepoint is released and merge holds the rows and
@@ -2132,6 +2150,35 @@ mispricing a booking.
   would be worse than one that is momentarily stale. Where they do disagree the
   edit panel shows the SAVE's sentence before it closes, so the member reads the
   outcome that was actually applied rather than the one that was previewed.
+- **Cancellation promo releases (#4909, `INV-MONEY-005`).** Every transaction
+  that writes a booking `CANCELLED` releases that booking's promo redemptions
+  through `releaseBookingPromoRedemptions` (`promo.ts`) in the same
+  transaction, once, after its guarded claim. The release updates `PromoCode`
+  rows in promo-code-id order, so the promo row is a new participant that
+  joins after every key the transaction already holds:
+  - `internet-banking-payment-cron.ts` hold expiry, the
+    `payment-reconciliation.ts` capacity void and the
+    `xero-inbound/invoice-paid-effects.ts` late-capacity cancel: global ->
+    lodge -> member-credit (member-owned bookings) -> promo rows. The hosting
+    seam, and with it the coverage keys, stays after the release.
+  - `booking-cancel.ts`, every claim: global -> lodge -> member-credit -> the
+    `Payment` row where the branch takes it -> promo rows, through
+    `cleanupPromoRedemption(tx, ...)`, which skips a booking with no code.
+  - `group-cancel.ts`, each child's own transaction: global -> promo rows (no
+    lodge key; its bed reconcile runs under the global key).
+  - `cron-waitlist.ts` past-date waitlist expiry and the admin review route's
+    legacy-draft rejection: global -> lodge -> promo rows. Approval never
+    cancels, so it never releases.
+
+  A later `restoreCreditFromBooking` re-takes the member-credit key the
+  transaction already holds, so it never waits. Writers whose booking cannot
+  carry a code are listed with the reason in
+  `cancelled-booking-promo-release-census.test.ts`, which also fails if any
+  advisory-lock call follows the release in its function. No key is minted or
+  reordered (`INV-LOCK-001`..`INV-LOCK-003`). Draft cleanup, hard delete,
+  modification and confirm-pending keep their existing releases. No
+  post-commit step of a cancel reads the redemptions: emails use the stored
+  booking and payment, and invoice clearing queues an amount.
 - `bed-allocation-bunk-pairing.ts` locks the owning `LodgeRoom` row with
   `FOR UPDATE` before checking and changing one room's bunk-group membership.
   This protocol is independent of the booking/capacity/credit lock cluster.
@@ -2919,6 +2966,10 @@ lockAdultMemberHostingPolicySet(tx)                              policy config
         rolled back; a miss 409s and does not wait. A lodge the opening
         prefix never locked is still #2672 drift on the first attempt)
         then null self-cycles, resolve collisions, applyMoves
+             (at the Booking.member arm, the captured loser bookings are
+              one sorted `FOR NO KEY UPDATE SKIP LOCKED` inside this attempt;
+              a shortfall rolls the attempt back and waits for that one
+              booking while holding no rows, #4860)
   → master/loser/ancillary `Member … FOR UPDATE`, all at once:     member rows
         sorted SKIP LOCKED attempts in a savepoint, waiting for one
         skipped row at a time while holding none (#4855, 10s, T6)
@@ -3137,7 +3188,7 @@ derivation at the top of the merge and the sweep. Step 3b closes that positively
 rather than by argument: it **re-derives the same guest-row lodge set** and 409s
 if the prefix does not cover it — and it does so *after* merge holds its
 `Member … FOR UPDATE` rows
-(`lockMemberMergeHostingCoverageParticipants`). `BookingGuest.memberId` is a real
+(`withMemberMergeParticipantRows`). `BookingGuest.memberId` is a real
 foreign key to `Member`, so PostgreSQL takes `FOR KEY SHARE` on the referenced
 member row for every INSERT naming it and every UPDATE re-pointing onto it, and
 `FOR KEY SHARE` conflicts with `FOR UPDATE`. Once merge holds both member rows
@@ -3694,6 +3745,81 @@ approvals, and removing the refusal clears the reviewer (both probed). The
 statements are pinned in `adult-member-hosting-queue-participants.test.ts`, the
 position in `adult-member-hosting-coverage-lock.test.ts`, and the row-lock count
 in `advisory-lock-guard.test.ts`.
+
+#### Merge never holds one of the duplicate's bookings while waiting for another (#4860)
+
+`applyMoves` re-points the duplicate's bookings with one `updateMany` of the
+ids captured before any mutation (`Booking.member`). `Booking` is indexed on
+`memberId`, and for one member that index is insertion order, not id order.
+Measured on PostgreSQL 16: an approval that already holds the later-inserted
+half of a split pair (`lockBookingRowForOwnerRead`, `FOR NO KEY UPDATE`) and
+then updates the earlier half deadlocks with that update (`40P01`). Merge
+holds the earlier row and waits for the later one; the approval holds the
+later row and waits for the earlier one. Sorting the approval's locks does not
+close it. Booking ids are cuids, monotonic only within one process, so id
+order and insertion order disagree, and the same crossing still deadlocks.
+
+The sibling is the split parent or child (`hostingSiblingWhere` in
+`adult-member-hosting-review.ts`: the other live booking of the same member).
+The policy-exception approval, the change-request approval, cancel, date edits
+and the other callers of `reconcileAdultMemberHostingReviewWithSiblings` all
+have this shape. They are unchanged. #4876's attempt rolls the moves back only
+when a Member row is busy. This deadlock is inside the `Booking.member` update,
+and PostgreSQL aborts the transaction (`40P01`) rather than returning to the
+savepoint.
+
+So the rule is the Member-row rule, on the captured set. Inside the attempt, at
+the `Booking.member` arm and not before it, merge try-locks those ids with one
+sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE SKIP LOCKED`, counted rather
+than read (`INV-OPS-001`). The id sort only makes "first skipped" stable. It does
+not have to match any writer. An empty captured set issues no statement.
+Uncontended, the count equals the captured length, this transaction holds every
+row, and the existing `updateMany` re-points `memberId` without waiting. A
+short count probes the sorted ids until one returns 0, and throws. The attempt
+savepoint rolls back — that releases every booking the try-lock took and every
+row this attempt already wrote — and only then does merge wait for that one
+booking, under its own savepoint (`member_merge_booking_wait`),
+`set_config('lock_timeout', <what is left of the 10s>, true)`, then
+`SELECT 1 FROM "Booking" WHERE "id" = … FOR NO KEY UPDATE`, then roll that savepoint
+back so the row and the timeout are both gone before the retry. The deadline
+is the same monotonic clock as the Member waits
+(`MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`). There is not a second 10 seconds.
+Advisory keys taken before the attempt stay held during the wait.
+
+Every booking lock here is `FOR NO KEY UPDATE`, the strength the `memberId`
+update takes anyway (`memberId` is in no unique index). It conflicts with the
+sibling writers' `FOR NO KEY UPDATE`, which is the cycle, but not with the
+`FOR KEY SHARE` a child insert's foreign-key check takes on the booking (a
+late `BookingGuest`, a `Payment`). `FOR UPDATE` would block every such insert
+until merge commits, while merge may be waiting on its own later locks, and
+would skip any booking a child insert had just touched. The hosting-queue
+race that commits a loser-linked guest between the moves and the participant
+locks hung on exactly that (#5004).
+
+On the successful attempt the booking locks are held through the Member
+`FOR UPDATE` and on to commit, which keeps #4840 (booking rows before the
+Member rows). The single-booking wait releases its row before the retry, so it
+does not invert that order. Merge never blocks on a booking while it holds
+another. A row that is gone, a wait that runs out (`55P03`), or a budget found
+spent at the next pass straight after a booking wait refuses with
+the existing booking-ownership 409 (`merge_drift_in_transaction`,
+`driftFields: ["Booking.member"]`). A budget spent after a later Member wait
+names the hosting participants instead. A row that still exists but no longer names
+the loser is locked by id, and the existing count check 409s the same way.
+
+The other `Booking` column sweeps stay a blocking `updateMany`. They re-point
+a different set. The split sibling is same-member, so both of its rows are in
+the captured owned set: once that set is held entirely, or not held at all,
+those writers cannot close this cycle. A cycle through a booking the duplicate
+does not own is a different issue. No new advisory key (`INV-LOCK-001`);
+advisory order is unchanged (`INV-LOCK-002`); the site is the existing merge
+transaction (`INV-LOCK-003`). The try-lock and the one-booking wait are in
+`member-merge-booking-lock.ts`; the attempt wrapper that calls them stays in
+`adult-member-hosting-queue-participants.ts`. Proved against real PostgreSQL by
+`member-merge-booking-row-races.realdb.test.ts`. The cost is the one #4855
+accepted for Member rows: a contended merge redoes its moves inside the same
+10 seconds, so a heavy merge against a busy booking refuses sooner, and the
+operator re-runs the preview.
 
 ## The disciplines, by writer class
 
@@ -4868,8 +4994,10 @@ have been visible already.
 
 **#3498 ADDS THE ONE TRANSITION ON THIS TABLE THAT DOES TAKE
 `pg_advisory_xact_lock(1)`, AND THE REASON IS THE DIRECTION IT MOVES THE FENCE.**
-An officer may now put a DISMISSED `EDIT_FINANCIAL_REVIEW` task back on the queue
-(`reopenManualRefundTask`, owner decision D2). Every paragraph above argues that a
+An officer may put a DISMISSED money task back on the queue
+(`reopenManualRefundTask`, owner decision D2), except an `EDIT_FINANCIAL_REVIEW`:
+since #4343 that kind is refused before the claim, so a retired review cannot
+re-arm the fence. Every other kind still can. Every paragraph above argues that a
 closure needs no advisory key; the reopen is not its mirror image and inherits
 none of that argument.
 
@@ -4897,6 +5025,11 @@ status-fenced `updateMany` and one audit row, all local. Single-lock holder,
 composing with no narrower tier, so `INV-LOCK-002`'s global -> lodge -> member
 order is satisfied trivially and no cycle is reachable. Registered as
 `reopenManualRefundTask#1` in `advisory-lock-guard.test.ts`.
+
+**#4343's headline re-base** (`editReviewHeadlineRebase#1`) takes the same global
+key first, re-reads the booking, and compare-and-sets the four money columns
+through the closure's re-base. It calls no provider and takes no lodge key. A
+booking that moved under the lock loses the compare-and-set and is listed.
 
 The status-fenced `updateMany` stays and still carries the two-officers case: the
 key serialises them, and the fence is what tells the loser the row moved instead
@@ -6843,7 +6976,11 @@ PENDING with its attempts reset, so of any two settlements of one row the
 second matches nothing and writes nothing; a write under the Payment row alone
 that lands between an action's read and its claim fails the claim too. The
 audit row is written in the same transaction; no journal posting or provider
-call of these two runs under the keys. Registered as `lockDeadCardRefundRow#1`.
+call of these two runs under the keys. #4851: `closeGroupCardRefundPaidAnotherWay`
+and `tryOrganiserChildCardRefundAgain` take this same helper and this same
+claim (`accept` `either-group` and `organiser-child`). The order is unchanged
+and no advisory key is added. Stripe is read before the transaction. Registered
+as `lockDeadCardRefundRow#1`.
 
 The re-arm sends nothing itself. The runner claims the row as any other, and
 its preflight (`INV-PAY-145`, below) reads Stripe outside every transaction
@@ -6902,8 +7039,14 @@ Stripe call:
   It reads the row's plan and writes compare-and-set on it, skipping a slice
   already moved, so two deliveries of one refusal move it, and alert, once.
 - **The edit refund door** (`executeBookingModificationRefund`, #3984,
-  `INV-PAY-146`) freezes its plan before Stripe, outside the edit transaction.
-  After success or throw it queues the whole read plan if any slice is unmade:
+  `INV-PAY-146`) freezes its plan before Stripe. Since #4872 that freeze takes
+  the Payment row (`lockPaymentForRefundedTotal`), reads the superseded-capture
+  hold-back, and commits before Stripe is asked. No provider call runs inside
+  it. A plan-less card-refund recovery derives its missing plan the same way
+  after provider preflight (`processBookingModificationRefundOperation`). A
+  manual hand-back reads the hold-back after its claim and after any credit
+  give-back, so a member-ledger lock still comes before the Payment row.
+  After success or throw the edit queues the whole read plan if any slice is unmade:
   made slices marked, refusals moved, unanswered slices on their original key.
   The lockless `charge.refunded` recorder may update the ledger before recovery;
   the worker still sends the original slices and keys. Recording keeps the
