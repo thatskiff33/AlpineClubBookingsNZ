@@ -472,10 +472,13 @@ export const OPEN_HAND_BACKS_FOR_REFUND_APPEAL_SELECT = {
 export function refundAppealCeilingParts(
   payment: (CardRefundOwedPaymentRow & { manualRefundTasks?: readonly { amountCents: number | null }[] }) | null | undefined,
   creditsFromCancellation: readonly { amountCents: number; description: string | null; type?: string | null }[] | null | undefined,
+  /** #4872 (`INV-PAY-150`): a live superseded capture's hold-back (`readSupersededCaptureHeldBack().totalCents`), which the approval nets too. */
+  supersededHeldBackCents = 0,
 ): { ceilingCents: number; cardRefundOwedCents: number } {
   const promisedCents =
     sumOpenNonCancellationHandBackCents(payment?.manualRefundTasks) +
-    sumInternetBankingLateCashCreditCents(creditsFromCancellation);
+    sumInternetBankingLateCashCreditCents(creditsFromCancellation) +
+    supersededHeldBackCents;
   const cardDebtCents = payment ? openCardRefundOwedCents(payment) : 0;
   const withoutCardDebtCents = getRemainingRefundableCentsNetOf(payment, promisedCents);
   return {
