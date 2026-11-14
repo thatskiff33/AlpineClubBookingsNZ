@@ -22,6 +22,7 @@ import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-c
 import { paymentsCountingInvoiceCorrections, uncapturedPrimaryStatus } from "./modification-note-refunds";
 import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
 import { readRefundRequestPaidBackCentsByPaymentId } from "./refund-request-paid-back";
+import { readFailedCardRefundRecountCentsByPayment } from "./failed-card-refund-recount";
 import { CLEARING_ALLOCATION_LINK_WHERE, distinctClearingAllocations, NOTE_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
 
 /** #3792: the operator alert, and the audit action, for a refused change. */
@@ -186,7 +187,8 @@ export async function repairRefundedPaymentBusinessState(input: {
 
   // #4215 (`INV-PAY-118`): requests' paid-back cash, read AFTER the payment rows, so one completed in between loses the claim
   // below. #4288: the note's own refund-note row too; its void may move no Payment column, so `repairOne` re-reads it locked.
-  const [directRefundLinks, modificationAllocationLinks, refundRequestPaidBackCentsByPaymentId, currentNoteRows] = await Promise.all([
+  // #4370 (`INV-PAY-155`): and what card refunds Stripe failed later take off, subtracted before the clamp and every floor.
+  const [directRefundLinks, modificationAllocationLinks, refundRequestPaidBackCentsByPaymentId, currentNoteRows, failedCardRefundCentsByPaymentId] = await Promise.all([
     prisma.xeroObjectLink.findMany({
       where: {
         localModel: "Payment",
@@ -212,6 +214,7 @@ export async function repairRefundedPaymentBusinessState(input: {
     }),
     readRefundRequestPaidBackCentsByPaymentId(paymentIds),
     input.creditNoteId === null ? new Map<string, { active: boolean; metadata: unknown }>() : readRefundNoteRowsByPayment(input.creditNoteId, paymentIds, prisma),
+    readFailedCardRefundRecountCentsByPayment(payments),
   ]);
 
   // #3979 (`INV-PAY-126`): a bank-transfer payment's modification notes are
@@ -390,7 +393,7 @@ export async function repairRefundedPaymentBusinessState(input: {
       modificationRefundTotalCents +
       currentDirectRefundContributionCents +
       currentModificationRefundContributionCents +
-      (refundRequestPaidBackCentsByPaymentId.get(payment.id) ?? 0);
+      (refundRequestPaidBackCentsByPaymentId.get(payment.id) ?? 0) - (failedCardRefundCentsByPaymentId.get(payment.id) ?? 0);
     const nextRefundedTotalCents = Math.min(
       Math.max(rawRefundedTotalCents, 0),
       payment.amountCents

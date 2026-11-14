@@ -369,6 +369,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
 | `INV-PAY-154` | A disputed capture is never refunded or credited |
+| `INV-PAY-155` | The inbound recount takes each failed-later card refund off once |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |

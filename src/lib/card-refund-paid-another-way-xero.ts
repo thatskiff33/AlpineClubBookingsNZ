@@ -13,8 +13,7 @@ import type { PaidAnotherWayXeroNote } from "@/lib/manual-refund-task-settlement
 import { lateCaptureIntentOfCardRefundOperation } from "@/lib/late-capture-paid-another-way";
 import { cardRefundSliceFailedRefundIds, parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { cardRefundFailedLaterRefundId } from "@/lib/payment-recovery-keys";
-import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
-import { readResolvedRefundCreditNoteCoverage, sumRefundCreditNoteCoverageCents } from "@/lib/xero-resolved-in-xero-fences";
+import { readRefundNoteCoverageAboveCashCents } from "@/lib/refund-note-coverage-above-cash";
 import {
   enqueueXeroKeptLateCaptureInvoiceOperation,
   keptLateCaptureDocumentDate,
@@ -275,10 +274,8 @@ export async function failedLaterCardNoteCoverCents(
   if (failedCents <= 0) return 0;
   const payment = await db.payment.findUnique({ where: { id: paymentId }, select: { id: true, bookingId: true, refundedAmountCents: true } });
   if (!payment) return 0;
-  const resolved = await readResolvedRefundCreditNoteCoverage(paymentId, db);
-  if (resolved.unreadableOperationIds.length > 0) return 0;
-  const coveredCents = await sumRefundCreditNoteCoverageCents(paymentId, resolved, db);
-  const { eligibleCashCents } = await resolveRefundNoteEligibleCash(payment, db);
+  const coveredAboveCashCents = await readRefundNoteCoverageAboveCashCents(payment, db);
+  if (coveredAboveCashCents === null) return 0;
   // #5017 review (money M1): sized as if every earlier close's documents had
   // reached Xero, so the answer never depends on which worker ran first.
   // Eligible cash counts a `now` close once it commits, but coverage counts its
@@ -287,7 +284,7 @@ export async function failedLaterCardNoteCoverCents(
   // queued, sending or FAILED.
   const closesUnnotedCents = await readPaidAnotherWayUncoveredCents(db, paymentId);
   const pendingReversalCents = await readPendingCardRefundReversalCents(db, paymentId);
-  const excessCents = coveredCents + closesUnnotedCents - eligibleCashCents - pendingReversalCents;
+  const excessCents = coveredAboveCashCents + closesUnnotedCents - pendingReversalCents;
   return Math.min(failedCents, Math.max(0, excessCents));
 }
 
