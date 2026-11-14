@@ -52,7 +52,7 @@ deployment secret store.
 After the first administrator can sign in, the club name, short name, and
 hut-leader label can also be overridden at runtime (without editing
 `config/club.json`) from Admin > Appearance > Club Identity — cross-linked from
-Admin > Setup > Initial Setup as "Club Identity". A blank field falls back to
+Admin > Setup > Foundations Setup as "Club Identity". A blank field falls back to
 the configured default, and the change reaches the public site and emails within
 a few seconds.
 

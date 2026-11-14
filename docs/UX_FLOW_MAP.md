@@ -386,7 +386,7 @@ Journey: Choose a lodge, inspect lockers and assignments, and manage the selecte
 
 [Guide](guides/lockers.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Member Applications — member-applications
+### Applications — member-applications
 
 Screen: `/admin/member-applications`.
 
@@ -470,7 +470,7 @@ Journey: Choose a date range, inspect events, and open an event to manage it.
 
 [Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Chore Templates — chores
+### Chores — chores
 
 Screen: `/admin/chores`.
 
@@ -980,7 +980,7 @@ Screen: `/admin/setup`.
 
 Shows: The installation setup hub and configuration cards.
 
-Journey: Open the setup card for the configuration task you need.
+Journey: Open the setup card for the configuration task you need. No card links back to Setup itself; each sub-hub returns here by its Setup back link (#4968).
 
 [Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

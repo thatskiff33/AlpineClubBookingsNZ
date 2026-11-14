@@ -18,6 +18,7 @@ import {
 } from "./helpers/stay-dates";
 import { clubConfig } from "../src/config/club";
 import { PLACEHOLDER_CONTACT_EMAIL_DOMAIN } from "../src/lib/placeholder-contact-email";
+import { getAdminPage } from "../src/lib/admin-hubs";
 
 // docs/END_TO_END_TEST_MATRIX.md — Book on Behalf (non-member), E9 (#1935),
 // live-app follow-up (#1962). The admin non-member Book-on-Behalf flow has
@@ -125,7 +126,7 @@ function assertNonMemberPricing(quote: NonMemberQuote, window: StayWindow): void
 async function openBookOnBehalf(page: Page): Promise<void> {
   await page.goto("/admin/book");
   await expect(
-    page.getByRole("heading", { name: "Book on Behalf of Member" }),
+    page.getByRole("heading", { name: getAdminPage("book").label }),
   ).toBeVisible();
   // Switch the owner toggle from "Existing member" to the inline non-member form.
   await page.getByRole("button", { name: "Non-member booking" }).click();

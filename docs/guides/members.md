@@ -282,7 +282,7 @@ The list is a working roster; its controls:
 ## Related links
 
 - Back to the [documentation hub](../README.md).
-- Sibling guides: [Member Applications](member-applications.md),
+- Sibling guides: [Applications](member-applications.md),
   [Member Fields](member-fields.md), [Membership Types](membership-types.md),
   [Family Groups](family-groups.md), [Subscriptions](subscriptions.md),
   [Cancellation Requests](membership-cancellations.md),

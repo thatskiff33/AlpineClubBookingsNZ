@@ -77,6 +77,7 @@ vi.mock("../policy-scope-select", () => ({
   ),
 }));
 
+import { getAdminPage } from "@/lib/admin-hubs";
 import { BookingPeriodsSection } from "../booking-periods-section";
 import { MinimumNightStaySection } from "../minimum-night-stay-section";
 
@@ -219,7 +220,7 @@ describe("BookingPeriodsSection scope switching (#2142 review)", () => {
     expect(screen.queryByRole("button", { name: "Add Period" })).toBeNull();
     // Not relabelled as the lodge's, either.
     expect(
-      screen.queryByText(/Date-Specific Periods — Lodge One/),
+      screen.queryByText(new RegExp(`${getAdminPage("booking-policies-periods").label} — Lodge One`)),
     ).toBeNull();
     expect(writeCalls(fetchMock)).toHaveLength(0);
   });
@@ -307,7 +308,7 @@ describe("MinimumNightStaySection scope switching (#2142 review)", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Deactivate" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add Policy" })).toBeNull();
-    expect(screen.queryByText(/Minimum Night Stay — Lodge One/)).toBeNull();
+    expect(screen.queryByText(new RegExp(`${getAdminPage("booking-policies-minimum-stay").label} — Lodge One`))).toBeNull();
     expect(writeCalls(fetchMock)).toHaveLength(0);
   });
 

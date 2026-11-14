@@ -43,7 +43,7 @@ export const RULES_HUB = defineHub({
       label: "Age Groups",
       oldPath: "/admin/age-tier-settings",
       area: "bookings",
-      keywords: ["age tiers", "child pricing", "youth", "senior"],
+      keywords: ["age group settings", "age tiers", "child pricing", "youth", "senior"],
       moved: true,
     },
     {
@@ -72,6 +72,7 @@ export const RULES_HUB = defineHub({
     {
       id: "booking-policies-cancellation",
       label: "Cancellation Policy",
+      keywords: ["default cancellation policy"],
       oldPath: "/admin/booking-policies/cancellation",
       area: "bookings",
       moved: true,
@@ -86,6 +87,7 @@ export const RULES_HUB = defineHub({
     {
       id: "booking-policies-minimum-stay",
       label: "Minimum Stay",
+      keywords: ["minimum night stay"],
       oldPath: "/admin/booking-policies/minimum-stay",
       area: "bookings",
       moved: true,
@@ -93,6 +95,7 @@ export const RULES_HUB = defineHub({
     {
       id: "booking-policies-periods",
       label: "Booking Periods",
+      keywords: ["date-specific periods"],
       oldPath: "/admin/booking-policies/periods",
       area: "bookings",
       moved: true,

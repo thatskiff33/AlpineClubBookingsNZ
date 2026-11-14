@@ -12,6 +12,7 @@ import {
 import { DUAL_HAT_ADMIN, E2E_ADMIN, ROLE_PERSONAS } from "./helpers/fixtures";
 import { personas } from "./helpers/personas";
 import { stayWindowForAttempt } from "./helpers/stay-dates";
+import { getAdminPage } from "../src/lib/admin-hubs";
 
 // Issue #1442: portal context determines booking intent.
 // - A dual-hat admin (USER + ADMIN tokens: dana) books their own stay through
@@ -67,7 +68,7 @@ test.describe("admin-only routing", () => {
     await page.goto("/book");
     await expect(page).toHaveURL(/\/admin\/book/);
     await expect(
-      page.getByRole("heading", { name: "Book on Behalf of Member" }),
+      page.getByRole("heading", { name: getAdminPage("book").label }),
     ).toBeVisible();
   });
 });
@@ -80,7 +81,7 @@ test("a booking officer completes an on-behalf booking draft", async ({
 
   await page.goto("/admin/book");
   await expect(
-    page.getByRole("heading", { name: "Book on Behalf of Member" }),
+    page.getByRole("heading", { name: getAdminPage("book").label }),
   ).toBeVisible();
 
   // Pick the target member (alice) through the search picker.

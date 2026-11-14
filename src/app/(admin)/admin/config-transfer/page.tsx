@@ -24,6 +24,7 @@ import {
   formatConfigImportTotals,
   visibleImportPlanItems,
 } from "@/lib/config-transfer/preview";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 // Full-admin Configuration Export & Import page. Export selected categories to a
 // portable zip; import a bundle via a mandatory dry-run before applying (the
@@ -120,7 +121,7 @@ export default function ConfigTransferPage() {
   if (session && !fullAdmin) {
     return (
       <div className="rounded-md border bg-card p-6 text-sm text-muted-foreground">
-        Configuration Export &amp; Import is available to full administrators only.
+        {getAdminPage("config-transfer").label} is available to full administrators only.
       </div>
     );
   }
@@ -301,7 +302,7 @@ export default function ConfigTransferPage() {
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
           <ArrowRightLeft className="h-6 w-6" />
-          Configuration Export &amp; Import
+          {getAdminPage("config-transfer").label}
         </h1>
         <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
           Move configuration, site content, and lodge setup between instances as a

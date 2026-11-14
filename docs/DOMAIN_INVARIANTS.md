@@ -1031,6 +1031,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
+| `INV-SSOT-008` | An admin page's heading is its registry label; a census holds it |
 
 ## Authentication
 

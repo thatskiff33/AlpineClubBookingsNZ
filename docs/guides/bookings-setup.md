@@ -10,8 +10,8 @@ than the daily booking queues. It links to six places: **Booking Policies**,
 bed inventory) and **Booking Messages** (member-facing booking copy), and
 carries one settings card of its own: **Member guests** (the member-guest
 consent policy, #2307). Find it at **Admin → Setup & Configuration → Bookings
-Setup** (`/admin/bookings-setup`), or from the Setup Wizard's **Bookings Setup**
-card. The first four cards were the Setup Wizard's separate **Booking Rules**
+Setup** (`/admin/bookings-setup`), or from the Setup page's **Bookings Setup**
+card. The first four cards were the Setup page's separate **Booking Rules**
 page (`/admin/setup/booking-rules`) until #4796 merged the two; that address
 opens this page.
 

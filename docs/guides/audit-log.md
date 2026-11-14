@@ -427,7 +427,7 @@ because the entry's own category is `admin`, which on this screen is Support onl
 a Booking Officer who cannot find the entry in the Audit Log can still read its
 words on the booking.
 
-A **view-only** booking admin sees the queue on **Admin → All Bookings** — which
+A **view-only** booking admin sees the queue on **Admin → Bookings** — which
 booking, whose, which nights, how many uncovered guest-nights and the cause label
 — and, on the booking itself, no reason. That is the same line drawn twice:
 noticing that a booking needs attention and reading an officer's private note

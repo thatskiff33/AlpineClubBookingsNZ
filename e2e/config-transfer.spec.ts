@@ -1,6 +1,7 @@
 import { expect, test } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
+import { getAdminPage } from "../src/lib/admin-hubs";
 
 // Configuration Export & Import (config transfer) round trip: a full admin
 // exports a site-content bundle, re-uploads the same file, previews (dry-run),
@@ -17,7 +18,7 @@ test.use({ storageState: storageStatePath(E2E_ADMIN.email) });
 test("export → re-upload → dry-run → apply round trip", async ({ page }) => {
   await page.goto("/admin/config-transfer");
   await expect(
-    page.getByRole("heading", { name: /configuration export & import/i }),
+    page.getByRole("heading", { name: getAdminPage("config-transfer").label }),
   ).toBeVisible();
 
   // Export a site-content-only bundle (deterministic, no door codes). Assert

@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { BackLink } from "@/components/admin/back-link";
 import { BackupSetupWizard } from "./backup-setup-wizard";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 export const metadata: Metadata = {
-  title: "Database backup setup",
+  title: getAdminPage("backups-setup").label,
 };
 
 // Guided database-backup setup wizard (#2227). Registered under the `support`
@@ -16,7 +17,7 @@ export default function BackupSetupPage() {
   return (
     <div className="max-w-6xl p-6">
       <BackLink href="/admin/integrations" label="Integrations" />
-      <h1 className="mt-2 mb-2 text-2xl font-bold">Database backup setup</h1>
+      <h1 className="mt-2 mb-2 text-2xl font-bold">{getAdminPage("backups-setup").label}</h1>
       <p className="mb-6 text-muted-foreground">
         Set up durable, off-site (S3) database backups step by step, then run a
         real verification backup to confirm the whole path works. Day-to-day

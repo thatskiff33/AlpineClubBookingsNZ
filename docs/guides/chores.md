@@ -1,4 +1,4 @@
-# Chore Templates
+# Chores
 
 Audience: Operator
 

@@ -4,7 +4,7 @@ Audience: Operator
 
 ## What it is
 
-The **Induction Register**: where you start and track lodge-induction workflows
+The **Induction** page, the induction register: where you start and track lodge-induction workflows
 for members — new-member, hut-leader, youth-to-full, and re-induction — against
 a versioned checklist template, assign the people who sign them off, and record
 each sign-off. A separate **Induction Settings** page controls the nomination
@@ -127,7 +127,7 @@ register remains the right workflow for individual inductions.
 
 - Back to the [documentation hub](../README.md).
 - Sibling guides: [Members](members.md),
-  [Member Applications](member-applications.md), [Committee](committee.md).
+  [Applications](member-applications.md), [Committee](committee.md).
 - Maintenance runbook:
   [Trusted legacy induction baseline](../INDUCTION_BASELINE_RUNBOOK.md).
 - Reference: the

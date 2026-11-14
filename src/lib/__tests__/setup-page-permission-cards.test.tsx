@@ -109,7 +109,7 @@ describe("SetupPageClient — permission-aware cross-area cards (#1548)", () => 
     renderSetup({ support: "view" });
 
     await waitFor(() => {
-      expect(screen.getByText("Setup Wizard")).toBeTruthy();
+      expect(screen.getByRole("heading", { level: 1, name: "Setup" })).toBeTruthy();
     });
     expect(screen.queryByTestId("lodge-card")).toBeNull();
   });
@@ -126,7 +126,7 @@ describe("SetupPageClient — permission-aware cross-area cards (#1548)", () => 
     const { container } = renderSetup({ support: "view" });
 
     await waitFor(() => {
-      expect(screen.getByText("Setup Wizard")).toBeTruthy();
+      expect(screen.getByRole("heading", { level: 1, name: "Setup" })).toBeTruthy();
     });
     expect(screen.queryByTestId("finance-panel")).toBeNull();
     expect(container.querySelector('a[href="/admin/setup/finance"]')).toBeNull();

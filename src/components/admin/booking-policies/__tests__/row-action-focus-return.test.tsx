@@ -19,6 +19,7 @@ vi.mock("@/components/lodge-select", () => ({
 }));
 
 import { expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { getAdminPage } from "@/lib/admin-hubs";
 import { BookingPeriodsSection } from "../booking-periods-section";
 import { MinimumNightStaySection } from "../minimum-night-stay-section";
 
@@ -202,7 +203,7 @@ describe("MinimumNightStaySection returns focus after a row write (#4116)", () =
     release();
 
     await expectToHoldFocus(
-      await screen.findByRole("region", { name: "Minimum Night Stay" }),
+      await screen.findByRole("region", { name: getAdminPage("booking-policies-minimum-stay").label }),
     );
   });
 
@@ -306,7 +307,7 @@ describe("BookingPeriodsSection returns focus after a row write (#4116)", () => 
 
     await screen.findByText(/No date-specific periods configured/);
     await expectToHoldFocus(
-      screen.getByRole("region", { name: "Date-Specific Periods" }),
+      screen.getByRole("region", { name: getAdminPage("booking-policies-periods").label }),
     );
   });
 

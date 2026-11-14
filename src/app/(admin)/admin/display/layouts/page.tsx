@@ -21,6 +21,7 @@ import { listDisplayConditions } from "@/lib/lodge-display/conditions";
 import { listDisplayCssTokens } from "@/lib/lodge-display/css-tokens";
 import { isBuiltInDisplayLayoutKey } from "@/lib/lodge-display/built-in-seeds";
 import { DISPLAY_TERM_LAYOUT } from "@/lib/lodge-display/display-terminology";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 // Lobby display LAYOUT authoring (fork issue #78, LTV-032, ADR-003 §1). An
 // admin authors the structural template: an HTML body with `{{area:key}}`
@@ -493,7 +494,7 @@ export default function AdminDisplayLayoutsPage() {
       <div className="space-y-6">
       <div>
         <BackLink href="/admin/display" label="Lobby Display" />
-        <h1 className="mt-2 text-2xl font-bold">Display Layouts — Advanced mode</h1>
+        <h1 className="mt-2 text-2xl font-bold">{getAdminPage("display-layouts").label}</h1>
         <p className="text-muted-foreground">
           This is the <strong>Advanced mode</strong> hand-editor. Most boards are
           easier to build in the{" "}

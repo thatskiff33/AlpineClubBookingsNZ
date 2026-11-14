@@ -74,6 +74,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 export function formatAdminBookingGuestCount(totalGuests: number, nonMemberGuests: number) {
   return `${totalGuests} (${nonMemberGuests} non-member${nonMemberGuests === 1 ? "" : "s"})`;
@@ -413,7 +414,7 @@ export default async function AdminBookingsPage({
           widget so a Diagnostics question carries them (#2816). */}
       <DiagnosticsViewStatePublisher view={appliedView} />
       <AdminPageHeader
-        title="All Bookings"
+        title={getAdminPage("bookings").label}
         actions={
           canEditBookings ? (
             <Link href={adminHref("book")} className="app-button-brand">

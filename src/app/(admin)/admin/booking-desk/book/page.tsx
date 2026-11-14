@@ -46,7 +46,7 @@ import {
   formatStayDateOrNull,
 } from "@/lib/club-time";
 
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 import { formatCents } from "@/lib/utils";
 import { CreditCard, Landmark } from "lucide-react";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
@@ -928,7 +928,7 @@ export default function AdminBookPage() {
         first, always" stays the shape everywhere else. See
         `docs/ARCHITECTURE.md` for the whole rule.
       */}
-      <h1 className="mb-6 text-3xl font-bold">Book on Behalf of Member</h1>
+      <h1 className="mb-6 text-3xl font-bold">{getAdminPage("book").label}</h1>
       {viewOnlyBanner}
       <div className="space-y-6">
 
