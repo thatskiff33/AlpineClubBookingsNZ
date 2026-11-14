@@ -16,14 +16,7 @@ import {
   formatStayDateOrNull,
 } from "@/lib/club-time";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import ApprovalMappingPanel, {
   type ReviewRequestPayload,
 } from "./_components/approval-mapping-panel";
@@ -772,46 +765,39 @@ export default function MemberApplicationsPage() {
           is a required field), so the dialog always shows on approve and reject.
           Both choices complete the review; the choice is recorded in the audit
           log. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={reviewDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && submittingId === null) setReviewDialogOpen(false);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {reviewChoice?.decision === "REJECT"
-                ? "Email the applicant about this rejection?"
-                : "Email the applicant about this approval?"}
-            </DialogTitle>
-            <DialogDescription>
-              {reviewChoice?.decision === "REJECT"
-                ? "The application is rejected either way. Choose whether the applicant receives the standard rejection email — your choice is recorded in the audit log."
-                : "The application is approved either way. Choose whether the applicant receives the standard approval email, which carries their account-setup link — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={submittingId !== null}
-              onClick={() => confirmReview(false)}
-            >
-              {reviewChoice?.decision === "REJECT"
+        onOpenChange={setReviewDialogOpen}
+        submitting={submittingId !== null}
+        title={
+          reviewChoice?.decision === "REJECT"
+            ? "Email the applicant about this rejection?"
+            : "Email the applicant about this approval?"
+        }
+        description={
+          reviewChoice?.decision === "REJECT"
+            ? "The application is rejected either way. Choose whether the applicant receives the standard rejection email — your choice is recorded in the audit log."
+            : "The application is approved either way. Choose whether the applicant receives the standard approval email, which carries their account-setup link — your choice is recorded in the audit log."
+        }
+        actions={{
+          kind: "choice",
+          withoutEmail: {
+            label:
+              reviewChoice?.decision === "REJECT"
                 ? "Reject without emailing"
-                : "Approve without emailing"}
-            </Button>
-            <Button
-              disabled={submittingId !== null}
-              onClick={() => confirmReview(true)}
-            >
-              {reviewChoice?.decision === "REJECT"
+                : "Approve without emailing",
+            variant: "outline",
+            onSelect: () => confirmReview(false),
+          },
+          withEmail: {
+            label:
+              reviewChoice?.decision === "REJECT"
                 ? "Reject and email applicant"
-                : "Approve and email applicant"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                : "Approve and email applicant",
+            onSelect: () => confirmReview(true),
+          },
+        }}
+      />
       </div>
     </div>
   );

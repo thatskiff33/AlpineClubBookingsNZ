@@ -30,6 +30,10 @@
  * SUCCEEDED on it, never left RUNNING for the stale reset to loop on. PR #4708
  * round 2: in the two other orders - the queued run closes first, or holds the
  * row RUNNING behind `lock(1)` - the failed email is still audited and alerted.
+ *
+ * #4919: the invoice email fence holds `lock(1)` while Xero answers. An
+ * organiser's cancel that arrives meanwhile waits and commits only after the
+ * fence ends; one that commits first means no email is asked for at all.
  */
 import type { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -493,6 +497,148 @@ let savedModuleSettings: { xeroIntegration: boolean; internetBankingPayments: bo
       expect(queued).toMatchObject({ status: "fulfilled", value: expect.objectContaining({ succeeded: 1, failed: 0 }) });
       await closedOnBoundInvoice(operationId, stalledClaimAt);
       await emailFailureTraced(operationId, send);
+    });
+
+    /**
+     * #4919: a bound invoice whose email is owed, its CREATE claimed for the
+     * re-drive. Xero is faked whole: the client, the email (the deadline and
+     * zero retries are unit-proven), and the VOID the cancel queues.
+     */
+    async function owedEmailRedrive(queued = false) {
+      await child(CHILD_A, "CONFIRMED", 4_500);
+      await prisma.groupBookingSettlement.create({
+        data: {
+          id: SETTLEMENT_ID, groupBookingId: GROUP_ID, source: "INTERNET_BANKING", status: "PENDING", amountCents: 4_500,
+          xeroInvoiceId: BOUND_INVOICE, xeroInvoiceNumber: "INV-BOUND",
+        },
+      });
+      const { deferredGroupInvoiceEmailPayload } = await import("@/lib/xero-group-settlement-invoice-outbox");
+      const { sanitizeForJson } = await import("@/lib/xero-sync");
+      const startedAt = new Date();
+      const claimed = await prisma.xeroSyncOperation.create({
+        data: {
+          direction: "OUTBOUND", entityType: "INVOICE", operationType: "CREATE", localModel: "GroupBookingSettlement", localId: SETTLEMENT_ID,
+          status: queued ? "PENDING" : "RUNNING", startedAt: queued ? null : startedAt, createdAt: new Date("2000-01-01T00:00:00.000Z"),
+          correlationKey: groupSettlementInvoiceCreateKey(SETTLEMENT_ID, 0), idempotencyKey: groupSettlementInvoiceCreateKey(SETTLEMENT_ID, 0),
+          requestPayload: { queueType: "GROUP_SETTLEMENT_INVOICE", settlementId: SETTLEMENT_ID }, queueType: "GROUP_SETTLEMENT_INVOICE",
+          // Stored as the fence stores it: through the payload redactor.
+          responsePayload: sanitizeForJson(deferredGroupInvoiceEmailPayload({ invoiceID: BOUND_INVOICE }, new Error("Xero 429: rate limited"))),
+        },
+      });
+      const allow = { kind: "allow", clearance: {} } as never;
+      const invoiceEmail = await import("@/lib/xero-invoice-email");
+      vi.spyOn(invoiceEmail, "resolveXeroInvoiceEmailPolicy").mockResolvedValue(allow);
+      vi.spyOn(invoiceEmail, "reassertXeroInvoiceEmailPolicy").mockResolvedValue(allow);
+      const voids = await import("@/lib/xero-group-settlement-invoice-voids");
+      const voided = vi.spyOn(voids, "voidCancelledGroupSettlementInvoice").mockResolvedValue(undefined as never);
+      const outbox = await import("@/lib/xero-operation-outbox");
+      vi.spyOn(outbox, "kickQueuedXeroOutboxOperationsIfConnected").mockResolvedValue(undefined as never);
+      const apiClient = await import("@/lib/xero-api-client");
+      const client = vi.spyOn(apiClient, "getAuthenticatedXeroClient").mockResolvedValue({ xero: {}, tenantId: "race-tenant" } as never);
+      const { createXeroInvoiceForGroupSettlement } = await import("@/lib/xero-group-settlement-invoices");
+      const redrive = () => createXeroInvoiceForGroupSettlement(SETTLEMENT_ID, { syncOperation: { id: claimed.id, startedAt } });
+      return { invoiceEmail, voided, client, redrive, operationId: claimed.id };
+    }
+
+    async function organiserCancel() {
+      const { settleGroupBookingOnOrganiserCancel } = await import("@/lib/group-cancel");
+      const { CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture");
+      await settleGroupBookingOnOrganiserCancel(ORGANISER_BOOKING_ID, ORGANISER_ID, "127.0.0.1", CLUB_FORMAT_TEST);
+    }
+
+    const groupStatus = async () =>
+      (await observerClient.groupBooking.findUniqueOrThrow({ where: { id: GROUP_ID }, select: { status: true } })).status;
+
+    /** Sessions in this database waiting for an advisory lock. */
+    async function advisoryWaiters(): Promise<number> {
+      const rows = await observerClient.$queryRaw<Array<{ count: number }>>`
+        SELECT COUNT(*)::int AS "count" FROM pg_locks
+        WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+      `;
+      return rows[0]?.count ?? 0;
+    }
+
+    it("#4919: a slow email holds the fence while the organiser's cancel waits - the cancel commits only after the fence ends", async () => {
+      const { invoiceEmail, voided, redrive, operationId } = await owedEmailRedrive();
+      const events: string[] = [];
+      let cancel: Promise<void> | undefined;
+      const send = vi.spyOn(invoiceEmail, "sendXeroInvoiceEmail").mockImplementation(async () => {
+        events.push("email asked");
+        cancel = organiserCancel().then(() => void events.push("cancel returned"));
+        const startedAt = process.hrtime.bigint();
+        while ((await advisoryWaiters()) < 1) {
+          if (realElapsedMs(startedAt) > LOCK_POLL_TIMEOUT_MS) throw new Error("The cancel never queued on lock(1) behind the email fence.");
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        // Xero is slow; the cancel stays queued, not committed.
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        expect(await groupStatus()).toBe("OPEN");
+        events.push("email accepted");
+        return { body: { emailed: true } };
+      });
+
+      await expect(redrive()).resolves.toBe(BOUND_INVOICE);
+      await cancel;
+      expect(events).toEqual(["email asked", "email accepted", "cancel returned"]);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(await groupStatus()).toBe("CANCELLED");
+      // The email won, so the cancel commits its own durable VOID debt.
+      expect(await abandonVoidRows(BOUND_INVOICE)).toHaveLength(0);
+      const cancelVoids = await prisma.xeroSyncOperation.findMany({
+        where: { localId: SETTLEMENT_ID, correlationKey: groupSettlementInvoiceVoidKey(SETTLEMENT_ID, BOUND_INVOICE, "cancel") },
+        select: { status: true },
+      });
+      expect(cancelVoids).toEqual([{ status: "PENDING" }]);
+      expect(voided).not.toHaveBeenCalled();
+      expect(await operation(operationId)).toMatchObject({
+        status: "SUCCEEDED",
+        xeroObjectId: BOUND_INVOICE,
+        responsePayload: expect.objectContaining({ invoiceSendAccepted: true, deferredInvoiceSend: null }),
+      });
+    });
+
+    it("#4919: a cancel that commits before the email fence takes lock(1) - no email is asked for, and the invoice is voided", async () => {
+      const { invoiceEmail, voided, client, redrive } = await owedEmailRedrive();
+      const send = vi.spyOn(invoiceEmail, "sendXeroInvoiceEmail");
+      // Between the re-drive's first fence and its email fence: the cancel commits.
+      client.mockImplementationOnce(async () => {
+        await organiserCancel();
+        return { xero: {}, tenantId: "race-tenant" } as never;
+      });
+
+      await expect(redrive()).resolves.toBeNull();
+      expect(await groupStatus()).toBe("CANCELLED");
+      expect(send).not.toHaveBeenCalled();
+      expect(voided).toHaveBeenCalledWith(expect.objectContaining({ settlementId: SETTLEMENT_ID, invoiceId: BOUND_INVOICE }));
+    });
+
+    it("#4919: an email Xero did not answer in time stays owed through the real outbox - back to PENDING, spaced out, then asked again with the same key", async () => {
+      const { invoiceEmail, operationId } = await owedEmailRedrive(true);
+      const { XeroCallDeadlineError } = invoiceEmail;
+      const send = vi
+        .spyOn(invoiceEmail, "sendXeroInvoiceEmail")
+        .mockRejectedValueOnce(new XeroCallDeadlineError(3_000))
+        .mockResolvedValueOnce({ body: { emailed: true } });
+
+      await expect(queuedRun()).resolves.toMatchObject({ succeeded: 0, failed: 0 });
+      const owed = await operation(operationId);
+      expect(owed).toMatchObject({ status: "PENDING", startedAt: null, lastErrorCode: "GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED" });
+      const { readDeferredGroupInvoiceEmail } = await import("@/lib/xero-group-settlement-invoice-outbox");
+      expect(readDeferredGroupInvoiceEmail(owed.responsePayload)).toEqual({ invoice: { invoiceID: BOUND_INVOICE } });
+
+      // Not asked again at once: the scan spaces the wait code out.
+      await expect(queuedRun()).resolves.toMatchObject({ succeeded: 0, failed: 0 });
+      expect(send).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(new Date(Date.now() + 61_000));
+      await expect(queuedRun()).resolves.toMatchObject({ succeeded: 1, failed: 0 });
+      expect(send).toHaveBeenCalledTimes(2);
+      const key = `group-settlement:${SETTLEMENT_ID}:invoice-email:${BOUND_INVOICE}:v1`;
+      expect(send.mock.calls.map(([params]) => params.idempotencyKey)).toEqual([key, key]);
+      expect(await operation(operationId)).toMatchObject({
+        status: "SUCCEEDED",
+        responsePayload: expect.objectContaining({ invoiceSendAccepted: true, deferredInvoiceSend: null }),
+      });
     });
 
     it("a refused change to a bound settlement rolls back the bed it claimed for a late joiner", async () => {

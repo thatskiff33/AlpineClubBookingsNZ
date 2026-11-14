@@ -24,7 +24,7 @@ describe("forcedCancelRefundMethod (#3643 follow-up, the one home)", () => {
 });
 
 describe("cancelRefundDisposition (#3949 review round 3, the one home for the cancel and its preview)", () => {
-  const base = { paymentSource: "STRIPE", organiserCard: false, organiserByBank: false, manuallyMarkedPaid: false, requested: "credit" as const };
+  const base = { paymentSource: "STRIPE", organiserCard: false, organiserByBank: false, manuallyMarkedPaid: false, disputed: false, requested: "credit" as const };
 
   it("an organiser paid by internet banking: forced to them by hand, tiered on the card tiers", () => {
     expect(cancelRefundDisposition({ ...base, paymentSource: "INTERNET_BANKING", organiserByBank: true })).toEqual({ forced: "organiser_by_hand", refundMethod: "card", manualDisposition: true });
@@ -38,6 +38,16 @@ describe("cancelRefundDisposition (#3949 review round 3, the one home for the ca
     expect(cancelRefundDisposition({ ...base, paymentSource: "INTERNET_BANKING" })).toEqual({ forced: "credit", refundMethod: "credit", manualDisposition: false });
     expect(cancelRefundDisposition(base)).toEqual({ forced: null, refundMethod: "credit", manualDisposition: false });
     expect(cancelRefundDisposition({ ...base, requested: "card", manuallyMarkedPaid: true })).toEqual({ forced: null, refundMethod: "card", manualDisposition: true });
+  });
+
+  it("#4911: a disputed card capture is handed to the treasurer, whichever method the member chose", () => {
+    expect(cancelRefundDisposition({ ...base, disputed: true })).toEqual({ forced: null, refundMethod: "credit", manualDisposition: true });
+    // Tiered on the credit tier, so the cancel plans no card refund for it.
+    expect(cancelRefundDisposition({ ...base, disputed: true, requested: "card" })).toEqual({ forced: null, refundMethod: "credit", manualDisposition: true });
+    // An internet banking capture cannot be disputed at Stripe, but the flag still wins over its forced credit.
+    expect(cancelRefundDisposition({ ...base, paymentSource: "INTERNET_BANKING", disputed: true }).manualDisposition).toBe(true);
+    // The organiser's card refund is a recovery row the refund chokepoint stops instead.
+    expect(cancelRefundDisposition({ ...base, organiserCard: true, disputed: true }).manualDisposition).toBe(false);
   });
 });
 

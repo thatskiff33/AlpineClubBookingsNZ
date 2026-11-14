@@ -159,6 +159,10 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `processing` answers `PAYMENT_PROCESSING` in its own words.
 - **Retired** (`isCardIntentRetired`, through the doors' check) once the
   machinery owns it.
+- **The `/pay` link asks the server what a card success did**
+  (`checkCardSuccess`) at both exits: the resolved confirmation (`succeeded`
+  or `processing`) and the redirect return (#4955). It never shows the pay
+  buttons meanwhile; unsettled `processing` reads "being processed".
 - Proven on PostgreSQL by `superseded-intent-card-doors.realdb.test.ts`, and
   by `superseded-capture-ownership.test.ts`, `payment-recovery.test.ts`,
   `issue-1992-duplicate-capture-refund.test.ts` and the door suites.
@@ -1736,25 +1740,24 @@ release).
 - **Once.** Queued per capture under the per-anchor supplementary-invoice lock;
   never on an internet-banking or cancelled booking, save a kept capture
   (`INV-PAY-144`).
-- **Where.** The gap invoice billing its change, else an unpaid invoice naming
-  it or the change's own, else the primary less unallocated credit: the
-  capture net of other writers, capped at the room; the rest to an officer.
+- **Where.** Each dollar once (#4434): unpaid invoices naming it, oldest
+  first, then the change's gap, its own unpaid invoice, the primary less
+  unallocated credit, each to its room; the rest to an officer, never an
+  overpayment. A paying namer's billed cents count as recorded.
 - **Never twice.** One receipt plans per booking at a time, never during a
-  live create. Store decisions under the change's lock before Xero.
-  Match reference, receipt cents, and no active `CREDIT_RELEASE_PAYMENT`
-  link on that payment id (#4435); else the same per-invoice key or refuse.
+  live create, storing its ordered invoice list, pending too,
+  under the change's lock before Xero. A leg adopts only a payment with its
+  reference, cents and no active `CREDIT_RELEASE_PAYMENT` link (#4435),
+  else sends on its own key; a retry sends unlinked legs.
 - **Refused, never guessed.** Xero unreadable, nothing due, an uncertain
   recorder or changed figures: FAILED `ADDITIONAL_CAPTURE_RECEIPT_REFUSED`,
   an officer told.
-- **Refunds and repair.** A Stripe refund names the receipt's invoice. The
-  repair tool reports "card payment not recorded in Xero" and queues the
-  receipt; a missing or revived invoice goes unpaid where a receipt records it.
-- Pinned by `additional-capture-xero-receipt.test.ts`,
-  `additional-capture-recorder.test.ts`,
-  `additional-capture-receipt.realdb.test.ts`,
-  `additional-capture-receipt-unattributed.realdb.test.ts`,
-  `additional-capture-receipt-sweep-retry.realdb.test.ts` and
-  `xero-booking-repair.test.ts`.
+- **Refunds and repair.** A Stripe refund names leg 0's invoice. Repair
+  queues a missing receipt and flags unlinked legs; a missing or revived
+  invoice a receipt records goes unpaid.
+- Pinned by the `additional-capture-xero-receipt`,
+  `additional-capture-recorder` and `xero-booking-repair` unit tests and the
+  `additional-capture-receipt*` realdb suites.
 
 ## INV-PAY-140
 
@@ -4216,3 +4219,36 @@ Proven by `cancellation-credit-event.realdb.test.ts` and `member-credit.test.ts`
   these rows are not on the paid-back-twice list.
 - Proven by `card-refund-group-settle.test.ts`,
   `card-refund-group-settle.realdb.test.ts` and `dead-card-refunds-panel.test.tsx`.
+
+## INV-PAY-154
+
+**Related: `INV-PAY-128`** (a refusal never loops), **`INV-INT-032`** (an
+alert nobody received answers 500).
+
+- **A disputed capture is never refunded, nor credited by a cancel** (#4911).
+  While a cardholder's dispute (chargeback) is OPEN or LOST, no card refund is
+  issued for that capture and a paid cancel issues no account credit. A WON
+  dispute, or one closed with no funds taken, holds nothing.
+- **One read.** `disputedCaptureCents` (`stripe-dispute-hold.ts`) answers "is
+  this capture disputed": `processRefund` asks before every Stripe call, a
+  refund asks before reserving, the paid cancel inside its claim.
+- **A paid cancel** of a disputed booking records the cancel, issues neither,
+  raises a `CANCELLED_BOOKING_HAND_BACK` task on the credit tier naming the
+  dispute, and tells the member the refund is with the treasurer. A
+  joiner's refund to the organiser's card is refused at `processRefund`.
+- **A refused refund stops.** A recovery row refused for a dispute goes to
+  the treasurer at once (`unretryableRecoveryCause`); a late capture's is held
+  for a treasurer, never redelivered.
+- **One record per dispute.** The four `charge.dispute.*` events keep one
+  `StripeDispute` row, claimed by its unique Stripe id and merged under its row
+  lock: duplicates and replays change nothing, an older event never overwrites
+  a newer one, a closed dispute never reopens.
+- **Two Finance alerts per dispute**, unmuteable, once ever: open and close.
+- **A record, not money.** No ledger line, journal, refund, `Payment` total or
+  Xero posting; the treasurer records a lost dispute in Xero by hand
+  (`DEPLOYMENT.md`).
+- Limits: a dispute recorded after a cancel's read is not seen by that cancel,
+  so a credit committed in that window stays; a booking edit's reduction does
+  not read the hold and can still mint account credit.
+- Proven by `stripe-dispute.test.ts`, `admin-stripe-dispute-alert.test.ts`,
+  `cancel-refund-method.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
