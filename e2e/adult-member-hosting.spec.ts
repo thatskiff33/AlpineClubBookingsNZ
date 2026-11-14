@@ -98,9 +98,10 @@ type HostScopeWrite = Partial<HostScopes> &
   Pick<HostScopes, "sameBooking" | "sameBookingOwner">;
 
 /**
- * Every status the admin booking list can filter on (its own `VALID_STATUSES`).
- * `AWAITING_REVIEW` is deliberately absent from that set in the route, so it
- * cannot be listed at all — the same limitation `e2e/helpers/reset.ts` records.
+ * The statuses this spec asks the admin booking list for. The route accepts
+ * every `BookingStatus` (#4923); `AWAITING_REVIEW` is simply not named here, and
+ * naming it would be an e2e behaviour change that needs the e2e stack to prove
+ * (the same choice `e2e/helpers/reset.ts` records).
  */
 const LISTABLE_STATUSES = [
   "DRAFT",
