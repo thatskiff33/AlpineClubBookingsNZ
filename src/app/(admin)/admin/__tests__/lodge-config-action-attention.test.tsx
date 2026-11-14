@@ -47,7 +47,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
 
 import ChoresPage from "@/app/(admin)/admin/chores/page";
 import LockersPage from "@/app/(admin)/admin/lockers/page";
-import AdminLodgesPage from "@/app/(admin)/admin/lodges/page";
+import AdminLodgesPage from "@/app/(admin)/admin/lodge-ops/lodges/page";
 
 type Handler = (
   url: string,

@@ -39,7 +39,7 @@ vi.mock("@/components/admin/analytics-integration-card", () => ({
 }));
 
 import AppearanceHubPage from "@/app/(admin)/admin/website/appearance/page";
-import DisplayHubPage from "@/app/(admin)/admin/display/page";
+import DisplayHubPage from "@/app/(admin)/admin/lodge-ops/display/page";
 import BookingsSetupHubPage from "@/app/(admin)/admin/rules/bookings-setup/page";
 import FinanceSetupPage from "@/app/(admin)/admin/setup/finance/page";
 import FoundationsSetupHubPage from "@/app/(admin)/admin/setup/foundations/page";
@@ -103,7 +103,7 @@ describe("admin setup hub pages", () => {
     // "already set up" and it appears as an ordinary card rather than the gold
     // lead card — which is exactly the always-available half of the entry-point
     // decision (the lead-vs-ordinary switch itself is pinned in
-    // `src/app/(admin)/admin/display/__tests__/display-setup-entry.test.tsx`).
+    // `src/app/(admin)/admin/lodge-ops/display/__tests__/display-setup-entry.test.tsx`).
     expect(html).toContain("/admin/display/setup");
   });
 

@@ -1024,6 +1024,154 @@ describe("the Bookings hub keeps each page's own admission (C10 #4807)", () => {
 });
 
 /**
+ * C11 part 1 (#4808): Lobby Display and Lodges moved under `/admin/lodge-ops`;
+ * the other eleven Lodge pages have not. Every moved page is on the lodge
+ * area's ordinary admission, the eight display pages other than setup need the
+ * Lobby Display module, and setup is exempt at its old path and its hub path
+ * and nowhere else. `/admin/lodge-ops` gets no rule of its own, and the kiosk
+ * prefix `/admin/lodge` stops at a segment boundary, so it covers none of the
+ * hub's paths. The `/api/admin` routes these pages call stay where they are.
+ */
+describe("the Lodge hub's Lobby Display and Lodges pages keep their admission (C11 part 1 #4808)", () => {
+  type Row = readonly [
+    id: string,
+    oldPath: string,
+    hubPath: string,
+    flags: readonly FeatureFlagKey[],
+  ];
+  const LODGE_PART_ONE: readonly Row[] = [
+    ["lodges", "/admin/lodges", "/admin/lodge-ops/lodges", []],
+    ["lodge-detail", "/admin/lodges/[id]", "/admin/lodge-ops/lodges/[id]", []],
+    [
+      "lodge-central-lodge",
+      "/admin/lodges/[id]/central-lodge",
+      "/admin/lodge-ops/lodges/[id]/central-lodge",
+      [],
+    ],
+    ["lodge-display", "/admin/lodges/[id]/display", "/admin/lodge-ops/lodges/[id]/display", []],
+    ["lodge-roster", "/admin/lodges/[id]/roster", "/admin/lodge-ops/lodges/[id]/roster", []],
+    ["lodge-setup", "/admin/lodges/[id]/setup", "/admin/lodge-ops/lodges/[id]/setup", []],
+    ["display", "/admin/display", "/admin/lodge-ops/display", ["lobbyDisplay"]],
+    ["display-builder", "/admin/display/builder", "/admin/lodge-ops/display/builder", ["lobbyDisplay"]],
+    ["display-devices", "/admin/display/devices", "/admin/lodge-ops/display/devices", ["lobbyDisplay"]],
+    ["display-layouts", "/admin/display/layouts", "/admin/lodge-ops/display/layouts", ["lobbyDisplay"]],
+    ["display-preview", "/admin/display/preview", "/admin/lodge-ops/display/preview", ["lobbyDisplay"]],
+    [
+      "display-reference",
+      "/admin/display/reference",
+      "/admin/lodge-ops/display/reference",
+      ["lobbyDisplay"],
+    ],
+    ["display-settings", "/admin/display/settings", "/admin/lodge-ops/display/settings", ["lobbyDisplay"]],
+    ["display-setup", "/admin/display/setup", "/admin/lodge-ops/display/setup", []],
+    [
+      "display-templates",
+      "/admin/display/templates",
+      "/admin/lodge-ops/display/templates",
+      ["lobbyDisplay"],
+    ],
+  ];
+  const UNMOVED = [
+    "rooms-beds",
+    "lodge-kiosk",
+    "hut-leaders",
+    "roster",
+    "roster-print",
+    "chores",
+    "work-parties",
+    "lodge-instructions",
+    "maintenance-reports",
+    "lockers",
+    "calendar",
+  ];
+
+  const only = (area: AdminPermissionArea, level: "view" | "edit"): AdminPermissionInput => ({
+    canLogin: true,
+    accessRoles: [],
+    adminPermissionMatrix: {
+      ...(Object.fromEntries(
+        ADMIN_PERMISSION_AREAS.map((entry) => [entry.key, "none"]),
+      ) as AdminPermissionMatrix),
+      [area]: level,
+    },
+  });
+
+  it("names the fifteen moved pages, each on the lodge area's ordinary admission, and leaves the rest unmoved", () => {
+    const lodge = ADMIN_PAGES.filter((page) => page.hub === "lodge-ops");
+    expect(
+      lodge.filter((page) => page.moved).map((page) => [page.id, page.oldPath, page.hubPath, page.flags]),
+    ).toEqual(LODGE_PART_ONE);
+    for (const page of lodge.filter((candidate) => candidate.moved)) {
+      expect(page.admission, page.id).toBe("area");
+      expect(page.area, page.id).toBe("lodge");
+    }
+    expect(lodge.filter((page) => !page.moved).map((page) => page.id).sort()).toEqual([...UNMOVED].sort());
+  });
+
+  it.each(LODGE_PART_ONE)("%s answers at %s and at %s as main did at the old path", (id, oldPath, hubPath, flags) => {
+    for (const pathname of [oldPath, hubPath].map(concrete)) {
+      expect(getAdminRouteRequirement(pathname, "GET"), pathname).toEqual({ area: "lodge", level: "view" });
+      expect(getAdminRouteRequirement(pathname, "POST"), pathname).toEqual({ area: "lodge", level: "edit" });
+      expect(getRequiredFeaturesForPath(pathname), pathname).toEqual([...flags]);
+      expect(differences(id, actualAnswer(pathname), oracleAnswer(concrete(oldPath)))).toEqual([]);
+      expect(canOpenAdminPath(only("lodge", "view"), pathname), pathname).toBe(true);
+      for (const area of ["bookings", "membership", "overview"] as const) {
+        expect(canOpenAdminPath(only(area, "edit"), pathname), `${pathname} ${area}`).toBe(false);
+      }
+    }
+  });
+
+  it("exempts Display Setup from the Lobby Display module at its two paths, and nothing else", () => {
+    expect(getRequiredFeaturesForPath("/admin/display/setup")).toEqual([]);
+    expect(getRequiredFeaturesForPath("/admin/lodge-ops/display/setup")).toEqual([]);
+    for (const pathname of [
+      "/admin/display",
+      "/admin/display/devices",
+      "/admin/display/templates",
+      "/admin/display/builder",
+      "/admin/lodge-ops/display",
+      "/admin/lodge-ops/display/devices",
+      "/admin/lodge-ops/display/templates",
+      "/admin/lodge-ops/display/builder",
+      "/admin/display/setup/child",
+      "/admin/lodge-ops/display/setup/child",
+      "/admin/display/setupfoo",
+      "/admin/lodge-ops/display/setup-extra",
+      "/api/admin/display/setup",
+    ]) {
+      expect(getRequiredFeaturesForPath(pathname), pathname).toEqual(["lobbyDisplay"]);
+    }
+  });
+
+  it("gives the hub's root no rule, and keeps the kiosk gate on the kiosk alone", () => {
+    expect(ADMIN_ROUTE_MAP.map(({ prefix }) => prefix)).not.toContain("/admin/lodge-ops");
+    expect(firstMatch("/admin/lodge-ops")?.prefix).toBe("/admin");
+    expect(getRequiredFeaturesForPath("/admin/lodge-ops")).toEqual([]);
+    expect(getRequiredFeaturesForPath("/admin/lodge")).toEqual(["kiosk"]);
+    for (const [id, , hubPath] of LODGE_PART_ONE) {
+      const pathname = concrete(hubPath);
+      expect(getRequiredFeaturesForPath(pathname), id).not.toContain("kiosk");
+      const entry = firstMatch(pathname);
+      expect(
+        entry && nestsUnder(entry.prefix, "/admin/lodge-ops") && entry.prefix !== "/admin/lodge-ops",
+        id,
+      ).toBe(true);
+    }
+  });
+
+  it.each([
+    ["/api/admin/display", ["lobbyDisplay"]],
+    ["/api/admin/display/templates", ["lobbyDisplay"]],
+    ["/api/admin/lodges", []],
+    ["/api/admin/lodges/lodge-1/display", []],
+  ] as const)("leaves the API %s on lodge", (pathname, flags) => {
+    expect(getAdminRouteRequirement(pathname, "GET")).toEqual({ area: "lodge", level: "view" });
+    expect(getAdminRouteRequirement(pathname, "POST")).toEqual({ area: "lodge", level: "edit" });
+    expect(getRequiredFeaturesForPath(pathname)).toEqual([...flags]);
+  });
+});
+
+/**
  * C9 (#4806): the Members hub is one permission area, with the induction module
  * on three of its pages and on nothing else. Moving the pages under
  * `/admin/membership` must not give that root a rule of its own — a prefix

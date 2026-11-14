@@ -145,7 +145,7 @@ import { requireCalendarDate } from "@/lib/club-time";
 const CLUB_DAY = requireCalendarDate("2026-07-01");
 
 import { LodgeSelect } from "@/components/lodge-select";
-import AdminLodgesPage from "@/app/(admin)/admin/lodges/page";
+import AdminLodgesPage from "@/app/(admin)/admin/lodge-ops/lodges/page";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const EXPECTED_SELECT = {

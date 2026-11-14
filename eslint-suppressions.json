@@ -104,7 +104,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/display/builder/display-builder.tsx": {
+  "src/app/(admin)/admin/lodge-ops/display/builder/display-builder.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     },
@@ -112,12 +112,12 @@
       "count": 10
     }
   },
-  "src/app/(admin)/admin/display/devices/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/display/devices/page.tsx": {
     "design-system/no-raw-select": {
       "count": 2
     }
   },
-  "src/app/(admin)/admin/display/layouts/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/display/layouts/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 2
     },
@@ -125,7 +125,7 @@
       "count": 3
     }
   },
-  "src/app/(admin)/admin/display/reference/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/display/reference/page.tsx": {
     "design-system/no-raw-button": {
       "count": 1
     },
@@ -133,7 +133,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/display/setup/display-wizard-steps.tsx": {
+  "src/app/(admin)/admin/lodge-ops/display/setup/display-wizard-steps.tsx": {
     "design-system/no-raw-button": {
       "count": 2
     },
@@ -141,7 +141,7 @@
       "count": 2
     }
   },
-  "src/app/(admin)/admin/display/templates/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/display/templates/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 2
     },
@@ -233,32 +233,32 @@
       "count": 2
     }
   },
-  "src/app/(admin)/admin/lodges/[id]/_components/lodge-central-lodge-card.tsx": {
+  "src/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-central-lodge-card.tsx": {
     "design-system/no-raw-select": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/lodges/[id]/_components/lodge-display-settings-card.tsx": {
+  "src/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-display-settings-card.tsx": {
     "design-system/no-raw-select": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/lodges/[id]/_components/lodge-roster-settings-card.tsx": {
+  "src/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-roster-settings-card.tsx": {
     "design-system/no-raw-select": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/lodges/[id]/setup/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page.tsx": {
     "design-system/no-raw-select": {
       "count": 2
     }
   },
-  "src/app/(admin)/admin/lodges/_components/other-lodges-panel.tsx": {
+  "src/app/(admin)/admin/lodge-ops/lodges/_components/other-lodges-panel.tsx": {
     "design-system/no-raw-input": {
       "count": 1
     }
   },
-  "src/app/(admin)/admin/lodges/page.tsx": {
+  "src/app/(admin)/admin/lodge-ops/lodges/page.tsx": {
     "design-system/no-native-confirm": {
       "count": 1
     }

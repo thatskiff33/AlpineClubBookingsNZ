@@ -163,8 +163,10 @@ const nextConfig: NextConfig = {
    * hub URL and there are no rewrites. C4 (#4801) has moved the Website pages,
    * C5 (#4802) the Finance pages, C6 (#4803) the Fees & booking rules pages,
    * C7 (#4804) the Help & system pages, C8 (#4805) the Messages & email pages,
-   * C9 (#4806) the Members pages and C10 (#4807) the Bookings pages, so those
-   * rules are live while the switch stays off.
+   * C9 (#4806) the Members pages, C10 (#4807) the Bookings pages and C11 part
+   * 1 (#4808) the Lobby Display and Lodges pages under `/admin/lodge-ops` (the
+   * other Lodge pages have not moved yet), so those rules are live while the
+   * switch stays off.
    *
    * The pages S1 (#4796) merged into others (`src/lib/admin-hubs/retired.ts`)
    * each have a redirect in both states, FIRST in the list so no moved page's

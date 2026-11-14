@@ -221,8 +221,8 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // theme.
     "src/app/(admin)/admin/finance/reports/page.tsx",
     // Signage: `bg-black` letterboxes simulating a display screen.
-    "src/app/(admin)/admin/display/builder/display-builder.tsx",
-    "src/app/(admin)/admin/display/preview/page.tsx",
+    "src/app/(admin)/admin/lodge-ops/display/builder/display-builder.tsx",
+    "src/app/(admin)/admin/lodge-ops/display/preview/page.tsx",
     // #2190 P4 — three former entries were the last "deferred work wearing an
     // allowlist badge" and are now GONE: xero-record-activity-panel.tsx (solid
     // slate PENDING chip + selected record pill) moved onto

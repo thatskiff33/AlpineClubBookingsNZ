@@ -145,7 +145,7 @@ const HONEST_CLAIMS: Array<{
   mustContain: string;
 }> = [
   {
-    file: "src/app/(admin)/admin/display/setup/display-wizard-steps.tsx",
+    file: "src/app/(admin)/admin/lodge-ops/display/setup/display-wizard-steps.tsx",
     branchContains: "Could not read the current module settings",
     reason:
       "The failing fetch is the GET that READS the current module settings, " +
@@ -516,7 +516,7 @@ describe("unverified-write copy contract (#2668)", () => {
         bannedPhrase: "Nothing was changed",
       },
       {
-        file: "src/app/(admin)/admin/display/templates/restore-built-ins.tsx",
+        file: "src/app/(admin)/admin/lodge-ops/display/templates/restore-built-ins.tsx",
         outcome: "the built-in boards were restored",
         bannedPhrase: "was changed — safe to try again",
       },
@@ -562,7 +562,7 @@ describe("unverified-write copy contract (#2668)", () => {
         // refusal the server reported. Without it the branch goes back to saying
         // the screen "will come up on the club default board", which is false in
         // exactly the case where the bind landed and only the answer was lost.
-        file: "src/app/(admin)/admin/display/setup/display-wizard-steps.tsx",
+        file: "src/app/(admin)/admin/lodge-ops/display/setup/display-wizard-steps.tsx",
         mustContain: "bindResponse === null",
       },
     ];

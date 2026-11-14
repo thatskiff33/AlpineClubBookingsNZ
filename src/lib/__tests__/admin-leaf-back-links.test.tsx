@@ -38,13 +38,13 @@ vi.mock("@/components/admin/site-content-panel", () => ({
 // The Lodge display settings sub-page (#110) renders a client card that fetches
 // on mount; only its top-of-page BackLink matters here, so stub the card.
 vi.mock(
-  "@/app/(admin)/admin/lodges/[id]/_components/lodge-display-settings-card",
+  "@/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-display-settings-card",
   () => ({ LodgeDisplaySettingsCard: () => null }),
 );
 // #2942: the per-lodge Member roster settings sub-page renders a client card
 // that fetches on mount; only its top-of-page BackLink matters here.
 vi.mock(
-  "@/app/(admin)/admin/lodges/[id]/_components/lodge-roster-settings-card",
+  "@/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-roster-settings-card",
   () => ({ LodgeRosterSettingsCard: () => null }),
 );
 // #2046 F2: stub the Xero record activity loader + its heavy client panel so the
@@ -69,7 +69,7 @@ vi.mock("@/components/admin/xero-record-activity-panel", () => ({
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: async () => ({ lobbyDisplay: false }),
 }));
-vi.mock("@/app/(admin)/admin/display/setup/display-setup-wizard", () => ({
+vi.mock("@/app/(admin)/admin/lodge-ops/display/setup/display-setup-wizard", () => ({
   DisplaySetupWizard: () => null,
 }));
 // #2046 F6: the Induction Settings leaf drills in from the Induction Register;
@@ -85,18 +85,18 @@ import BookingPeriodsPage from "@/app/(admin)/admin/rules/booking-policies/perio
 import AdminMembershipTypesPage from "@/app/(admin)/admin/membership/membership-types/page";
 import SiteContentAdminPage from "@/app/(admin)/admin/website/site-content/page";
 // #2046: the five Lobby Display leaves and the converted [id]-aware drill-downs.
-import DisplayDevicesPage from "@/app/(admin)/admin/display/devices/page";
-import DisplayLayoutsPage from "@/app/(admin)/admin/display/layouts/page";
-import DisplayTemplatesPage from "@/app/(admin)/admin/display/templates/page";
-import DisplayReferencePage from "@/app/(admin)/admin/display/reference/page";
-import DisplayPreviewPage from "@/app/(admin)/admin/display/preview/page";
+import DisplayDevicesPage from "@/app/(admin)/admin/lodge-ops/display/devices/page";
+import DisplayLayoutsPage from "@/app/(admin)/admin/lodge-ops/display/layouts/page";
+import DisplayTemplatesPage from "@/app/(admin)/admin/lodge-ops/display/templates/page";
+import DisplayReferencePage from "@/app/(admin)/admin/lodge-ops/display/reference/page";
+import DisplayPreviewPage from "@/app/(admin)/admin/lodge-ops/display/preview/page";
 // #2048: the visual builder is a statically-renderable Lobby Display leaf (its
 // header renders before the loading/fetch gate), so it joins the frozen suite.
-import DisplayBuilderPage from "@/app/(admin)/admin/display/builder/page";
+import DisplayBuilderPage from "@/app/(admin)/admin/lodge-ops/display/builder/page";
 // #2249: the guided setup wizard, the sixth Lobby Display leaf.
-import DisplaySetupPage from "@/app/(admin)/admin/display/setup/page";
-import LodgeDisplaySettingsPage from "@/app/(admin)/admin/lodges/[id]/display/page";
-import LodgeRosterSettingsPage from "@/app/(admin)/admin/lodges/[id]/roster/page";
+import DisplaySetupPage from "@/app/(admin)/admin/lodge-ops/display/setup/page";
+import LodgeDisplaySettingsPage from "@/app/(admin)/admin/lodge-ops/lodges/[id]/display/page";
+import LodgeRosterSettingsPage from "@/app/(admin)/admin/lodge-ops/lodges/[id]/roster/page";
 import XeroRecordActivityPage from "@/app/(admin)/admin/finance/xero/records/[localModel]/[localId]/page";
 import AdminInductionSettingsPage from "@/app/(admin)/admin/membership/induction/settings/page";
 import { MemberDetailHeader } from "@/app/(admin)/admin/membership/members/[id]/_components/member-detail-header";
@@ -278,8 +278,8 @@ describe("admin drill-down leaf back links", () => {
 // covered by render tests in the companion RTL suite
 // `admin-drilldown-back-links-client.test.tsx`, which drives a failed/benign
 // fetch to reach each converted affordance:
-//   - src/app/(admin)/admin/lodges/[id]/page.tsx (error fallback → /admin/lodges)
-//   - src/app/(admin)/admin/lodges/[id]/setup/page.tsx (main → lodge config; and
+//   - src/app/(admin)/admin/lodge-ops/lodges/[id]/page.tsx (error fallback → /admin/lodges)
+//   - src/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page.tsx (main → lodge config; and
 //     the "not found" fallback → /admin/lodges)
 //   - src/app/(admin)/admin/membership/members/[id]/page.tsx (error fallback → returnTo)
 //   - src/app/(admin)/admin/membership/members/[id]/merge/page.tsx (→ master member)

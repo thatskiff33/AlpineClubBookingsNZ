@@ -21,8 +21,9 @@ import { ADMIN_PAGES, ADMIN_RETIRED_PAGES, isInexactAdminPagePath } from "@/lib/
 // the hub registry. C4 (#4801) has moved the Website pages, C5 (#4802) the
 // Finance pages, C6 (#4803) the Fees & booking rules pages, C7 (#4804) the
 // Help & system pages, C8 (#4805) the Messages & email pages, C9 (#4806) the
-// Members pages and C10 (#4807) the Bookings pages, and the switch is off, so
-// each of those hub URLs
+// Members pages, C10 (#4807) the Bookings pages and C11 part 1 (#4808) the
+// Lobby Display and Lodges pages, and the switch is off, so each of those hub
+// URLs
 // redirects to its old URL and each old URL is rewritten to the moved file. The five retired pages (S1 #4796) still redirect
 // in both states. All of this is run through
 // Next's own pipeline (`unstable_getResponseFromNextConfig`, which calls the
@@ -106,8 +107,10 @@ describe("next.config.ts with the switch off", () => {
   it("redirects each moved page's hub URL, rewrites its old URL, and keeps the asset rewrites", async () => {
     const config = await loadConfig();
     const moved = movedPages();
+    // Every hub but Lodge has moved whole. Lodge is part-moved (C11 part 1
+    // #4808): Lobby Display and Lodges have moved, the rest of the hub has not.
     expect(new Set(moved.map((page) => page.hub))).toEqual(
-      new Set(["website", "finance", "rules", "system", "messages", "bookings", "members"]),
+      new Set(["website", "finance", "rules", "system", "messages", "bookings", "members", "lodge-ops"]),
     );
     const retired = ADMIN_RETIRED_PAGES.map(({ oldPath }) => oldPath);
     expect(
@@ -128,8 +131,8 @@ describe("next.config.ts with the switch off", () => {
   });
 
   /**
-   * C4 (#4801), C5 (#4802), C6 (#4803), C7 (#4804), C8 (#4805), C9 (#4806) and C10
-   * (#4807) off-state smoke. Next's config pipeline answers a
+   * C4 (#4801), C5 (#4802), C6 (#4803), C7 (#4804), C8 (#4805), C9 (#4806), C10
+   * (#4807) and C11 part 1 (#4808) off-state smoke. Next's config pipeline answers a
    * `beforeFiles` rewrite as 200 and a redirect as 307. The old URL is served
    * from the moved file; the hub URL redirects to the old URL.
    */
@@ -190,7 +193,7 @@ describe("next.config.ts with the switch off", () => {
     expect(isInexactAdminPagePath("/admin/site%2Dstyle")).toBe(true);
   });
 
-  it.each(["/admin/lodges", "/admin/lockers", "/admin/lodges/x1"])(
+  it.each(["/admin/lockers", "/admin/lockers/x1"])(
     "routes %s untouched",
     async (url) => {
       await expect(resolve(await loadConfig(), url)).resolves.toEqual({ kind: "none" });
@@ -316,8 +319,8 @@ describe("next.config.ts over the moved Finance hub", () => {
     await expect(
       resolve(config, "/admin/xero/records/Booking/b-1"),
     ).resolves.toEqual({ kind: "rewrite", url: "/admin/finance/xero/records/Booking/b-1" });
-    // Lodges has not moved, so an unmoved neighbour is untouched.
-    await expect(resolve(config, "/admin/lodges")).resolves.toEqual({ kind: "none" });
+    // Lockers has not moved, so an unmoved neighbour is untouched.
+    await expect(resolve(config, "/admin/lockers")).resolves.toEqual({ kind: "none" });
   });
 
   it("on: the old URL redirects (307) to the hub URL, query kept, and nothing is rewritten", async () => {
@@ -633,6 +636,90 @@ describe("next.config.ts over the moved Bookings hub", () => {
     await expect(resolve(config, "/admin/booking-desk/bookings?status=PENDING")).resolves.toEqual({
       kind: "none",
     });
+  });
+});
+
+describe("next.config.ts over the part-moved Lodge hub (C11 part 1 #4808)", () => {
+  // Lobby Display and Lodges moved under `/admin/lodge-ops`; the other eleven
+  // Lodge pages have not. The prefix is `lodge-ops`: `/admin/lodge` is the kiosk.
+  it("PREMISE: Lobby Display and Lodges have moved, and nothing else in the hub has", () => {
+    const lodge = ADMIN_PAGES.filter((page) => page.hub === "lodge-ops");
+    expect(lodge.filter((page) => page.moved).map((page) => page.id).sort()).toEqual([
+      "display",
+      "display-builder",
+      "display-devices",
+      "display-layouts",
+      "display-preview",
+      "display-reference",
+      "display-settings",
+      "display-setup",
+      "display-templates",
+      "lodge-central-lodge",
+      "lodge-detail",
+      "lodge-display",
+      "lodge-roster",
+      "lodge-setup",
+      "lodges",
+    ]);
+    expect(lodge.filter((page) => !page.moved)).toHaveLength(11);
+  });
+
+  it("off: the preview's hub URL redirects to its old URL, and the old URL is served from the moved file, query kept", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(
+      resolve(config, "/admin/lodge-ops/display/preview?templateId=t-1&previewLodge=lodge-a"),
+    ).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/display/preview?templateId=t-1&previewLodge=lodge-a",
+    });
+    await expect(
+      resolve(config, "/admin/display/preview?templateId=t-1&previewLodge=lodge-a"),
+    ).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/lodge-ops/display/preview?templateId=t-1&previewLodge=lodge-a",
+    });
+  });
+
+  it("off: a lodge's setup hub URL redirects to its old URL, and the old URL is served from the moved file", async () => {
+    const config = await loadConfig({ live: false });
+    await expect(resolve(config, "/admin/lodge-ops/lodges/lodge-1/setup")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/lodges/lodge-1/setup",
+    });
+    await expect(resolve(config, "/admin/lodges/lodge-1/setup")).resolves.toEqual({
+      kind: "rewrite",
+      url: "/admin/lodge-ops/lodges/lodge-1/setup",
+    });
+  });
+
+  it("on: the old URL redirects once, straight to the hub URL, query kept, and the hub URL is not rewritten", async () => {
+    const config = await loadConfig({ live: true });
+    await expect(
+      resolve(config, "/admin/display/preview?templateId=t-1&previewLodge=lodge-a"),
+    ).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/lodge-ops/display/preview?templateId=t-1&previewLodge=lodge-a",
+    });
+    await expect(
+      resolve(config, "/admin/lodge-ops/display/preview?templateId=t-1&previewLodge=lodge-a"),
+    ).resolves.toEqual({ kind: "none" });
+    await expect(resolve(config, "/admin/lodges/lodge-1/setup")).resolves.toEqual({
+      kind: "redirect",
+      status: 307,
+      url: "/admin/lodge-ops/lodges/lodge-1/setup",
+    });
+    await expect(resolve(config, "/admin/lodge-ops/lodges/lodge-1/setup")).resolves.toEqual({
+      kind: "none",
+    });
+  });
+
+  it.each([false, true])("leaves the hub's root and the kiosk alone (live=%s)", async (live) => {
+    const config = await loadConfig({ live });
+    await expect(resolve(config, "/admin/lodge-ops")).resolves.toEqual({ kind: "none" });
+    await expect(resolve(config, "/admin/lodge")).resolves.toEqual({ kind: "none" });
   });
 });
 

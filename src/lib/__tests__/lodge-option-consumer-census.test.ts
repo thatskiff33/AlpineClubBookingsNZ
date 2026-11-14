@@ -3,14 +3,14 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const EXPECTED_DIRECT_CONSUMERS = [
-  "src/app/(admin)/admin/display/builder/page.tsx",
-  "src/app/(admin)/admin/display/devices/page.tsx",
-  "src/app/(admin)/admin/display/reference/page.tsx",
-  "src/app/(admin)/admin/display/setup/use-display-wizard-context.ts",
-  "src/app/(admin)/admin/display/templates/page.tsx",
-  "src/app/(admin)/admin/lodges/[id]/page.tsx",
-  "src/app/(admin)/admin/lodges/[id]/setup/page.tsx",
-  "src/app/(admin)/admin/lodges/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/display/builder/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/display/devices/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/display/reference/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/display/setup/use-display-wizard-context.ts",
+  "src/app/(admin)/admin/lodge-ops/display/templates/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/lodges/[id]/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page.tsx",
+  "src/app/(admin)/admin/lodge-ops/lodges/page.tsx",
   "src/app/(authenticated)/book/whole-lodge/_components/whole-lodge-request-form.tsx",
   "src/components/admin/lodge-details-panel.tsx",
   "src/components/admin/notice-audience-picker.tsx",
