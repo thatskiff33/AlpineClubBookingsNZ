@@ -91,7 +91,6 @@ const TONE_CLASSES: Record<
 > = {
   warning: { card: "border-warning-6 bg-warning-3", text: "text-warning-11" },
   danger: { card: "border-danger-6 bg-danger-3", text: "text-danger-11" },
-  info: { card: "border-info-6 bg-info-3", text: "text-info-11" },
 };
 
 export function AdminWorkQueueCards(

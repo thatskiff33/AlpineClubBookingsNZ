@@ -45,8 +45,10 @@ export type PendingCountsStatus = "loading" | "ok" | "error";
  * - whenever the pathname changes,
  * - when the tab regains focus or becomes visible again,
  * - when a queue page announces a decision (`notifyAdminQueueChanged`),
- * with at most one request in flight: a trigger during a request queues one
- * more after it, never a second concurrent one.
+ * with at most one request in flight. A navigation, decision or retry during a
+ * request queues one more after it (the request may predate the change); focus
+ * and visibility do not, since the request in flight is already fresh — a tab
+ * coming back fires both, and that must not cost two loads.
  *
  * A failed or non-OK load sets `status: "error"` and KEEPS the last good
  * counts, so the sidebar can say it could not load them rather than show a
@@ -67,9 +69,9 @@ export function usePendingCounts(): {
     let inFlight = false;
     let again = false;
 
-    const run = () => {
+    const run = (queueIfBusy: boolean) => {
       if (inFlight) {
-        again = true;
+        if (queueIfBusy) again = true;
         return;
       }
       inFlight = true;
@@ -88,22 +90,24 @@ export function usePendingCounts(): {
           inFlight = false;
           if (again && !disposed) {
             again = false;
-            run();
+            run(false);
           }
         });
     };
-    load.current = run;
+    load.current = () => run(true);
 
+    const onFocus = () => run(false);
+    const onQueueChanged = () => run(true);
     const onVisible = () => {
-      if (document.visibilityState === "visible") run();
+      if (document.visibilityState === "visible") run(false);
     };
-    window.addEventListener("focus", run);
-    window.addEventListener(ADMIN_QUEUE_CHANGED_EVENT, run);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener(ADMIN_QUEUE_CHANGED_EVENT, onQueueChanged);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       disposed = true;
-      window.removeEventListener("focus", run);
-      window.removeEventListener(ADMIN_QUEUE_CHANGED_EVENT, run);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener(ADMIN_QUEUE_CHANGED_EVENT, onQueueChanged);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);

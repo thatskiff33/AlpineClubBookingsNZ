@@ -103,7 +103,7 @@ export const ZERO_ADMIN_PENDING_COUNTS: AdminPendingCounts = {
   unavailable: [],
 };
 
-export type AdminWorkQueueTone = "warning" | "danger" | "info";
+export type AdminWorkQueueTone = "warning" | "danger";
 
 /** What the dashboard card says beyond the queue's label and number. */
 type AdminWorkQueueCard = {

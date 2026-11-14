@@ -2517,8 +2517,10 @@ rather than reading the failure as "nothing to do". The admin layout is
 persistent, so the sidebar refetches on every pathname change, on window focus,
 when the tab becomes visible, and on the `admin-queue-changed` window event a
 queue page fires after a decision (`notifyAdminQueueChanged` in
-`src/lib/admin-queue-events.ts`); a failed load shows "Couldn't load counts"
-with Retry and keeps the last good badges. Sidebar sections render expanded by
+`src/lib/admin-queue-events.ts`). One load runs at a time: a navigation,
+decision or retry mid-load queues one more, while focus and visibility do not.
+A failed load shows "Couldn't load counts" with Retry and keeps the last good
+badges. Sidebar sections render expanded by
 default; a per-section collapse preference persists in localStorage.
 
 The admin command palette (#2092, `src/components/admin-command-palette.tsx`)

@@ -132,6 +132,59 @@ describe("AdminSidebar pending counts", () => {
     expect(countCalls(fetchMock)).toBe(2);
   });
 
+  /** A fetch whose first pending-counts load waits for `release`. */
+  function holdFirstLoad() {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const fetchMock = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) await held;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ...ZERO_ADMIN_PENDING_COUNTS, issueReports: calls }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { fetchMock, release: () => release() };
+  }
+
+  it("does not load twice when a tab comes back mid-request", async () => {
+    const { fetchMock, release } = holdFirstLoad();
+    render(<AdminSidebar features={allOn} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // A returning tab fires both; the request in flight is already fresh.
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    release();
+
+    await waitFor(() => expect(issueReportsBadge()).toContain("1"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues exactly one more load for decisions made mid-request", async () => {
+    const { fetchMock, release } = holdFirstLoad();
+    render(<AdminSidebar features={allOn} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // The request may predate these decisions, so one more load follows it.
+    act(() => {
+      notifyAdminQueueChanged();
+      notifyAdminQueueChanged();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    release();
+
+    await waitFor(() => expect(issueReportsBadge()).toContain("2"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("refetches when a queue page reports a decision", async () => {
     const fetchMock = queueReplies({ issueReports: 1 }, { issueReports: 0 });
     render(<AdminSidebar features={allOn} />);
