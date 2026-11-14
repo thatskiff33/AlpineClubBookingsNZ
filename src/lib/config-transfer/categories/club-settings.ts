@@ -1,3 +1,4 @@
+import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_REFUSAL } from "@/lib/privacy-hosting";
 import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
 
@@ -576,6 +577,27 @@ export const SINGLETONS: SingletonSpec[] = [
     // No `constraints`: every column is nullable (String?), so null is a
     // legitimate value — nothing to require (#2200 nullability audit).
     defaults: () => ({}),
+  },
+  {
+    entity: "privacy-hosting-settings",
+    delegate: "privacyHostingSettings",
+    fields: ["hostingProvider", "dataLocation"],
+    defaults: () => ({ ...PRIVACY_HOSTING_DEFAULTS }),
+    // Each field is checked and normalised by its own admin-route schema.
+    constraints: Object.fromEntries(Object.entries(privacyHostingSchema.shape).map(([field, schema]) => [field, {
+      validate: (value: unknown) => schema.safeParse(value).success ? null : PRIVACY_HOSTING_TEXT_REFUSAL,
+    }])),
+    // Trim and blank-to-null like the admin save; a value that fails is left as
+    // found so the constraint above refuses it.
+    reconcile: incoming => {
+      const normalized = { ...incoming };
+      for (const [field, schema] of Object.entries(privacyHostingSchema.shape)) {
+        if (!(field in incoming)) continue;
+        const parsed = schema.safeParse(incoming[field]);
+        if (parsed.success) normalized[field] = parsed.data;
+      }
+      return normalized;
+    },
   },
   {
     entity: "email-message-setting",

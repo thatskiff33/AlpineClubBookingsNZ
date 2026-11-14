@@ -1141,8 +1141,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   failed Stripe PRIMARY-only evidence, no captured transaction history, no refund,
   invoice, manual settlement or recorded settler. Missing evidence fails closed.
   The runtime and Prisma queue forms derive from the same qualifying facts
-  (`INV-SSOT-001`). Every edit door that asks loads the transactions under its
-  locks, which the predicate requires by type; negotiated-price and primary-invoice fences remain authoritative. Approved
+  (`INV-SSOT-001`). Every edit door that asks re-reads the booking under its
+  locks through the shared `EDIT_DOOR_BOOKING_INCLUDE`, whose derived type
+  carries the transactions the predicate requires (#4925); negotiated-price and primary-invoice fences remain authoritative. Approved
   requests reprice through sanctioned placeholder links or rate elections;
   structural date edits stay refused. The
   `INV-MOD-012` clamp preserves credit up to worth including recorded fees,
@@ -1160,8 +1161,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
 - Pinned by `booking-payment-flow.test.ts`, `booking-modify-credit-clamp.test.ts`,
   `unpaid-finished-stays.test.ts`, `school-booking-request.test.ts`,
   `lifecycle-door-payment-transactions-census.test.ts` and
-  `whole-lodge-payment-review.realdb.test.ts`. The census also pins the
-  guest-acceptance door, unreachable today for an officer-priced whole-lodge
+  `whole-lodge-payment-review.realdb.test.ts`. The census pins the door set,
+  each door's use of the shared include and the confirmation post, including
+  the guest-acceptance door, unreachable today for an officer-priced whole-lodge
   booking.
 
 ## INV-PAY-023
