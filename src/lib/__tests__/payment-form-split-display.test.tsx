@@ -53,7 +53,7 @@ describe("PaymentForm split-vs-non-split amount display (#1976)", () => {
   it("quotes the server charge in the payment success message", async () => {
     confirmPayment.mockResolvedValueOnce({ paymentIntent: { id: "pi_paid", status: "succeeded" } });
     render(<PaymentForm amountCents={30000} chargedAmountCents={20000} isSplit={false}
-      returnUrl="http://localhost/return" onSuccess={noop} onError={noop} />);
+      returnUrl="http://localhost/return" onSuccess={noop} />);
     fireEvent.click(screen.getByRole("button", { name: "Pay Now" }));
     expect(await screen.findByText("Your payment of $200.00 has been processed.")).toBeTruthy();
     expect(screen.queryByText(/300.00/)).toBeNull();
