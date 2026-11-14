@@ -1,7 +1,7 @@
-import { getBrowserSentryDsn } from "@/lib/observability/browser-sentry-config";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { getDetailedHealthReport } from "@/lib/health-check";
+import { buildSentryDashboardInfo } from "@/lib/observability/sentry-dashboard-info";
 import { prisma } from "@/lib/prisma";
 import { getWebhookStats } from "@/lib/webhook-log";
 import { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review";
@@ -34,36 +34,6 @@ interface RuntimeStatusPayload {
 function getTrimmedEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
-}
-
-function buildSentryDashboardInfo() {
-  const dsn = getTrimmedEnv("SENTRY_DSN");
-  const org = getTrimmedEnv("SENTRY_ORG");
-  const project = getTrimmedEnv("SENTRY_PROJECT");
-  const missingFields = [
-    !dsn ? "SENTRY_DSN" : null,
-    !org ? "SENTRY_ORG" : null,
-    !project ? "SENTRY_PROJECT" : null,
-  ].filter((field): field is string => Boolean(field));
-  const sentryDashboardUrl =
-    missingFields.length === 0 && org && project
-      ? `https://sentry.io/organizations/${encodeURIComponent(org)}/issues/?project=${encodeURIComponent(project)}`
-      : null;
-
-  const warnings = [
-    ...(missingFields.length > 0
-      ? [`${missingFields.join(", ")} ${missingFields.length === 1 ? "is" : "are"} not configured; admin health cannot link directly to Sentry.`]
-      : []),
-    ...(!getBrowserSentryDsn()
-      ? ["Browser Sentry is off: NEXT_PUBLIC_SENTRY_DSN is missing or blank at runtime."]
-      : []),
-  ];
-
-  return {
-    sentryConfigured: Boolean(dsn),
-    sentryDashboardUrl,
-    sentryConfigWarning: warnings.length > 0 ? warnings.join(" ") : null,
-  };
 }
 
 function isWebRuntimeRole(role: string | undefined) {
