@@ -3,17 +3,19 @@ import { StrictMode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
-const { signIn, params } = vi.hoisted(() => ({
-  signIn: vi.fn(), params: new URLSearchParams("token=unused-test-token"),
-}));
+const { signIn } = vi.hoisted(() => ({ signIn: vi.fn() }));
 vi.mock("next-auth/react", () => ({ signIn }));
-vi.mock("next/navigation", () => ({ useSearchParams: () => params }));
+// Follow the live URL, as Next does after replaceState, so the scrubbed token is
+// gone from the search params and only the page's in-memory copy can retry it.
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
 
 import MagicLinkPage from "../magic/page";
 import { ADDRESS_THROTTLED_CODE, ADDRESS_THROTTLED_MESSAGE } from "@/lib/login-throttle-policy";
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   window.history.replaceState(null, "", "/login/magic?token=unused-test-token");
 });
 

@@ -1,3 +1,4 @@
+import { ADDRESS_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 import { expect, test } from "./helpers/accessibility";
 import { loginPersona } from "./helpers/auth";
 import { completeMemberDetailsGateIfShown } from "./helpers/booking";
@@ -25,7 +26,7 @@ test("sign-out still works after the address sign-in budget is spent", async ({ 
     });
     refused = response.status() === 429;
     if (refused) {
-      expect(new URL((await response.json()).url).searchParams.get("code")).toBe("ADDRESS_THROTTLED");
+      expect(new URL((await response.json()).url).searchParams.get("code")).toBe(ADDRESS_THROTTLED_CODE);
       expect(response.headers()["retry-after"]).toBeTruthy();
     }
   }

@@ -84,7 +84,9 @@ This file holds only the rules.
   budget** (#4640). Change-password uses the authenticated member's stored
   email after session validation; a refused claim answers HTTP 429 with
   `LOGIN_THROTTLED` without comparing the password. Emailed sign-in links, Google, two-factor code
-  entry and lodge PIN sign-in are unaffected, and have their own address limits.
+  entry and lodge PIN sign-in are unaffected by this per-account count.
+  Emailed sign-in links and Google share the Auth.js address limit
+  (`INV-AUTH-011`); two-factor code entry and lodge PIN sign-in have their own.
 - **A store failure never becomes a sign-in outage.** The claim falls back to a
   bounded per-process count at the budget divided as the auth-sensitive
   limiters divide theirs (#1142).
