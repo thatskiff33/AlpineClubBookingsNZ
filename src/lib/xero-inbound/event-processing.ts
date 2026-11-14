@@ -17,6 +17,8 @@ import { reconcileXeroCreditNote } from "./credit-note";
 import { recheckPendingDeletedPaymentLinks } from "./deleted-payment-links";
 import { failIfRecountLeftUnsettled } from "./recount-left-unsettled";
 import { startInboundReconcileOperation } from "./reconcile-operation";
+import { xeroInboundDedupMarkerWhere } from "./dedup-marker";
+import { takeOverStaleProcessingXeroInboundEvent, takeOverStaleProcessingXeroInboundEvents } from "./stale-event-takeover";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -179,10 +181,7 @@ async function claimProcessedWebhookEvent(event: StoredXeroInboundEvent) {
 
 async function releaseProcessedWebhookEventClaim(event: StoredXeroInboundEvent) {
   await prisma.processedWebhookEvent.deleteMany({
-    where: {
-      eventId: event.correlationKey,
-      source: "xero",
-    },
+    where: xeroInboundDedupMarkerWhere(event.correlationKey),
   });
 }
 
@@ -219,6 +218,14 @@ export async function processStoredXeroInboundEvents(options?: {
           ],
         };
 
+  // INV-INT-039: the automatic worker first takes over events a dead worker
+  // left PROCESSING past the webhook lease, so they rejoin this selection as
+  // RECEIVED. An officer's replay (eventIds) has already reset its own row.
+  const takeover =
+    eventIds.length > 0
+      ? { takenOver: 0, lost: 0 }
+      : await takeOverStaleProcessingXeroInboundEvents({ limit });
+
   const events = await prisma.xeroInboundEvent.findMany({
     where: {
       ...statusWhere,
@@ -241,7 +248,8 @@ export async function processStoredXeroInboundEvents(options?: {
     processed: 0,
     succeeded: 0,
     failed: 0,
-    skipped: 0,
+    // A stale event another worker took over first is this worker's skip.
+    skipped: takeover.lost,
   };
 
   for (const event of events as StoredXeroInboundEvent[]) {
@@ -424,40 +432,38 @@ export async function replayStoredXeroInboundEvent(eventId: string) {
   }
 
   // A row claimed as PROCESSING is normally genuinely in flight, so replay is
-  // refused. But if the worker died after claiming it the row would stay
-  // PROCESSING forever with no sweep to reset it (issue #819/#815). Once the
-  // claim is older than the staleness threshold, allow an operator to take it
-  // over and replay it; the replay path below resets it to RECEIVED and
-  // reprocesses idempotently.
-  if (
-    event.status === "PROCESSING" &&
-    !isStaleProcessingXeroInboundEvent(event.updatedAt)
-  ) {
-    throw new XeroInboundReplayError(
-      "This inbound event is already being processed.",
-      409
-    );
+  // refused. Past the webhook lease its worker is presumed dead, and the
+  // automatic worker takes it over on its next run (INV-INT-039); an officer's
+  // replay takes it over now through the same guarded helper, which also clears
+  // its dedup row. Losing that guard means another writer moved it first.
+  if (event.status === "PROCESSING") {
+    if (
+      !isStaleProcessingXeroInboundEvent(event.updatedAt) ||
+      !(await takeOverStaleProcessingXeroInboundEvent(event))
+    ) {
+      throw new XeroInboundReplayError(
+        "This inbound event is already being processed.",
+        409
+      );
+    }
+  } else {
+    await prisma.$transaction(async (tx) => {
+      await tx.processedWebhookEvent.deleteMany({
+        where: xeroInboundDedupMarkerWhere(event.correlationKey),
+      });
+
+      await tx.xeroInboundEvent.update({
+        where: {
+          id: event.id,
+        },
+        data: {
+          status: "RECEIVED",
+          errorMessage: null,
+          processedAt: null,
+        },
+      });
+    });
   }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.processedWebhookEvent.deleteMany({
-      where: {
-        eventId: event.correlationKey,
-        source: "xero",
-      },
-    });
-
-    await tx.xeroInboundEvent.update({
-      where: {
-        id: event.id,
-      },
-      data: {
-        status: "RECEIVED",
-        errorMessage: null,
-        processedAt: null,
-      },
-    });
-  });
 
   const result = await processStoredXeroInboundEvents({
     limit: 1,

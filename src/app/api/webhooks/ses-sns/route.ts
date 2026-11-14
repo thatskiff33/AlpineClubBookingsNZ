@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { ingestSesSnsEmailFeedback } from "@/lib/email";
 import {
   parseSnsWebhookEnvelope,
   verifySnsWebhookMessage,
 } from "@/lib/ses-sns";
-import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+import {
+  claimWebhookEventLease,
+  completeWebhookEventLease,
+  releaseWebhookEventLease,
+} from "@/lib/webhook-claim-lease";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
 import { reportWebhookError } from "@/lib/observability-bridge";
@@ -45,7 +48,10 @@ export async function POST(request: NextRequest) {
   const startedAt = Date.now();
   let eventId = "unknown";
   let eventType = "unknown";
-  let claimedEvent = false;
+  // The processingStartedAt this attempt claimed (`INV-INT-039`): completion
+  // and release are fenced on it, so a slow attempt that outlived its lease
+  // never completes or releases a successor's claim.
+  let leaseToken: Date | null = null;
 
   try {
     let payload: unknown;
@@ -150,23 +156,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ received: true, type: envelope.Type });
     }
 
-    try {
-      await prisma.processedWebhookEvent.create({
-        data: {
-          eventId,
-          source: "ses-sns",
-          eventType,
-        },
-      });
-      claimedEvent = true;
-    } catch (err) {
-      if (isPrismaUniqueConstraintError(err)) {
-        return NextResponse.json({ received: true, duplicate: true });
-      }
-      throw err;
+    // The shared processing lease (`INV-INT-039`), as Stripe's: a crash between
+    // the claim and the ingest no longer turns SNS's redelivery into a silent
+    // duplicate.
+    const claim = await claimWebhookEventLease({
+      source: "ses-sns",
+      eventId,
+      eventType,
+      now: new Date(startedAt),
+    });
+    if (claim.outcome === "duplicate_completed") {
+      return NextResponse.json({ received: true, duplicate: true });
     }
+    if (claim.outcome === "in_progress") {
+      // Another attempt holds a live lease. Never ACK feedback this attempt
+      // did not record: a 503 makes SNS redeliver, and a redelivery after the
+      // lease expires takes a crashed attempt's claim over.
+      await recordSesWebhookLog({
+        eventType,
+        eventId,
+        status: "failure",
+        startedAt,
+        error: "Concurrent delivery already in progress (lease held); forcing SNS retry",
+      });
+      return NextResponse.json(
+        { error: "Webhook processing already in progress" },
+        { status: 503 }
+      );
+    }
+    leaseToken = claim.leaseToken;
 
     const result = await ingestSesSnsEmailFeedback(envelope);
+    await completeWebhookEventLease({ source: "ses-sns", eventId, leaseToken });
     const feedbackEventType = result.handled
       ? `ses.${result.notificationType}`
       : "ses.unhandled";
@@ -179,15 +200,15 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ received: true, ...result });
   } catch (err) {
-    if (claimedEvent && eventId !== "unknown") {
-      await prisma.processedWebhookEvent
-        .deleteMany({ where: { eventId, source: "ses-sns" } })
-        .catch((cleanupError) => {
+    if (leaseToken) {
+      await releaseWebhookEventLease({ source: "ses-sns", eventId, leaseToken }).catch(
+        (cleanupError) => {
           logger.error(
             { err: cleanupError, eventId },
             "Failed to release SES/SNS webhook claim after handler failure"
           );
-        });
+        }
+      );
     }
 
     const message = err instanceof Error ? err.message : String(err);

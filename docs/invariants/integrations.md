@@ -750,6 +750,39 @@ abandoned attempt's claim, and recovers the row that attempt left RUNNING.
 Pinned by `xero-inbound-reconcile-operation.test.ts`, `xero-sync.test.ts`
 and, against real PostgreSQL, `xero-inbound-abandoned-operation.realdb.test.ts`.
 
+## A webhook attempt that died mid-flight (#4921)
+
+### INV-INT-039
+
+A provider event whose attempt died after its claim is reprocessed, never lost
+as a duplicate and never applied twice by racing takeovers.
+
+- **One lease.** Stripe and SES/SNS claim a `ProcessedWebhookEvent` row
+  through `webhook-claim-lease.ts`: a COMPLETED claim is a duplicate; a
+  PROCESSING one inside `WEBHOOK_PROCESSING_LEASE_MINUTES` forces a provider
+  retry (SES answers 503); one past it is taken over in one guarded
+  `updateMany`. Completion and release are fenced on the attempt's
+  `processingStartedAt`.
+- **Xero inbound events are taken over automatically.** The stored-event
+  worker first resets events PROCESSING past the same lease to RECEIVED, in
+  one `updateMany` guarded on status and the stale `updatedAt`, and the winner
+  deletes the event's `xero` dedup row in the same transaction: left in place,
+  it would mark the reprocess PROCESSED unapplied. A loser counts it skipped.
+- **Replay shares the helper.** A Replay of a stale PROCESSING event takes it
+  over through the same guard; losing it answers 409. A fresh one is refused.
+- **The operation row** the dead attempt left is recovered by `INV-INT-038`.
+- **Replays are harmless.** Handlers are idempotent; the same SES feedback
+  (message id and event type) is not counted twice toward suppression.
+- **Limits.** An event that kills its worker is retaken each lease. Xero
+  outcome writes are not fenced, so a live attempt past the lease can overlap
+  its successor. SNS's default HTTP/S policy stops retrying within a minute, so
+  SES takeover needs the longer delivery policy `CONFIGURATION.md` gives. The
+  operation threshold must not exceed the lease.
+
+Pinned by `ses-sns-webhook.test.ts`, `stripe-webhook-events.test.ts`,
+`xero-inbound-stale-event-takeover.test.ts`, `email-suppression-replay.test.ts`
+and, against real PostgreSQL, `xero-inbound-stale-event-takeover.realdb.test.ts`.
+
 ## Stored outbox payloads (#3971)
 
 ### INV-INT-026

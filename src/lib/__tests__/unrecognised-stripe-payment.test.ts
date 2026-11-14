@@ -171,7 +171,7 @@ import {
   UnrecognisedStripePaymentAlertNotSentError,
   UNRECOGNISED_PAYMENT_DESCRIPTION_MAX_LENGTH,
 } from "@/lib/unrecognised-stripe-payment";
-import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
+import { WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/webhook-processing-lease";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CREATED = Date.parse("2026-06-30T21:00:00.000Z") / 1000;
@@ -467,7 +467,7 @@ describe("recordUnrecognisedStripePayment (#4532)", () => {
  * The clock is frozen, so every age below is exact.
  */
 describe("the alert claim's in-flight window against the webhook lease (#4647)", () => {
-  const LEASE_MS = STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60_000;
+  const LEASE_MS = WEBHOOK_PROCESSING_LEASE_MINUTES * 60_000;
   const key = unrecognisedStripePaymentAlertKey("pi_donation");
 
   /** A stored row a dead delivery wrote, and its claim taken `ageMs` ago. */

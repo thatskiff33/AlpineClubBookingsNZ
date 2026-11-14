@@ -627,7 +627,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | --- | --- |
 | `xero-sync` | The ledger primitives: `startXeroSyncOperation` / `completeXeroSyncOperation` / `failXeroSyncOperation`, payload redaction + hashing, `buildXeroIdempotencyKey`, `upsertXeroObjectLink` (enforces single-active canonical links for Member CONTACT, Payment PRIMARY_INVOICE, MemberSubscription SUBSCRIPTION_INVOICE; a `mergeMetadata` write lays its record over the stored metadata in one statement, `xero-object-link-metadata-merge.ts`, so two writers of one link both keep their keys, #4445), `recordXeroInboundEvent`. |
 | `xero-sync-cursors` | `XeroSyncCursor` read/write for incremental syncs, plus throttling helpers. |
-| `xero-stale-operations` | Filters/counters for operations stuck in RUNNING and inbound events stuck in PROCESSING (feeds cron health and the admin reset/replay actions). |
+| `xero-stale-operations` | Filters/counters for operations stuck in RUNNING and inbound events stuck in PROCESSING (feeds cron health, the admin reset/replay actions and the automatic inbound takeover). |
 
 ### Outbound document pipeline
 
@@ -746,7 +746,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `XeroConnection` | Single row (id `default`): the connected tenant, the access token's expiry and the only refresh lease. No secret. |
 | `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields, and `queueType` (a denormalized, indexed copy of `requestPayload.queueType` set at enqueue — canonical value still lives in the payload; #1271). **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
-| `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; stale PROCESSING is operator-replayable). Unique `correlationKey` makes webhook delivery idempotent. |
+| `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; PROCESSING past the webhook lease is taken over automatically, `INV-INT-039`). Unique `correlationKey` makes webhook delivery idempotent. |
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
 | `WebhookValidationReceipt` | One row per provider recording the last valid intent-to-receive (ITR) validation ping (#2081): `validatedAt` + a non-reversible SHA-256 `keyFingerprint` of the webhook key that signed it (never the key). Drives the wizard's freshness-scoped, key-bound webhook Verify and the persistent amber "webhooks not configured" badge. |
 | `XeroSyncCursor` | Incremental checkpoints per (`resourceType`, `scope`) for contact/membership/invoice reconciliation. |
@@ -1208,8 +1208,11 @@ note.
    before it checks for an overlapping retry.) Once FAILED, the ordinary
    Retry / Requeue applies.
 4. **Inbound event retry** — FAILED `XeroInboundEvent` rows are re-swept after
-   `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; stale PROCESSING rows are
-   operator-replayable.
+   `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; rows left PROCESSING past
+   `WEBHOOK_PROCESSING_LEASE_MINUTES` are reset to RECEIVED by the worker,
+   with their `xero` dedup row cleared, in one guarded write
+   (`xero-inbound/stale-event-takeover.ts`, `INV-INT-039`). A Replay takes one
+   over at once through the same helper.
 
 ### Stripe payments the app did not create (#4532)
 

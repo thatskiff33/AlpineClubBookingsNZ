@@ -4844,13 +4844,17 @@ model ProcessedWebhookEvent {
   // F16 (issue #1887): the dedup claim is a processing LEASE, not a bare
   // "seen" marker. `status` is "PROCESSING" (claimed, handler in flight) or
   // "COMPLETED" (handler finished). `processingStartedAt` stamps when the
-  // current attempt took the lease. A redelivery hitting an existing claim
-  // returns 200 only when COMPLETED; a PROCESSING claim still inside the lease
-  // window forces a provider retry (500), and an expired lease (a crashed
-  // prior attempt) is taken over and reprocessed. This closes the two
-  // lost-event windows: (a) a crash between claim-insert and completion no
-  // longer ACKs every redelivery as a duplicate, and (b) a concurrent
-  // redelivery is no longer ACKed while the in-flight attempt later fails.
+  // current attempt took the lease. Stripe and SES/SNS claim through
+  // `webhook-claim-lease.ts` (INV-INT-039, #4921). A redelivery hitting an
+  // existing claim returns 200 only when COMPLETED; a PROCESSING claim still
+  // inside the lease window forces a provider retry (Stripe 500, SES 503), and
+  // an expired lease (a crashed prior attempt) is taken over and reprocessed.
+  // Xero rows are plain dedup markers, never COMPLETED: the XeroInboundEvent
+  // row holds that claim, and its stale-event takeover deletes the marker.
+  // This closes the two lost-event windows: (a) a crash between claim-insert
+  // and completion no longer ACKs every redelivery as a duplicate, and (b) a
+  // concurrent redelivery is no longer ACKed while the in-flight attempt
+  // later fails.
   //
   // Blue/green-safe: `status` defaults to "PROCESSING" so an old-colour insert
   // (which omits the column and never marks COMPLETED) is reprocessed by the

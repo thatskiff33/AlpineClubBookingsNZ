@@ -65,7 +65,7 @@ import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { findCheckoutSessionForPaymentIntent } from "@/lib/stripe";
-import { STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/stripe-webhook-lease";
+import { WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/webhook-processing-lease";
 import { UNMATCHED_APP_LEDGER_MATCH_LABEL } from "@/lib/unrecognised-stripe-payment-note";
 import { formatCents } from "@/lib/utils";
 
@@ -101,7 +101,7 @@ export const UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS = 5 * 60_000;
  * stamp, so it finds a claim taken within the margin of that stamp expired.
  */
 export const UNRECOGNISED_ALERT_IN_FLIGHT_MS =
-  STRIPE_WEBHOOK_PROCESSING_LEASE_MINUTES * 60_000 - UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS;
+  WEBHOOK_PROCESSING_LEASE_MINUTES * 60_000 - UNRECOGNISED_ALERT_CLAIM_LAG_MARGIN_MS;
 
 /** The alert was neither sent nor left claimed, so the webhook must fail and Stripe redeliver. */
 export class UnrecognisedStripePaymentAlertNotSentError extends Error {

@@ -170,8 +170,10 @@ Verified controls already present and intentionally preserved:
 - Provider webhooks remain unauthenticated by session and rely on Stripe
   signature verification, Xero HMAC verification, and SNS signature plus topic
   allowlisting.
-- Stripe and SES/SNS webhook handlers claim event ids before side effects and
-  release the claim if downstream processing fails.
+- Stripe and SES/SNS webhook handlers claim event ids under one processing
+  lease before side effects, release the claim if downstream processing
+  fails, and take over a crashed attempt's claim once the lease expires
+  (`INV-INT-039`).
 - Xero inbound events use correlation keys for replay/idempotency and keep
   reconciliation work outside the initial provider response path.
 - Operational Xero token storage encrypts access and refresh tokens at rest.

@@ -440,6 +440,17 @@ vi.mock("@/lib/xero-bulk-contact-sync", async (importOriginal) => {
   };
 });
 
+// INV-INT-039 (#4921): the stale-PROCESSING takeover has its own suite
+// (xero-inbound-stale-event-takeover.test.ts) and a real-Postgres race. Here it
+// is a seam: by default the worker finds nothing stale, so `inboundFindMany`
+// mocks still feed the batch select. `vi.fn(impl)` keeps its default through
+// `vi.resetAllMocks()`.
+const staleTakeover = vi.hoisted(() => ({
+  takeOverStaleProcessingXeroInboundEvents: vi.fn(async () => ({ takenOver: 0, lost: 0 })),
+  takeOverStaleProcessingXeroInboundEvent: vi.fn(async () => true),
+}));
+vi.mock("@/lib/xero-inbound/stale-event-takeover", () => staleTakeover);
+
 import {
   processStoredXeroInboundEvents,
   runXeroInboundReconciliationCycle,
@@ -8452,14 +8463,94 @@ describe("replayStoredXeroInboundEvent", () => {
       event: { id: "evt_stale", status: "RECEIVED" },
     });
 
-    expect(mocks.transaction).toHaveBeenCalled();
-    expect(mocks.inboundUpdate).toHaveBeenCalledWith({
-      where: { id: "evt_stale" },
-      data: {
-        status: "RECEIVED",
-        errorMessage: null,
-        processedAt: null,
-      },
+    // INV-INT-039: the reset goes through the guarded takeover helper the
+    // automatic worker shares (which also clears the dedup row), never the
+    // unguarded update a RECEIVED/FAILED replay uses.
+    expect(staleTakeover.takeOverStaleProcessingXeroInboundEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "evt_stale", correlationKey: "corr_stale" }),
+    );
+    expect(mocks.inboundUpdate).not.toHaveBeenCalled();
+    expect(mocks.inboundFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: ["evt_stale"] } }),
+      }),
+    );
+  });
+
+  it("MUTATION (#4921): a stale PROCESSING replay that loses the guarded takeover is refused with 409", async () => {
+    mocks.inboundFindUnique.mockResolvedValueOnce({
+      id: "evt_stale_lost",
+      correlationKey: "corr_stale_lost",
+      status: "PROCESSING",
+      errorMessage: null,
+      processedAt: null,
+      updatedAt: new Date(Date.now() - 30 * 60_000),
     });
+    // Another writer (the automatic worker) moved the row between our read and
+    // the guarded reset.
+    staleTakeover.takeOverStaleProcessingXeroInboundEvent.mockResolvedValueOnce(false);
+
+    await expect(replayStoredXeroInboundEvent("evt_stale_lost")).rejects.toMatchObject({
+      message: "This inbound event is already being processed.",
+      status: 409,
+    } satisfies Partial<XeroInboundReplayError>);
+
+    expect(mocks.inboundFindMany).not.toHaveBeenCalled();
+    expect(mocks.inboundUpdate).not.toHaveBeenCalled();
+  });
+
+  it("never asks the takeover helper about a PROCESSING row still inside the lease", async () => {
+    mocks.inboundFindUnique.mockResolvedValueOnce({
+      id: "evt_fresh",
+      correlationKey: "corr_fresh",
+      status: "PROCESSING",
+      errorMessage: null,
+      processedAt: null,
+      updatedAt: new Date(Date.now() - 5 * 60_000),
+    });
+
+    await expect(replayStoredXeroInboundEvent("evt_fresh")).rejects.toMatchObject({ status: 409 });
+    expect(staleTakeover.takeOverStaleProcessingXeroInboundEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("processStoredXeroInboundEvents stale PROCESSING takeover (INV-INT-039, #4921)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.inboundFindMany.mockResolvedValue([]);
+  });
+
+  it("takes over stale PROCESSING events, capped at the batch limit, before selecting the batch", async () => {
+    staleTakeover.takeOverStaleProcessingXeroInboundEvents.mockResolvedValueOnce({
+      takenOver: 2,
+      lost: 0,
+    });
+
+    await processStoredXeroInboundEvents({ limit: 7 });
+
+    expect(staleTakeover.takeOverStaleProcessingXeroInboundEvents).toHaveBeenCalledWith({ limit: 7 });
+    const takeoverOrder =
+      staleTakeover.takeOverStaleProcessingXeroInboundEvents.mock.invocationCallOrder[0];
+    const selectOrder = mocks.inboundFindMany.mock.invocationCallOrder[0];
+    expect(takeoverOrder).toBeLessThan(selectOrder);
+  });
+
+  it("counts a takeover another writer won as skipped", async () => {
+    staleTakeover.takeOverStaleProcessingXeroInboundEvents.mockResolvedValueOnce({
+      takenOver: 1,
+      lost: 2,
+    });
+
+    await expect(processStoredXeroInboundEvents({ limit: 5 })).resolves.toMatchObject({
+      found: 0,
+      processed: 0,
+      skipped: 2,
+    });
+  });
+
+  it("an officer's replay of named events runs no sweep of other stale rows", async () => {
+    await processStoredXeroInboundEvents({ limit: 1, eventIds: ["evt_named"] });
+
+    expect(staleTakeover.takeOverStaleProcessingXeroInboundEvents).not.toHaveBeenCalled();
   });
 });
