@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isBookingStatus } from "@/lib/booking-status";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -82,7 +83,6 @@ export async function GET(request: NextRequest) {
     ? parseDateOnly(`${year + 1}-01-01`)
     : parseDateOnly(`${yearStr}-${String(month + 1).padStart(2, "0")}-01`);
 
-  const VALID_STATUSES = new Set(["DRAFT", "PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"]);
   const statusParam = request.nextUrl.searchParams.get("status");
   const deletedVisibility = parseBookingDeletedVisibility(
     request.nextUrl.searchParams.get("deleted")
@@ -90,10 +90,9 @@ export async function GET(request: NextRequest) {
   const statusFilter: Record<string, unknown> = {};
   if (statusParam && statusParam !== "all") {
     const statuses = statusParam.split(",").map((s) => s.trim()).filter(Boolean);
-    const validStatuses = statuses.filter((s) => VALID_STATUSES.has(s));
-    if (validStatuses.length > 0) {
-      statusFilter.status = validStatuses.length === 1 ? validStatuses[0] : { in: validStatuses };
-    }
+    const validStatuses = statuses.filter(isBookingStatus);
+    // No recognised value matches nothing (`in: []`), never every status (#4923).
+    statusFilter.status = validStatuses.length === 1 ? validStatuses[0] : { in: validStatuses };
   } else {
     statusFilter.status = { not: "DRAFT" };
   }

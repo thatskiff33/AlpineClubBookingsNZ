@@ -76,6 +76,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
+import { XERO_CRON_JOB_NAMES } from "./xero-cron-jobs";
 import { sendAdminCreditSyncDriftAlert } from "@/lib/email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import type { ClubFormat } from "@/lib/club-format";
@@ -83,13 +84,6 @@ import {
   type CreditSyncDriftItemEmail,
   type CreditSyncDriftReportEmail,
 } from "@/lib/email-templates/admin-xero-reports";
-
-/**
- * Cron job name for this checker. The Xero cron runner records each run under
- * this name; the throttle below reads that history back, so the two MUST agree
- * — the runner imports this constant rather than repeating the string.
- */
-export const XERO_CREDIT_SYNC_JOB_NAME = "xero-credit-sync-check";
 
 // A completed pass throttles real Xero work to roughly once a day, so bundling
 // this task into a frequently-run `all` cron cannot burn the org's daily Xero
@@ -297,7 +291,7 @@ export async function reconcileXeroCreditSync(
   if (minInterval > 0) {
     const recent = await db.cronJobRun.findFirst({
       where: {
-        jobName: XERO_CREDIT_SYNC_JOB_NAME,
+        jobName: XERO_CRON_JOB_NAMES["credit-sync"],
         status: "SUCCESS",
         startedAt: { gte: new Date(now.getTime() - minInterval) },
       },

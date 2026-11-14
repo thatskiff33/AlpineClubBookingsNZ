@@ -9,6 +9,7 @@
  * judges them by, from the child's snapshot row. Pure: it reads nothing.
  */
 import { groupSettlementRefundKey, groupSettlementShareKey } from "@/lib/booking-ledger-posting-keys";
+import { groupSettlementRefundLineKind } from "@/lib/booking-ledger-group-settlement-posting";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { planCancellationChargeLines } from "@/lib/booking-ledger-cancellation-posting";
 import type { ReversibleChargeLine } from "@/lib/booking-ledger-charge-line";
@@ -55,7 +56,9 @@ export function groupSettlementSourceDrift(row: BookingLedgerCensusRow, line: Ce
     return line.amountCents === paid ? null : `the child's payment holds ${paid}, the share line ${line.amountCents}`;
   }
   if (line.postingKey === groupSettlementRefundKey(settlement.id, bookingId)) {
-    if (line.kind !== (card ? "CARD_REFUND" : "BANK_REFUND")) return `a ${line.kind} refund on a ${settlement.source} settlement`;
+    // A card plan closed on Stuck States as paid by bank posts a bank refund (#4851).
+    const expected = groupSettlementRefundLineKind(settlement);
+    if (line.kind !== expected) return `a ${line.kind} refund where the settlement's plan was refunded as ${expected}`;
     const planned = plannedMirrorRefundCents(row);
     return line.amountCents === -planned ? null : `the settlement's plan refunds ${planned}, the line ${line.amountCents}`;
   }

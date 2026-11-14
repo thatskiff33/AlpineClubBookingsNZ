@@ -32,6 +32,7 @@ import {
 } from "@/components/admin/view-only-action"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
+import { adminHref } from "@/lib/admin-hubs"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
@@ -179,7 +180,7 @@ function RowList({
           <li key={row.memberId} className="px-3 py-2 text-xs">
             <div className="flex flex-wrap items-center gap-2">
               <a
-                href={buildHrefWithReturnTo(`/admin/members/${row.memberId}`, returnTo)}
+                href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: row.memberId })}`, returnTo)}
                 className="font-medium text-primary hover:underline"
               >
                 {row.memberName}
