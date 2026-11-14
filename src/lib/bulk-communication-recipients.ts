@@ -32,9 +32,14 @@ export interface BulkCommunicationRecipient {
  *
  * - `all`: every active account, whatever its role.
  * - `members-only`: active member-level accounts (`MEMBER_LEVEL_ROLE_VALUES`),
- *   so admin-role accounts are not included.
- * - `admins-only`: active admin-role accounts.
+ *   so `Member.role` ADMIN accounts are not included.
+ * - `admins-only`: active `Member.role` ADMIN accounts. That is the Full Admin
+ *   access role only (`legacyRoleFromAccessRoles`): officers on other admin
+ *   roles keep `Member.role` USER, so `members-only` reaches them.
  * - `custom`: the active accounts among `memberIds`; none when it is empty.
+ *
+ * The page, the guide's Audiences table and the changelog describe these in
+ * words; the route tests pin the facts those words rest on.
  */
 export async function selectBulkCommunicationRecipients(
   recipientFilter: BulkRecipientFilter,

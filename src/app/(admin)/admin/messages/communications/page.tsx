@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Card,
   CardContent,
@@ -16,6 +16,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
 import { useConfirm } from "@/components/confirm-dialog";
 import { requireInstant } from "@/lib/club-time";
+import { ACCESS_ROLE_LABELS } from "@/lib/access-roles";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,8 +32,15 @@ import type { BulkRecipientFilter } from "@/lib/bulk-communication-recipients";
 type OfferedAudience = Exclude<BulkRecipientFilter, "custom">;
 
 // What each audience reaches today, in the words the officer confirms against
-// (#4964). The route's shared recipient query is the authority; keep these in
-// step with `selectBulkCommunicationRecipients`.
+// (#4964). `selectBulkCommunicationRecipients` is the authority and these are
+// prose over it, which a client component cannot import (it is server-only).
+// `Member.role` is ADMIN only for the Full Admin access role: other admin roles
+// (Membership Officer, Treasurer, ...) leave it USER, so Members Only reaches
+// them. A pin test in the route's tests fails if the role scope changes; update
+// these, the guide's Audiences table and the changelog fragment with it.
+const FULL_ADMIN = ACCESS_ROLE_LABELS.ADMIN;
+const OTHER_ADMIN_ROLES = `${ACCESS_ROLE_LABELS.ADMIN_MEMBERSHIP} or ${ACCESS_ROLE_LABELS.FINANCE_ADMIN}`;
+
 const AUDIENCES: Record<
   OfferedAudience,
   { label: string; description: string }
@@ -44,12 +52,11 @@ const AUDIENCES: Record<
   },
   "members-only": {
     label: "Members Only",
-    description:
-      "Active ordinary member accounts. Members whose account has the admin role are not included.",
+    description: `Active ordinary member accounts. Accounts with the ${FULL_ADMIN} role are not included. Accounts on other admin roles, such as ${OTHER_ADMIN_ROLES}, are.`,
   },
   "admins-only": {
     label: "Admins Only",
-    description: "Active accounts with the admin role only.",
+    description: `Active ${FULL_ADMIN} accounts only.`,
   },
 };
 
@@ -57,6 +64,14 @@ const OFFERED_AUDIENCES = Object.keys(AUDIENCES) as OfferedAudience[];
 
 function peopleCount(count: number) {
   return `${count} ${count === 1 ? "person" : "people"}`;
+}
+
+// A past send's audience as the form names it; `custom` is not offered on the
+// page, so it keeps its stored key.
+function audienceLabel(recipientFilter: string) {
+  return Object.hasOwn(AUDIENCES, recipientFilter)
+    ? AUDIENCES[recipientFilter as OfferedAudience].label
+    : recipientFilter;
 }
 
 interface HistoryEntry {
@@ -94,11 +109,23 @@ export default function CommunicationsPage() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [bulkSendLimit, setBulkSendLimit] = useState<number>(1);
+  // Where focus goes once a cancelled confirmation has settled (below).
+  const returnFocusTo = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     fetchRateLimit();
     fetchHistory();
   }, []);
+
+  // `useConfirm` opens its dialog without a trigger element, so Radix has
+  // nothing to return focus to when Cancel closes it. Do it here, once the
+  // form is idle again: the submit button is disabled until then, and a
+  // disabled button cannot take focus.
+  useEffect(() => {
+    if (sendPhase !== "idle") return;
+    returnFocusTo.current?.focus();
+    returnFocusTo.current = null;
+  }, [sendPhase]);
 
   async function fetchRateLimit() {
     try {
@@ -151,6 +178,11 @@ export default function CommunicationsPage() {
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
     if (!canEdit || sendPhase !== "idle") return;
+    // The control the officer used: the button, or Subject for Enter.
+    const opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     // Send exactly what was confirmed, whatever happens to the form meanwhile.
     const message = { subject, body, recipientFilter };
     const audience = AUDIENCES[message.recipientFilter];
@@ -178,10 +210,13 @@ export default function CommunicationsPage() {
       setSendPhase("confirming");
       const confirmed = await confirm({
         title: `Send this email to ${peopleCount(eligible)}?`,
-        description: `Audience: ${audience.label}. ${audience.description} Subject: "${message.subject}". Only people who opted in to marketing email are counted. Sending cannot be undone, and you can send ${bulkSendLimit} bulk email${bulkSendLimit === 1 ? "" : "s"} per hour.`,
+        description: `Audience: ${audience.label}. ${audience.description} Subject: "${message.subject}". Only people who opted in to marketing email are counted. Sending cannot be undone. The club can send ${bulkSendLimit} bulk email${bulkSendLimit === 1 ? "" : "s"} per hour, shared by all admins.`,
         confirmLabel: `Send to ${peopleCount(eligible)}`,
       });
-      if (!confirmed) return;
+      if (!confirmed) {
+        returnFocusTo.current = opener;
+        return;
+      }
 
       setSendPhase("sending");
       const res = await fetch("/api/admin/communications/send", {
@@ -384,7 +419,7 @@ export default function CommunicationsPage() {
                       </td>
                       <td className="py-2 pr-4 font-medium">{entry.subject}</td>
                       <td className="py-2 pr-4 text-muted-foreground">
-                        {entry.recipientFilter}
+                        {audienceLabel(entry.recipientFilter)}
                       </td>
                       <td className="py-2 pr-4 text-muted-foreground">
                         {entry.totalRecipients}

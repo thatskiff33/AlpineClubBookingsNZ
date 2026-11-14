@@ -10,7 +10,9 @@
   nobody would receive it, or the count cannot be read, nothing is offered.
 
   A line under **Recipients** now says who each audience reaches: *All Active
-  Members* includes lodge, school and non-member booking contact accounts, and
-  *Members Only* leaves out members whose account has the admin role. Who each
-  audience reaches has not changed. The result of a send is now announced to
-  screen readers.
+  Members* includes lodge, school and non-member booking contact accounts,
+  *Members Only* leaves out accounts with the Full Admin role (officers on other
+  admin roles are included), and *Admins Only* reaches Full Admin accounts only.
+  Who each audience reaches has not changed. Past sends in the history now show
+  the audience name as the selector does. The result of a send is now announced
+  to screen readers.

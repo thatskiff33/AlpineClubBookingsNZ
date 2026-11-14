@@ -67,6 +67,8 @@ vi.mock("@/lib/email-theme", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn() } }));
 
+import { legacyRoleFromAccessRoles } from "@/lib/access-roles";
+import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
 import { GET, POST } from "../route";
 
 const URL_BASE = "http://localhost/api/admin/communications/send";
@@ -207,5 +209,25 @@ describe("POST /api/admin/communications/send", () => {
       }),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe("audience wording (#4964)", () => {
+  // The page's `AUDIENCES` descriptions, the Audiences table in
+  // docs/guides/communications.md and the changelog fragment say in words who
+  // each audience reaches. A client page cannot import the server-only recipient
+  // query, so this pins the role facts those words rest on: if it fails, change
+  // the words in those three places together with the query.
+  it("keeps the role scope the page and guide describe", () => {
+    // Members Only reaches these roles and nothing else.
+    expect([...MEMBER_LEVEL_ROLE_VALUES]).toEqual(["USER"]);
+    // Member.role is ADMIN only for the Full Admin access role, with or
+    // without the member token; other admin roles leave it USER, so Members
+    // Only reaches them and Admins Only does not.
+    expect(legacyRoleFromAccessRoles(["ADMIN"])).toBe("ADMIN");
+    expect(legacyRoleFromAccessRoles(["ADMIN", "USER"])).toBe("ADMIN");
+    expect(
+      legacyRoleFromAccessRoles(["ADMIN_MEMBERSHIP", "FINANCE_ADMIN"]),
+    ).toBe("USER");
   });
 });

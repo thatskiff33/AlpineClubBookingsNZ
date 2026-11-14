@@ -54,8 +54,8 @@ the page but the **Send to Members** button is disabled.
 | Recipients | Who it reaches (active accounts only) |
 | --- | --- |
 | All Active Members | Every active account, including admin, lodge, school and non-member booking contact accounts |
-| Members Only | Ordinary member accounts. A member whose account has the admin role, such as a committee member, is not included |
-| Admins Only | Accounts with the admin role only |
+| Members Only | Ordinary member accounts. Accounts with the Full Admin role are not included. Accounts on other admin roles, such as Membership Officer or Treasurer, are. So are committee members unless they also hold the Full Admin role, because a committee position gives no admin role |
+| Admins Only | Full Admin accounts only. Officers on other admin roles are not reached |
 
 In every audience, only people who opted in to marketing email receive it.
 
@@ -68,9 +68,9 @@ In every audience, only people who opted in to marketing email receive it.
 | Message Body | The plain-text body | empty | Required; max 10,000 characters; HTML is escaped |
 | Send to Members | Asks you to confirm the audience, count and subject, then sends | — | Requires membership **edit**; only marketing-opted-in members receive it; rate limited (default 1/hour) |
 
-The **Send History** table lists each past send: date, subject, recipient
-filter, total recipients matched, and how many were actually sent (eligible
-after preference filtering).
+The **Send History** table lists each past send: date, subject, audience
+(shown as in the Recipients selector), total recipients matched, and how many
+were actually sent (eligible after preference filtering).
 
 ## Troubleshooting
 
@@ -78,8 +78,8 @@ after preference filtering).
 | --- | --- | --- |
 | No **Communications** entry in the sidebar | The Communications module is off | Turn it on in [Modules](modules.md) |
 | **Send to Members** is disabled | Your role has membership view, not edit (or subject/body is empty) | Fill both fields; ask a full admin for membership edit access |
-| Far fewer recipients than expected | Only members who opted in to marketing email receive it | Expected — the count shows how many were filtered by preference |
-| *Nobody in this audience has opted in* | No active account in the chosen audience has opted in to marketing email | Choose another audience, or check members' preferences |
+| Far fewer recipients than expected | Only members who opted in to marketing email receive it | Expected. The confirmation counts only people who opted in; the result shown after the send says how many opted out |
+| *Nobody in "…" has opted in to marketing email* | No active account in the chosen audience has opted in to marketing email | Choose another audience, or check members' preferences |
 | *Could not check how many people would receive this email* | The recipient count could not be read, so the page would not send | Try again; nothing was sent and the hourly limit is untouched |
 | Send rejected as rate limited | You already sent within the hour window | Wait for the window to clear (default one send per hour) |
 | A member says the formatting was lost | The body is plain text; HTML is escaped | Send plain text; use [Email Messages](email-messages.md) for templated system email |

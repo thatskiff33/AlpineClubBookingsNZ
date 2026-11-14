@@ -9,6 +9,7 @@ import {
   within,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type React from "react";
 
 /*
   A bulk member email states its audience and recipient count before it sends
@@ -37,6 +38,40 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
+// Radix Select does not open in jsdom; a native select keeps the audience
+// binding and the option list assertable.
+vi.mock("@/components/ui/select", () => ({
+  Select: ({
+    value,
+    onValueChange,
+    children,
+  }: {
+    value?: string;
+    onValueChange?: (value: string) => void;
+    children?: React.ReactNode;
+  }) => (
+    <select
+      id="recipientFilter"
+      value={value}
+      onChange={(event) => onValueChange?.(event.target.value)}
+    >
+      {children}
+    </select>
+  ),
+  SelectTrigger: () => null,
+  SelectValue: () => null,
+  SelectContent: ({ children }: { children?: React.ReactNode }) => (
+    <>{children}</>
+  ),
+  SelectItem: ({
+    value,
+    children,
+  }: {
+    value: string;
+    children?: React.ReactNode;
+  }) => <option value={value}>{children}</option>,
+}));
+
 import CommunicationsPage from "../page";
 
 const SEND_URL = "/api/admin/communications/send";
@@ -44,6 +79,7 @@ const SEND_URL = "/api/admin/communications/send";
 type Answer = { status?: number; body: unknown } | "network-error";
 
 let countAnswer: Answer;
+let historyRows: unknown[];
 let fetchMock: ReturnType<typeof vi.fn>;
 
 function json({ status = 200, body }: { status?: number; body: unknown }) {
@@ -54,6 +90,7 @@ function json({ status = 200, body }: { status?: number; body: unknown }) {
 }
 
 beforeEach(() => {
+  historyRows = [];
   countAnswer = {
     body: {
       limit: 1,
@@ -66,7 +103,7 @@ beforeEach(() => {
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith("/api/admin/communications/history")) {
-      return json({ body: { history: [] } });
+      return json({ body: { history: historyRows } });
     }
     if (url === SEND_URL && init?.method === "POST") {
       return json({
@@ -133,6 +170,10 @@ describe("CommunicationsPage confirmation step (#4964)", () => {
     ).toBeInTheDocument();
     expect(dialog).toHaveTextContent("Audience: All Active Members");
     expect(dialog).toHaveTextContent('Subject: "Lodge closed this weekend"');
+    // One shared allowance for every admin, not a personal one.
+    expect(dialog).toHaveTextContent(
+      "The club can send 1 bulk email per hour, shared by all admins.",
+    );
     expect(fetchMock).toHaveBeenCalledWith(
       `${SEND_URL}?recipientFilter=all`,
     );
@@ -225,5 +266,112 @@ describe("CommunicationsPage confirmation step (#4964)", () => {
   it("explains who the selected audience reaches", async () => {
     await compose();
     expect(screen.getByText(/^Every active account, including admin, lodge, school/)).toBeInTheDocument();
+  });
+
+  it.each<[string, string, RegExp]>([
+    [
+      "members-only",
+      "Members Only",
+      /Accounts with the Full Admin role are not included/,
+    ],
+    ["admins-only", "Admins Only", /Active Full Admin accounts only/],
+  ])(
+    "counts, names and sends the %s audience, never a fixed one",
+    async (filter, label, reach) => {
+      countAnswer = {
+        body: {
+          limit: 1,
+          windowSeconds: 3600,
+          recipientFilter: filter,
+          totalRecipients: 9,
+          eligibleRecipients: 7,
+        },
+      };
+      await compose();
+      fireEvent.change(screen.getByLabelText("Recipients"), {
+        target: { value: filter },
+      });
+      expect(screen.getByText(reach)).toBeInTheDocument();
+
+      pressSend();
+      const dialog = await screen.findByRole("dialog");
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${SEND_URL}?recipientFilter=${filter}`,
+      );
+      expect(
+        within(dialog).getByText("Send this email to 7 people?"),
+      ).toBeInTheDocument();
+      expect(dialog).toHaveTextContent(`Audience: ${label}.`);
+
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Send to 7 people" }),
+      );
+      await waitFor(() => expect(postCalls()).toHaveLength(1));
+      expect(JSON.parse(postCalls()[0][1].body as string)).toMatchObject({
+        recipientFilter: filter,
+      });
+    },
+  );
+
+  it("takes no second submit while the first is being checked", async () => {
+    const subjectInput = await compose();
+    fireEvent.submit(subjectInput.form!);
+    fireEvent.submit(subjectInput.form!);
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    const countReads = fetchMock.mock.calls.filter(([url]) =>
+      String(url).startsWith(`${SEND_URL}?recipientFilter=`),
+    );
+    expect(countReads).toHaveLength(1);
+  });
+
+  // useConfirm has no trigger element, so the page returns focus itself.
+  it.each<[string, "button" | "subject", "cancel" | "escape"]>([
+    ["Send to Members, then Cancel", "button", "cancel"],
+    ["Subject (Enter), then Escape", "subject", "escape"],
+  ])(
+    "returns focus to the control the officer used: %s",
+    async (_case, openedFrom, closedWith) => {
+      const subjectInput = await compose();
+      const send = screen.getByRole("button", { name: "Send to Members" });
+      const opener = openedFrom === "button" ? send : subjectInput;
+      opener.focus();
+      if (openedFrom === "button") fireEvent.click(send);
+      else fireEvent.submit(subjectInput.form!);
+
+      const dialog = await screen.findByRole("dialog");
+      if (closedWith === "cancel") {
+        fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      } else {
+        fireEvent.keyDown(dialog, { key: "Escape" });
+      }
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      );
+      await waitFor(() => expect(opener).toHaveFocus());
+      expect(postCalls()).toHaveLength(0);
+    },
+  );
+
+  it("names a past send's audience as the form does", async () => {
+    historyRows = [
+      ["h1", "members-only"],
+      ["h2", "custom"],
+    ].map(([id, recipientFilter]) => ({
+      id,
+      sentBy: "admin-1",
+      subject: `Subject ${id}`,
+      recipientFilter,
+      totalRecipients: 10,
+      eligibleRecipients: 8,
+      queued: 8,
+      sentAt: "2026-06-30T00:00:00.000Z",
+    }));
+    render(<CommunicationsPage />);
+
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Members Only")).toBeInTheDocument();
+    // `custom` is not offered on the page, so it has no label to show.
+    expect(within(table).getByText("custom")).toBeInTheDocument();
   });
 });
