@@ -40,6 +40,7 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 
 import { ALLOWANCE_DIR } from "../lib/allowance-dir.mjs";
+import { githubHeadingAnchor } from "../lib/github-heading-anchor.mjs";
 import {
   classifyUnreleased,
   compileChangelog,
@@ -172,16 +173,6 @@ export function parseGitHubRemote(url) {
 /** `url` with any `user:password@` / `token@` credentials replaced, safe to print. */
 export function redactUrl(url) {
   return String(url ?? "").replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1***@");
-}
-
-/** The anchor GitHub gives a Markdown heading (lower case, punctuation dropped, spaces to hyphens). */
-export function githubHeadingAnchor(heading) {
-  return heading
-    .replace(/^#+\s*/, "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-    .replace(/\s/g, "-");
 }
 
 /**
