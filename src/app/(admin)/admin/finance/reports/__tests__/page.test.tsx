@@ -17,7 +17,8 @@ vi.mock("next/dynamic", () => ({
 }));
 
 vi.mock("@/components/club-identity-provider", () => ({
-  useClubIdentity: () => ({ name: "Test Club", bookingsName: "Bookings" }),
+  // The real identity always carries a short name; the CSV filename is built from it (#4932).
+  useClubIdentity: () => ({ name: "Test Club", shortName: "Mt Hutt SC", bookingsName: "Bookings" }),
 }));
 
 let lodgeOptions: {
@@ -350,7 +351,11 @@ describe("ReportsPage quick ranges", () => {
     const createObjectUrl = vi.fn<(blob: Blob) => string>(() => "blob:report");
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    // Records the name the browser would save the file under instead of downloading.
+    const downloadNames: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      downloadNames.push(this.download);
+    });
 
     render(<ReportsPage />);
     const warning = await screen.findByRole("alert");
@@ -365,6 +370,8 @@ describe("ReportsPage quick ranges", () => {
     await waitFor(() => expect(csvButton).toBeEnabled());
     fireEvent.click(csvButton);
 
+    // Named from the club's short name, not the reference club's initials (#4932).
+    expect(downloadNames).toEqual([expect.stringMatching(/^mt-hutt-sc-report-\d{4}-\d{2}-\d{2}\.csv$/)]);
     const blob = createObjectUrl.mock.calls[0][0] as Blob;
     const csv = await blob.text();
     expect(csv).toContain("Booked Revenue,100.00");
