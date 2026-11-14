@@ -8,7 +8,9 @@ import { Role, type PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { declareEnvironmentRoleForSuite } from "./helpers/environment-role";
+// Type only: the helper loads `@/lib/prisma`, which must be built after DATABASE_URL
+// points at the race database (see beforeAll).
+import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-financial-history-teardown";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
@@ -47,7 +49,7 @@ let acceptance: typeof import("@/lib/booking-guest-acceptance-reprice");
 let keys: typeof import("@/lib/payment-recovery-keys");
 let clubTime: typeof import("@/lib/club-time");
 let restoreInline: (() => void) | undefined;
-let role: ReturnType<typeof declareEnvironmentRoleForSuite> | undefined;
+let role: SuiteEnvironmentRoleDeclaration | undefined;
 
 async function clean(): Promise<void> {
   const modifications = await prisma.bookingModification.findMany({ where: { bookingId: BOOKING }, select: { id: true } });
@@ -142,6 +144,7 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
   beforeAll(async () => {
     assertSafeRaceDbUrl(RACE_DB_URL, "#4992 edit refund proofs");
     process.env.DATABASE_URL = RACE_DB_URL;
+    const { declareEnvironmentRoleForSuite } = await import("./helpers/environment-role");
     role = declareEnvironmentRoleForSuite("non-production");
     ({ prisma } = await import("@/lib/prisma"));
     const settlement = await import("@/lib/booking-modification-settlement");
