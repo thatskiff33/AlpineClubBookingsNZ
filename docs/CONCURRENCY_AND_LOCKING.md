@@ -100,7 +100,11 @@ on their caller’s locks (`INV-LOCK-003`). The global check lives in
 `LodgeCapacityLockNotHeldError`. These checks acquire nothing. A key-only
 lookup may precede the lodge check; mutable state is still re-read afterward.
 The member-merge sweep checks its supplied lodge keys without requiring global.
-The export census prevents an unchecked entrypoint from being added.
+The export census prevents an unchecked entrypoint from being added, and
+`lock-held-writer-refusal.test.ts` proves each writer checks the lodge its own
+rows sit in. The real-PostgreSQL proof of the probe,
+`bed-allocation-lock-held.realdb.test.ts`, runs in the required migration
+drift job.
 
 ### Fresh reads after waiting on locks
 
