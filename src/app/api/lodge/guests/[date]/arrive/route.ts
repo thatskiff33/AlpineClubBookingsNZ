@@ -8,8 +8,8 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { logAudit, getAuditRequestContext } from "@/lib/audit";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const bodySchema = z.object({
   bookingGuestId: z.string().min(1),
 });
@@ -62,7 +62,7 @@ export async function PUT(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!dateSchema.safeParse(dateStr).success) {
+  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
   const date = parseDateOnly(dateStr);
