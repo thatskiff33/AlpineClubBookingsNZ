@@ -182,12 +182,12 @@ text from #4031. On such a page:
 
 - section 5 lists every outside service in the
   [recipient register](PRIVACY_RECIPIENTS.md) that can receive members'
-  information, links each to its privacy notice, and marks the optional ones
-  "Only if the club turns it on";
+  information, links to the privacy notice the register records for each, and
+  marks the optional ones "Only if the club turns it on";
 - section 5 names your host and data location through `{{data-hosting}}`, and
   says the System does not fix the country your data is held in;
-- section 6 refers to the hosting provider named in section 5, its backup line
-  moves to section 5's list, and its admin note is removed;
+- section 6 refers to the hosting company described in section 5, its backup
+  line moves to section 5's list, and its admin note is removed;
 - the header's "Last updated" date moves to 15 November 2026, unless the header
   was edited, in which case it is kept.
 

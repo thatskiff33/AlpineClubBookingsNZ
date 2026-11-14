@@ -989,7 +989,7 @@ describe("starter privacy policy versus the recipient register (#5007)", () => {
   it("names the host only through the club's settings, never as a fact for every club", () => {
     expect(STARTER_PRIVACY_RECIPIENT_ITEMS.hosting).toContain("{{data-hosting}}");
     expect(section(5) + section(6)).not.toMatch(/Lightsail|Sydney|Asia Pacific|region\b.*\(|encrypted and stored|backups are encrypted/i);
-    expect(section(6)).toContain("named in section 5");
+    expect(section(6)).toContain("hosting company described in section 5");
   });
 
   it("uses only tokens in the page-body catalogue", () => {
