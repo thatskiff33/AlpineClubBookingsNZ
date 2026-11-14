@@ -35,7 +35,17 @@ const h = vi.hoisted(() => ({
   realExecuteBookingModificationRefund: undefined as unknown as (typeof import("@/lib/booking-modification-settlement"))["executeBookingModificationRefund"],
 }));
 
-vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { findUnique: h.recoveryFindUnique } } }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    paymentRecoveryOperation: { findUnique: h.recoveryFindUnique },
+    // #4872: the refund's plan is frozen under the Payment row, beside the superseded-capture
+    // hold-back read (no superseded rows here, so nothing is held back).
+    $transaction: async (cb: (tx: unknown) => unknown) => cb({
+      $executeRaw: async () => 1,
+      paymentRecoveryOperation: { findMany: async () => [] },
+    }),
+  },
+}));
 vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-recovery")),
   runPaymentRecoveryOperationNow: h.runPaymentRecoveryOperationNow,

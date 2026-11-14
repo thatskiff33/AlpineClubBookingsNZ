@@ -23,7 +23,7 @@ import { formatConsentShortDate } from "@/lib/member-guest-consent-labels";
   rightly (`size-allowances.d/README.md`).
 
   THE RE-EXPORT IS DELIBERATE, NOT A SHIM LEFT BEHIND. Six files import these by
-  name from here, and one of them — `src/app/(admin)/admin/bookings/page.tsx` —
+  name from here, and one of them — `src/app/(admin)/admin/booking-desk/bookings/page.tsx` —
   is being edited right now by the sibling admin lane (#3067). Re-pointing its
   import to buy back a line count in a file it does not touch would hand two open
   pull requests a conflict over a file neither of them needed to share. The

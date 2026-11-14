@@ -770,8 +770,15 @@ this section records how it is enforced.
 - **The AI diagnostics role cannot read it.** Its Member and BookingGuest
   grants are column allowlists (`provision-role.ts`) that include neither
   column.
+- **A stay's value is cleared after the stay** (`INV-PRIV-023`): a nightly job
+  nulls `BookingGuest.dietaryRequirements` a club-set number of days (default
+  30, ships on) after the stay's `stayEnd`, for every guest and booking status,
+  through `clearExpiredStayDietaryValues` in the write half. It audits a count
+  only and takes no advisory lock. The profile value is current and is not
+  cleared by it; turning the field off does not clear anything.
 - **Backups contain it**, like every other column; see
-  [`guides/backups.md`](guides/backups.md).
+  [`guides/backups.md`](guides/backups.md). Backups taken before the after-stay
+  clear still hold a cleared value until they age out.
 
 ## Token-bearing URL paths
 
