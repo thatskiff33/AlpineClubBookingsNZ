@@ -284,7 +284,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
 | `INV-PAY-112` | One edit's charge request is raised by one run at a time |
-| `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
+| `INV-PAY-099` | A dismissed money task can be reopened, except a retired edit review |
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
 | `INV-PAY-116` | Invoice-correction and officer-chosen cash notes have their own wordings |
@@ -365,6 +365,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-150` | Refund doors leave a live superseded capture to its own refund |
 | `INV-PAY-151` | Paid another way reverses a covered failed card refund |
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
+| `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -966,6 +967,7 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-002` | Global before per-lodge; one helper mints the per-lodge capacity key |
 | `INV-LOCK-003` | Every global-lock call site is registered, by site, with its own reason |
 | `INV-LOCK-004` | A read taken under a lock uses the caller's transaction client |
+| `INV-LOCK-005` | Advisory-lock transactions use fresh READ COMMITTED snapshots |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |
@@ -982,6 +984,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-015` | A money seam is never mocked in a test asserting its money |
 | `INV-OPS-016` | Member journal grants and database guards forbid mutation |
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
+| `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 
 ## Product Configuration
 

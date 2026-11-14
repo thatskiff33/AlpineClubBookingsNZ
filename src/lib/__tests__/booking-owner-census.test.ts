@@ -476,7 +476,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-payment/route.ts:90",
   "src/app/api/bookings/[id]/exception-requests/route.ts:137",
   "src/app/api/bookings/[id]/guests/route.ts:347",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:366",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:365",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:273",
   "src/app/api/bookings/[id]/refund-request/route.ts:50",
@@ -487,8 +487,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/switch-to-internet-banking/route.ts:127",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1094",
-  "src/lib/booking-cancel.ts:2537",
-  "src/lib/booking-cancel.ts:568",
+  "src/lib/booking-cancel.ts:2527",
+  "src/lib/booking-cancel.ts:567",
   "src/lib/booking-date-modification-service.ts:415",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
@@ -497,7 +497,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-guest-removal-service.ts:675",
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
-  "src/lib/booking-modify-validation.ts:618",
+  "src/lib/booking-modify-validation.ts:611",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:276",
   "src/lib/kiosk-access.ts:230",
@@ -525,7 +525,7 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   "src/lib/member-guest-consent-service.ts:1355",
   "src/lib/payment-recovery.ts:2765",
   "src/lib/payment-recovery.ts:2817",
-  "src/lib/xero-admin-health.ts:400",
+  "src/lib/xero-admin-health.ts:422",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */
@@ -809,7 +809,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:112",
   "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:102",
+  "src/lib/payment-reconciliation.ts:103",
   "src/lib/stuck-state-dashboard.ts:629",
   "src/lib/xero-booking-repair-types.ts:246",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",
