@@ -48,7 +48,7 @@ export const PRIVACY_RECIPIENTS = {
     name: "Hosting provider",
     dataSent: "The application database, uploaded content, request and server logs, including members' personal information.",
     enablement: "Running the application and database on the club's chosen infrastructure enables this flow; ending hosting requires an operational migration or shutdown.",
-    processing: "The club's choice: see Admin → Website → Appearance → Club Identity → Where members' data is held. Ask the Privacy Officer if it is not set.",
+    processing: "The club's choice: see Admin → Setup & Configuration → Site Appearance & Content → Club Identity → Where members' data is held. Ask the Privacy Officer if it is not set.",
     memberFacing: true,
     hosts: [],
     privacyUrl: "https://www.privacy.org.nz/your-rights/",
