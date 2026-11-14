@@ -41,67 +41,15 @@ import {
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
-
-type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
-type ProgressStatus = "open" | "completed" | "skipped";
-type Provider = "stripe" | "smtp" | "sentry" | "xero";
-
-interface SetupStepCheck {
-  id: string;
-  title: string;
-  description: string;
-  status: SetupStatus;
-  required: boolean;
-  message: string;
-  details: string[];
-  href?: string;
-  progress: ProgressStatus;
-  action?: {
-    type: "provider-test";
-    provider: Provider;
-    label: string;
-  };
-}
-
-interface SetupCategory {
-  id: string;
-  title: string;
-  description: string;
-  status: SetupStatus;
-  checks: SetupStepCheck[];
-}
-
-interface SetupReadiness {
-  status: SetupStatus;
-  summary: {
-    total: number;
-    complete: number;
-    warning: number;
-    blocked: number;
-    skipped: number;
-  };
-  categories: SetupCategory[];
-  generatedAt: string;
-}
-
-interface SetupProgressState {
-  completedStepIds: string[];
-  skippedStepIds: string[];
-  completedAt: string | null;
-  completedByMemberId: string | null;
-}
-
-interface SetupResponse {
-  readiness: SetupReadiness;
-  progress: SetupProgressState;
-}
-
-interface ProviderTestResult {
-  ok: boolean;
-  provider: Provider;
-  checkedAt: string;
-  message: string;
-}
+import type {
+  ProgressStatus,
+  Provider,
+  ProviderTestResult,
+  SetupProgressState,
+  SetupReadiness,
+  SetupResponse,
+  SetupStatus,
+} from "./setup-types";
 
 interface SetupHubCard {
   href: string;
