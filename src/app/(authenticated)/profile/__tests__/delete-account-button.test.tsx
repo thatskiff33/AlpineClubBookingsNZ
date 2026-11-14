@@ -81,7 +81,9 @@ describe("DeleteAccountButton", () => {
     // What `router.refresh()` does: the page passes the request it just read.
     rerender(<DeleteAccountButton pendingRequest={{ requestedOn: "29 Jun 2026" }} />);
 
-    expect(screen.getAllByRole("status")).toEqual([status]);
+    const regions = screen.getAllByRole("status");
+    expect(regions).toHaveLength(1);
+    expect(regions[0]).toBe(status);
     expect(status.textContent).toBe(confirmation);
     expect(screen.queryByText(/You asked for your account to be deleted/)).toBeNull();
     expect(
