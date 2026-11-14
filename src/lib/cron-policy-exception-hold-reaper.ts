@@ -63,7 +63,10 @@
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
 import { resolvePolicyExceptionRequestTerminal } from "@/lib/booking-exception-execution";
-import { computePolicyExceptionHoldExpiry } from "@/lib/booking-exception-requests";
+import {
+  computePolicyExceptionHoldExpiry,
+  POLICY_EXCEPTION_HOLD_TTL_DAYS,
+} from "@/lib/booking-exception-requests";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { formatDateOnly } from "@/lib/date-only";
 import { sendPolicyExceptionRequestExpiredEmail } from "@/lib/email/booking";
@@ -194,6 +197,10 @@ export async function reapExpiredPolicyExceptionHolds(
       computePolicyExceptionHoldExpiry({
         createdAt: candidate.createdAt,
         firstHeldNight,
+        // NOT the club's current setting (#4932): this row was raised under the
+        // fixed 7-day rule, and reading a setting here would let a later edit
+        // move a deadline the stamped rows can never have moved.
+        ttlDays: POLICY_EXCEPTION_HOLD_TTL_DAYS,
         zone: clubZone,
       });
     if (now < deadline) continue;

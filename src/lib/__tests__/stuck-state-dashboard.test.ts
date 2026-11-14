@@ -30,6 +30,7 @@ const modulesOn: FeatureFlags = {
   hutLeaders: true,
   communications: true,
   skifieldConditions: true,
+  skifieldWhakapapa: true,
   twoFactor: false,
   magicLink: false,
   googleLogin: false,

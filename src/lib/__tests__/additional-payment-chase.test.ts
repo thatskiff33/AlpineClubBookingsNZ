@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  ADDITIONAL_PAYMENT_REMINDER_DAYS,
   CREDIT_RELEASE_CHASE_HORIZON_DAYS,
   CREDIT_RELEASE_REMINDER_COUNT,
   CREDIT_RELEASE_REMINDER_INTERVAL_DAYS,
@@ -21,6 +20,7 @@ import {
   resolveAdditionalPaymentChase,
   resolveAdditionalPaymentDoor,
 } from "@/lib/additional-payment-chase";
+import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { CREDIT_RELEASE_ASK_REASON } from "@/lib/credit-release-ask-keys";
 import { buildAdditionalOwedWhere } from "@/lib/unpaid-finished-stays";
 
@@ -301,6 +301,7 @@ describe("resolveAdditionalPaymentChase", () => {
       episodeStartedAt: AFTER_CUTOFF,
       reminderSentAt: null,
       finalReminderSentAt: null,
+      reminderDays: DEFAULT_BOOKING_DEFAULTS.additionalPaymentReminderDays,
       chaseStartsAt: CUTOFF,
       ...overrides,
     });
@@ -320,8 +321,22 @@ describe("resolveAdditionalPaymentChase", () => {
     expect(
       chase({ ...raisedJustNow, askReason: CREDIT_RELEASE_ASK_REASON, reminderSentAt: AFTER_CUTOFF }),
     ).toBeNull();
-    expect(additionalPaymentFirstReminderDelayDays(CREDIT_RELEASE_ASK_REASON)).toBe(0);
-    expect(additionalPaymentFirstReminderDelayDays(null)).toBe(ADDITIONAL_PAYMENT_REMINDER_DAYS);
+    expect(additionalPaymentFirstReminderDelayDays(CREDIT_RELEASE_ASK_REASON, 3)).toBe(0);
+    expect(additionalPaymentFirstReminderDelayDays(null, 3)).toBe(3);
+  });
+
+  it("waits the club's own number of days before the first reminder (#4932)", () => {
+    const daysIn = (days: number) => {
+      const at = new Date(AFTER_CUTOFF.getTime() + days * 86_400_000);
+      return { now: at, today: at };
+    };
+    expect(chase({ ...daysIn(4), reminderDays: 5 })).toBeNull();
+    expect(chase({ ...daysIn(5), reminderDays: 5 })).toBe("initial");
+    expect(chase({ ...daysIn(1), reminderDays: 1 })).toBe("initial");
+    // A request for credit used elsewhere still goes at once, whatever the wait.
+    expect(chase({ ...daysIn(0), reminderDays: 5, askReason: CREDIT_RELEASE_ASK_REASON })).toBe(
+      "initial",
+    );
   });
 
   it("prefers the last-chance nudge inside the pre-arrival window", () => {

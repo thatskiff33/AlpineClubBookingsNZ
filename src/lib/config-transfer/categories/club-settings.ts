@@ -3,6 +3,8 @@ import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
 
 import {
+  BOOKING_TIMING_DAYS_MAX,
+  BOOKING_TIMING_DAYS_MIN,
   DEFAULT_BED_ALLOCATION_SETTINGS,
   DEFAULT_BOOKING_DEFAULTS,
   DEFAULT_BOOKING_REQUEST_SETTINGS,
@@ -185,6 +187,13 @@ export function excludedColumnsFor(spec: SingletonSpec): Record<string, string> 
   return { ...COMMON_EXCLUDED_COLUMNS, ...spec.excluded };
 }
 
+// #4932: the admin form's (and the database CHECK's) 1–30 day bound.
+const BOOKING_TIMING_CONSTRAINT = {
+  required: true,
+  min: BOOKING_TIMING_DAYS_MIN,
+  max: BOOKING_TIMING_DAYS_MAX,
+} as const;
+
 // DELIBERATELY NOT REGISTERED as a travelling singleton (#2211, epic decision):
 // AiAssistantSettings (the AI spend-cap singleton, id="default"). The monthly
 // budget is a deployment-specific operational spend control, not portable club
@@ -213,6 +222,9 @@ export const SINGLETONS: SingletonSpec[] = [
       "bedAllocation", "internetBankingPayments", "addressAutocomplete",
       "groupBookings", "lockers", "induction", "workParties", "promoCodes",
       "hutLeaders", "communications", "memberNotices", "skifieldConditions",
+      // skifieldWhakapapa SHOULD-TRAVEL (#4932): which ski field's report a
+      // club shows is a plain capability choice, like skifieldConditions.
+      "skifieldWhakapapa",
       "twoFactor", "analytics", "lobbyDisplay",
       // eventsCalendar SHOULD-TRAVEL (#2241): "does this club run an events
       // calendar?" is a plain club capability decision like communications or
@@ -347,6 +359,7 @@ export const SINGLETONS: SingletonSpec[] = [
       memberNotices: { required: true },
       eventsCalendar: { required: true },
       skifieldConditions: { required: true },
+      skifieldWhakapapa: { required: true },
       twoFactor: { required: true },
       analytics: { required: true },
       lobbyDisplay: { required: true },
@@ -356,6 +369,14 @@ export const SINGLETONS: SingletonSpec[] = [
     },
     select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     defaults: () => DEFAULT_MODULE_SETTINGS,
+    // A bundle from before #4932 has no skifieldWhakapapa: there,
+    // skifieldConditions also switched the Whakapapa report on, so it carries
+    // that answer across — as migration 20261220010000 does for a database.
+    reconcile: (incoming) =>
+      "skifieldWhakapapa" in incoming ||
+      typeof incoming.skifieldConditions !== "boolean"
+        ? incoming
+        : { ...incoming, skifieldWhakapapa: incoming.skifieldConditions },
   },
   {
     entity: "booking-defaults",
@@ -375,10 +396,17 @@ export const SINGLETONS: SingletonSpec[] = [
       // have a treasurer approve it. It TRAVELS for the same reason: it is the
       // club's own answer about how it handles members' money.
       "lateCaptureRefundNeedsApproval",
+      // #4932: the club's three booking timings travel as club answers. An older
+      // bundle without them imports unchanged (an absent field is skipped), and a
+      // new hold length moves no request already holding beds (stamped at raise).
+      "preArrivalReminderDays",
+      "additionalPaymentReminderDays",
+      "policyExceptionHoldDays",
     ],
-    // All five columns are non-null (@default); a present null fails the dry-run
+    // Every column is non-null (@default); a present null fails the dry-run
     // (#2200). nonMemberHoldDays mirrors the admin route's 1–365 bound
-    // (booking-policies/cancellation route: z.number().int().min(1).max(365)).
+    // (booking-policies/cancellation route: z.number().int().min(1).max(365)),
+    // and the three timings share the route's (and the database CHECK's) bound.
     // waitlistCrossLodgeOrder is enum-validated automatically.
     constraints: {
       nonMemberHoldEnabled: { required: true },
@@ -386,6 +414,9 @@ export const SINGLETONS: SingletonSpec[] = [
       waitlistCrossLodgeOrder: { required: true },
       linkedMoveChargesBothChangeFees: { required: true },
       lateCaptureRefundNeedsApproval: { required: true },
+      preArrivalReminderDays: BOOKING_TIMING_CONSTRAINT,
+      additionalPaymentReminderDays: BOOKING_TIMING_CONSTRAINT,
+      policyExceptionHoldDays: BOOKING_TIMING_CONSTRAINT,
     },
     excluded: {
       lodgeId:

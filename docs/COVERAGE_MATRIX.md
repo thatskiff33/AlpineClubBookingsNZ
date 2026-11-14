@@ -329,9 +329,11 @@ feature-gated surfaces; the guides document the reality:
   screenshot — the [Integrations](guides/integrations.md) guide describes it in
   prose, matching the batch-2 Xero pattern. The page is now a thin hub with a
   single **Xero Setup** card.
-- **`communications` and `mountain-conditions` are gated but ON by default.**
-  Their modules (`communications`, `skifieldConditions`) default **on** in the
-  seed, so both render and are captured. `communications` lives in the **Members**
+- **`communications` and `mountain-conditions` render in the capture.**
+  `communications` defaults **on** in the seed; `mountain-conditions` is gated
+  by `skifieldWhakapapa`, which a fresh install leaves off and the E2E prepare
+  step (`e2e/setup/enable-e2e-modules.ts`) turns on (#4932), so both render and
+  are captured. `communications` lives in the **Members**
   sidebar section (permission area `membership`), not support.
 - **`display` stays a feature hub.** The lobby TV display module (`lobbyDisplay`)
   is **off** by default, so `/admin/display` 404s in the seed; rather than a new

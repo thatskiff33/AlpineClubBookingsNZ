@@ -11,6 +11,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { LateCaptureRefundSetting } from "@/components/admin/booking-policies/late-capture-refund-setting"
+import { LinkedMoveFeesSetting } from "@/components/admin/booking-policies/linked-move-fees-setting"
+import {
+  bookingTimingsDiffer,
+  BookingTimingsSetting,
+} from "@/components/admin/booking-policies/booking-timings-setting"
+import { bookingTimingsFrom, type BookingTimings } from "@/lib/booking-timings"
 import { Label } from "@/components/ui/label"
 import { CancellationRulesEditor } from "./cancellation-rules-editor"
 import { PolicyPreview } from "./policy-preview"
@@ -69,7 +75,7 @@ function endpointFor(lodgeId: string | null) {
  * config object per SCOPE, so a single `useSectionEditState` instance owns it
  * and the scope switch drives `reload`.
  */
-interface CancellationDraft {
+interface CancellationDraft extends BookingTimings {
   rules: PolicyRule[]
   holdEnabled: boolean
   holdDays: number
@@ -125,10 +131,11 @@ const CANCELLATION_DEFAULTS: CancellationDraft = {
   // Charging both is the club's default answer; waiving is the exception.
   linkedMoveBothFees: true,
   lateCaptureNeedsApproval: DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+  ...bookingTimingsFrom({}),
 }
 
 function toDraft(
-  data: {
+  data: Partial<BookingTimings> & {
     rules?: PolicyRule[]
     linkedMoveChargesBothChangeFees?: boolean
     lateCaptureRefundNeedsApproval?: boolean
@@ -159,6 +166,7 @@ function toDraft(
       DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
     waitlistOrder:
       data.waitlistCrossLodgeOrder === "MERGED" ? "MERGED" : "OWN_LODGE_FIRST",
+    ...bookingTimingsFrom(data), // #4932: club-wide like the hold above
     configured: fetchedRules.length > 0,
     scope: lodgeId,
   }
@@ -239,6 +247,7 @@ export function DefaultCancellationPolicySection() {
                 nonMemberHoldDays: draft.holdDays,
                 waitlistCrossLodgeOrder: draft.waitlistOrder,
                 linkedMoveChargesBothChangeFees: draft.linkedMoveBothFees,
+                ...bookingTimingsFrom(draft),
                 // #3639 delta D3: only from someone who may change it, with the loaded value.
                 ...(canEditFinance === true ? {
                   lateCaptureRefundNeedsApproval: draft.lateCaptureNeedsApproval,
@@ -286,6 +295,7 @@ export function DefaultCancellationPolicySection() {
         draft.waitlistOrder !== saved.waitlistOrder ||
         draft.linkedMoveBothFees !== saved.linkedMoveBothFees ||
         draft.lateCaptureNeedsApproval !== saved.lateCaptureNeedsApproval ||
+        bookingTimingsDiffer(draft, saved) ||
         !cancellationRuleSetsEqual(draft.rules, saved.rules)
       )
     },
@@ -572,44 +582,21 @@ export function DefaultCancellationPolicySection() {
                         : "The threshold is retained but inactive while First Paid, First In is selected."}
                     </p>
                   </div>
-                  {/*
-                    #3232 D2. Club-wide, beside the other club-wide booking
-                    defaults, because whether a second change fee is fair when the
-                    club's own supervision rule compelled the move is a question
-                    about how the club treats its members — not about one lodge's
-                    cancellation risk, which is what the fee TIERS below price.
-                  */}
-                  <div className="flex items-start gap-3 rounded-md border p-3">
-                    <Checkbox
-                      id="linkedMoveBothFees"
-                      checked={draft.linkedMoveBothFees}
-                      disabled={!editing}
-                      onCheckedChange={(v) =>
-                        section.setDraft({ linkedMoveBothFees: v === true })
-                      }
-                    />
-                    <div className="space-y-1">
-                      <Label htmlFor="linkedMoveBothFees">
-                        Charge the change fee on both bookings when a member moves
-                        two together
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        When a member changes the dates of a booking that another of
-                        their own bookings relies on for adult supervision, they are
-                        offered the chance to move both together. Both bookings
-                        really move, so by default both attract the change fee, shown
-                        as one combined figure. Turn this off to charge only the
-                        booking the member was editing — some clubs think the second
-                        fee is unfair when it was the club&apos;s own supervision rule
-                        that made the second move necessary.
-                      </p>
-                    </div>
-                  </div>
+                  <LinkedMoveFeesSetting
+                    chargeBoth={draft.linkedMoveBothFees}
+                    editing={editing}
+                    onChange={(v) => section.setDraft({ linkedMoveBothFees: v })}
+                  />
                   <LateCaptureRefundSetting
                     needsApproval={draft.lateCaptureNeedsApproval}
                     editing={editing}
                     canChange={canEditFinance}
                     onChange={(v) => section.setDraft({ lateCaptureNeedsApproval: v })}
+                  />
+                  <BookingTimingsSetting
+                    timings={draft}
+                    editing={editing}
+                    onChange={(patch) => section.setDraft(patch)}
                   />
                 </div>
               ) : null}

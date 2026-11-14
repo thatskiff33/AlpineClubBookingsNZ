@@ -4,16 +4,20 @@ Audience: Operator
 
 ## What it is
 
-The editor for the cached Whakapapa mountain-conditions payload that drives the
-public Snow.nz conditions widget — road status, lifts, facilities, food & drink,
+The editor for the cached Whakapapa (Mt Ruapehu) conditions report that drives
+the public `{{skifield-whakapapa}}` panel — road status, lifts, facilities, food & drink,
 trails, and general conditions. Find it at **Admin → Setup & Configuration → Site
 Appearance & Content → Mountain Conditions** (`/admin/mountain-conditions`). It
 has no direct sidebar entry — open it from the **Mountain Conditions** card on
 the Site Appearance & Content hub.
 
-The page is gated by the **`skifieldConditions`** module (Admin → Modules),
-which is on by default. Turning that module off hides both this page and the
-public conditions widget. Mountain Conditions is edited under the **content**
+This page is **Whakapapa-specific**. It is gated by the **`skifieldWhakapapa`**
+module (Admin → Modules), which is off on a new install; an install upgraded
+from before #4932 keeps whatever its `skifieldConditions` switch was. Turning
+the module off hides this page, the `{{skifield-whakapapa}}` panel and its
+public feed. A club at any other ski field uses the generic Snow.nz widget
+(`{{skifield-conditions:<id>}}`, the `skifieldConditions` module) instead, which
+needs nothing on this page. Mountain Conditions is edited under the **content**
 permission area.
 
 ## When you'd use it
@@ -99,13 +103,13 @@ Under **Advanced: element selectors**:
 | Report URL                                                                                          | The page the scraper fetches                                      | `https://www.whakapapa.com/report` | Must be https on whakapapa.com / snow.nz                     |
 | Element selectors (Advanced)                                                                        | Per-section overrides used to locate content on the source page   | Built-in hash-agnostic defaults    | Blank = use default; test with **Preview** before saving     |
 | Import / Export selectors (Advanced)                                                                | Transfer the URL + full selector set between sites as a JSON file | Defaults seeded into the DB        | Export reads the DB; Import writes to the DB.                |
-| `skifieldConditions` module                                                                         | Whether this page and the public widget exist at all              | On                                 | Toggled at **Admin → Modules**; off hides both               |
+| `skifieldWhakapapa` module                                                                          | Whether this page and the Whakapapa panel exist at all            | Off (new install)                  | Toggled at **Admin → Modules**; off hides both               |
 
 ## Troubleshooting
 
 | Symptom                                           | Likely cause                                                 | Fix                                                                                                            |
 | ------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| The page 404s or the card is missing              | The `skifieldConditions` module is off                       | Enable it at **Admin → Modules**                                                                               |
+| The page 404s or the card is missing              | The `skifieldWhakapapa` module is off                        | Enable it at **Admin → Modules**                                                                               |
 | My edits were overwritten                         | Auto-refresh replaced them                                   | Save via the Raw JSON editor — that freezes upstream updates for 12 hours                                      |
 | A section still shows publicly after unticking    | Visibility wasn't saved                                      | Click **Save visibility** after changing the checkboxes                                                        |
 | A whole section is empty after an upstream change | The scraper can't locate it                                  | Use **Preview** in **Source & selectors** to test, override the affected selector, then **Save configuration** |

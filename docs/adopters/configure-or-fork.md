@@ -35,6 +35,11 @@ assistants are all modules.
   deploy-time setup default off; general-purpose ones default on.
 - **Reach for it when** the capability is genuinely optional for a club — when
   some clubs would want it and others would not want it visible at all.
+- **A feature tied to one place is its own module, default off.** The
+  Whakapapa (Mt Ruapehu) conditions report is the example: it is the
+  `skifieldWhakapapa` module, split from the generic Snow.nz widget
+  (`skifieldConditions`) so a club at another mountain never inherits it
+  (#4932).
 
 A module toggle holds no secrets. A module that also needs credentials or
 inventory shows **Needs setup** until they exist, rather than failing at the
@@ -44,7 +49,7 @@ point of use.
 
 A **setting** is a stored value an admin edits in the app. Cancellation refund
 tiers, minimum stay, group discount, the subscription lockout policy, booking
-request rules, member-guest consent policy, hut-leader label, notification
+request rules, reminder and hold timings, member-guest consent policy, hut-leader label, notification
 recipients, email wording, public page content, colours and fonts are all
 settings.
 

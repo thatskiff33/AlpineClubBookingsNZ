@@ -62,8 +62,19 @@ export async function PUT(req: NextRequest) {
     linkedMoveChargesBothChangeFees,
     lateCaptureRefundNeedsApproval,
     lateCaptureRefundNeedsApprovalLoaded,
+    preArrivalReminderDays,
+    additionalPaymentReminderDays,
+    policyExceptionHoldDays,
     lodgeId,
   } = parsed.data
+  // #4932: the three booking timings, written only when the request names them.
+  // A new hold length applies to requests raised from now on; one already
+  // holding beds keeps the deadline stamped on it (INV-EXCEPT).
+  const timings = {
+    ...(preArrivalReminderDays !== undefined ? { preArrivalReminderDays } : {}),
+    ...(additionalPaymentReminderDays !== undefined ? { additionalPaymentReminderDays } : {}),
+    ...(policyExceptionHoldDays !== undefined ? { policyExceptionHoldDays } : {}),
+  }
 
   if (lodgeId) {
     const lodge = await prisma.lodge.findUnique({
@@ -129,7 +140,8 @@ export async function PUT(req: NextRequest) {
       nonMemberHoldEnabled !== undefined ||
       waitlistCrossLodgeOrder !== undefined ||
       linkedMoveChargesBothChangeFees !== undefined ||
-      lateCaptureRefundNeedsApproval !== undefined
+      lateCaptureRefundNeedsApproval !== undefined ||
+      Object.keys(timings).length > 0
     ) {
       await tx.bookingDefaults.upsert({
         where: { id: "default" },
@@ -143,6 +155,7 @@ export async function PUT(req: NextRequest) {
           ...(lateCaptureRefundNeedsApproval !== undefined
             ? { lateCaptureRefundNeedsApproval }
             : {}),
+          ...timings,
         },
         create: {
           id: "default",
@@ -158,6 +171,7 @@ export async function PUT(req: NextRequest) {
           ...(lateCaptureRefundNeedsApproval !== undefined
             ? { lateCaptureRefundNeedsApproval }
             : {}),
+          ...timings,
         },
       })
     }
@@ -187,7 +201,7 @@ export async function PUT(req: NextRequest) {
     action: "cancellation-policy.update",
     category: "booking",
     memberId: session.user.id,
-    details: `Updated to ${sortedRules.length} rules, holdEnabled=${nonMemberHoldEnabled ?? "unchanged"}, holdDays=${nonMemberHoldDays ?? "unchanged"}, waitlistOrder=${waitlistCrossLodgeOrder ?? "unchanged"}, linkedMoveBothFees=${linkedMoveChargesBothChangeFees ?? "unchanged"}, lateCaptureNeedsApproval=${lateCaptureRefundNeedsApproval ?? "unchanged"}, lodge=${lodgeId ?? "club-wide"}`,
+    details: `Updated to ${sortedRules.length} rules, holdEnabled=${nonMemberHoldEnabled ?? "unchanged"}, holdDays=${nonMemberHoldDays ?? "unchanged"}, waitlistOrder=${waitlistCrossLodgeOrder ?? "unchanged"}, linkedMoveBothFees=${linkedMoveChargesBothChangeFees ?? "unchanged"}, lateCaptureNeedsApproval=${lateCaptureRefundNeedsApproval ?? "unchanged"}, preArrivalReminderDays=${preArrivalReminderDays ?? "unchanged"}, additionalPaymentReminderDays=${additionalPaymentReminderDays ?? "unchanged"}, policyExceptionHoldDays=${policyExceptionHoldDays ?? "unchanged"}, lodge=${lodgeId ?? "club-wide"}`,
   })
 
   if (lateCapture.changing) {

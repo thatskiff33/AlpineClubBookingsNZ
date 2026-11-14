@@ -81,6 +81,7 @@ const MODULES = {
   induction: true, workParties: true, promoCodes: true, hutLeaders: true,
   communications: true, memberNotices: true, eventsCalendar: true,
   skifieldConditions: true,
+  skifieldWhakapapa: true,
   twoFactor: false, analytics: false,
   // Every travelling module flag is a non-null Boolean; the #2200 dry-run
   // `constraints.required` audit rejects a projected null, so the fixture must
@@ -179,6 +180,43 @@ describe("config-transfer club-settings", () => {
       },
     ]);
   });
+
+  // #4932: before the split, skifieldConditions also switched the Whakapapa
+  // report on, so an older bundle's answer must carry across to the new flag.
+  it.each([true, false])(
+    "carries a pre-#4932 bundle's skifieldConditions=%s to skifieldWhakapapa",
+    async (value) => {
+      const older = Object.fromEntries(
+        Object.entries({ ...MODULES, skifieldConditions: value }).filter(
+          ([key]) => key !== "skifieldWhakapapa",
+        ),
+      );
+      const plan = await clubSettingsImporter.plan({
+        format: CLUB_FORMAT_TEST,
+        db: stubDb({
+          clubModuleSettings: { ...MODULES, skifieldConditions: value, skifieldWhakapapa: !value },
+        }),
+        files: new Map([
+          [
+            "club-settings/club-module-settings.json",
+            strToU8(JSON.stringify(older)),
+          ],
+        ]),
+        manifest: {} as never,
+        mode: "merge",
+        resolutions: new Map(),
+      });
+      expect(plan.errors).toEqual([]);
+      expect(plan.items).toEqual([
+        {
+          entity: "club-module-settings",
+          key: "default",
+          action: "update",
+          changedFields: ["skifieldWhakapapa"],
+        },
+      ]);
+    },
+  );
 
   // #3819 retired #3416's club-wide switch in favour of a per-lodge setting.
   // A bundle from a release that still exported it must import cleanly, and
@@ -687,6 +725,11 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       // that answer rather than switching a target install to treasurer approval.
       lateCaptureRefundNeedsApproval:
         DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+      // #4932: the three booking timings export their shipped defaults.
+      preArrivalReminderDays: DEFAULT_BOOKING_DEFAULTS.preArrivalReminderDays,
+      additionalPaymentReminderDays:
+        DEFAULT_BOOKING_DEFAULTS.additionalPaymentReminderDays,
+      policyExceptionHoldDays: DEFAULT_BOOKING_DEFAULTS.policyExceptionHoldDays,
     });
     expect(readJson(files, "booking-request-settings")).toEqual({
       ...DEFAULT_BOOKING_REQUEST_SETTINGS,
@@ -1545,6 +1588,34 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
     expect(plan.errors.join(" ")).toMatch(
       /nonMemberHoldDays — .*out of range.*1–365/,
     );
+  });
+
+  // #4932: the three booking timings carry the admin form's 1–30 bound.
+  it("rejects a booking timing outside the admin 1–30 range, and accepts one inside it", async () => {
+    for (const field of [
+      "preArrivalReminderDays",
+      "additionalPaymentReminderDays",
+      "policyExceptionHoldDays",
+    ]) {
+      for (const bad of [0, 31]) {
+        const zip = singletonBundle("booking-defaults", {
+          nonMemberHoldEnabled: true,
+          nonMemberHoldDays: 7,
+          waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+          [field]: bad,
+        });
+        const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+        expect(plan.errors.join(" ")).toMatch(new RegExp(`${field} — .*out of range.*1–30`));
+      }
+      const zip = singletonBundle("booking-defaults", {
+        nonMemberHoldEnabled: true,
+        nonMemberHoldDays: 7,
+        waitlistCrossLodgeOrder: "OWN_LODGE_FIRST",
+        [field]: 14,
+      });
+      const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "merge" });
+      expect(plan.errors).toEqual([]);
+    }
   });
 });
 

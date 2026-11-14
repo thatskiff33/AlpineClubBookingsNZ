@@ -65,7 +65,8 @@ deploy-time setup default **off**; general-purpose modules default **on**):
 | Communications (`communications`) | Admin bulk email to members. Transactional notifications (booking, payment and membership emails) are unaffected | On |
 | Member notices (`memberNotices`) | Committee news notices targeted to member audiences, shown on the dashboard with read/acknowledge tracking | On |
 | Events calendar (`eventsCalendar`) | Club events calendar, recurring events, and the dashboard Events card | On |
-| Ski-field conditions (`skifieldConditions`) | Mountain/road status panel and the Mountain Conditions page, the public conditions API routes, and the admin cache controls | On |
+| Ski-field conditions (`skifieldConditions`) | Snow.nz condition widgets for any New Zealand ski field, placed on a public page with the `{{skifield-conditions:<id>}}` token, and their public API route | On |
+| Whakapapa (Mt Ruapehu) conditions report (`skifieldWhakapapa`) | **Whakapapa (Mt Ruapehu) only.** The live mountain and road status panel from the `{{skifield-whakapapa}}` token, its public feed, and the admin [Mountain Conditions](mountain-conditions.md) cache page. Off on a new install; an install upgraded from before #4932 keeps the value its `skifieldConditions` switch had | Off |
 | Two-factor authentication (`twoFactor`) | Second-factor after password login | Off |
 | Email sign-in link (`magicLink`) | Single-use email sign-in links | Off |
 | Google sign-in (`googleLogin`) | Sign in with a linked Google account. Credentials are entered in-app at **Admin › Integrations › Google sign-in**; see [Integrations](integrations.md) | Off |

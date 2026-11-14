@@ -130,6 +130,37 @@ describe("cancellation policy partitions", () => {
     installTransactionMock();
   });
 
+  it("saves club-wide timings and returns the persisted values", async () => {
+    const timings = { preArrivalReminderDays: 5, additionalPaymentReminderDays: 6, policyExceptionHoldDays: 10 };
+    mocks.bookingDefaultsFindUnique.mockResolvedValue(timings);
+    const res = await CANCELLATION_PUT(request(
+      "http://localhost/api/admin/booking-policies/cancellation", "PUT", { rules: [RULE], ...timings },
+    ));
+    expect(res.status).toBe(200);
+    expect(mocks.bookingDefaultsUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining(timings), create: expect.objectContaining(timings),
+    }));
+    expect(await res.json()).toMatchObject(timings);
+  });
+
+  it.each([0, 31, 1.5])("rejects invalid timing %s before writing", async (days) => {
+    const res = await CANCELLATION_PUT(request(
+      "http://localhost/api/admin/booking-policies/cancellation", "PUT",
+      { rules: [RULE], preArrivalReminderDays: days },
+    ));
+    expect(res.status).toBe(400);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses timing overrides for an individual lodge", async () => {
+    const res = await CANCELLATION_PUT(request(
+      "http://localhost/api/admin/booking-policies/cancellation", "PUT",
+      { rules: [RULE], lodgeId: "lodge-2", policyExceptionHoldDays: 5 },
+    ));
+    expect(res.status).toBe(400);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
   it("GET reads the club-wide (null) partition by default", async () => {
     const res = await CANCELLATION_GET(
       request("http://localhost/api/admin/booking-policies/cancellation"),

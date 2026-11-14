@@ -80,6 +80,12 @@ describe("feature route map", () => {
       "communications",
     ]);
     expect(getRequiredFeaturesForPath("/api/skifield-whakapapa")).toEqual([
+      "skifieldWhakapapa",
+    ]);
+    expect(
+      getRequiredFeaturesForPath("/api/admin/mountain-conditions/refresh"),
+    ).toEqual(["skifieldWhakapapa"]);
+    expect(getRequiredFeaturesForPath("/api/skifield-conditions")).toEqual([
       "skifieldConditions",
     ]);
   });

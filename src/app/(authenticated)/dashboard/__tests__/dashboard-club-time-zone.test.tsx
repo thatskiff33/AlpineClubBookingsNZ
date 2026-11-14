@@ -226,6 +226,7 @@ function moduleFlags() {
     hutLeaders: true,
     communications: false,
     skifieldConditions: false,
+    skifieldWhakapapa: false,
     twoFactor: false,
     analytics: false,
     eventsCalendar: true,

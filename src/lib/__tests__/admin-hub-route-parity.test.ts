@@ -232,7 +232,7 @@ const ORACLE_MODULE_GATES: ReadonlyArray<{
   { flag: "communications", prefixes: ["/admin/communications"] },
   { flag: "memberNotices", prefixes: ["/admin/notices"] },
   { flag: "eventsCalendar", prefixes: ["/admin/calendar"] },
-  { flag: "skifieldConditions", prefixes: ["/admin/mountain-conditions"] },
+  { flag: "skifieldWhakapapa", prefixes: ["/admin/mountain-conditions"] },
   {
     flag: "lobbyDisplay",
     prefixes: ["/admin/display"],

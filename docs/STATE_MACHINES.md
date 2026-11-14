@@ -735,7 +735,7 @@ positive delta -> additional payment or supplementary Xero invoice
   asked nothing, and an ask a cancel landing mid-mint could not see is retired
   FAILED by the minter - the door's, the recovery runner's or a currency
   re-issue's - #4316, INV-ADDPAY-044)
-uncollected additional payment -> reminder at +3 days, reminder 2 days before
+uncollected additional payment -> reminder at +`additionalPaymentReminderDays` (default 3), reminder 2 days before
   check-in, admin re-send on demand; stops at check-out (never auto-cancelled);
   a credit-release request is instead reminded weekly, four times after the request, past check-out,
   and so is a request an edit merged into once the stay has ended (INV-ADDPAY-048)
@@ -1026,8 +1026,8 @@ policy-exception requests".
 
 **An abandoned hold expires (#2553).** A request nobody ever decides used to hold
 its beds forever. Every request that actually reserves beds is therefore stamped
-at creation with an immutable `holdExpiresAt`: seven days
-(`POLICY_EXCEPTION_HOLD_TTL_DAYS`), never past the start of the first night it is
+at creation with an immutable `holdExpiresAt`: the club's
+`policyExceptionHoldDays` (default seven, read only then), never past the start of the first night it is
 holding, and never less than 24 hours
 (`POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS`) so a late request still gets a real
 review window. The deadline is stamped once and never rewritten, so a member's

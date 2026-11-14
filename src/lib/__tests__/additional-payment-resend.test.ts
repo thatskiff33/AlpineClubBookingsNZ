@@ -24,6 +24,8 @@ const {
   mockPrisma: {
     booking: { findUnique: vi.fn() },
     payment: { updateMany: vi.fn(), findUnique: vi.fn() },
+    // #4932: no saved BookingDefaults row unless a test says otherwise.
+    bookingDefaults: { findUnique: vi.fn(async (): Promise<unknown> => null) },
   },
   mockSendAdditionalPaymentReminderEmail: vi.fn(),
   mockReadBookingNoEmails: vi.fn(),

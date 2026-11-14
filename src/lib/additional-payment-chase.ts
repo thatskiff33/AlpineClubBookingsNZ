@@ -29,18 +29,16 @@ import {
 } from "@/lib/credit-release-ask-keys";
 import { isStripeResourceMissingError } from "@/lib/stripe-errors";
 
-/** Days after the extra was raised before the first reminder goes out. */
-export const ADDITIONAL_PAYMENT_REMINDER_DAYS = 3;
-
 /**
  * Days after the request was raised before the first reminder, by what the request
  * is for. A request for credit used elsewhere in the club's accounts (#4253,
  * `INV-ADDPAY-045`) is not noticed by the member the way a change they made
  * themselves is: nothing they did caused it, so the first email goes out at once
- * and is the only way they hear of it. Every other request keeps the usual wait.
+ * and is the only way they hear of it. Every other request waits the club's
+ * `reminderDays` (#4932), passed in so this module stays free of Prisma.
  */
-export function additionalPaymentFirstReminderDelayDays(askReason: string | null | undefined): number {
-  return askReason === CREDIT_RELEASE_ASK_REASON ? 0 : ADDITIONAL_PAYMENT_REMINDER_DAYS;
+export function additionalPaymentFirstReminderDelayDays(askReason: string | null | undefined, reminderDays: number): number {
+  return askReason === CREDIT_RELEASE_ASK_REASON ? 0 : reminderDays;
 }
 
 /**
@@ -76,7 +74,7 @@ export function creditReleaseCadenceSummary(): string {
 
 /**
  * Days before check-in for the last-chance reminder. Deliberately inside the
- * pre-arrival reminder's own 3-day window so the two land close together and a
+ * pre-arrival reminder's default 3-day window so the two land close together and a
  * member who is about to travel is told once, clearly, that money is still owing.
  */
 export const ADDITIONAL_PAYMENT_FINAL_REMINDER_DAYS_BEFORE_CHECK_IN = 2;
@@ -490,6 +488,8 @@ export interface AdditionalPaymentChaseInput {
   finalReminderSentAt: Date | null;
   /** The newest request's cause (its ledger `reason`); sets how long the first reminder waits. */
   askReason?: string | null;
+  /** The club's `additionalPaymentReminderDays` (#4932); required, so the cron and re-send agree. */
+  reminderDays: number;
   /**
    * First-deploy guard: the instant automatic chasing began on THIS deployment.
    *
@@ -523,7 +523,7 @@ export interface AdditionalPaymentChaseInput {
  *
  * An obligation whose episode began before `chaseStartsAt` is never emailed
  * about: on the first deploy every already-outstanding delta is long past the
- * day-3 threshold, so without the guard the first pass would mail the whole
+ * first-reminder threshold, so without the guard the first pass would mail the whole
  * backlog at once. The exclusion is per EPISODE, not permanent — a later upward
  * change (or a member retrying a failed charge) starts a fresh episode after the
  * cutover and is chased normally.
@@ -564,7 +564,7 @@ export function resolveAdditionalPaymentChase(
 
   const initialDueAt =
     input.episodeStartedAt.getTime() +
-    additionalPaymentFirstReminderDelayDays(input.askReason) * MS_PER_DAY;
+    additionalPaymentFirstReminderDelayDays(input.askReason, input.reminderDays) * MS_PER_DAY;
   if (
     input.now.getTime() >= initialDueAt &&
     !isCurrentEpisodeStamp(input.reminderSentAt, input.episodeStartedAt)

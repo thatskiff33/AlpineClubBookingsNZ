@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
 import { addDaysDateOnly, parseDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
@@ -1669,10 +1670,14 @@ export async function createModificationExceptionRequest(
   // first held night begins. Resolved here, in the request path, and passed in:
   // the expiry rule stays a pure function of its inputs, which is what lets the
   // reaper re-derive the identical deadline for a row that never got one.
+  //
+  // #4932 — the hold length is the club's setting AS IT STANDS NOW, read here and
+  // only here. Once stamped, a later change to the setting moves no request.
   const holdExpiresAt = reservesBeds
     ? computePolicyExceptionHoldExpiry({
         createdAt: new Date(),
         firstHeldNight: firstReservedNight(reservationFootprint),
+        ttlDays: (await getBookingTimingSettings()).policyExceptionHoldDays,
         zone: await clubTimeZone(),
       })
     : null;

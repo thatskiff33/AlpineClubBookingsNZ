@@ -27,6 +27,7 @@ export const MODULE_KEYS = [
   "memberNotices",
   "eventsCalendar",
   "skifieldConditions",
+  "skifieldWhakapapa",
   "twoFactor",
   "magicLink",
   "googleLogin",
@@ -169,6 +170,12 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   memberNotices: true,
   eventsCalendar: true,
   skifieldConditions: true,
+  // Default OFF, inverting the general ON rule above on purpose: this report
+  // reads one ski field's public feed (Whakapapa, Mt Ruapehu), so a club at any
+  // other mountain should not start with it. An existing install keeps the
+  // value it had, because migration 20261220010000_add_skifield_whakapapa_module
+  // copies skifieldConditions onto it (#4932).
+  skifieldWhakapapa: false,
   twoFactor: false,
   magicLink: false,
   googleLogin: false,
@@ -375,8 +382,17 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     key: "skifieldConditions",
     label: "Ski-field conditions",
     description:
-      "Live mountain/road status panel and widgets, plus the admin conditions cache.",
+      "Snow.nz ski-field condition widgets for any New Zealand ski field, placed on a public page with the {{skifield-conditions:<id>}} token.",
     dependencies: [],
+  },
+  skifieldWhakapapa: {
+    key: "skifieldWhakapapa",
+    label: "Whakapapa (Mt Ruapehu) conditions report",
+    description:
+      "Whakapapa-specific: the live Mt Ruapehu mountain and road status panel, its {{skifield-whakapapa}} token, and the admin Mountain Conditions cache page.",
+    dependencies: [
+      "Only useful to a club whose lodge is at Whakapapa. When off, the panel, its feed and the admin Mountain Conditions page return Not Found.",
+    ],
   },
   twoFactor: {
     key: "twoFactor",
