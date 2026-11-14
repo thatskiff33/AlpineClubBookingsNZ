@@ -15,6 +15,7 @@ import {
   bindClubTime,
   formatClubWeekdayDate,
   formatClubWeekdayDayMonth,
+  isCalendarDate,
   parseCalendarDate,
   requireClubTimeZone,
   type BoundClubTime,
@@ -100,8 +101,6 @@ function formatClock(club: BoundClubTime, date: Date): string {
   follow the one setting.
 */
 
-const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
 /** Preview-mode state for the header (issue #60): whether the URL marks this
  * as an admin preview, and any active simulated date. Computed after mount so
  * the server render and first client render match (the page is force-dynamic
@@ -120,7 +119,9 @@ export function readPreviewState(): {
     params.has("previewDevice") ||
     params.has("previewGrant");
   const raw = params.get("previewDate");
-  const previewDate = raw && DATE_ONLY_REGEX.test(raw) ? raw : null;
+  // A real calendar day or no simulated date at all: `2026-02-30` used to
+  // switch the clock to "simulating" a day the state route refuses.
+  const previewDate = raw && isCalendarDate(raw) ? raw : null;
   return { isPreview, previewDate };
 }
 
@@ -175,7 +176,7 @@ export function HeaderClock({
   const simulated = preview.isPreview && preview.previewDate !== null;
 
   const applyPreviewDate = (value: string) => {
-    if (!DATE_ONLY_REGEX.test(value)) return;
+    if (!isCalendarDate(value)) return;
     const params = new URLSearchParams(window.location.search);
     params.set("previewDate", value);
     // A testing tool: a full reload keeps the fetch/render path identical to a

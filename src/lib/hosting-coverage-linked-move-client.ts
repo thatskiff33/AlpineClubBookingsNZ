@@ -24,6 +24,7 @@
 
 import { formatCents } from "@/lib/utils";
 import { HOSTING_COVERAGE_STATE_KEY_PATTERN } from "@/lib/hosting-coverage-override-client";
+import { isCalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 
 /**
@@ -319,10 +320,8 @@ export function linkedMoveDeclineConsequence(linkedCount: number): string {
 
 export type HostingCoverageLinkedMoveChoice = "MOVE_BOTH" | "LEAVE_UNCOVERED";
 
-const LODGE_NIGHT_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 function isLodgeNight(value: unknown): value is string {
-  return typeof value === "string" && LODGE_NIGHT_PATTERN.test(value);
+  return typeof value === "string" && isCalendarDate(value);
 }
 
 /**

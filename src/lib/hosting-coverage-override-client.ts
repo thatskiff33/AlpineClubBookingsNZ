@@ -10,6 +10,7 @@
 // comparator lives in a module that imports NOTHING precisely so this
 // browser-side path can share it instead of keeping its own copy.
 import { compareOrdinal } from "@/lib/ordinal-order";
+import { isCalendarDate } from "@/lib/club-time";
 
 export interface HostingCoverageStrandedBooking {
   bookingId: string;
@@ -53,8 +54,6 @@ export function hostingCoverageStateKeyOf(digest: string): string {
   return `${HOSTING_COVERAGE_STATE_KEY_VERSION}:${digest}`;
 }
 
-const LODGE_NIGHT_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 /** Fail closed unless the complete typed 409 body is present. */
 export function readHostingCoverageOverridePrompt(
   value: unknown,
@@ -88,7 +87,7 @@ export function readHostingCoverageOverridePrompt(
       !Array.isArray(row.nights) ||
       row.nights.length === 0 ||
       !row.nights.every(
-        (night) => typeof night === "string" && LODGE_NIGHT_PATTERN.test(night),
+        (night) => typeof night === "string" && isCalendarDate(night),
       )
     ) {
       return null;

@@ -1,6 +1,7 @@
 import { createHmac, randomInt, timingSafeEqual } from "crypto";
 import type { NextRequest } from "next/server";
 import { hashActionToken, issueActionToken } from "./action-tokens";
+import { isCalendarDate } from "./club-time";
 import { prisma } from "./prisma";
 import { requireAuthSecret } from "./runtime-config";
 
@@ -149,8 +150,6 @@ export async function confirmDevicePairing(
 // a pairing blob can never be replayed as a grant and vice versa.
 export const PREVIEW_GRANT_TTL_SECONDS = 5 * 60;
 
-const PREVIEW_GRANT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 export interface PreviewGrantPayload {
   /** The authored v2 template to preview (null → the lodge's legacy board, OR a
    * draft preview when `draftNonce` is set). */
@@ -218,7 +217,7 @@ export function decodePreviewGrant(raw: string): PreviewGrantPayload | null {
       (payload.windowStart != null &&
         !(
           typeof payload.windowStart === "string" &&
-          PREVIEW_GRANT_DATE_PATTERN.test(payload.windowStart)
+          isCalendarDate(payload.windowStart)
         ))
     ) {
       return null;

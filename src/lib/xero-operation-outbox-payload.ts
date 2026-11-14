@@ -7,6 +7,7 @@ import {
   parseRefundMethod, readModificationNoteWording, readRefundNoteWording,
   type ModificationNoteWording, type RefundMethod, type RefundNoteWording,
 } from "@/lib/xero-refund-method";
+import { isCalendarDate } from "@/lib/club-time";
 import { readAdditionalCaptureReceiptPayload, XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE, type QueuedAdditionalCaptureReceiptOutboxPayload } from "@/lib/additional-capture-receipt-payload";
 export { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE }; // #3953: a change's card capture's own receipt
 
@@ -535,7 +536,9 @@ export function readQueuedOutboxPayload(
       !Number.isInteger(capturedCents) ||
       capturedCents <= 0 ||
       !capturedOn ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(capturedOn)
+      // Strict on purpose: written from a real charge day, so a non-day is
+      // corruption and would only be refused by Xero later.
+      !isCalendarDate(capturedOn)
     ) {
       return null;
     }

@@ -142,6 +142,7 @@ describe("reading the linked-move offer (#3232)", () => {
       ["no lodge name", { lodgeName: "" }],
       ["no uncovered nights", { uncoveredNights: [] }],
       ["a night that is not a lodge night", { uncoveredNights: ["3 Aug"] }],
+      ["a night that is not a real calendar day", { uncoveredNights: ["2026-02-30"] }],
       ["current arrival missing", { currentCheckIn: undefined }],
       ["proposed departure malformed", { proposedCheckOut: "20/08/2026" }],
       ["fractional price difference", { priceDiffCents: 12.5 }],

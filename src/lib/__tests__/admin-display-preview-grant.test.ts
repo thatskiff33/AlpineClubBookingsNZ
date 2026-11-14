@@ -104,6 +104,15 @@ describe("POST /api/admin/display/preview-grant", () => {
     });
   });
 
+  it("400s a simulated date that is not a real calendar day", async () => {
+    const { POST } = await import("@/app/api/admin/display/preview-grant/route");
+    const res = await POST(
+      await jsonRequest({ templateId: "tpl-1", previewDate: "2026-02-30", previewLodge: "lodge-b" })
+    );
+    expect(res.status).toBe(400);
+    expect(mockResolveOptionalLodge).not.toHaveBeenCalled();
+  });
+
   it("404s an unknown template", async () => {
     mockPrisma.displayTemplate.findUnique.mockResolvedValue(null);
     const { POST } = await import("@/app/api/admin/display/preview-grant/route");
