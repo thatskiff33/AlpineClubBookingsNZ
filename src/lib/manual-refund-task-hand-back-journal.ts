@@ -12,6 +12,7 @@ import {
 import { lockMemberCreditLedger, requireMemberCreditRecipient } from "@/lib/member-credit";
 import { postHandBackPayment, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
+import { JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 
 /**
  * #4516 (Ledger M4d): WHICH MANUAL REFUND TASKS THE MEMBER-MONEY JOURNAL RECORDS AS A HAND-BACK DEBT, and the
@@ -55,6 +56,15 @@ export function isJournalHandBackTask(task: HandBackFacts): boolean {
   if (isOrganiserExtraRacedHandBackTask(task)) return false;
   if (isLateCaptureHandBackTask({ kind: task.kind, reason: task.reason ?? "" })) return false;
   return true;
+}
+
+/**
+ * Why this dismissal is refused, or null. Owner decision, 14 Nov 2026 (#4516, Q6): a journal hand-back is not
+ * dismissed until the four-way dismissal ships, so its debt stays open until it is paid. The completion door asks
+ * this under `lock(1)` and the booking row, before its claim, so a refusal writes nothing.
+ */
+export function journalHandBackDismissRefusal(task: HandBackFacts, resolution: "completed" | "dismissed"): string | null {
+  return resolution === "dismissed" && isJournalHandBackTask(task) ? JOURNAL_HAND_BACK_DISMISS_REFUSAL : null;
 }
 
 /** Whether the completion takes `lock(1)` and the booking row first: a late-capture approval or a journal hand-back. */

@@ -31,11 +31,11 @@ import { settlementWriteRefusal } from "@/lib/manual-refund-task-settlement-refu
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
 import { lockBookingRowForOwnerRead, postRefundObligation, resolveBookingDoorClock, reverseKeptCapture } from "@/lib/member-money/doors";
-import { isJournalHandBackTask, lockCancellationHandBackBeforeClaim, postHandBackCompletion, takesHandBackJournalLocksFirst } from "@/lib/manual-refund-task-hand-back-journal";
+import { journalHandBackDismissRefusal, lockCancellationHandBackBeforeClaim, postHandBackCompletion, takesHandBackJournalLocksFirst } from "@/lib/manual-refund-task-hand-back-journal";
 // #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
-import { editRefundHandBackDismissAfterCancelMessage, JOURNAL_HAND_BACK_DISMISS_REFUSAL, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { editRefundHandBackDismissAfterCancelMessage, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import { recordBankRefundVoidAnswerInTransaction } from "@/lib/bank-refund-void-answer";
 import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import { isCancelCardShortfallTask, isEditRefundHandBackTask, isNonCancellationHandBackTask, refundRequestIdOfHandBack,
@@ -91,9 +91,8 @@ import {
  * member-facing event log would be a claim nothing backs — see `recordedRefund`
  * below. DISMISSED exists for
  * "the member declined it" / "settled another way" and requires a note; it
- * moves no money and writes no allocation. A bank or cash hand-back the
- * journal holds as a debt (`isJournalHandBackTask`) is refused it for now
- * (#4516, owner decision 14 Nov 2026). For an `EDIT_FINANCIAL_REVIEW` task
+ * moves no money and writes no allocation (#4516: refused for now on a journal
+ * hand-back, `journalHandBackDismissRefusal`). For an `EDIT_FINANCIAL_REVIEW` task
  * DISMISSED carries its #2797 meaning: reviewed, and THIS SYSTEM MOVED NO MONEY
  * for that occurrence — which is a real decision, and is why it is not the same
  * thing as an unknown amount. The required note is what says which decision it
@@ -121,18 +120,10 @@ export async function resolveManualRefundTask(
 ) {
   const { taskId, resolution, note, actingMemberId } = input;
   const trimmedNote = normaliseManualPaymentNote(note);
-  if (resolution === "dismissed" && !trimmedNote) {
-    throw new ManualBookingPaymentError(
-      "Say why this refund is being dismissed — a note is required.",
-      400
-    );
-  }
+  if (resolution === "dismissed" && !trimmedNote) throw new ManualBookingPaymentError("Say why this refund is being dismissed — a note is required.", 400);
   const confirmedAmountCents = resolution === "completed" ? input.confirmedAmountCents : null;
   const requestedDirection = resolution === "completed" ? (input.direction ?? null) : null;
-  if (
-    confirmedAmountCents !== null &&
-    !isNonNegativeIntegerCents(confirmedAmountCents)
-  ) {
+  if (confirmedAmountCents !== null && !isNonNegativeIntegerCents(confirmedAmountCents)) {
     // `INV-MONEY-001`: integer cents, non-negative, through the ONE predicate
     // (`INV-SSOT`, #3030) rather than a fourth inline spelling of the rule. The
     // DB `ManualRefundTask_amount_nonnegative` CHECK says the same; this refuses
@@ -202,8 +193,7 @@ export async function resolveManualRefundTask(
       throw new ManualBookingPaymentError(editRefundHandBackDismissAfterCancelMessage(task.booking), 409); // #3949: names the organiser on a group child
     }
     const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); // #4042
-    // #4516 (owner decision, 14 Nov 2026): a bank or cash hand-back the journal holds as a debt is not dismissed until the four-way dismissal ships. Refused under lock(1) and the booking row, before the claim, so nothing is written.
-    if (resolution === "dismissed" && isJournalHandBackTask(task)) throw new ManualBookingPaymentError(JOURNAL_HAND_BACK_DISMISS_REFUSAL, 409);
+    const journalRefusal = journalHandBackDismissRefusal(task, resolution); if (journalRefusal) throw new ManualBookingPaymentError(journalRefusal, 409); // #4516: under lock(1) and the booking row, before the claim
     const laterRemoval = resolution === "completed" && input.refuseIfGuestRemovedSinceRaised === true ? await editReviewLaterRemovalRefusal(tx, task, resolution) : null; if (laterRemoval) throw new ManualBookingPaymentError(laterRemoval, 409); // #4343: the clean-up's opt-in, under lock(1), which a consent removal also holds; an officer is warned instead (owner, 24 Oct)
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
@@ -434,8 +424,7 @@ export async function resolveManualRefundTask(
         // #3639: the same persist-the-debt-first rule for an approved late
         // capture, under the webhook's own Stripe prefix.
         else if (settlementRoute.kind === "late-capture-refund") {
-          // #4516 (M4d): a keep recorded on an earlier dismissal is reversed before this approval's debt posts.
-          if (task.lateCaptureApprovalIntentId) await reverseKeptCapture(tx, journal, { bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, actorMemberId: actingMemberId });
+          if (task.lateCaptureApprovalIntentId) await reverseKeptCapture(tx, journal, { bookingId: task.bookingId, paymentIntentId: task.lateCaptureApprovalIntentId, actorMemberId: actingMemberId }); // #4516 (M4d): an earlier keep, reversed before this debt posts
           await persistLateCaptureApprovalRefundDebt({
             bookingId: task.bookingId,
             route: settlementRoute,
@@ -553,8 +542,7 @@ export async function resolveManualRefundTask(
       });
     }
     if (settlement && settlementRoute?.kind === "stripe-refund" && settlementRoute.refundCents > 0) await postRefundObligation(tx, journal, { bookingId: task.bookingId, scope: "review", id: task.id, amountCents: settlementRoute.refundCents, origin: "OFFICER", actorMemberId: actingMemberId, debtorRead: "booking-row" }); // #4516 R05: after R21 and any credit write (member key, then Payment row, INV-LOCK-002)
-    await postHandBackCompletion(tx, journal, { task, route: settlementRoute, settled: settlement !== null, actingMemberId, // #4516 (M4d): R14, after the allocation
-      inCash: input.resolution === "completed" && input.handedBackInCash === true, fundingTransactionIds: handBackFunding });
+    await postHandBackCompletion(tx, journal, { task, route: settlementRoute, settled: settlement !== null, actingMemberId, inCash: input.resolution === "completed" && input.handedBackInCash === true, fundingTransactionIds: handBackFunding }); // #4516 (M4d): R14, after the allocation
     const chargeInvoice = settlement ? await queueEditReviewChargeInvoiceInTransaction({ bookingId: task.bookingId, route: settlementRoute, hasIssuedXeroInvoice, createdByMemberId: actingMemberId, store: tx }) : null; // #3947: the invoice route's invoice, queued LAST - its anchor key after every other lock
     await recordManualRefundTaskClosureAudit({
       task,
