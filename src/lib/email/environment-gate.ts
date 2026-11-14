@@ -75,6 +75,7 @@
 
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import {
   describeDeliveryDecision,
   resolveDeliveryPolicy,
@@ -83,20 +84,6 @@ import {
   type DeliveryReplayability,
 } from "@/lib/environment-delivery-policy";
 import type { EmailDeliveryBlockReason } from "@prisma/client";
-
-/**
- * The email retry cron's `MAX_ATTEMPTS`, and the operator review queue's
- * `attempts >= 3` threshold. One number serving both, and they are the same
- * number by design: at the ceiling a row leaves the retry query and enters the
- * review queue.
- *
- * DUPLICATED RATHER THAN IMPORTED, deliberately: `cron-email-retry.ts` imports
- * `@/lib/email` for its failure alert, so importing its constant here would make
- * the mailer depend on the cron that depends on the mailer.
- * `email-retry-attempt-ceiling` in the boundary census pins the three copies
- * against each other so they cannot drift.
- */
-const EMAIL_RETRY_CEILING = 3;
 
 /** How a blocked-environment reason is persisted on the mail log. */
 const BLOCK_REASON_COLUMN: Record<DeliveryBlockReason, EmailDeliveryBlockReason> = {
@@ -244,7 +231,7 @@ export async function resolveEmailEnvironmentGate(params: {
               */
               ...(params.bodyRetainedForReplay
                 ? {}
-                : { attempts: EMAIL_RETRY_CEILING }),
+                : { attempts: EMAIL_RETRY_MAX_ATTEMPTS }),
             },
       });
     } catch (err) {

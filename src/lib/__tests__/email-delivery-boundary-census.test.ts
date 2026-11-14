@@ -663,47 +663,45 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
   });
 
   /**
-   * The retry ceiling is one number in three files, and they must agree (#3035).
+   * The retry ceiling is one constant, and every reader imports it (#3035).
    *
-   * The email retry cron stops at `MAX_ATTEMPTS`; the operator review queue
-   * selects `attempts >= EMAIL_FAILURE_MAX_ATTEMPTS`; and the mail gate writes a
-   * body-less blocked row AT the ceiling so it leaves the first query and enters
-   * the second. If those three drift the row lands in NEITHER — which is exactly
-   * the state this issue found and fixed, where a blocked sensitive-template row
-   * sat at `attempts: 1`, below the review threshold and outside the retry query,
-   * visible nowhere at all.
+   * The email retry cron stops at it; the operator review queue selects
+   * `attempts >=` it; the mail gate writes a body-less blocked row AT it so the
+   * row leaves the first query and enters the second; and a waitlist offer's
+   * email reads as exhausted at it. If any of those held its own number, a row
+   * could land in neither queue — the state #3035 found, where a blocked
+   * sensitive-template row sat at `attempts: 1`, visible nowhere at all.
    *
-   * They are three separate constants rather than one import because
-   * `cron-email-retry.ts` imports `@/lib/email` for its failure alert, so the
-   * mailer importing the cron's constant would be a cycle. This is the guard that
-   * makes the duplication safe.
+   * `EMAIL_RETRY_MAX_ATTEMPTS` in `email/retry-selection.ts` is that constant.
+   * The module has no runtime imports, so the mailer can import it without the
+   * cycle through `cron-email-retry.ts` that once forced copies (INV-SSOT).
    */
-  it("keeps the retry ceiling identical in the cron, the gate and the review queue", () => {
-    const declarations: [string, RegExp][] = [
-      ["src/lib/cron-email-retry.ts", /const MAX_ATTEMPTS = (\d+);/],
-      ["src/lib/email/environment-gate.ts", /const EMAIL_RETRY_CEILING = (\d+);/],
-      [
-        "src/lib/email-failure-review.ts",
-        /const EMAIL_FAILURE_MAX_ATTEMPTS = (\d+);/,
-      ],
-    ];
-    const values = declarations.map(([file, pattern]) => {
-      const match = readFileSync(
-        path.resolve(process.cwd(), file),
-        "utf8",
-      ).match(pattern);
-      // Anti-vacuity: an unmatched pattern would otherwise contribute `undefined`
-      // and a set of one, which passes.
-      expect(match?.[1], `${file} no longer declares its attempt ceiling`).toBeDefined();
-      return `${file}=${match?.[1]}`;
-    });
+  const EMAIL_RETRY_CEILING_MODULE = "src/lib/email/retry-selection.ts";
+  const EMAIL_RETRY_CEILING_READERS = [
+    "src/lib/cron-email-retry.ts",
+    "src/lib/email-failure-review.ts",
+    "src/lib/email/environment-gate.ts",
+    "src/lib/waitlist-offer-email-visibility.ts",
+  ];
+
+  it("declares the email retry ceiling once, and every reader imports it", () => {
+    // The names the copies went by before they were folded into one constant:
+    // a numeric literal under any of them is a second ceiling.
+    const ceilingDeclaration =
+      /\bconst\s+(?:\w*EMAIL\w*(?:ATTEMPTS|CEILING)|MAX_ATTEMPTS|\w*RETRY_CEILING)\s*=\s*\d/;
+    expect(filesMatching(ceilingDeclaration)).toEqual([EMAIL_RETRY_CEILING_MODULE]);
+
+    const importsCeiling =
+      /import\s*\{[^}]*\bEMAIL_RETRY_MAX_ATTEMPTS\b[^}]*\}\s*from\s*"@\/lib\/email\/retry-selection"/;
+    const readersWithoutImport = EMAIL_RETRY_CEILING_READERS.filter(
+      (file) => !importsCeiling.test(stripComments(readRepoFile(file))),
+    );
     expect(
-      new Set(values.map((value) => value.split("=")[1])).size,
-      `the retry ceiling disagrees across ${values.join(", ")}. A body-less ` +
-        "blocked row is written AT the ceiling so it drops out of the retry query " +
-        "and lands in the operator review queue; if these three numbers differ it " +
-        "lands in neither and the message is silently lost (INV-CONFIG-004).",
-    ).toBe(1);
+      readersWithoutImport,
+      "These modules decide whether an email row is retrying or exhausted, so " +
+        `each must import EMAIL_RETRY_MAX_ATTEMPTS from ${EMAIL_RETRY_CEILING_MODULE} ` +
+        "rather than hold its own number (INV-SSOT, INV-CONFIG-004).",
+    ).toEqual([]);
   });
 
   /**

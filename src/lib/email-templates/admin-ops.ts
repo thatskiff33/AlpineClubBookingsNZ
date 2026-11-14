@@ -229,7 +229,7 @@ export function websiteContactTemplate(data: {
 
 /**
  * `admin-email-failure`, as the retry cron sends it: a member's email has now
- * failed MAX_ATTEMPTS times and will not be tried again.
+ * failed EMAIL_RETRY_MAX_ATTEMPTS times and will not be tried again.
  *
  * This is the shape the registry's default body describes, which is why it is
  * the one `REGISTRY_KEY_RENDERERS` maps the key to. Moved out of
