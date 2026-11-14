@@ -1,5 +1,13 @@
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Fakes below model a correctly locked caller: the caller-held lock checks
+// (#4929) are proven against PostgreSQL in bed-allocation-lock-held.realdb.test.ts.
+vi.mock("@/lib/global-lock-held", () => ({ assertGlobalLockHeld: vi.fn() }));
+vi.mock("@/lib/lodge-capacity-lock", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity-lock")),
+  assertLodgeCapacityLockHeld: vi.fn(),
+}));
 import { parseDateOnly } from "@/lib/date-only";
 
 
@@ -140,6 +148,8 @@ function buildDb(overrides: Record<string, unknown> = {}) {
       update: vi.fn().mockResolvedValue({ id: "bed-1" }),
     },
     lodgeRoom: {
+      // The lock-held entry's lodge-key read (#4929).
+      findUnique: vi.fn().mockResolvedValue({ lodgeId: "lodge-1" }),
       findFirst: vi.fn().mockResolvedValue({ id: "room-1" }),
       delete: vi.fn().mockResolvedValue({ id: "room-1" }),
       update: vi.fn().mockResolvedValue({ id: "room-1" }),
@@ -381,6 +391,7 @@ describe("chokepoint 5 — bed and room admin guards", () => {
           deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         lodgeRoom: {
+          findUnique: vi.fn().mockResolvedValue({ lodgeId: "lodge-1" }),
           findFirst: vi.fn().mockResolvedValue({ id: "room-1" }),
           delete: vi.fn().mockRejectedValue(
             p2003(

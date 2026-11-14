@@ -18,6 +18,8 @@ import {
   type BedAllocationDb,
 } from "@/lib/bed-allocation-admin-contract";
 import type { BedAllocationDateRange } from "@/lib/bed-allocation-date-range";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 /**
  * Whether an admin has confirmed (locked) the bed allocation for a booking.
@@ -100,6 +102,15 @@ function buildApproveBedAllocationsWhere(
 export async function approveBedAllocationsWithLocksHeld(
   input: ApproveBedAllocationsInput & { db: BedAllocationDb },
 ) {
+  await assertGlobalLockHeld(input.db, "approveBedAllocationsWithLocksHeld");
+  const lockLodgeIds = input.lodgeId ? [input.lodgeId] : (await input.db.bedAllocation.findMany({
+    where: buildApproveBedAllocationsWhere(input),
+    select: { room: { select: { lodgeId: true } } },
+  })).map((allocation) => allocation.room.lodgeId);
+  for (const lodgeId of new Set(lockLodgeIds)) {
+    await assertLodgeCapacityLockHeld(input.db, lodgeId, "approveBedAllocationsWithLocksHeld");
+  }
+
   const where = buildApproveBedAllocationsWhere(input);
 
   return input.db.bedAllocation.updateMany({

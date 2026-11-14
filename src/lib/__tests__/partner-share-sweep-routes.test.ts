@@ -12,6 +12,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
     member: {
       findUnique: vi.fn(),
@@ -227,6 +228,7 @@ function putMember(id: string, body: Record<string, unknown>) {
 function mockTransaction() {
   vi.mocked(prisma.$transaction).mockImplementation((async (op: any) =>
     op({
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: prisma.$executeRaw,
       member: {
         findUnique: prisma.member.findUnique,

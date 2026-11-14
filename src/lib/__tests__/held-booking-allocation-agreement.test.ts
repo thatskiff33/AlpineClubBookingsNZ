@@ -1,6 +1,14 @@
 import { BookingStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 
+// Fakes below model a correctly locked caller: the caller-held lock checks
+// (#4929) are proven against PostgreSQL in bed-allocation-lock-held.realdb.test.ts.
+vi.mock("@/lib/global-lock-held", () => ({ assertGlobalLockHeld: vi.fn() }));
+vi.mock("@/lib/lodge-capacity-lock", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity-lock")),
+  assertLodgeCapacityLockHeld: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Two-paths agreement: whole-lodge-held bookings get NO bed allocations
 // (ADR-001 bed-allocation short-circuit, issue #2285).

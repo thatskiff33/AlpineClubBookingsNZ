@@ -68,6 +68,7 @@ vi.mock("@/lib/booking-ledger-modification-sync", () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     // #4217: the ledger writers lock the Payment row first.
     $executeRaw: vi.fn(async () => 0),
     $transaction: (...args: unknown[]) => {
@@ -504,6 +505,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
   */
   const fenceBooking = recordingBookingDouble(async () => booking);
   return {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
     // F1 (#1887): the date path now reads the applied-credit ledger for every
     // pre-payment modification (gated on status, not the payment mirror) so the

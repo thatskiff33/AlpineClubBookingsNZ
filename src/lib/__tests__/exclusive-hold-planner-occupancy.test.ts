@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     $transaction: mocks.transaction,
     $executeRaw: mocks.executeRaw,
   },
@@ -263,6 +264,7 @@ function holdBooking(overrides: AnyRow = {}) {
  */
 function buildBoardDb(bookings: AnyRow[], rooms: AnyRow[] = [ROOM]) {
   return {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     $executeRaw: mocks.executeRaw,
     bedAllocationSettings: {
       findUnique: vi.fn().mockResolvedValue({
@@ -1100,6 +1102,7 @@ describe("planner 2 — the lifecycle auto-allocator", () => {
   function buildLifecycleDb(bookings: AnyRow[], overrides: AnyRow = {}) {
     const reconciled = bookings.find((row) => row.id === "booking-ord");
     const db: AnyRow = {
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       clubModuleSettings: {
         findUnique: vi.fn().mockResolvedValue({ bedAllocation: true }),
       },

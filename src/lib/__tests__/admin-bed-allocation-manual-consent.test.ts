@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
+// Fakes below model a correctly locked caller: the caller-held lock checks
+// (#4929) are proven against PostgreSQL in bed-allocation-lock-held.realdb.test.ts.
+vi.mock("@/lib/global-lock-held", () => ({ assertGlobalLockHeld: vi.fn() }));
+vi.mock("@/lib/lodge-capacity-lock", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity-lock")),
+  assertLodgeCapacityLockHeld: vi.fn(),
+}));
+
 // #2307, owner decision D-12 — the WRITE half, at the manual chokepoint.
 //
 // Every READ surface already filters unconsented member guests out with
@@ -82,6 +90,8 @@ function buildDb(consentStatus: MemberGuestConsentStatus | null) {
         room: { id: "room-1", name: "Room One", active: true, lodgeId: "lodge-1" },
       }),
     },
+    // The placement chokepoint's lodge-key read (#4929).
+    lodgeRoom: { findUnique: vi.fn().mockResolvedValue({ lodgeId: "lodge-1" }) },
     booking: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue({
