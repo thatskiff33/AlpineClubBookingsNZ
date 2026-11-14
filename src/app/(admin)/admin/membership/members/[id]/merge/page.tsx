@@ -1,4 +1,5 @@
 "use client";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
 import { use, useCallback, useEffect, useMemo, useState } from "react";
@@ -10,11 +11,8 @@ import { BackLink } from "@/components/admin/back-link";
 import { Input } from "@/components/ui/input";
 import { MemberPicker, type PickedMember } from "@/components/admin/member-picker";
 import { useClubTime } from "@/components/club-time-provider";
-import {
-  formatMergeFieldValue,
-  mergeFieldValueKind,
-  type MergeFieldValueKind,
-} from "@/lib/member-merge-field-kinds";
+import { formatMergeFieldValue } from "@/lib/member-merge-field-kinds";
+import { rowValueKind, type MergePreview } from "./merge-preview";
 
 import { adminHref, adminLink } from "@/lib/admin-hubs";
 type MemberBasic = {
@@ -26,51 +24,6 @@ type MemberBasic = {
   active?: boolean;
   archivedAt?: string | null;
 };
-
-type FieldMergeRow = {
-  field: string;
-  master: unknown;
-  loser: unknown;
-  result: unknown;
-  source: string;
-  // The server stamps this on every row (#2860). Optional here only so a page
-  // served by a newer build can still render a preview built by an older one
-  // mid-deploy; `rowValueKind` re-derives it from the same declaration.
-  kind?: MergeFieldValueKind;
-};
-
-type MergePreview = {
-  masterId: string;
-  loserId: string;
-  masterName: string;
-  loserName: string;
-  confirmationPhrase: string;
-  previewToken: string;
-  fieldMerge: FieldMergeRow[];
-  relationMoves: { model: string; count: number }[];
-  collisions: { model: string; resolution: string; count: number }[];
-  blockers: { code: string; label: string; count?: number }[];
-  warnings: string[];
-};
-
-/**
- * What this row's values mean (#2860). The row carries it; the field-name
- * lookup is the mid-deploy fallback described on `FieldMergeRow.kind`. This
- * screen never infers a date's meaning from its runtime type — an instant and a
- * calendar day are the same `Date`, and reading one as the other dates it a day
- * early for half of every New Zealand day, immediately before an irreversible
- * merge.
- *
- * This REPLACES the `display()` helper that used to live here. #2684 had just
- * moved its `value instanceof Date` arm off a hand-written truncation and onto
- * `formatDateOnly`, which fixed the spelling; the arm itself is the defect,
- * because no runtime type can tell the two kinds apart. The canonical encoder is
- * still what renders a calendar day — one module across, in
- * `formatMergeFieldValue` — so nothing #2684 centralised is given back.
- */
-function rowValueKind(row: FieldMergeRow): MergeFieldValueKind {
-  return row.kind ?? mergeFieldValueKind(row.field);
-}
 
 export default function MemberMergePage({
   params,
@@ -99,6 +52,7 @@ export default function MemberMergePage({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState("");
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
 
   // Load the master member.
   useEffect(() => {
@@ -174,6 +128,12 @@ export default function MemberMergePage({
     setError("");
   }, []);
 
+  // Every action failure goes through here so it always asks for attention.
+  const reportFailure = useCallback((message: string) => {
+    setError(message);
+    setErrorAttentionKey((key) => key + 1);
+  }, []);
+
   const runPreview = useCallback(async () => {
     if (!loser) return;
     setLoadingPreview(true);
@@ -186,33 +146,46 @@ export default function MemberMergePage({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "Failed to build the merge preview.");
+        reportFailure(data.error || "Failed to build the merge preview.");
         setPreview(null);
         return;
       }
       setPreview(data as MergePreview);
+    } catch {
+      // A network failure is a failed action too, not a click that did nothing.
+      reportFailure("Failed to build the merge preview.");
+      setPreview(null);
     } finally {
       setLoadingPreview(false);
     }
-  }, [loser, masterId]);
+  }, [loser, masterId, reportFailure]);
 
   const execute = useCallback(async () => {
     if (!preview) return;
     setExecuting(true);
     setError("");
     try {
-      const res = await fetchWithRecentAuth(`/api/admin/members/${masterId}/merge`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          loserId: preview.loserId,
-          previewToken: preview.previewToken,
-          confirmationText,
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithRecentAuth(`/api/admin/members/${masterId}/merge`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            loserId: preview.loserId,
+            previewToken: preview.previewToken,
+            confirmationText,
+          }),
+        });
+      } catch {
+        // No response, so the outcome is unknown: say so rather than "failed".
+        reportFailure(
+          "The merge could not be confirmed. Check your connection and the members' records, then try again.",
+        );
+        return;
+      }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "The merge could not be completed.");
+        reportFailure(data.error || "The merge could not be completed.");
         return;
       }
       toast.success("Members merged. The duplicate has been deleted.");
@@ -220,7 +193,7 @@ export default function MemberMergePage({
     } finally {
       setExecuting(false);
     }
-  }, [preview, masterId, confirmationText, router]);
+  }, [preview, masterId, confirmationText, router, reportFailure]);
 
   const swap = useCallback(() => {
     if (!loser) return;
@@ -350,11 +323,12 @@ export default function MemberMergePage({
         </Button>
       )}
 
-      {error && (
-        <div className="mt-4 rounded-lg border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11">
-          {error}
-        </div>
-      )}
+      <FocusedActionError
+        id="member-merge-error"
+        error={error}
+        attentionKey={errorAttentionKey}
+        className="mt-4"
+      />
 
       {/* Preview panel */}
       {preview && (
