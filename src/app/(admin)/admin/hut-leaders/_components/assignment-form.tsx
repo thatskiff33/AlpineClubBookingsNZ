@@ -55,6 +55,11 @@ export interface AssignmentSummary {
   nights: number;
   fills: number;
   conflicts: ConflictInfo[];
+  /**
+   * The page could not load the existing assignments (#4961), so `conflicts`
+   * is empty because nothing was compared, not because nothing clashes.
+   */
+  overlapCheckUnavailable?: boolean;
 }
 
 type MemberTab = "staying" | "any";
