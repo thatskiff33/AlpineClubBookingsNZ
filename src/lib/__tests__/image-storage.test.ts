@@ -4,7 +4,9 @@ import {
   ALLOWED_IMAGE_EXTS,
   ALLOWED_IMAGE_MIME,
   IMAGES_ROOT,
+  imageContentTypeForExt,
   imagePublicUrl,
+  isCurrentDerivative,
   isSafeDirectoryName,
   isStorageUnavailableCode,
   resolveInImagesRoot,
@@ -25,6 +27,29 @@ describe("image-storage", () => {
       for (const ext of [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]) {
         expect(ALLOWED_IMAGE_EXTS.has(ext)).toBe(true);
       }
+    });
+
+    // #5087 review (INV-SSOT): an allowed extension with no served content
+    // type would be stored but served as application/octet-stream.
+    it("gives every allowed extension a content type, and allows exactly those MIME types", () => {
+      for (const ext of ALLOWED_IMAGE_EXTS) {
+        expect(imageContentTypeForExt(ext)).not.toBeNull();
+      }
+      expect([...ALLOWED_IMAGE_MIME].sort()).toEqual([
+        "image/avif",
+        "image/gif",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+      ]);
+    });
+  });
+
+  describe("isCurrentDerivative", () => {
+    it("treats a copy as current only when it is no older than its original", () => {
+      expect(isCurrentDerivative({ mtimeMs: 2000 }, 1000)).toBe(true);
+      expect(isCurrentDerivative({ mtimeMs: 1000 }, 1000)).toBe(true);
+      expect(isCurrentDerivative({ mtimeMs: 999 }, 1000)).toBe(false);
     });
   });
 
