@@ -54,6 +54,8 @@ import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import { buildAppThemeTokens } from "@/lib/theme/app-tokens";
 import { must } from "@/lib/indexed-access";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionFailure } from "@/hooks/use-action-failure";
+import { FocusedActionError } from "@/components/focused-action-error";
 import {
   AdminForbiddenSaveNotice,
   AdminViewOnlySectionBanner,
@@ -221,7 +223,8 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
   const [step, setStep] = useState<StepId>("colours");
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
-  const [error, setError] = useState("");
+  // Save and logo-upload failures: each one takes focus, a repeat included.
+  const failure = useActionFailure();
   const [savedMessage, setSavedMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -346,7 +349,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
 
   async function save(completeSetup: boolean) {
     setSaving(true);
-    setError("");
+    failure.clear();
     setSavedMessage("");
     setForbidden(false);
 
@@ -390,7 +393,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       router.refresh();
       return true;
     } catch (saveError) {
-      setError(
+      failure.fail(
         saveError instanceof Error
           ? saveError.message
           : "Failed to save site style",
@@ -428,7 +431,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
     setRawCss(DEFAULT_CLUB_THEME_VALUES.rawCss);
     setCompletedAt(null);
     setSavedMessage("");
-    setError("");
+    failure.clear();
   }
 
   /**
@@ -437,9 +440,9 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
    * whole file as base64 and shipped it on every public page render.
    */
   async function uploadLogo(file: File) {
-    setError("");
+    failure.clear();
     if (file.size > MAX_LOGO_UPLOAD_BYTES) {
-      setError("Logo must be 2MB or smaller.");
+      failure.fail("Logo must be 2MB or smaller.");
       return;
     }
 
@@ -461,13 +464,13 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       }
 
       if (!response.ok) {
-        setError(apiErrorMessageFromBody(payload, "Logo could not be uploaded."));
+        failure.fail(apiErrorMessageFromBody(payload, "Logo could not be uploaded."));
         return;
       }
 
       const logoUrl = (payload as { logoUrl?: string } | null)?.logoUrl;
       if (!logoUrl) {
-        setError("Logo could not be uploaded.");
+        failure.fail("Logo could not be uploaded.");
         return;
       }
 
@@ -477,7 +480,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
       setSavedMessage("Logo uploaded. Save to apply it to the site.");
     } catch {
       if (generation === logoGenerationRef.current) {
-        setError("Logo could not be uploaded.");
+        failure.fail("Logo could not be uploaded.");
       }
     } finally {
       if (generation === logoGenerationRef.current) {
@@ -762,7 +765,7 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                           // response that lands afterwards.
                           logoGenerationRef.current += 1;
                           setUploadingLogo(false);
-                          setError("");
+                          failure.clear();
                           setValues((current) => ({
                             ...current,
                             logoUrl: null,
@@ -971,11 +974,12 @@ export function SiteStyleWizard({ initialTheme }: SiteStyleWizardProps) {
                 </div>
               )}
 
-              {error && (
-                <div className="rounded-md border border-danger-6 bg-danger-3 p-4 text-sm text-danger-11">
-                  {error}
-                </div>
-              )}
+              <FocusedActionError
+                id="site-style-action-error"
+                error={failure.error}
+                attentionKey={failure.attentionKey}
+                className="p-4"
+              />
               {savedMessage && (
                 <div className="rounded-md border border-success-6 bg-success-3 p-4 text-sm text-success-11">
                   {savedMessage}

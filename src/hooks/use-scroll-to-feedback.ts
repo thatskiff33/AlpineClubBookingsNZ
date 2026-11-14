@@ -61,10 +61,10 @@ import {
  * next to the fact each excludes (`INV-SSOT-001`).
  *
  * WHAT THE CENSUS DOES NOT HOLD, stated here rather than left to be inferred
- * from "the one home": a bare effect-driven `.focus()` passes it, and four
+ * from "the one home": a bare effect-driven `.focus()` passes it, and three
  * admin surfaces still hand-roll their attention that way —
- * `hut-leaders/page.tsx` (failure, twice), `xero/setup/xero-wizard-steps.tsx`
- * (success), `integration-wizard/integration-wizard.tsx` (step transition,
+ * `hut-leaders/page.tsx` (failure, twice),
+ * `integration-wizard/integration-wizard.tsx` (step transition,
  * with its own arrival-detection ref) and `fees/_components/hut-fees-section.tsx`
  * (the copy notice, with a hand-rolled counter). They are not excluded, they
  * are unconverted. A census over every effect-driven focus was measured and

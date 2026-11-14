@@ -20,6 +20,8 @@ import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import { MappingsPanel } from "../_components/mappings-panel";
 import { SetupPanels } from "../_components/setup-panels";
 import { XERO_WEBHOOK_STATE_CHANGED_EVENT } from "../_components/webhook-amber-badge";
@@ -91,7 +93,12 @@ export function WebhooksStep({
   const [webhookKey, setWebhookKey] = useState("");
   const [saving, setSaving] = useStepSaving(helpers);
   const [verifying, setVerifying] = useState(false);
-  const [error, setError] = useState("");
+  const {
+    error,
+    attentionKey: errorAttention,
+    fail: failAction,
+    clear: clearError,
+  } = useActionFailure();
   const [notice, setNotice] = useState("");
   const cancelledRef = useRef(false);
 
@@ -99,7 +106,7 @@ export function WebhooksStep({
     const value = webhookKey.trim();
     if (!value) return;
     setSaving(true);
-    setError("");
+    clearError();
     setNotice("");
     try {
       const res = await fetchWithRecentAuth(CREDENTIALS_ENDPOINT, {
@@ -122,17 +129,17 @@ export function WebhooksStep({
       // A key save/replace re-arms verification — refresh any mounted badge.
       window.dispatchEvent(new Event(XERO_WEBHOOK_STATE_CHANGED_EVENT));
     } catch (saveError) {
-      setError(
+      failAction(
         saveError instanceof Error ? saveError.message : "Failed to save.",
       );
     } finally {
       setSaving(false);
     }
-  }, [helpers, webhookKey]);
+  }, [clearError, failAction, helpers, webhookKey]);
 
   const verify = useCallback(async () => {
     setVerifying(true);
-    setError("");
+    clearError();
     setNotice("");
     cancelledRef.current = false;
     try {
@@ -164,11 +171,11 @@ export function WebhooksStep({
           return;
         }
       }
-      setError(
+      failAction(
         "No verification ping received yet. In Xero, open your webhook and use Save/Send to trigger the intent-to-receive check, then Verify again. You can also Skip for now and finish this later.",
       );
     } catch (verifyError) {
-      setError(
+      failAction(
         verifyError instanceof Error
           ? verifyError.message
           : "Verification failed.",
@@ -176,7 +183,7 @@ export function WebhooksStep({
     } finally {
       setVerifying(false);
     }
-  }, [helpers]);
+  }, [clearError, failAction, helpers]);
 
   return (
     <div className="space-y-4">
@@ -275,13 +282,11 @@ export function WebhooksStep({
               already populated is dropped by some SR/browser pairings — AGENTS.md
               live-region rule, matching CredentialsStep). The styled box exists
               only when there is a message, so the empty region takes no space. */}
-          <div role="alert">
-            {error ? (
-              <div className="rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
-                {error}
-              </div>
-            ) : null}
-          </div>
+          <FocusedActionError
+            id="xero-wizard-webhook-error"
+            error={error}
+            attentionKey={errorAttention}
+          />
           <div role="status">
             {verifying ? (
               <div className="flex items-start gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">
