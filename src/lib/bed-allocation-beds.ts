@@ -27,7 +27,6 @@ import {
   lockRoomForBunkGroup,
   normalizeBunkGroup,
 } from "@/lib/bed-allocation-bunk-pairing";
-import { resolveBedLodgeIdForLock } from "@/lib/bed-allocation-placement";
 import { assertGlobalLockHeld } from "@/lib/global-lock-held";
 import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
@@ -171,8 +170,12 @@ export async function updateBedAllocationBedWithLocksHeld(input: {
   today: Date;
 }): Promise<LodgeBed> {
   await assertGlobalLockHeld(input.db, "updateBedAllocationBedWithLocksHeld");
-  const lockKey = await resolveBedLodgeIdForLock(input.id, input.db);
-  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "updateBedAllocationBedWithLocksHeld");
+  // Key-only lookup, the same projection the self-wrapped writer locks by.
+  const bedKey = await input.db.lodgeBed.findUnique({
+    where: { id: input.id },
+    select: { room: { select: { lodgeId: true } } },
+  });
+  if (bedKey?.room.lodgeId) await assertLodgeCapacityLockHeld(input.db, bedKey.room.lodgeId, "updateBedAllocationBedWithLocksHeld");
 
   const touchesBunk =
     input.bedType !== undefined || input.bunkGroup !== undefined;
@@ -435,8 +438,12 @@ export async function deleteBedAllocationBedWithLocksHeld(input: {
   db: BedAllocationDb;
 }) {
   await assertGlobalLockHeld(input.db, "deleteBedAllocationBedWithLocksHeld");
-  const lockKey = await resolveBedLodgeIdForLock(input.id, input.db);
-  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey, "deleteBedAllocationBedWithLocksHeld");
+  // Key-only lookup, the same projection the self-wrapped writer locks by.
+  const bedKey = await input.db.lodgeBed.findUnique({
+    where: { id: input.id },
+    select: { room: { select: { lodgeId: true } } },
+  });
+  if (bedKey?.room.lodgeId) await assertLodgeCapacityLockHeld(input.db, bedKey.room.lodgeId, "deleteBedAllocationBedWithLocksHeld");
 
   const db = input.db;
   await assertNoFutureBedAllocations({
