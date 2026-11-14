@@ -552,12 +552,15 @@ a retry key from the current refund watermark or current set of voids.
 
 M13 (#4525) ships the first role, `PRIMARY_BOOKING_INVOICE`, as an observer.
 `createXeroInvoiceForBooking` still sends its own lines; the pure
-`planPrimaryBookingInvoice` builds the same lines with the same builders and
-compares them in cents with the booking's posted charge legs. Stay lines must
+`planPrimaryBookingInvoice` builds the same lines through the sender's one
+composition, `buildPrimaryInvoiceLines`, and compares them in cents with the
+booking's posted charge legs. Stay lines must
 equal the stay component's live gross, the change-fee line the live fee
 components', and the total what is covered; otherwise the manifest records
 `CONFLICT` (`STAY_CENTS`, `FEE_CENTS` or `COMPONENT_UNUSABLE`) and covers
-nothing. The manifest is written after the invoice link, in its own short
+nothing. A covered plan also becomes `CONFLICT` when the
+invoice Xero returns bills other stay or fee cents than were planned, as a
+replayed create's original invoice can. The manifest is written after the invoice link, in its own short
 transaction, under the invoice's existing correlation key
 (`buildXeroBookingInvoiceCorrelationKey`): the first row
 wins, and a failure is logged without changing the send or its operation. A
