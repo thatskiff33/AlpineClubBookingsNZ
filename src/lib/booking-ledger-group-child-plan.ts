@@ -73,6 +73,8 @@ export type GroupChildSettlement = {
   amountCents: number;
   stripePaymentIntentId: string | null;
   refundPlan: unknown;
+  /** #4851: the plan's refund was closed on Stuck States as paid by bank (`legacyGroupRefundPaidByBank`). */
+  refundPaidByBank: boolean;
 };
 
 /** One child of the organiser's booking that the organiser settled, as the settle flipped it. */

@@ -1625,7 +1625,7 @@ layer decides three things once, so no form has to:
 
 The committee page's **Add / Edit Role** form is the worked example: its
 schema module is `src/lib/forms/committee-role-schema.ts`, and its form is
-`src/app/(admin)/admin/committee/_components/committee-role-form.tsx`.
+`src/app/(admin)/admin/membership/committee/_components/committee-role-form.tsx`.
 
 ### Building a form
 
@@ -1870,7 +1870,7 @@ establishes:
   census does and does not hold are written out ONCE, in that module's docblock;
   do not restate them here. `admin-attention-primitive-contract.test.ts` fails a
   direct `scrollIntoView` / `scrollTo` or a `requestAnimationFrame` focus in an
-  admin file. It does **not** catch a bare effect-driven `.focus()`, and four
+  admin or `/book` file (#4945). It does **not** catch a bare effect-driven `.focus()`, and four
   surfaces still hand-roll their attention that way — the module names them.
 - **Final sweep (#1819):** colour-coded calendar seasons, payment choices, and
   focused bed-allocation cards/cells pair their colour with visible text/icons
