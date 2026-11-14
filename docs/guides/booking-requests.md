@@ -25,9 +25,8 @@ counts waiting policy exceptions alongside the other queues.
 
 Each tab shows how many items are waiting on it. The four counts are worked out
 the same way as the sidebar badge, so they add up to it. The page reads them
-when it opens and again each time you change tab, so a badge can lag behind
-something you have just done on the tab you are on until you switch tab or
-reload.
+once, when it opens, so a badge can lag behind something you do on the page
+until you reload.
 
 A link to the page that names no tab, such as the sidebar entry followed from
 another page, the dashboard card, or a typed address, opens on the first tab

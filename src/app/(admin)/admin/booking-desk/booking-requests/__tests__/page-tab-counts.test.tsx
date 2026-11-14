@@ -279,50 +279,6 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
     expect(tab(/^Changes/)).toHaveAttribute("aria-selected", "true");
   });
 
-  it("reads the counts again when the officer changes tab", async () => {
-    serveCounts({ bookingReviews: 1 });
-    render(<BookingRequestsPage />);
-    await waitFor(() => expect(tab(/^Approvals/)).toHaveTextContent("Approvals1"));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    // The officer clears the last review, then moves to another tab.
-    serveCounts({ bookingReviews: 0, lockedPeriodChangeRequests: 2 });
-    fireEvent.mouseDown(tab(/^Changes/), { button: 0 });
-
-    await waitFor(() =>
-      expect(tab(/^Approvals/)).toHaveTextContent(/^Approvals$/),
-    );
-    expect(tab(/^Changes/)).toHaveTextContent("Changes2");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("drops a read that arrives after a newer one", async () => {
-    const answers: Array<(response: Response) => void> = [];
-    fetchMock.mockImplementation(
-      () =>
-        new Promise<Response>((resolve) => {
-          answers.push(resolve);
-        }),
-    );
-    render(<BookingRequestsPage />);
-    await waitFor(() => expect(answers).toHaveLength(1));
-    fireEvent.mouseDown(tab(/^Changes/), { button: 0 });
-    await waitFor(() => expect(answers).toHaveLength(2));
-
-    // The newer read answers first; the older one then arrives late.
-    await act(async () => {
-      answers[1](Response.json({ ...ZERO_COUNTS, publicBookingRequests: 5 }));
-    });
-    await waitFor(() =>
-      expect(tab(/^Public Requests/)).toHaveTextContent("Public Requests5"),
-    );
-    await act(async () => {
-      answers[0](Response.json({ ...ZERO_COUNTS, publicBookingRequests: 1 }));
-    });
-    await countsLoaded();
-    expect(tab(/^Public Requests/)).toHaveTextContent("Public Requests5");
-  });
-
   it("decides the landing tab once: the sidebar link followed from this page opens Approvals", async () => {
     serveCounts({ publicBookingRequests: 2 });
     render(<BookingRequestsPage />);

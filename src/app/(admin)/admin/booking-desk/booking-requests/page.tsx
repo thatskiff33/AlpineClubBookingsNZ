@@ -120,11 +120,9 @@ export default function BookingRequestsPage() {
     setPublicRequestUrl(`${window.location.origin}/booking-requests`);
   }, []);
 
-  // Read on mount and again whenever the tab changes, so a badge catches up
-  // with what an officer did on the tab they just left. A response that
-  // arrives after the tab has changed again is dropped, so an older read never
-  // overwrites a newer one. It does not follow an action taken on the current
-  // tab: that badge updates when the officer switches tab or reloads.
+  // Read once, when the page opens. The badges do not follow an action taken
+  // on the page: refreshing counts after an action is outside #4969's scope,
+  // so a badge catches up on reload.
   useEffect(() => {
     let active = true;
     fetch(BOOKING_REQUEST_PENDING_COUNTS_PATH)
@@ -141,7 +139,7 @@ export default function BookingRequestsPage() {
     return () => {
       active = false;
     };
-  }, [activeTab]);
+  }, []);
 
   // A link that opens this page with no tab (the sidebar's from another page,
   // the dashboard card's, a typed address) opens on the first tab with work
