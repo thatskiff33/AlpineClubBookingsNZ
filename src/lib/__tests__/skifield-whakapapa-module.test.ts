@@ -13,7 +13,7 @@ import {
  *
  * The default is the load-bearing part: the report reads one ski field's
  * public feed, so a new install must not start with it on. An existing install
- * keeps its value through migration 20261212010000_add_skifield_whakapapa_module,
+ * keeps its value through migration 20261220010000_add_skifield_whakapapa_module,
  * which prisma/migration-verification proves against a real database.
  */
 describe("skifieldWhakapapa module flag", () => {

@@ -45,6 +45,7 @@ const SINGLETON_DELEGATES = [
   "bookingRequestSettings",
   "internetBankingPaymentSettings",
   "clubIdentitySettings",
+  "privacyHostingSettings",
   "emailMessageSetting",
   "groupDiscountSetting",
   "membershipNominationSettings",
@@ -820,11 +821,16 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
     const result = await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
 
     // Effect on what the app reads: none. Effect on the database: the row is
-    // MATERIALISED — the cost the owner accepted on #2171. Except for the two
-    // all-null override-only singletons, which create nothing (test below).
-    expect(result.created).toBe(
-      SINGLETONS.length - DEFAULTS_INTENTIONALLY_PARTIAL.size,
+    // MATERIALISED — the cost the owner accepted on #2171. Except for a
+    // singleton whose effective defaults are all null — the two override-only
+    // ones and privacy-hosting-settings (#4918) — which creates nothing.
+    const allNullDefaults = SINGLETONS.filter((spec) =>
+      Object.values(spec.defaults()).every((value) => value === null),
     );
+    expect(allNullDefaults.map((spec) => spec.entity).sort()).toEqual(
+      [...DEFAULTS_INTENTIONALLY_PARTIAL, "privacy-hosting-settings"].sort(),
+    );
+    expect(result.created).toBe(SINGLETONS.length - allNullDefaults.length);
     expect(delegates.bookingRequestSettings.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: { id: "default", ...DEFAULT_BOOKING_REQUEST_SETTINGS },
@@ -1832,5 +1838,45 @@ describe("a pre-#2543 bundle's `enabled` key still imports to the right mode (#2
     const plan = await buildImportPlan(stubDb({}), zip, { format: CLUB_FORMAT_TEST, mode: "overwrite" });
     expect(plan.errors).toEqual([]);
     expect(plan.categories[0].errors).toEqual([]);
+  });
+});
+
+describe("privacy hosting config portability (#4918)", () => {
+  it("exports and imports both disclosure values", async () => {
+    const values = { hostingProvider: "Example Host", dataLocation: "New Zealand" };
+    const db = stubDb({ privacyHostingSettings: values });
+    const exported = await buildConfigExport({
+      db,
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.10.1",
+      prismaMigration: null,
+      generatedAt: "2026-07-08T00:00:00.000Z",
+    });
+    const { files } = readBundle(exported.zip);
+    expect(JSON.parse(strFromU8(files.get("club-settings/privacy-hosting-settings.json")!))).toEqual(values);
+    const { tx, delegates } = stubTx({});
+    await clubSettingsImporter.apply(applyCtx(tx, files, "merge"));
+    expect(delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: { id: "default", ...values } }));
+  });
+  it("normalizes disclosure values even when the bundle has unknown fields", async () => {
+    const files = new Map([["club-settings/privacy-hosting-settings.json", strToU8(JSON.stringify({
+      hostingProvider: "  Example Host  ", dataLocation: "  ", futureField: true,
+    }))]]);
+    const fresh = stubTx({});
+    await clubSettingsImporter.apply(applyCtx(fresh.tx, files, "merge"));
+    expect(fresh.delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: { id: "default", hostingProvider: "Example Host", dataLocation: null },
+    }));
+    const existing = stubTx({ privacyHostingSettings: { hostingProvider: "Old Host", dataLocation: "Old Place" } });
+    await clubSettingsImporter.apply(applyCtx(existing.tx, files, "overwrite"));
+    expect(existing.delegates.privacyHostingSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { hostingProvider: "Example Host", dataLocation: null },
+    }));
+  });
+  it("leaves the row alone when an old bundle has no hosting entity", async () => {
+    const { tx, delegates } = stubTx({ privacyHostingSettings: { hostingProvider: "Local", dataLocation: null } });
+    await clubSettingsImporter.apply(applyCtx(tx, new Map(), "merge"));
+    expect(delegates.privacyHostingSettings.upsert).not.toHaveBeenCalled();
   });
 });

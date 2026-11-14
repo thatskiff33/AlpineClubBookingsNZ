@@ -173,7 +173,7 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   // Default OFF, inverting the general ON rule above on purpose: this report
   // reads one ski field's public feed (Whakapapa, Mt Ruapehu), so a club at any
   // other mountain should not start with it. An existing install keeps the
-  // value it had, because migration 20261212010000_add_skifield_whakapapa_module
+  // value it had, because migration 20261220010000_add_skifield_whakapapa_module
   // copies skifieldConditions onto it (#4932).
   skifieldWhakapapa: false,
   twoFactor: false,

@@ -67,7 +67,7 @@ describe("the timing defaults have one source (INV-SSOT)", () => {
       process.cwd(),
       "prisma",
       "migrations",
-      "20261212020000_add_booking_timing_settings",
+      "20261220020000_add_booking_timing_settings",
       "migration.sql",
     ),
     "utf8",

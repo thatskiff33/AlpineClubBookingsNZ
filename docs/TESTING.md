@@ -98,7 +98,7 @@ Not covered: `React.createElement`, an element named through a variable
 
 The pattern is in [`UX_FLOW_MAP.md`](UX_FLOW_MAP.md#forms-4467). A form on it
 is tested in jsdom, like
-`src/app/(admin)/admin/committee/__tests__/committee-role-form.test.tsx`:
+`src/app/(admin)/admin/membership/committee/__tests__/committee-role-form.test.tsx`:
 
 - **Assert the wiring by resolving it.** Read the control's
   `aria-describedby`, look each id up with `document.getElementById`, and
@@ -587,9 +587,11 @@ their purpose. Every other file is a root of exactly one project:
   and `.cts` test/spec file and `__tests__/` directory under `src/` and
   `scripts/`, plus `vitest.config.mts` and the two setup files. It supplies
   `vitest/globals` and Node's types.
-- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts` and
-  `playwright.config.ts`, with Node's types and nothing from Vitest. Specs
-  reach application code through imports (`@/lib/...`), never by listing it.
+- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts`,
+  `playwright.config.ts` and the contract specs and their React fixtures under
+  `scripts/e2e-contracts/` (`.ts` and `.tsx`), with Node's types and nothing
+  from Vitest. Specs reach application code through imports (`@/lib/...`),
+  never by listing it.
 
 Vitest also collects JavaScript test files. The `scripts/**/*.test.mjs`
 suites — each the test of a tool that runs under a bare `node`, so both stay
@@ -1435,13 +1437,15 @@ discriminated by a named test in the tree already:
   (#4116).
 
 `admin-attention-primitive-contract.test.ts` is the census that keeps the admin
-tree routed through the module: a direct `scrollIntoView` / `scrollTo`, or a
-focus deferred to `requestAnimationFrame`, fails it, and its one exclusion is
-listed beside the primitive in `DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
+tree and the member `/book` wizard (#4945) routed through the module: a direct
+`scrollIntoView` / `scrollTo`, or a focus deferred to `requestAnimationFrame`,
+fails it, and its exclusions are listed beside the primitive in
+`DIRECT_SCROLL_EXCLUSIONS`, each with the exact number of direct scrolls it
+covers, so a second scroll in an excluded file fails too. A bare effect-driven
 `.focus()` passes it, which is a stated limit rather than an oversight — the
 module says why, and names the four surfaces that still hand-roll their
 attention. It scans the tree from disk, so `pnpm run test:related` cannot reach
-it; run it by name when an admin file gains a scroll or a focus.
+it; run it by name when a censused file gains a scroll or a focus.
 
 ## A fake store applies `where` through one evaluator
 
