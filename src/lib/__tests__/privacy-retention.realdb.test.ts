@@ -1,5 +1,7 @@
-import type { PrismaClient, PrivacyRetentionSettings } from "@prisma/client";
+import type { Prisma, PrismaClient, PrivacyRetentionSettings } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { realElapsedMs } from "./helpers/clock";
+import { backendPid } from "./support/race-lock-waits";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -85,6 +87,9 @@ let anonymise: typeof import("@/lib/privacy-retention-jobs").runFormerMemberAnon
     try {
       await db.auditLog.deleteMany({ where: { entityId: { startsWith: PREFIX } } });
       await db.payment.deleteMany({ where: { id: { in: [id("payment"), id("payment-addition")] } } });
+      await db.refundRequest.deleteMany({ where: { id: { startsWith: PREFIX } } });
+      await db.memberCredit.deleteMany({ where: { memberId: { startsWith: PREFIX } } });
+      await db.familyGroup.deleteMany({ where: { id: { startsWith: PREFIX } } });
       await db.booking.deleteMany({ where: { id: { startsWith: PREFIX } } });
       await db.member.deleteMany({ where: { id: { startsWith: PREFIX } } });
       await db.memberApplication.deleteMany({ where: { id: { startsWith: PREFIX } } });
@@ -144,4 +149,69 @@ let anonymise: typeof import("@/lib/privacy-retention-jobs").runFormerMemberAnon
     expect(await anonymise({ db, now: NOW })).toMatchObject({ anonymised: 0, blocked: 2 });
     expect(await db.auditLog.count({ where: { entityId: id("member-old"), action: "privacy.retention.member_anonymised" } })).toBe(1);
   });
+
+  it.each(["credit", "family", "refund"] as const)(
+    "preserves a former member when a %s blocker commits while anonymisation waits (#4920)",
+    async (kind) => {
+      const memberId = id(`race-${kind}`);
+      await db.member.create({ data: {
+        id: memberId, firstName: "Former", lastName: "Race", active: false,
+        email: `${kind}@example.invalid`, passwordHash: "keep-this-hash", leavingDate: new Date("2018-01-01"),
+      } });
+      if (kind === "refund") await db.booking.create({ data: {
+        id: id("race-refund-booking"), memberId, status: "COMPLETED",
+        checkIn: new Date("2018-01-01"), checkOut: new Date("2018-01-02"), totalPriceCents: 0, finalPriceCents: 0,
+      } });
+      await db.privacyRetentionSettings.update({ where: { id: "default" }, data: { anonymiseMembersEnabled: true } });
+      const before = await db.member.findUniqueOrThrow({ where: { id: memberId } });
+      let release!: () => void;
+      let ready!: (pid: number) => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const held = new Promise<number>(resolve => { ready = resolve; });
+      const writer = db.$transaction(async (tx: Prisma.TransactionClient) => {
+        if (kind === "credit") {
+          const { lockMemberCreditLedger } = await import("@/lib/member-credit");
+          await lockMemberCreditLedger(memberId, tx);
+          await tx.memberCredit.create({ data: { memberId, amountCents: 4000, type: "ADMIN_ADJUSTMENT", description: "Race fixture" } });
+        } else if (kind === "family") {
+          const { acquireMemberLifecycleLocks } = await import("@/lib/member-lifecycle-lock");
+          await acquireMemberLifecycleLocks(tx, [memberId]);
+          await tx.familyGroup.create({ data: { id: id("race-family-group"), memberships: { create: { memberId } } } });
+        } else {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+          await tx.refundRequest.create({ data: { id: id("race-refund"), memberId, bookingId: id("race-refund-booking"), reason: "Race fixture", status: "PENDING" } });
+        }
+        ready(await backendPid(tx));
+        await gate;
+      }, { timeout: 20_000 });
+      // Observe setup failure immediately rather than waiting forever for ready.
+      const writerPid = await Promise.race([held, writer.then(() => { throw new Error("writer exited before barrier"); })]);
+      const job = anonymise({ db, now: NOW });
+      // Attach a handler immediately: a broken job must not leak a rejection
+      // while the observer is still checking the lock barrier.
+      void job.catch(() => {});
+      try {
+        const started = process.hrtime.bigint();
+        for (;;) {
+          const waiters = await db.$queryRaw<Array<{ pid: number }>>`
+            SELECT pid FROM pg_locks
+            WHERE locktype = 'advisory' AND NOT granted
+              AND ${writerPid} = ANY(pg_blocking_pids(pid))`;
+          if (waiters.length) break;
+          if (realElapsedMs(started) > 8_000) throw new Error(`Anonymisation never waited for the ${kind} writer`);
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+      } finally {
+        release();
+        await writer;
+      }
+      const result = await job;
+      expect(result.anonymised).toBe(0);
+      expect(result.blocked).toBeGreaterThan(0);
+      const after = await db.member.findUniqueOrThrow({ where: { id: memberId } });
+      expect(after).toMatchObject({ email: before.email, passwordHash: before.passwordHash, deletedAt: before.deletedAt });
+      expect(await db.auditLog.count({ where: { entityId: memberId, action: "privacy.retention.member_anonymised" } })).toBe(0);
+    }, 30_000,
+  );
+
 });

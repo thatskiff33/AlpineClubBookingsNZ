@@ -188,8 +188,8 @@ and will be applied when you confirm."*
 **A draft the club saved for you** looks slightly different. It is labelled
 **"Saved for you by the club"** and its button reads **Review & pay** rather than
 **Resume**, because you never started it — someone at the club made the booking
-for you and left the payment to you. Open it, check the dates and the party, and
-pay; paying is what confirms it. If the booking comes to **$0** there is nothing
+for you and left the payment to you. Open it, check the lodge, the dates and the
+party, and pay; paying is what confirms it. If the booking comes to **$0** there is nothing
 for you to pay, so the button just opens it and the club confirms that one for
 you. See [Booking a stay](booking-a-stay.md#a-booking-the-club-saved-for-you).
 

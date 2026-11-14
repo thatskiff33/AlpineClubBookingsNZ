@@ -202,6 +202,9 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
             return { body: { creditNotes: [{ creditNoteID: noteId, creditNoteNumber: `CN-${noteId}`, total, remainingCredit: total, status: "AUTHORISED", payments: [] }] } };
           },
           getCreditNote: async () => ({ body: { creditNotes: [] } }),
+          // #3993: an edit's note first reads what the invoice still owes. As
+          // the allocation below always lands, the invoice can take the note.
+          getInvoice: async () => ({ body: { invoices: [{ status: "AUTHORISED", amountDue: 100 }] } }),
           createCreditNoteAllocation: async (_t: string, _id: string, body: unknown) => ({ body }),
         },
       };

@@ -9,14 +9,14 @@
  * product (`INV-CONFIG-001`). The caller resolves the zone and passes it in;
  * this module states no zone of its own.
  */
+import { FINANCE_SYNC_CRON_JOB_NAME, FINANCE_SYNC_CRON_SCHEDULE } from "@/lib/finance-sync-cron-config";
 import {
-  FINANCE_SYNC_CRON_JOB_NAME,
-  FINANCE_SYNC_CRON_SCHEDULE,
-} from "@/lib/finance-sync-cron-config";
-import {
+  BOOKING_DIETARY_CLEAR_JOB_NAME,
+  DEFAULT_PRIVACY_RETENTION_SETTINGS,
   FORMER_MEMBER_ANONYMISATION_JOB_NAME,
   PRIVACY_DATA_PRUNE_JOB_NAME,
 } from "@/lib/privacy-retention-shared";
+import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 
 const DAILY_STALE_AFTER_MINUTES = 36 * 60;
 const THREE_HOURLY_STALE_AFTER_MINUTES = 6 * 60 + 30;
@@ -392,7 +392,7 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
-        jobName: "xero-membership-refresh",
+        jobName: XERO_CRON_JOB_NAMES.memberships,
         label: "Xero membership refresh",
         schedule: "0 2 * * *",
         timezone: clubTimeZone,
@@ -406,7 +406,7 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
-        jobName: "xero-link-backfill",
+        jobName: XERO_CRON_JOB_NAMES.backfill,
         label: "Xero link backfill",
         schedule: "20 2 * * *",
         timezone: clubTimeZone,
@@ -417,7 +417,7 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
-        jobName: "xero-link-cleanup",
+        jobName: XERO_CRON_JOB_NAMES["link-cleanup"],
         label: "Xero stale link cleanup",
         schedule: "25 2 * * *",
         timezone: clubTimeZone,
@@ -429,7 +429,7 @@ export function getAdminCronJobDefinitions(
     defineCronJob(
       {
         // #4162: runs in the link cleanup's slot, right after it.
-        jobName: "xero-bank-refund-void-follow-up",
+        jobName: XERO_CRON_JOB_NAMES["bank-refund-voids"],
         label: "Voided bank-transfer refund notes",
         schedule: "25 2 * * *",
         timezone: clubTimeZone,
@@ -440,7 +440,7 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
-        jobName: "xero-reconciliation-report",
+        jobName: XERO_CRON_JOB_NAMES.report,
         label: "Xero reconciliation report",
         schedule: "35 2 * * *",
         timezone: clubTimeZone,
@@ -451,7 +451,7 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
-        jobName: "xero-credit-sync-check",
+        jobName: XERO_CRON_JOB_NAMES["credit-sync"],
         label: "Xero credit-sync check",
         schedule: "45 2 * * *",
         timezone: clubTimeZone,
@@ -462,7 +462,7 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
-        jobName: "xero-outbox",
+        jobName: XERO_CRON_JOB_NAMES.outbox,
         label: "Xero outbox processing",
         schedule: "*/15 * * * *",
         timezone: clubTimeZone,
@@ -473,7 +473,7 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
-        jobName: "xero-operation-replay",
+        jobName: XERO_CRON_JOB_NAMES.retries,
         label: "Xero operation replay",
         schedule: "*/15 * * * *",
         timezone: clubTimeZone,
@@ -485,7 +485,7 @@ export function getAdminCronJobDefinitions(
     defineCronJob(
       {
         // #4270: runs in the inbound reconcile's slot, right after it.
-        jobName: "xero-credit-note-outside-spend-mirror",
+        jobName: XERO_CRON_JOB_NAMES["credit-note-mirror"],
         label: "Credit notes used in Xero",
         schedule: "*/15 * * * *",
         timezone: clubTimeZone,
@@ -496,7 +496,7 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
-        jobName: "xero-inbound-reconcile",
+        jobName: XERO_CRON_JOB_NAMES.inbound,
         label: "Xero inbound reconcile",
         schedule: "*/15 * * * *",
         timezone: clubTimeZone,
@@ -559,10 +559,13 @@ export function getAdminCronJobDefinitions(
       globalDisabledReason
     ),
     ...([ [PRIVACY_DATA_PRUNE_JOB_NAME, "Email and rejected-application retention"],
-      [FORMER_MEMBER_ANONYMISATION_JOB_NAME, "Former member anonymisation"] ] as const).map(([jobName, label]) =>
+      [FORMER_MEMBER_ANONYMISATION_JOB_NAME, "Former member anonymisation"],
+      [BOOKING_DIETARY_CLEAR_JOB_NAME, "Expired stay dietary clearing"] ] as const).map(([jobName, label]) =>
       defineCronJob({ jobName, label, schedule: "30 3 * * *", timezone: clubTimeZone,
         expectedLocalTime: `03:30 daily in ${clubTimeZone}`, staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
-        note: "Ships off. Review Admin → Privacy retention before enabling; disabled jobs record SKIPPED.",
+        note: jobName === BOOKING_DIETARY_CLEAR_JOB_NAME
+          ? `Ships on: clears stay dietary notes ${DEFAULT_PRIVACY_RETENTION_SETTINGS.bookingDietaryRetentionDays} days after the stay by default. Configure in Admin → Privacy retention; switched off it records SKIPPED.`
+          : "Ships off. Review Admin → Privacy retention before enabling; disabled jobs record SKIPPED.",
       }, globalDisabledReason)),
     defineCronJob(
       {
