@@ -212,6 +212,9 @@ describe("BookingPaymentWrapper", () => {
     fireEvent.click(await screen.findByText("trigger-success"));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("$40.00 was applied"));
     expect(screen.getByRole("alert")).not.toHaveTextContent("Your card will be charged");
+    // #4943 review: the recovery alert is the only place the credit sentence appears.
+    expect(screen.queryByRole("status", { name: "Saved account credit" })).toBeNull();
+    expect(screen.getAllByText(/\$40\.00 was applied/)).toHaveLength(1);
   });
 
   // #4949: "Preparing payment..." is silent to a screen reader unless it sits in

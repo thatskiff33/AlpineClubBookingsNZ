@@ -88,7 +88,7 @@ Journey: Open the booking, check the lodge it names (`INV-CAP-039`), inspect wha
 
 The card form and success message use the intent's server `chargedAmountCents`,
 including for non-split bookings. `creditElection` on fresh, reused, already-paid
-and recovery responses explains the amount applied and any balance/price
+and the processing, superseded and below-minimum 409 responses explains the amount applied and any balance/price
 shortfall. Credit-only completion waits for **Continue**, so both the wizard
 and booking page let the member read the outcome before moving on. Recovery
 messages disclose credit already applied without promising another card charge.

@@ -9,10 +9,17 @@ type CreditElectionDisplayOutcome = Pick<StoredCreditElectionOutcome,
   "requestedCents" | "appliedCents" | "shortfallCents" | "shortfallReason" | "fullyCovered">;
 
 type ShortfallReason = StoredCreditElectionOutcome["shortfallReason"];
-const SHORTFALL_REASONS: readonly ShortfallReason[] = ["none", "balance", "price", "balance_and_price"];
+// One record defines both the valid shortfall reasons and their wording, so a
+// reason added to the server outcome cannot compile without copy here.
+const SHORTFALL_COPY = {
+  none: "",
+  balance: "you no longer hold that much credit",
+  price: "the booking no longer costs that much",
+  balance_and_price: "you no longer hold that much credit and the booking no longer costs that much",
+} satisfies Record<ShortfallReason, string>;
 
 function isShortfallReason(value: unknown): value is ShortfallReason {
-  return SHORTFALL_REASONS.includes(value as ShortfallReason);
+  return typeof value === "string" && Object.hasOwn(SHORTFALL_COPY, value);
 }
 
 function isCents(value: unknown): value is number {
@@ -42,13 +49,7 @@ export function creditElectionOutcomeCopy(
   const applied = formatCents(outcome.appliedCents, format);
   let message: string;
   if (outcome.shortfallCents > 0) {
-    const reasons = {
-      none: "",
-      balance: "you no longer hold that much credit",
-      price: "the booking no longer costs that much",
-      balance_and_price: "you no longer hold that much credit and the booking no longer costs that much",
-    } satisfies Record<ShortfallReason, string>;
-    message = `You asked to use ${formatCents(outcome.requestedCents, format)} credit. ${applied} was applied because ${reasons[outcome.shortfallReason]}. Any unused credit stays on your account.`;
+    message = `You asked to use ${formatCents(outcome.requestedCents, format)} credit. ${applied} was applied because ${SHORTFALL_COPY[outcome.shortfallReason]}. Any unused credit stays on your account.`;
   } else if (outcome.appliedCents > 0) {
     message = `Your credit of ${applied} was applied.`;
   } else {

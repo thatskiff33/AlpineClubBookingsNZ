@@ -393,7 +393,9 @@ export default function BookingPaymentWrapper({
         </div>
       ) : suppressPaymentContent ? null : (
         <>
-        {creditCopy && <p role="status" aria-label="Saved account credit" className="mb-4 rounded-md bg-info-3 p-4 text-sm text-info-11">{creditCopy}</p>}
+        {/* #4943: a recovery alert already carries the credit sentence, so it
+            appears here only when no alert is showing. */}
+        {creditCopy && !visibleError && <p role="status" aria-label="Saved account credit" className="mb-4 rounded-md bg-info-3 p-4 text-sm text-info-11">{creditCopy}</p>}
         <PreviousPaymentRefundingNotice show={previousPaymentRefunding} className="mb-4" />
         <StripeProvider clientSecret={clientSecret!}>
           {paymentMode === "payment" ? (

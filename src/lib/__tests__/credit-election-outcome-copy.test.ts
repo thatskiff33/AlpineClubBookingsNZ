@@ -48,6 +48,8 @@ describe("saved credit outcome copy", () => {
     { ...outcome, shortfallCents: Number.MAX_SAFE_INTEGER + 1 }, { ...outcome, appliedCents: 10001 },
     { ...outcome, shortfallCents: 5000 }, { ...outcome, shortfallReason: "other" },
     { ...outcome, shortfallReason: "none" }, { ...outcome, fullyCovered: "true" },
+    // Inherited object keys are not shortfall reasons (#4943 review).
+    { ...outcome, shortfallReason: "constructor" }, { ...outcome, shortfallReason: "toString" },
   ])("ignores invalid payload %j", (value) => {
     expect(parseCreditElectionOutcome(value)).toBeNull();
     expect(creditElectionOutcomeCopy(parseCreditElectionOutcome(value), format)).toBeNull();

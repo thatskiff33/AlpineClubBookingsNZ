@@ -114,8 +114,11 @@ can** rather than refusing your payment, and the pay step tells you what it did:
 
 Shortfall messages add: "Any unused credit stays on your account." If a card
 form is ready, the message also says "Your card will be charged $X today."
-If payment cannot proceed after credit was applied, the recovery message still
-names the credit applied, without promising a card charge.
+If payment is paused because a payment is already processing, is being
+refunded, or is below the card minimum, the message still names the credit
+applied, without promising a card charge. If the card payment could not start at
+all, check the **Account Credit** section on your [profile](your-account.md)
+before trying again.
 
 The same applies if you switch that booking to internet banking: your credit is
 applied first and the invoice asks only for the difference. If your credit
