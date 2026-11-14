@@ -158,6 +158,7 @@ import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 // Keep the existing route import surface while the schema lives in one module.
 export { schoolTeacherSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * Bound a school party by the lodge's bed count — `INV-CAP`, and ONE
@@ -1797,7 +1798,7 @@ export async function approveSchoolBookingRequest(input: {
         memberGuestNotificationRows,
         displacedMemberGuestIds,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     if (
       err instanceof Error &&
@@ -2899,7 +2900,7 @@ export async function approveMemberWholeLodgeRequest(input: {
         committedGuestCount: guests.length,
         alreadyConverted: false as const,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     if (
       err instanceof Error &&

@@ -13,6 +13,11 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 // Route-level gating for the admin member-email choice on account-deletion
 // review (#1788, mirroring #1705/#1769a): the REJECT path honours
@@ -1587,5 +1592,69 @@ describe("POST /api/admin/deletion-requests/[id] -- the future-stay cut-off is t
     for (const bound of checkInBounds) {
       expect(bound.toISOString()).toBe("2026-06-30T00:00:00.000Z");
     }
+  });
+});
+
+// INV-LOCK-006: the anonymisation transaction runs on the lock(1) budget. The
+// approval's claim may already have committed, so a spent budget asks the admin
+// to check the status; once a booking cancellation committed, the partial-cleanup
+// recovery contract wins instead.
+describe("POST /api/admin/deletion-requests/[id] approve under lock(1) contention", () => {
+  const contention = (code: string) =>
+    new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" });
+
+  it.each(["P2028", "P2034"])(
+    "answers %s in the anonymisation transaction with a retryable status-check 503",
+    async (code) => {
+      h.wouldRemoveLastFullAdmin
+        .mockResolvedValueOnce(false)
+        .mockRejectedValueOnce(contention(code));
+
+      const response = await POST(req({ action: "approve" }), { params });
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Retry-After")).toBe("2");
+      await expect(response.json()).resolves.toEqual({
+        error: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        code: TRANSACTION_CONTENDED_CODE,
+      });
+      expect(h.sendAccountDeletionApprovedEmail).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps an unrelated anonymisation failure on the generic 500", async () => {
+    h.wouldRemoveLastFullAdmin
+      .mockResolvedValueOnce(false)
+      .mockRejectedValueOnce(new Error("private database detail"));
+
+    const response = await POST(req({ action: "approve" }), { params });
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("Retry-After")).toBeNull();
+    await expect(response.json()).resolves.toEqual({
+      error: "Failed to process deletion request",
+    });
+  });
+
+  it("keeps the partial-cleanup recovery when contention follows a committed cancellation", async () => {
+    h.prisma.booking.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "booking-1" }]);
+    h.cancelBooking.mockResolvedValueOnce({ status: 200, data: {} });
+    h.wouldRemoveLastFullAdmin
+      .mockResolvedValueOnce(false)
+      .mockRejectedValueOnce(contention("P2028"));
+
+    const response = await POST(req({ action: "approve" }), { params });
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("Retry-After")).toBeNull();
+    await expect(response.json()).resolves.toMatchObject({
+      code: "DELETION_CLEANUP_PARTIAL",
+      cancelledBookings: 1,
+      memberDataAnonymised: false,
+      approvalReceiptSent: false,
+    });
+    expect(h.prisma.member.update).not.toHaveBeenCalled();
   });
 });

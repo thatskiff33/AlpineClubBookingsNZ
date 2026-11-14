@@ -48,6 +48,7 @@ import {
   reconcileMembersXeroContactGroups,
   triggerMemberXeroContactGroupSync,
 } from "@/lib/xero-contact-groups";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 // test seam
 export const SEASONAL_MEMBERSHIP_ASSIGNMENT_CHANGED_ACTION =
@@ -964,7 +965,7 @@ export async function saveSeasonalMembershipAssignment(params: {
     );
 
     return saved;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   if (sweptShares.length > 0) {
     // Post-commit, fire-and-forget: the sweep committed with the assignment, so
@@ -1623,7 +1624,7 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
               });
             }
             return { chunkReconciled, chunkSwept };
-          });
+          }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
           ageTierReconciledCount += chunkResult.chunkReconciled.length;
           for (const entry of chunkResult.chunkReconciled) {

@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export const REQUESTED_ROOM_LOCKED_MESSAGE =
   "Your beds have been allocated by the lodge and can no longer be changed here.";
@@ -137,7 +138,7 @@ export async function writeRequestedRoom(input: {
       tx,
     );
     return updated;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 export function requestedRoomWriteErrorResponse(error: unknown) {

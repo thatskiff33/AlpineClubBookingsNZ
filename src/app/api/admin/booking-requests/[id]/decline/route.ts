@@ -8,6 +8,7 @@ import {
   serializeBookingRequestForAdmin,
 } from "@/lib/booking-request";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 
@@ -80,6 +81,14 @@ export async function POST(
         { status: err.status },
       );
     }
+    // `INV-LOCK-006`: the decline's claim rolled back; the hold release after
+    // it reports through the committed shape above.
+    const contended = transactionContendedResponse(
+      err,
+      "Booking request decline contended for the lock(1) budget",
+      { context: { requestId: id } },
+    );
+    if (contended) return contended;
     if (err instanceof BookingRequestError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

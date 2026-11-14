@@ -129,6 +129,7 @@ import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 import { getCapacityFullNights } from "@/lib/capacity-full-nights";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 // Organiser booking states that may host a group. The organiser must be
 // committed (their own beds already reserved) before opening the group to
@@ -414,7 +415,7 @@ async function setGroupBookingJoinStatus(
       data: { status },
     });
     return claimed.count > 0;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   if (!written) {
     throw new GroupBookingError("This group booking has been cancelled", 409);
   }

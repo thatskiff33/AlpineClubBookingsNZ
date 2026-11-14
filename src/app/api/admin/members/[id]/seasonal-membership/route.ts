@@ -4,6 +4,7 @@ import { getAuditRequestContext } from "@/lib/audit";
 import { saveSeasonalMembershipAssignment } from "@/lib/seasonal-membership-assignments";
 import { requireAdmin } from "@/lib/session-guards";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -53,16 +54,28 @@ export async function PATCH(
     );
   }
 
-  const result = await saveSeasonalMembershipAssignment({
-    memberId: parsedParams.data.id,
-    adminMemberId: guard.session.user.id,
-    seasonYear: parsedBody.data.seasonYear,
-    membershipTypeId: parsedBody.data.membershipTypeId,
-    applyFrom: parsedBody.data.applyFrom ?? null,
-    reason: parsedBody.data.reason,
-    previewToken: parsedBody.data.previewToken,
-    request: getAuditRequestContext(request),
-  });
+  let result: Awaited<ReturnType<typeof saveSeasonalMembershipAssignment>>;
+  try {
+    result = await saveSeasonalMembershipAssignment({
+      memberId: parsedParams.data.id,
+      adminMemberId: guard.session.user.id,
+      seasonYear: parsedBody.data.seasonYear,
+      membershipTypeId: parsedBody.data.membershipTypeId,
+      applyFrom: parsedBody.data.applyFrom ?? null,
+      reason: parsedBody.data.reason,
+      previewToken: parsedBody.data.previewToken,
+      request: getAuditRequestContext(request),
+    });
+  } catch (err) {
+    // INV-LOCK-006: the assignment's transaction is the first write.
+    const contended = transactionContendedResponse(
+      err,
+      "Seasonal membership assignment contended for the lock(1) budget",
+      { context: { memberId: parsedParams.data.id } },
+    );
+    if (contended) return contended;
+    throw err;
+  }
 
   return NextResponse.json(result.body, result.init);
 }

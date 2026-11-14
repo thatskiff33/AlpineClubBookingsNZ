@@ -7,6 +7,10 @@ import { AdminReviewStatus, BookingStatus, type Prisma } from "@prisma/client";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { cancelBooking } from "@/lib/booking-cancel";
 import {
   sendBookingReviewApprovedEmail,
@@ -18,6 +22,7 @@ import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const reviewSchema = z
   .object({
@@ -61,6 +66,61 @@ async function loadPendingReviewUnderEligibilityLocks(
 // Approve/decline a booking request: a bookings write. Explicit bookings:edit
 // matches the area the route-area matrix already infers for /api/admin/bookings
 // (#1997), pairing the queue's view-only UI gating with a route-level guard.
+/** The claim found the review already decisioned: someone else got there first. */
+function alreadyReviewedResponse(): NextResponse {
+  return NextResponse.json({ error: "This booking has already been reviewed" }, { status: 409 });
+}
+
+/**
+ * `INV-LOCK-006`: a review claim that ran out of its lock(1) budget rolled back
+ * with nothing recorded, so it answers the shared retryable 503.
+ */
+function reviewClaimContended(err: unknown, bookingId: string): NextResponse {
+  const contended = transactionContendedResponse(
+    err,
+    "Booking review claim contended for the lock(1) budget",
+    { context: { bookingId } },
+  );
+  if (contended) return contended;
+  throw err;
+}
+
+/**
+ * The rejection committed but the cancellation after it threw. A contended
+ * cancel claim (`INV-LOCK-006`) is a retryable 503 that still says the review
+ * landed; anything else is a 500 asking the officer to check before retrying.
+ */
+function rejectedCancellationFailedResponse(err: unknown, bookingId: string): NextResponse {
+  const hostingRetry = hostingCoverageParticipantRetryResponse(err, {
+    reviewRecorded: true,
+    cancellationPending: true,
+  });
+  if (hostingRetry) return hostingRetry;
+  const contended = transactionContendedResponse(
+    err,
+    "Rejected review committed but its cancellation contended for the lock(1) budget",
+    {
+      message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+      context: { bookingId },
+      body: { reviewRecorded: true, cancellationStatusUnconfirmed: true },
+    },
+  );
+  if (contended) return contended;
+  logger.error(
+    { err, bookingId },
+    "Rejected review committed but cancellation status could not be confirmed",
+  );
+  return NextResponse.json(
+    {
+      error:
+        "The rejection was recorded, but the booking's cancellation status could not be confirmed. Open the booking and check its status before retrying.",
+      reviewRecorded: true,
+      cancellationStatusUnconfirmed: true,
+    },
+    { status: 500 },
+  );
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -151,14 +211,10 @@ export async function PATCH(
 
       await reconcileBedAllocationsForBookingWithLodgeLockHeld({ bookingId, db: tx });
       return current;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => reviewClaimContended(err, bookingId));
+    if (reviewedBooking instanceof NextResponse) return reviewedBooking;
 
-    if (!reviewedBooking) {
-      return NextResponse.json(
-        { error: "This booking has already been reviewed" },
-        { status: 409 },
-      );
-    }
+    if (!reviewedBooking) return alreadyReviewedResponse();
 
     // #1790: approve always emails the member unless the admin chose not to
     // notify (default is notify; the suppression is audited below).
@@ -243,14 +299,10 @@ export async function PATCH(
       await releaseBookingPromoRedemptions(tx, bookingId);
     }
     return current;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => reviewClaimContended(err, bookingId));
+  if (reviewedBooking instanceof NextResponse) return reviewedBooking;
 
-  if (!reviewedBooking) {
-    return NextResponse.json(
-      { error: "This booking has already been reviewed" },
-      { status: 409 },
-    );
-  }
+  if (!reviewedBooking) return alreadyReviewedResponse();
 
   // Legacy PENDING+DRAFT rows are rejected and cancelled in the claim above;
   // every other status uses the shared cancellation/refund flow after commit.
@@ -266,24 +318,7 @@ export async function PATCH(
         "card",
       );
     } catch (err) {
-      const hostingRetry = hostingCoverageParticipantRetryResponse(err, {
-        reviewRecorded: true,
-        cancellationPending: true,
-      });
-      if (hostingRetry) return hostingRetry;
-      logger.error(
-        { err, bookingId },
-        "Rejected review committed but cancellation status could not be confirmed",
-      );
-      return NextResponse.json(
-        {
-          error:
-            "The rejection was recorded, but the booking's cancellation status could not be confirmed. Open the booking and check its status before retrying.",
-          reviewRecorded: true,
-          cancellationStatusUnconfirmed: true,
-        },
-        { status: 500 },
-      );
+      return rejectedCancellationFailedResponse(err, bookingId);
     }
 
     // A concurrent cancel won the single-flight claim (#1160): surface the 409

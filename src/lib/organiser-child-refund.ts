@@ -71,6 +71,7 @@ import {
 import type { ClubFormat } from "@/lib/club-format";
 import { formatCents } from "@/lib/utils";
 import { groupCancellationRefundSentence } from "@/lib/booking-modified-email-copy";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 type Db = Prisma.TransactionClient;
 
@@ -515,7 +516,7 @@ export async function planOrganiserCancelChildRefunds({
       });
     }
     return plan;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 function serializePerChildRefundPlan(plan: Map<string, number>): Prisma.InputJsonValue {

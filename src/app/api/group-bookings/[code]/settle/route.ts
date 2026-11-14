@@ -12,6 +12,10 @@ import {
   type BookingPaymentMethod,
 } from "@/lib/booking-payment-methods";
 import logger from "@/lib/logger";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 /**
  * Organiser action: start (or resume) settling an ORGANISER_PAYS group as one
@@ -75,6 +79,18 @@ export async function POST(
       reference: result.reference ?? null,
     });
   } catch (err) {
+    // Settling commits the children, mints a Stripe intent, then attaches it in
+    // a second lock(1) transaction, so an earlier step may have landed
+    // (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      err,
+      "Group settlement contended for the lock(1) budget",
+      {
+        message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        context: { code, paymentMethod },
+      },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     if (err instanceof GroupBookingError) {

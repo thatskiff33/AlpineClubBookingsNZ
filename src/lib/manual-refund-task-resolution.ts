@@ -76,6 +76,7 @@ import {
   planKeptLateCaptureXeroRecord,
   type KeptLateCaptureXeroPlan,
 } from "@/lib/late-capture-kept-xero";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * B5 (#2262): close a hand-back task raised when a cash-settled booking was
@@ -235,10 +236,9 @@ export async function resolveManualRefundTask(
         );
       }
       if (confirmedAmountCents === null) {
-        // #2797 (owner decision D2): a task cannot be COMPLETED without a
-        // confirmed amount. The DB `ManualRefundTask_completed_amount_present`
-        // check enforces the same rule; this throws first with a message an
-        // operator can read.
+        // #2797 (owner decision D2): no COMPLETED task without a confirmed
+        // amount. The DB `ManualRefundTask_completed_amount_present` check
+        // enforces it too; this throws first, with a message an operator reads.
         if (task.amountCents === null) {
           throw new ManualBookingPaymentError(
             "This refund has no confirmed amount yet — price it before completing.",
@@ -649,7 +649,7 @@ export async function resolveManualRefundTask(
           : ManualRefundTaskStatus.DISMISSED,
       keptLateCaptureXeroPlan, chargeInvoice, // #3947: the invoice route's queued invoice
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   if (result.recordedRefund) {
     await recordBookingEvent({

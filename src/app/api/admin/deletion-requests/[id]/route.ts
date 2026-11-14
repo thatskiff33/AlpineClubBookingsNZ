@@ -15,11 +15,14 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { isDeletedAccountRecord } from "@/lib/deleted-account";
 import { DELETED_CONTACT_EMAIL_DOMAIN } from "@/lib/deleted-account-email";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
-import { isTransactionContention } from "@/lib/prisma-errors";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { createAuditLog, getAuditRequestContext, logAudit } from "@/lib/audit";
 import { recordErasureTwoFactorClear } from "@/lib/two-factor-audit";
@@ -88,6 +91,7 @@ import {
 import { DIETARY_ERASURE_PATCH } from "@/lib/member-dietary";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 // Route-private: a Next.js route module's export surface is its handlers.
 const DELETION_CLAIM_RELEASE_FULL_ADMIN_MESSAGE =
@@ -461,20 +465,17 @@ export async function POST(
         // cannot act on. Scoped to this branch on purpose — the approval's own
         // transaction reports contention through its partial-cleanup contract,
         // which must not be replaced by a bare retry-later.
-        if (isTransactionContention(releaseError)) {
-          logger.warn(
-            { err: releaseError, requestId: id },
-            "Deletion approval release contended with a committing decision",
-          );
-          return NextResponse.json(
-            {
-              code: DELETION_REQUEST_RELEASE_CONTENDED_CODE,
-              error: DELETION_REQUEST_RELEASE_CONTENDED_MESSAGE,
-              retryAllowed: true,
-            },
-            { status: 503 },
-          );
-        }
+        const contended = transactionContendedResponse(
+          releaseError,
+          "Deletion approval release contended with a committing decision",
+          {
+            code: DELETION_REQUEST_RELEASE_CONTENDED_CODE,
+            message: DELETION_REQUEST_RELEASE_CONTENDED_MESSAGE,
+            context: { requestId: id },
+            body: { retryAllowed: true },
+          },
+        );
+        if (contended) return contended;
         throw releaseError;
       }
 
@@ -1126,7 +1127,7 @@ export async function POST(
         },
       });
 
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     memberAnonymised = true;
 
     try {
@@ -1289,6 +1290,20 @@ export async function POST(
         },
         { status: err.statusCode },
       );
+    }
+    // INV-LOCK-006: an exhausted lock(1) budget is a retryable 503 — but only
+    // when no booking was cancelled short of anonymisation, because that case
+    // keeps the partial-cleanup recovery contract below.
+    if (!(completedBookingCancellations > 0 && !memberAnonymised)) {
+      const contended = transactionContendedResponse(
+        err,
+        "Deletion request decision contended for the lock(1) budget",
+        {
+          message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+          context: { requestId: id },
+        },
+      );
+      if (contended) return contended;
     }
     logger.error({ err, requestId: id }, "Failed to process deletion request");
     if (completedBookingCancellations > 0 && !memberAnonymised) {

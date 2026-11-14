@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getAuditRequestContext } from "@/lib/audit";
 import { rollForwardSeasonalMembershipAssignments } from "@/lib/seasonal-membership-assignments";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const rollForwardSchema = z
   .object({
@@ -33,13 +34,31 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const result = await rollForwardSeasonalMembershipAssignments({
-    fromSeasonYear: parsedBody.data.fromSeasonYear,
-    toSeasonYear: parsedBody.data.toSeasonYear,
-    dryRun: parsedBody.data.dryRun,
-    adminMemberId: guard.session.user.id,
-    request: getAuditRequestContext(request),
-  });
+  let result: Awaited<ReturnType<typeof rollForwardSeasonalMembershipAssignments>>;
+  try {
+    result = await rollForwardSeasonalMembershipAssignments({
+      fromSeasonYear: parsedBody.data.fromSeasonYear,
+      toSeasonYear: parsedBody.data.toSeasonYear,
+      dryRun: parsedBody.data.dryRun,
+      adminMemberId: guard.session.user.id,
+      request: getAuditRequestContext(request),
+    });
+  } catch (err) {
+    // INV-LOCK-006: only the copy transaction (the first write) can surface
+    // contention; the later lock(1) reconcile chunks are isolated and logged.
+    const contended = transactionContendedResponse(
+      err,
+      "Membership roll-forward contended for a transaction budget",
+      {
+        context: {
+          fromSeasonYear: parsedBody.data.fromSeasonYear,
+          toSeasonYear: parsedBody.data.toSeasonYear,
+        },
+      },
+    );
+    if (contended) return contended;
+    throw err;
+  }
 
   return NextResponse.json(result.body, result.init);
 }

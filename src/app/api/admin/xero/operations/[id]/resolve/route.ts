@@ -3,6 +3,10 @@ import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import logger from "@/lib/logger";
 import { isResolvedInXero, XERO_OPERATION_REASON_MAX, XERO_OPERATION_REASON_MIN } from "@/lib/xero-operation-resolution";
 import { reconcileHandMadeNoteAfterRecording, type VerifiedHandMadeRefundNote } from "@/lib/bank-refund-void-answer";
@@ -224,6 +228,12 @@ export async function POST(
         : "Xero operation marked resolved; it will drop off the active failure list.",
     });
   } catch (error) {
+    const contended = transactionContendedResponse(
+      error,
+      "Xero operation resolve contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { operationId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, operationId: id }, "Failed to resolve Xero operation");
     return NextResponse.json(
       { error: "Failed to resolve Xero operation" },

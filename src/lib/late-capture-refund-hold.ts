@@ -17,6 +17,7 @@ import { sendAdminAlertOnceEver } from "@/lib/admin-alert-once";
 import { bookingOwner } from "@/lib/booking-owner";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { sendAdminLateCaptureHeldAlert } from "@/lib/email";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #3639 (owner decision 26 Sep 2026, `INV-PAY-106`): a club may have a treasurer
@@ -186,7 +187,7 @@ export async function holdLateCaptureForTreasurerIfRequired(
       select: { id: true },
     });
     return { taskId: task.id, created: true };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   logAudit({
     action: "booking.payment.late_capture_refund_held",

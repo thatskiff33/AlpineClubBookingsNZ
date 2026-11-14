@@ -201,6 +201,47 @@ admin-review email, which the throwaway stack captures in Mailpit. Reset the
 stack (`pnpm run test:e2e:down && pnpm run test:e2e:prepare`) between contention
 runs so each run starts from a known-empty night.
 
+#### Two lodges at once (#4933)
+
+Booking create holds the global `pg_advisory_xact_lock(1)` before the
+per-lodge key, so writers at different lodges still queue behind each other.
+To exercise that, run one instance per lodge at the same time on a fresh
+night. A multi-lodge club must send `LODGE_ID` (the route refuses a booking
+that names no lodge), and each instance needs its own `--address` for the k6
+API port:
+
+```bash
+k6 run --address 127.0.0.1:6566 load/scenarios/booking-contention.js  # LODGE_ID=<lodge A>
+k6 run --address 127.0.0.1:6567 load/scenarios/booking-contention.js  # LODGE_ID=<lodge B>
+```
+
+Use `LOAD_USERS` accounts that can book for themselves: an admin gets a 403
+("book on behalf of a member"). Keep the two-factor module off, or every
+VU's API call answers 403 "Two-factor verification required".
+
+A contended create that runs out of its transaction budget answers
+`503` with `Retry-After` and code `BOOKING_CREATE_CONTENDED`. The scenario
+counts that as `booking_unexpected`, so a red run with 503s means the budget
+in [`CONCURRENCY_AND_LOCKING.md`](CONCURRENCY_AND_LOCKING.md#the-lock1-transaction-budget-4933)
+is too small for the load, not that capacity was oversold.
+
+Recorded run, 12 Nov 2026, with the #4933 budget: `next dev` (a production
+build does not fit the 8 GB sandbox), local Postgres 17,
+`connection_limit=10`, demo seed plus the E2E second lodge. Lodge A has 14
+beds and lodge B has 8. Both instances ran together on one night:
+
+| VUs (A + B) | 201 created | 409 capacity | 400 | 503 | p95 A / B |
+| --- | --- | --- | --- | --- | --- |
+| 30 + 20 | 14 + 8 | 14 + 10 | 0 | 0 | 3.61 s / 4.52 s |
+| 40 + 30 | 14 + 8 | 26 + 22 | 0 | 0 | 5.69 s / 5.65 s |
+
+`capacity_invariant` held in both runs. The first run also had four 403s
+from admin accounts in the pool, a harness mistake fixed for the second run.
+In the second run the slowest creates took longer than Prisma's old 5 s
+default timeout, which the shared budget now covers. Its p95 crossed the 5 s
+`CONTENTION_P95_MS` gate; dev-mode rendering is slower than a production
+build, so treat these latencies as an upper bound.
+
 ### 4. Member dashboard — `load/scenarios/member-dashboard.js`
 
 Each VU logs in once (round-robin across `LOAD_USERS` when supplied), then

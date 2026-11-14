@@ -64,6 +64,11 @@ import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { BELOW_STRIPE_MINIMUM_MEMBER_BODY, BelowStripeMinimumError, chargeCurrencyRefusal, isLocalChargeRefusal, localChargeRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import { staleIntentAction } from "@/lib/stale-intent-action";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 class PaymentIntentCapacityError extends Error {
   constructor() {
@@ -467,7 +472,7 @@ export async function POST(request: NextRequest) {
               // pre-transaction snapshot.
               finalPriceCents: freshBooking.finalPriceCents,
             };
-          })
+          }, LOCK1_HOLDER_TRANSACTION_BUDGET)
         : null;
 
     // The admin alert for review-flagged bookings is sent once at
@@ -885,6 +890,15 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+    // After the captured-payment answers above. The pay step commits its draft
+    // transition, queues stale-intent cancellations and mints an intent before
+    // the lock(1) attach, so an earlier step may have landed (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      error,
+      "Payment intent creation contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE },
+    );
+    if (contended) return contended;
     // The pay transaction's capacity refusal and its status-conflict bail both
     // carry an intentionally user-facing message; keep them (and their 409).
     // Every other unexpected error gets the fixed generic message so internal

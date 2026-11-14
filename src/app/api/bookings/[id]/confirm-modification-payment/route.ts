@@ -20,6 +20,10 @@ import {
 import { hasAdminAccess } from "@/lib/access-roles";
 import { raiseDeletedBookingModificationRefundTask } from "@/lib/deleted-booking-modification-payment";
 import { isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -45,10 +49,7 @@ export async function POST(
   const body = await request.json();
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
   const { paymentIntentId } = parsed.data;
@@ -76,10 +77,7 @@ export async function POST(
     }
 
     if (payment.additionalPaymentIntentId !== paymentIntentId) {
-      return NextResponse.json(
-        { error: "PaymentIntent does not match booking" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "PaymentIntent does not match booking" }, { status: 400 });
     }
 
     const paymentTransaction = await findPaymentTransactionByIntentId({
@@ -101,17 +99,11 @@ export async function POST(
 
     const pi = await getPaymentIntent(paymentIntentId);
     if (pi.status !== "succeeded") {
-      return NextResponse.json(
-        { error: `Payment has not succeeded (status: ${pi.status})` },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: `Payment has not succeeded (status: ${pi.status})` }, { status: 400 });
     }
 
     if (pi.amount !== paymentTransaction.amountCents) {
-      return NextResponse.json(
-        { error: "Payment amount does not match booking modification" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Payment amount does not match booking modification" }, { status: 400 });
     }
 
     await markPaymentIntentTransactionSucceeded({
@@ -237,12 +229,21 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (err) {
+    // Stripe may already hold the capture when recording it runs out of its
+    // lock(1) budget (INV-LOCK-006): never "nothing was saved". A retry, or the
+    // payment_intent.succeeded webhook, records it.
+    const contended = transactionContendedResponse(
+      err,
+      "Modification payment confirmation contended for the lock(1) budget",
+      {
+        message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        context: { bookingId, paymentIntentId },
+      },
+    );
+    if (contended) return contended;
     // #1888 — never echo an unexpected error's message to the client; the raw
     // error stays in the log only.
     logger.error({ err, bookingId }, "Failed to confirm modification payment");
-    return NextResponse.json(
-      { error: "Failed to confirm payment" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to confirm payment" }, { status: 500 });
   }
 }

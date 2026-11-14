@@ -37,6 +37,7 @@ import {
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
 import { BookingGuestValidationError } from "@/lib/booking-guests";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 /*
  * A guest's explicit night set (#713) rides in `guestStayFieldsSchema`, as on `/modify`.
@@ -306,6 +307,13 @@ export async function POST(
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
+    // The request is created in one lock(1) transaction (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      error,
+      "Modification exception request create contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
     // #3770: a collapsed member-guest refusal owes the add paths' throttle unit,
     // audit row and timing floor; no boundary hook here, so it charges on exit.
     if (error instanceof BookingGuestValidationError) {

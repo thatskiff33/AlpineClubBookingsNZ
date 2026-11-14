@@ -973,6 +973,7 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-003` | Every global-lock call site is registered, by site, with its own reason |
 | `INV-LOCK-004` | A read taken under a lock uses the caller's transaction client |
 | `INV-LOCK-005` | Advisory-lock transactions use fresh READ COMMITTED snapshots |
+| `INV-LOCK-006` | A lock(1) waiter states the shared budget; contention is a 503 |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |

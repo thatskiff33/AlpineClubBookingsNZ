@@ -33,6 +33,7 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { prisma } from "@/lib/prisma";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -481,7 +482,7 @@ export async function createGroupSettlementIntent(
       },
     });
     return { attached: true as const, refusal: null };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   if (!attached.attached) {
     await cancelPaymentIntentIfCancellable(paymentIntent.id).catch((err) =>
       logger.error(
@@ -658,7 +659,7 @@ async function createGroupSettlementInvoice(
       { newAttempt: true, store: tx }
     );
     return { settlement, queued };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Void the dropped card intent in Stripe so a retained client_secret in a
   // stale tab can no longer capture money alongside the combined invoice.
@@ -942,7 +943,7 @@ async function commitChildrenToConfirmed(
       hostingCoverageQueued,
       claimedNewChild,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 export interface GroupSettlementAppliedResult {
@@ -1325,7 +1326,7 @@ async function settleConfirmedChildrenAndNotify(
     );
 
     return settledIds;
-  }, { maxWait: 10_000, timeout: 30_000 }); // #4627: each child's R01 adds journal round trips; the lock(1) holders' bound.
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET); // #4627: each child's R01 adds journal round trips (`INV-LOCK-006`).
 
   if (settled === "refunded") {
     logger.warn(
@@ -1632,7 +1633,7 @@ export async function markGroupSettlementIntentRefunded(
       },
       data: { status: PaymentStatus.REFUNDED },
     });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /**
@@ -1680,5 +1681,5 @@ export async function markGroupSettlementIntentFailed(
       },
       data: { status },
     });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }

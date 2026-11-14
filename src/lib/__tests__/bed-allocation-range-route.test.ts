@@ -238,37 +238,21 @@ describe("POST /api/admin/bed-allocation/allocations/range", () => {
     expect(mockAssignBedRange).not.toHaveBeenCalled();
   });
 
-  /*
-   * Prisma codes that mean "nothing was written, something collided" must not
-   * fall through to a generic 500 — the admin can act on both of these (#2251
-   * review A3).
-   */
-  it("maps a write conflict (P2034) to a 409 that says nothing was written", async () => {
+  it.each(["P2028", "P2034"])("maps %s to a retryable 503", async (code) => {
     mockAssignBedRange.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError("write conflict", {
-        code: "P2034",
-        clientVersion: "test",
-      }),
-    );
-
-    const response = await post(validBody);
-    expect(response.status).toBe(409);
-    const body = await response.json();
-    expect(body.error).toContain("Nothing was written");
-  });
-
-  it("maps a transaction timeout (P2028) to a 503 that says to try a shorter range", async () => {
-    mockAssignBedRange.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError("transaction timed out", {
-        code: "P2028",
+      new Prisma.PrismaClientKnownRequestError("private database details", {
+        code,
         clientVersion: "test",
       }),
     );
 
     const response = await post(validBody);
     expect(response.status).toBe(503);
-    const body = await response.json();
-    expect(body.error).toContain("shorter date range");
+    expect(response.headers.get("Retry-After")).toBe("2");
+    expect(await response.json()).toEqual({
+      code: "TRANSACTION_CONTENDED",
+      error: "The booking system is busy right now. Nothing was saved, so please try again in a moment.",
+    });
   });
 
   it("404s when the bed allocation module is off", async () => {

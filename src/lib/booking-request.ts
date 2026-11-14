@@ -109,6 +109,7 @@ import { nameField } from "@/lib/zod-helpers";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 /** Privacy Act 2020 retention: purge declined and never-verified requests. */
@@ -2645,7 +2646,7 @@ export async function approveBookingRequest(input: {
         memberGuestNotificationRows,
         displacedMemberGuestIds,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     if (
       err instanceof Error &&

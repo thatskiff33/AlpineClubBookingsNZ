@@ -33,6 +33,7 @@ import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { cancelPaymentIntentIfCancellableWithResult } from "@/lib/stripe";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export type CardIntentAttachOutcome =
   | "attached"
@@ -98,7 +99,7 @@ export async function attachMintedCardIntent({
         store: tx,
       });
       return "attached";
-    },
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET,
   );
 
   if (outcome !== "attached") {

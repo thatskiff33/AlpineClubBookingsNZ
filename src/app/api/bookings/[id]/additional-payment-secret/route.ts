@@ -25,6 +25,10 @@ import {
   PAYMENT_PROCESSING_BODY,
 } from "@/lib/payment-recovery-contract";
 import { CarriedAskChangedError } from "@/lib/additional-ask-queue-transaction";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 /**
  * GET /api/bookings/[id]/additional-payment-secret
@@ -187,6 +191,14 @@ export async function GET(
       paymentIntentId: pi.id,
     });
   } catch (err) {
+    // The currency re-issue mints its intent at Stripe before its lock(1)
+    // queue transaction (INV-LOCK-006), so the member checks before retrying.
+    const contended = transactionContendedResponse(
+      err,
+      "Additional payment secret re-issue contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { bookingId } },
+    );
+    if (contended) return contended;
     // #1888 — never echo an unexpected error's message to the client; the raw
     // error stays in the log only.
     logger.error({ err, bookingId }, "Failed to retrieve additional payment secret");

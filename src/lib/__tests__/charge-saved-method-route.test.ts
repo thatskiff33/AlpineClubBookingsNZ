@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 import { stripeSdkError } from "./support/stripe-sdk-error";
 
 const {
@@ -251,6 +252,11 @@ import {
   HostingCoverageParticipantRetryError,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY } from "@/lib/payment-recovery-contract";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_MESSAGE,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+} from "@/lib/transaction-contended-response";
 import { BELOW_STRIPE_MINIMUM_ADMIN_BODY, BelowStripeMinimumError, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE } from "@/lib/stripe-charge-currency";
 
 /** #3267: the id the attempt row is minted with; the Stripe key is built from it. */
@@ -1225,6 +1231,78 @@ describe("POST /api/payments/charge-saved-method", () => {
       createdByMemberId: "admin-1",
       // #2929: no creation-time email choice on this path.
       invoiceEmailDelivery: null,
+    });
+  });
+
+  // INV-LOCK-006: a contended lock(1) transaction answers a retryable 503, but
+  // never after a capture, where the payment-received recovery wins.
+  describe("lock(1) transaction contention (INV-LOCK-006)", () => {
+    function contention(code: "P2028" | "P2034" | "P2002") {
+      return new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" });
+    }
+
+    it.each(["P2028", "P2034"] as const)(
+      "a contended claim (%s) saved nothing: 503 with the default wording, and no charge",
+      async (code) => {
+        mockPrismaTransaction.mockRejectedValueOnce(contention(code));
+
+        const response = await POST(makeRequest());
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get("Retry-After")).toBe("2");
+        expect(await response.json()).toEqual({
+          error: TRANSACTION_CONTENDED_MESSAGE,
+          code: TRANSACTION_CONTENDED_CODE,
+        });
+        expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a contended release after a non-captured charge asks for a status check", async () => {
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_3ds_contended",
+        status: "requires_action",
+        amount: 12500,
+        payment_method: "pm_123",
+      });
+      mockPrismaTransaction
+        .mockImplementationOnce(async (fn: (tx: unknown) => unknown) => fn(txClient))
+        .mockRejectedValueOnce(contention("P2028"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Retry-After")).toBe("2");
+      expect(await response.json()).toEqual({
+        error: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        code: TRANSACTION_CONTENDED_CODE,
+      });
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+    });
+
+    it("keeps the payment-received recovery when settling a capture contends", async () => {
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_captured_contended",
+        status: "succeeded",
+        amount: 12500,
+      });
+      mockMarkBookingPaymentSucceeded.mockRejectedValue(contention("P2034"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(409);
+      expect(response.headers.get("Retry-After")).toBeNull();
+      expect(await response.json()).toEqual(PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY);
+      expect(releaseCall()).toBeUndefined();
+    });
+
+    it("keeps the generic 500 for an unrelated Prisma error in the claim", async () => {
+      mockPrismaTransaction.mockRejectedValueOnce(contention("P2002"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get("Retry-After")).toBeNull();
     });
   });
 });

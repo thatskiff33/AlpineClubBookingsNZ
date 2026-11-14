@@ -29,6 +29,7 @@ import {
   PARTNER_LINK_CONFIRMED,
 } from "@/lib/member-partner-link-shared";
 import { prisma } from "@/lib/prisma";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export const BED_ALLOCATION_MOVE_DIGEST_VERSION = "v1" as const;
 export const MAX_BED_ALLOCATION_PERSON_MOVE_NIGHTS = 366;
@@ -1437,5 +1438,5 @@ export async function applyBedAllocationMove(input: {
       promotedRowCount: authoritative.promotionRows.length,
       affectedNights,
     };
-  }, { timeout: 30_000, maxWait: 10_000 });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET); // `INV-LOCK-006`
 }

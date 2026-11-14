@@ -72,6 +72,7 @@ import {
   type ProposalGuest,
   type ProposalParty,
 } from "@/lib/booking-exception-requests";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * The canonical global booking/money lock(1). A HELD modification request now
@@ -1815,7 +1816,7 @@ export async function createModificationExceptionRequest(
       }
 
       return request;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     return {
       id: created.id,
@@ -1937,7 +1938,7 @@ export async function cancelModificationExceptionRequest(input: {
 
     await releasePolicyExceptionReservation(tx, input.id);
     return true;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 // ---------------------------------------------------------------------------

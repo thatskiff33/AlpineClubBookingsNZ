@@ -647,6 +647,10 @@ async function backPostOne(
         if (!apply) throw new BackPostRollback(result.kind === "POSTED" ? { ...result, lineIds: [] } : result);
         return result;
       },
+      // INV-LOCK-006 exception: an operator-run, one-off back-post of a whole
+      // booking's history does far more work under the global key than any
+      // request, and no member waits on it, so it gets a deliberately wider
+      // budget than the shared lock(1) one.
       { maxWait: 30_000, timeout: 120_000 },
     );
   } catch (error) {

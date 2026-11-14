@@ -20,6 +20,7 @@ import { prisma } from "@/lib/prisma";
 import { decodeRawRows } from "@/lib/raw-sql-rows";
 import { z } from "zod";
 import { formatCents } from "@/lib/utils";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #4042 (`INV-PAY-124`): THE HAND-BACK AN ORGANISER'S INTERNET BANKING GROUP
@@ -382,7 +383,7 @@ async function updateGroupHandBackAlertRecord(
       data: { reviewContext: sharesContext(shares.settlementId, shares.shares, record) },
     });
     return { amountCents: task.amountCents, reason: task.reason, record };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /**

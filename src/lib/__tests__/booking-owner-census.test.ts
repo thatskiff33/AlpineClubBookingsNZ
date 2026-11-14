@@ -461,7 +461,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
   "src/app/(authenticated)/bookings/[id]/page.tsx:205",
   "src/app/(authenticated)/bookings/page.tsx:196",
-  "src/app/api/bookings/[id]/additional-payment-secret/route.ts:83",
+  "src/app/api/bookings/[id]/additional-payment-secret/route.ts:87",
   "src/app/api/bookings/[id]/arrival-time/route.ts:140",
   "src/app/api/bookings/[id]/arrival-time/route.ts:248",
   "src/app/api/bookings/[id]/arrival-time/route.ts:298",
@@ -470,28 +470,28 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/change-requests/quote/route.ts:76",
   "src/app/api/bookings/[id]/change-requests/route.ts:179",
   "src/app/api/bookings/[id]/change-requests/route.ts:504",
-  "src/app/api/bookings/[id]/confirm-draft/route.ts:177",
-  "src/app/api/bookings/[id]/confirm-draft/route.ts:98",
-  "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:72",
-  "src/app/api/bookings/[id]/confirm-payment/route.ts:90",
-  "src/app/api/bookings/[id]/exception-requests/route.ts:137",
-  "src/app/api/bookings/[id]/guests/route.ts:347",
+  "src/app/api/bookings/[id]/confirm-draft/route.ts:100",
+  "src/app/api/bookings/[id]/confirm-draft/route.ts:179",
+  "src/app/api/bookings/[id]/confirm-modification-payment/route.ts:73",
+  "src/app/api/bookings/[id]/confirm-payment/route.ts:94",
+  "src/app/api/bookings/[id]/exception-requests/route.ts:138",
+  "src/app/api/bookings/[id]/guests/route.ts:352",
   "src/app/api/bookings/[id]/modify-quote/route.ts:366",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:273",
   "src/app/api/bookings/[id]/refund-request/route.ts:50",
   "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
   "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:67",
-  "src/app/api/payments/create-payment-intent/route.ts:171",
+  "src/app/api/payments/create-payment-intent/route.ts:176",
   "src/app/api/payments/create-setup-intent/route.ts:59",
-  "src/app/api/payments/switch-to-internet-banking/route.ts:127",
+  "src/app/api/payments/switch-to-internet-banking/route.ts:132",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1081",
-  "src/lib/booking-cancel.ts:2548",
-  "src/lib/booking-cancel.ts:570",
-  "src/lib/booking-date-modification-service.ts:394",
-  "src/lib/booking-delete.ts:120",
-  "src/lib/booking-delete.ts:69",
+  "src/lib/booking-batch-modification-service.ts:1078",
+  "src/lib/booking-cancel.ts:2549",
+  "src/lib/booking-cancel.ts:571",
+  "src/lib/booking-date-modification-service.ts:395",
+  "src/lib/booking-delete.ts:121",
+  "src/lib/booking-delete.ts:70",
   "src/lib/booking-email-authority.ts:115",
   "src/lib/booking-guest-removal-service.ts:426",
   "src/lib/booking-guest-removal-service.ts:653",
@@ -499,15 +499,15 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:624",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
-  "src/lib/group-booking.ts:276",
+  "src/lib/group-booking.ts:277",
   "src/lib/kiosk-access.ts:230",
   "src/lib/manual-refund-task-queue-payload.ts:366",
-  "src/lib/requested-room-write.ts:62",
-  "src/lib/waitlist-cross-lodge.ts:344",
-  "src/lib/waitlist-cross-lodge.ts:532",
-  "src/lib/waitlist.ts:1091",
-  "src/lib/waitlist.ts:949",
-  "src/lib/xero-applied-credit-spent-outside-app.ts:174",
+  "src/lib/requested-room-write.ts:63",
+  "src/lib/waitlist-cross-lodge.ts:346",
+  "src/lib/waitlist-cross-lodge.ts:534",
+  "src/lib/waitlist.ts:1093",
+  "src/lib/waitlist.ts:951",
+  "src/lib/xero-applied-credit-spent-outside-app.ts:175",
   "src/lib/xero-period-lock-guard.ts:569",
 ];
 
@@ -522,7 +522,7 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // records that store the owner's member id (null for a school), and one
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
-  "src/lib/member-guest-consent-service.ts:1355",
+  "src/lib/member-guest-consent-service.ts:1356",
   "src/lib/payment-recovery.ts:2768",
   "src/lib/payment-recovery.ts:2820",
   "src/lib/xero-admin-health.ts:423",
@@ -780,12 +780,12 @@ describe("#3369: an `organisation` selection names a relation that exists", () =
 /** Measured, not counted by hand. Re-measure by running this test. */
 const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/app/api/admin/payments/manual-refund-tasks/route.ts:81",
-  "src/lib/bed-allocation-removal.ts:144",
+  "src/lib/bed-allocation-removal.ts:145",
   // #3750: the change-request decision route's `includeRequestDetail`, moved
   // out of the route file to keep it in budget. Verified by hand: it is passed
   // as `include` to `bookingChangeRequest.findUnique`, and `organisation` sits
   // under its `booking` relation, which declares it.
-  "src/lib/booking-change-request-admin-decision.ts:93",
+  "src/lib/booking-change-request-admin-decision.ts:94",
   // #4925: `EDIT_DOOR_BOOKING_INCLUDE`, the one include every edit door
   // re-reads its booking with. Verified by hand: written
   // `satisfies Prisma.BookingInclude` and read back through
@@ -799,7 +799,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `organisation`.
   "src/lib/booking-owner-name.ts:12",
   "src/lib/cron-additional-payment-reminders.ts:439",
-  "src/lib/cron-confirm-pending.ts:192",
+  "src/lib/cron-confirm-pending.ts:193",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
   // it in budget. Verified by hand: written through

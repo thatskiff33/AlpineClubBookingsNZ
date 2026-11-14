@@ -1,5 +1,11 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_MESSAGE,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -1596,5 +1602,88 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
       expect(mocks.sendConfirmedEmail).not.toHaveBeenCalled();
       expect(mocks.createStructuredAuditLog).not.toHaveBeenCalled();
     });
+  });
+
+  // INV-LOCK-006: a spent lock(1) budget before any charge saved nothing; after
+  // a capture the captured-payment recovery answer wins; after the no-card move
+  // committed the admin is asked to check the status.
+  describe("lock(1) budget contention", () => {
+    const contention = (code: string) =>
+      new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" });
+
+    it.each(["P2028", "P2034"])(
+      "answers %s on the claim with a retryable 503 and charges nothing",
+      async (code) => {
+        mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+        mocks.transaction.mockRejectedValue(contention(code));
+
+        const res = await POST(makeRequest(), { params });
+
+        expect(res.status).toBe(503);
+        expect(res.headers.get("Retry-After")).toBe("2");
+        await expect(res.json()).resolves.toEqual({
+          error: TRANSACTION_CONTENDED_MESSAGE,
+          code: TRANSACTION_CONTENDED_CODE,
+        });
+        expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+      },
+    );
+
+    it("keeps an unrelated claim failure on the generic 500", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+      mocks.transaction.mockRejectedValue(new Error("boom"));
+
+      const res = await POST(makeRequest(), { params });
+
+      expect(res.status).toBe(500);
+      expect(res.headers.get("Retry-After")).toBeNull();
+      await expect(res.json()).resolves.toEqual({
+        error: "Failed to confirm pending guests",
+      });
+    });
+
+    it("keeps the captured-payment answer when the settle contends after the capture", async () => {
+      mocks.bookingFindUnique.mockResolvedValue(makeBooking());
+      mocks.chargePaymentMethod.mockResolvedValue({
+        id: "pi_contended",
+        status: "succeeded",
+        amount: 10000,
+        payment_method: "pm_1",
+      });
+      mocks.markBookingPaymentSucceeded.mockRejectedValue(contention("P2028"));
+
+      const res = await POST(makeRequest(), { params });
+      const body = await res.json();
+
+      expect(res.status).toBe(500);
+      expect(res.headers.get("Retry-After")).toBeNull();
+      expect(body).toMatchObject({ paymentReceived: true, finalisationPending: true });
+      expect(body.code).not.toBe(TRANSACTION_CONTENDED_CODE);
+      expect(mocks.sendPaymentFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentIntentId: "pi_contended" }),
+        CLUB_FORMAT_TEST,
+      );
+    });
+
+    it.each(["P2028", "P2034"])(
+      "asks the admin to check the status when the no-card bed reconcile hits %s after the move committed",
+      async (code) => {
+        mocks.bookingFindUnique.mockResolvedValue(makeBooking({ payment: null }));
+        mocks.reconcile.mockRejectedValueOnce(contention(code));
+
+        const res = await POST(makeRequest(), { params });
+
+        expect(res.status).toBe(503);
+        expect(res.headers.get("Retry-After")).toBe("2");
+        await expect(res.json()).resolves.toEqual({
+          error: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+          code: TRANSACTION_CONTENDED_CODE,
+        });
+        expect(mocks.bookingUpdateMany).toHaveBeenCalledWith({
+          where: { id: "b1", status: "PENDING" },
+          data: { status: "PAYMENT_PENDING", nonMemberHoldUntil: null },
+        });
+      },
+    );
   });
 });

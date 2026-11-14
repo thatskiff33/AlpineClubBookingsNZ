@@ -11,8 +11,13 @@
  * The real-PostgreSQL half (the debt, the refund row, the executor's Xero note,
  * the headroom race) is `organiser-child-refund.realdb.test.ts`.
  */
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -459,5 +464,35 @@ describe("approving a refund appeal on a booking the group organiser paid for by
       createdByMemberId: "admin_1",
     });
     expect(mocks.sendGroupOrganiserJoinerRefundEmail).not.toHaveBeenCalled();
+  });
+
+  // INV-LOCK-006: the claim transaction is the approval's first write, so a spent
+  // budget rolls everything back and the admin is told nothing was saved.
+  it.each(["P2028", "P2034"])(
+    "answers %s contention on the claim with a retryable 503, refunding and emailing nothing",
+    async (code) => {
+      mocks.transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" }),
+      );
+
+      const response = await approve(5_000);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Retry-After")).toBe("2");
+      await expect(response.json()).resolves.toEqual({
+        error: TRANSACTION_CONTENDED_MESSAGE,
+        code: TRANSACTION_CONTENDED_CODE,
+      });
+      expect(mocks.runOrganiserChildRefundDebtNow).not.toHaveBeenCalled();
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+      expect(mocks.createAuditLog).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still throws an unrelated claim failure rather than calling it contention", async () => {
+    mocks.reserveOrganiserChildAppealRefund.mockRejectedValue(new Error("boom"));
+
+    await expect(approve(5_000)).rejects.toThrow("boom");
+    expect(mocks.runOrganiserChildRefundDebtNow).not.toHaveBeenCalled();
   });
 });

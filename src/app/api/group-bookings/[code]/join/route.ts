@@ -32,6 +32,7 @@ import {
 } from "@/lib/booking-payment-methods";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import logger from "@/lib/logger";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 
 const joinSchema = z
@@ -119,6 +120,13 @@ export async function POST(
     );
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
+    // The join's booking create is one lock(1) transaction (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      err,
+      "Group booking join contended for the lock(1) budget",
+      { context: { code } },
+    );
+    if (contended) return contended;
     if (err instanceof MembershipTypeBookingPolicyError) {
       // Finding 2 (privacy re-review of MG3 #2308). This route is a member-facing
       // surface that can now answer D-8's collapsed refusal, so it owes the same

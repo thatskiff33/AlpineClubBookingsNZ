@@ -105,6 +105,7 @@ type ReconciliationBooking = Prisma.BookingGetPayload<{
 }>;
 
 import type { CapacityCancellationRefund } from "@/lib/booking-card-refund-copy";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export type MarkBookingPaymentSucceededResult = {
   outcome:
@@ -1701,7 +1702,7 @@ export async function markBookingPaymentSucceeded({
       paymentMethodId,
       format,
       recordedByCaller, capturedAt,
-    }, journal)
+    }, journal), LOCK1_HOLDER_TRANSACTION_BUDGET
   );
 
 
@@ -2253,7 +2254,7 @@ export async function markBookingPaymentManuallySettled({
       expectedAmountCents,
       notifyMember,
       additionalCoverage,
-    }, journal)
+    }, journal), LOCK1_HOLDER_TRANSACTION_BUDGET
   );
 
 
@@ -2828,7 +2829,7 @@ export async function reverseManualBookingPayment({
       restoredCreditElectionCents,
       restoredAdditionalAmountCents,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Recorded as a CANCELLED event carrying the reversal discriminator (#2008
   // pattern): durable and never pruned, rendered honestly on the admin

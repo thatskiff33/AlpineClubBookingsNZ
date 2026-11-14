@@ -9,6 +9,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import {
   approveAndExecutePolicyExceptionRequest,
   modificationExceptionRequestStore,
@@ -420,15 +421,27 @@ export async function PATCH(
         { status: 400 },
       );
     }
-    const result = await resolvePolicyExceptionRequestTerminal({
-      requestId: id,
-      expectedVersion,
-      to: "REJECTED",
-      actorMemberId: session.user.id,
-      adminNotes,
-      internalNotes,
-      store,
-    });
+    let result;
+    try {
+      result = await resolvePolicyExceptionRequestTerminal({
+        requestId: id,
+        expectedVersion,
+        to: "REJECTED",
+        actorMemberId: session.user.id,
+        adminNotes,
+        internalNotes,
+        store,
+      });
+    } catch (error) {
+      // `INV-LOCK-006`: the refusal's one transaction rolled back.
+      const contended = transactionContendedResponse(
+        error,
+        "Booking-policy exception refusal contended for the lock(1) budget",
+        { context: { requestId: id, source } },
+      );
+      if (contended) return contended;
+      throw error;
+    }
     if (!result.claimed) {
       return NextResponse.json(
         {
@@ -677,6 +690,12 @@ export async function PATCH(
         { status: error.status },
       );
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Booking-policy exception approval contended for the lock(1) budget",
+      { context: { requestId: id, source } },
+    );
+    if (contended) return contended;
     logger.error(
       { err: error, requestId: id, source },
       "Booking-policy exception approval failed",

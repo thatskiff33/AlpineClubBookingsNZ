@@ -35,6 +35,7 @@ import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
 import { isXeroBankRefundVoidWritesEnabled } from "@/lib/xero-feature-flags";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #4162 (owner decision 17 Oct 2026, `INV-ADDPAY-042`): UNDO, THEN ASK ONCE.
@@ -324,7 +325,7 @@ export async function followUpVoidedBankRefundNote(linkId: string, now: Date = n
         if (!done.claimed) return itemOf(note, "handled", "Already handled (follow-up raised by another run)");
         return itemOf(note, "undone", describe(c, true), { followUpTaskId: done.followUpTaskId });
       },
-      { timeout: 30_000 },
+      LOCK1_HOLDER_TRANSACTION_BUDGET,
     );
   } catch (error) {
     if (isPostgresLockNotAvailable(error)) return deferredBusy(linkId);
@@ -371,7 +372,7 @@ export async function pickRefundForUnmatchedVoid(input: { linkId: string; lineId
       }
       return { followUpTaskId: done.followUpTaskId, paymentId: note.paymentId, bookingId: note.bookingId! };
     },
-    { timeout: 30_000 },
+    LOCK1_HOLDER_TRANSACTION_BUDGET,
   );
 }
 
@@ -478,7 +479,7 @@ export async function markUnmatchedBankRefundVoidAnswered(input: {
       tx,
     );
     return { paymentId: note.paymentId, bookingId: note.bookingId };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /** The Stuck States panel's rows, read with the pooled client, with each pickable refund's task date. */

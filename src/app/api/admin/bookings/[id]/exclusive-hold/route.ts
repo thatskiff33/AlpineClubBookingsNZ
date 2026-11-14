@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import {
@@ -20,6 +21,7 @@ import {
 import { formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 import { z } from "zod";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const exclusiveHoldSchema = z.object({
   hold: z.boolean(),
@@ -391,7 +393,7 @@ export async function POST(
           promotedCount: allocationReconcile.promotedCount,
         },
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if ("error" in result) {
       return NextResponse.json(
@@ -414,6 +416,13 @@ export async function POST(
       bedAllocationReconcile: result.bedAllocationReconcile,
     });
   } catch (err) {
+    // `INV-LOCK-006`: the toggle's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      err,
+      "Exclusive whole-lodge hold toggle contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
     logger.error({ err, bookingId }, "Failed to update exclusive whole-lodge hold");
     return NextResponse.json(
       { error: "Failed to update exclusive whole-lodge hold" },

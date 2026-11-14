@@ -37,6 +37,7 @@ import logger from "@/lib/logger";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
 import { resolveEffectiveBedAllocationSettings } from "@/lib/bed-allocation-settings";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 type BedAllocationLifecycleDb = Prisma.TransactionClient | typeof prisma;
 
@@ -1466,7 +1467,7 @@ export async function reconcileBedAllocationsForBooking(
     });
   };
 
-  return prisma.$transaction(runLocked);
+  return prisma.$transaction(runLocked, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 // ---------------------------------------------------------------------------

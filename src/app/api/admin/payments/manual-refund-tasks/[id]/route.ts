@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 // `INV-SSOT` (#3030): the one non-negative-integer-cents rule, not a fourth
 // inline `.number().int().nonnegative()`.
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
@@ -229,6 +230,12 @@ export async function POST(
     if (error instanceof ManualBookingPaymentError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Manual refund task resolution contended for the lock(1) budget",
+      { context: { taskId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, taskId: id }, "Manual refund task resolution failed");
     return NextResponse.json(
       { error: "Could not close the refund task." },

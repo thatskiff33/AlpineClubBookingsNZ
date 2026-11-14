@@ -10,6 +10,7 @@ import { privacyRetentionSelection, selectFormerMemberBatch, RETENTION_BATCH_SIZ
 import { createAuditLog } from "@/lib/audit";
 import { clearExpiredStayDietaryValues } from "@/lib/member-dietary-booking-writes";
 import { anonymiseFormerMember } from "@/lib/privacy-retention-anonymise";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const CLAIM_LIFETIME_MS = 60 * 60 * 1000;
 type JobOptions = { now?: Date; db?: PrismaClient };
@@ -112,7 +113,7 @@ async function runClaimed(
             const done = await db.$transaction(async tx => {
               if (!(await getPrivacyRetentionSettings(tx)).anonymiseMembersEnabled) return false;
               return anonymiseFormerMember(tx, row.id, selection.formerMembers, now);
-            }, { timeout: 15_000 });
+            }, LOCK1_HOLDER_TRANSACTION_BUDGET);
             if (done) result.anonymised++; else result.blocked++;
           } catch (err) {
             logger.error({ err, memberId: row.id, job: FORMER_MEMBER_ANONYMISATION_JOB_NAME }, "Former-member anonymisation failed; member blocked for this run");

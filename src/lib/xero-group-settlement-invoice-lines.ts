@@ -42,6 +42,7 @@ import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-aler
 import { clubFormatValues } from "@/lib/club-format-server";
 import { formatCents } from "@/lib/utils";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 
 export interface GroupSettlementInvoiceLines {
@@ -178,7 +179,7 @@ export async function releaseUninvoiceableGroupSettlement(
       },
       data: { status: "FAILED" },
     });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   const format = await clubFormatValues();
   await alertGroupSettlementInvoice(
     {

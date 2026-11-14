@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -35,6 +36,7 @@ import {
   isHutLeaderStayCheckExempt,
 } from "@/lib/hut-leader-stayed-nights";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const createSchema = z.object({
   memberId: z.string().min(1),
@@ -380,7 +382,7 @@ export async function POST(req: NextRequest) {
         });
       }
       return { assignment, member: lockedMember, amendments, lodgeId: lockedLodgeId };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     const { assignment } = created;
     let emailSent = true;
     try {
@@ -454,6 +456,12 @@ export async function POST(req: NextRequest) {
     }
     const custodianResponse = custodianBedHoldErrorResponse(err);
     if (custodianResponse) return custodianResponse;
+    const contended = transactionContendedResponse(
+      err,
+      "Hut leader assignment create contended for the lock(1) budget",
+      { context: { memberId: parsed.data.memberId } },
+    );
+    if (contended) return contended;
     logger.error({ err }, "Error creating hut leader assignment");
     return NextResponse.json({ error: "Failed to create assignment" }, { status: 500 });
   }

@@ -58,6 +58,7 @@ import {
   RefundAllocationRacedError,
 } from "@/lib/payment-transactions";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #3372 (owner, 7 Oct 2026: "Count + add close action"; 8 Oct 2026: "Keep it
@@ -666,7 +667,7 @@ export async function closeCardRefundPaidAnotherWay(
       paidBack: input.paidBack, rest, stillOwedOperationId,
       xeroQueued,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Round 10: only a close that queued a row - its note, or the receipt its
   // note follows - kicks the outbox; a close whose note waits on another

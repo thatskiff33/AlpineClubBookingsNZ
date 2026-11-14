@@ -52,6 +52,8 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 export async function POST(
   request: NextRequest,
@@ -348,8 +350,15 @@ export async function POST(
         ...(hostingOverride ? { override: hostingOverride } : {}),
       }),
     });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
+    // The draft's one transaction rolled back (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      err,
+      "Draft confirmation contended for the lock(1) budget",
+      { context: { bookingId: id } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     // #2576 §6/§7/§9, and #2569's own refusal. All three are `ApiError`s thrown

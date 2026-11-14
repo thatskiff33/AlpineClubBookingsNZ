@@ -58,6 +58,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { formatCents } from "@/lib/utils";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export interface CreateXeroGroupSettlementInvoiceOptions
   extends FindOrCreateXeroContactOptions {
@@ -203,7 +204,7 @@ export async function createXeroInvoiceForGroupSettlement(
       attempt,
       superseded: current !== null && attempt < current,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   const settlement = initialFence.settlement;
   const attempt = initialFence.attempt;
 
@@ -416,8 +417,7 @@ export async function createXeroInvoiceForGroupSettlement(
           number: createdInvoice.invoiceNumber ?? null,
           totalCents: providerAmountToCents(createdInvoice.total),
         },
-      })
-    );
+      }), LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if (cancellationResult.abandoned) {
       if (cancellationResult.totalMismatch) {

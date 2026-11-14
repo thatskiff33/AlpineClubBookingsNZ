@@ -56,6 +56,7 @@ import {
 } from "@/lib/manual-settlement-reversal-event";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * The one definition of "the organiser pays for a member joining now": an
@@ -413,7 +414,7 @@ export async function releaseJoinersLeftBehindPaidSettlements(
           { groupBookingId: group.id, organiserBookingId: group.organiserBookingId },
           clubTodayDateOnly
         );
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     } catch (err) {
       logger.error(
         { err, groupBookingId: group.id },

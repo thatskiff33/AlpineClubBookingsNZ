@@ -8,6 +8,7 @@ import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-al
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { clubFormatValues } from "@/lib/club-format-server";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_ATTEMPTS = 3;
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_DELAY_MS = 500;
@@ -150,7 +151,7 @@ async function processWaitlistCronOnce(): Promise<{
       });
       await releaseBookingPromoRedemptions(tx, booking.id);
       return booking;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     if (cancelled) pastWaitlisted.push(cancelled);
   }
 

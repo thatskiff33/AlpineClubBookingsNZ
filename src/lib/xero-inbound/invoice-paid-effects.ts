@@ -75,6 +75,7 @@ import {
   type CashSettlementMarker,
 } from "@/lib/xero-inbound/settle-from-cash-notice";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 function isPaidXeroInvoice(invoice: Invoice): boolean {
   const status = String(invoice.status ?? "").toUpperCase();
@@ -1430,7 +1431,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
           decision: { transactionIds: receiptRowIds, collect: settled.type === "paid", effectiveDate: receiptDate ?? undefined } });
       }
       return settled;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     if (outcome.type === "missing") {
       continue;

@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
 import {
   MANUAL_PAYMENT_NOTE_MAX,
@@ -87,6 +88,12 @@ export async function POST(
         { status: error.status },
       );
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Manual refund task reopen contended for the lock(1) budget",
+      { context: { taskId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, taskId: id }, "Manual refund task reopen failed");
     return NextResponse.json(
       { error: "Could not put this item back on the queue." },

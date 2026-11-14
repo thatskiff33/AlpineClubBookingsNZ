@@ -50,6 +50,11 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY, SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { BELOW_STRIPE_MINIMUM_ADMIN_BODY, BelowStripeMinimumError, chargeCurrencyRefusal, isLocalChargeRefusal, localChargeRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -283,7 +288,7 @@ export async function POST(request: NextRequest) {
           paymentId: locked.payment.id,
           amountCents: chargeCents,
         };
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     let claim: Awaited<ReturnType<typeof runClaim>>;
     try {
@@ -397,7 +402,7 @@ export async function POST(request: NextRequest) {
           });
         }
         return { released: released.count > 0 };
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     claimReleaser = async () => {
       await releaseChargeClaim();
     };
@@ -670,6 +675,21 @@ export async function POST(request: NextRequest) {
             "unknown",
       });
     }
+
+    // Never after a capture (answered above). Only a contended claim saved
+    // nothing; once it committed, or the card was tried, the status may have
+    // moved (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      error,
+      "Saved-method charge contended for the lock(1) budget",
+      {
+        ...(claimReleaser || chargeAttempted
+          ? { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE }
+          : {}),
+        context: { chargeAttempted, claimCommitted: claimReleaser !== null },
+      },
+    );
+    if (contended) return contended;
 
     return NextResponse.json(
       { error: "Failed to charge saved payment method" },

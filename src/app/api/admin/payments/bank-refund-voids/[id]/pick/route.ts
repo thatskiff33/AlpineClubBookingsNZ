@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
 import {
   BankRefundVoidAnswerRefusal,
@@ -50,6 +51,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (isPostgresLockNotAvailable(error)) {
       return NextResponse.json({ error: "This payment is being updated right now. Try again in a minute." }, { status: 409 });
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Bank refund void pick contended for the lock(1) budget",
+      { context: { linkId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, linkId: id }, "Picking the refund of a voided bank-transfer refund note failed");
     return NextResponse.json({ error: "Could not take the refund back." }, { status: 500 });
   }
