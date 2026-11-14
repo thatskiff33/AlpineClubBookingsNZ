@@ -68,9 +68,9 @@ In every audience, only people who opted in to marketing email receive it.
 | Message Body | The plain-text body | empty | Required; max 10,000 characters; HTML is escaped |
 | Send to Members | Asks you to confirm the audience, count and subject, then sends | — | Requires membership **edit**; only marketing-opted-in members receive it; rate limited (default 1/hour) |
 
-The **Send History** table lists each past send: date, subject, audience
-(shown as in the Recipients selector), total recipients matched, and how many
-were actually sent (eligible after preference filtering).
+The **Send History** table lists each past send: date, subject, recipient
+filter, total recipients matched, and how many were actually sent (eligible
+after preference filtering).
 
 ## Troubleshooting
 

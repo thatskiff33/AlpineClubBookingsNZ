@@ -66,14 +66,6 @@ function peopleCount(count: number) {
   return `${count} ${count === 1 ? "person" : "people"}`;
 }
 
-// A past send's audience as the form names it; `custom` is not offered on the
-// page, so it keeps its stored key.
-function audienceLabel(recipientFilter: string) {
-  return Object.hasOwn(AUDIENCES, recipientFilter)
-    ? AUDIENCES[recipientFilter as OfferedAudience].label
-    : recipientFilter;
-}
-
 interface HistoryEntry {
   id: string;
   sentBy: string;
@@ -419,7 +411,7 @@ export default function CommunicationsPage() {
                       </td>
                       <td className="py-2 pr-4 font-medium">{entry.subject}</td>
                       <td className="py-2 pr-4 text-muted-foreground">
-                        {audienceLabel(entry.recipientFilter)}
+                        {entry.recipientFilter}
                       </td>
                       <td className="py-2 pr-4 text-muted-foreground">
                         {entry.totalRecipients}

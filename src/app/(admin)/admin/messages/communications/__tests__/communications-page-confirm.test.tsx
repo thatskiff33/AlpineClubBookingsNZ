@@ -352,26 +352,4 @@ describe("CommunicationsPage confirmation step (#4964)", () => {
       expect(postCalls()).toHaveLength(0);
     },
   );
-
-  it("names a past send's audience as the form does", async () => {
-    historyRows = [
-      ["h1", "members-only"],
-      ["h2", "custom"],
-    ].map(([id, recipientFilter]) => ({
-      id,
-      sentBy: "admin-1",
-      subject: `Subject ${id}`,
-      recipientFilter,
-      totalRecipients: 10,
-      eligibleRecipients: 8,
-      queued: 8,
-      sentAt: "2026-06-30T00:00:00.000Z",
-    }));
-    render(<CommunicationsPage />);
-
-    const table = await screen.findByRole("table");
-    expect(within(table).getByText("Members Only")).toBeInTheDocument();
-    // `custom` is not offered on the page, so it has no label to show.
-    expect(within(table).getByText("custom")).toBeInTheDocument();
-  });
 });
