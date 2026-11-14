@@ -180,7 +180,7 @@ export function WaitlistOfferCard({
   return (
     <Card className="border-primary/30 bg-card">
       <CardHeader>
-        <CardTitle className="text-foreground">A Spot Has Opened Up!</CardTitle>
+        <CardTitle headingLevel={2} className="text-foreground">A Spot Has Opened Up!</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {isCrossLodge ? (

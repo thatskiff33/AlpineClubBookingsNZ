@@ -143,7 +143,9 @@ export function GroupJoinVerifyPageClient({
     <div className="mx-auto flex min-h-[60vh] max-w-lg items-center justify-center p-4">
       <Card className="w-full">
         <CardHeader>
-          <CardTitle>Confirm your group booking spot</CardTitle>
+          {/* join/verify/[token]/page.tsx has no h1 of its own — this card is
+              the whole page. */}
+          <CardTitle headingLevel={1}>Confirm your group booking spot</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {outcome === "idle" || outcome === "submitting" ? (

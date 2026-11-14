@@ -252,7 +252,10 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
     return (
       <Card className="w-full max-w-2xl">
         <CardHeader>
-          <CardTitle>Request Sent</CardTitle>
+          {/* Embeddable both as /school-bookings' body AND via the
+              {{school-bookings}} token on any published CMS page, so this
+              card's position in the outline varies by caller. */}
+          <CardTitle headingLevel="none">Request Sent</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-2 text-success-11">
@@ -273,7 +276,8 @@ export function SchoolBookingForm({ club }: { club: ClubIdentity }) {
   return (
     <Card id="schoolBookingForm" className="w-full max-w-2xl">
       <CardHeader>
-        <CardTitle>School Group Booking Request</CardTitle>
+        {/* Same embed-anywhere reasoning as "Request Sent" above. */}
+        <CardTitle headingLevel="none">School Group Booking Request</CardTitle>
         <CardDescription>
           Request a school group stay at {club.lodgeName}. We&apos;ll email you to confirm your
           address, then send a quote for your school to review.

@@ -4,7 +4,9 @@ import { BookingRequestRespondClient } from "@/app/(website-dynamic)/booking-req
 // The quote-response link carries a one-time token and must never be indexed
 // (#2421). The group layout also sets this; kept here so the route states its own
 // reason.
+// A fixed tab title (#4951): it lands in history, so never the token or a name.
 export const metadata: Metadata = {
+  title: "Your booking quote",
   robots: { index: false, follow: false },
 };
 

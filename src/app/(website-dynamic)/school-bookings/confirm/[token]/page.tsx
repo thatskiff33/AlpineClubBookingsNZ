@@ -9,6 +9,9 @@ import { SchoolAttendeeConfirmForm } from "./school-attendee-confirm-form";
 // indexed (#2421): keep it out of search results the same way the group-join and
 // booking-request token pages are.
 export const metadata: Metadata = {
+  // A fixed page name (#4951): a tab title lands in history, so it never
+  // carries the school's name or the token.
+  title: "Confirm your attendee list",
   robots: { index: false, follow: false },
 };
 
@@ -38,7 +41,8 @@ export default async function SchoolAttendeeConfirmationPage({
     <div className="mx-auto flex w-full max-w-3xl justify-center px-4 py-12 sm:py-16">
       <Card className="w-full max-w-2xl">
       <CardHeader>
-        <CardTitle>Confirm Your Attendee List</CardTitle>
+        {/* This page has no h1 of its own — the card is the whole page. */}
+        <CardTitle headingLevel={1}>Confirm Your Attendee List</CardTitle>
         {details.request?.schoolName ? (
           <CardDescription>{details.request.schoolName}</CardDescription>
         ) : null}

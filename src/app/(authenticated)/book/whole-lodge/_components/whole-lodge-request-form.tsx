@@ -136,7 +136,7 @@ export function WholeLodgeRequestForm({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Request sent</CardTitle>
+          <CardTitle headingLevel={2}>Request sent</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* FIXED COPY. Identical whatever the member asked for and whatever

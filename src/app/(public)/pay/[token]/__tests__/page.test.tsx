@@ -1160,6 +1160,115 @@ describe("public payment page discloses money held for review", () => {
   });
 });
 
+describe("the /pay link has exactly one h1 in every state (#4951)", () => {
+  // Reached from a booking email, this page is one card; its title is the
+  // page's only heading. Before #4951 a screen reader's heading list here was
+  // empty, and the loading state had no title at all.
+  function expectOneLevelOneHeading(name: string) {
+    const headings = screen.getAllByRole("heading", { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveAccessibleName(name);
+  }
+
+  function installContext(response: { ok: boolean; body: Record<string, unknown> }) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/pay/public-token") {
+          return { ok: response.ok, json: async () => response.body } as Response;
+        }
+        if (url === "/api/booking-messages") {
+          return { ok: true, json: async () => ({ messages: {} }) } as Response;
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }) as typeof fetch,
+    );
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("loading", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})) as typeof fetch);
+    render(<PayByLinkPage />);
+    expectOneLevelOneHeading("Payment Link");
+  });
+
+  it("a link that will not load", async () => {
+    installContext({ ok: false, body: { error: "This payment link is not valid." } });
+    render(<PayByLinkPage />);
+    await screen.findByText("This payment link is not valid.");
+    expectOneLevelOneHeading("Payment Link");
+  });
+
+  it("payable", async () => {
+    installContext({ ok: true, body: payableContext });
+    render(<PayByLinkPage />);
+    await screen.findByRole("button", { name: "Pay by card" });
+    expectOneLevelOneHeading("Complete Your Payment");
+  });
+
+  it("a narrative state (paid)", async () => {
+    installContext({
+      ok: true,
+      body: {
+        ...payableContext,
+        state: "paid",
+        narrative: {
+          state: "paid",
+          headline: "Payment received",
+          message: "Thanks.",
+          nextStep: "Nothing more to do.",
+        },
+        payable: undefined,
+      },
+    });
+    render(<PayByLinkPage />);
+    await screen.findByText("Nothing more to do.");
+    expectOneLevelOneHeading("Payment received");
+  });
+});
+
+describe("the /pay link keeps its one h1 on the redirect-return screens (#4951, #4955)", () => {
+  // Both screens replace the whole page after a payer comes back from their
+  // bank, so each must still hand a screen reader exactly one level-1 heading.
+  function expectOneLevelOneHeading(name: string) {
+    const headings = screen.getAllByRole("heading", { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveAccessibleName(name);
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  });
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("while the server is asked what the payment did", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=succeeded");
+    const fetchMock = installIntentSequence([]);
+    fetchMock.mockImplementation(async (input, init) => {
+      if (init?.method === "POST") return new Promise<Response>(() => {});
+      return { ok: true, json: async () => String(input).endsWith("booking-messages") ? {} : payableContext } as Response;
+    });
+    render(<PayByLinkPage />);
+    expect(await screen.findByText("Checking your payment...")).toBeInTheDocument();
+    expectOneLevelOneHeading("Payment Link");
+  });
+
+  it("on the answer card shown when the link expired while the payer was at their bank", async () => {
+    window.history.replaceState(null, "", "?payment_intent=pi_test&redirect_status=processing");
+    installIntentSequence(
+      [{ status: 200, body: { clientSecret: "secret_test", paymentIntentId: "pi_test" } }],
+      [{ ...payableContext, payable: null, canRequestFreshLink: true }],
+    );
+    render(<PayByLinkPage />);
+    expect(await screen.findByText("Payment being processed")).toBeInTheDocument();
+    expectOneLevelOneHeading("Your Payment");
+  });
+});
 
 describe("#4955: Stripe returns to the payment link", () => {
   beforeEach(() => {

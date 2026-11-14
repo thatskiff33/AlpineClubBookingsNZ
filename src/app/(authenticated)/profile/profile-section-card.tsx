@@ -9,6 +9,13 @@ import {
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
+/**
+ * `headingLevel={2}` is hardcoded rather than threaded through as a prop
+ * (#2796 sweep, #4951): every call site renders this directly under
+ * `profile/page.tsx`'s one `<h1>Profile</h1>`, so one level is correct for
+ * every caller today. Re-check this if a future caller ever nests it inside
+ * another card's content.
+ */
 interface ProfileSectionCardProps {
   children: ReactNode;
   title: string;
@@ -34,7 +41,7 @@ export function ProfileSectionCard({
     return (
       <Card id={id} className={className}>
         <CardHeader>
-          <CardTitle>{title}</CardTitle>
+          <CardTitle headingLevel={2}>{title}</CardTitle>
           {description ? <CardDescription>{description}</CardDescription> : null}
         </CardHeader>
         <CardContent className={contentClassName}>{children}</CardContent>
@@ -50,7 +57,7 @@ export function ProfileSectionCard({
       >
         <summary className="flex cursor-pointer list-none items-start justify-between gap-4 px-6 py-6">
           <div className="space-y-1.5">
-            <CardTitle>{title}</CardTitle>
+            <CardTitle headingLevel={2}>{title}</CardTitle>
             {description ? (
               <CardDescription>{description}</CardDescription>
             ) : null}

@@ -11,6 +11,11 @@ import { type ClubDateFormat, formatStayDateOrNull } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { NominationConfirmCard } from "@/components/nomination-confirm-card";
 import { CLUB_NAME } from "@/config/club-identity";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Confirm a nomination",
+};
 
 // A dependent's date of birth is a calendar day, formatted by the kernel's one
 // stay-date helper (#3511). A stored value naming no real day is echoed rather
@@ -57,7 +62,7 @@ export default async function NominationPage({
     return (
       <Card className="mx-auto max-w-3xl">
         <CardHeader>
-          <CardTitle>Nomination link not found</CardTitle>
+          <CardTitle headingLevel={1}>Nomination link not found</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-muted-foreground">
           <p>This nomination link is invalid or no longer exists.</p>
@@ -75,7 +80,7 @@ export default async function NominationPage({
     return (
       <Card className="mx-auto max-w-3xl">
         <CardHeader>
-          <CardTitle>This nomination is not assigned to your account</CardTitle>
+          <CardTitle headingLevel={1}>This nomination is not assigned to your account</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
           Please sign in with the nominated member account that received the
@@ -120,7 +125,7 @@ export default async function NominationPage({
           <div className="inline-flex w-fit rounded-full bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {statusLabel(application.status)}
           </div>
-          <CardTitle className="text-3xl">
+          <CardTitle headingLevel={1} className="text-3xl">
             Nominate {application.applicantFirstName} {application.applicantLastName}
           </CardTitle>
         </CardHeader>

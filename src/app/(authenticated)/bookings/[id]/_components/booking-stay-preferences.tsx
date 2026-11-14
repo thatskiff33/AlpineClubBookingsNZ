@@ -43,7 +43,7 @@ export function BookingStayPreferences({
       {showArrivalTime && (
         <Card id="arrival" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Expected Arrival Time</CardTitle>
+            <CardTitle headingLevel={2}>Expected Arrival Time</CardTitle>
           </CardHeader>
           <CardContent>
             <ArrivalTimeEditor
@@ -58,7 +58,7 @@ export function BookingStayPreferences({
       {showRequestedRoom && (
         <Card id="room-request" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Room Request</CardTitle>
+            <CardTitle headingLevel={2}>Room Request</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {canEditRequestedRoom && !canSeeAdminTools ? (
@@ -126,7 +126,7 @@ export function BookingStayPreferences({
                 and door code are below. Read from the booking row, not from
                 `memberArrivalInstructions.lodgeName`, which falls back to the
                 club default when the lodge cannot be resolved (#2918). */}
-            <CardTitle>How to Get to {booking.lodge.name}</CardTitle>
+            <CardTitle headingLevel={2}>How to Get to {booking.lodge.name}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <p className="whitespace-pre-wrap">

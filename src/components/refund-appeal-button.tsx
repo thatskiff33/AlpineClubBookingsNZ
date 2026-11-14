@@ -152,7 +152,7 @@ export function RefundAppealButton({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Refund Appeal</CardTitle>
+        <CardTitle headingLevel={2}>Refund Appeal</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {existingRequests.length > 0 && (

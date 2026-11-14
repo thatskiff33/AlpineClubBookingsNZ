@@ -19,7 +19,7 @@ function ConfirmEmailChangeContent() {
     return (
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-center">Invalid Link</CardTitle>
+          <CardTitle headingLevel={1} className="text-center">Invalid Link</CardTitle>
         </CardHeader>
         <CardContent className="text-center space-y-4">
           <p className="text-muted-foreground">
@@ -36,7 +36,7 @@ function ConfirmEmailChangeContent() {
   return (
     <Card className="w-full max-w-md">
       <CardHeader>
-        <CardTitle className="text-center">Confirming Email Change...</CardTitle>
+        <CardTitle headingLevel={1} className="text-center">Confirming Email Change...</CardTitle>
       </CardHeader>
       <CardContent className="text-center">
         <p className="text-muted-foreground">Please wait while we update your email address.</p>
@@ -50,7 +50,7 @@ export default function ConfirmEmailChangePage() {
     <Suspense fallback={
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-center">Loading...</CardTitle>
+          <CardTitle headingLevel={1} className="text-center">Loading...</CardTitle>
         </CardHeader>
       </Card>
     }>

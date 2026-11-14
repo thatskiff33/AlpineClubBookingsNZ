@@ -14,6 +14,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import type { Metadata } from "next";
+
+// A fixed title rather than the notice's own: reading it here would be a second
+// audience check to keep in step with the page's, for a title that lands in
+// browser history.
+export const metadata: Metadata = {
+  title: "Notice",
+};
 
 export default async function NoticeDetailPage({
   params,
@@ -41,7 +49,9 @@ export default async function NoticeDetailPage({
 
   // Defense in depth: bodyHtml is sanitised on save, but re-sanitise at render
   // so a bypass in the save path can never reach the browser as live markup.
-  const safeHtml = sanitizePageContentHtml(notice.bodyHtml);
+  // The notice title above is this page's h1, so an H1 an author put in the
+  // body is rendered as an h2 rather than a second level-1 heading (#4951).
+  const safeHtml = sanitizePageContentHtml(notice.bodyHtml, { underPageHeading: true });
 
   // `publishedAt` is a real INSTANT (a nullable `DateTime`, serialised to ISO by
   // `getNoticeForMember`), so the civil day it reads as comes from the club's
@@ -67,7 +77,7 @@ export default async function NoticeDetailPage({
             {notice.pinned ? (
               <Pin className="h-4 w-4 text-muted-foreground" aria-label="Pinned" />
             ) : null}
-            <CardTitle className="text-2xl">{notice.title}</CardTitle>
+            <CardTitle headingLevel={1} className="text-2xl">{notice.title}</CardTitle>
           </div>
           {notice.publishedAt ? (
             <p className="text-sm text-muted-foreground">

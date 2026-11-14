@@ -41,7 +41,7 @@ export function BookingCancellationOutcome({
       {booking.status === "CANCELLED" && (
         <Card id="cancellation" className="scroll-mt-20">
           <CardHeader>
-            <CardTitle>Cancellation Outcome</CardTitle>
+            <CardTitle headingLevel={2}>Cancellation Outcome</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">

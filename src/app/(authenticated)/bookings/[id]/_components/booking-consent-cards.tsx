@@ -92,7 +92,7 @@ export function BookingConsentCards({
                 You&apos;re on this booking
               </Badge>
             </div>
-            <CardTitle>
+            <CardTitle headingLevel={2}>
               {`${bookingOwner(booking).member.firstName} ${bookingOwner(booking).member.lastName}`.trim()}{" "}
               added you to this booking
             </CardTitle>

@@ -18,7 +18,7 @@ export function ChangeEmailCard({
   return (
     <Card id="change-email" className="scroll-mt-20">
       <CardHeader>
-        <CardTitle>Change Email</CardTitle>
+        <CardTitle headingLevel={2}>Change Email</CardTitle>
         <CardDescription>
           Update your email address. You will need to verify the new address.
         </CardDescription>

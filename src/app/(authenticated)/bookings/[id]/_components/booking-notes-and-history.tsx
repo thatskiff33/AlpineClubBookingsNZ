@@ -37,7 +37,7 @@ export function BookingNotesAndHistory({
     <>
       <Card id="notes" className="scroll-mt-20">
         <CardHeader>
-          <CardTitle>Notes</CardTitle>
+          <CardTitle headingLevel={2}>Notes</CardTitle>
         </CardHeader>
         <CardContent>
           <BookingNotesEditor
@@ -50,7 +50,7 @@ export function BookingNotesAndHistory({
 
       <Card id="transaction-history" className="scroll-mt-20">
         <CardHeader>
-          <CardTitle>Transaction History</CardTitle>
+          <CardTitle headingLevel={2}>Transaction History</CardTitle>
         </CardHeader>
         <CardContent>
           <BookingMoneyReconciliationHistoryStatus

@@ -294,7 +294,7 @@ export function GuestsStep({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>
+        <CardTitle headingLevel={2}>
           Add Guests
           {checkIn && checkOut && (
             <span className="ml-2 text-sm font-normal text-muted-foreground">

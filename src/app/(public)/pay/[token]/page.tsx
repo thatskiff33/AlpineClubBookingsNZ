@@ -28,6 +28,7 @@ import {
   formatLinkExpiry,
   internetBankingHeading,
   NarrativeCard,
+  PAY_LINK_PAGE_HEADING,
   paymentRecoveryForRefusal,
   RedirectFailedNotice,
   toneForState,
@@ -189,6 +190,9 @@ export default function PayByLinkPage() {
   if (loading) {
     return (
       <Card className="w-full max-w-lg">
+        {/* No visible title while loading, but every render state of this page
+            still needs its one h1 (#4951) — same sr-only spelling as #1242. */}
+        <h1 className="sr-only">{PAY_LINK_PAGE_HEADING}</h1>
         <CardContent role="status" className="py-8 text-center text-muted-foreground">Loading...</CardContent>
       </Card>
     );
@@ -199,7 +203,7 @@ export default function PayByLinkPage() {
     return (
       <Card className="w-full max-w-lg">
         <CardHeader>
-          <CardTitle>Payment Link</CardTitle>
+          <CardTitle headingLevel={1}>{PAY_LINK_PAGE_HEADING}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-start gap-2 text-warning-11">
@@ -301,7 +305,9 @@ export default function PayByLinkPage() {
     return (
       <Card className="w-full max-w-lg">
         <CardHeader>
-          <CardTitle>Your Payment</CardTitle>
+          {/* A whole-page state after a redirect return (#4955), so its title is
+              the page's one h1 (#4951). */}
+          <CardTitle headingLevel={1}>Your Payment</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {recoveryNotice}
@@ -370,7 +376,7 @@ export default function PayByLinkPage() {
   return (
     <Card className="w-full max-w-lg">
       <CardHeader>
-        <CardTitle>Complete Your Payment</CardTitle>
+        <CardTitle headingLevel={1}>Complete Your Payment</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
