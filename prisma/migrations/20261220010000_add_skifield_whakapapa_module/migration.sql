@@ -18,8 +18,11 @@
 -- a fresh install's first migrate runs before anyone has signed up, so its row
 -- keeps the column default and the report starts off.
 --
--- Idempotent: a re-run's ADD COLUMN IF NOT EXISTS is a no-op and the UPDATE
--- rewrites the same value.
+-- Safe to run twice in a row: the second run's ADD COLUMN IF NOT EXISTS is a
+-- no-op and its UPDATE rewrites the same value. It is NOT safe to replay later:
+-- once an admin has set the two switches apart, the UPDATE would copy
+-- skifieldConditions back over their choice. Prisma's _prisma_migrations ledger
+-- is what stops a later replay; the migration does not guard against it.
 
 ALTER TABLE "ClubModuleSettings"
   ADD COLUMN IF NOT EXISTS "skifieldWhakapapa" BOOLEAN NOT NULL DEFAULT false;

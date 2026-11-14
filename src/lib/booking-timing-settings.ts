@@ -19,7 +19,9 @@ const BOOKING_TIMING_SELECT = {
   preArrivalReminderDays: true,
   additionalPaymentReminderDays: true,
   policyExceptionHoldDays: true,
-} as const;
+  // `satisfies` makes this list exact: a timing added to or dropped from
+  // `BookingTimings` stops this file compiling until the select follows it.
+} as const satisfies Record<keyof BookingTimings, true>;
 
 /** Reads the three timings; a club that never saved the row gets the defaults. */
 export async function getBookingTimingSettings(): Promise<BookingTimings> {

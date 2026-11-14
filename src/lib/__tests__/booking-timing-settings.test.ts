@@ -11,6 +11,8 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
+import { policySchema } from "@/lib/booking-policy-cancellation-schema";
+import { BOOKING_TIMING_KEYS } from "@/lib/booking-timings";
 import {
   BOOKING_TIMING_DAYS_MAX,
   BOOKING_TIMING_DAYS_MIN,
@@ -83,5 +85,40 @@ describe("the timing defaults have one source (INV-SSOT)", () => {
     expect(migration).toContain(
       `"${field}" BETWEEN ${BOOKING_TIMING_DAYS_MIN} AND ${BOOKING_TIMING_DAYS_MAX}`,
     );
+  });
+});
+
+// The three timing keys are listed in four places that cannot all be derived
+// from BOOKING_TIMING_KEYS: the reader's select, the route's request schema,
+// its club-wide-only guard and the admin form's rows. This walks every key in
+// BOOKING_TIMING_KEYS through the two server-side ones, so a fourth timing
+// added to the keys alone fails here until each place knows it (INV-SSOT).
+describe("every timing key is wired into each place that lists it", () => {
+  const BASE = { rules: [{ daysBeforeStay: 7, refundPercentage: 100 }] };
+
+  it("the reader selects exactly the timing keys", async () => {
+    findUnique.mockResolvedValue(null);
+    await getBookingTimingSettings();
+    const { select } = findUnique.mock.calls[0][0] as { select: Record<string, boolean> };
+    expect(Object.keys(select).sort()).toEqual([...BOOKING_TIMING_KEYS].sort());
+    expect(Object.values(select).every((picked) => picked === true)).toBe(true);
+  });
+
+  it.each(BOOKING_TIMING_KEYS)("%s: the request schema bounds it", (key) => {
+    expect(policySchema.safeParse({ ...BASE, [key]: BOOKING_TIMING_DAYS_MIN }).success).toBe(true);
+    expect(policySchema.safeParse({ ...BASE, [key]: BOOKING_TIMING_DAYS_MAX }).success).toBe(true);
+    expect(policySchema.safeParse({ ...BASE, [key]: BOOKING_TIMING_DAYS_MIN - 1 }).success).toBe(false);
+    expect(policySchema.safeParse({ ...BASE, [key]: BOOKING_TIMING_DAYS_MAX + 1 }).success).toBe(false);
+    expect(policySchema.safeParse({ ...BASE, [key]: 2.5 }).success).toBe(false);
+  });
+
+  it.each(BOOKING_TIMING_KEYS)("%s: a lodge override that carries it is refused", (key) => {
+    const result = policySchema.safeParse({
+      ...BASE,
+      lodgeId: "lodge-1",
+      [key]: BOOKING_TIMING_DAYS_MIN,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toContain(key);
   });
 });
