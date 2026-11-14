@@ -96,12 +96,12 @@ function savedWork(overrides: Partial<SavedWizardWork> = {}): SavedWizardWork {
     cancelIfGuestsBumped: false,
     groupTrip: false,
     groupPaymentMode: "EACH_PAYS_OWN",
-    paymentMethod: "stripe",
     memberReviewJustification: "",
     useCredit: false,
     attendingWorkParty: false,
     selectedWorkPartyEventId: null,
     waitlistAlternateLodgeIds: [],
+    selfSeedSettled: true,
     ...overrides,
   };
 }
@@ -111,7 +111,21 @@ function storedRecord(): Record<string, unknown> | null {
   return raw === null ? null : (JSON.parse(raw) as Record<string, unknown>);
 }
 
-function stubFetch({ policyValid = true } = {}) {
+function stubFetch({
+  policyValid = true,
+  internetBanking = false,
+  subscriptionStatus = "PAID",
+  rooms = null,
+  bookingsReply = null,
+}: {
+  policyValid?: boolean;
+  internetBanking?: boolean;
+  subscriptionStatus?: string;
+  /** Rooms the lodge offers for a request, or null for room requests off. */
+  rooms?: Array<{ id: string; name: string; bedCount: number }> | null;
+  /** Replaces the answer to every create, waitlist and draft call. */
+  bookingsReply?: Response | null;
+} = {}) {
   const calls: Array<{ url: string; body: unknown }> = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const u = String(url);
@@ -139,14 +153,14 @@ function stubFetch({ policyValid = true } = {}) {
       return jsonResponse({
         methods: {
           stripe: { enabled: true, default: true },
-          internetBanking: { enabled: false },
+          internetBanking: { enabled: internetBanking },
         },
         groupBookingsEnabled: false,
       });
     }
     if (u.includes("/api/member/subscription-status")) {
       return jsonResponse({
-        status: "PAID",
+        status: subscriptionStatus,
         seasonDisplay: "2026",
         invoiceUrl: null,
         invoiceNumber: null,
@@ -154,7 +168,7 @@ function stubFetch({ policyValid = true } = {}) {
     }
     if (u.includes("/api/booking-messages")) return jsonResponse({ messages: {} });
     if (u.includes("/api/bookings/rooms")) {
-      return jsonResponse({ enabled: false, rooms: [] });
+      return jsonResponse({ enabled: rooms !== null, rooms: rooms ?? [] });
     }
     if (u.includes("/api/availability/check")) {
       return jsonResponse({ lodgeCapacity: 20, nightDetails: [] });
@@ -172,7 +186,13 @@ function stubFetch({ policyValid = true } = {}) {
     if (u.includes("/api/promo-codes/available")) return jsonResponse([]);
     if (u.includes("/api/work-parties/active")) return jsonResponse({ events: [] });
     if (u.endsWith("/api/bookings")) {
-      return jsonResponse({ id: "booking-1", status: "PENDING", finalPriceCents: 20000 });
+      return (
+        bookingsReply ??
+        jsonResponse({ id: "booking-1", status: "PENDING", finalPriceCents: 20000 })
+      );
+    }
+    if (u.includes("/api/bookings/exception-requests")) {
+      return jsonResponse({ id: "request-1", proposal: {}, capacityHeld: false });
     }
     return jsonResponse({}, false);
   });
@@ -273,9 +293,10 @@ describe("the booking wizard keeps the member's work in this tab (#4950)", () =>
       selectedWorkPartyEventId: "event-1",
       waitlistAlternateLodgeIds: ["lodge-a"],
     }));
-    stubFetch();
+    stubFetch({ rooms: [{ id: "room-1", name: "Room 1", bedCount: 4 }] });
     const { result } = renderHook(() => useBookingWizard());
     await waitFor(() => expect(result.current.step).toBe("guests"));
+    await waitFor(() => expect(result.current.roomOptions).toHaveLength(1));
     expect(result.current).toMatchObject({
       guests,
       multiDateRangesEnabled: true,
@@ -329,7 +350,7 @@ describe("the booking wizard keeps the member's work in this tab (#4950)", () =>
   });
 
   it("keeps a party the member emptied, rather than adding them back", async () => {
-    saveWizardWork(savedWork({ guests: [] }));
+    saveWizardWork(savedWork({ guests: [], selfSeedSettled: true }));
     stubFetch();
     const { result } = renderHook(() => useBookingWizard());
 
@@ -481,5 +502,154 @@ describe("the booking wizard keeps the member's work in this tab (#4950)", () =>
     expect(storedRecord()).toBeNull();
     expect(assign).toHaveBeenCalledWith("/book");
     clearWizardWork();
+  });
+
+  it("does not keep the payment method, which is payment state", async () => {
+    saveWizardWork(savedWork({ step: "review" }));
+    stubFetch({ internetBanking: true });
+    const { result } = renderHook(() => useBookingWizard());
+    await waitFor(() => expect(result.current.priceQuote).toBeTruthy());
+    await waitFor(() => expect(result.current.internetBankingEnabled).toBe(true));
+
+    act(() => {
+      result.current.setPaymentMethod("internet_banking");
+      result.current.setNotes("after choosing Internet Banking");
+    });
+
+    await waitFor(() =>
+      expect(storedRecord()).toMatchObject({ notes: "after choosing Internet Banking" }),
+    );
+    expect(storedRecord()).not.toHaveProperty("paymentMethod");
+    expect(result.current.paymentMethod).toBe("internet_banking");
+  });
+
+  it("keeps the copy when a guest's own date is cleared", async () => {
+    stubFetch();
+    const { result } = renderHook(() => useBookingWizard());
+    await act(async () => result.current.handleLodgeChange("lodge-b"));
+    await act(async () => result.current.handleDateSelect(CHECK_IN, CHECK_OUT));
+    act(() => {
+      // A native date input reads '' once the member clears it.
+      result.current.handleGuestsChange([SELF, { ...FRIEND, stayStart: "" }]);
+      result.current.setNotes("after clearing a date");
+    });
+
+    await waitFor(() =>
+      expect(storedRecord()).toMatchObject({ notes: "after clearing a date" }),
+    );
+    expect(storedRecord()?.guests).toEqual([SELF, FRIEND]);
+  });
+
+  it("seeds the member on return when the copy was kept before the seed had run", async () => {
+    saveWizardWork(savedWork({ guests: [], selfSeedSettled: false }));
+    stubFetch();
+    const { result } = renderHook(() => useBookingWizard());
+
+    await waitFor(() => expect(result.current.step).toBe("guests"));
+    await waitFor(() => expect(result.current.guests).toEqual([SELF]));
+  });
+
+  it("records that the seed has run, so a later empty party stays the member's choice", async () => {
+    stubFetch();
+    const { result } = renderHook(() => useBookingWizard());
+    await act(async () => result.current.handleLodgeChange("lodge-b"));
+    await waitFor(() => expect(result.current.guests).toEqual([SELF]));
+    act(() => result.current.handleGuestsChange([]));
+
+    await waitFor(() => expect(storedRecord()).toMatchObject({ guests: [] }));
+    expect(storedRecord()).toMatchObject({ selfSeedSettled: true });
+  });
+
+  it("sends a blocked member back to the dates step, with the party kept", async () => {
+    saveWizardWork(savedWork({ step: "guests" }));
+    const calls = stubFetch({ subscriptionStatus: "UNPAID" });
+    const { result } = renderHook(() => useBookingWizard());
+
+    await waitFor(() => expect(result.current.bookingBlockedBySubscription).toBe(true));
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.includes("/api/booking-policies/check"))).toBe(true),
+    );
+    await act(async () => undefined);
+    expect(result.current.step).toBe("dates");
+    expect(result.current.guests).toEqual([SELF, FRIEND]);
+  });
+
+  it("tells the member the dates went when the date check refuses them on return", async () => {
+    saveWizardWork(savedWork());
+    stubFetch({ policyValid: false });
+    const { result } = renderHook(() => useBookingWizard());
+
+    await waitFor(() => expect(result.current.error).toBe("Choose different dates"));
+    expect(result.current.restoredWorkNotice).toBe("datesDropped");
+  });
+
+  it("stops saying the dates went once the member has chosen new ones", async () => {
+    saveWizardWork(savedWork({ checkIn: "2026-06-20", checkOut: "2026-06-22" }));
+    stubFetch();
+    const { result } = renderHook(() => useBookingWizard());
+    await waitFor(() => expect(result.current.restoredWorkNotice).toBe("datesDropped"));
+
+    await act(async () => result.current.handleDateSelect(CHECK_IN, CHECK_OUT));
+
+    expect(result.current.restoredWorkNotice).toBeNull();
+  });
+
+  it("forgets a room request the lodge no longer offers", async () => {
+    saveWizardWork(savedWork({ requestedRoomId: "room-9" }));
+    stubFetch({ rooms: [{ id: "room-1", name: "Room 1", bedCount: 4 }] });
+    const { result } = renderHook(() => useBookingWizard());
+
+    await waitFor(() => expect(result.current.roomOptions).toHaveLength(1));
+    await waitFor(() => expect(result.current.requestedRoomId).toBeNull());
+  });
+
+  it("forgets a room request once the club has switched room requests off", async () => {
+    saveWizardWork(savedWork({ requestedRoomId: "room-1" }));
+    stubFetch({ rooms: null });
+    const { result } = renderHook(() => useBookingWizard());
+
+    await waitFor(() => expect(result.current.step).toBe("guests"));
+    await waitFor(() => expect(result.current.requestedRoomId).toBeNull());
+  });
+
+  it("forgets the work once an exception request is sent", async () => {
+    saveWizardWork(savedWork({ step: "review" }));
+    stubFetch();
+    const { result } = renderHook(() => useBookingWizard());
+    await waitFor(() => expect(result.current.priceQuote).toBeTruthy());
+
+    await act(async () => {
+      await result.current.submitExceptionRequest({
+        memberMessage: "Please review",
+        supersedeRequestId: null,
+      });
+    });
+
+    expect(storedRecord()).toBeNull();
+  });
+
+  // A reply the browser cannot verify leaves the member in the wizard to try
+  // again (#5035, #5036), so what they typed must still be there to try with.
+  describe.each([
+    ["an unreadable body", () => ({ ok: true, status: 200, json: async () => { throw new Error("not json"); } }) as Response],
+    ["a 200 with no booking id", () => jsonResponse({ status: "PENDING" })],
+  ])("when the server answers with %s", (_name, reply) => {
+    it.each([
+      ["confirm", "handleSubmit"],
+      ["waitlist", "handleJoinWaitlist"],
+      ["draft", "handleSaveAsDraft"],
+    ] as const)("keeps the work on the %s path", async (_path, handler) => {
+      saveWizardWork(savedWork({ step: "review" }));
+      stubFetch({ bookingsReply: reply() });
+      const { result } = renderHook(() => useBookingWizard());
+      await waitFor(() => expect(result.current.priceQuote).toBeTruthy());
+
+      await act(async () => {
+        await result.current[handler]();
+      });
+
+      expect(navigation.push).not.toHaveBeenCalled();
+      expect(storedRecord()).toMatchObject({ lodgeId: "lodge-b", guests: [SELF, FRIEND] });
+    });
   });
 });

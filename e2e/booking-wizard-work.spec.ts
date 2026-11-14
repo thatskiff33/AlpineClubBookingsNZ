@@ -11,7 +11,9 @@ import { stayWindow } from "./helpers/stay-dates";
 // RETRY IDEMPOTENCY (#2302): nothing here writes to the database. The dates are
 // only checked, never booked, and the kept work lives in the page's
 // sessionStorage, which a retry's fresh browser context starts without. So one
-// window serves every attempt.
+// window serves every attempt. Window 16 is also member-guest-consent's decline
+// window on its first retry; sharing it is safe because this spec books nothing,
+// so it claims no capacity and leaves no member-night behind for that spec.
 test.use({ storageState: storageStatePath(personas.booker.email) });
 
 const stay = stayWindow(16);

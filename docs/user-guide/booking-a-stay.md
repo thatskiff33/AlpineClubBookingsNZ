@@ -17,11 +17,13 @@ full booking state machine is in
 [`STATE_MACHINES.md`](../STATE_MACHINES.md#booking-lifecycle).
 
 Your unfinished booking stays in this browser tab when you visit your profile
-or refresh the page. Return to **Book** to continue with your dates, party and
-notes. Prices and family details are checked again. If the dates are no longer
-valid, choose new ones; your party stays. Use **Start again** to discard restored
-work. Submitting, joining the waitlist, saving a draft or signing out clears it;
-closing the tab also removes the saved copy. It is not a confirmed booking.
+or refresh the page. Return to **Book** to continue with your lodge, dates,
+party and notes. Prices and family details are checked again, and you choose
+your payment method again at the review step. If the dates are no longer valid,
+choose new ones; your party stays. Use **Start again** to discard restored work.
+Submitting, joining the waitlist, saving a draft, sending an exception request
+or signing out clears it, and closing the tab normally removes the saved copy.
+It is not a confirmed booking.
 
 ## When you'd use it
 

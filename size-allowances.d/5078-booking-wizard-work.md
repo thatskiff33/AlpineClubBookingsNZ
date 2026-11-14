@@ -7,14 +7,17 @@ lives in `src/lib/booking-wizard-work.ts`, when it is saved and restored in
 wizard's state is.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2567
-reason: restoring work writes nineteen pieces of the wizard's own state and then
+lines: 2605
+reason: restoring work writes eighteen pieces of the wizard's own state and then
   re-runs the wizard's own date check and quote, so the member's restored inputs
   are checked exactly as a click would check them. Those setters and functions
   are private to this hook; moving the restore out would mean handing a second
-  module every setter, which is a wider surface than the code it moves. About a
-  third of the growth is the date check learning to report whether it moved on,
-  which the restore needs and a click ignores.
+  module every setter, which is a wider surface than the code it moves. The
+  restore also has to wait for the subscription status, so work restored to a
+  later step cannot walk round the dates step's subscription gate, and to check
+  a kept room request against the lodge's own rooms; both are state this hook
+  owns. Part of the growth is the date check learning to report whether it moved
+  on, which the restore needs and a click ignores.
 
 file: src/app/(authenticated)/book/page.tsx
 lines: 712

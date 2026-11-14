@@ -9,6 +9,7 @@ import {
   type SavedWizardWork,
 } from "@/lib/booking-wizard-work";
 import { parseCalendarDate, type CalendarDate } from "@/lib/club-time";
+import { MEMBER_GUEST_CONSENT_PREVIEW_VALUES } from "@/lib/member-guest-consent-preview";
 
 const STORAGE_KEY = "booking-wizard-work";
 const TODAY = parseCalendarDate("2026-07-01") as CalendarDate;
@@ -39,12 +40,12 @@ function work(overrides: Partial<SavedWizardWork> = {}): SavedWizardWork {
     cancelIfGuestsBumped: true,
     groupTrip: false,
     groupPaymentMode: "EACH_PAYS_OWN",
-    paymentMethod: "internet_banking",
     memberReviewJustification: "",
     useCredit: false,
     attendingWorkParty: false,
     selectedWorkPartyEventId: null,
     waitlistAlternateLodgeIds: [],
+    selfSeedSettled: true,
     ...overrides,
   };
 }
@@ -66,17 +67,40 @@ describe("booking wizard work storage (#4950)", () => {
     expect(raw).not.toContain("passport");
   });
 
-  it("keeps the consent preview of a member added from outside the family", () => {
-    const outsider = {
-      firstName: "Pat",
-      lastName: "Outsider",
-      ageTier: "ADULT" as const,
-      isMember: true,
-      memberId: "member-9",
-      memberGuestConsentPreview: "PENDING" as const,
-    };
-    saveWizardWork(work({ guests: [outsider] }));
-    expect(loadWizardWork("member-1")?.guests).toEqual([outsider]);
+  it.each(MEMBER_GUEST_CONSENT_PREVIEW_VALUES)(
+    "keeps the %s consent preview of a member added from outside the family",
+    (memberGuestConsentPreview) => {
+      const outsider = {
+        firstName: "Pat",
+        lastName: "Outsider",
+        ageTier: "ADULT" as const,
+        isMember: true,
+        memberId: "member-9",
+        memberGuestConsentPreview,
+      };
+      saveWizardWork(work({ guests: [outsider] }));
+      expect(loadWizardWork("member-1")?.guests).toEqual([outsider]);
+    },
+  );
+
+  it("does not keep the payment method, which is payment state", () => {
+    saveWizardWork({ ...work(), paymentMethod: "internet_banking" } as SavedWizardWork);
+    expect(window.sessionStorage.getItem(STORAGE_KEY)).not.toContain("paymentMethod");
+    expect(loadWizardWork("member-1")).toEqual(work());
+  });
+
+  it("keeps the copy, minus the blank, when a guest's own date was cleared", () => {
+    const sam = work().guests[1];
+    saveWizardWork(work({ guests: [{ ...sam, stayStart: "", stayEnd: "" }] }));
+    expect(loadWizardWork("member-1")?.guests).toEqual([
+      { firstName: "Sam", lastName: "Friend", ageTier: "CHILD", isMember: false },
+    ]);
+  });
+
+  it("leaves the earlier copy alone when a later state does not fit the saved shape", () => {
+    saveWizardWork(work({ notes: "first" }));
+    saveWizardWork(work({ notes: "second", checkIn: "not a date" }));
+    expect(loadWizardWork("member-1")).toEqual(work({ notes: "first" }));
   });
 
   it("removes a copy for another member, with another version, or unreadable", () => {
@@ -93,11 +117,21 @@ describe("booking wizard work storage (#4950)", () => {
     expect(window.sessionStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
-  it("rejects a malformed date or a step the wizard cannot resume", () => {
-    saveWizardWork(work({ checkIn: "2026-02-30" }));
-    expect(loadWizardWork("member-1")).toBeNull();
-    saveWizardWork(work({ step: "pay" as SavedWizardWork["step"] }));
-    expect(loadWizardWork("member-1")).toBeNull();
+  it("never writes, and on read removes, a malformed date or a step the wizard cannot resume", () => {
+    // Written straight to storage: `saveWizardWork` refuses to write these.
+    for (const bad of [
+      { checkIn: "2026-02-30" },
+      { step: "pay" as SavedWizardWork["step"] },
+    ]) {
+      saveWizardWork(work(bad));
+      expect(window.sessionStorage.getItem(STORAGE_KEY)).toBeNull();
+      window.sessionStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ ...work(bad), version: 1 }),
+      );
+      expect(loadWizardWork("member-1")).toBeNull();
+      expect(window.sessionStorage.getItem(STORAGE_KEY)).toBeNull();
+    }
   });
 
   it("clears", () => {

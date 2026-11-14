@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { GuestNightGrid } from "@/components/guest-night-grid";
 import { formatDateOnly } from "@/lib/date-only";
+import type { MemberGuestConsentPreview } from "@/lib/member-guest-consent-preview";
 
 export interface GuestData {
   firstName: string;
@@ -46,7 +47,7 @@ export interface GuestData {
    * PENDING row and still triggers the consent request. `member-guest-add-call-sites`
    * and the wizard's own tests pin that.
    */
-  memberGuestConsentPreview?: "PENDING" | "NOTIFY_ONLY" | "ADMIN_ASSIGNED";
+  memberGuestConsentPreview?: MemberGuestConsentPreview;
 }
 
 interface GuestFormProps {

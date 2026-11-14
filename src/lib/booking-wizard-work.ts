@@ -1,3 +1,4 @@
+import { GroupBookingPaymentMode } from "@prisma/client";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import {
@@ -5,6 +6,7 @@ import {
   parseCalendarDate,
   type CalendarDate,
 } from "@/lib/club-time";
+import { MEMBER_GUEST_CONSENT_PREVIEW_VALUES } from "@/lib/member-guest-consent-preview";
 
 /**
  * The booking wizard's work in progress, kept in this browser tab (#4950).
@@ -25,6 +27,11 @@ import {
  * always re-fetched, so a family member completed on the profile shows as
  * addable on return.
  *
+ * The payment method is payment state, so it is not kept either (#4950's
+ * acceptance criteria). The wizard withdraws an Internet Banking choice whenever
+ * the current quote cannot hold it, which is exactly the state a restore starts
+ * in, so a kept choice would be reset to card before the member saw it.
+ *
  * ## Privacy (`INV-PRIV`)
  *
  * Guest names and age tiers sit in `sessionStorage`: one tab, gone when the tab
@@ -33,6 +40,10 @@ import {
  * stamped with the signed-in member's id and a copy for anyone else is thrown
  * away on read, and it is cleared on every sign-out (`signOutMember`), on
  * submit, waitlist join, draft save, exception request and "Start again".
+ *
+ * Limit: a session that ends by expiry or revocation never runs
+ * `signOutMember`, so the copy then stays in the tab until the next member's
+ * `/book` visit discards it (the member stamp) or the tab closes.
  */
 
 const STORAGE_KEY = "booking-wizard-work";
@@ -63,9 +74,7 @@ const savedGuestSchema = z.object({
   // reads it, so dropping it made an outsider count as the supervising adult
   // and the create route refuse a party the wizard had let through. Display
   // only; the server decides consent for itself.
-  memberGuestConsentPreview: z
-    .enum(["PENDING", "NOTIFY_ONLY", "ADMIN_ASSIGNED"])
-    .optional(),
+  memberGuestConsentPreview: z.enum(MEMBER_GUEST_CONSENT_PREVIEW_VALUES).optional(),
 });
 
 const savedWorkSchema = z.object({
@@ -84,13 +93,18 @@ const savedWorkSchema = z.object({
   requestedRoomId: z.string().nullable(),
   cancelIfGuestsBumped: z.boolean(),
   groupTrip: z.boolean(),
-  groupPaymentMode: z.enum(["EACH_PAYS_OWN", "ORGANISER_PAYS"]),
-  paymentMethod: z.enum(["stripe", "internet_banking"]),
+  groupPaymentMode: z.nativeEnum(GroupBookingPaymentMode),
   memberReviewJustification: z.string(),
   useCredit: z.boolean(),
   attendingWorkParty: z.boolean(),
   selectedWorkPartyEventId: z.string().nullable(),
   waitlistAlternateLodgeIds: z.array(z.string()),
+  // Whether the wizard's one-shot "add the member to the party" has run. An
+  // empty party means "the member left themselves out" only once it has; an
+  // empty party saved before it ran (the family list still loading, or the
+  // member's own record blocked until they finish their profile) must still be
+  // seeded on return.
+  selfSeedSettled: z.boolean(),
 });
 
 export type SavedWizardWork = Omit<z.infer<typeof savedWorkSchema>, "version">;
@@ -104,20 +118,36 @@ function tabStorage(): Storage | null {
   }
 }
 
-/** Keep the wizard's inputs for this tab, replacing any earlier copy. */
+/**
+ * A per-guest date the member has cleared reads as '' from a native date input.
+ * The guest form shows the booking's own date for it, so it is the same as no
+ * per-guest date, and must not make the whole copy unsavable.
+ */
+function withoutBlankGuestDates(guest: SavedWizardWork["guests"][number]) {
+  const { stayStart, stayEnd, ...rest } = guest;
+  return {
+    ...rest,
+    ...(stayStart ? { stayStart } : {}),
+    ...(stayEnd ? { stayEnd } : {}),
+  };
+}
+
+/**
+ * Keep the wizard's inputs for this tab, replacing any earlier copy. A state
+ * that does not fit the saved shape leaves the earlier copy as it was: one
+ * transient value must never erase the member's work.
+ */
 export function saveWizardWork(work: SavedWizardWork): void {
   const storage = tabStorage();
   if (!storage) return;
   const record = {
     ...work,
+    guests: work.guests.map(withoutBlankGuestDates),
     version: SAVED_WORK_VERSION,
   };
   try {
     const parsed = savedWorkSchema.safeParse(record);
-    if (!parsed.success) {
-      clearWizardWork();
-      return;
-    }
+    if (!parsed.success) return;
     storage.setItem(STORAGE_KEY, JSON.stringify(parsed.data));
   } catch {
     // Quota or privacy mode: losing the copy is the old behaviour, not an error.

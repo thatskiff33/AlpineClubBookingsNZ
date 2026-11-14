@@ -43,10 +43,10 @@ import { Button } from "@/components/ui/button";
  * already uses for the same reason.
  *
  * Signing out requires JavaScript here, exactly as it does everywhere else in this
- * application (`src/components/nav-bar.tsx` calls the same `signOutMember`), so
- * nothing that worked without scripting stops working. The signed-out branch's anchor —
- * the one the no-JavaScript recipient of an emailed invite actually uses — is
- * untouched.
+ * application (`src/components/nav-bar.tsx` calls `signOutToLogin`, which calls the
+ * same `signOutMember`), so nothing that worked without scripting stops working.
+ * The signed-out branch's anchor — the one the no-JavaScript recipient of an
+ * emailed invite actually uses — is untouched.
  */
 export function SignOutAndReturnButton({
   returnPath,

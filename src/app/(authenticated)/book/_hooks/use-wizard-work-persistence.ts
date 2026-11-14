@@ -164,6 +164,14 @@ export function useWizardWorkPersistence({
     setRestoredWorkNotice(null);
   }, []);
 
+  /**
+   * The restored dates were refused by the date check that runs on return, so
+   * the notice must say the dates went, not that the work came back whole.
+   */
+  const noteDatesDropped = useCallback(() => {
+    setRestoredWorkNotice((current) => (current === null ? current : "datesDropped"));
+  }, []);
+
   /** The member chose to throw the kept work away: forget it and reload empty. */
   const startAgain = useCallback(() => {
     stopKeepingWork();
@@ -173,5 +181,11 @@ export function useWizardWorkPersistence({
     window.location.assign("/book");
   }, [stopKeepingWork]);
 
-  return { restoreSettled, restoredWorkNotice, stopKeepingWork, startAgain };
+  return {
+    restoreSettled,
+    restoredWorkNotice,
+    noteDatesDropped,
+    stopKeepingWork,
+    startAgain,
+  };
 }

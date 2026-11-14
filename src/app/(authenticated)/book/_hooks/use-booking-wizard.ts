@@ -453,6 +453,9 @@ export function useBookingWizard() {
   // instead of the default partial bump for non-member guests.
   const [cancelIfGuestsBumped, setCancelIfGuestsBumped] = useState(false);
   const [roomOptions, setRoomOptions] = useState<RoomOption[]>([]);
+  // Which lodge `roomOptions` was answered for, so a room request can be checked
+  // only against its own lodge's list (#4950).
+  const [roomOptionsLodgeId, setRoomOptionsLodgeId] = useState<string | null>(null);
   const [roomRequestEnabled, setRoomRequestEnabled] = useState(false);
   const [useCredit, setUseCredit] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<BookingPaymentMethod>("stripe");
@@ -784,6 +787,9 @@ export function useBookingWizard() {
   // never a per-guest stay range or a live quote/promo/credit to invalidate;
   // the resets below match that helper for parity and are no-ops here.
   const selfSeededRef = useRef(false);
+  // The same fact as `selfSeededRef`, readable while rendering so the kept copy
+  // can say whether an empty party was the member's choice (#4950).
+  const [selfSeedSettled, setSelfSeedSettled] = useState(false);
   useEffect(() => {
     if (selfSeededRef.current) return;
     const self = familyMembers.find((fm) => fm.relationship === "self");
@@ -795,6 +801,7 @@ export function useBookingWizard() {
 
     // Consume the one-shot opportunity now — seeding must never fire later.
     selfSeededRef.current = true;
+    setSelfSeedSettled(true);
 
     // Only a fresh, bookable, within-capacity party gets self injected. Case (a)
     // (a non-empty party) falls through here having spent the opportunity.
@@ -840,9 +847,13 @@ export function useBookingWizard() {
   } | null>(null);
   const [restoredRequotePending, setRestoredRequotePending] = useState(false);
   function applyRestoredWork(work: SavedWizardWork) {
-    // The kept party is the member's own choice, including leaving themselves
-    // out, so the one-shot self seed is spent rather than run over it.
-    selfSeededRef.current = true;
+    // A kept party is the member's own choice, including one that leaves
+    // themselves out, so the one-shot self seed is spent rather than run over
+    // it. An empty party kept before the seed had run was nobody's choice: the
+    // seed stays open and the family list decides, as on a fresh visit.
+    const seedSpent = work.guests.length > 0 || work.selfSeedSettled;
+    selfSeededRef.current = seedSpent;
+    setSelfSeedSettled(seedSpent);
     setLodgeId(work.lodgeId);
     setCheckIn(work.checkIn);
     setCheckOut(work.checkOut);
@@ -855,7 +866,6 @@ export function useBookingWizard() {
     setCancelIfGuestsBumped(work.cancelIfGuestsBumped);
     setGroupTrip(work.groupTrip);
     setGroupPaymentMode(work.groupPaymentMode);
-    setPaymentMethod(work.paymentMethod);
     setMemberReviewJustification(work.memberReviewJustification);
     setUseCredit(work.useCredit);
     setAttendingWorkParty(work.attendingWorkParty);
@@ -896,12 +906,12 @@ export function useBookingWizard() {
             cancelIfGuestsBumped,
             groupTrip,
             groupPaymentMode,
-            paymentMethod,
             memberReviewJustification,
             useCredit,
             attendingWorkParty,
             selectedWorkPartyEventId,
             waitlistAlternateLodgeIds,
+            selfSeedSettled,
           }
         : null,
     onRestore: applyRestoredWork,
@@ -1032,6 +1042,7 @@ export function useBookingWizard() {
       // preference; the picker is simply absent until a lodge is known.
       setRoomRequestEnabled(false);
       setRoomOptions([]);
+      setRoomOptionsLodgeId(null);
       return;
     }
     let cancelled = false;
@@ -1041,16 +1052,29 @@ export function useBookingWizard() {
         if (cancelled) return;
         setRoomRequestEnabled(Boolean(data?.enabled));
         setRoomOptions(data?.rooms ?? []);
+        setRoomOptionsLodgeId(scopedLodgeId);
       })
       .catch(() => {
         if (cancelled) return;
         setRoomRequestEnabled(false);
         setRoomOptions([]);
+        setRoomOptionsLodgeId(scopedLodgeId);
       });
     return () => {
       cancelled = true;
     };
   }, [scopedLodgeId]);
+
+  // #4950 — work kept in this tab can name a room that has since gone, or that
+  // the club no longer lets members request, and nothing on screen would offer a
+  // way to clear it before the create route refused it. Once this lodge's rooms
+  // are known, a request they do not list is forgotten.
+  useEffect(() => {
+    if (!requestedRoomId || roomOptionsLodgeId !== scopedLodgeId) return;
+    if (!roomRequestEnabled || !roomOptions.some((room) => room.id === requestedRoomId)) {
+      setRequestedRoomId(null);
+    }
+  }, [requestedRoomId, roomOptions, roomOptionsLodgeId, roomRequestEnabled, scopedLodgeId]);
 
   // Fetch subscription status for the current season
   useEffect(() => {
@@ -1564,6 +1588,7 @@ export function useBookingWizard() {
           if (!reviewable) {
             setError(policyData.message);
             if (keepGuestStayRanges) {
+              workPersistence.noteDatesDropped();
               setCheckIn(null);
               setCheckOut(null);
               setPerGuestDatesEnabled(false);
@@ -1749,11 +1774,30 @@ export function useBookingWizard() {
     }
   }
 
+  // #4941 — the fact and its consequence are separate values. An unpaid
+  // subscription only stops a member starting a booking under HARD_BLOCK; the
+  // mode is read once here so the banner and the dates step cannot disagree.
+  // A failed fetch (UNKNOWN) is not unpaid, so it blocks nobody.
+  const subscriptionIsUnpaid =
+    subscriptionStatus?.status === "UNPAID" ||
+    subscriptionStatus?.status === "OVERDUE";
+  const subscriptionLockout = readSubscriptionLockoutView(subscriptionStatus);
+  const bookingBlockedBySubscription = isBookingBlockedBySubscription(
+    subscriptionIsUnpaid,
+    subscriptionLockout,
+  );
+
   // #4950 — resuming restored work re-runs the same date check and quote a
   // member's clicks would, so it is wired up after both are declared.
+  //
+  // The "booking is disabled until your subscription is paid" gate exists only
+  // on the dates step, so restored work must not walk round it: resuming waits
+  // for the subscription status, and a blocked member stays on the dates step
+  // with their party kept.
   const resumeRestoredDates = useEffectEvent(
     (restored: NonNullable<typeof restoredDatesRef.current>) => {
-      void selectDates(restored.checkIn, restored.checkOut, true, restored.advance).then(
+      const advance = restored.advance && !bookingBlockedBySubscription;
+      void selectDates(restored.checkIn, restored.checkOut, true, advance).then(
         (advanced) => {
           if (advanced && restored.requote) setRestoredRequotePending(true);
         },
@@ -1763,9 +1807,10 @@ export function useBookingWizard() {
   useEffect(() => {
     const restored = restoredDatesRef.current;
     if (!restored || scopedLodgeId !== restored.lodgeId) return;
+    if (subscriptionStatus === null) return;
     restoredDatesRef.current = null;
     resumeRestoredDates(restored);
-  }, [scopedLodgeId, workPersistence.restoreSettled]);
+  }, [scopedLodgeId, workPersistence.restoreSettled, subscriptionStatus]);
   const resumeRestoredQuote = useEffectEvent(() => {
     void handleGuestsDone();
   });
@@ -2298,18 +2343,6 @@ export function useBookingWizard() {
       "Internet Banking is not available for this check-in date. Please pay by card to secure the booking immediately."
     );
 
-  // #4941 — the fact and its consequence are separate values. An unpaid
-  // subscription only stops a member starting a booking under HARD_BLOCK; the
-  // mode is read once here so the banner and the dates step cannot disagree.
-  // A failed fetch (UNKNOWN) is not unpaid, so it blocks nobody.
-  const subscriptionIsUnpaid =
-    subscriptionStatus?.status === "UNPAID" ||
-    subscriptionStatus?.status === "OVERDUE";
-  const subscriptionLockout = readSubscriptionLockoutView(subscriptionStatus);
-  const bookingBlockedBySubscription = isBookingBlockedBySubscription(
-    subscriptionIsUnpaid,
-    subscriptionLockout,
-  );
   const showInviteFamilyGroupMembersLink =
     shouldShowInviteFamilyGroupMembersLink(familyMembers);
   /**
@@ -2561,7 +2594,12 @@ export function useBookingWizard() {
     waitlistAlternateLodgeIds,
     setWaitlistAlternateLodgeIds,
     // #4950 — work brought back from this tab, and the way to throw it away.
-    restoredWorkNotice: workPersistence.restoredWorkNotice,
+    // "Its dates can no longer be booked. Choose new dates." stops being true
+    // once the member has chosen new ones.
+    restoredWorkNotice:
+      workPersistence.restoredWorkNotice === "datesDropped" && checkIn
+        ? null
+        : workPersistence.restoredWorkNotice,
     startAgain: workPersistence.startAgain,
   };
 }
