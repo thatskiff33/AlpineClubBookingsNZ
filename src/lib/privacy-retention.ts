@@ -1,5 +1,6 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
+import { countExpiredStayDietaryValues } from "@/lib/member-dietary-booking-writes";
 import { prisma } from "@/lib/prisma";
 import { getPrivacyRetentionSettings } from "@/lib/privacy-retention-settings";
 import {
@@ -17,11 +18,12 @@ export async function getPrivacyRetentionPreview({
   const selection = await privacyRetentionSelection(settings, now);
   const take = Math.max(1, Math.min(100, Math.floor(pageSize)));
   const skip = (Math.max(1, Math.floor(page)) - 1) * take;
-  const [emailCount, emailRows, applicationCount, applicationRows] = await Promise.all([
+  const [emailCount, emailRows, applicationCount, applicationRows, clearedBookingDietary] = await Promise.all([
     db.emailLog.count({ where: selection.emailLogs }),
     db.emailLog.findMany({ where: selection.emailLogs, select: { id: true, createdAt: true }, orderBy: { id: "asc" }, take, skip }),
     includeMembers ? db.memberApplication.count({ where: selection.rejectedApplications }) : Promise.resolve(0),
     includeMembers ? db.memberApplication.findMany({ where: selection.rejectedApplications, select: { id: true, reviewedAt: true }, orderBy: { id: "asc" }, take, skip }) : Promise.resolve([]),
+    countExpiredStayDietaryValues(db, selection.bookingDietaryCutoff),
   ]);
   const formerMembers: PreviewGroup = { count: 0, rows: [] };
   const blockedMembers: PreviewGroup = { count: 0, rows: [] };
@@ -51,7 +53,7 @@ export async function getPrivacyRetentionPreview({
     undatedMembers.rows = rows.map(({ id }) => ({ id, date: null }));
   }
   return {
-    settings,
+    settings, clearedBookingDietary,
     emailLogs: { count: emailCount, rows: emailRows.map(row => ({ id: row.id, date: row.createdAt })) },
     rejectedApplications: { count: applicationCount, rows: applicationRows.map(row => ({ id: row.id, date: row.reviewedAt })) },
     formerMembers, blockedMembers, undatedMembers,

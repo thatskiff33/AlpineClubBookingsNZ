@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
-import { z } from "zod";
-import { editPromoCodesSchema } from "@/lib/booking-modify-quote-request";
+import { isDateOnlyOverrideViolation } from "@/lib/booking-modify-quote-request";
+import { batchModifySchema } from "@/lib/booking-modify-request";
+import { EditPriceChangedError, editPriceChangedBody } from "@/lib/edit-quoted-figures";
 import {
-  GUEST_CHANGE_LIST_BOUND, BOOKING_PARTY_GUESTS_MAX, guestRequestSchemaError, guestStayFieldsSchema,
+  guestRequestSchemaError,
 } from "@/lib/booking-guest-stay-range-input";
 
 import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
@@ -12,13 +13,10 @@ import {
   SameOwnerCoverageWouldBreakError,
   buildSameOwnerCoverageOverrideRequiredBody,
   buildSameOwnerCoverageRefusalBody,
-  hostingCoverageOverrideSchema,
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
 import { auth } from "@/lib/auth";
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import {
-  dependantIdentityDeclarationSchema,
   OwnDependantIdentityRefusedError,
 } from "@/lib/booking-dependant-identity";
 import {
@@ -40,7 +38,6 @@ import {
 import {
   SameOwnerCoverageLinkedMoveRequiredError,
   buildSameOwnerCoverageLinkedMoveBody,
-  hostingCoverageLinkedMoveSchema,
 } from "@/lib/adult-member-hosting-linked-move";
 import { modifyBookingWithLinkedMoveSupport } from "@/lib/booking-linked-date-move-arms";
 import { clubTime } from "@/lib/club-time/server";
@@ -62,127 +59,9 @@ import {
 } from "@/lib/membership-type-policy";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { nameField } from "@/lib/zod-helpers";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
 import { clubFormatValues } from "@/lib/club-format-server";
-
-const batchModifySchema = z.object({
-  checkIn: z.string().optional(),
-  checkOut: z.string().optional(),
-  addGuests: z
-    .array(
-      z.object({
-        firstName: nameField(),
-        lastName: nameField(),
-        ageTier: bookableAgeTierEnum,
-        isMember: z.boolean(),
-        memberId: z.string().min(1).optional(),
-        ...guestStayFieldsSchema.shape,
-      }),
-    )
-    .max(...GUEST_CHANGE_LIST_BOUND).optional(),
-  // #3451 (`INV-GUEST-019`): the answer about an added guest sharing a name with
-  // one of the owner's dependants, re-verified by the guest planner.
-  dependantIdentityDeclarations: z
-    .array(dependantIdentityDeclarationSchema)
-    .max(50)
-    .optional(),
-  removeGuestIds: z.array(z.string()).max(...GUEST_CHANGE_LIST_BOUND).optional(),
-  guestStayRanges: z
-    .array(
-      z.object({
-        guestId: z.string().min(1),
-        ...guestStayFieldsSchema.shape,
-      }),
-    )
-    .max(BOOKING_PARTY_GUESTS_MAX).optional(),
-  guestUpdates: z
-    .array(
-      z.object({
-        guestId: z.string().min(1),
-        firstName: nameField(),
-        lastName: nameField(),
-      }),
-    )
-    .max(...GUEST_CHANGE_LIST_BOUND).optional(),
-  // #2337: link a placeholder guest to a member (admin-only, member whole-lodge
-  // only — enforced in the service by `resolveGuestMemberLinks` and the
-  // member-origin check). Re-rates the linked row at the member rate in place.
-  linkGuestToMember: z
-    .array(
-      z.object({
-        guestId: z.string().min(1),
-        memberId: z.string().min(1),
-      }),
-    )
-    .max(60).optional(),
-  // Other Lodges epic: the reciprocal other-club rate election. Admin-only and
-  // gated in the service by `resolveOtherLodgeRateElection`; both fields are an
-  // END STATE for the whole booking, never a delta.
-  otherLodgeId: z.string().min(1).nullable().optional(),
-  otherLodgeMemberGuestIds: z.array(z.string().min(1)).max(BOOKING_PARTY_GUESTS_MAX).optional(),
-  promoCode: z.string().optional(),
-  // #2266 (MED-4): guest-targeted promo beneficiaries. Existing guests bind by
-  // bookingGuestId (stale ids refuse loudly); positional indexes exist only
-  // for TO-BE-ADDED guests within this same request, relative to addGuests.
-  promoGuestIds: z.array(z.string().min(1)).max(BOOKING_PARTY_GUESTS_MAX).optional(),
-  promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(...GUEST_CHANGE_LIST_BOUND).optional(),
-  removePromoCode: z.boolean().optional(),
-  // #3827: the complete list of codes after the edit, in the booker's order.
-  promoCodes: editPromoCodesSchema,
-  // #2266: credit election on the edit path — stored on the booking (#2265),
-  // never applied here. Bounds mirror the create route's applyCreditCents.
-  applyCreditCents: z.number().int().min(0).max(100_000_000).optional(),
-  memberReviewJustification: z.string().trim().min(1).max(1000).optional(),
-  settlementMethod: z.enum(["card", "credit"]).optional(),
-  // Admin-only date override (issue #1668).
-  adminOverride: z.boolean().optional(),
-  pricingMode: z.enum(["shift", "recalculate"]).optional(),
-  confirmOverCapacity: z.boolean().optional(),
-  notifyMember: z.boolean().optional(),
-  // Admin-only (#1746): flag proposed member guests as partner-sharers so
-  // capacity runs through the #1745 reserved double-bed slots.
-  partnerSharedGuests: z
-    .array(
-      z.object({
-        memberId: z.string().min(1),
-        partnerMemberId: z.string().min(1),
-      }),
-    )
-    .max(10)
-    .optional(),
-  // #2576 §7: the officer's explicit confirmation and mandatory reason for
-  // overriding a same-owner coverage refusal. Optional in the shape because the
-  // first submission never carries it — the officer is asked only when the change
-  // would actually strand another booking on the account.
-  hostingCoverageOverride: hostingCoverageOverrideSchema.optional(),
-  // #3232: the member's answer to the linked-move offer. Absent on a first
-  // submission, which is the normal case — the question is only asked when the
-  // change would actually strand another booking on their own account.
-  hostingCoverageLinkedMove: hostingCoverageLinkedMoveSchema.optional(),
-});
-
-const OVERRIDE_DATE_ONLY_FIELDS = [
-  "addGuests",
-  // #3451: an answer about an added guest is a guest change, never a date override.
-  "dependantIdentityDeclarations",
-  "removeGuestIds",
-  "guestStayRanges",
-  "guestUpdates",
-  // #2337: a placeholder→member link is a guest change, never a date override.
-  "linkGuestToMember",
-  // The other-lodge rate election re-rates guests, so it is a guest change too.
-  "otherLodgeId",
-  "otherLodgeMemberGuestIds",
-  "promoCode",
-  "promoGuestIds",
-  "promoAddedGuestIndexes",
-  "removePromoCode",
-  "promoCodes",
-  // #1746: partner-shared flags ride guest changes, never a date override.
-  "partnerSharedGuests",
-] as const;
 
 export async function PUT(
   request: NextRequest,
@@ -287,17 +166,7 @@ export async function PUT(
   }
   if (
     adminOverride &&
-    (OVERRIDE_DATE_ONLY_FIELDS.some((field) => {
-      const value = parsed.data[field];
-      return Array.isArray(value) ? value.length > 0 : Boolean(value);
-    }) ||
-      // #2266: checked explicitly — `Boolean(0)` is false, so a credit
-      // election of 0 cents would otherwise slip past the date-only contract.
-      parsed.data.applyCreditCents !== undefined ||
-      // Same trap, same fix: `otherLodgeId: null` CLEARS the election and is
-      // falsy, so the list membership above would let it through a date-only
-      // override.
-      parsed.data.otherLodgeId !== undefined)
+    isDateOnlyOverrideViolation(parsed.data)
   ) {
     return NextResponse.json(
       { error: "Admin override edits change dates only" },
@@ -329,6 +198,7 @@ export async function PUT(
             input: {
               checkIn: parsed.data.checkIn,
               checkOut: parsed.data.checkOut,
+              quotedFigures: parsed.data.quotedFigures,
               confirmOverCapacity,
               notifyMember,
             },
@@ -351,6 +221,12 @@ export async function PUT(
 
     return NextResponse.json(result);
   } catch (err) {
+    // #4924 (`INV-MOD-062`): the save's own figures differ from the ones the
+    // member previewed. Thrown inside the save's transaction before its first
+    // write, so nothing was settled; the body carries the fresh figures.
+    if (err instanceof EditPriceChangedError) {
+      return NextResponse.json(editPriceChangedBody(err), { status: err.status });
+    }
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     // #3451 (`INV-GUEST-019`): an added guest is named as one of the owner's

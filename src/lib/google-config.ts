@@ -19,6 +19,7 @@
  * logged, or put in an audit row. Setup surfaces read metadata-only state.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import {
@@ -32,7 +33,7 @@ import type {
   CredentialRequestContext,
 } from "@/lib/integration-credential-actor";
 
-export const GOOGLE_PROVIDER = "google";
+export const GOOGLE_PROVIDER = "google" satisfies IntegrationCredentialNamespace;
 
 export const GOOGLE_CREDENTIAL_KEYS = {
   clientId: "client_id",

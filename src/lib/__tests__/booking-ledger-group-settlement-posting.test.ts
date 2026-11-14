@@ -7,13 +7,14 @@ import { describe, expect, it } from "vitest";
 
 import { ledgerLineAmountCents } from "@/lib/booking-ledger-write";
 import {
+  groupSettlementRefundLineKind,
   planGroupSettlementRefundLine,
   planGroupSettlementShareLines,
 } from "@/lib/booking-ledger-group-settlement-posting";
 import { groupSettlementRefundKey, groupSettlementShareKey } from "@/lib/booking-ledger-posting-keys";
 
-const card = { id: "gs1", source: "STRIPE" as const, amountCents: 10_000 };
-const bank = { id: "gs2", source: "INTERNET_BANKING" as const, amountCents: 10_000 };
+const card = { id: "gs1", source: "STRIPE" as const, amountCents: 10_000, refundPaidByBank: false };
+const bank = { id: "gs2", source: "INTERNET_BANKING" as const, amountCents: 10_000, refundPaidByBank: false };
 const child = (bookingId: string, shareCents: number) => ({ bookingId, lodgeId: "l1", shareCents });
 const sum = (postings: ReturnType<typeof planGroupSettlementShareLines>["postings"]) =>
   postings.reduce((total, posting) => total + ledgerLineAmountCents(posting), 0);
@@ -120,6 +121,25 @@ describe("planGroupSettlementRefundLine", () => {
       planGroupSettlementRefundLine({ settlement: bank, bookingId: "c1", lodgeId: "l1", refundCents: 100 }),
     ).toEqual(expect.objectContaining({ kind: "BANK_REFUND", settlementMethod: "INTERNET_BANKING", sign: -1 }));
     expect(planGroupSettlementRefundLine({ settlement: bank, bookingId: "c1", lodgeId: "l1", refundCents: 0 })).toBeNull();
+  });
+
+  it("#4851: posts a card plan closed on Stuck States as paid by bank as a bank refund under the same key", () => {
+    const paidByBank = { ...card, refundPaidByBank: true };
+    expect(groupSettlementRefundLineKind(paidByBank)).toBe("BANK_REFUND");
+    expect(groupSettlementRefundLineKind(card)).toBe("CARD_REFUND");
+    expect(
+      planGroupSettlementRefundLine({ settlement: paidByBank, bookingId: "c1", lodgeId: "l1", refundCents: 2_250 }),
+    ).toEqual(
+      expect.objectContaining({
+        kind: "BANK_REFUND",
+        settlementMethod: "INTERNET_BANKING",
+        sign: -1,
+        unitCents: 2_250,
+        anchorKind: "GROUP_SETTLEMENT",
+        anchorId: "gs1",
+        postingKey: groupSettlementRefundKey("gs1", "c1"),
+      }),
+    );
   });
 
   it("keys a share and a refund apart, so both post on one child", () => {

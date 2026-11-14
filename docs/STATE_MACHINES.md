@@ -6,6 +6,14 @@ inventing certainty.
 
 ## Booking Lifecycle
 
+Every cancellation returns its promo uses in the transaction that writes
+`CANCELLED` (`INV-MONEY-005`, #4909). A lost claim releases nothing. The
+`cancelled-booking-promo-release-census.test.ts` census classifies every writer,
+including quote holds, split children and cross-lodge replacements that cannot
+carry codes. Member cancellations, bank hold expiry, card capacity voids, Xero
+late-capacity cancellations, organiser child cancellations, past-date waitlist
+expiry and legacy draft rejection use the shared transaction-bound release.
+
 Known schema statuses: `DRAFT`, `PENDING`, `PAYMENT_PENDING`, `CONFIRMED`,
 `PAID`, `BUMPED`, `CANCELLED`, `COMPLETED`, `WAITLISTED`,
 `WAITLIST_OFFERED`, `AWAITING_REVIEW`.
@@ -239,7 +247,8 @@ to internet banking, the school pay-on-account approval) post R01; an edit or
 the Internet Banking reconcile's flip, which now writes the confirmation's
 ledger lines as the settle does) links its lines to that charge rather than
 charging again. Every writer that sets `PAID` or `CANCELLED` is classified by
-`booking-sale-status-writer-census.test.ts`.
+`booking-sale-status-writer-census.test.ts`, which requires each posting write's
+own function to call its poster at least once per write.
 
 Waitlist confirmation and expiry serialize on the offered booking's lodge lock.
 Confirmation re-reads `WAITLIST_OFFERED` and the deadline after acquiring the
@@ -295,7 +304,7 @@ charge-saved-card branch follows the cron's claim-first shape (#1418): claim
 promote to PAID. A failed or requires-action charge releases the claim back to
 `PENDING` with the hold restored and (on failure) alerts admins. The claim
 stamps `Booking.savedCardClaimAt` and the release clears it, so a claim whose
-release never ran is recovered by the cron (#4993, `INV-PAY-151`, "Stale
+release never ran is recovered by the cron (#4993, `INV-PAY-155`, "Stale
 saved-card claim recovery" below); a captured
 charge is durably recorded as a PRIMARY payment transaction before promotion,
 so if the promotion fails the booking stays CONFIRMED holding its beds, admins
@@ -1779,7 +1788,11 @@ answers 409 `SUPERSEDED_CARD_PAYMENT_REFUNDING`, also for a captured intent of
 the booking its pointer has moved past. Neither reuse arm hands out an intent
 a superseded row still names; one being paid answers `PAYMENT_PROCESSING` in
 its own words. After a card success the `/pay` link asks the server what it
-did and never shows the pay buttons again.
+did and never shows the pay buttons again, whether the confirmation resolved in
+the page or a redirect method returned the payer to the link with
+`payment_intent` and `redirect_status` in the address (#4955). The door's 410
+for a booking already paid carries `BOOKING_ALREADY_PAID`, which the link reads
+as paid (the webhook settled first); its other 410s stay unconfirmed.
 
 Saved-card provenance (#3269, `INV-PAY-053`). Two writers put a
 `stripePaymentMethodId` on a `Payment` row and only one of them saves a card:
@@ -1879,7 +1892,7 @@ already recorded, and each path's locked release re-reads the booking under its
 locks and hands the claim back only while it is still CONFIRMED — a booking the
 webhook has since settled PAID is left alone.
 
-The claim is durable (#4993, `INV-PAY-151`): all three paths stamp
+The claim is durable (#4993, `INV-PAY-155`): all three paths stamp
 `Booking.savedCardClaimAt` in the PENDING -> CONFIRMED write, and every release
 (CONFIRMED -> PENDING) and every PAID promotion clears it in the same guarded
 write. All three release through one helper (`runSavedCardClaimRelease`) with
@@ -2466,6 +2479,28 @@ inbound fence records its conflict the same way, under the
 
 `INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`, `INV-ADDPAY-052`.
 
+### Stripe dispute record (#4911)
+
+One `StripeDispute` row per Stripe dispute (chargeback), kept by the four
+`charge.dispute.*` webhook events (`INV-PAY-154`). The row's status follows
+Stripe's dispute status; the first event to arrive inserts it, whichever it is:
+
+```text
+(none) -> OPEN          charge.dispute.created / funds_withdrawn, or any event on an open dispute
+OPEN   -> WON           charge.dispute.closed, Stripe status won
+OPEN   -> LOST          charge.dispute.closed, Stripe status lost
+OPEN   -> CLOSED_OTHER  charge.dispute.closed with no funds taken (warning_closed, prevented)
+(none) -> WON / LOST / CLOSED_OTHER   a closed event arriving first
+```
+
+WON, LOST and CLOSED_OTHER are terminal: a later or older event never reopens
+the row, and a replay changes nothing. `funds_withdrawn` and `funds_reinstated`
+add to the row's withdrawn and reinstated cents. OPEN and LOST hold the
+payment's captures: no card refund or account credit, and a paid cancel goes to
+the treasurer as a hand-back task. WON and CLOSED_OTHER hold nothing. The opened
+alert is sent once ever on the first record, the closed alert once ever on the
+first terminal status. To verify: `stripe-dispute.test.ts`.
+
 ### Manual refund task lifecycle (#2262)
 
 ```text
@@ -2582,7 +2617,12 @@ DISMISSED -> OPEN   (#3498, owner decision D2: an officer with finance:edit puts
                      clears all three off the row, so that entry is the only
                      place they survive. Everything the OPEN status governs
                      re-arms with it: the pending-review fence, and the
-                     member-facing banner. See `INV-PAY-099`.)
+                     member-facing banner. See `INV-PAY-099`. Since #4343 an
+                     `EDIT_FINANCIAL_REVIEW` is refused on this arm, before the
+                     claim, and nothing is written: officer edit reviews are
+                     retired. Remaining OPEN rows of that kind are settled or
+                     closed by `bookings:edit-review-cleanup`. Every other kind
+                     still uses this arm. A completion stays terminal.)
 OPEN -> DISMISSED   (#3643, owner decision 28 Sep 2026: the ONLY close of a
                      part-payment review - a `CANCELLED_BOOKING_HAND_BACK`
                      marked by `partPaymentReviewPaymentId`, raised with no
@@ -2885,7 +2925,11 @@ removal (`CONSENT_DECLINE` / `CONSENT_EXPIRY`): owner decision D-14 says a membe
 who never consented must always be able to come off a booking, so that removal
 proceeds rather than being held behind a pricing question nobody has answered.
 No removal parks its money since #4317, so the exemption's only effect is that
-the fence does not refuse it.
+the fence does not refuse it. The removal already credited the guest, so
+`bookings:edit-review-cleanup` dismisses the review that guest was on instead of
+settling it, and its own completion is refused under the same lock if a removal
+lands mid-run. An officer settling it by hand is warned, not refused (owner,
+24 Oct 2026).
 
 The transition is a status-fenced conditional update, so a double click can
 never double-apply the allocation, and the row is never processed by any cron —
@@ -4153,6 +4197,10 @@ worker finds the operation must wait (busy) -> RUNNING -> PENDING: returns
   createdAt -> FAILED for a person (an operator's retry raises it unwaited)
   it waits only when its edit expected an own note; a note the repair pass
   queues reads that from the edit's history row (#4049)
+  group invoice raised and bound but its email owed (#4919): code
+  GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED, the owed marker kept in
+  responsePayload, rechecked every minute; the re-drive only asks Xero to
+  email it, under lock(1), and an operator's retry of a FAILED row does too
 supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
   an officer's or the repair tool's own actions on it are not drawn here)
   -> that intent captured and the money kept -> the others naming it billed
@@ -4182,6 +4230,11 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
      row on the anchor it holds; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
+  its WEBHOOK_RECONCILE row is this attempt's own (INV-INT-038): an INBOUND
+  row left RUNNING past the stale threshold by a dead attempt is re-claimed
+  in place under a fresh startedAt (one guarded write, one winner; the dead
+  attempt's late outcome refused); a live one fails this attempt as in
+  flight -> event FAILED, retried after its backoff
 failure -> retry/backoff/admin visibility
 FAILED/PARTIAL -> officer marks it resolved in Xero -> done: status unchanged,
   never retried, requeued or re-minted beside (INV-INT-025)
@@ -4588,6 +4641,9 @@ PROCESSING -> attempt throws
   card refund whose slice's reservation the journal refused (#4516, M4c)
                               -> FAILED terminal at once, the same way; Stripe was not
                                  asked for that slice; settled by "Paid another way"
+  card refund on a capture an OPEN or LOST Stripe dispute holds (#4911, INV-PAY-154)
+                              -> FAILED terminal at once, the same way; Stripe was not
+                                 asked; the cause names the dispute for the treasurer
 ```
 
 Every terminal row sits at the attempt ceiling, so the claim, the health check
@@ -4744,8 +4800,12 @@ PENDING|FAILED -> same (an open, claimed row that counted the refund is
                        recording the failure in failedRefundIds; compare-and-set
                        on the plan, status, attempts and nextRetryAt read)
 DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
-                       Payment row, refused (409) unless what is owed is the
-                       figure the treasurer saw, then a status-guarded claim on
+                       Payment row; refused (409) when the owed figure moved,
+                       or (#4492) a failed-later row is on the payment, a
+                       plan-less superseded row's sizing refund has not gone
+                       back to the card, or that row's charge was already
+                       returned by a superseded card-send with less left than
+                       it still owes; then a status-guarded claim on
                        PENDING|FAILED with attempts >= MAX; lastError is the
                        paid-another-way marker, nextRetryAt null, succeededAt
                        now; the amount - all of what is still owed, or part
@@ -5159,6 +5219,35 @@ refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
 concurrent consumes, one success), `confirm-its-you-dialog.test.tsx` (the
 replay is once, body unchanged), and `webauthn.realdb.test.ts` (one of two
 challenge claims, and one of two counter updates).
+
+## Officer two-factor (#4618)
+
+Who must hold an authenticator app or a passkey (`INV-AUTH-012`). The
+requirement is recomputed on every session refresh. Nothing here runs until
+#4620 sets `OFFICER_SIGN_IN_ENFORCED`.
+
+```text
+not required -> required: becomes Full Admin, gains a role that requires it, or the club turns the policy on
+required, no app or passkey, no grace stamp -> in grace (twoFactorGraceStartedAt = NOW(), set once)
+in grace -> gated: club midnight after (first club date + grace days); 0 days gates at once
+gated -> only /login/enroll, /login/verify, /profile, sign-out and the enrolment APIs answer
+in grace or gated -> enrolled: authenticator app or passkey saved (an emailed code does not count)
+enrolled -> enrolled: removing the last app or passkey is refused with 400
+enrolled -> reset: another Full Admin after step-up, or `auth:reset-factors`
+  factors cleared, sessions ended, factorsResetAt = NOW(), member emailed;
+  a required officer's missing grace stamp is set to the same NOW()
+reset -> gated: the next sign-in of a required officer; no new grace period
+reset -> in grace: a member reset before the rule reached them, on first exposure
+reset -> enrolled: enrolment from a session issued after the reset; an older session gets 409
+required -> not required: the role or policy goes, or the member can no longer sign in
+```
+
+To verify: `officer-two-factor-required.test.ts` (who is required, grace on the
+club calendar at 0, 14 and 60 days, no grace after a reset, first grace for a
+member reset before promotion),
+`officer-two-factor-gate-callers.test.ts` (the allowlist and every gate
+caller), `officer-factor-reset-route.test.ts` (each refusal of the reset
+route), and `webauthn.test.ts` (the last passkey is kept, under the member lock).
 
 ## Password Sign-In Throttle (#4609)
 

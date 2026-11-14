@@ -115,7 +115,7 @@ describe("member booking wizard unresolved lodge scope (#2701, #2887)", () => {
     const retry = vi.fn()
     const view = render(
       <DatesStep
-        subscriptionUnpaid={false}
+        bookingBlockedBySubscription={false}
         handleDateSelect={vi.fn()}
         checkIn={null}
         checkOut={null}
@@ -134,7 +134,7 @@ describe("member booking wizard unresolved lodge scope (#2701, #2887)", () => {
 
     view.rerender(
       <DatesStep
-        subscriptionUnpaid={false}
+        bookingBlockedBySubscription={false}
         handleDateSelect={vi.fn()}
         checkIn={null}
         checkOut={null}

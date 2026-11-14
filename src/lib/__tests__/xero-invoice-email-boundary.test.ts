@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   emailInvoice: vi.fn(),
+  callXeroApi: vi.fn<(fn: () => Promise<unknown>, options?: unknown) => Promise<unknown>>(async (fn) => fn()),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
@@ -22,15 +23,22 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { environmentSafetySettings: { findUnique: mocks.findUnique } },
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
-vi.mock("@/lib/xero-api-client", () => ({
-  callXeroApi: async (fn: () => Promise<unknown>) => fn(),
+vi.mock("@/lib/xero-api-client", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-api-client")),
+  callXeroApi: mocks.callXeroApi,
 }));
 
 import { resolveDeliveryPolicy } from "@/lib/environment-delivery-policy";
 import {
+  isDeferrableInLockEmailError,
   resolveXeroInvoiceEmailPolicy,
   sendXeroInvoiceEmail,
+  XERO_EMAIL_FENCE_LATEST_SEND_MS,
+  XERO_EMAIL_FENCE_TRANSACTION_OPTIONS,
+  XERO_IN_LOCK_EMAIL_BUDGET,
+  XeroCallDeadlineError,
 } from "@/lib/xero-invoice-email";
+import { XeroDailyLimitError, XeroTransientOutageError } from "@/lib/xero-api-client";
 import {
   declareEnvironmentRole,
   undeclareEnvironmentRole,
@@ -174,5 +182,88 @@ describe("sendXeroInvoiceEmail", () => {
       }),
     ).rejects.toThrow(/did not present a delivery clearance/);
     expect(mocks.emailInvoice).not.toHaveBeenCalled();
+  });
+});
+
+/*
+  #4919 (`INV-INT-003`): the in-lock budget is opt-in. The booking and
+  subscription senders hold no lock and keep the wrapper's retries; the group
+  fence passes zero retries and a deadline shorter than its transaction.
+*/
+describe("the in-lock email budget (#4919)", () => {
+  async function clearance() {
+    declareEnvironmentRole("production");
+    const policy = await resolveXeroInvoiceEmailPolicy();
+    if (policy.kind !== "allow") throw new Error("unreachable");
+    return policy.clearance;
+  }
+  const call = async (extra: Partial<Parameters<typeof sendXeroInvoiceEmail>[0]> = {}) =>
+    sendXeroInvoiceEmail({
+      clearance: await clearance(),
+      xero: { accountingApi: { emailInvoice: mocks.emailInvoice } },
+      tenantId: "tenant-1",
+      invoiceId: "invoice-1",
+      idempotencyKey: "key-1",
+      workflow: "test",
+      context: "test",
+      ...extra,
+    });
+
+  it("leaves the wrapper's retry defaults alone when no budget is passed", async () => {
+    await call();
+    const options = mocks.callXeroApi.mock.calls[0]![1] as Record<string, unknown>;
+    expect(options.maxRetries).toBeUndefined();
+    expect(options.maxTransientRetries).toBeUndefined();
+    expect(options.armTransientBreaker).toBeUndefined();
+  });
+
+  it("passes zero retries, and a deadline that fits inside the fence's timeout with room to commit", async () => {
+    await call({ ...XERO_IN_LOCK_EMAIL_BUDGET });
+    expect(mocks.callXeroApi.mock.calls[0]![1]).toMatchObject({ maxRetries: 0, maxTransientRetries: 0 });
+    expect(XERO_IN_LOCK_EMAIL_BUDGET.deadlineMs).toBeLessThan(XERO_EMAIL_FENCE_TRANSACTION_OPTIONS.timeout);
+    expect(XERO_EMAIL_FENCE_LATEST_SEND_MS + XERO_IN_LOCK_EMAIL_BUDGET.deadlineMs).toBeLessThan(
+      XERO_EMAIL_FENCE_TRANSACTION_OPTIONS.timeout
+    );
+  });
+
+  it("rejects a request Xero never answers at the deadline", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      mocks.emailInvoice.mockImplementation(() => new Promise(() => {}));
+      const settled = call({ deadlineMs: 3_000 }).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(await settled).toBeInstanceOf(XeroCallDeadlineError);
+      expect(mocks.emailInvoice).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts no request once the deadline has already passed", async () => {
+    let clockMs = 0;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => clockMs);
+    // A slow pre-call step inside the wrapper, before the provider is asked.
+    mocks.callXeroApi.mockImplementationOnce(async (fn) => {
+      clockMs += 3_000;
+      return fn();
+    });
+    try {
+      await expect(call({ deadlineMs: 3_000 })).rejects.toBeInstanceOf(XeroCallDeadlineError);
+      expect(mocks.emailInvoice).not.toHaveBeenCalled();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("owes the email for a deadline, a rate limit, a transient error or a cooldown, and fails it otherwise", () => {
+    const status = (statusCode: number) => ({ response: { statusCode, headers: {} } });
+    expect(isDeferrableInLockEmailError(new XeroCallDeadlineError(3_000))).toBe(true);
+    expect(isDeferrableInLockEmailError(status(429))).toBe(true);
+    expect(isDeferrableInLockEmailError(status(503))).toBe(true);
+    expect(isDeferrableInLockEmailError(status(408))).toBe(true);
+    expect(isDeferrableInLockEmailError(new XeroDailyLimitError(60, false))).toBe(true);
+    expect(isDeferrableInLockEmailError(new XeroTransientOutageError(60, true))).toBe(true);
+    expect(isDeferrableInLockEmailError(status(400))).toBe(false);
+    expect(isDeferrableInLockEmailError(new Error("validation"))).toBe(false);
   });
 });

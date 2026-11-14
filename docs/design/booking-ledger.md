@@ -278,8 +278,9 @@ skipped has no live line, so those edits post NOTHING (`LIVE_LINE_DISAGREES`,
 `NO_LIVE_LINE`) - never a wrong line. Each such edit is an `UNPOSTED_EDIT` gap,
 and **every one closes the cut-over gate**, where a park posted nothing and
 raised none. `booking-money:census` counts the bookings an edit would leave so
-(`ledgerNightValues`, #4317 review M3); wave B's re-base (D5) re-posts their
-lines. Only a booking already confirmed on the ledger posts (§4.1a), asked under
+(`ledgerNightValues`, #4317 review M3); wave B's script
+(`bookings:edit-review-cleanup`, D5) re-posts them through the closure poster.
+A line that poster refuses stays listed and is not forced. Only a booking already confirmed on the ledger posts (§4.1a), asked under
 `lock(1)`.
 The planner is `booking-ledger-modification-posting.ts`; the writer calls are in
 `booking-ledger-modification-sync.ts` (`INV-MONEY-036`).
@@ -373,7 +374,7 @@ proves the ledger was in step rather than assuming it. The completion takes
 | Admin date shift (`adminShiftBookingDates`, #3741) | the same per-night rule: each old-date night's live line reversed, each new-date night posted at the same figure, netting to the row's zero; both sides read as written rows, since a shift sells nothing | `MODIFICATION` / the `ADMIN_DATE_SHIFT` row | `adminShiftBookingDates`, under the `lock(1)` it takes first |
 | Booking edited and **parked** before #4317 (`INV-MOD-040`) | **nothing** — a parked edit wrote structure, never an amount; the lines post when the review closes. Since #4317 no edit parks: every edit is the priced row above | — | — |
 | Booking cancelled — member or admin cancel (all four `cancelBooking` branches), the linked provisional child, the internet banking hold-expiry release, a group organiser's settled children, the settle's capacity void, the late internet banking capacity cancel, and `cron-confirm-pending`'s three hold-window cancels | the rule above. Only the paid `cancelBooking` branch (and the unpaid branch's tiered credit on a captured, refunded-whole payment, #3809) and a group organiser's settled children keep anything; every other path keeps nothing and posts reversals only. A settled child keeps its share less every refund made or owed on it (#3854; before #3854 it held no settlement line and kept nothing) | `CANCELLATION` / booking id | each cancel path, in the claim transaction that flips the booking `CANCELLED`, under its `lock(1)` |
-| Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`), whose only caller is the closure | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines or writes no history row | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under the completion's `lock(1)` |
+| Review closed by re-pricing (`INV-MOD-055`) — the admin price rebase (`booking-review-price-rebase.ts`). The closure calls it, and so does the one-off headline script (#4343) | reversal of every live `GUEST_NIGHT` the re-price changed + re-post at the new figure, and the promotion likewise — all or nothing against the re-base's movement of the final price; **nothing** where the re-base declines, writes no history row, or the poster refuses (`LIVE_LINE_DISAGREES`, `NO_LIVE_LINE`). A refusal stays listed and is not forced | `MODIFICATION` / the `PRICE_REBASE` history row the re-base writes (both money components zero) | the closure (`recordReviewClosurePricing`), under `lock(1)`; the headline script uses the same poster |
 
 ### 5.2 Moving money (SETTLEMENT)
 
