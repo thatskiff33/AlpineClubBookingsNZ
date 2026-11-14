@@ -1,4 +1,5 @@
 import { expect, test } from "./helpers/accessibility";
+import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN, WAITLISTER } from "./helpers/fixtures";
 
@@ -89,7 +90,7 @@ test("a full admin creates, edits, assigns a custom access role and sees the eff
   expect(target?.id, "Wanda should exist as an admin-visible member").toBeTruthy();
 
   await page.goto(`/admin/members/${target!.id}`);
-  await expect(page).toHaveURL(/\/admin\/members\/(?!$)[^/?#]+/);
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("members"), { child: true }));
 
   // Expand the Account & Access group (groups start collapsed), then scope every
   // interaction to that group's content REGION — its accessible name is the

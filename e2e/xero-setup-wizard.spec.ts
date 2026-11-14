@@ -1,4 +1,5 @@
 import { type BrowserContext, expect, test } from "./helpers/accessibility";
+import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";
@@ -115,7 +116,7 @@ test("operator reaches Connected to <Org> entirely in-app", async () => {
   // that marker once and strips it (#2394 review, F1) — otherwise every later
   // return to this step re-fires a forced live Xero read with nobody pressing
   // anything. So assert the landing page, then that the marker is gone.
-  await expect(page).toHaveURL(/\/admin\/xero\/setup/);
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("xero-setup")));
   await expect(
     page.getByText(new RegExp(`Connected to\\s+${MOCK_XERO_ORG_NAME}`, "i")),
   ).toBeVisible({ timeout: 30_000 });
