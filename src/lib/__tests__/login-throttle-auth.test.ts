@@ -90,13 +90,8 @@ vi.mock("next-auth", () => {
   };
 });
 vi.mock("@/lib/password-hashing", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/password-hashing");
-  const overrides = { verifyPassword: mockBcryptCompare, hashPassword: vi.fn().mockResolvedValue("new-hash") };
-  return {
-    ...actual,
-    ...overrides,
-    burnDummyPasswordCompare: (plain: string) => overrides.verifyPassword(plain, actual.DUMMY_PASSWORD_HASH),
-  };
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: mockBcryptCompare, hashPassword: vi.fn().mockResolvedValue("new-hash") });
 });
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: vi.fn().mockResolvedValue(null),

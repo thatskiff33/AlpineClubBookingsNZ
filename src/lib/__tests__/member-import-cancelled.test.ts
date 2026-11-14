@@ -1,4 +1,3 @@
-import { hashPassword, UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 // Issue #1946: the member CSV import can create a member directly in the
 // cancelled end-state via an optional Cancelled Date column. These tests
 // exercise the POST /api/admin/members/import route to confirm the cancelled
@@ -8,6 +7,7 @@ import { hashPassword, UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password
 // import stays create-only.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { hashPassword, UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -46,7 +46,6 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 vi.mock("@/lib/email", () => ({ sendMemberSetupInviteEmail: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
-
 
 import { prisma } from "@/lib/prisma";
 import { sendMemberSetupInviteEmail } from "@/lib/email";

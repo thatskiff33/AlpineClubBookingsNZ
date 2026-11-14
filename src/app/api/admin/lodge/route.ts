@@ -165,7 +165,8 @@ export async function GET() {
   let lodge = accounts[0] ?? null;
 
   if (!lodge && isFullAdmin(session.user)) {
-    // Auto-create the lodge account with a random password (admin must set via UI)
+    // Auto-create the lodge account with the shared unusable placeholder hash
+    // (an officer sets a real password through the screened PUT).
     const passwordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
     lodge = await prisma.member.create({
       data: {

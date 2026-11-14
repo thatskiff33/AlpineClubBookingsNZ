@@ -44,13 +44,8 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 vi.mock("@/lib/password-hashing", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/password-hashing");
-  const overrides = { verifyPassword: mocks.bcryptCompare, hashPassword: mocks.bcryptHash };
-  return {
-    ...actual,
-    ...overrides,
-    burnDummyPasswordCompare: (plain: string) => overrides.verifyPassword(plain, actual.DUMMY_PASSWORD_HASH),
-  };
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: mocks.bcryptCompare, hashPassword: mocks.bcryptHash });
 });
 vi.mock("@/lib/audit", () => ({
   buildStructuredAuditLogCreateArgs: (value: unknown) => ({ data: value }),

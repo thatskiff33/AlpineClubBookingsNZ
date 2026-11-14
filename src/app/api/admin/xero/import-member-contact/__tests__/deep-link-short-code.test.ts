@@ -34,8 +34,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 
-
-
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: async () => ({
     ok: true as const,

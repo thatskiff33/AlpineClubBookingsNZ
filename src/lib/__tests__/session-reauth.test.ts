@@ -42,13 +42,8 @@ vi.mock("@/lib/login-throttle", () => ({
   clearPasswordAttempts: mockClear,
 }));
 vi.mock("@/lib/password-hashing", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/password-hashing");
-  const overrides = { verifyPassword: mockCompare };
-  return {
-    ...actual,
-    ...overrides,
-    burnDummyPasswordCompare: (plain: string) => overrides.verifyPassword(plain, actual.DUMMY_PASSWORD_HASH),
-  };
+  const { passwordHashingModuleMock } = await import("@/lib/__tests__/helpers/password-hashing-mock");
+  return passwordHashingModuleMock(await importOriginal(), { verifyPassword: mockCompare });
 });
 
 import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
