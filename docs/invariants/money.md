@@ -163,22 +163,24 @@ records). Three facets, not three statements of one rule (#2707, owner decision
 - **A promo "use" means the member actually got something (#2299).** A
   `PromoRedemptionAllocation` row exists only where the application delivered a
   benefit — `discountCents > 0`, `priceAdjustmentCents ≠ 0`, or
-  `freeNightsUsed > 0` (a price-RAISING fixed-nightly application counts: the
-  member's price genuinely changed). All three usage caps count those rows and
+  `freeNightsUsed > 0` (a price-RAISING fixed-nightly application counts).
+  All three usage caps count those rows and
   nothing else: uses per member, unique members, and total redemptions via the
   denormalised `PromoCode.currentRedemptions`. The single write-time choke point
   is `normalizeAllocations` in `src/lib/promo.ts`; every cap query additionally
   applies `BENEFICIAL_PROMO_ALLOCATION_FILTER` so a legacy all-zero row cannot
-  occupy a slot. Two corollaries: (a) `currentRedemptions` is always the RAW
+  occupy a slot. Corollaries: (a) `currentRedemptions` is always the RAW
   count of a code's allocation rows, so `redeemPromoCode`,
   `replacePromoRedemptionAllocations` and `deletePromoRedemptionAndAdjustCount`
-  must measure their delta against the raw row count, never a filtered one; and
+  must measure their delta against the raw row count, never a filtered one;
   (b) a reprice that destroys a booking's promo benefit RELEASES the slot it
   held, in the same transaction that removes the benefit — a member holds
-  exactly as many slots as they hold benefits, at every instant. The
+  exactly as many slots as they hold benefits, at every instant; and (c) a
+  cancellation releases its slots in its CANCELLED transaction
+  (`cancelled-booking-promo-release-census.test.ts`, #4909). The
   `PromoRedemption` row is never benefit-gated: it persists for any application
-  with eligible guests and is the audit and reporting trail, which is why the
-  archive-or-delete decision for a promo code counts redemptions, not
+  with eligible guests and is the audit and reporting trail, so a code's
+  archive-or-delete decision counts redemptions, not
   allocations (`PromoRedemption.promoCodeId` is `onDelete: Restrict`).
   **Statement order in the two redemption writers is load-bearing**, because the
   `PromoRedemption_sync_allocation_insert` / `..._update` triggers
@@ -1114,7 +1116,9 @@ journal is re-stated to the lines once (`chargeRestatement`), and that is
 logged. `booking-ledger:census` compares a pending charge with the booking's
 final price plus its recorded fees, or what a cancellation kept
 (`JOURNAL_PENDING`). Every booking write setting PAID or CANCELLED is
-classified as posting, not a sale, or a legacy confirmation gap the back-post
-fills. Pins: `member-money-pending-charges.test.ts`,
+classified as posting or not a sale; each posting write's own enclosing
+function calls its named poster at least once per such write, checked by
+function, not per file or per branch (#4928). Pins:
+`member-money-pending-charges.test.ts`,
 `booking-sale-status-writer-census.test.ts`,
 `booking-ledger-pending-charge.realdb.test.ts`.

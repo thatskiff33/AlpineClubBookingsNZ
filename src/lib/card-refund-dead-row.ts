@@ -52,6 +52,13 @@ export class DeadCardRefundActionError extends Error {
   }
 }
 
+/** Every dead-row settlement's refusal when the row was settled first (`DeadCardRefundRowRefusals.closed`). */
+export const DEAD_CARD_REFUND_CLOSED = "This card refund has already been closed.";
+
+/** Every dead-row settlement's refusal when its status-guarded claim or a re-read lost: nothing was written. */
+export const DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING =
+  "This card refund changed while you were settling it. The list has been refreshed: check it and try again.";
+
 /** The dead row, as each action reads it. */
 export const DEAD_CARD_REFUND_OPERATION_SELECT = {
   id: true,

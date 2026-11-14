@@ -6,6 +6,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_ATTEMPTS = 3;
@@ -147,6 +148,7 @@ async function processWaitlistCronOnce(): Promise<{
           checkOut: booking.checkOut,
         },
       });
+      await releaseBookingPromoRedemptions(tx, booking.id);
       return booking;
     });
     if (cancelled) pastWaitlisted.push(cancelled);
