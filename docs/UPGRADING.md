@@ -41,7 +41,8 @@ any custom body and re-export your configuration bundle after reviewing it.
 
 ## Review privacy retention before enabling cleanup (#4457)
 
-The three new automatic jobs ship OFF. After upgrading, review the
+The three automatic jobs from #4457 ship OFF. (The after-stay dietary clear
+from #4916 ships ON; see its entry under Unreleased.) After upgrading, review the
 [personal-data retention schedule](PRIVACY_RETENTION.md) and visit
 **Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
 member candidates and the configured periods before enabling any job. Defaults
@@ -183,6 +184,71 @@ Rollback is code-only; the additive settings table can stay. If you manually
 insert `{{data-hosting}}` into a page and then roll back to an earlier release
 that does not know the token, visitors see the raw `{{data-hosting}}` braces.
 Replace the token with reviewed plain text before such a rollback.
+
+### Old stays' dietary notes are cleared on the first night after upgrading (#4916)
+
+**What changes.** A new nightly job clears each stay's dietary/allergy note
+(`BookingGuest.dietaryRequirements`) once the stay ended more than a set number
+of days ago, for member and non-member guests and on bookings of any status.
+Migration `20261216050000_booking_dietary_retention` adds the period (default
+**30 days**) and the switch (default **on**) to `PrivacyRetentionSettings`. It
+is additive and safe with the previous app colour still serving.
+
+**What you will notice.** Because the switch ships on, **the first nightly
+data-pruning run after the upgrade (03:30 club time) clears every stay note
+whose stay ended more than 30 days ago.** Cleared notes cannot be brought back
+except from a backup taken before that run. Names, nights, prices, the booking
+and the member's own profile note are not touched.
+
+**If your club wants to keep them**, open **Admin → Privacy retention**
+(`/admin/privacy-retention`) straight after deploying and, before 03:30 club
+time, untick **Enable after-stay dietary clearing**, or change the period
+(1 to 365 days), and save. Support edit and bookings edit permission are both
+needed. The page shows how many notes the next run would clear. Clubs that never
+switched on the dietary field have no notes and nothing changes for them. See
+the [retention schedule](PRIVACY_RETENTION.md#automatic-retention-and-operator-review).
+
+### Cancelled bookings give back their promo uses; re-run the repair after cutover (#4909)
+
+`20261217010000_release_cancelled_booking_promos` is a **data-only repair**. It
+adds and removes no schema and is safe to run in the ordinary deploy window with
+the previous app colour still serving. It wants **one post-cutover action**
+(below).
+
+**What it fixes.** Until this release, a booking the system cancelled by itself
+(an expired Internet Banking hold, a card payment that lost its beds, a late
+Xero payment with no room left, a group cancel's children, a past-date waitlist
+entry, or an officer rejecting a legacy draft) kept its promo redemptions. The
+code's use count and the member's per-member allowance stayed spent, so a
+single-use or capped code could stay blocked. The new code releases them in the
+same transaction that cancels the booking. The migration repairs the history:
+it deletes the redemptions still held by cancelled bookings, then sets each
+code's `currentRedemptions` to its raw allocation row count. Live bookings keep
+their promotions.
+
+**How it runs.** One transaction. It locks the promo-code rows in id order
+before the recount, so a member redeeming a code at that moment waits a moment
+rather than being miscounted. Each lock waits at most the deploy migration lock
+timeout. On `55P03` or `40P01` nothing applies: follow
+[the lock-timeout recovery steps](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout)
+and retry.
+
+**Post-upgrade action, required.** `prisma migrate deploy` runs **before**
+cutover. While the previous colour and its workers still serve, they can cancel
+a promo booking without giving its uses back. Run the same file verbatim once
+cutover is complete and the old colour and its workers have stopped:
+
+```bash
+psql "$DATABASE_URL" \
+  -f prisma/migrations/20261217010000_release_cancelled_booking_promos/migration.sql
+```
+
+**Re-running is safe.** A second run finds no cancelled booking holding a
+redemption and no counter that differs from its rows, so it changes nothing.
+
+**There is no rollback.** The deleted rows described discounts on bookings that
+no longer exist as stays. The [safety ledger](BLUE_GREEN_MIGRATION_SAFETY.tsv)
+row records this.
 
 ### Payment transaction history outlives its payment (#4574)
 

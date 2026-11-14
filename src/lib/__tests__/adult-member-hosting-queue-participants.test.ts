@@ -33,6 +33,7 @@ import {
   withMemberMergeParticipantRows,
   type HostingCoverageQueueParticipantProof,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { lockCapturedLoserOwnedBookings, MemberMergeBookingOwnershipDriftError } from "@/lib/member-merge-booking-lock";
 
 const SOURCE = {
   bookingId: "booking-1",
@@ -369,7 +370,8 @@ describe("hosting coverage queue participant fence (#2597)", () => {
 
   /**
    * A merge participant client. Every statement goes through `$executeRaw`;
-   * `lockCounts` answers the row-lock statements in turn with the number of
+   * `lockCounts` answers the row-lock statements (Member `FOR UPDATE`, Booking
+   * `FOR NO KEY UPDATE`) in turn with the number of
    * rows each locked (or a rejection), and everything else (savepoints, the
    * lock bound) returns 0. The typed read returns `typed`.
    */
@@ -380,7 +382,7 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     const answers = [...lockCounts];
     const db = {
       $executeRaw: vi.fn((sql: { strings?: readonly string[] }) => {
-        if (!/FOR UPDATE/.test((sql.strings ?? []).join("?"))) return Promise.resolve(0);
+        if (!/FOR (NO KEY )?UPDATE/.test((sql.strings ?? []).join("?"))) return Promise.resolve(0);
         const next = answers.shift();
         if (next === undefined) throw new Error("an unexpected row-lock statement");
         return typeof next === "number" ? Promise.resolve(next) : Promise.reject(next.reject);
@@ -603,6 +605,178 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     } finally {
       clock.mockRestore();
     }
+  });
+
+  const CAPTURED_BOOKINGS = ["mrg-book-z", "mrg-book-a"];
+  const SORTED_BOOKINGS = ["mrg-book-a", "mrg-book-z"];
+  const BOOKING_SET =
+    'SELECT 1 FROM "Booking" WHERE "id" IN (?,?) ORDER BY "id" FOR NO KEY UPDATE SKIP LOCKED';
+  const BOOKING_PROBE = 'SELECT 1 FROM "Booking" WHERE "id" = ? FOR NO KEY UPDATE SKIP LOCKED';
+  const BOOKING_WAIT = 'SELECT 1 FROM "Booking" WHERE "id" = ? FOR NO KEY UPDATE';
+
+  it("takes the captured bookings in one SKIP LOCKED statement and releases the attempt only after the Member rows, with no lock bound (#4860)", async () => {
+    const { db, statements } = mergeParticipantDb([2, 3]);
+    await expect(
+      withMemberMergeParticipantRows(db as never, async () => {
+        await lockCapturedLoserOwnedBookings(db as never, CAPTURED_BOOKINGS);
+        return { participantIds: ALL, result: "held" };
+      }),
+    ).resolves.toMatchObject({ result: "held", lockedMemberIds: ALL });
+    expect(statements().map((statement) => statement.text)).toEqual([
+      "SAVEPOINT member_merge_participants_attempt",
+      BOOKING_SET,
+      ATTEMPT,
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
+    ]);
+    expect(statements()[1].values).toEqual(SORTED_BOOKINGS);
+    expect(statements().some((statement) => statement.text.includes("lock_timeout"))).toBe(false);
+  });
+
+  it("rolls the attempt back before waiting for the one skipped booking, under what is left of the budget (#4860)", async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { db, statements } = mergeParticipantDb([1, 0, 1, 2, 3]);
+      const answer = db.$executeRaw.getMockImplementation()!;
+      db.$executeRaw.mockImplementation((sql) => {
+        const text = (sql.strings ?? []).join("?");
+        if (text.includes('"Booking"') && text.includes("IN (")) now += 4_000;
+        return answer(sql);
+      });
+      await expect(
+        withMemberMergeParticipantRows(db as never, async () => {
+          await lockCapturedLoserOwnedBookings(db as never, CAPTURED_BOOKINGS);
+          return { participantIds: ALL, result: "held" };
+        }),
+      ).resolves.toMatchObject({ result: "held" });
+      const texts = statements().map((statement) => statement.text);
+      expect(texts).toEqual([
+        "SAVEPOINT member_merge_participants_attempt",
+        BOOKING_SET,
+        BOOKING_PROBE,
+        "ROLLBACK TO SAVEPOINT member_merge_participants_attempt",
+        "RELEASE SAVEPOINT member_merge_participants_attempt",
+        "SAVEPOINT member_merge_booking_wait",
+        "SELECT set_config('lock_timeout', ?, true)",
+        BOOKING_WAIT,
+        "ROLLBACK TO SAVEPOINT member_merge_booking_wait",
+        "RELEASE SAVEPOINT member_merge_booking_wait",
+        "SAVEPOINT member_merge_participants_attempt",
+        BOOKING_SET,
+        ATTEMPT,
+        "RELEASE SAVEPOINT member_merge_participants_attempt",
+      ]);
+      const rollback = texts.indexOf("ROLLBACK TO SAVEPOINT member_merge_participants_attempt");
+      const wait = texts.indexOf(BOOKING_WAIT);
+      expect(rollback).toBeGreaterThan(-1);
+      expect(wait).toBeGreaterThan(rollback);
+      expect(statements()[2].values).toEqual(["mrg-book-a"]);
+      expect(statements()[7].values).toEqual(["mrg-book-a"]);
+      expect(Number(statements()[6].values[0])).toBe(MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS - 4_000);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("keeps the booking-ownership refusal when wait cleanup exhausts the budget (#4860)", async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { db, statements } = mergeParticipantDb([1, 0, 1]);
+      const answer = db.$executeRaw.getMockImplementation()!;
+      db.$executeRaw.mockImplementation((sql) => {
+        const text = (sql.strings ?? []).join("?");
+        if (text === "RELEASE SAVEPOINT member_merge_booking_wait") {
+          now += MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+        }
+        return answer(sql);
+      });
+      await expect(
+        withMemberMergeParticipantRows(db as never, async () => {
+          await lockCapturedLoserOwnedBookings(db as never, CAPTURED_BOOKINGS);
+          return { participantIds: ALL, result: "held" };
+        }),
+      ).rejects.toBeInstanceOf(MemberMergeBookingOwnershipDriftError);
+      expect(statements().filter((statement) => statement.text === BOOKING_SET)).toHaveLength(1);
+      expect(statements().slice(-2).map((statement) => statement.text)).toEqual([
+        "ROLLBACK TO SAVEPOINT member_merge_booking_wait",
+        "RELEASE SAVEPOINT member_merge_booking_wait",
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("names the hosting participants, not the booking, when a later Member wait spends the budget (#4860)", async () => {
+    // Booking wait frees at once; the retried attempt then finds master-1 busy,
+    // and the Member wait's cleanup spends the rest. The refusal names the
+    // Member contention that used the budget up, not the earlier booking wait.
+    let now = 1_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { db } = mergeParticipantDb([1, 0, 1, 2, 2, 1, 0, 1]);
+      const answer = db.$executeRaw.getMockImplementation()!;
+      db.$executeRaw.mockImplementation((sql) => {
+        const text = (sql.strings ?? []).join("?");
+        if (text === "RELEASE SAVEPOINT member_merge_participant_wait") {
+          now += MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
+        }
+        return answer(sql);
+      });
+      let attempts = 0;
+      await expect(
+        withMemberMergeParticipantRows(db as never, async () => {
+          attempts += 1;
+          await lockCapturedLoserOwnedBookings(db as never, CAPTURED_BOOKINGS);
+          return { participantIds: ALL, result: "held" };
+        }),
+      ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
+      expect(attempts).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("issues no booking statement when the captured set is empty (#4860)", async () => {
+    const { db, statements } = mergeParticipantDb([3]);
+    await withMemberMergeParticipantRows(db as never, async () => {
+      await lockCapturedLoserOwnedBookings(db as never, []);
+      return { participantIds: ALL, result: "none" };
+    });
+    expect(statements().some((statement) => statement.text.includes('"Booking"'))).toBe(false);
+    expect(statements().map((statement) => statement.text)).toEqual([
+      "SAVEPOINT member_merge_participants_attempt",
+      ATTEMPT,
+      "RELEASE SAVEPOINT member_merge_participants_attempt",
+    ]);
+  });
+
+  it("refuses, without a second attempt, when the booking wait finds the row gone or the budget runs out (#4860)", async () => {
+    const gone = mergeParticipantDb([1, 0, 0]);
+    let goneAttempts = 0;
+    await expect(
+      withMemberMergeParticipantRows(gone.db as never, async () => {
+        goneAttempts += 1;
+        await lockCapturedLoserOwnedBookings(gone.db as never, CAPTURED_BOOKINGS);
+        return { participantIds: ALL, result: goneAttempts };
+      }),
+    ).rejects.toBeInstanceOf(MemberMergeBookingOwnershipDriftError);
+    expect(goneAttempts).toBe(1);
+
+    const timedOut = mergeParticipantDb([
+      1, 0,
+      { reject: { driverAdapterError: { cause: { originalCode: "55P03" } } } },
+    ]);
+    await expect(
+      withMemberMergeParticipantRows(timedOut.db as never, async () => {
+        await lockCapturedLoserOwnedBookings(timedOut.db as never, CAPTURED_BOOKINGS);
+        return { participantIds: ALL, result: "held" };
+      }),
+    ).rejects.toBeInstanceOf(MemberMergeBookingOwnershipDriftError);
+    expect(timedOut.statements().slice(-2).map((statement) => statement.text)).toEqual([
+      "ROLLBACK TO SAVEPOINT member_merge_booking_wait",
+      "RELEASE SAVEPOINT member_merge_booking_wait",
+    ]);
   });
 
   it("refuses source owner or lodge drift after the participant lock", async () => {

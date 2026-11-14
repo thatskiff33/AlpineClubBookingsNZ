@@ -59,7 +59,8 @@ export async function planGroupChildBackPost(
   return planGroupChildLines({
     child,
     payment,
-    settlement,
+    // Whether the plan's refund was paid by bank is read beside the census row (#4851).
+    settlement: { ...settlement, refundPaidByBank: groupSettlement.refundPaidByBank },
     siblings,
     perChildCommittedRefundCents:
       needsPerChildCommittedRefund(child, settlement) && settlement.stripePaymentIntentId
