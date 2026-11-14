@@ -1739,10 +1739,13 @@ require_resolved_caddy_legacy_upstream() {
     echo "CADDY_LEGACY_ROUTES=on needs CADDY_FINANCE_LEGACY_UPSTREAM: the legacy finance dashboard's host:port as Caddy reaches it (for example 10.0.0.5:8501), set in .env. It has no default. Set CADDY_LEGACY_ROUTES=off if this club runs no legacy dashboard." >&2
     return 1
   fi
-  # A hostname or IPv4 address and a port: no scheme, path, space or second
-  # upstream, any of which would change what the snippet's directive means.
+  # A hostname or IPv4 address and a port: no scheme, path, space, second
+  # upstream or bracketed IPv6 literal. The first three would change what the
+  # snippet's directive means; an IPv6 literal is refused (with the reason in
+  # the message) so the accepted shape stays this one narrow pattern, and a
+  # dashboard reachable only by IPv6 is given a hostname instead.
   if ! [[ "$value" =~ ^[A-Za-z0-9._-]+:[0-9]+$ ]]; then
-    echo "CADDY_FINANCE_LEGACY_UPSTREAM must be one host:port, such as 10.0.0.5:8501; '$(printable_deploy_value "$value")' is not. Set it in .env." >&2
+    echo "CADDY_FINANCE_LEGACY_UPSTREAM must be one host:port, a hostname or IPv4 address then a port, such as 10.0.0.5:8501 (no scheme, path or IPv6 literal; use a hostname for an IPv6-only dashboard); '$(printable_deploy_value "$value")' is not. Set it in .env." >&2
     return 1
   fi
 }

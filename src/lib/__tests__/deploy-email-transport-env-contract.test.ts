@@ -739,10 +739,15 @@ describe("the www redirect and legacy finance routes are opt-in settings (#4981)
       "10.0.0.5:8501 10.0.0.6:8501",
       "10.0.0.5:8501}",
       "{$OTHER}",
+      // Valid to Caddy but outside the narrow shape the guard accepts.
+      "[fd00::5]:8501",
     ]) {
       const result = upstream(malformed);
       expect(result.passed, malformed).toBe(false);
       expect(result.stderr).toContain("CADDY_FINANCE_LEGACY_UPSTREAM must be one host:port");
+      // The refusal says what is accepted, so a valid-looking IPv6 literal is explained.
+      expect(result.stderr).toContain("a hostname or IPv4 address then a port");
+      expect(result.stderr).toContain("no scheme, path or IPv6 literal");
     }
     // Off, the upstream is never read.
     const off = check(

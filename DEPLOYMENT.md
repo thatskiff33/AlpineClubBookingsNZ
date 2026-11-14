@@ -1184,8 +1184,9 @@ finance dashboard of its own. Besides the two hostnames it adds a
 active finance viewer past two-factor), then Caddy forwards the request to
 `CADDY_FINANCE_LEGACY_UPSTREAM`, the dashboard's `host:port` as the Caddy
 container reaches it. That setting has no default; the step-3 preflight
-refuses `on` without it, refuses anything that is not one `host:port`, and
-refuses either switch set to anything but `on` or `off`. A club that never ran
+refuses `on` without it, refuses anything that is not one `host:port` (a
+hostname or IPv4 address, then a port; give an IPv6-only dashboard a hostname),
+and refuses either switch set to anything but `on` or `off`. A club that never ran
 such a dashboard leaves both settings unset.
 
 **Upgrading from 0.13.2 or earlier:** those releases served the
