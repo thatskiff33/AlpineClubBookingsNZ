@@ -28,7 +28,7 @@ const answerState = `
 `;
 
 const verification: DataMigrationVerification = {
-  migration: "20261218010000_summarise_starter_faq_personal_data",
+  migration: "20261218070000_summarise_starter_faq_personal_data",
   intent:
     "Replace the untouched starter FAQ with the copy that summarises every category of personal data and points to section 2 of the Privacy Policy, and leave an FAQ a club edited untouched.",
   idempotentReRun: true,

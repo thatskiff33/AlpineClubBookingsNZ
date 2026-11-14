@@ -131,7 +131,7 @@ const FAQ_PERSONAL_DATA_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
   "migrations",
-  "20261218010000_summarise_starter_faq_personal_data",
+  "20261218070000_summarise_starter_faq_personal_data",
   "migration.sql",
 );
 

@@ -210,7 +210,7 @@ the [retention schedule](PRIVACY_RETENTION.md#automatic-retention-and-operator-r
 
 ### One-off update of the starter FAQ's personal-data answer (#4914 follow-up)
 
-`20261218010000_summarise_starter_faq_personal_data` is a **data-only
+`20261218070000_summarise_starter_faq_personal_data` is a **data-only
 correction**. It adds and removes no schema, touches no hot table, and is safe
 to run in the ordinary deploy window with the previous app colour still serving.
 
