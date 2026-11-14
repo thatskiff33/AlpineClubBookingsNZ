@@ -117,14 +117,23 @@ each attempt. Stripe retains its test-mode credential prerequisite and loud skip
 when keys are absent. Neither project uses live provider credentials.
 
 For a small, database-free test of the fixture, run
-`pnpm run test:e2e:a11y-fixture`. It serves synthetic pages through Playwright
-routing and checks both clean pages and expected axe failures with attached
-reports. It also mounts the shared dialog, confirmation, `Select` and command
-palette with the app's CSS and checks that their buttons stay reachable at
-320 × 256 (#4967). `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` may select a preinstalled browser
-for this contract test. CI does not run it, so run it locally before pushing any
-change to `e2e/helpers/accessibility.ts`, its allowlist, the Playwright
-config or `src/components/ui/dialog.tsx`: without it, broken instrumentation would leave the journeys green. Run real journeys against a prepared local stack via
+`pnpm run test:e2e:a11y-fixture` from the repository root. The axe specs serve
+synthetic pages through Playwright routing and check both clean pages and
+expected axe failures with attached reports.
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` may select a preinstalled browser for
+this contract test. CI does not run it, so run it locally before pushing any
+change to `e2e/helpers/accessibility.ts`, its allowlist or the Playwright
+config: without it, broken instrumentation would leave the journeys green.
+
+The dialog-viewport spec (#4967) is different. It starts a local Vite server on
+127.0.0.1 and mounts the real shared dialog, confirmation, `Select` and command
+palette with the app's `globals.css`, then checks at 320 × 256 that their
+buttons, close button, search box and last items stay reachable. Run it
+locally before changing `src/components/ui/dialog.tsx`, `command.tsx`,
+`select.tsx`, `src/components/confirm-dialog.tsx` or `src/app/globals.css`.
+CI does not run it; `dialog-viewport-cap.test.tsx` is the CI guard.
+
+Run real journeys against a prepared local stack via
 `E2E_PRESERVE_AUTH_STATE=1 pnpm run test:e2e:run --project=mobile --no-deps` (setup storage states must
 already exist). CI discovers mobile through the existing Playwright config.
 

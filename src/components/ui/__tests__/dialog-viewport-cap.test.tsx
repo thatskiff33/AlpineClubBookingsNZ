@@ -39,4 +39,12 @@ describe("DialogContent viewport safety", () => {
     expect(dialog.classList.contains("max-h-[calc(100dvh-2rem)]")).toBe(true);
     expect(dialog.classList.contains("overflow-y-auto")).toBe(false);
   });
+
+  it("makes the command palette a column so only its list shrinks", () => {
+    render(<CommandDialog open />);
+    const dialog = screen.getByRole("dialog", { name: "Command Palette" });
+    expect(dialog.classList.contains("flex")).toBe(true);
+    expect(dialog.classList.contains("flex-col")).toBe(true);
+    expect(dialog.classList.contains("grid")).toBe(false);
+  });
 });

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { createServer, type ViteDevServer } from "vite";
-import { test, expect } from "../../e2e/helpers/accessibility";
+import { test, expect, type Locator } from "../../e2e/helpers/accessibility";
 
 // Exercise the real shared confirmation, Radix portals and application CSS,
 // without a database or provider fixtures. No copied dialog markup or styles.
@@ -59,6 +59,37 @@ test("existing cap, close button and portalled Select stay reachable", async ({ 
   await option.click();
   await expect(page.getByRole("combobox", { name: "Method" })).toHaveText("Second method");
   await close.click();
+  await expect(dialog).toHaveCount(0);
+});
+
+// Short window or 400% zoom: the palette must scroll only its own list, so the
+// search box and the last item are both on screen. Geometry is asserted before
+// any click, because Playwright's click scrolls an overflow-hidden dialog into
+// place and would pass this test while the search box was pushed off screen.
+test("command palette keeps its search box and every item reachable at 320 by 256", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 256 });
+  await page.goto(url);
+  await page.getByRole("button", { name: "Open commands" }).click();
+  const dialog = page.getByRole("dialog", { name: "Command Palette" });
+  const input = dialog.getByRole("combobox", { name: "Search commands" });
+  const last = dialog.getByRole("option", { name: "Command 20", exact: true });
+  const insideDialog = (item: Locator) => item.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const frame = el.closest('[role="dialog"]')!.getBoundingClientRect();
+    return box.top >= frame.top && box.bottom <= frame.bottom && box.top >= 0 && box.bottom <= innerHeight;
+  });
+  await expect(input).toBeInViewport({ ratio: 1 });
+  expect(await dialog.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+  await dialog.locator("[cmdk-list]").evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  expect(await insideDialog(last)).toBe(true);
+  expect(await dialog.evaluate((el) => el.scrollTop)).toBe(0);
+  // Keyboard path: End selects the last item and cmdk scrolls it into view.
+  await input.press("End");
+  await expect(last).toHaveAttribute("aria-selected", "true");
+  expect(await insideDialog(input)).toBe(true);
+  expect(await insideDialog(last)).toBe(true);
+  expect(await dialog.evaluate((el) => el.scrollTop)).toBe(0);
+  await last.click();
   await expect(dialog).toHaveCount(0);
 });
 
