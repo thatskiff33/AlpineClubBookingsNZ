@@ -529,7 +529,7 @@ async function addEmailItems(
     severity: "warning",
     owner: "Admin",
     count: unreachableMembers.total,
-    href: "/admin/members?contactability=unreachable",
+    href: `${adminHref("members")}?contactability=unreachable`,
     summary: `${unreachableMembers.total} active ${plural(
       unreachableMembers.total,
       "member",
@@ -548,7 +548,7 @@ async function addEmailItems(
           id: member.id,
           title: member.name,
           summary: UNREACHABLE_MEMBER_REASON_LABEL[member.reason],
-          href: `/admin/members/${member.id}`,
+          href: `${adminHref("member-detail", { id: member.id })}`,
         }))
       : undefined,
   });

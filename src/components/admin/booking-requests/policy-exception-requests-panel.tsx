@@ -782,7 +782,7 @@ export function PolicyExceptionRequestsPanel({
                       {item.requestedBy ? (
                         <Link
                           href={buildHrefWithReturnTo(
-                            `/admin/members/${item.requestedBy.id}`,
+                            `${adminHref("member-detail", { id: item.requestedBy.id })}`,
                             basePath,
                           )}
                           className="text-info-11 hover:underline"

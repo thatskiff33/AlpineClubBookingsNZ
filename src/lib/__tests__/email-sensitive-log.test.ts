@@ -65,9 +65,10 @@ describe("caller-retried admin alerts (#4669)", () => {
     (templateName) => !SENSITIVE_EMAIL_LOG_TEMPLATES.has(templateName),
   );
 
-  it("names the three alerts whose owner retries a send nobody received", () => {
+  it("names the four alerts whose owner retries a send nobody received", () => {
     expect(callerRetried.sort()).toEqual([
       "admin-bank-transfer-settlement-figure",
+      "admin-stripe-dispute",
       "admin-unmatched-app-stripe-payment",
       "admin-unrecognised-stripe-payment",
     ]);

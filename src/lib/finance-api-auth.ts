@@ -8,7 +8,7 @@ import {
   loadFinanceAccessMember,
   type FinanceAccessMember,
 } from "@/lib/finance-auth";
-import { isTwoFactorSessionBlocked } from "@/lib/two-factor-gate";
+import { factorGateRedirect } from "@/lib/two-factor-gate";
 
 type FinanceApiAuthSuccess = {
   ok: true;
@@ -66,12 +66,8 @@ async function requireFinanceApiAccess(input: {
     };
   }
 
-  if (
-    isTwoFactorSessionBlocked({
-      sessionUser: session.user,
-      member,
-    })
-  ) {
+  // No path: no finance route is on the officer enrolment allowlist.
+  if (factorGateRedirect({ sessionUser: session.user, member })) {
     return {
       ok: false,
       response: NextResponse.json(

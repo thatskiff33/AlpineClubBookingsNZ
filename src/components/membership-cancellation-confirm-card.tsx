@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 import type { MembershipCancellationConfirmationDetails } from "@/lib/membership-cancellation-requests";
 
 export function MembershipCancellationConfirmCard({
@@ -18,6 +20,9 @@ export function MembershipCancellationConfirmCard({
   const [message, setMessage] = useState(details.message);
   const [error, setError] = useState("");
   const [canRespond, setCanRespond] = useState(details.canRespond);
+  // #4949: recording the response removes the buttons that had focus, so the
+  // recorded outcome takes it.
+  const [recordedCount, setRecordedCount] = useState(0);
 
   async function respond(decision: "confirm" | "decline") {
     setLoadingDecision(decision);
@@ -41,6 +46,7 @@ export function MembershipCancellationConfirmCard({
 
       setMessage(data.message || "Your response has been recorded.");
       setCanRespond(false);
+      setRecordedCount((count) => count + 1);
     } catch {
       setError("Could not record your response.");
     } finally {
@@ -50,16 +56,19 @@ export function MembershipCancellationConfirmCard({
 
   return (
     <div className="space-y-4">
-      {message ? (
-        <div className="rounded-md border border-info-6 bg-info-3 px-4 py-3 text-sm text-info-11">
-          {message}
-        </div>
-      ) : null}
-      {error ? (
-        <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
-          {error}
-        </div>
-      ) : null}
+      {/* #4949: mounted before the response, so the recorded outcome is announced. */}
+      <StatusRegion
+        visible={Boolean(message)}
+        visibleClassName="rounded-md border border-info-6 bg-info-3 px-4 py-3 text-sm text-info-11"
+        outcomeKey={recordedCount}
+      >
+        {message}
+      </StatusRegion>
+      <FocusedActionError
+        id="membership-cancellation-confirm-error"
+        error={error}
+        className="px-4 py-3"
+      />
       {canRespond ? (
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button

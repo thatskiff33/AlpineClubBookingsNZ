@@ -8,6 +8,7 @@ import { bindClubFormat } from "@/lib/club-format-bound";
 import { stableDigest } from "@/lib/stable-digest";
 import { resolveBookingDetailLinkedParty } from "../_lib/booking-detail-linked-party";
 import { resolveBookingDetailPayment } from "../_lib/booking-detail-payment";
+import { loadSupersededHeldBackCents } from "../_lib/booking-detail-organiser-card-appeal";
 import { renderBookingDetailMessages } from "../_lib/booking-detail-messages";
 
 // One read action per server render, never a cross-request observation cache.
@@ -25,7 +26,8 @@ export async function BookingStatusSection(props: ComponentProps<typeof BookingS
   const modules = state.modules ?? props.modules;
   const access = { ...props.access, isDeleted: state.booking.deletedAt !== null };
   const party = resolveBookingDetailLinkedParty({ booking: state.booking, modules, viewer: state.viewer, access });
-  const payment = resolveBookingDetailPayment({ booking: state.booking, modules, viewer: state.viewer, access, party, amountOwed: history.amountOwed });
+  const supersededHeldBackCents = await loadSupersededHeldBackCents(state.booking);
+  const payment = resolveBookingDetailPayment({ booking: state.booking, modules, viewer: state.viewer, access, party, amountOwed: history.amountOwed, supersededHeldBackCents });
   const messages = renderBookingDetailMessages({ booking: state.booking, club: props.club, money, modules,
     bookingMessages: props.bookingMessages, bookingLodgeEmailSettings: props.bookingLodgeEmailSettings, payment });
   return <>
