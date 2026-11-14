@@ -17,6 +17,7 @@ import { reconcileXeroCreditNote } from "./credit-note";
 import { recheckPendingDeletedPaymentLinks } from "./deleted-payment-links";
 import { failIfRecountLeftUnsettled } from "./recount-left-unsettled";
 import { startInboundReconcileOperation } from "./reconcile-operation";
+import { xeroInboundDedupMarkerWhere } from "./dedup-marker";
 import { takeOverStaleProcessingXeroInboundEvent, takeOverStaleProcessingXeroInboundEvents } from "./stale-event-takeover";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -180,10 +181,7 @@ async function claimProcessedWebhookEvent(event: StoredXeroInboundEvent) {
 
 async function releaseProcessedWebhookEventClaim(event: StoredXeroInboundEvent) {
   await prisma.processedWebhookEvent.deleteMany({
-    where: {
-      eventId: event.correlationKey,
-      source: "xero",
-    },
+    where: xeroInboundDedupMarkerWhere(event.correlationKey),
   });
 }
 
@@ -451,10 +449,7 @@ export async function replayStoredXeroInboundEvent(eventId: string) {
   } else {
     await prisma.$transaction(async (tx) => {
       await tx.processedWebhookEvent.deleteMany({
-        where: {
-          eventId: event.correlationKey,
-          source: "xero",
-        },
+        where: xeroInboundDedupMarkerWhere(event.correlationKey),
       });
 
       await tx.xeroInboundEvent.update({

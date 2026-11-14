@@ -29,6 +29,16 @@ import {
 } from "@/lib/xero-stale-operations";
 
 describe("stale RUNNING Xero operation visibility (issue #819)", () => {
+  it("never treats an operation as live longer than the inbound event lease (INV-INT-039)", () => {
+    // A takeover reprocesses the event as soon as it is past the lease, and its
+    // start recovers the dead attempt's RUNNING operation only once that row is
+    // stale too (INV-INT-038). A longer operation threshold would turn every
+    // automatic takeover into an in-flight failure.
+    expect(STALE_RUNNING_XERO_OPERATION_MINUTES).toBeLessThanOrEqual(
+      STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES,
+    );
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });

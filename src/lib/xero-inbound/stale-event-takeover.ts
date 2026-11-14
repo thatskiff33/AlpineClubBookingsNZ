@@ -25,6 +25,7 @@
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { staleProcessingXeroInboundEventFilter } from "@/lib/xero-stale-operations";
+import { xeroInboundDedupMarkerWhere } from "./dedup-marker";
 
 interface StaleInboundEvent {
   id: string;
@@ -49,7 +50,7 @@ export async function takeOverStaleProcessingXeroInboundEvent(
       return false;
     }
     await tx.processedWebhookEvent.deleteMany({
-      where: { eventId: event.correlationKey, source: "xero" },
+      where: xeroInboundDedupMarkerWhere(event.correlationKey),
     });
     return true;
   });
