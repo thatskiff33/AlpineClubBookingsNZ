@@ -352,10 +352,12 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
       appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     });
 
+    // #3993: the card's share is the payment's refund note (the card-paid
+    // invoice cannot take a modification note); the give-back keeps its own
+    // allocated note beside it.
     expect(decision.financialAction).toEqual(expect.objectContaining({
-      type: "modification-credit-note",
+      type: "refund-credit-note",
       refundAmountCents: 10_000,
-      refundMethod: "card",
       allocatedGiveBackCents: 5_000,
     }));
   });
