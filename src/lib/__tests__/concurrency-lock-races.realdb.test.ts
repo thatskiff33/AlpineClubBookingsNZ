@@ -823,6 +823,11 @@ import "./unpaid-edit-change-fee-owed.realdb.test";
 // changed underneath it (no side effect, retried), and two writers forced to meet
 // at the claim. It owns and cleans its own `race-4456` credential rows.
 import "./data-encryption-key-ring.realdb.test";
+// INV-INT-038 (the #4921 prerequisite) reuses it to prove an abandoned inbound
+// Xero reconcile operation is recovered under a fresh claim: one winner among
+// racing takeovers or a racing Mark failed, and the abandoned attempt's late
+// outcome refused. It owns and cleans its own `race-alp546-` fixtures.
+import "./xero-inbound-abandoned-operation.realdb.test";
 // #4851 reuses it to prove Stuck States' settlement of a dead refund out of the
 // group organiser's card: a refund Stripe already holds is recorded and nobody is
 // paid again, a bank close raises the mirror and its no-Xero-note hand-back, a

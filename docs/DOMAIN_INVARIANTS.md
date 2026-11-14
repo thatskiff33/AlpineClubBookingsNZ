@@ -951,6 +951,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-035` | An unrecorded refund note holds its payment's refund notes until recorded |
 | `INV-INT-036` | An account-credit note stamps the one member credit it was raised for |
 | `INV-INT-037` | A manual grant queues one Xero note at approval |
+| `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
 
 ## Operations
 
