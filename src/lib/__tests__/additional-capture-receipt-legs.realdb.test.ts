@@ -5,7 +5,7 @@
  * which writes each payment's link as the real create does. No live provider
  * is called.
  */
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
@@ -120,7 +120,8 @@ function fakeXero(invoices: Invoices, failures: Record<string, "refused" | "lost
     if (failure === "lost") throw new Error(`The response for the payment on ${params.invoiceId} was lost`);
     await prisma.xeroObjectLink.create({ data: {
       localModel: "PaymentTransaction", localId: params.localId, xeroObjectType: "PAYMENT",
-      xeroObjectId: paymentID, role: params.role, active: true, metadata: params.metadata ?? {},
+      // The real helper takes `Record<string, unknown>`; Prisma's JSON input wants its own type.
+      xeroObjectId: paymentID, role: params.role, active: true, metadata: (params.metadata ?? {}) as Prisma.InputJsonObject,
     } });
     return paymentID;
   });
