@@ -219,8 +219,9 @@ export function isPaymentOwedBookingStatus(status: string) {
 /**
  * Whether a booking's own price is still owed: it is in a payment-owed status
  * and its payment has not succeeded. One home (`INV-PAY-119`, `INV-SSOT`): the
- * dashboard's Payment Owed card and the booking page's pay, credit and
- * change-fee cards all read it, so they cannot quote different amounts owed.
+ * dashboard's Payment Owed card and the booking page's pay, credit,
+ * change-fee and Internet Banking cards all read it, so they cannot quote
+ * different amounts owed.
  * Additional asks are a separate question (`outstandingAdditionalAskCents`).
  */
 export function isBookingOwnAmountOwed(booking: {
