@@ -111,10 +111,10 @@ export function SetupPanels({
     [onRefreshDiagnostics]
   )
 
-  // Auto-load the groups once per opening of the section. A failed or empty
-  // load stays on screen until the admin presses a load/refresh button; without
-  // this latch the effect re-fired every time `loadingGroups` settled while the
-  // list was still empty, requesting the groups in a loop (ALP-591).
+  // Auto-load the groups once while the list is empty (re-armed when the section
+  // opens, Xero reconnects or Reset clears the list). After a failed or empty load
+  // nothing more is requested until the admin presses Load or Refresh; without
+  // this latch the effect re-fired each time `loadingGroups` settled (ALP-591).
   const autoLoadAttemptedRef = useRef(false)
   useEffect(() => {
     if (!connected || !open) {
@@ -400,7 +400,7 @@ export function SetupPanels({
                 <Button onClick={() => void importMembers()} disabled={syncing !== null || !groupMappings.some(isGroupMapped)}>
                   {syncing === "import" ? "Importing..." : "Import Members"}
                 </Button>
-                <Button variant="outline" onClick={() => { setContactGroups([]); setGroupMappings([]) }}>Reset</Button>
+                <Button variant="outline" onClick={() => { autoLoadAttemptedRef.current = false; setContactGroups([]); setGroupMappings([]) }}>Reset</Button>
               </div>
             </>
           )}

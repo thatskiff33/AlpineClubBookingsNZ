@@ -273,10 +273,10 @@ describe("SetupPanels — Repair Canonical Links (#4161)", () => {
 });
 
 describe("SetupPanels — contact-group auto-load runs once per opening (ALP-591)", () => {
-  function panel(open: boolean, onRefreshDiagnostics = vi.fn()) {
+  function panel(open: boolean, onRefreshDiagnostics = vi.fn(), connected = true) {
     return (
       <SetupPanels
-        connected
+        connected={connected}
         open={open}
         onToggle={vi.fn()}
         clubName="Test Club"
@@ -331,6 +331,34 @@ describe("SetupPanels — contact-group auto-load runs once per opening (ALP-591
     rerender(panel(false));
     await settle();
     rerender(panel(true));
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(2);
+  });
+
+  it("disconnecting and reconnecting Xero loads again after a failed load", async () => {
+    mockLoadGroups.mockRejectedValue(new Error("Xero is unreachable"));
+    const { rerender } = render(panel(true));
+    await screen.findByText("Xero is unreachable");
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(1);
+
+    rerender(panel(true, vi.fn(), false));
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(1);
+    rerender(panel(true, vi.fn(), true));
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(2);
+  });
+
+  it("Reset clears the loaded groups and loads them again", async () => {
+    render(panel(true));
+    await screen.findByText("Adults");
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(mockLoadGroups).toHaveBeenCalledTimes(2));
+    await screen.findByText("Adults");
     await settle();
     expect(mockLoadGroups).toHaveBeenCalledTimes(2);
   });
