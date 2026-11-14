@@ -65,7 +65,8 @@ function sources(dir: string): string[] {
 }
 
 describe("caller-held lock export census", () => {
-  it("checks every non-test export, including newly added modules", () => {
+  // Parses every source file; under shard load that outlasts vitest's 5s default.
+  it("checks every non-test export, including newly added modules", { timeout: 90_000 }, () => {
     const failures = sources("src").flatMap((file) => violations(file.split(path.sep).join("/"), fs.readFileSync(file, "utf8")));
     expect(failures).toEqual([]);
   });
