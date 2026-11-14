@@ -1438,7 +1438,8 @@ discriminated by a named test in the tree already:
 tree and the member `/book` wizard (#4945) routed through the module: a direct
 `scrollIntoView` / `scrollTo`, or a focus deferred to `requestAnimationFrame`,
 fails it, and its exclusions are listed beside the primitive in
-`DIRECT_SCROLL_EXCLUSIONS`. A bare effect-driven
+`DIRECT_SCROLL_EXCLUSIONS`, each with the exact number of direct scrolls it
+covers, so a second scroll in an excluded file fails too. A bare effect-driven
 `.focus()` passes it, which is a stated limit rather than an oversight — the
 module says why, and names the four surfaces that still hand-roll their
 attention. It scans the tree from disk, so `pnpm run test:related` cannot reach

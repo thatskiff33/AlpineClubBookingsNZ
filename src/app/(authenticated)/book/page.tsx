@@ -14,7 +14,10 @@ import { GuestsStep } from "./_components/guests-step";
 import { WaitlistAlternateLodges } from "./_components/waitlist-alternate-lodges";
 import { ReviewStep } from "./_components/review-step";
 import { PayStep } from "./_components/pay-step";
-import { WizardErrorActions } from "./_components/wizard-error-actions";
+import {
+  hasWizardErrorActions,
+  WizardErrorActions,
+} from "./_components/wizard-error-actions";
 import { BOOKING_WIZARD_ERROR_ID } from "./_components/types";
 import { useBookingWizard } from "./_hooks/use-booking-wizard";
 
@@ -34,6 +37,7 @@ export default function BookPage() {
     priceLoading,
     error,
     errorAttentionKey,
+    reviewReasonMissing,
     errorPaymentTargets,
     subscriptionInvoiceUrl,
     subscriptionInvoiceNumber,
@@ -185,11 +189,14 @@ export default function BookPage() {
     scrollToError(waitlistPromptRef, { block: "center" });
   }, [showWaitlistPrompt]);
 
-  const hasErrorActions =
-    lodgeUnresolved ||
-    guestProfileBlocks.length > 0 ||
-    memberNightConflicts.length > 0 ||
-    errorPaymentTargets.length > 0;
+  const exceptionOffered = exceptionOffer !== null;
+  const hasErrorActions = hasWizardErrorActions({
+    lodgeUnresolved,
+    guestProfileBlocks,
+    memberNightConflicts,
+    errorPaymentTargets,
+    exceptionOffered,
+  });
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -353,6 +360,7 @@ export default function BookPage() {
               handleRemoveConflictGuest={handleRemoveConflictGuest}
               removingConflictGuestId={removingConflictGuestId}
               errorPaymentTargets={errorPaymentTargets}
+              exceptionOffered={exceptionOffered}
             />
           ) : null
         }
@@ -367,13 +375,23 @@ export default function BookPage() {
         same reason the error box above is permanently mounted — a region
         inserted already populated is missed by some screen-reader/browser
         pairs. Polite, not an alert: the wizard keeps exactly one assertive
-        region, and the card takes focus as well.
+        region, and the card takes focus as well. Not atomic: a status region
+        is atomic by default, so pressing Join Waitlist (its label changes to
+        "Joining waitlist...") would re-read the whole card.
+
+        The card is a named group, not a bare div: `aria-labelledby` is ignored
+        on an element with no role, so the focused card would have had no name.
       */}
-      <div role="status" className={showWaitlistPrompt ? undefined : "sr-only"}>
+      <div
+        role="status"
+        aria-atomic="false"
+        className={showWaitlistPrompt ? undefined : "sr-only"}
+      >
         {showWaitlistPrompt && (
           <Card
             ref={waitlistPromptRef}
             tabIndex={-1}
+            role="group"
             aria-labelledby="booking-waitlist-prompt-heading"
             className="border-cat1-6 bg-cat1-3 outline-none"
           >
@@ -591,6 +609,7 @@ export default function BookPage() {
           savingDraft={savingDraft}
           memberGuestPendingHoldExpiryDays={memberGuestConfig.pendingHoldExpiryDays}
           exceptionOffer={exceptionOffer}
+          reviewReasonMissing={reviewReasonMissing}
           replaceExceptionRequestId={replaceExceptionRequestId}
           submitExceptionRequest={submitExceptionRequest}
           waitlistOnly={waitlistOnly}

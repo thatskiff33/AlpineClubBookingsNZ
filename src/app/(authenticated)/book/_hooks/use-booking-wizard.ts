@@ -67,6 +67,11 @@ import {
   type AdvisoryNight,
 } from "../_lib/capacity-advisory";
 import { readJsonOrNull } from "../_lib/read-json-or-null";
+import {
+  isReviewReasonMissingMessage,
+  REVIEW_REASON_MISSING_MESSAGE,
+  REVIEW_REASON_MISSING_WAITLIST_MESSAGE,
+} from "../_lib/review-reason-missing";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import {
   type AvailablePromoCode,
@@ -321,11 +326,12 @@ export function useBookingWizard() {
   const [error, setError] = useState("");
   /**
    * #4945: one count per failure a member's own press raised — Continue to
-   * Payment / Confirm, Join Waitlist, Save as Draft. The page's error box and
-   * the 409 waitlist card take focus and scroll into view when it moves, so a
-   * second press refused with the IDENTICAL sentence still lands the member on
-   * the explanation instead of leaving them on a button that looks dead. Only
-   * an action bumps it; a re-quote or a typed note never does.
+   * Payment / Confirm, Join Waitlist, Save as Draft, the guests step's Continue.
+   * The page's error box (not the 409 card, which keys on `showWaitlistPrompt`)
+   * takes focus and scrolls into view when it moves, so a second press refused
+   * with the IDENTICAL sentence still lands the member on the explanation
+   * instead of a button that looks dead. Only an action bumps it; a re-quote or
+   * a typed note never does.
    */
   const [errorAttentionKey, setErrorAttentionKey] = useState(0);
   function takeErrorAttention() {
@@ -1487,6 +1493,7 @@ export function useBookingWizard() {
     setMemberNightConflicts([]);
     if (guests.length === 0) {
       setError("Add at least one guest");
+      takeErrorAttention();
       return;
     }
 
@@ -1494,6 +1501,7 @@ export function useBookingWizard() {
     for (const g of guests) {
       if (!g.firstName.trim() || !g.lastName.trim()) {
         setError("All guests must have first and last names");
+        takeErrorAttention();
         return;
       }
     }
@@ -1509,6 +1517,7 @@ export function useBookingWizard() {
     */
     if (dependantIdentity.unresolvedCollisions.length > 0) {
       setError(DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE);
+      takeErrorAttention();
       return;
     }
 
@@ -1516,6 +1525,7 @@ export function useBookingWizard() {
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
       setError(stayRangeError);
+      takeErrorAttention();
       return;
     }
 
@@ -1665,7 +1675,7 @@ export function useBookingWizard() {
       return;
     }
     if (requiresAdminReviewLocal && !memberReviewJustification.trim()) {
-      setError("Please add a reason for booking without an adult guest. This goes to an admin for review.");
+      setError(REVIEW_REASON_MISSING_MESSAGE);
       takeErrorAttention();
       return;
     }
@@ -1787,8 +1797,8 @@ export function useBookingWizard() {
         setShowWaitlistPrompt(true);
         setWaitlistFullNights(data.fullNights || []);
         setWaitlistAlternateLodgeIds([]);
+        // No bump: the box is empty; the card takes focus in `page.tsx`.
         setError("");
-        takeErrorAttention();
       } else {
         handleBookingApiError(data, "Failed to create booking");
         // #2562: the ONE shared rule decides whether this refusal may offer to ask
@@ -1816,7 +1826,7 @@ export function useBookingWizard() {
       return;
     }
     if (requiresAdminReviewLocal && !memberReviewJustification.trim()) {
-      setError("Please add a reason for booking without an adult guest before joining the waitlist.");
+      setError(REVIEW_REASON_MISSING_WAITLIST_MESSAGE);
       takeErrorAttention();
       return;
     }
@@ -2139,6 +2149,8 @@ export function useBookingWizard() {
     exceptionOfferState.proposalSignature === exceptionProposalSignature()
       ? exceptionOfferState.offer
       : null;
+  // #4945: derived from the message, so it never outlives the refusal.
+  const reviewReasonMissing = isReviewReasonMissingMessage(error);
   // #2919 review: these three bodies are templates — every token is insertable
   // into them — so they render through the shared client renderer with the lodge
   // the member is actually booking, not the club's default one.
@@ -2301,6 +2313,7 @@ export function useBookingWizard() {
     priceLoading,
     error,
     errorAttentionKey,
+    reviewReasonMissing,
     errorPaymentTargets,
     subscriptionInvoiceUrl,
     subscriptionInvoiceNumber,

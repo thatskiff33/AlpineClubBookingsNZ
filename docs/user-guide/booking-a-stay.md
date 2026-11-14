@@ -158,8 +158,10 @@ it gives.
 **If the club can't take the booking as it stands**, pressing the button moves
 the page up to a message saying why, with a button to fix it where there is one
 (complete a guest's details, open the clashing booking, pay a subscription). If
-the lodge filled up while you were reviewing, you are taken to an offer to join
-the waitlist instead.
+a Booking Officer could allow it, the message links down to the request form.
+If the lodge filled up while you were reviewing, you are taken to an offer to
+join the waitlist instead. The same happens when Continue is stopped on the
+guests step, for example because a guest has no name yet.
 
 ### 4. Pay (or wait for review)
 

@@ -11,7 +11,9 @@
 //
 // This is a census rather than a structural guard because a DOM method cannot
 // be made unrepresentable; the exclusion list lives in the module that owns the
-// fact, not here, and a stale entry fails below so the list can only shrink.
+// fact, not here. Each entry names how many direct scrolls it covers, and the
+// file is held to exactly that, so a stale entry and a second, unexcused scroll
+// in an excluded file both fail below.
 //
 // It reads the tree from disk, so `pnpm run test:related` cannot reach it — run
 // it by name (`pnpm run test:named`) when a censused file gains a scroll or focus.
@@ -118,15 +120,19 @@ describe("admin and /book attention goes through the shared primitive (#2934, #4
     ).toEqual([]);
   });
 
-  it("keeps every exclusion live, so the list can only shrink", () => {
+  it("keeps every exclusion live and exact, so the list can only shrink", () => {
     for (const entry of DIRECT_SCROLL_EXCLUSIONS) {
       expect(files, `${entry.file} is no longer a censused source`).toContain(
         entry.file,
       );
+      expect(entry.count).toBeGreaterThan(0);
       expect(
         findings(entry.file).direct,
-        `${entry.file} no longer scrolls directly — remove its DIRECT_SCROLL_EXCLUSIONS entry`,
-      ).toBeGreaterThan(0);
+        `${entry.file} has a different number of direct scrolls than its ` +
+          "DIRECT_SCROLL_EXCLUSIONS entry covers. A new one is not excused by the " +
+          "old reason: route it through the primitive, or record it. If one went, " +
+          "lower `count` (or remove the entry when none is left).",
+      ).toBe(entry.count);
       expect(entry.reason.length).toBeGreaterThan(20);
     }
   });

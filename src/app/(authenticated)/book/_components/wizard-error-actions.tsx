@@ -10,17 +10,48 @@ import {
   describeBookingMemberNightConflictNights,
 } from "@/lib/booking-member-night-conflict-messages";
 import type { useBookingWizard } from "../_hooks/use-booking-wizard";
-import { PROFILE_FAMILY_GROUP_RETURN_TO_BOOK } from "./types";
+import {
+  BOOKING_EXCEPTION_REQUEST_ID,
+  PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
+} from "./types";
 
 type Wizard = ReturnType<typeof useBookingWizard>;
+
+/**
+ * Whether the box has anything to offer beyond its sentence. The page asks this
+ * to decide whether to render the action slot at all (an always-truthy slot
+ * would add an empty gap under every message), so it sits beside the sections
+ * it counts: a new action is added to both in one file.
+ */
+export function hasWizardErrorActions({
+  lodgeUnresolved,
+  guestProfileBlocks,
+  memberNightConflicts,
+  errorPaymentTargets,
+  exceptionOffered,
+}: Pick<
+  Wizard,
+  | "lodgeUnresolved"
+  | "guestProfileBlocks"
+  | "memberNightConflicts"
+  | "errorPaymentTargets"
+> & { exceptionOffered: boolean }): boolean {
+  return (
+    lodgeUnresolved ||
+    guestProfileBlocks.length > 0 ||
+    memberNightConflicts.length > 0 ||
+    errorPaymentTargets.length > 0 ||
+    exceptionOffered
+  );
+}
 
 /**
  * What a refused booking offers the member to do about it (#4945): retry the
  * lodge lookup, fix a guest's profile, deal with a member-night conflict, or
  * pay a subscription. It is the body of the wizard's one error box
- * (`FocusedActionError` in `page.tsx`), moved here unchanged so the page stays
- * the shell that wires the wizard together. The box owns the `role="alert"`
- * region and the focus; nothing here is a live region of its own.
+ * (`FocusedActionError` in `page.tsx`), moved here so the page stays the shell
+ * that wires the wizard together. The box owns the `role="alert"` region and
+ * the focus; nothing here is a live region of its own.
  */
 export function WizardErrorActions({
   lodgeUnresolved,
@@ -32,6 +63,7 @@ export function WizardErrorActions({
   handleRemoveConflictGuest,
   removingConflictGuestId,
   errorPaymentTargets,
+  exceptionOffered,
 }: {
   lodgeUnresolved: Wizard["lodgeUnresolved"];
   retryLodgeOptions: Wizard["retryLodgeOptions"];
@@ -42,10 +74,28 @@ export function WizardErrorActions({
   handleRemoveConflictGuest: Wizard["handleRemoveConflictGuest"];
   removingConflictGuestId: Wizard["removingConflictGuestId"];
   errorPaymentTargets: Wizard["errorPaymentTargets"];
+  /** The refusal is one a Booking Officer can allow, so the request card is on the review step. */
+  exceptionOffered: boolean;
 }) {
   const format = useClubFormat();
   return (
     <div className="space-y-3">
+      {/*
+        #4945: a reviewable refusal puts its reason here and its remedy, the
+        request form, further down the review step. Without a pointer the
+        member reads the reason and has no sign that anything can be done.
+      */}
+      {exceptionOffered && (
+        <p>
+          You can ask a Booking Officer to allow this.{" "}
+          <a
+            href={`#${BOOKING_EXCEPTION_REQUEST_ID}`}
+            className="font-medium underline underline-offset-4"
+          >
+            Go to the request
+          </a>
+        </p>
+      )}
       {/*
         #2701: the booking was refused because no lodge could be determined.
         The lodge selector is NOT on screen in that state — an empty list

@@ -10,7 +10,10 @@ import {
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
-import { BOOKING_WIZARD_ERROR_ID } from "@/app/(authenticated)/book/_components/types";
+import {
+  BOOKING_EXCEPTION_REQUEST_ID,
+  BOOKING_WIZARD_ERROR_ID,
+} from "@/app/(authenticated)/book/_components/types";
 
 // #4945. The review step is several screens long on a phone, and its buttons are
 // the last thing on it. A refusal used to land in a static block at the very top
@@ -178,6 +181,43 @@ async function renderOnReviewStep(
   return posts;
 }
 
+/** Mount the page and walk it to the guests step with `guests` as the party. */
+async function renderOnGuestsStep(guests: unknown[]) {
+  stubFetch({ status: 400, body: { error: "unused" } });
+  render(<BookPage />);
+  const current = () => wizard.current as unknown as Wizard;
+  await act(async () => {
+    current().handleLodgeChange("lodge-a");
+  });
+  await act(async () => {
+    await current().handleDateSelect("2026-08-01", "2026-08-03");
+  });
+  act(() => {
+    current().handleGuestsChange(guests);
+  });
+  await screen.findByRole("button", { name: "Continue" });
+}
+
+// A refusal the server marks as one a Booking Officer may allow (#2562): it
+// carries the frozen violation the request card renders.
+const MIN_STAY_VIOLATION = {
+  reasonCode: "MINIMUM_STAY",
+  policyId: "policy-weekend",
+  policyVersion: 3,
+  policyName: "Weekend minimum",
+  resolvedScope: { kind: "CLUB_WIDE", lodgeId: null, effectiveLodgeId: "lodge-a" },
+  affectedNights: ["2026-08-01"],
+  exceptionEligible: true,
+  capacityMode: "HOLD",
+  message: "Friday nights need a two-night booking.",
+};
+const REVIEWABLE_REFUSAL = {
+  error: "Booking does not meet minimum stay requirement",
+  code: "MINIMUM_STAY_VIOLATION",
+  violations: [MIN_STAY_VIOLATION],
+  exceptionReview: { violations: [MIN_STAY_VIOLATION], capacityMode: "HOLD" },
+};
+
 function errorBox() {
   return document.getElementById(BOOKING_WIZARD_ERROR_ID);
 }
@@ -273,7 +313,14 @@ describe("review-step failures land where the member is looking (#4945)", () => 
     });
     const card = heading.closest("[tabindex='-1']");
     await expectRecoveryAlertToHoldFocus(card);
-    expect(card?.closest("[role='status']")).not.toBeNull();
+    // A named group: `aria-labelledby` is ignored on a role-less div, so without
+    // the role the focused card would be announced with no name at all.
+    expect(screen.getByRole("group", { name: "Lodge is fully booked" })).toBe(card);
+    // A status region is atomic by default, which would re-read the whole card
+    // when Join Waitlist changes its label.
+    const region = card?.closest("[role='status']");
+    expect(region).not.toBeNull();
+    expect(region).toHaveAttribute("aria-atomic", "false");
     // The 409 clears the error box, so nothing is announced twice.
     expect(errorBox()).toHaveTextContent("");
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
@@ -293,7 +340,10 @@ describe("review-step failures land where the member is looking (#4945)", () => 
     await expectRecoveryAlertToHoldFocus(errorBox());
   });
 
-  it("moves focus again when a second press is refused identically", async () => {
+  it("brings the member back to a repeated refusal", async () => {
+    // Not a test of the attention key: a create press clears the box before it
+    // posts, so the sentence goes '' -> message and the box refocuses on `error`
+    // alone. The client-side checks below are what pin the key.
     await renderOnReviewStep({
       status: 400,
       body: { error: "Bookings for these dates are not open yet." },
@@ -349,18 +399,116 @@ describe("review-step failures land where the member is looking (#4945)", () => 
       },
     );
     const reason = screen.getByLabelText(/Reason for booking without an adult guest/);
-    expect(reason).toHaveAttribute("aria-describedby", BOOKING_WIZARD_ERROR_ID);
+    // Nothing has been refused yet, so the field is not tied to the box.
+    expect(reason).not.toHaveAttribute("aria-describedby");
+    expect(reason).not.toHaveAttribute("aria-invalid");
 
     fireEvent.click(screen.getByRole("button", { name: "Submit for Review" }));
     await waitFor(() =>
       expect(errorBox()).toHaveTextContent("Please add a reason for booking"),
     );
     await expectRecoveryAlertToHoldFocus(errorBox());
+    // The box is about this field now, so the field points at it.
+    expect(reason).toHaveAttribute("aria-describedby", BOOKING_WIZARD_ERROR_ID);
+    expect(reason).toHaveAttribute("aria-invalid", "true");
 
     const again = screen.getByRole("button", { name: "Submit for Review" });
     again.focus();
     fireEvent.click(again);
     await expectRecoveryAlertToHoldFocus(errorBox());
     expect(posts).toEqual([]);
+  });
+
+  it("stops pointing the reason field at the box once the box is about something else", async () => {
+    await renderOnReviewStep(
+      { status: 400, body: { error: "Bookings for these dates are not open yet." } },
+      {
+        guests: [
+          { firstName: "Kid", lastName: "Member", ageTier: "CHILD", isMember: true },
+        ],
+        primaryButton: "Submit for Review",
+      },
+    );
+    const reason = screen.getByLabelText(/Reason for booking without an adult guest/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit for Review" }));
+    await waitFor(() =>
+      expect(errorBox()).toHaveTextContent("Please add a reason for booking"),
+    );
+    expect(reason).toHaveAttribute("aria-describedby", BOOKING_WIZARD_ERROR_ID);
+
+    // Filling the field in answers the refusal, so the field stops claiming it.
+    fireEvent.change(reason, { target: { value: "My adult is travelling separately" } });
+    expect(reason).not.toHaveAttribute("aria-describedby");
+    expect(reason).not.toHaveAttribute("aria-invalid");
+
+    // The next refusal is about something else, and the field never claims it.
+    fireEvent.click(screen.getByRole("button", { name: "Submit for Review" }));
+    await waitFor(() =>
+      expect(errorBox()).toHaveTextContent("Bookings for these dates are not open yet."),
+    );
+    expect(reason).not.toHaveAttribute("aria-describedby");
+    expect(reason).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("points a reviewable refusal at the Booking Officer request further down", async () => {
+    // The box takes the member to the reason; the request form, their remedy, is
+    // screens lower on the review step. The box has to say so.
+    await renderOnReviewStep({ status: 400, body: REVIEWABLE_REFUSAL });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Payment" }));
+
+    await waitFor(() =>
+      expect(errorBox()).toHaveTextContent("Booking does not meet minimum stay requirement"),
+    );
+    await expectRecoveryAlertToHoldFocus(errorBox());
+    const link = Array.from(errorBox()!.querySelectorAll("a")).find(
+      (anchor) => anchor.textContent === "Go to the request",
+    );
+    expect(link).toHaveAttribute("href", `#${BOOKING_EXCEPTION_REQUEST_ID}`);
+    // The link lands on the card itself, which is on the review step and not in
+    // the box.
+    const target = document.getElementById(BOOKING_EXCEPTION_REQUEST_ID);
+    expect(target).toHaveAttribute("data-testid", "request-officer-approval");
+    expect(errorBox()!.contains(target)).toBe(false);
+  });
+
+  it("offers no request link for a refusal a Booking Officer cannot allow", async () => {
+    await renderOnReviewStep({
+      status: 400,
+      body: { error: "Bookings for these dates are not open yet." },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Payment" }));
+
+    await waitFor(() =>
+      expect(errorBox()).toHaveTextContent("Bookings for these dates are not open yet."),
+    );
+    expect(errorBox()!.querySelector("a")).toBeNull();
+    expect(document.getElementById(BOOKING_EXCEPTION_REQUEST_ID)).toBeNull();
+  });
+});
+
+describe("a stopped Continue on the guests step also lands where the member is looking (#4945)", () => {
+  it("moves focus each time, even for the identical sentence", async () => {
+    // A guest with no name stops the press in the browser. Nothing between the
+    // two presses clears the box, so only the attention key can move focus the
+    // second time.
+    await renderOnGuestsStep([
+      { firstName: "", lastName: "", ageTier: "ADULT", isMember: false },
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() =>
+      expect(errorBox()).toHaveTextContent("All guests must have first and last names"),
+    );
+    await expectRecoveryAlertToHoldFocus(errorBox());
+
+    const again = screen.getByRole("button", { name: "Continue" });
+    again.focus();
+    expect(document.activeElement).toBe(again);
+    fireEvent.click(again);
+
+    await expectRecoveryAlertToHoldFocus(errorBox());
   });
 });

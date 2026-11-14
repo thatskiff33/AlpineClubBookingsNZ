@@ -93,24 +93,39 @@ export interface AttentionOptions {
  * reason. Each entry is a deep link or a layout concern this module cannot
  * express. Shrinking this list is the ratchet; a new entry is a decision to
  * record here.
+ *
+ * `count` is how many direct calls the reason covers, and the census holds the
+ * file to exactly that number: an exclusion is for the scroll named below, not a
+ * licence for the file, and the wizard hook is over 2,400 lines.
  */
 export const DIRECT_SCROLL_EXCLUSIONS: ReadonlyArray<{
   file: string;
+  count: number;
   reason: string;
 }> = [
   {
     file: "src/app/(admin)/admin/membership/members/[id]/page.tsx",
+    count: 1,
     reason:
       "the /admin/members/[id]#account-credit deep link scrolls once the collapsed Finance accordion has finished expanding — a navigation restore, not an action result",
   },
   {
     file: "src/app/(authenticated)/book/_hooks/use-booking-wizard.ts",
+    count: 1,
     reason:
       "a successful card booking moves the wizard to its pay step and scrolls the WINDOW to the top (#1084, #4945). The member layout scrolls the document rather than a container, and `scrollToTop` only scrolls the nearest overflow container, so it would focus the step without moving the page. The jump is instant, so reduced motion is not at stake",
   },
 ];
 
-const FEEDBACK_SCROLL_MARGIN_TOP = "5rem";
+const FEEDBACK_SCROLL_MARGIN_REM = 5;
+const FEEDBACK_SCROLL_MARGIN_TOP = `${FEEDBACK_SCROLL_MARGIN_REM}rem`;
+
+/**
+ * Elements whose inline `scroll-margin-top` THIS module wrote, so a later
+ * centred reveal of the same permanently mounted alert can take it back off
+ * (`applyStickyHeaderClearance`).
+ */
+const clearanceWrittenHere = new WeakSet<HTMLElement>();
 
 export function isHTMLElement(value: unknown): value is HTMLElement {
   return typeof HTMLElement !== "undefined" && value instanceof HTMLElement;
@@ -202,7 +217,17 @@ function applyStickyHeaderClearance(
   element: HTMLElement,
   block: AttentionBlock,
 ) {
-  if (block === "center") return;
+  if (block === "center") {
+    // The same alert may have been revealed from its top edge a moment ago (see
+    // `exceedsCentredView`), which left 5rem on it; centring would then land it
+    // 2.5rem above the middle it asked for. Only a margin written here is
+    // removed, never one the surface declared.
+    if (clearanceWrittenHere.has(element)) {
+      element.style.scrollMarginTop = "";
+      clearanceWrittenHere.delete(element);
+    }
+    return;
+  }
   const declared =
     (typeof window !== "undefined" &&
     typeof window.getComputedStyle === "function"
@@ -212,9 +237,40 @@ function applyStickyHeaderClearance(
   // jsdom, and a declared one arrives in whatever unit the class used.
   if (Number.parseFloat(declared) > 0) return;
   element.style.scrollMarginTop = FEEDBACK_SCROLL_MARGIN_TOP;
+  clearanceWrittenHere.add(element);
 }
 
-function focusAndReveal(element: HTMLElement, block: AttentionBlock) {
+/**
+ * True when centring the element would push its top edge under the sticky
+ * header (or off the top of the screen), because it is taller than the room the
+ * viewport leaves once the header's clearance is kept at both ends.
+ *
+ * A centred element taller than the viewport loses its top and bottom equally.
+ * For a recovery alert that is the wrong half to lose: the first line is the
+ * sentence that explains everything below it, such as several clashing guests
+ * on the member booking wizard (#4945). Such an element is revealed from its
+ * top edge instead. jsdom has no layout, so a measured height of 0 never
+ * qualifies and tests that want the fallback stub `getBoundingClientRect`.
+ */
+function exceedsCentredView(element: HTMLElement) {
+  if (
+    typeof window === "undefined" ||
+    typeof element.getBoundingClientRect !== "function"
+  ) {
+    return false;
+  }
+  const rootFontPx =
+    typeof window.getComputedStyle === "function"
+      ? Number.parseFloat(
+          window.getComputedStyle(document.documentElement).fontSize,
+        )
+      : Number.NaN;
+  const clearancePx = (rootFontPx > 0 ? rootFontPx : 16) * FEEDBACK_SCROLL_MARGIN_REM;
+  return element.getBoundingClientRect().height > window.innerHeight - 2 * clearancePx;
+}
+
+function focusAndReveal(element: HTMLElement, requested: AttentionBlock) {
+  const block = requested === "center" && exceedsCentredView(element) ? "start" : requested;
   applyStickyHeaderClearance(element, block);
   ensureFocusable(element);
   element.focus({ preventScroll: true });
@@ -292,7 +348,8 @@ export function scrollToTop(target: ScrollContainerTarget) {
 /**
  * FAILURE. Focus the actionable error, summary or invalid control and bring it
  * into view under the sticky admin header (`block: "start"`), or centred for a
- * permanently mounted recovery alert.
+ * permanently mounted recovery alert — from its top edge instead when it is
+ * taller than the viewport, so its first line is never the part cut off.
  */
 // test seam
 export function scrollToError(
