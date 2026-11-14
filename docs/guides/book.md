@@ -58,6 +58,10 @@ date-only lodge nights. The behaviour and its guardrails are documented in
    the nights from check-in up to — but not including — the check-out date,
    which is the departure morning, not a stayed night. As an admin you are not
    blocked by member minimum-stay rules.
+4. A night marked **?** has not loaded its availability. If a month could not be
+   loaded, the calendar says so above the dates with a **Try again** button. You
+   can still pick **?** nights: Step 2 warns you if the beds for those dates
+   run short, and an over-capacity booking needs your confirmation at the end.
 
 ### Step 2 — Add Guests
 

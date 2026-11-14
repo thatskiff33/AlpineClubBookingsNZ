@@ -1698,6 +1698,18 @@ rollback until the new colour is back. After each window ends:
    Open each booking's **Dietary/allergy information** card and correct any
    note that belongs to somebody no longer on that row.
 
+### 3.1c Old stays' dietary notes are cleared on the first nightly run (#4916)
+
+`20261216050000_booking_dietary_retention` adds the after-stay dietary clear
+to `PrivacyRetentionSettings`, **switched on with a 30-day period** (owner
+decision, 11 Nov 2026). The next data-pruning run at 03:30 club time clears
+every `BookingGuest.dietaryRequirements` value whose stay ended more than 30
+days ago. If the club wants to keep them, untick **Enable after-stay dietary
+clearing** in **Admin → Privacy retention** before that run; nothing already
+cleared can be restored except from the pre-migrate backup. The previous colour
+never reads the new columns. See [`UPGRADING.md`](UPGRADING.md#unreleased) and
+`INV-PRIV-023`.
+
 ### 3.2 Re-run the audit category backfills
 
 Two data-only migrations rewrite the stored audit `category` and each wants one

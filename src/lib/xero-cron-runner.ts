@@ -14,16 +14,17 @@ import {
   sendXeroReconciliationReport,
 } from "@/lib/xero-hardening";
 import { canonicalLinkCleanupFailureMessage } from "@/lib/xero-hardening-shared";
-import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
+import {
+  processStoredXeroInboundEventBatches,
+  runXeroInboundReconciliationCycle,
+  type RunXeroInboundReconciliationCycleResult,
+} from "@/lib/xero-inbound-reconciliation";
 import {
   bankRefundVoidFollowUpFailureMessage,
   runBankRefundVoidFollowUp,
 } from "@/lib/bank-refund-void-follow-up";
-import {
-  reconcileXeroCreditSync,
-  XERO_CREDIT_SYNC_JOB_NAME,
-} from "@/lib/xero-credit-sync-checker";
-import { CREDIT_NOTE_MIRROR_JOB_NAME } from "@/lib/xero-credit-note-mirror";
+import { reconcileXeroCreditSync } from "@/lib/xero-credit-sync-checker";
+import { XERO_CRON_JOB_NAMES, XERO_CRON_TASKS, type XeroCronTask } from "@/lib/xero-cron-jobs";
 import { runCreditNoteMirrorSweep } from "@/lib/xero-credit-note-mirror-sweep";
 import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
@@ -32,36 +33,7 @@ import { isXeroConnected } from "@/lib/xero-token-store";
 import { retryCashSettlementAlerts } from "@/lib/xero-inbound/cash-settlement-alert-retry";
 import { clubFormatValues } from "@/lib/club-format-server";
 
-const XERO_CRON_TASKS = [
-  "memberships",
-  "outbox",
-  "retries",
-  "inbound",
-  "backfill",
-  "link-cleanup",
-  // #4162: after the link cleanup, whose #4161 heal turns voided mirrors off.
-  "bank-refund-voids",
-  "report",
-  "credit-sync",
-  // #4270: after the inbound cycle, whose webhook path mirrors a note as it changes.
-  "credit-note-mirror",
-] as const;
-
-export type XeroCronTask = (typeof XERO_CRON_TASKS)[number];
 export type XeroCronTaskSelection = XeroCronTask | "all";
-
-const XERO_CRON_JOB_NAMES: Record<XeroCronTask, string> = {
-  memberships: "xero-membership-refresh",
-  outbox: "xero-outbox",
-  retries: "xero-operation-replay",
-  inbound: "xero-inbound-reconcile",
-  backfill: "xero-link-backfill",
-  "link-cleanup": "xero-link-cleanup",
-  "bank-refund-voids": "xero-bank-refund-void-follow-up",
-  report: "xero-reconciliation-report",
-  "credit-sync": XERO_CREDIT_SYNC_JOB_NAME,
-  "credit-note-mirror": CREDIT_NOTE_MIRROR_JOB_NAME,
-};
 
 export interface XeroCronRunnerPayload {
   message: string;
@@ -468,7 +440,10 @@ async function runXeroCronTaskListUnderClaim(
   return payload;
 }
 
-/** Scheduled, HTTP cron and officer whole-club runs share this one claim. */
+/**
+ * Scheduled, HTTP cron and officer whole-club runs share this one claim with
+ * the webhook kick below; only these lists record CronRun rows.
+ */
 export async function runXeroCronTaskList(
   taskList: XeroCronTask[],
   dependencies: XeroCronRunnerDependencies & { taskLabel?: string } = {},
@@ -485,6 +460,40 @@ export async function runXeroCronTaskList(
     skipped: true,
     reason: "already-running",
   } as XeroCronRunnerPayload;
+}
+
+export type XeroWebhookInboundKickResult =
+  | { claimed: true; cycle: RunXeroInboundReconciliationCycleResult }
+  | { claimed: false; inbound: RunXeroInboundReconciliationCycleResult["inbound"] };
+
+/**
+ * #4922: the Xero webhook's after-response kick. It takes the same inbound run
+ * claim once (no retry) and records no CronRun row. With the claim it runs the
+ * whole cycle; while another run holds it, it applies stored events only, each
+ * row-claimed, and leaves the cursor reconciliations to the holder.
+ */
+export async function runXeroWebhookInboundKick(options: {
+  batchSize: number;
+  maxBatches: number;
+}): Promise<XeroWebhookInboundKickResult> {
+  // A claim that cannot even be attempted (no database connection) must not
+  // strand stored events until the next scheduled run: they are row-claimed, so
+  // applying them unclaimed is the held-elsewhere path. An error from inside the
+  // cycle itself is not swallowed.
+  let cycleStarted = false;
+  let outcome: { claimed: false } | { claimed: true; result: RunXeroInboundReconciliationCycleResult };
+  try {
+    outcome = await withCronRunClaim(XERO_CRON_JOB_NAMES.inbound, () => {
+      cycleStarted = true;
+      return runXeroInboundReconciliationCycle(options);
+    });
+  } catch (error) {
+    if (cycleStarted) throw error;
+    logger.error({ err: error }, "Xero webhook kick could not take the inbound run claim; applying stored events only");
+    outcome = { claimed: false };
+  }
+  if (outcome.claimed) return { claimed: true, cycle: outcome.result };
+  return { claimed: false, inbound: await processStoredXeroInboundEventBatches(options) };
 }
 
 /** One task list for the scheduled callback and whole-club officer action. */
