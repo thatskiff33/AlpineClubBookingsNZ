@@ -1785,7 +1785,11 @@ answers 409 `SUPERSEDED_CARD_PAYMENT_REFUNDING`, also for a captured intent of
 the booking its pointer has moved past. Neither reuse arm hands out an intent
 a superseded row still names; one being paid answers `PAYMENT_PROCESSING` in
 its own words. After a card success the `/pay` link asks the server what it
-did and never shows the pay buttons again.
+did and never shows the pay buttons again, whether the confirmation resolved in
+the page or a redirect method returned the payer to the link with
+`payment_intent` and `redirect_status` in the address (#4955). The door's 410
+for a booking already paid carries `BOOKING_ALREADY_PAID`, which the link reads
+as paid (the webhook settled first); its other 410s stay unconfirmed.
 
 Saved-card provenance (#3269, `INV-PAY-053`). Two writers put a
 `stripePaymentMethodId` on a `Payment` row and only one of them saves a card:
