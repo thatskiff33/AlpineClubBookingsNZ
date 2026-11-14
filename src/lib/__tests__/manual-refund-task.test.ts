@@ -35,7 +35,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
   bookingUpdateMany: vi.fn(),
   bookingModificationCreate: vi.fn(),
-  applyLocalRefundAllocation: vi.fn(async (..._args: unknown[]) => [] as { transactionId: string; cents: number }[]), // #4516 (M4d): the receipts it consumed
+  applyLocalRefundAllocation: vi.fn<(...args: unknown[]) => Promise<{ transactionId: string; cents: number }[]>>(async () => []), // #4516 (M4d): the receipts it consumed
   createAuditLog: vi.fn(),
   recordBookingEvent: vi.fn(),
   // #3032: the two canonical settlement paths a confirmed review amount is
