@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { canonicalXeroWebhookEventCategory } from "@/lib/xero-webhook-categories";
-import { completeXeroSyncOperation, failXeroSyncOperation, startXeroSyncOperation } from "@/lib/xero-sync";
+import { completeXeroSyncOperation, failXeroSyncOperation } from "@/lib/xero-sync";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 import { isStaleProcessingXeroInboundEvent } from "@/lib/xero-stale-operations";
@@ -16,6 +16,7 @@ import { reconcileXeroInvoice, runIncrementalInvoiceReconciliation } from "./inv
 import { reconcileXeroCreditNote } from "./credit-note";
 import { recheckPendingDeletedPaymentLinks } from "./deleted-payment-links";
 import { failIfRecountLeftUnsettled } from "./recount-left-unsettled";
+import { startInboundReconcileOperation } from "./reconcile-operation";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
 
@@ -262,12 +263,10 @@ export async function processStoredXeroInboundEvents(options?: {
     let claim: XeroOperationClaim | null = null;
 
     try {
-      const operation = await startXeroSyncOperation({
-        direction: "INBOUND",
+      // INV-INT-038: never another attempt's row; an abandoned one is taken over under a fresh claim.
+      const operation = await startInboundReconcileOperation({
         entityType: event.eventCategory ?? "UNKNOWN",
-        operationType: "WEBHOOK_RECONCILE",
         correlationKey: event.correlationKey,
-        replayable: true,
         requestPayload: event.payload,
       });
       claim = operation;

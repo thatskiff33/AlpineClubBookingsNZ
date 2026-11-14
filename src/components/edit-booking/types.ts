@@ -1,6 +1,7 @@
 import type { AgeTier, MemberGuestConsentStatus } from "@prisma/client";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import type { AggregatedPolicyExceptions } from "@/lib/booking-policy-exceptions";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 /**
  * The wire shapes the edit-booking panel is handed and the ones it reads back.
@@ -267,6 +268,11 @@ export interface SettlementOptions {
 }
 
 export interface QuoteResult {
+  /**
+   * #4924 (`INV-MOD-062`): the figures sent back unchanged on Save. Optional
+   * only because an older server omits it during a blue-green cutover.
+   */
+  quotedFigures?: EditQuotedFigures;
   newTotalPriceCents: number;
   newDiscountCents: number;
   newPromoAdjustmentCents: number;
