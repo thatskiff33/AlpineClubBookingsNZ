@@ -156,6 +156,11 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// #4516 (M4d): a hand-back's R05 is the journal's (`member-money-hand-backs.test.ts`); here, that the edit asks for it.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postHandBackObligation: vi.fn(async () => null),
+}));
 vi.mock("@/lib/auth", () => ({
   auth: mockAuth,
 }));
@@ -554,6 +559,8 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       // #3827 (`INV-PAY-117`): no open edit refund hand-back on file.
       aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
       findFirst: vi.fn().mockResolvedValue(null),
+      // #4516 (M4d): the internet-banking reduction's task, read back for its R05.
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ id: "hand-back-1", amountCents: 5000 }),
       // No edit raises a review since #4317; kept so a case asserting that
       // nothing was created reads a real double.
       findUnique: vi.fn().mockResolvedValue(null),
@@ -3726,6 +3733,11 @@ describe("PUT /api/bookings/[id]/modify", () => {
       ],
       skipDuplicates: true,
     });
+    // #4516 (M4d): and its refund debt posts beside it.
+    const { postHandBackObligation } = await import("@/lib/member-money/doors");
+    expect(vi.mocked(postHandBackObligation)).toHaveBeenCalledWith(tx, expect.anything(), expect.objectContaining({
+      bookingId: "bk1", taskId: "hand-back-1", amountCents: 5000, debtorRead: "booking-row",
+    }));
 
     await Promise.resolve();
     expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
