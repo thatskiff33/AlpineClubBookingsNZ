@@ -1,3 +1,4 @@
+import { bookingHasExternalSettlement } from "@/lib/booking-external-settlement";
 import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL, resolveOrganiserBilling } from "@/lib/organiser-billing";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { organiserExtraWaivedBeforeRaised } from "@/lib/organiser-extra-state";
@@ -495,6 +496,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     where: { id: bookingId },
     select: {
       id: true,
+      importRow: { select: { id: true } },
       organiserSettled: true,
       parentBookingId: true,
       payment: {
@@ -538,7 +540,7 @@ export async function enqueueXeroBookingInvoiceOperation(
   // invoice precisely when source is INTERNET_BANKING) for money the club
   // already holds in cash.
   //
-  // Provenance is `manuallyMarkedPaidAt` ALONE — never conjoined with "has no
+  // Cash provenance is `manuallyMarkedPaidAt` ALONE — never conjoined with "has no
   // Xero id" — because two stampers outside the cash-settle loop can
   // legitimately stamp a Xero id onto a manual row, and that must not launder
   // the row's provenance away from this fence.
@@ -546,8 +548,9 @@ export async function enqueueXeroBookingInvoiceOperation(
   // Returns the existing skip shape, which every caller already handles (the
   // repair pass maps a null queueOperationId to "skipped"; the force-sync and
   // missing-invoices routes surface the message), but logs at WARN so a
-  // repeated attempt is visible rather than silent.
-  if (booking.payment.manuallyMarkedPaidAt) {
+  // repeated attempt is visible rather than silent. Imported free stays have
+  // no cash provenance; their import row is the equivalent fence (#5005).
+  if (bookingHasExternalSettlement(booking)) {
     logger.warn(
       {
         bookingId,
@@ -559,7 +562,9 @@ export async function enqueueXeroBookingInvoiceOperation(
     return {
       queueOperationId: null,
       message:
-        "Booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected.",
+        booking.importRow
+          ? "Booking was imported as settled outside the app — no Xero invoice is expected."
+          : "Booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected.",
     };
   }
 

@@ -765,7 +765,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // 542 -> 543 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
   // two-factor policy save, `tx.auditLog.create` in the route's transaction like the
   // password-policy writer beside it, `security`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 543,
+  // 543 -> 545 (#5005): `booking_import.booking_imported` and `booking_import.completed`, the paid-booking
+  // import's per-booking and per-batch rows, each written after its transaction commits
+  // (`src/lib/booking-import/write.ts`); both `logAudit`, both `booking`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 545,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -869,7 +872,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // and the lost-record recovery's own entry.
     // 273 -> 274 (#4170): the refunded-outside-the-app entry.
     // 274 -> 275 (#4533): the officer's finished-stay promo correction request, above.
-    logAudit: { total: 275, uncategorised: 0 },
+    // 275 -> 277 (#5005): the paid-booking import's two rows, above.
+    logAudit: { total: 277, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -1130,7 +1134,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // the acknowledgement of the same action.
     // 108 -> 109 (#4533): the officer's finished-stay promo correction request,
     // `booking` like the member's own request — the same readers.
-    booking: 109,
+    // 109 -> 111 (#5005): the paid-booking import's per-booking and per-batch
+    // rows, `booking` — read by booking officers like the booking they made.
+    booking: 111,
     // 16 -> 33 (#2581 child 2): the seventeen money writers — subscription
     // billing, member credit, fee configuration, saved-card charges and the five
     // Stripe webhook outcomes. `payment` is `support` plus `finance`, the

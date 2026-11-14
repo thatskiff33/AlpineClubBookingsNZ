@@ -4252,3 +4252,37 @@ alert nobody received answers 500).
   not read the hold and can still mint account credit.
 - Proven by `stripe-dispute.test.ts`, `admin-stripe-dispute-alert.test.ts`,
   `cancel-refund-method.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
+
+## INV-PAY-155
+
+**Related: `INV-PAY-001`** (manual provenance), **`INV-PAY-038`** (one
+settlement body), **`INV-PAY-040`** (the manual capacity refusal),
+**`INV-CAP-040`** (the import's beds).
+
+- **An imported paid booking is settled outside the app, once, in the
+  transaction that creates it** (#5005). A future stay a club sold and was paid
+  for before it moved in is written by the booking import
+  (`src/lib/booking-import/`) at the amount the club received, which is also its
+  stored price, and settled through `settleImportedBookingInTransaction`: a
+  sibling entry point that runs the one settlement body
+  (`settleAndPostBookingReceipts`) inside the import's transaction, with the
+  imported total as the expected amount. The body still derives the amount
+  under its locks. No copy of the body exists.
+- **It is a cash settlement.** The payment carries source `INTERNET_BANKING`
+  and the manual provenance columns, with a note naming the batch and the
+  Booking Ref; the ledger posts `CASH_RECORDED` and the journal its receipt. No
+  new payment source, line kind or journal account.
+- **A free stay is not settled.** A booking whose amounts total $0.00 takes the
+  existing zero-price confirmation (a $0 `SUCCEEDED` payment and
+  `postStoredBookingConfirmationLedgerLines`), as force-confirm does. A blank
+  amount is a missing amount, never zero.
+- **The import produces no Xero document, Stripe object or email**, and writes
+  no recovery row. The hosting drain still runs after commit (`INV-HOST-039`).
+- **Afterwards the booking is a cash booking**: cancelling raises the by-hand
+  refund task of `INV-PAY-044`, and the invoice choke point refuses it on its
+  manual provenance.
+- Limit: part-paid rows are refused ("part-paid bookings cannot be imported
+  yet") until #5008; reversing a batch and the refund-as-credit choice are
+  #5005 children B and D.
+- Proven by `booking-import-parse.test.ts`, `booking-import-plan.test.ts` and
+  `booking-import.realdb.test.ts`.

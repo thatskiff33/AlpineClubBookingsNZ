@@ -5385,3 +5385,24 @@ admin edits the banner -> updatedAt changes -> dismissal invalidated, banner re-
 To verify: the admin page's current/upcoming/past split, the inclusive
 date-only comparison in NZ time, and dismissal invalidation keyed on
 `updatedAt`.
+
+## Paid-booking import batch lifecycle (#5005 child A)
+
+The [import engine](design/booking-import.md) records each booking separately,
+so a stopped batch resumes without creating a second booking. It has no route
+or screen yet.
+
+| Entity | From | To | Guard and effect |
+| --- | --- | --- | --- |
+| Batch | absent | OPEN | Fresh preview digest matches; unique lodge/content batch key, actor and reconciliation totals recorded. |
+| Row | absent | PENDING or REFUSED | Preview result recorded once per batch/reference. No uploaded file is stored. |
+| Row | PENDING | IMPORTED | Under global, lodge and member-night locks, repeat all checks; status-guarded claim; booking, cash settlement (or free confirmation), ledger, journal and events commit together. |
+| Row | PENDING | REFUSED | A failed under-lock check rolls back the booking; a PENDING-guarded write records the reason. |
+| Batch | OPEN | COMPLETED | No PENDING rows remain; guarded update records completion once. |
+
+IMPORTED and REFUSED rows are terminal for this engine. Repeated confirms find
+the same batch and skip decided rows. A new file may retry a refused reference;
+the partial unique index excludes only IMPORTED rows. REVERSED values and actor
+columns reserve the schema for child B; no reversal transition is implemented
+here. Confirm refuses an already REVERSED batch. Children C, D and E add access,
+refund-as-credit and part-paid support respectively.

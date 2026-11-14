@@ -2215,6 +2215,36 @@ export type ManualBookingSettlementResult = {
 };
 
 /**
+ * #5005 (child A, `INV-PAY-155`) — the paid-booking import's settle: a SIBLING
+ * ENTRY POINT into the manual arm of the one settlement body, called inside the
+ * import's own creating transaction. That transaction already holds lock(1) and
+ * the lodge key (both re-entrant), so this adds nothing a manual settle does not
+ * already do: the same member-credit lock, refusals, capacity check, fenced PAID
+ * claim, CASH_RECORDED line and bed reconciliation. It sends nothing — the
+ * member is not told (`notifyMember: false`) — and a booking created moments
+ * ago has no outstanding extra to cover. The caller resolves `journal` before
+ * its transaction opens (`INV-LOCK-004`).
+ */
+export async function settleImportedBookingInTransaction(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+  settlement: { actingAdminMemberId: string; note: string; expectedAmountCents: number },
+  journal: BookingJournalContext,
+) {
+  const result = await settleAndPostBookingReceipts(tx, bookingId, {
+    kind: "manual",
+    ...settlement,
+    notifyMember: false,
+    additionalCoverage: null,
+  }, journal);
+  if (result.outcome !== "manual_paid") {
+    // Unreachable, as on the officer's door: the manual source pays or throws.
+    throw new Error(`Unexpected settlement outcome on the import path: ${result.outcome}`);
+  }
+  return result;
+}
+
+/**
  * B5 (#2262) — record a cash / off-Xero bank-transfer settlement for a booking.
  *
  * A SIBLING ENTRY POINT into the settlement core above, not a second settlement

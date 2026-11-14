@@ -258,6 +258,7 @@ const BOOKING_WRITES_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
     reason: "W2 policy-exception approval seeding read",
     ...WRITE_SIDE,
   },
+  "src/lib/booking-import/write.ts": { reason: "W20 imported paid booking (#5005)", ...WRITE_SIDE },
   "src/lib/booking-modify-plan.ts": { reason: "W11/W12 resolver, W15 fill", ...WRITE_SIDE },
   "src/lib/booking-request-quotes.ts": { reason: "W6 held booking", ...WRITE_SIDE },
   "src/lib/booking-request-shared.ts": { reason: "the pipeline create shaper", ...WRITE_SIDE },
@@ -879,6 +880,7 @@ const BOOKING_GUEST_CREATE_SITES: Readonly<Record<string, string>> = {
   "src/lib/school-pending-adult-resolution.ts": "#3413 accepted pending adult becomes a named non-member",
   "src/app/api/bookings/[id]/guests/route.ts": "W10 add a guest",
   "src/lib/booking-modify-plan.ts": "W11 in-progress add, W12 modification add",
+  "src/lib/booking-import/write.ts": "W20 imported paid booking (#5005)",
 };
 
 /**

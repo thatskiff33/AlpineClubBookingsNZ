@@ -77,6 +77,29 @@ detail — the deleted-booking refund tasks below are the longest example — it
 expanding that entry and must agree with it; if the two ever diverge, the entry
 is what CI enforces and this page is the defect.
 
+### Paid future-booking import (#5005, child A)
+
+The engine imports one booking at a time; it never holds the global key for a
+whole file. `writeOneBooking` takes `lock(1)`, then the selected lodge's
+`acquireLodgeCapacityLock`, then sorted member-night keys. Its manual settlement
+re-enters the first two locks and takes the owner's credit key through the
+existing settlement body (`INV-LOCK-001`, `INV-LOCK-002`). The registered site
+is `writeOneBooking#1` (`INV-LOCK-003`).
+
+The lodge id and parsed file are immutable inputs. Under the locks the writer
+re-reads the lodge, members and imported reference, repeats the planner's
+person-night, hosting, supervision and capacity checks, and claims a PENDING
+row with `updateMany`. A lost claim creates no booking. The partial unique
+index additionally excludes a second live reference per lodge. The booking,
+settlement, ledger, journal, events and row result commit together. Refusals
+roll back that transaction and are recorded with another PENDING-guarded update;
+a concurrent successful import cannot be overwritten by the refusal.
+
+Journal tax context and dietary settings resolve before the transaction
+(`INV-LOCK-004`); no provider call runs inside it. The hosting drain and audit
+run after commit. See the [engine contract](design/booking-import.md) for the
+read-only preview, digest and resumable batch.
+
 ### A writer that does BOTH takes BOTH — global first
 
 Many writers do both tiers at once: a Stripe capture claims capacity **and**
