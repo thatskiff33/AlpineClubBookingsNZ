@@ -186,8 +186,15 @@ fit into.
 2. Review privacy retention before switching on any cleanup job:
    [Review privacy retention before enabling cleanup (#4457)](#review-privacy-retention-before-enabling-cleanup-4457).
    Deleted data cannot be restored.
-3. Do the after-the-deploy part of each of these sections:
+3. Decide on after-stay dietary clearing straight after the deploy. It ships on,
+   and its first run is the first nightly pruning run after the upgrade:
+   [Old stays' dietary notes are cleared on the first night after upgrading (#4916)](#old-stays-dietary-notes-are-cleared-on-the-first-night-after-upgrading-4916).
+4. Do the after-the-deploy part of each of these sections:
+   - [Cancelled bookings give back their promo uses; re-run the repair after cutover (#4909)](#cancelled-bookings-give-back-their-promo-uses-re-run-the-repair-after-cutover-4909)
+   - [Privacy-incident guide and hosting disclosure settings (#4918)](#privacy-incident-guide-and-hosting-disclosure-settings-4918)
+   - [Correct the starter privacy policy (#4914)](#correct-the-starter-privacy-policy-4914)
    - [Member money journal foundation (#4513)](#member-money-journal-foundation-4513)
+   - [Stripe balance evidence tables (#4520)](#stripe-balance-evidence-tables-4520)
    - [Member-money applications and refund reservations (#4691)](#member-money-applications-and-refund-reservations-4691)
    - [The Xero connection moves to its own table (#3806)](#the-xero-connection-moves-to-its-own-table-some-installs-reconnect-xero-once-3806)
    - [Check card cancellations left behind by earlier cash-payment reversals (#4320)](#check-card-cancellations-left-behind-by-earlier-cash-payment-reversals-4320)
