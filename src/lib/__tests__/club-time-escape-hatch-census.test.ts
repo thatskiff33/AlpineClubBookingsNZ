@@ -670,7 +670,17 @@ const CENSUS_CEILING = {
   // stepped with `club-time` (`addCalendarDays`), not this adapter. No
   // `timeZone` is taken anywhere in the file's use of it. Re-measured by
   // RUNNING this suite on the merged tree, not by adding one to the literal.
-  dateOnlyImporters: 224, // 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
+  // 224 -> 225 (ALP-574): one importer, `_applied-query-vocabulary.ts`,
+  // `isDateOnlyString` alone and the zone-free direction. The payments page
+  // mirrors `adminPaymentsQuerySchema`'s date rule by hand because that schema
+  // pulls in Prisma and cannot reach the client bundle; the rule is now a real
+  // calendar day, so the mirror asks the same predicate the schema's
+  // `dateOnlyStringSchema` uses instead of keeping a second regex that would
+  // drift. `date-only.ts` is the client-safe module (no zod, no Prisma), and
+  // `date-only-schema.ts` is not, which is why the mirror cannot take it from
+  // there. No `timeZone` is taken. Re-measured by RUNNING this suite on the
+  // merged tree, not by adding one to the literal.
+  dateOnlyImporters: 225, // 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
