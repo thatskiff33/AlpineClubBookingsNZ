@@ -1427,7 +1427,7 @@ one, check the other.
     (`INV-PAY-146`, #4117); **a cancellation** re-plans its unclaimed row.
   - **The runner never closes a row on a refusal**: it re-plans on the attempt
     it holds and fails it.
-  - **A slice made beside a refusal or a failure stays, marked**
+  - **A slice made beside a refusal or failure stays, marked**
     (`madeRefundId`), never re-sent.
   - **Failed later**: the refund-row writer sees it once, under the Payment row
     lock. The open row that counted it moves that slice (`failedRefundIds`) - a
@@ -1438,6 +1438,7 @@ one, check the other.
     booking only alerts and is audited.
   - **Paid another way** queues a Stripe reversal for the cents a card note
     still covers, and a bank note for the whole close (`INV-PAY-151`).
+  - **Inbound recount**: `INV-PAY-155`.
   - **Officers hear once per refused slice or failed-later decision**, and
     again if retries run out.
   - **Deploy window**: an older release closes a refused row as paid and drops
@@ -4152,8 +4153,8 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   day of the close. A lock on or after that day dates the invoice and its
   payment the next open day and keeps the close day in the reference. A voided
   or deleted one is not raised again.
-- Coverage subtracts a reversal only once its invoice link is active and not
-  voided or deleted. Paying back less than the card note leaves the
+- Coverage, and the inbound recount (`INV-PAY-155`), subtract a reversal only
+  once its invoice link is active and not voided or deleted. Paying back less than the card note leaves the
   over-coverage the reconciliation report already lists. While the reversal is linked and the bank note is only queued, the
   gap is the close's own uncovered cents, and card-note sizing raises no
   Stripe note for it.
@@ -4170,6 +4171,39 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   `card-refund-reversal-coverage.test.ts`,
   `card-refund-reversal-readers.test.ts` and both `.realdb` suites
   (`card-refund-paid-another-way`, `xero-deleted-payment-links`).
+
+## INV-PAY-155
+
+**Related: `INV-PAY-128`** (a refund Stripe fails later), **`INV-PAY-151`**
+(its reversal) and **`INV-ADDPAY-021`** (the bank floor).
+
+- **The inbound credit-note recount takes every card refund Stripe failed
+  later off once** (#4370; owner decision 11 Nov 2026, option (a)). The failed
+  refund's note stays in Xero, so any later credit-note event on the payment
+  counted it again.
+- **Reversed**: through its live reversal, at the cents #4369's net coverage
+  takes off (`readCardRefundReversalCentsByPayment`). A voided or deleted
+  reversal takes off nothing.
+- **Never reversed**: through the failure record - the refunds
+  `INV-PAY-128`'s writer marked failed after they counted (`failedRefundIds`,
+  or a row of their own) - at their amounts, less every reversal ever raised on
+  the payment, voided ones included, so no failure comes off twice. Sized as a
+  close sizes its card cover: never more than the payment's refund notes cover
+  above the cash still standing (`readRefundNoteCoverageAboveCashCents`). A
+  failure never noted, or paid back under a later refund's own note, takes
+  nothing off.
+- **Before the clamp and every floor**, so a lower total on a card payment is
+  still kept off and alerted (#1353). The bank floor and the organiser cap
+  (`INV-PAY-114`) are unchanged. A payment with no failed refund recounts
+  exactly as before.
+- Reads only, after the payment rows, inside the recount's existing claim on
+  the row as read (#3979): no Xero call, no new lock. An affected payment is
+  corrected at its next credit-note event; nothing is back-filled.
+- Limits: a failed refund naming no booking raises no row, so it is not taken
+  off; a card total already overstated stays, alerted, under the raise-only
+  floor.
+- Proven by `xero-credit-note-repairs.test.ts` and
+  `xero-recount-failed-later-refund.realdb.test.ts`.
 
 ## INV-PAY-152
 
