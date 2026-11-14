@@ -65,6 +65,7 @@ import { formatCents } from "@/lib/utils";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import {
   bookingAmountOwedCents,
@@ -1185,6 +1186,7 @@ async function settleBookingPaymentInTransaction(
           checkOut: booking.checkOut,
         },
       });
+      await releaseBookingPromoRedemptions(tx, booking.id);
 
       // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
       // booking has none, so there is no key to take. Passing a null key would
