@@ -30,8 +30,9 @@
  * `RUN_CONCURRENCY_RACE_TESTS=1` against `CONCURRENCY_RACE_DATABASE_URL`
  * (loopback, port 55442+, the `concurrency_race_1881` marker), and hosted CI
  * runs it through the import in `concurrency-lock-races.realdb.test.ts`. It owns
- * and cleans its own `race-4456` credential rows and their audit rows, and puts
- * back every environment variable it changes (#4107).
+ * and cleans every `mirotalk` credential row and its audit rows (no other
+ * real-PostgreSQL suite writes that namespace), and puts back every environment
+ * variable it changes (#4107).
  *
  *   RUN_CONCURRENCY_RACE_TESTS=1 \
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://user:pass@127.0.0.1:55442/concurrency_race_1881 \
@@ -41,6 +42,7 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -49,14 +51,17 @@ const LABEL = "Data-encryption key ring (#4456)";
 const RACE_TEST_TIMEOUT_MS = 20_000;
 const BARRIER_TIMEOUT_MS = 3_000;
 
-const PROVIDER = "race-4456";
-const ADMIN = { kind: "admin", memberId: "race-4456-admin" } as const;
+// A registered namespace (#4918): the store's type and the re-encrypt guard
+// refuse any other, so the suite borrows one no other realdb suite touches.
+const PROVIDER = "mirotalk" satisfies IntegrationCredentialNamespace;
+const TAG = "race-4456";
+const ADMIN = { kind: "admin", memberId: `${TAG}-admin` } as const;
 const REFRESH_JOB = { kind: "system", actor: "xero-token-refresh" } as const;
 // Fabricated auth secrets, built at run time so no secret-shaped literal sits in
 // the source for the secret scanner to read (#4456 review). Each clears the
 // 32-character strength gate, and the two differ.
-const AUTH = `${PROVIDER}-a`.padEnd(48, "a");
-const ROTATED_AUTH = `${PROVIDER}-r`.padEnd(48, "r");
+const AUTH = `${TAG}-a`.padEnd(48, "a");
+const ROTATED_AUTH = `${TAG}-r`.padEnd(48, "r");
 
 function testKey(seed: number): string {
   return Buffer.from(Array.from({ length: 32 }, (_, index) => (seed * 53 + index * 19) % 256)).toString("base64");
