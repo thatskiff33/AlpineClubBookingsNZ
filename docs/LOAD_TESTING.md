@@ -306,9 +306,8 @@ Bookings use a non-member child guest plus an explicit review justification.
 That follows the real child-only policy into `AWAITING_REVIEW`, a
 capacity-holding state, and **touches no payment provider**. It can enqueue an
 admin-review email, which the throwaway stack captures in Mailpit. Reset the
-stack between contention runs so each run starts from a known-empty night:
-`pnpm run test:e2e:down && pnpm run test:e2e:prepare` for the E2E stack, or
-`bash scripts/load-stack.sh down` and then `prepare` for the load stack.
+stack (`pnpm run test:e2e:down && pnpm run test:e2e:prepare`) between contention
+runs so each run starts from a known-empty night.
 
 ### 4. Member dashboard — `load/scenarios/member-dashboard.js`
 
