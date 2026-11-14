@@ -578,19 +578,19 @@ clears the previous query's rows and totals, and offers **Try again**. #4961.
 
 - **One component, one wording.** The alert carries `role="alert"`. Its
   sentence comes from `src/lib/api-error-message.ts` or
-  `src/lib/admin-query-error.ts`, which also hold the two fixed fallbacks for
-  an outage and a dropped connection. A page writes no private reader.
-- **No fake answers.** Summary totals are not drawn while the error shows:
-  `$0.00` or `0` under an outage reads as a real figure. The same goes for a
+  `src/lib/admin-query-error.ts`, the only home of the two fixed fallbacks. A
+  page writes no private reader. Neither fallback says what was saved: each
+  read re-runs after a write, beside the page's own success message.
+- **No fake answers.** Totals are not drawn while the error shows, nor is a
   warning whose absence means "all clear", such as Hut Leaders' unassigned
-  nights.
-- **Stale rows are the other half of the defect.** A failure after a filter
-  change used to leave the previous search's rows under the new filters, which
-  reads as an answer to a question nobody asked.
-- **A census keeps it one.** `admin-load-error-census.test.ts` reads the page
-  sources and fails if a file imports the component without being listed, or
-  if a listed empty state is no longer behind its page's load-error gate. The
-  behaviour is proven per page by `admin-list-load-failure.test.tsx`. Both are
-  disk-scanning: run them with `pnpm run test:named`.
+  nights. A failure after a filter change used to leave the previous search's
+  rows under the new filters, which is the same defect.
+- **Try again keeps focus.** The button is `aria-disabled`, never `disabled`,
+  and the page keeps the error mounted while the retry runs.
+- **A census keeps it one.** `admin-load-error-census.test.ts` fails if a file
+  imports the component without being listed, or a listed empty state is no
+  longer behind its load-error gate. `admin-list-load-failure.test.tsx` proves
+  each page. The census is disk-scanning: run it with `pnpm run test:named`.
 - **Not every page is covered yet.** The four pages from #4961 are; others
-  join the census when they adopt the component.
+  join the census when they adopt the component. Its stated limits are in
+  [`UX_FLOW_MAP.md`](../UX_FLOW_MAP.md#a-list-or-total-that-fails-to-load-4961).

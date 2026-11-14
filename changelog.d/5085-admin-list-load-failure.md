@@ -10,4 +10,7 @@
   the list loads. On Payments, a filter the server refuses is also pointed out
   above the table, so it is visible without opening **More filters**. On Hut
   Leaders, a failed check of unassigned nights is said, rather than the
-  warning simply not appearing.
+  warning simply not appearing, and while the assignments could not be loaded
+  the confirm step says its overlap check is unavailable instead of showing no
+  clash. Try again keeps keyboard focus on its button and announces that it is
+  trying again.

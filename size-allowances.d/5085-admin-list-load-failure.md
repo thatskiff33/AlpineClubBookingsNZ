@@ -30,9 +30,13 @@ reason: +42 lines over the base. The page had no `catch` at all, so the rejected
   "No subscriptions found" row sit behind the gate.
 
 file: src/app/(admin)/admin/hut-leaders/page.tsx
-lines: 1478
-reason: +48 lines over the base. Two separate load-error states (assignments and
+lines: 1491
+reason: +61 lines over the base. Two separate load-error states (assignments and
   unassigned nights), each written only under the existing `activeLodgeIdRef`
   guard and reset on a lodge switch. The unassigned-nights failure now renders a
   "could not be checked" card in place of the amber warning, because the
-  warning's absence would read as "every night is covered".
+  warning's absence would read as "every night is covered". The load error also
+  stays mounted while Try again re-reads, so its button keeps keyboard focus,
+  the Confirm preview carries a flag saying the overlap check had nothing to
+  compare, and short comments record why the month overlay's read stays silent
+  and why Loading never replaces the error.
