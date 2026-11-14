@@ -6,16 +6,19 @@
  * `isUnpaidConfirmedWholeLodge` (`booking-payment-flow.ts`) tells an abandoned
  * card attempt from a capture by the payment's `PaymentTransaction` rows, and
  * fails closed without them: a door that loaded `payment: true` alone would
- * read an abandoned attempt as paid and stop clamping or settling it. Its input
- * type requires `transactions`, and `applyLifecycleTransitions` takes
- * `LoadedBookingForLifecycle`, which carries them, so a TYPED caller that drops
- * them no longer compiles. But every door reaches those types through an
- * `as unknown as` cast of its own Prisma payload, which no compiler checks.
- * So this reads each door's source and requires, in the SAME function as each
- * reader call (the door's transaction body, not anywhere in the file):
+ * read an abandoned attempt as paid and stop clamping or settling it.
  *
- * - a `payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } }`
- *   load (the order `INV-PAY-133` gives the ledger);
+ * #4925: the load is the compiler's job now. `applyLifecycleTransitions` takes
+ * `LoadedBookingForLifecycle`, which is DERIVED from the one shared include,
+ * `EDIT_DOOR_BOOKING_INCLUDE` (`booking-modify-validation.ts`), and that
+ * include carries the ordered transactions (`INV-PAY-133`). No door casts its
+ * payload any more, so a door that drops them no longer compiles. What typing
+ * cannot prove is checked here, in the SAME function as each reader call (the
+ * door's transaction body, not anywhere in the file):
+ *
+ * - the door's re-read uses the shared include - `include: EDIT_DOOR_BOOKING_INCLUDE`,
+ *   or an object literal that spreads it - rather than an inline list of its own,
+ *   so the next field the shared code needs reaches every door at once;
  * - a `postStoredBookingConfirmationLedgerLines(...)` call that runs only when
  *   the unpaid whole-lodge answer is true: a whole-lodge booking reaching PAID
  *   at $0 through an edit bypasses the ordinary settle, which is what posts its
@@ -51,6 +54,7 @@ import {
   relativeSource,
   sourceFiles,
 } from "@/lib/__tests__/support/booking-guest-night-writer-scan";
+import { enclosingFunction } from "@/lib/__tests__/support/function-scope";
 
 /** The callees whose answer depends on the payment's transaction rows. */
 const UNPAID_READERS = new Set(["applyLifecycleTransitions", "isUnpaidConfirmedWholeLodge"]);
@@ -66,7 +70,7 @@ const EXPECTED_DOORS = [
   "src/lib/booking-guest-acceptance-reprice.ts",
   "src/lib/booking-guest-removal-service.ts",
 ];
-const TRANSACTIONS_LOAD = "payment:{include:{transactions:{orderBy:[...LEDGER_ROWS_OLDEST_FIRST]}}}";
+const SHARED_INCLUDE = "EDIT_DOOR_BOOKING_INCLUDE";
 const CONFIRMATION_POSTER = "postStoredBookingConfirmationLedgerLines";
 /** The unpaid whole-lodge answer, called or stored in a local. */
 const UNPAID_GUARD = /unpaidConfirmedWholeLodge/i;
@@ -75,15 +79,7 @@ const GUARD_SHAPES =
   "inside `if (<guard>) { ... }`, or after `if (!(<guard>)) return;` (or `throw`) in the same block, " +
   "where <guard> reads isUnpaidConfirmedWholeLodge(...) through nothing but `&&` and parentheses";
 
-type DoorScan = { readers: string[]; loadsTransactions: boolean; postsConfirmation: boolean };
-
-/** The innermost function around `node`: the door's own scope. */
-function enclosingFunction(node: ts.Node): ts.Node {
-  for (let at = node.parent; at; at = at.parent) {
-    if (ts.isFunctionLike(at)) return at;
-  }
-  return node.getSourceFile();
-}
+type DoorScan = { readers: string[]; loadsSharedInclude: boolean; postsConfirmation: boolean };
 
 /** Does `expr` being true prove the unpaid whole-lodge answer true? Only `&&` and parentheses may sit between. */
 function provesUnpaid(expr: ts.Expression): boolean {
@@ -149,15 +145,19 @@ function scanDoor(file: string, code: string): DoorScan {
     ts.forEachChild(scope, visit);
     return found;
   };
-  const isTransactionsLoad = (node: ts.Node) =>
+  const isSharedInclude = (expr: ts.Expression): boolean =>
+    (ts.isIdentifier(expr) && expr.text === SHARED_INCLUDE) ||
+    (ts.isObjectLiteralExpression(expr) &&
+      expr.properties.some((property) => ts.isSpreadAssignment(property) && isSharedInclude(property.expression)));
+  const isSharedIncludeLoad = (node: ts.Node) =>
     ts.isPropertyAssignment(node) &&
     ts.isIdentifier(node.name) &&
-    node.name.text === "payment" &&
-    node.getText(source).replace(/\s+/g, "") === TRANSACTIONS_LOAD;
+    node.name.text === "include" &&
+    isSharedInclude(node.initializer);
   const all = [...scopes];
   return {
     readers: [...readers].sort(),
-    loadsTransactions: all.length > 0 && all.every((scope) => scopeHas(scope, isTransactionsLoad)),
+    loadsSharedInclude: all.length > 0 && all.every((scope) => scopeHas(scope, isSharedIncludeLoad)),
     postsConfirmation: all.length > 0 && all.every((scope) => scopeHas(scope, (node) =>
       ts.isCallExpression(node) &&
       ts.isIdentifier(node.expression) &&
@@ -179,20 +179,20 @@ function scanTree(): Map<string, DoorScan> {
   return doors;
 }
 
-describe("INV-PAY-143: whole-lodge unpaid readers load transactions and post confirmation lines", () => {
+describe("INV-PAY-143: whole-lodge unpaid readers load the shared include and post confirmation lines", () => {
   const doors = scanTree();
 
   it("pins the exact set of edit doors that call the unpaid readers", () => {
     expect(
       [...doors.keys()].sort(),
-      "INV-PAY-143: a new caller of applyLifecycleTransitions / isUnpaidConfirmedWholeLodge must load the payment's transactions and post confirmation lines; add it here once it does",
+      "INV-PAY-143: a new caller of applyLifecycleTransitions / isUnpaidConfirmedWholeLodge must load EDIT_DOOR_BOOKING_INCLUDE and post confirmation lines; add it here once it does",
     ).toEqual(EXPECTED_DOORS);
   });
 
-  it.each(EXPECTED_DOORS)("%s loads the payment with its ordered transactions", (door) => {
+  it.each(EXPECTED_DOORS)("%s re-reads the booking through the shared edit-door include", (door) => {
     expect(
-      doors.get(door)?.loadsTransactions,
-      `INV-PAY-143: ${door} must load \`payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } }\` - without the rows isUnpaidConfirmedWholeLodge reads an abandoned card attempt as paid`,
+      doors.get(door)?.loadsSharedInclude,
+      `INV-SSOT-001: ${door} must re-read the booking with \`include: ${SHARED_INCLUDE}\` (or a literal spreading it), not an inline include of its own`,
     ).toBe(true);
   });
 
@@ -211,23 +211,40 @@ describe("INV-PAY-143: whole-lodge unpaid readers load transactions and post con
         "  await applyLifecycleTransitions(tx, { booking: b });\n" +
         "}\n",
     );
-    expect(dropped).toEqual({ readers: ["applyLifecycleTransitions"], loadsTransactions: false, postsConfirmation: false });
+    expect(dropped).toEqual({ readers: ["applyLifecycleTransitions"], loadsSharedInclude: false, postsConfirmation: false });
     const wired = scanDoor(
       "fixture.ts",
       "async function door(tx) {\n" +
-        "  const b = await tx.booking.findUnique({ include: { payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } } } });\n" +
+        "  const b = await tx.booking.findUnique({ include: EDIT_DOOR_BOOKING_INCLUDE });\n" +
         "  const lifecycle = await applyLifecycleTransitions(tx, { booking: b });\n" +
         "  if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(b)) await postStoredBookingConfirmationLedgerLines(tx, b.id);\n" +
         "}\n",
     );
-    expect(wired).toEqual({ readers: ["applyLifecycleTransitions", "isUnpaidConfirmedWholeLodge"], loadsTransactions: true, postsConfirmation: true });
+    expect(wired).toEqual({ readers: ["applyLifecycleTransitions", "isUnpaidConfirmedWholeLodge"], loadsSharedInclude: true, postsConfirmation: true });
+  });
+
+  it("accepts the shared include spread with a door's own guest order, and refuses an inline include", () => {
+    const loadWith = (include: string) =>
+      scanDoor(
+        "fixture.ts",
+        "async function door(tx) {\n" +
+          `  const b = await tx.booking.findUnique({ include: ${include} });\n` +
+          "  await applyLifecycleTransitions(tx, { booking: b });\n" +
+          "}\n",
+      ).loadsSharedInclude;
+    expect(loadWith("{ ...EDIT_DOOR_BOOKING_INCLUDE, guests: { ...EDIT_DOOR_BOOKING_INCLUDE.guests, orderBy: [] } }")).toBe(true);
+    expect(
+      loadWith("{ payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } }, member: true }"),
+      "an inline include, however complete today, is the door's own list again",
+    ).toBe(false);
+    expect(loadWith("{ guests: EDIT_DOOR_BOOKING_INCLUDE.guests }"), "borrowing one field is not the shared include").toBe(false);
   });
 
   it("refuses a poster call outside the unpaid guard, and a load in another function", () => {
     const unguarded = scanDoor(
       "fixture.ts",
       "async function door(tx) {\n" +
-        "  const b = await tx.booking.findUnique({ include: { payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } } } });\n" +
+        "  const b = await tx.booking.findUnique({ include: EDIT_DOOR_BOOKING_INCLUDE });\n" +
         "  const lifecycle = await applyLifecycleTransitions(tx, { booking: b });\n" +
         "  if (isUnpaidConfirmedWholeLodge(b)) { log(); } else { await postStoredBookingConfirmationLedgerLines(tx, b.id); }\n" +
         "  await postStoredBookingConfirmationLedgerLines(tx, b.id);\n" +
@@ -236,13 +253,13 @@ describe("INV-PAY-143: whole-lodge unpaid readers load transactions and post con
     expect(unguarded.postsConfirmation, "an unguarded or else-branch post is not the door's post").toBe(false);
     const elsewhere = scanDoor(
       "fixture.ts",
-      "const load = (tx) => tx.booking.findUnique({ include: { payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } } } });\n" +
+      "const load = (tx) => tx.booking.findUnique({ include: EDIT_DOOR_BOOKING_INCLUDE });\n" +
         "async function door(tx, b) {\n" +
         "  const lifecycle = await applyLifecycleTransitions(tx, { booking: b });\n" +
         "  if (lifecycle.zeroDollarAutoPaid && isUnpaidConfirmedWholeLodge(b)) await postStoredBookingConfirmationLedgerLines(tx, b.id);\n" +
         "}\n",
     );
-    expect(elsewhere).toMatchObject({ loadsTransactions: false, postsConfirmation: true });
+    expect(elsewhere).toMatchObject({ loadsSharedInclude: false, postsConfirmation: true });
   });
 
   /** A door whose lifecycle call is followed by `body`, for the guard-shape fixtures. */
@@ -250,7 +267,7 @@ describe("INV-PAY-143: whole-lodge unpaid readers load transactions and post con
     scanDoor(
       "fixture.ts",
       "async function door(tx) {\n" +
-        "  const b = await tx.booking.findUnique({ include: { payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } } } });\n" +
+        "  const b = await tx.booking.findUnique({ include: EDIT_DOOR_BOOKING_INCLUDE });\n" +
         "  const lifecycle = await applyLifecycleTransitions(tx, { booking: b });\n" +
         body +
         "\n}\n",
