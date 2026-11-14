@@ -496,7 +496,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     where: { id: bookingId },
     select: {
       id: true,
-      importRow: { select: { id: true } },
+      importRow: { select: { amountCents: true } },
       organiserSettled: true,
       parentBookingId: true,
       payment: {
@@ -562,7 +562,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     return {
       queueOperationId: null,
       message:
-        booking.importRow
+        booking.payment.manuallyMarkedPaidAt === null
           ? "Booking was imported as settled outside the app — no Xero invoice is expected."
           : "Booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected.",
     };

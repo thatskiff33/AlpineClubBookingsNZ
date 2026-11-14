@@ -53,7 +53,7 @@ export async function readBookingForPrimaryInvoice(bookingId: string) {
           // item per contiguous run.
           guests: { include: { nights: true } },
           payment: true,
-          importRow: { select: { id: true } },
+          importRow: { select: { amountCents: true } },
           promoRedemptions: { include: { promoCode: true, allocations: true } },
           nightAdjustments: true,
           // #2258: recipient for the withheld-send audit row when the booking's

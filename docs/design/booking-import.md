@@ -60,7 +60,10 @@ one manual settlement body. Free rows use the existing zero-price confirmation
 and ledger posting. Neither creates invoices, card objects, email or recovery
 work. The shared `bookingHasExternalSettlement` fence also prevents a later
 invoice queue or handler from minting a document for an imported free stay,
-whose zero payment has no manual provenance. Automatic bed allocation is the ordinary lifecycle reconciliation. Events
+whose zero payment has no manual provenance; the Xero repair check and the
+missing-invoices list read the same fence. A paid import is fenced by its manual
+provenance alone, so once that settlement is reversed it is invoiceable like
+any reversed cash booking. Automatic bed allocation is the ordinary lifecycle reconciliation. Events
 commit with the booking; the hosting drain and audit run after commit.
 
 The batch stores the confirming officer, time, original file totals and each

@@ -177,7 +177,11 @@ export async function getMissingXeroInvoiceBookings(options?: {
       // it here would invite an admin to mint an awaiting-payment invoice — and
       // email it to the member — for money the club already holds. Admin UX
       // only: the enforcement point is the enqueue choke fence.
-      NOT: { payment: { manuallyMarkedPaidAt: { not: null } } },
+      // #5005: nor is an imported free stay (`bookingHasExternalSettlement`).
+      NOT: [
+        { payment: { manuallyMarkedPaidAt: { not: null } } },
+        { importRow: { is: { amountCents: 0 } } },
+      ],
     },
     select: {
       id: true,
