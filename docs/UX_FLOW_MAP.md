@@ -1045,6 +1045,33 @@ every screen:
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
 
+**An outcome is never a bare styled box (#4949).** A coloured `<div>` that
+appears with the text already in it is not announced by every screen reader,
+so a blind member can miss a declined card or a wrong sign-in code:
+
+- **A failure** goes in `FocusedActionError`
+  (`src/components/focused-action-error.tsx`): mounted empty with its own
+  unique `id`, filled when the action fails, and focused.
+- **A success or progress message** goes in a `StatusRegion`
+  (`src/components/status-region.tsx`): a `role="status"` region mounted
+  before the request, `sr-only` while empty, so only its text changes. It is the
+  one home of that markup; do not hand-write another. An `Alert` that reports an
+  action's outcome sits inside such a region, or its heading takes focus.
+- **A form that disappears takes focus somewhere stable.** When an outcome
+  replaces the control that had focus, move focus to the outcome, never leaving
+  it on `<body>`: give the `StatusRegion` an `outcomeKey` (a counter the success
+  path bumps), or give the result panel `tabIndex={-1}` and a ref and call
+  `useFocusOnOutcome` (same file). The cancel booking flow is the worked
+  example: one frame holds a status region and the error in every step, and
+  focus moves to each step's heading, then back to **Cancel Booking**.
+- **A field's own error** sets `aria-invalid` and is named first in
+  `aria-describedby`, as the form layer below does.
+
+Test a surface with `expectRecoveryAlertToHoldFocus` for a failure and
+`expectToHoldFocus` for an outcome (both in `src/lib/__tests__/helpers/focus`),
+and assert that the status region is the same element before and after the
+action.
+
 ## Forms (#4467)
 
 A form is built on the shared form layer: shadcn's Form primitives over
