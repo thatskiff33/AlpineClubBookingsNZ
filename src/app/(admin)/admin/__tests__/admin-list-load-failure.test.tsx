@@ -99,6 +99,8 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   if (url.startsWith("/api/admin/subscriptions?")) return failure ? fail() : response({ data: [subscription], total: 60, summary: { total: 17, paid: 13, unpaid: 4, overdue: 2, notInvoiced: 0, notRequired: 0 } });
   if (url === "/api/admin/communications/history") return failure ? fail() : response({ history: [history] });
   if (url === "/api/admin/communications/send") return response({ limit: 10 });
+  // #4964: the count the confirmation step shows before anything is sent.
+  if (url.startsWith("/api/admin/communications/send?")) return response({ eligibleRecipients: 1 });
   if (url === "/api/admin/lodges") return response({ lodges: [{ id: "lodge-1", name: "Lodge One" }, { id: "lodge-2", name: "Lodge Two" }] });
   if (url.startsWith("/api/admin/hut-leaders/unassigned-dates?")) return failure && failUnassigned ? fail() : response({ unassignedDates: [{ date: "2026-07-10", bookingCount: 1, guestCount: 3 }] });
   if (url.startsWith("/api/admin/hut-leaders?")) return failure && failAssignments ? fail() : response({ assignments: [assignment] });
@@ -210,6 +212,9 @@ for (const kind of ["server", "network", "bare"] as const) {
       fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "New newsletter" } });
       fireEvent.change(screen.getByLabelText("Message Body"), { target: { value: "Club news" } });
       fireEvent.click(screen.getByRole("button", { name: /Send to members/i }));
+      // #4964: nothing is sent until the officer confirms the audience.
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Send to 1 person" }));
       const alert = await assertFailure("communications-history-load-error", "No bulk communications sent yet.", "Previous newsletter");
       expect(screen.getByText(/Sent to 1 recipients/)).toBeInTheDocument();
       failure = null;
