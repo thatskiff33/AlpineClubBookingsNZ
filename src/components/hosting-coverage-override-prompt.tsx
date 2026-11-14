@@ -4,6 +4,15 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { HostingCoverageOverridePromptData } from "@/lib/hosting-coverage-override-client";
 
+/**
+ * The id of the prompt's reason field for a given `idPrefix`. A caller that
+ * moves focus to the field after a refusal (the cancel flow, #4949) asks for it
+ * here rather than rebuilding the string, so renaming the field is one edit.
+ */
+export function hostingOverrideReasonId(idPrefix: string) {
+  return `${idPrefix}-reason`;
+}
+
 export function HostingCoverageOverridePrompt({
   prompt,
   confirmed,
@@ -66,7 +75,7 @@ export function HostingCoverageOverridePrompt({
       {prompt ? (
         <div className="space-y-3">
           <div className="space-y-1">
-            <Label htmlFor={`${idPrefix}-reason`}>
+            <Label htmlFor={hostingOverrideReasonId(idPrefix)}>
               Private hosting override reason (required)
             </Label>
             <p id={reasonHintId} className="text-xs text-muted-foreground">
@@ -74,7 +83,7 @@ export function HostingCoverageOverridePrompt({
               characters and is separate from member-facing notes.
             </p>
             <Textarea
-              id={`${idPrefix}-reason`}
+              id={hostingOverrideReasonId(idPrefix)}
               aria-describedby={reasonHintId}
               value={reason}
               disabled={disabled}

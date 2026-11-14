@@ -557,27 +557,27 @@ export function getAdminPermissionMatrix(
     if (embedded) return embedded;
   }
 
-  const matrices: Array<Partial<AdminPermissionMatrix>> = [];
-  for (const item of input.accessRoles ?? []) {
-    const role = typeof item === "string" ? item : item.role;
-    if (role === "ADMIN") {
-      matrices.push(ADMIN_ROLE_BUNDLES.ADMIN ?? {});
-      continue;
-    }
-
-    const definition = typeof item === "string" ? null : item.roleDefinition;
-    if (definition) {
-      matrices.push(matrixFromAccessRoleDefinition(definition));
-      continue;
-    }
-
-    if (isAccessRole(role)) {
-      const bundle = ADMIN_ROLE_BUNDLES[role];
-      if (bundle) matrices.push(bundle);
-    }
-  }
-
+  const matrices = (input.accessRoles ?? []).map(getAssignmentPermissionMatrix);
   return mergeAdminPermissionMatrices(matrices);
+}
+
+/**
+ * One assignment row's levels, before the merge: the hardcoded Full Admin
+ * bundle, else the joined definition, else the bundle for a bare enum row.
+ * The officer two-factor rule reads Finance and Support from this too
+ * (#4618, INV-SSOT), so it can never disagree with `requireAdmin`.
+ */
+export function getAssignmentPermissionMatrix(
+  item: NonNullable<PrivilegeCheckInput["accessRoles"]>[number],
+): Partial<AdminPermissionMatrix> {
+  const role = typeof item === "string" ? item : item.role;
+  if (role === "ADMIN") return ADMIN_ROLE_BUNDLES.ADMIN ?? {};
+
+  const definition = typeof item === "string" ? null : item.roleDefinition;
+  if (definition) return matrixFromAccessRoleDefinition(definition);
+
+  if (isAccessRole(role)) return ADMIN_ROLE_BUNDLES[role] ?? {};
+  return {};
 }
 
 // test seam

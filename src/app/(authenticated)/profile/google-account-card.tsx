@@ -5,6 +5,7 @@ import { signIn } from "next-auth/react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { FocusedActionError } from "@/components/focused-action-error";
 
 /**
  * Profile "Connected accounts" control for Google sign-in (#2035). Rendered in
@@ -124,11 +125,7 @@ export function GoogleAccountCard({
         ) : null}
       </div>
 
-      {error ? (
-        <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
+      <FocusedActionError id="google-account-error" error={error} />
     </div>
   );
 }

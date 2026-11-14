@@ -279,7 +279,7 @@ async function readBooking() {
     await approve();
     await startCard();
     const before = await readBooking();
-    const { QUOTE_PRICED_EDIT_BLOCK_MESSAGE } = await import("@/lib/booking-modify-validation");
+    const { QUOTE_PRICED_EDIT_BLOCK_MESSAGE } = await import("@/lib/booking-modify-quote-priced");
     const edit = door === "batch"
       ? batch.modifyBookingBatch({ bookingId: bookingId!, actor: { id: OFFICER, role: Role.ADMIN }, input: { checkOut: "2027-09-04" }, ipAddress: "127.0.0.1", todayAtClub: (await clubTime.clubTime()).today(), format: CLUB_FORMAT_TEST })
       : dates.modifyBookingDates({ bookingId: bookingId!, actor: { id: OFFICER, role: Role.ADMIN }, input: { checkOut: "2027-09-04" }, ipAddress: "127.0.0.1" });
