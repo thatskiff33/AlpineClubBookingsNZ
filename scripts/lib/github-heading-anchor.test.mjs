@@ -2,24 +2,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { collectAnchors } from "../check-doc-links.mjs";
 import { MAX_RELEASE_NOTES_CHARS, releaseBody } from "../release/cut-release.mjs";
 import { githubHeadingAnchor } from "./github-heading-anchor.mjs";
 
-let tmpDir;
-afterEach(() => {
-  if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
-  tmpDir = undefined;
-});
-
 /** The anchors `docs:linkcheck` accepts for a Markdown file holding `text`. */
 function linkCheckAnchors(text) {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "heading-anchor-"));
-  const file = path.join(tmpDir, "doc.md");
-  fs.writeFileSync(file, text);
-  return collectAnchors(file);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "heading-anchor-"));
+  try {
+    const file = path.join(dir, "doc.md");
+    fs.writeFileSync(file, text);
+    return collectAnchors(file);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 describe("githubHeadingAnchor", () => {
@@ -34,9 +32,10 @@ describe("githubHeadingAnchor", () => {
     expect(githubHeadingAnchor("## Closing hashes ##")).toBe("closing-hashes");
   });
 
-  // The `code` + arrow heading is the shape of docs/UPGRADING.md's sections;
-  // the link and closing-hash headings are where a slugger that skipped the
-  // markup stripping used to drift from docs:linkcheck.
+  // docs/UPGRADING.md's sections use an arrow (`## v0.13.1 → v0.13.2`); the
+  // backticked form here exercises inline-code stripping. The link and
+  // closing-hash headings are where a slugger that skipped the markup
+  // stripping used to drift from docs:linkcheck.
   it.each([
     ["## `v0.13.2` → v0.14.0", "v0132--v0140"],
     ["## [0.14.0](https://example.org/r/0.14.0) - 2026-11-01", "0140---2026-11-01"],

@@ -1,9 +1,10 @@
 /**
  * The anchor GitHub gives a Markdown heading — the one rule for every script
  * that writes or checks a `#fragment` link (INV-SSOT). `docs:linkcheck`
- * (`scripts/check-doc-links.mjs`) checks links against it and the release tool
- * (`scripts/release/cut-release.mjs`) builds CHANGELOG.md links with it, so a
- * link the release tool writes is one the link check accepts.
+ * (`scripts/check-doc-links.mjs`) checks links against it; the release tool
+ * (`scripts/release/cut-release.mjs`) builds CHANGELOG.md links with it and the
+ * fragility ranking generator (`scripts/audit/fragility-rank.mjs`) writes its
+ * table links with it, so a link either writes is one the link check accepts.
  *
  * A close approximation of GitHub's slugger, not a byte-for-byte copy; lychee
  * in CI stays authoritative on an exotic heading. Node built-ins only.

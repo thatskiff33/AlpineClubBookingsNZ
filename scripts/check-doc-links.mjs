@@ -24,7 +24,8 @@
  * would under lychee's `--include-fragments` in CI. The slugger is a close
  * approximation of GitHub's, not a byte-for-byte reimplementation; CI (lychee)
  * remains authoritative if the two ever disagree on an exotic heading. The
- * slugger lives in `lib/github-heading-anchor.mjs`, shared with the release tool.
+ * slugger lives in `lib/github-heading-anchor.mjs`, shared with the release tool
+ * and the fragility ranking generator.
  */
 import fs from "node:fs";
 import path from "node:path";
