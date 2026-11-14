@@ -35,6 +35,8 @@ import { join, sep } from "node:path";
 
 import ts from "typescript";
 
+import { unwrap } from "../lib/ts-unwrap";
+
 export const SOURCE_EXTENSIONS = /\.(ts|tsx|js|mjs|cjs)$/;
 
 export const DECLARATION_AND_TEST_FILES = /(\.test\.|\.spec\.|\.d\.ts$)/;
@@ -86,14 +88,9 @@ export function eachNode(node: ts.Node, visit: (node: ts.Node) => void): void {
   node.forEachChild((child) => eachNode(child, visit));
 }
 
-/** Strip parentheses and `as` / `satisfies` wrappers. */
-export function unwrap(node: ts.Expression): ts.Expression {
-  if (ts.isParenthesizedExpression(node)) return unwrap(node.expression);
-  if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
-    return unwrap(node.expression);
-  }
-  return node;
-}
+// Shared with the function-length ratchet; re-exported so the censuses keep
+// importing every scanning helper from this one module.
+export { unwrap };
 
 /** The text of a string literal or a template with no substitutions. */
 export function literalText(node: ts.Expression): string | null {

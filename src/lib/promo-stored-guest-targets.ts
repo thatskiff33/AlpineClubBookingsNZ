@@ -30,8 +30,9 @@ import { assignedMembersOnlyOwnNights } from "@/lib/promo-guest-scope";
 
 /**
  * The part of a loaded `PromoRedemption` these functions read. Structural on
- * purpose: `booking-modify-validation.ts`'s `LoadedPromoRedemption` (Prisma
- * `PromoRedemption & { promoCode: PromoCode & … }`) satisfies it, and so do the
+ * purpose: a redemption loaded through `booking-modify-validation.ts`'s
+ * `EDIT_DOOR_BOOKING_INCLUDE` (Prisma `PromoRedemption & { promoCode: PromoCode
+ * & … }`) satisfies it, and so do the
  * narrower selects the routes and services load, so all five call sites pass
  * their own shape without a cast.
  */
