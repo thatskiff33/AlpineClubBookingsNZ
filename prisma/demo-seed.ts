@@ -49,6 +49,7 @@ import {
   DUAL_HAT_ADMIN,
   E2E_ADMIN,
   EMAIL_2FA_ENROLLEE,
+  PASSKEY_ENROLLEE,
   IB_BOOKING_ID,
   IB_WINDOW,
   relDateOnly,
@@ -1137,6 +1138,16 @@ async function main() {
     emailLocalPart(EMAIL_2FA_ENROLLEE.email),
     EMAIL_2FA_ENROLLEE.firstName,
     EMAIL_2FA_ENROLLEE.lastName,
+  );
+
+  // Passkey enrollee (#5160): bob's shape (finance VIEWER, no two-factor
+  // state) for e2e/passkey-second-factor.spec.ts, so that spec never enrols
+  // bob and breaks two-factor-login.spec.ts's never-enrolled precondition.
+  await makeMember(
+    emailLocalPart(PASSKEY_ENROLLEE.email),
+    PASSKEY_ENROLLEE.firstName,
+    PASSKEY_ENROLLEE.lastName,
+    { financeAccessLevel: "VIEWER" },
   );
 
   // Waitlist spec: fill a September window to capacity (lodge capacity is 20)

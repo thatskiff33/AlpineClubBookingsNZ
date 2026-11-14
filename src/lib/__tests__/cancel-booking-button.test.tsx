@@ -695,6 +695,93 @@ describe("CancelBookingButton — manual (cash / off-Xero) settlement copy (#226
   });
 });
 
+// #4911 (`INV-PAY-154`): a card payment disputed with the card issuer is handed
+// to the treasurer on the credit tier, as a manual settlement is, and both the
+// preview and the success panel (#4949's `CancelBookingSuccessPanel`) say so.
+describe("CancelBookingButton — a disputed card payment (#4911)", () => {
+  const disputedPreview = {
+    refundAmountCents: 4500,
+    keptAmountCents: 500,
+    changeFeeCents: 0,
+    refundPercentage: 90,
+    creditRefundAmountCents: 4000,
+    creditRefundPercentage: 80,
+    creditRestoredCents: 0,
+    totalPaidCents: 5000,
+    hasPayment: true,
+    refundDisputed: true,
+  };
+
+  function stubDisputedFetch(result: Record<string, unknown> = { refundAmountCents: 4000, refundMethod: "manual", refundDisputed: true }) {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("cancel-preview")
+        ? { ok: true, json: async () => disputedPreview }
+        : { ok: true, json: async () => result },
+    ) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+  }
+
+  async function confirmCancel() {
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Confirm Cancellation" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
+  }
+
+  it("preview names the dispute and the treasurer, at the credit tier, with no card row or method choice", async () => {
+    stubDisputedFetch();
+    render(<CancelBookingButton bookingId="bk_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Booking" }));
+    await waitFor(() => {
+      expect(screen.getByText(/Your card payment for this booking is disputed with your card issuer/)).toBeTruthy();
+    });
+    expect(screen.getByText(/goes to the club.s treasurer, who will be in touch/)).toBeTruthy();
+    expect(screen.getByText("Refund arranged by the club:")).toBeTruthy();
+    expect(screen.queryByText(/paid in cash or by bank transfer/i)).toBeNull();
+    expect(screen.queryByText("Refund to card:")).toBeNull();
+    expect(screen.queryByRole("radio")).toBeNull();
+  });
+
+  it("success panel says the refund is with the treasurer, and never the original-payment-method sentence", async () => {
+    stubDisputedFetch();
+    render(<CancelBookingButton bookingId="bk_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Booking" }));
+    await confirmCancel();
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Your card payment for this booking is disputed with your card issuer, so the club cannot refund it to your card or as account credit. Your refund of $40.00 is with the club's treasurer, who will be in touch.",
+        ),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText(/original payment method/i)).toBeNull();
+    expect(screen.queryByText(/The club will arrange your refund/)).toBeNull();
+    expect(screen.queryByText(/added to your account/i)).toBeNull();
+  });
+
+  it("frames the success panel for the member when an officer cancels, even when an organiser would otherwise be refunded", async () => {
+    stubDisputedFetch({
+      refundAmountCents: 4000,
+      refundMethod: "manual",
+      refundDisputed: true,
+      organiserRefund: { method: "organiser_by_hand", amountCents: 4000 },
+    });
+    render(<CancelBookingButton bookingId="bk_1" onBehalfOfMember canChooseMemberEmail />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel on behalf of member" }));
+    await confirmCancel();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel booking, no email" }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "The member's card payment for this booking is disputed with their card issuer, so no card refund or account credit was issued. The refund of $40.00 is with the club's treasurer, who will be in touch with the member.",
+        ),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText(/original payment method/i)).toBeNull();
+    expect(screen.queryByText(/organiser/i)).toBeNull();
+  });
+});
+
 // #3643 follow-up: an internet banking payment always refunds as account
 // credit (`forcedCancelRefundMethod`, the cancel path's own decision). The
 // preview says so, and the dialog offers only that option, with a reason.

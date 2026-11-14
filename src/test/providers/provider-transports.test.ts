@@ -12,6 +12,16 @@ import { getAuthenticatedXeroClient, resetXeroRateLimitStateForTests, withXeroRe
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { getStripe, getPaymentIntent, processRefund } from "@/lib/stripe";
 import { setStripeClientForTests, resetStripeClientForTests } from "@/lib/stripe-test-client-override";
+import { assertCaptureNotDisputed } from "@/lib/stripe-dispute-hold";
+
+// #4911 (`INV-PAY-154`): `processRefund` first asks the dispute hold, a
+// database read. This file has no database, so that read answers "no holding
+// dispute" here and is asserted to be asked; the guard itself is pinned in
+// `stripe.test.ts` and `stripe-dispute-hold.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  assertCaptureNotDisputed: vi.fn(async () => undefined),
+}));
 
 const invoice = (contactID: string): Invoice => ({ type: Invoice.TypeEnum.ACCREC, status: Invoice.StatusEnum.AUTHORISED, contact: { contactID }, lineAmountTypes: LineAmountTypes.Inclusive, lineItems: [{ description: "Stay", quantity: 2, unitAmount: 40 }] });
 afterEach(() => { resetXeroClientForTests(); resetXeroRateLimitStateForTests(); resetStripeClientForTests(); vi.unstubAllEnvs(); });
@@ -127,6 +137,7 @@ describe("provider transport mapping", () => {
     expect(await getPaymentIntent(i.id, { timeoutMs: 1_000, expand: ["latest_charge"] })).toMatchObject({ created: frozen, latest_charge: { id: `charge-${i.id}`, created: frozen, amount_captured: 5000 } });
     await expect(stripe.paymentIntents.retrieve(i.id, { expand: ["customer"] })).rejects.toThrow("does not model expand customer");
     const r = await processRefund({ paymentIntentId: i.id, amountCents: 2000, idempotencyKey: "refund-key" });
+    expect(assertCaptureNotDisputed).toHaveBeenCalledWith(i.id);
     expect(await processRefund({ paymentIntentId: i.id, amountCents: 2000, idempotencyKey: "refund-key" })).toEqual(r);
     await expect(processRefund({ paymentIntentId: i.id, amountCents: 2000, reason: "duplicate", idempotencyKey: "refund-key" })).rejects.toBeInstanceOf(Stripe.errors.StripeIdempotencyError);
     const listed = []; for await (const item of stripe.refunds.list({ payment_intent: i.id })) listed.push(item);
