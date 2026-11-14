@@ -4178,27 +4178,29 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 (its reversal) and **`INV-ADDPAY-021`** (the bank floor).
 
 - **The inbound credit-note recount takes every card refund Stripe failed
-  later off once** (#4370; owner decision 11 Nov 2026, option (a)). The failed
-  refund's note stays in Xero, so any later credit-note event on the payment
-  counted it again.
+  later off once** (#4370; owner decision 11 Nov 2026, option (a)). Its note
+  stays in Xero, so later credit-note events counted it again.
 - **Reversed**: through its live reversal, at the cents #4369's net coverage
   takes off (`readCardRefundReversalCentsByPayment`). A voided or deleted
   reversal takes off nothing.
-- **Never reversed**: through the failure record - the refunds
-  `INV-PAY-128`'s writer marked failed after they counted (`failedRefundIds`,
-  or a row of their own) - at their amounts, less every reversal ever raised on
-  the payment, voided ones included, so no failure comes off twice. Sized as a
-  close sizes its card cover: never more than the payment's refund notes cover
-  above the cash still standing (`readRefundNoteCoverageAboveCashCents`). A
-  failure never noted, or paid back under a later refund's own note, takes
-  nothing off.
+- **Never reversed**: through the failure record (`INV-PAY-128`'s
+  `failedRefundIds`, or a row of their own), at the refunds' amounts, less
+  every reversal ever raised on the payment, voided ones included, so none
+  comes off twice. Never more
+  than the payment's refund notes cover above the cash still standing
+  (`readRefundNoteCoverageAboveCashCents`, the reader a close's card cover
+  shares), with none of the close's adjustments for queued documents: the
+  recount follows what Xero holds. A failure never noted, or paid back under a
+  later refund's own note, takes nothing off; one whose cover cannot be read
+  comes off whole.
 - **Before the clamp and every floor**, so a lower total on a card payment is
   still kept off and alerted (#1353). The bank floor and the organiser cap
   (`INV-PAY-114`) are unchanged. A payment with no failed refund recounts
   exactly as before.
-- Reads only, after the payment rows, inside the recount's existing claim on
-  the row as read (#3979): no Xero call, no new lock. An affected payment is
-  corrected at its next credit-note event; nothing is back-filled.
+- Reads only, after the payment rows, in one read-only snapshot: no Xero call,
+  no new lock. The claim on the row as read (#3979) is kept, but cannot see a
+  reversal linked mid-read; the snapshot keeps the reads agreeing on it. An
+  affected payment is corrected at its next credit-note event.
 - Limits: a failed refund naming no booking raises no row, so it is not taken
   off; a card total already overstated stays, alerted, under the raise-only
   floor.

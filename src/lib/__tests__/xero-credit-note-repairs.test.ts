@@ -63,6 +63,12 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// #4370: the failed-later recount reads in one read-only snapshot; here it
+// runs on the mocked client, and against a real database in
+// xero-recount-failed-later-refund.realdb.test.ts.
+const snapshot = vi.hoisted(() => ({ open: vi.fn((client: unknown, run: (tx: unknown) => Promise<unknown>) => run(client)) }));
+vi.mock("@/lib/read-only-snapshot", () => ({ withReadOnlySnapshot: snapshot.open }));
+
 // #4370: how far a payment's refund notes cover more than its cash. Its own
 // reads are proved against a real database (xero-recount-failed-later-refund);
 // here a suite sets what it answers.
@@ -1333,7 +1339,10 @@ describe("#4370: a card refund Stripe failed later is taken off the recount once
       await recount(source);
 
       expect(mocks.paymentUpdate).not.toHaveBeenCalled();
-      expect(aboveCash.read).toHaveBeenCalledWith(expect.objectContaining({ id: "pay-1", bookingId: "booking-1", refundedAmountCents: 3000 }));
+      expect(aboveCash.read).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "pay-1", bookingId: "booking-1", refundedAmountCents: 3000 }),
+        expect.anything(),
+      );
     });
 
     it("an unreversed failure comes off no further than the notes cover above the cash", async () => {
@@ -1344,6 +1353,17 @@ describe("#4370: a card refund Stripe failed later is taken off the recount once
 
       // $80 + $30 - $50 = $60.
       expect(writtenTotals()).toEqual([6000]);
+    });
+
+    it("MUTATION (unreadable cover): a failure whose notes' cover cannot be read comes off whole, never counted again", async () => {
+      // A hand-resolved note with no readable amount: the recount cannot size the failure, so it takes all of it off.
+      arrange({});
+      aboveCash.read.mockResolvedValue(null);
+
+      await recount(source);
+
+      // Counting it again would write 10000; all of it off leaves the $30 that went back.
+      expect(mocks.paymentUpdate).not.toHaveBeenCalled();
     });
 
     it("a failure with no failure record and no reversal recounts exactly as before", async () => {
@@ -1360,6 +1380,9 @@ describe("#4370: a card refund Stripe failed later is taken off the recount once
     arrange({ aboveCashCents: 8000 });
 
     await recount(PaymentSource.STRIPE);
+
+    // One snapshot holds every read, so a reversal linked mid-recount is seen by all of them or none.
+    expect(snapshot.open).toHaveBeenCalledTimes(1);
 
     expect(mocks.paymentRecoveryOperationFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ paymentId: { in: ["pay-1"] }, type: expect.anything() }) }),

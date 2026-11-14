@@ -142,6 +142,13 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingReceipts: receiptDoors.postBookingReceipts,
 }));
+// #4370: the failed-later recount reads in one read-only snapshot; here it
+// runs on the mocked client, and against a real database in
+// xero-recount-failed-later-refund.realdb.test.ts.
+vi.mock("@/lib/read-only-snapshot", () => ({
+  withReadOnlySnapshot: (client: unknown, run: (tx: unknown) => Promise<unknown>) => run(client),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroInboundEvent: {
