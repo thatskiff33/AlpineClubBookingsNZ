@@ -16,6 +16,23 @@ import {
   isPaymentProcessing,
 } from "@/lib/payment-recovery-contract";
 
+/**
+ * Asks the confirm route to settle this card's intent; true only on its "yes".
+ * The one request both exits send: the in-page success and a redirect return.
+ */
+async function postModificationConfirm(bookingId: string, paymentIntentId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/bookings/${bookingId}/confirm-modification-payment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paymentIntentId }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** The same secret-response projection that drives the form (`INV-ADDPAY-023`). */
 export type AdditionalPaymentCardDisplay =
   | { kind: "loading" }
@@ -75,10 +92,11 @@ export function AdditionalPaymentCard({
   const [redirectFailed, setRedirectFailed] = useState(false);
   // Bumped when an in-page confirmation resolves `processing`: ask the door again.
   const [recheck, setRecheck] = useState(0);
-  const completeReturnedPayment = useEffectEvent(() => {
+  function completePayment() {
     setPaymentComplete(true);
     setTimeout(() => router.refresh(), 1500);
-  });
+  }
+  const completeReturnedPayment = useEffectEvent(() => completePayment());
   const display = useMemo<AdditionalPaymentCardDisplay>(() => paymentComplete
     ? { kind: "paid", message: "Your additional payment has been processed." }
     : notice ?? (loading ? { kind: "loading" } : clientSecret && askAmountCents !== null
@@ -97,25 +115,13 @@ export function AdditionalPaymentCard({
       falls through to the door below, which reads Stripe too: "already made",
       "being processed", or (a payment that never happened) the form again.
     */
-    async function confirmedReturn(paymentIntentId: string): Promise<boolean> {
-      try {
-        const res = await fetch(`/api/bookings/${bookingId}/confirm-modification-payment`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ paymentIntentId }),
-        });
-        return res.ok;
-      } catch {
-        return false;
-      }
-    }
     async function fetchSecret() {
       try {
         // Short-circuits without a return: the door is asked synchronously.
         if (
           returned.kind === "check" &&
           returned.confirmation === "succeeded" &&
-          (await (returnConfirmation.current ??= confirmedReturn(returned.intentId)))
+          (await (returnConfirmation.current ??= postModificationConfirm(bookingId, returned.intentId)))
         ) {
           if (active) completeReturnedPayment();
           return;
@@ -188,17 +194,10 @@ export function AdditionalPaymentCard({
   }, [bookingId, additionalAmountCents, recheck]);
 
   async function handlePaymentSuccess(paymentIntentId: string) {
-    try {
-      await fetch(`/api/bookings/${bookingId}/confirm-modification-payment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentIntentId }),
-      });
-    } catch {
-      // Non-fatal: webhook will also confirm
-    }
-    setPaymentComplete(true);
-    setTimeout(() => router.refresh(), 1500);
+    // The answer is not read here: Stripe.js already reported success in the
+    // page, and the webhook also confirms if this request fails.
+    await postModificationConfirm(bookingId, paymentIntentId);
+    completePayment();
   }
 
   const returnUrl =

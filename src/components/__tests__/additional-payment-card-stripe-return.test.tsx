@@ -12,9 +12,14 @@ vi.mock("@/components/stripe/StripeProvider", () => ({
 
 const formProps = vi.fn();
 vi.mock("@/components/stripe/PaymentForm", () => ({
-  default: (props: { returnUrl: string; onProcessing?: (id: string) => void }) => {
+  default: (props: { returnUrl: string; onSuccess?: (id: string) => void; onProcessing?: (id: string) => void }) => {
     formProps(props);
-    return <button type="button" onClick={() => props.onProcessing?.("pi_inpage")}>trigger-processing</button>;
+    return (
+      <>
+        <button type="button" onClick={() => props.onProcessing?.("pi_inpage")}>trigger-processing</button>
+        <button type="button" onClick={() => props.onSuccess?.("pi_inpage")}>trigger-success</button>
+      </>
+    );
   },
 }));
 
@@ -104,6 +109,20 @@ describe("AdditionalPaymentCard Stripe redirect return (ALP-569)", () => {
     await waitFor(() => expect(calls("/additional-payment-secret").length).toBe(asked + 1));
     expect(await screen.findByRole("status")).toHaveTextContent(PAYMENT_PROCESSING_MESSAGE);
     expect(screen.queryByText("trigger-processing")).toBeNull();
+  });
+
+  it("sends an in-page success the same confirm request as a redirect return", async () => {
+    fetchMock.mockResolvedValue(secret);
+    renderCard();
+    fireEvent.click(await screen.findByText("trigger-success"));
+    expect(await screen.findByText("Payment successful!")).toBeInTheDocument();
+    const [[url, init]] = calls("/confirm-modification-payment");
+    expect(url).toBe("/api/bookings/b1/confirm-modification-payment");
+    expect(init).toEqual({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paymentIntentId: "pi_inpage" }),
+    });
   });
 
   it("offers the form again with a notice after a failed return", async () => {

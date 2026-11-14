@@ -441,15 +441,12 @@ export default function BookingPaymentWrapper({
           ) : undefined
         }
       />
-      {checkingPayment ? (
+      {checkingPayment || loading ? (
         <div className="flex items-center justify-center p-8">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-info-7 border-t-transparent" />
-          <span role="status" className="ml-3 text-muted-foreground">{CHECKING_PAYMENT_MESSAGE}</span>
-        </div>
-      ) : loading ? (
-        <div className="flex items-center justify-center p-8">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-info-7 border-t-transparent" />
-          <span role="status" className="ml-3 text-muted-foreground">Preparing payment...</span>
+          <span role="status" className="ml-3 text-muted-foreground">
+            {checkingPayment ? CHECKING_PAYMENT_MESSAGE : "Preparing payment..."}
+          </span>
         </div>
       ) : suppressPaymentContent ? null : (
         <>

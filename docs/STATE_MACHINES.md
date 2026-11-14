@@ -1784,11 +1784,13 @@ payment is going back (`previousPaymentRefunding`), and `confirm-payment`
 answers 409 `SUPERSEDED_CARD_PAYMENT_REFUNDING`, also for a captured intent of
 the booking its pointer has moved past. Neither reuse arm hands out an intent
 a superseded row still names; one being paid answers `PAYMENT_PROCESSING` in
-its own words. After a card success every card surface asks the server what it
-did and never shows the pay buttons again, whether the confirmation resolved in
-the page or a redirect method returned the payer with `payment_intent` and
-`redirect_status` in the address (#4955): the `/pay` link its
-`checkCardSuccess`, the booking page and pay step `confirm-payment` (a
+its own words. After a redirect method returns the payer with `payment_intent`
+and `redirect_status` in the address, or an in-page confirmation resolves
+`processing`, every card surface asks the server what it did and never shows
+the pay buttons again (#4955). An in-page `succeeded` is asked about too on the
+`/pay` link, booking page and pay step; the additional payment and group settle
+cards take Stripe.js's word there, backed by the webhook. The server checks
+are: the `/pay` link its `checkCardSuccess`, the booking page and pay step `confirm-payment` (a
 `processing` intent, or a returned success it cannot vouch for, asks
 `create-payment-intent`, which settles a succeeded intent or hands it back),
 the additional payment `confirm-modification-payment` then its secret door,
