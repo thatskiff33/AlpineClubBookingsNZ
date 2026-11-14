@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { getSanitizedLodgeInstructions } from "@/lib/lodge-instructions";
 import { prisma } from "@/lib/prisma";
-
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /**
  * GET /api/lodge/instructions?date=YYYY-MM-DD
@@ -15,7 +13,7 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  */
 export async function GET(req: NextRequest) {
   const dateStr = req.nextUrl.searchParams.get("date") ?? undefined;
-  if (dateStr !== undefined && !dateSchema.safeParse(dateStr).success) {
+  if (dateStr !== undefined && !dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json(
       { error: "Invalid date parameter" },
       { status: 400 },

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./helpers/accessibility";
+import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 import {
   enrollTotp,
   readStoredTwoFactor,
@@ -22,7 +23,7 @@ test.describe.configure({ timeout: 180_000 });
 const enrollee = personas.enrollee;
 
 async function expectPaymentsDestination(page: Page): Promise<void> {
-  await expect(page).toHaveURL(/\/admin\/payments/);
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("payments")));
   const payments = page.getByRole("heading", { name: "Payments", exact: true });
   const details = page.getByRole("dialog", { name: "Confirm member details", exact: true });
   const confirmDetails = details.getByRole("button", {

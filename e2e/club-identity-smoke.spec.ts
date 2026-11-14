@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./helpers/accessibility";
+import { adminHref } from "./helpers/admin-url";
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 
@@ -67,7 +68,7 @@ async function saveClubIdentity(page: Page): Promise<void> {
 }
 
 async function openIdentityPage(page: Page): Promise<void> {
-  await page.goto("/admin/appearance/identity");
+  await page.goto(adminHref("club-identity"));
   await expect(
     page.getByRole("heading", { name: "Club Identity" }),
   ).toBeVisible();

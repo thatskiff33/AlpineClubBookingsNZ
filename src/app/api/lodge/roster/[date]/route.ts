@@ -9,8 +9,7 @@ import { logAudit } from "@/lib/audit";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { lockRosterDate } from "@/lib/roster-lock";
-
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const rosterActionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -45,7 +44,7 @@ async function handleGet(req: NextRequest, dateStr: string) {
     return NextResponse.json({ error }, { status: status! });
   }
 
-  if (!dateSchema.safeParse(dateStr).success) {
+  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 
@@ -130,7 +129,7 @@ export async function PUT(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!dateSchema.safeParse(dateStr).success) {
+  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
   const date = parseDateOnly(dateStr);

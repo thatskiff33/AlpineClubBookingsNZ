@@ -14,14 +14,13 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendAdminFamilyGroupRequestAlert } from "@/lib/email";
 import { nameField } from "@/lib/zod-helpers";
+import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
 
 const requestAdultSchema = z.object({
   familyGroupId: z.string().min(1, "Family group ID required"),
   firstName: nameField({ required: "First name required" }),
   lastName: nameField({ required: "Last name required" }),
-  dateOfBirth: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD format"),
+  dateOfBirth: dateOfBirthStringSchema,
   notes: z.string().max(500).optional(),
 });
 

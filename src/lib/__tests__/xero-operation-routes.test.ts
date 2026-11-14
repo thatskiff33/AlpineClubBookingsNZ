@@ -279,6 +279,17 @@ describe("Xero operation admin retry routes", () => {
     });
   });
 
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    const response = await listOperations(
+      new NextRequest(
+        "http://localhost/api/admin/xero/operations?createdFrom=2026-02-30",
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.xeroOperationFindMany).not.toHaveBeenCalled();
+  });
+
   it("tells the panel which rows' Resolve asks for the Xero note number and for what amount, and which it will refuse (#4421)", async () => {
     const createdAt = new Date("2026-04-14T09:00:00Z");
     const refundNote = {

@@ -37,8 +37,8 @@ import {
   parseDateOnly,
   startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 /**
  * An amount filter typed into the payments search box, in integer cents.
  *
@@ -109,12 +109,12 @@ export const adminPaymentsQuerySchema = z.object({
   source: z.enum(paymentApiSourceFilters).optional().default("all"),
   xeroState: z.enum(xeroStateFilters).optional().default("all"),
   settlement: z.enum(settlementFilters).optional().default("all"),
-  from: dateSchema.optional(),
-  to: dateSchema.optional(),
-  lastUpdatedFrom: dateSchema.optional(),
-  lastUpdatedTo: dateSchema.optional(),
-  checkInFrom: dateSchema.optional(),
-  checkInTo: dateSchema.optional(),
+  from: dateOnlyStringSchema.optional(),
+  to: dateOnlyStringSchema.optional(),
+  lastUpdatedFrom: dateOnlyStringSchema.optional(),
+  lastUpdatedTo: dateOnlyStringSchema.optional(),
+  checkInFrom: dateOnlyStringSchema.optional(),
+  checkInTo: dateOnlyStringSchema.optional(),
   search: z.string().trim().max(100).optional(),
   amountExact: amountSchema.optional(),
   amountMin: amountSchema.optional(),

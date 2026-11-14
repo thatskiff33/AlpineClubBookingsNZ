@@ -465,6 +465,15 @@ describe("POST /api/admin/hut-leaders — bed hold", () => {
     });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
+
+  it("refuses a startDate day that does not exist (2026-02-30)", async () => {
+    const res = await POST(
+      postRequest({ ...CREATE_BODY, startDate: "2026-02-30" }),
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.assignmentCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe("PUT /api/admin/hut-leaders/[id] — three-state bedId", () => {
@@ -678,6 +687,13 @@ describe("PUT /api/admin/hut-leaders/[id] — three-state bedId", () => {
     expect(mocks.validateCustodianBedHold).toHaveBeenCalledWith(
       expect.objectContaining({ bedId: "bed-9", assignmentId: "a1" }),
     );
+  });
+
+  it("refuses an endDate day that does not exist (2026-02-30)", async () => {
+    const res = await PUT(putRequest({ endDate: "2026-02-30" }), { params });
+    expect(res.status).toBe(400);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.txAssignmentUpdate).not.toHaveBeenCalled();
   });
 });
 

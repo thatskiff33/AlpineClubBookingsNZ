@@ -6,7 +6,7 @@ import { countActiveLodges } from "@/lib/lodges";
 import { AmbiguousKioskLodgeError, getStaffLodgeBinding } from "@/lib/lodge-access";
 import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /**
  * Name of the lodge this kiosk session operates, for the kiosk header —
@@ -30,8 +30,6 @@ async function kioskLodgeName(
   }
 }
 
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-
 /**
  * GET /api/lodge/access?date=YYYY-MM-DD
  * Returns the user's kiosk access tier and capabilities for the given date.
@@ -43,7 +41,7 @@ export async function GET(req: NextRequest) {
 
 async function handleGet(req: NextRequest) {
   const dateStr = req.nextUrl.searchParams.get("date");
-  if (!dateStr || !dateSchema.safeParse(dateStr).success) {
+  if (!dateStr || !dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid or missing date parameter" }, { status: 400 });
   }
 

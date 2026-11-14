@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { AgeTier } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
-import { isCalendarDate } from "@/lib/club-time";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   getJoiningFeePreviewForInputs,
   getJoiningFeePreviewForMember,
 } from "@/lib/joining-fee";
+import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
 
 const paramsSchema = z.object({ id: z.string().min(1) });
 
@@ -26,11 +26,7 @@ const previewSchema = z
     // 400, and before #3082 it answered a wrong ADULT band. This route is the
     // only caller of `getJoiningFeePreviewForInputs`, so validating here closes
     // the path rather than only narrowing it.
-    dateOfBirth: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .refine(isCalendarDate, "Date of birth must be a real date")
-      .optional(),
+    dateOfBirth: dateOfBirthStringSchema.optional(),
   })
   .strict();
 
