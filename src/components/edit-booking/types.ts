@@ -1,6 +1,7 @@
 import type { AgeTier, MemberGuestConsentStatus } from "@prisma/client";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import type { AggregatedPolicyExceptions } from "@/lib/booking-policy-exceptions";
+import type { MemberGuestConsentPreview } from "@/lib/member-guest-consent-preview";
 import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 /**
@@ -235,7 +236,7 @@ export interface NewGuest {
    * fake deadline ends up on screen. The server recomputes the family boundary
    * and is the only thing that decides what is persisted.
    */
-  memberGuestConsentPreview?: "PENDING" | "NOTIFY_ONLY" | "ADMIN_ASSIGNED";
+  memberGuestConsentPreview?: MemberGuestConsentPreview;
 }
 
 // Server-computed partner-sharer quick-add candidate (#1746): a confirmed
