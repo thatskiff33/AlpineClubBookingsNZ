@@ -2862,7 +2862,9 @@ _Legacy: settles tasks raised before #4317._
   - **A tie has one order** (#4284): rows raised, or refunds recorded, at the
     same instant are taken by `id` and by `stripeRefundId`, never in the order
     PostgreSQL returns them (`compareCardRefundOperations`,
-    `compareRecordedCardRefunds`; their reads ask for the same order).
+    `compareRecordedCardRefunds`; their reads ask for the same order). Limit:
+    the answer is the same every read, not "the one written first", since a
+    cuid is not an insertion order (#4129); exact answers are #4361 stage 3.
   - **"Refunds owed" is Net Collected's own per-payment figure**
     (`refundsOwedOfCashParts`), so the two agree for every payment. Two parts
     have no booking figure to agree with: a hand-back on a payment that shows
