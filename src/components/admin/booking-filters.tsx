@@ -1,5 +1,6 @@
 "use client";
 
+import { BOOKING_STATUSES_IN_LIFECYCLE_ORDER } from "@/lib/booking-status";
 import { adminHref } from "@/lib/admin-hubs";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
@@ -141,7 +142,7 @@ export function BookingFilters({
   const [additionalOwed, setAdditionalOwed] = useState(searchParams.get("additionalOwed") || "all");
   const [lodgeId, setLodgeId] = useState(searchParams.get("lodgeId") || "all");
   const showLodgeFilter = lodgeOptions.length > 1;
-  const bookingStatuses = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
+  const bookingStatuses = BOOKING_STATUSES_IN_LIFECYCLE_ORDER;
   function statusFilterLabel(value: string) {
     if (value === "all") return "All";
 
