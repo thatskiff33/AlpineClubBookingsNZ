@@ -28,6 +28,7 @@ import {
 import { GROUP_SETTLEMENT_INVOICE_ROLE } from "@/lib/group-settlement-invoice-binding";
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
@@ -1249,6 +1250,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
             bookingId: fresh.bookingId,
             db: tx,
           });
+          await releaseBookingPromoRedemptions(tx, fresh.bookingId);
           // #3792: the account credit the booking had applied goes back too, in
           // full — a capacity cancel is not the member's choice, so no policy
           // tier applies. The same helper and the same place as the settle's

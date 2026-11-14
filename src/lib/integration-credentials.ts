@@ -23,6 +23,7 @@
  */
 
 import type { IntegrationCredential, Prisma } from "@prisma/client";
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { prisma } from "@/lib/prisma";
 import {
   applyCredentialWrite,
@@ -85,7 +86,7 @@ interface CachedProvider {
 
 // Module-scoped, per-process cache. Cleared on write in the writing process;
 // other processes re-read once their entry ages past the TTL.
-const providerCache = new Map<string, CachedProvider>();
+const providerCache = new Map<IntegrationCredentialNamespace, CachedProvider>();
 
 /** test seam — reset the in-process cache between tests. */
 export function resetIntegrationCredentialCacheForTests(): void {
@@ -93,7 +94,7 @@ export function resetIntegrationCredentialCacheForTests(): void {
 }
 
 /** Drop a provider's cached rows immediately (called after any write). */
-export function invalidateProviderCredentialCache(provider: string): void {
+export function invalidateProviderCredentialCache(provider: IntegrationCredentialNamespace): void {
   providerCache.delete(provider);
 }
 
@@ -103,7 +104,7 @@ export function invalidateProviderCredentialCache(provider: string): void {
  * bounded negative that expires at the TTL).
  */
 async function loadProviderRows(
-  provider: string,
+  provider: IntegrationCredentialNamespace,
   now: number = Date.now(),
 ): Promise<Map<string, IntegrationCredential>> {
   const cached = providerCache.get(provider);
@@ -158,7 +159,7 @@ export type CredentialResolution =
  * decrypt failure).
  */
 export async function resolveIntegrationCredential(
-  provider: string,
+  provider: IntegrationCredentialNamespace,
   key: string,
 ): Promise<CredentialResolution> {
   const rows = await loadProviderRows(provider);
@@ -179,7 +180,7 @@ export async function resolveIntegrationCredential(
  */
 export async function readIntegrationCredentialRow(
   db: Pick<Prisma.TransactionClient, "integrationCredential">,
-  provider: string,
+  provider: IntegrationCredentialNamespace,
   key: string,
 ): Promise<CredentialResolution> {
   const row = await db.integrationCredential.findUnique({
@@ -232,7 +233,7 @@ function resolveStoredRow(
  * DB error still propagates.
  */
 export async function getIntegrationCredentialValue(
-  provider: string,
+  provider: IntegrationCredentialNamespace,
   key: string,
 ): Promise<string | null> {
   const resolution = await resolveIntegrationCredential(provider, key);
@@ -273,7 +274,7 @@ export async function getIntegrationCredentialValue(
  */
 
 export interface SetCredentialResult {
-  provider: string;
+  provider: IntegrationCredentialNamespace;
   key: string;
   secretSource: WrappingKeySource;
   labelVersion: string;
@@ -318,7 +319,7 @@ export async function setIntegrationCredential(
 
 /** What every credential write declares. */
 export interface SetIntegrationCredentialParams {
-  provider: string;
+  provider: IntegrationCredentialNamespace;
   key: string;
   value: string;
   actor: CredentialActor;
@@ -372,7 +373,7 @@ function assertKeepUpdatedAtIsAReencrypt(params: SetIntegrationCredentialParams)
  * lease guard) leaves no cached row for the caller's re-read to trust.
  */
 export async function withCredentialTransaction<T>(
-  providers: readonly string[],
+  providers: readonly IntegrationCredentialNamespace[],
   work: (tx: Prisma.TransactionClient) => Promise<T>,
   options?: { timeout?: number; maxWait?: number },
 ): Promise<T> {
@@ -487,13 +488,13 @@ export async function deleteIntegrationCredential(
  * delete the store itself could not see (the token store's pre-upgrade copy,
  * #3454) words it the same way.
  */
-export function deletedCredentialSummary(provider: string, key: string): string {
+export function deletedCredentialSummary(provider: IntegrationCredentialNamespace, key: string): string {
   return `Deleted ${provider} credential "${key}"`;
 }
 
 /** What every credential delete declares. */
 export interface DeleteIntegrationCredentialParams {
-  provider: string;
+  provider: IntegrationCredentialNamespace;
   key: string;
   actor: CredentialActor;
   expect: CredentialDeleteExpectation;
@@ -640,7 +641,7 @@ export type ProviderCredentialState =
  * A DB error propagates (the caller decides how to surface an unknown state);
  * a `not_configured` provider is simply not "needing re-entry".
  */
-export async function providerNeedsReentry(provider: string): Promise<boolean> {
+export async function providerNeedsReentry(provider: IntegrationCredentialNamespace): Promise<boolean> {
   return (await providerUnreadableKeys(provider)).length > 0;
 }
 
@@ -650,7 +651,7 @@ export async function providerNeedsReentry(provider: string): Promise<boolean> {
  * must not block the earlier keys step that cannot replace it. Empty when
  * nothing is stored or everything reads. Propagates a DB error.
  */
-export async function providerUnreadableKeys(provider: string): Promise<string[]> {
+export async function providerUnreadableKeys(provider: IntegrationCredentialNamespace): Promise<string[]> {
   const rows = await loadProviderRows(provider);
   if (rows.size === 0) return [];
   // Each row is tried under the key IT names; a key this deployment lacks is a
@@ -681,7 +682,7 @@ export async function providerUnreadableKeys(provider: string): Promise<string[]
  * appear. Propagates a DB error.
  */
 export async function getIntegrationsNeedingReentry(
-  providers: readonly string[],
+  providers: readonly IntegrationCredentialNamespace[],
 ): Promise<string[]> {
   const needing: string[] = [];
   for (const provider of providers) {

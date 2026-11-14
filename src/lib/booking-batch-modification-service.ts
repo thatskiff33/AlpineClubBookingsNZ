@@ -1,9 +1,9 @@
+import { assertEditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
-import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   type Booking,
   type BookingGuest,
@@ -37,7 +37,6 @@ import {
   resolveTargetDates,
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
-  type LoadedBookingForLifecycle,
   type LoadedBookingForModify,
   type ResolvedGuestNameUpdate,
   type PricingResult,
@@ -47,6 +46,8 @@ import {
   GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+// Imported directly, not through the barrel: route tests mock the barrel whole.
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 // Pure readers of the request, imported from their home rather than the barrel
 // so a test that stubs the barrel's pipeline still reads the request for real.
 import {
@@ -113,7 +114,6 @@ import { hasCapturedPayment, hasIssuedPrimaryXeroInvoice } from "@/lib/booking-p
 import {
   editRefundBankTransferPayee,
   raiseEditRefundHandBackIfOwed,
-  refundableCashNetOfOpenHandBacks,
 } from "@/lib/edit-refund-hand-back";
 import { reserveOrganiserChildModificationRefund } from "@/lib/organiser-child-refund";
 import { prisma } from "@/lib/prisma";
@@ -149,7 +149,7 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
-import { calculateFullReductionSettlementOptions } from "@/lib/booking-modify-settlement-options";
+import { calculateFullReductionSettlementOptions, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -1045,34 +1045,21 @@ export async function modifyBookingBatch({
 
     // Re-read the full booking under the lock; everything below consumes ONLY
     // this post-lock snapshot.
-    const booking = (await tx.booking.findUnique({
+    const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
+        ...EDIT_DOOR_BOOKING_INCLUDE,
         // Per-night sets (issue #713): preserve unedited guests' gaps and
         // re-sync edited guests' nights. Deterministic order (#2266 MED-4):
         // pricing, promo targeting and the client's guest list must all agree
-        // on guest order, so never rely on the planner's unordered scan.
+        // on guest order, so never rely on the planner's unordered scan. Only
+        // this door orders guests; the shared include deliberately does not.
         guests: {
-          include: { nights: { select: { stayDate: true, priceCents: true, priceSource: true } } },
+          ...EDIT_DOOR_BOOKING_INCLUDE.guests,
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
-        payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
-        member: true,
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        organisation: { select: { name: true, email: true } },
-        promoRedemptions: {
-          include: {
-            promoCode: {
-              include: {
-                assignments: { select: { memberId: true } },
-                lodges: { select: { lodgeId: true } },
-              },
-            },
-            guestTargets: { select: { bookingGuestId: true } },
-          },
-        },
       },
-    })) as LoadedBookingForLifecycle | null;
+    });
 
     assertBookingModifiable(booking, {
       role: actor.role,
@@ -1615,9 +1602,12 @@ export async function modifyBookingBatch({
       Boolean(finishedStayCorrection) && changeFeeCents > 0 && !hasCapturedPayment(booking.payment);
     const feeOnPrimaryInvoice = feeAddedToAmountOwed && !hasIssuedPrimaryXeroInvoice(booking);
 
+    // The edit's net before any unpaid-ask offset: one name for the reduction
+    // read, the settlement options and the `INV-MOD-062` comparison below.
+    const netChargeCents = priceDiffCents + changeFeeCents;
     // #3954: the unpaid ask, read ONCE for this edit and handed to both the
     // options and the save, so a capture between two reads cannot split them.
-    const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents + changeFeeCents);
+    const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);
     // #3750: a correction already paid the tier in its fee, so what remains of a
     // reduction comes back in full — the tier applies once, to the removed portion.
     // #3954: what remains once the unpaid ask has taken its share.
@@ -1625,16 +1615,22 @@ export async function modifyBookingBatch({
         ? calculateFullReductionSettlementOptions({
             booking,
             netChargeCents: reduction.netChargeLeftCents,
-            refundableCashCents: await refundableCashNetOfOpenHandBacks(tx, booking.payment),
+            refundableCashCents: await refundableCashForModification(tx, booking.payment, reduction),
             todayAtClub: moneyTierDay,
           })
         : await calculateModificationSettlementOptions({
       booking,
-      netChargeCents: priceDiffCents + changeFeeCents,
+      netChargeCents,
       reduction,
       db: tx,
       todayAtClub: moneyTierDay,
     });
+    // #4924 (`INV-MOD-062`): the save settles only the figures the member was
+    // shown. Compared on the post-lock re-read, after every figure is final and
+    // before anything leaves the transaction: the promo writes above roll back
+    // with the refusal, and nothing durable or external has run yet.
+    // `netChargeCents` is the pre-offset figure the preview reports.
+    assertEditQuotedFigures(input.quotedFigures, { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents });
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
       throw new BookingModificationSettlementMethodRequiredError();
     }
@@ -2633,7 +2629,7 @@ async function dispatchBatchPostTransactionSideEffects({
     datesChanged: result.datesChanged,
     guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment,
+    refundedThroughStripe: result.hasSucceededPayment, paymentId: result.paymentId,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,

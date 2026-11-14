@@ -13,6 +13,7 @@
  * key derivation itself stays synchronous.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { getIntegrationCredentialValue } from "@/lib/integration-credentials";
 import { readEnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 
@@ -21,7 +22,7 @@ function readEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-export const XERO_PROVIDER = "xero";
+export const XERO_PROVIDER = "xero" satisfies IntegrationCredentialNamespace;
 export const XERO_CREDENTIAL_KEYS = {
   clientId: "client_id",
   clientSecret: "client_secret",

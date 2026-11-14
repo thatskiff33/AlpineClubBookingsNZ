@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
 
 /*
-  INV-OPS-017 (#4989): every push run of these workflows completes. `ci.yml`
+  INV-OPS-019 (#4989): every push run of these workflows completes. `ci.yml`
   publishes a commit's `:<sha>` images and judges its push from
   `github.event.before`; `e2e.yml` and `money-coverage.yml` give each merge its
   own verdict. A shared concurrency group loses runs even with
@@ -120,7 +120,7 @@ function cancels(concurrency, github) {
 /**
  * Every way a top-level `concurrency` block lets one push run cancel or
  * replace another, or stops a pull request's newer run cancelling its older
- * one. Empty when the block keeps INV-OPS-017.
+ * one. Empty when the block keeps INV-OPS-019.
  */
 function concurrencyProblems(concurrency) {
   if (!concurrency || typeof concurrency !== "object" || typeof concurrency.group !== "string") {
@@ -149,14 +149,14 @@ function concurrencyProblems(concurrency) {
   return problems;
 }
 
-describe("INV-OPS-017: push runs never cancel or replace each other", () => {
+describe("INV-OPS-019: push runs never cancel or replace each other", () => {
   for (const file of WORKFLOWS) {
     it(`${file} gives each push its own group and still cancels superseded pull-request runs`, () => {
       const workflow = parseWorkflowYaml(readFileSync(path.join(REPO_ROOT, ".github", "workflows", file), "utf8"));
       // The census is vacuous unless the workflow really runs on push.
       expect(workflow.on).toHaveProperty("push");
       expect(workflow.on).toHaveProperty("pull_request");
-      expect(concurrencyProblems(workflow.concurrency), `${file} breaks INV-OPS-017`).toEqual([]);
+      expect(concurrencyProblems(workflow.concurrency), `${file} breaks INV-OPS-019`).toEqual([]);
     });
   }
 

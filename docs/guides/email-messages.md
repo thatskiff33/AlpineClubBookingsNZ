@@ -565,6 +565,14 @@ Two consequences worth knowing before you edit one:
   "Whole-lodge booking needs a manual invoice" alert quotes the netted amount
   the member was asked for — invoice that, not the booking's price.
 
+### The authenticator reset notice
+
+**Your authenticator was reset** (`officer-factor-reset`, #4618) is sent after
+a Full Admin, or the operator command, clears a member's authenticator app and
+passkeys. `{{firstName}}` is required. Keep the sentences that say their
+sessions have ended and that no new grace period starts; both are true of
+every reset.
+
 ### Consent emails ignore a member's notification preferences
 
 The six member-guest emails — the consent request, the "you have been added"

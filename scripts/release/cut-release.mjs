@@ -589,7 +589,7 @@ function requireFirstParent(firstParent, sha) {
 /**
  * The `main` push run of `CI_WORKFLOW_FILE` for `sha` whose
  * `PUBLISH_IMAGES_JOB_NAME` job succeeded: the only evidence that the images a
- * deploy of its tag pulls exist (INV-OPS-017). A cancelled, failed or
+ * deploy of its tag pulls exist (INV-OPS-019). A cancelled, failed or
  * unfinished run published nothing, so this asks GitHub rather than trusting
  * the first-parent chain. Any answer it cannot read refuses, never passes.
  */

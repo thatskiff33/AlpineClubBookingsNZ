@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { BookingStatus } from "@prisma/client";
+import { bookingStatusClass, bookingStatusSwatchClass } from "@/lib/status-colors";
 import { NextRequest } from "next/server";
 import { getAdminCalendarBookingDayRange } from "@/lib/admin-booking-calendar-ranges";
 
@@ -342,22 +344,10 @@ describe("#33: Calendar component helpers", () => {
 // ---------------------------------------------------------------------------
 
 describe("#33: Status colors exist for all booking statuses", () => {
-  const STATUS_COLORS: Record<string, string> = {
-    DRAFT: "bg-gray-300",
-    PENDING: "bg-yellow-400",
-    CONFIRMED: "bg-green-500",
-    PAID: "bg-blue-500",
-    COMPLETED: "bg-purple-500",
-    CANCELLED: "bg-red-500",
-    BUMPED: "bg-orange-500",
-  };
-
-  for (const status of ["DRAFT", "PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED"]) {
-    it(`has color for ${status}`, () => {
-      expect(STATUS_COLORS[status]).toBeDefined();
-      expect(STATUS_COLORS[status]).toMatch(/^bg-/);
-    });
-  }
+  it.each(Object.values(BookingStatus))("has a swatch and chip tone for %s", (status) => {
+    expect(bookingStatusSwatchClass(status)).toMatch(/^bg-/);
+    expect(bookingStatusClass(status)).toBeTruthy();
+  });
 });
 
 // ---------------------------------------------------------------------------

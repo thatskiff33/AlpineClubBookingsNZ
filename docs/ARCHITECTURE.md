@@ -899,7 +899,7 @@ Use these ownership boundaries when adding new code:
 | --- | --- | --- |
 | Club configuration | `config/`, `src/config/` | Club identity, capacities, rates, and feature switches must come from config or environment, not hard-coded deployment values. |
 | Pages and route handlers | `src/app/` | Validate input and session state near the route boundary, then delegate decisions to `src/lib/`. |
-| Route-private page UI | `src/app/(admin)/admin/finance/xero/_components`, `src/app/(admin)/admin/finance/xero/_hooks`, `src/app/(admin)/admin/members/**/_components`, `src/app/(admin)/admin/members/**/_hooks`, `src/app/(authenticated)/book/_components` | Large routes should be route shells plus local components/hooks before moving anything to shared UI. |
+| Route-private page UI | `src/app/(admin)/admin/finance/xero/_components`, `src/app/(admin)/admin/finance/xero/_hooks`, `src/app/(admin)/admin/membership/members/**/_components`, `src/app/(admin)/admin/membership/members/**/_hooks`, `src/app/(authenticated)/book/_components` | Large routes should be route shells plus local components/hooks before moving anything to shared UI. |
 | Shared UI | `src/components/` | Reusable view pieces live here; route-specific view state can stay beside the page until it is reused. |
 | Booking lifecycle | `src/lib/booking-create.ts`, `src/lib/booking-create-types.ts`, `src/lib/booking-create-promo.ts`, `src/lib/booking-create-guests.ts`, `src/lib/booking-modify.ts` (barrel over `booking-modify-validation` / `booking-modify-plan` / `booking-modify-settlement`), `src/lib/booking-payment-cleanup.ts`, `src/lib/payment-recovery.ts` | Keep route handlers thin; booking orchestration and durable payment recovery live behind these services. |
 | Bed allocation | `src/lib/bed-allocation.ts`, `src/lib/bed-allocation-lifecycle.ts`, `src/lib/bed-allocation-*.ts` (the admin surface, split by responsibility in #2688 — `-rooms` / `-beds` / `-bunk-pairing` inventory, `-board` / `-board-records` / `-board-payload` / `-warnings` read model, `-placement` / `-manual-writes` / `-auto-allocate` / `-range-assign` / `-range-audit` / `-range-report` / `-approval` writers, over `-admin-contract` / `-date-range` / `-display-names` / `-admin-settings`), `src/lib/bed-allocation-removal.ts` | Room/bed inventory, family-aware allocation planning, lifecycle reconciliation, manual admin allocation, reviewed removal, and approval state live behind focused services. Each `LodgeBed` carries a descriptive **bed type** (`SINGLE` / `BUNK_TOP` / `BUNK_BOTTOM` / `DOUBLE`) and an optional `bunkGroup` label; a group holds at most two beds — one top and one bottom — enforced in `bed-allocation-bunk-pairing.ts` (serialised by a room-row lock, no partial index) and shown as an icon on the setup list and allocation board (#1675). Bed type is mostly descriptive, with one capacity exception (#1701): a **DOUBLE** bed may hold **two** occupants for a night when they are declared partners (two `ADULT` members holding a **CONFIRMED** `MemberPartnerLink` (#1742/#1744), the single-source `mayShareDoubleBed()` rule in `double-bed-sharing.ts`), added by an admin on the board onto a bed whose primary already holds capacity. Every other bed type stays one person per night. The bed-night uniqueness is `@@unique([bedId, stayDate, isSecondOccupant])` (≤1 primary + ≤1 second occupant) plus a raw-SQL partial unique index capping non-DOUBLE beds at exactly one (`WHERE "bedType" <> 'DOUBLE'`, in `prisma/partial-unique-indexes.tsv`); `BedAllocation.bedType` is a denormalized copy the partial index reads. The **base** capacity figure is unchanged — a shared double is still **one bed** of `activeBedCount` and each occupant is a full person-night — but each active DOUBLE adds one reserved, bounded **partner-shared admission slot** above it (#1745: `getLodgePartnerSharedCapacityStatus` + `checkCapacityForPartnerSharedAdmission`, admin-initiated only, never visible to public availability; see docs/CAPACITY_MODEL.md); auto-allocation never creates a second occupant. Beds may be pre-assigned on provisional statuses (`BED_ALLOCATABLE_BOOKING_STATUSES`) before a booking holds capacity, so the admin board tags each bed **Held** vs **Provisional** (#1251). The state is a server-computed flag from `bookingHoldsCapacity` (booking-status.ts) — not a per-row status check — because holding is no longer purely status-based: an accepted-but-unpaid quote is `PENDING` but holds (#1254). In the AUTOMATIC on-payment/confirmation reconcile (`bed-allocation-lifecycle.ts` → the planner's `prioritizeCapacityHolding` mode), **capacity-holding bookings get first claim**: they are allocated before provisional ones, and a held booking blocked only by a **Provisional** allocation moves that provisional aside (to a free bed) — or, if the night is otherwise full, unallocates it back to the awaiting-allocation queue — then takes the freed bed. A **Held** or admin-**approved** (#776 lock) allocation is never displaced, and displacement never strands a same-booking minor; each displacement is applied atomically and writes a `lodge` audit row on the displaced provisional booking (#1387). The planner keeps bed-night **capacity** (`bedId:stayDate` — is this bed taken?) separate from occupant **identity** (`bedId:stayDate:bookingGuestId` — who is in it?), because a shared DOUBLE holds two occupant rows on one bed-night, possibly from two different bookings (#2656): an eviction releases the physical bed-night only when no occupant remains, displacement credit is counted in beds actually freed rather than rows or bookings displaced, a bed-night whose occupants span two bookings is never a *single-bed* displacement target (the whole-stay room path instead makes every occupant a candidate and gains the bed only once ALL of them are being evicted — so both bookings on a shared double go together or the room is not chosen; see docs/CAPACITY_MODEL.md rule 3), and the apply path promotes any second occupant its displacements orphan and refuses to write onto a bed-night the database still shows as occupied rather than relying on `skipDuplicates`. The planner enforces the cross-booking age-mix invariant on every placement path (#1768): a room-night holding one booking's minors never also holds another booking's adult (in either direction), minors may fill rooms of their own once the booking has an adult on-site that night (the adult count no longer caps the rooms a large group fills), a SCHOOL-request booking rooms its adults together and its students separately (`isSchoolGroup`), and persisted violations surface as `MINOR_ADULT_MIX` board warnings. That automatic reconcile auto-places **only the reconciled booking's own** guests on its current nights (#1686): editing, confirming, promoting, or cancelling one booking never opportunistically drafts *other* bookings' guests into idle or freed beds — a cancellation's freed beds stay in the awaiting-allocation queue rather than being auto-refilled. It still loads lodge-wide occupancy so it can seat that booking whole-stay and displace blocking provisionals to seat a held booking (#1387/#1677); opportunistic lodge-wide re-planning of *everyone* is exclusively the explicit board action below. The manual board **Run auto-allocation** button (`runAutoBedAllocation`) runs pure first-fit and does NOT displace — only the automatic reconcile does. One further occupancy class has **no `BedAllocation` row at all** (#2286): a `HutLeaderAssignment` carrying a `bedId` is a **custodian bed hold**, which takes that bed out of both the bookable and the allocatable pool for every night from `startDate` to `endDate` *inclusive*, with no `Booking`, no `BookingGuest` and no allocation row anywhere (`src/lib/custodian-occupancy.ts` read side, `src/lib/custodian-assignment.ts` write side). It is counted as an **occupant** rather than as a smaller lodge, so `occupiedBeds + availableBeds === lodgeCapacity` still holds; it is fed to the planner as a #1768 blocking, never-evictable unknown occupant; and because nothing in the database enforces it, every placing write re-reads the live holds on its own client immediately before writing, inside the per-lodge advisory lock where it owns the transaction — and where it does not, which is the common no-displacement path, that re-read is the only thing standing between a hold and a bed-night written over it. The three re-filters doing it (occupied / custodian-held / whole-lodge-held) live in `bed-allocation-write-rechecks.ts` (#3128); their call sites stay in `bed-allocation-lifecycle.ts`, which is where the contract test below proves them. `custodian-write-path-contract.test.ts` scans the whole `src/` tree and fails CI when a `bedAllocation.create*` site appears undeclared — counting them per site, so a second write in an already-declared file fails too — and pins the global → per-lodge lock order over each self-wrapping writer's own body. See docs/CAPACITY_MODEL.md and DOMAIN_INVARIANTS.md. |
@@ -911,6 +911,7 @@ Use these ownership boundaries when adding new code:
 | Business logic | `src/lib/` | Keep money in integer cents, dates as New Zealand date-only lodge nights, and external calls outside long database transactions where practical. |
 | Database | `prisma/schema.prisma`, `prisma/migrations/` | Schema changes must include deployable migrations and respect the blue/green migration policy. |
 | Operations | `scripts/`, `deploy/`, Compose files | Deployment helpers should be reusable by forks through environment overrides. |
+| Function length | every production file | A top-level function, const-assigned function or class member over 300 lines may not appear or grow (`pnpm run quality:budget`, #4927; object-literal methods are not measured); split a long function into typed top-level functions that read only what they are given. See docs/MAINTENANCE.md → "Function-length ratchet". |
 
 ### Bed-allocation preference resolution
 
@@ -1074,6 +1075,9 @@ modules split out in issue #1138 — `booking-modify-validation.ts`
 (the in-transaction guest/pricing/promo pipeline), and
 `booking-modify-settlement.ts` (settlement handoff and lifecycle
 transitions) — so importers keep using `@/lib/booking-modify` unchanged.
+`booking-modify-quote-priced.ts` (#4924) holds the booking-request-origin
+fences (the quote-priced edit block and the member whole-lodge test) behind
+the same barrel.
 
 `src/lib/booking-payment-cleanup.ts` queues superseded Stripe PaymentIntents
 when booking edits replace or zero out pending payment work.
@@ -1205,12 +1209,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **105 components render a banner, and
- 333 of the 388 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **107 components render a banner, and
+ 336 of the 391 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 333 split by WHICH rule
-covers them: **295** pass the literal
+test currently pins, which is the only authority.) Those 336 split by WHICH rule
+covers them: **298** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **38**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 33 by a parent's own JSX render site (#2168), 5 by the
@@ -1261,7 +1265,7 @@ default** (`describeReason` left at `true`), in three shapes:
 - **A member detail per-record card gated on a DIFFERENT permission area than
   the page banner** — today exactly one: `member-credit-card.tsx` (4 controls
   across 1 file). The other eight cards in
-  `src/app/(admin)/admin/members/[id]/_components/` were converted under #2168
+  `src/app/(admin)/admin/membership/members/[id]/_components/` were converted under #2168
   and now take their coverage from the page banner. The credit card did not,
   and that is deliberate rather than a leftover: the page banner states the
   **membership** area, the credit card's controls are gated on **finance**, so
@@ -1895,6 +1899,18 @@ shape, `member-lifecycle-actions` owns archive/delete request handling, and
 `membership-cancellation-*` owns the cancellation request, confirmation,
 approval, Xero, settings, and status-label flow.
 
+Officer two-factor (#4618) sits on the same layer. `/admin/security` adds
+`officer-two-factor-card`, a staged-edit section with its own
+`useSectionEditState` and its own `PUT /api/admin/security/officer-two-factor`,
+so it shares no whole-object PUT with a sibling. Non-Full-Admins see it
+view-only, with the section banner. The member detail page adds a Full Admin
+reset button that posts to `/api/admin/security/two-factor-reset/[memberId]`.
+Both writes go through `fetchWithRecentAuth` and are in `STEP_UP_ROUTES`. The
+rule lives in `second-factor-enrolment.ts`; the session claims in
+`officer-two-factor-claims.ts`; the gate in `two-factor-gate.ts`; the reset in
+`officer-factor-reset.ts`. All of it is inert while `OFFICER_SIGN_IN_ENFORCED`
+is false.
+
 Browser-facing API routes treat an unexpected exception as operator-only
 diagnostic data: the complete error is sent to the structured logger, while the
 JSON response uses a fixed route-specific message. Validation and domain
@@ -1945,10 +1961,14 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
   school's identity lives in. Added and linked but read by nothing yet — see
   "Organisations, and the school that is currently a person" below.
 
-### Inert member money journal (#4513)
+### Member money journal (#4513)
 
-The new journal preserves economic evidence without changing any current money
-reader or writer. `MemberMoneyEvent` has one `MemberMoneyJournal`; its positive
+The journal records booking charges, payment receipts and card refunds alongside
+the legacy writes. No screen, finance report or Xero document reads it yet; they
+still use the legacy money columns. Outside the doors, only the operator
+verifier, the read-only booking-ledger census and the deletion guards read it
+(`INV-MONEY-043`, `INV-MONEY-044`); `member-money-journal-writer-census.test.ts`
+pins that list. `MemberMoneyEvent` has one `MemberMoneyJournal`; its positive
 integer-cent `MemberMoneyLine` legs balance in one currency at commit. Headers
 record the transaction and cluster that may insert their complete, counted legs,
 obligations and applications. A debtor is a member or an organisation, never both. Exact reversals append evidence; no row is rewritten.
@@ -1972,7 +1992,7 @@ and review close, cancellation, the group settle and the back-post) and member
 merge post only through the server-only `src/lib/member-money/doors.ts`
 (`INV-MONEY-044`), as, since M3c (#4628), the bank-transfer binding doors and
 the pending-charge syncs do through `booking-ledger-pending-charge.ts`
-(`INV-MONEY-045`); `member-money-journal-inert-census.test.ts` admits exactly
+(`INV-MONEY-045`); `member-money-journal-writer-census.test.ts` admits exactly
 those callers. Writers implement the existing advisory tiers
 (`INV-LOCK-001`–`003`); the journal adds no advisory key, outbox or provider call. The verifier reads a repeatable-read,
 read-only snapshot. See [deployment grants](../DEPLOYMENT.md#member-money-journal-grants-m1)

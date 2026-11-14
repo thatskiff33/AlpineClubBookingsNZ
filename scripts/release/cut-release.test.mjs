@@ -1062,7 +1062,7 @@ describe("release:cut publish on a fixture repository", () => {
   });
 });
 
-describe("release:cut publish asks GitHub whether CI published the commit's images (INV-OPS-017)", () => {
+describe("release:cut publish asks GitHub whether CI published the commit's images (INV-OPS-019)", () => {
   it("names a workflow file and a job that exist, and the job publishes only from main pushes", () => {
     const workflow = parseWorkflowYaml(fs.readFileSync(path.join(import.meta.dirname, "..", "..", ".github", "workflows", CI_WORKFLOW_FILE), "utf8"));
     const publishing = Object.values(workflow.jobs).filter((job) => job.name === PUBLISH_IMAGES_JOB_NAME);

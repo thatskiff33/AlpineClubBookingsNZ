@@ -128,6 +128,20 @@ export const PROFILE_FAMILY_GROUP_RETURN_TO_BOOK = buildProfilePathWithReturnTo(
   "family-group",
 );
 
+/**
+ * The wizard's one error box (#4945). The page renders it; the review step's
+ * reason-for-review field points `aria-describedby` at it, because the
+ * missing-reason refusal is written there rather than beside the field.
+ */
+export const BOOKING_WIZARD_ERROR_ID = "booking-wizard-error";
+
+/**
+ * The wrapper around the review step's "Request Booking Officer approval" card
+ * (#2562). A reviewable refusal shows its reason in the error box above the
+ * steps and its remedy here, screens lower, so the box links to this id.
+ */
+export const BOOKING_EXCEPTION_REQUEST_ID = "booking-exception-request";
+
 /** The club's three subscription-lockout regimes (#2543), mirroring Prisma. */
 export type SubscriptionLockoutMode =
   | "NO_BLOCK"
@@ -184,4 +198,23 @@ export function readSubscriptionLockoutView(
     memberRateNotice:
       typeof rawNotice === "string" && rawNotice.length > 0 ? rawNotice : null,
   };
+}
+
+/**
+ * Whether the club's lockout mode stops this member starting a booking (#4941).
+ *
+ * `subscriptionIsUnpaid` is the FACT (an UNPAID or OVERDUE season subscription);
+ * this is the CONSEQUENCE, and only HARD_BLOCK makes the fact a refusal. Under
+ * NON_MEMBER_PRICING the member books at non-member rates, and under NO_BLOCK the
+ * subscription does not gate booking, so both must reach the calendar. Read it
+ * off the defaulted `SubscriptionLockoutView`: an absent or unrecognised mode is
+ * already HARD_BLOCK there, so a stale response keeps blocking an unpaid member
+ * rather than opening the wizard to one the server will refuse. The server stays
+ * the authority (`POST /api/bookings`); this decides only what the wizard draws.
+ */
+export function isBookingBlockedBySubscription(
+  subscriptionIsUnpaid: boolean,
+  lockout: SubscriptionLockoutView,
+): boolean {
+  return subscriptionIsUnpaid && lockout.mode === "HARD_BLOCK";
 }

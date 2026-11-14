@@ -7,17 +7,12 @@ import type { DependantIdentityDeclaration } from "@/lib/booking-dependant-ident
 import {
   BookingStatus,
   type AgeTier,
-  type Booking,
-  type BookingGuest,
-  type BookingGuestNightPriceSource,
-  type Member,
   type Payment,
-  type PaymentTransaction,
   type Prisma,
-  type PromoCode,
-  type PromoRedemption,
   type Role,
 } from "@prisma/client";
+
+import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { isAdditionalAmountUncollected } from "@/lib/additional-payment-chase";
@@ -41,8 +36,15 @@ import {
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 export type BatchModifyInput = {
+  /**
+   * #4924 (`INV-MOD-062`): the preview's figures the member approved. Present,
+   * the save refuses `EditPriceChangedError` when its own differ; absent (an
+   * older client), it saves as before.
+   */
+  quotedFigures?: EditQuotedFigures;
   checkIn?: string;
   checkOut?: string;
   addGuests?: Array<{
@@ -213,48 +215,59 @@ export function resolveStayRangesOrApiError<Guest extends LiveGuestStayRow>(args
   }
 }
 
-export type LoadedPromoRedemption = PromoRedemption & {
-  promoCode: PromoCode & {
-    assignments: Array<{ memberId: string }>;
-    lodges?: Array<{ lodgeId: string }>;
-  };
-  guestTargets?: Array<{ bookingGuestId: string }>;
-};
-
-export type LoadedBookingForModify = Booking & {
-  // Guests carry their explicit night set (issue #713) so an edit preserves the
-  // gaps of guests that are not being changed and re-syncs only edited guests.
-  guests: Array<
-    BookingGuest & {
-      // #3170: `priceCents` distinguishes three things and every reader has to
-      // keep them apart. `undefined` means the SELECT did not ask for the price;
-      // `null` means the row says the price is NOT KNOWN (a night a parked edit
-      // committed without valuing); a number is the stored sold price, and 0 is
-      // a real one (a comped night). `?? 0` on this field is prohibited.
-      nights?: {
-        stayDate: Date;
-        priceCents?: number | null;
-        priceSource: BookingGuestNightPriceSource;
-      }[];
-    }
-  >;
-  payment: Payment | null;
-  member: Member;
+/**
+ * #4925: the booking every edit door re-reads under its locks - the full edit,
+ * the date change, guest removal and the guest-acceptance re-price - and hands
+ * to the shared settlement and lifecycle code. It is the ONE home of that shape
+ * (`INV-SSOT-001`): the loaded types below are derived from it, so a field the
+ * shared code reads but a door does not load is a compile error rather than a
+ * cast that hides it. A field added here reaches all four doors.
+ *
+ * Guest order is deliberately absent: only the batch door orders guests, and it
+ * adds that `orderBy` over this include itself.
+ */
+export const EDIT_DOOR_BOOKING_INCLUDE = {
+  guests: {
+    include: {
+      // Each guest's explicit night set (issue #713), so an edit preserves the
+      // gaps of guests it does not change. #3170: `priceCents` is `null` when
+      // the row's price is NOT KNOWN and a number (0 included, a comped night)
+      // when it is the sold price; `?? 0` on it is prohibited.
+      nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
+    },
+  },
+  // #4019 review: with its transactions, oldest first (`INV-PAY-133`), because
+  // `isUnpaidConfirmedWholeLodge` reads them to tell an abandoned card attempt
+  // from a capture (`INV-PAY-143`).
+  payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
+  // #3369: the owner is a member OR an organisation; read it via bookingOwner().
+  member: true,
+  organisation: { select: { name: true, email: true } },
   // #3826: one redemption per promo code; read through booking-promo-redemptions.ts.
-  promoRedemptions: LoadedPromoRedemption[];
-};
+  promoRedemptions: {
+    include: {
+      guestTargets: { select: { bookingGuestId: true } },
+      promoCode: {
+        include: {
+          assignments: { select: { memberId: true } },
+          lodges: { select: { lodgeId: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.BookingInclude;
+
+/** The booking an edit door hands `applyLifecycleTransitions`, ledger rows included. */
+export type LoadedBookingForLifecycle = Prisma.BookingGetPayload<{
+  include: typeof EDIT_DOOR_BOOKING_INCLUDE;
+}>;
 
 /**
- * #4019 review: the booking an edit door hands `applyLifecycleTransitions` -
- * its payment loaded WITH its transactions (oldest first,
- * `LEDGER_ROWS_OLDEST_FIRST`), because the clamp's `isUnpaidConfirmedWholeLodge`
- * reads them to tell an abandoned card attempt from a capture, and requires
- * them by type. Every door reaches this type through an `as unknown as` cast,
- * which no compiler checks, so `lifecycle-door-payment-transactions-census`
- * pins each door's include.
+ * The same snapshot for the quote and settlement readers, which never read the
+ * payment's ledger rows - so a caller holding a bare payment can still use them.
  */
-export type LoadedBookingForLifecycle = Omit<LoadedBookingForModify, "payment"> & {
-  payment: (Payment & { transactions: PaymentTransaction[] }) | null;
+export type LoadedBookingForModify = Omit<LoadedBookingForLifecycle, "payment"> & {
+  payment: Payment | null;
 };
 
 type BookingGuestNameEditPayment = Pick<
@@ -616,78 +629,6 @@ export function assertBookingModifiable(
       "This booking cannot be modified in its current status",
       400,
     );
-  }
-}
-
-/**
- * Bookings converted from (or held for) a public/school booking request keep
- * an officer-negotiated price that was flat-split across the guest rows; the
- * quote's per-tier rates are not persisted on the booking. Every standard
- * edit path reprices the whole booking at current season rates, which would
- * silently replace the negotiated basis — a one-student addition can swing
- * the total by the full quote-vs-season delta (#1032) — so those paths
- * refuse instead and direct the admin to the booking-request re-quote /
- * re-price flow.
- */
-export async function isQuotePricedBooking(
-  db: Prisma.TransactionClient,
-  bookingId: string,
-): Promise<boolean> {
-  const request = await db.bookingRequest.findFirst({
-    where: {
-      OR: [{ convertedBookingId: bookingId }, { heldBookingId: bookingId }],
-    },
-    select: { id: true },
-  });
-  return Boolean(request);
-}
-
-export const QUOTE_PRICED_EDIT_BLOCK_MESSAGE =
-  "This booking keeps a negotiated booking-request price, so standard edits are disabled — they would reprice every guest at season rates. Re-price or issue a revised quote from its booking request instead.";
-
-/** #4202: the member-origin link fence's one wording, for the save, the quote and the promo box. */
-export const GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE =
-  "Linking a placeholder to a member is only available on member whole-lodge bookings.";
-/**
- * True when this booking was created from an authenticated member whole-lodge
- * request (#2263) — `requestedByMemberId` set and `exclusivityRequested` — as
- * opposed to a public or SCHOOL booking request. Mirrors
- * `isMemberWholeLodgeRequest` at the booking level.
- *
- * The #2337 placeholder→member link keys on this, NOT on `Booking.wholeLodgeHold`
- * alone: a school whole-lodge booking ALSO carries `wholeLodgeHold` (the admin
- * capacity action), and its non-member student rows would pass the placeholder
- * gate — so re-rating one at a member rate would silently corrupt the school's
- * flat-split negotiated price. Member-origin is the fence that keeps the re-rate
- * to the one booking class whose placeholders were always meant to re-rate.
- *
- * Every member whole-lodge booking is also "quote-priced" (its placeholders were
- * flat-split at approval), so `isQuotePricedBooking` returns true for it and the
- * standard structural-edit block would refuse the link; the apply/quote paths
- * exempt a member-whole-lodge link-only request from that block for exactly this
- * reason.
- */
-export async function isMemberWholeLodgeBooking(
-  db: Prisma.TransactionClient,
-  bookingId: string,
-): Promise<boolean> {
-  const request = await db.bookingRequest.findFirst({
-    where: {
-      OR: [{ convertedBookingId: bookingId }, { heldBookingId: bookingId }],
-      requestedByMemberId: { not: null },
-      exclusivityRequested: true,
-    },
-    select: { id: true },
-  });
-  return Boolean(request);
-}
-
-export async function assertBookingNotQuotePriced(
-  db: Prisma.TransactionClient,
-  bookingId: string,
-): Promise<void> {
-  if (await isQuotePricedBooking(db, bookingId)) {
-    throw new ApiError(QUOTE_PRICED_EDIT_BLOCK_MESSAGE, 400);
   }
 }
 
