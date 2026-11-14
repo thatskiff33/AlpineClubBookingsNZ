@@ -103,7 +103,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/membership-setup",
+    getAdminPage("membership-setup").oldPath,
     help(
       "Membership & Members setup",
       "Membership & Members groups the setup pages that define membership policy, profile fields, and subscription access behavior.",
@@ -252,7 +252,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/subscription-lockout",
+    getAdminPage("subscription-lockout").oldPath,
     help(
       "Subscription Lockout",
       "Subscription Lockout controls whether unpaid or overdue subscriptions restrict member access or booking behavior.",
@@ -281,7 +281,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/membership-types",
+    getAdminPage("membership-types").oldPath,
     help(
       "Membership Types",
       "Membership Types define seasonal member categories, booking rate behavior, subscription behavior, and optional Xero contact-group rules.",
@@ -367,7 +367,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/member-fields",
+    getAdminPage("member-fields").oldPath,
     help(
       "Member Fields",
       "Member Fields controls optional member-profile fields and how they appear in profile or admin workflows.",
@@ -426,7 +426,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
-    "/admin/committee",
+    getAdminPage("committee").oldPath,
     help(
       "Committee",
       "Committee manages master roles, role email aliases, and public/member-visible committee assignments.",

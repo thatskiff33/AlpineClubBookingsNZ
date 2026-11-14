@@ -81,6 +81,10 @@ here:
 - **`NON_MEMBER_PRICING`** — the rule above: the unpaid member is repriced, told
   why, and the booking must carry a paid-up adult member.
 
+The member wizard follows the same mode: its dates step hides the lodge picker
+and calendar only when `isBookingBlockedBySubscription` says so — an unpaid
+subscription under `HARD_BLOCK`, or a response too old to name its mode (#4941).
+
 ### INV-LOCKOUT-004
 
 **Independent booking failures are reported together.** A member create or member
@@ -626,8 +630,8 @@ a non-ADMIN caller. A recalculate override that moves money still respects the
 admin's choice. The same
 per-action choice covers the standalone **guest-removal** route
 (`DELETE /api/bookings/[id]/guests/[guestId]`) and **cancellation**
-(`POST /api/bookings/[id]/cancel`, "Cancel and email member" / "Cancel without
-emailing", the suppression also covering the linked provisional split children
+(`POST /api/bookings/[id]/cancel`, "Cancel booking and email member" / "Cancel
+booking, no email", the suppression also covering the linked provisional split children
 cancelled with the parent) (#1705). Both routes 403 the flag from any
 non-(booking-management)-ADMIN caller, force notify for non-admin actors,
 default to notify when the flag is absent, and record a suppressed

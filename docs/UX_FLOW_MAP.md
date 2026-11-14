@@ -44,7 +44,7 @@ rules belong in the linked references. See the [budget register](invariants/WORD
 
 Screen: `/`, `/login`.
 
-Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard. When a passkey is saved, the second step can be that passkey beside the app or email code.
+Journey: Browse club information, sign in, or follow account recovery. After sign-in, complete any required security or profile steps before opening the dashboard. When a passkey is saved, the second step can be that passkey beside the app or email code. The required profile step is the **Confirm member details** pop-up: nothing dismisses it, but its **Log out** is available in every state except while the final confirmation is saving, and leaves the step for the next sign-in.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -60,7 +60,7 @@ Journey: Fill in personal details and nominators, submit the application, and fo
 
 Screen: `/dashboard`.
 
-Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge.
 
 [Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -68,7 +68,7 @@ Journey: Read upcoming stays and account notices, then open a booking or choose 
 
 Screen: `/book`.
 
-Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey.
+Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer.
 
 [Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -76,15 +76,15 @@ Journey: Choose lodge and nights, add guests, review the price and rules, then c
 
 Screen: `/bookings`, `/bookings/[id]`.
 
-Journey: Find a stay and open its detail. Review status, guests and amounts before paying, requesting a change or cancelling. Pending consent appears on the booking for an eligible invited member.
+Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member.
 
 [Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Payment and booking outcome
 
-Screen: Booking detail and its payment action.
+Screen: Booking detail and its payment action, or an emailed payment link.
 
-Journey: Open the booking, inspect what is owed and choose an available payment method. Switching an unpaid card booking to internet banking asks for confirmation first, because the member cannot switch back to card. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
+Journey: Open the booking, check the lodge it names (`INV-CAP-039`), inspect what is owed and choose an available payment method. Switching an unpaid card booking to internet banking asks for confirmation first, because the member cannot switch back to card. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
 
 [Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -108,7 +108,7 @@ Journey: Join the waitlist for full nights, open an offer, and accept before its
 
 Screen: `/profile`.
 
-Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment.
+Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment. A deletion request awaiting review, or an email change awaiting its link, stays shown in its section after a reload until it resolves.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -244,7 +244,7 @@ Journey: Choose a queue tab, open a request, inspect the proposed stay, and use 
 
 Screen: `/admin/bookings`.
 
-Shows: A filterable booking list; booking detail holds the stay, party, status and next actions.
+Shows: A filterable booking list and calendar with status pills; booking detail holds the stay, party, status and next actions.
 
 Journey: Filter the list, open a booking, and inspect its dates, guests and status before acting.
 
@@ -698,7 +698,7 @@ Journey: Inspect connection and operations status; open a failed item to follow 
 
 Screen: `/admin/appearance`.
 
-Shows: Theme presets and links to club identity controls.
+Shows: Theme presets and links to club identity controls. The Club Identity sub-page (`/admin/appearance/identity`) also holds **Where members' data is held**, the hosting provider and data location the `{{data-hosting}}` token publishes.
 
 Journey: Choose a preset or open the identity editor; preview before saving.
 
@@ -952,7 +952,7 @@ Journey: Open the relevant notification settings or delivery screen from the hub
 
 Screen: `/admin/privacy-retention`.
 
-Shows: Retention settings, eligible-record previews and cleanup actions.
+Shows: Retention settings, eligible-record previews, the count of stay dietary notes the next run clears, and cleanup actions.
 
 Journey: Preview eligible records before running the documented retention action.
 
@@ -1065,7 +1065,7 @@ layer decides three things once, so no form has to:
 
 The committee page's **Add / Edit Role** form is the worked example: its
 schema module is `src/lib/forms/committee-role-schema.ts`, and its form is
-`src/app/(admin)/admin/committee/_components/committee-role-form.tsx`.
+`src/app/(admin)/admin/membership/committee/_components/committee-role-form.tsx`.
 
 ### Building a form
 

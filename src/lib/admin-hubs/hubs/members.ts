@@ -16,7 +16,7 @@ export const MEMBERS_HUB = defineHub({
       oldPath: "/admin/members",
       area: "membership",
       keywords: ["users", "people", "contacts", "membership"],
-      moved: false,
+      moved: true,
     },
     {
       id: "member-detail",
@@ -24,7 +24,7 @@ export const MEMBERS_HUB = defineHub({
       oldPath: "/admin/members/[id]",
       area: "membership",
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       id: "member-merge",
@@ -32,7 +32,7 @@ export const MEMBERS_HUB = defineHub({
       oldPath: "/admin/members/[id]/merge",
       area: "membership",
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       id: "member-applications",
@@ -40,7 +40,7 @@ export const MEMBERS_HUB = defineHub({
       keywords: ["member applications"],
       oldPath: "/admin/member-applications",
       area: "membership",
-      moved: false,
+      moved: true,
     },
     {
       // S1 (#4796): the settings tab holds what was
@@ -51,7 +51,7 @@ export const MEMBERS_HUB = defineHub({
       oldPath: "/admin/membership-cancellations",
       area: "membership",
       tabs: ["requests", "settings"],
-      moved: false,
+      moved: true,
     },
     {
       // S1 (#4796): the suggestions tab is what was `/admin/family-suggestions`.
@@ -62,7 +62,7 @@ export const MEMBERS_HUB = defineHub({
       tabs: ["groups", "suggestions"],
       // "Family Suggestions" is the palette's own entry for the retired page.
       keywords: ["suggested families"],
-      moved: false,
+      moved: true,
     },
     {
       id: "induction",
@@ -71,7 +71,7 @@ export const MEMBERS_HUB = defineHub({
       oldPath: "/admin/induction",
       area: "membership",
       flags: ["induction"],
-      moved: false,
+      moved: true,
     },
     {
       id: "induction-print",
@@ -80,7 +80,7 @@ export const MEMBERS_HUB = defineHub({
       area: "membership",
       flags: ["induction"],
       kind: "print",
-      moved: false,
+      moved: true,
     },
     {
       id: "induction-settings",
@@ -88,42 +88,42 @@ export const MEMBERS_HUB = defineHub({
       oldPath: "/admin/induction/settings",
       area: "membership",
       flags: ["induction"],
-      moved: false,
+      moved: true,
     },
     {
       id: "deletion-requests",
       label: "Deletion Requests",
       oldPath: "/admin/deletion-requests",
       area: "membership",
-      moved: false,
+      moved: true,
     },
     {
       id: "committee",
       label: "Committee",
       oldPath: "/admin/committee",
       area: "membership",
-      moved: false,
+      moved: true,
     },
     {
       id: "membership-setup",
       label: "Membership & Members",
       oldPath: "/admin/membership-setup",
       area: "membership",
-      moved: false,
+      moved: true,
     },
     {
       id: "membership-types",
       label: "Membership Types",
       oldPath: "/admin/membership-types",
       area: "membership",
-      moved: false,
+      moved: true,
     },
     {
       id: "member-fields",
       label: "Member Fields",
       oldPath: "/admin/member-fields",
       area: "membership",
-      moved: false,
+      moved: true,
     },
     {
       // #4581: the area of its API, /api/admin/membership-lockout-settings. It
@@ -135,7 +135,7 @@ export const MEMBERS_HUB = defineHub({
       keywords: ["subscription lockout settings"],
       oldPath: "/admin/subscription-lockout",
       area: "membership",
-      moved: false,
+      moved: true,
     },
   ],
 });

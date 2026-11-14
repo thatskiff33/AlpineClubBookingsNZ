@@ -63,8 +63,8 @@ function stubFetchRoutes(routes: Record<string, unknown>) {
   );
 }
 
-import FamilyGroupsPage from "@/app/(admin)/admin/family-groups/page";
-import MembershipCancellationsPage from "@/app/(admin)/admin/membership-cancellations/page";
+import FamilyGroupsPage from "@/app/(admin)/admin/membership/family-groups/page";
+import MembershipCancellationsPage from "@/app/(admin)/admin/membership/membership-cancellations/page";
 
 const SUGGESTIONS_VIEW_ONLY = /can view family group suggestions but cannot create, hide, or reset/i;
 const SETTINGS_VIEW_ONLY = /can view membership cancellation settings but cannot change/i;
