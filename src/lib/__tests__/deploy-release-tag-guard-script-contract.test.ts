@@ -12,7 +12,7 @@ import { DEPLOY_SCRIPT, shellFunctionSource } from "@/lib/__tests__/helpers/depl
 
 /**
  * The production deploy refuses a commit that is not a published release
- * (#4978, `INV-OPS-017`).
+ * (#4978, `INV-OPS-019`).
  *
  * `validate_deploy_commit_is_release_tag` is lifted out of the deploy script and
  * RUN against a scratch repository with a real bare "origin", so each case is a

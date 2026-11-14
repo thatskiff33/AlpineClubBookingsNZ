@@ -48,6 +48,16 @@ describe("BookingFilters", () => {
     setLocation("");
   });
 
+  it("recognises Awaiting Review as a single status filter", async () => {
+    mocks.currentSearch = "status=AWAITING_REVIEW";
+    setLocation(mocks.currentSearch);
+    render(<BookingFilters />);
+    expect(screen.getByText("Awaiting Review")).toBeTruthy();
+    expect(screen.queryByText("Custom status filter")).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(mocks.routerPush).not.toHaveBeenCalled();
+  });
+
   it("hides the bed-state filter and drops stale bed params when bed allocation is disabled", async () => {
     mocks.currentSearch = "status=PAID&bedState=unallocated&search=Aroha";
     setLocation(mocks.currentSearch);

@@ -22,13 +22,14 @@
  * endpoint is shipped (cut per plan option).
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { prisma } from "@/lib/prisma";
 import {
   getIntegrationCredentialValue,
   providerNeedsReentry,
 } from "@/lib/integration-credentials";
 
-export const ANTHROPIC_PROVIDER = "anthropic";
+export const ANTHROPIC_PROVIDER = "anthropic" satisfies IntegrationCredentialNamespace;
 
 export const ANTHROPIC_CREDENTIAL_KEYS = {
   apiKey: "api_key",
