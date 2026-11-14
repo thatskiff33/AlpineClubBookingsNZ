@@ -8,15 +8,15 @@ comments; splitting a page to absorb a dozen lines of focus wiring would put
 the alert in a different file from the action that fills it.
 
 file: src/app/(admin)/admin/booking-desk/book/page.tsx
-lines: 1669
+lines: 1655
 reason: the action alert and its Xero-reconnect link replace the old error box in place.
 
-file: src/app/(admin)/admin/family-groups/page.tsx
-lines: 890
+file: src/app/(admin)/admin/membership/family-groups/page.tsx
+lines: 891
 reason: two focused action alerts (revoke, save) replace two plain error boxes.
 
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
-lines: 998
+lines: 992
 reason: the queue's load error and its review failures are now two states, each with its Dismiss control.
 
 file: src/app/(admin)/admin/system/backups/backups-client.tsx
