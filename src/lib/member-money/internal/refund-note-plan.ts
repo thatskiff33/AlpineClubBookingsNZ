@@ -6,7 +6,7 @@ import { stableDigest } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
 
 /**
- * A REFUND NOTE, ITS PAYMENT AND THE FAILED-LATER REVERSAL, AS EXPORT PLANS
+ * A REFUND NOTE AND ITS PAYMENT, AS EXPORT PLANS
  * (#4525, Ledger M13, design section 7). Pure: no database, clock, settings or
  * provider. The sender keeps building and sending its own document; a plan
  * takes what it built and the one journal component that document answers,
@@ -16,8 +16,7 @@ import { formatCentsPlain } from "../../utils";
  * the component's, and anything else is a conflict with no coverage rows
  * (`CENTS`), as is a component that could not be read (`COMPONENT_UNUSABLE`).
  * A refund document never covers BOOKING_REVENUE or FEE_REVENUE: the note
- * covers the refund debt (REFUND_PAYABLE), and its payment and the reversal
- * the cash slice (STRIPE_CLEARING or BANK), so a composite note cannot count
+ * covers the refund debt (REFUND_PAYABLE), and its payment the cash slice (STRIPE_CLEARING or BANK), so a composite note cannot count
  * the price reduction a second time.
  */
 
@@ -58,7 +57,7 @@ export function refundExportPayloadHash(body: unknown): string {
 
 /**
  * Cover `component` whole when `lineTotalCents` equals it; otherwise a conflict.
- * Shared by the three refund roles so the rule is written once (`INV-SSOT`).
+ * Shared by the refund roles so the rule is written once (`INV-SSOT`).
  */
 export function coverRefundExportComponent(input: {
   rendering: RefundExportRendering;

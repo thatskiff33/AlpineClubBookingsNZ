@@ -381,6 +381,18 @@ describe("recordRefundNoteManifest", () => {
     })]);
   });
 
+  it("a card refund posted unapplied reads its debt from the answer that applied it later", async () => {
+    mocks.memberMoneyEventFindUnique.mockImplementation(async ({ where }: { where: { eventKey: string } }) =>
+      where.eventKey === "refund:re_1" ? { journal: { applications: [], lines: [] } }
+        : where.eventKey === "refund-answer:re_1" ? cardRefundEvent({ obligationKey: DEBT, faceCents: 5000 }, 5000) : null);
+
+    await recordRefundNoteManifest(built({ cardRefundId: "re_1" }));
+
+    expect(written()).toEqual([expect.objectContaining({
+      outcome: "COVERED", coverage: [{ account: "REFUND_PAYABLE", chargeIdentity: DEBT, coveredCents: 5000, taxCode: null }],
+    })]);
+  });
+
   it("a note short of its debt's face is a CENTS conflict; a reversed debt is unusable", async () => {
     mocks.memberMoneyEventFindUnique.mockResolvedValue(cardRefundEvent({ obligationKey: DEBT, faceCents: 6000 }, 5000));
     await recordRefundNoteManifest(built({ cardRefundId: "re_1" }));

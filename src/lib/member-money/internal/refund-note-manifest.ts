@@ -89,12 +89,13 @@ export async function resolveRefundNoteObligation(db: Db, door: RefundNoteDoor):
         where: { eventKey },
         select: { journal: { select: { applications: { select: { obligation: { select: OBLIGATION_SELECT } } } } } },
       });
-      if (!event) continue;
-      const debts = [...new Map((event.journal?.applications ?? []).map((a) => [a.obligation.obligationKey, a.obligation])).values()];
+      const debts = [...new Map((event?.journal?.applications ?? []).map((a) => [a.obligation.obligationKey, a.obligation])).values()];
+      // An R12 posted unapplied pays no debt itself; its answer (Dr RP, Cr AR) names the debt later.
+      if (debts.length === 0) continue;
       if (debts.length !== 1) return { problem: `cash event ${eventKey} pays ${debts.length} refund debts, not one` };
       return obligationComponent(debts[0], eventKey);
     }
-    return { problem: `no cash event is posted for ${cash.keys.join(" or ")}` };
+    return { problem: `no cash event posted for ${cash.keys.join(" or ")} pays a refund debt` };
   }
   const chained = door.refundRequestId ? { scope: "refund-request" as const, id: door.refundRequestId }
     : door.reviewTaskId ? { scope: "review" as const, id: door.reviewTaskId } : null;
