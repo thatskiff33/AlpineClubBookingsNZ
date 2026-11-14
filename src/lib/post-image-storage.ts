@@ -6,6 +6,11 @@ import path from "node:path";
 
 import sharp from "sharp";
 
+import {
+  SHARP_MAX_INPUT_PIXELS,
+  SHARP_WEBP_QUALITY,
+} from "@/lib/image-derivatives";
+
 /**
  * Where message-board images live on disk (epic #2992).
  *
@@ -64,20 +69,16 @@ export const MAX_POST_IMAGE_BYTES = 8 * 1024 * 1024;
 /** Most a single post may carry. */
 export const MAX_POST_IMAGES = 6;
 
-/**
- * Decode ceiling, in pixels.
- *
- * A decompression bomb is a small file that expands to an enormous bitmap; the
- * byte cap above does nothing about it because the FILE is tiny. sharp refuses
- * past this before allocating.
- */
-const MAX_INPUT_PIXELS = 50_000_000;
+// Decode ceiling and WebP quality are shared with the Image Manager's website
+// copies (#4935): one constant set for every sharp pipeline that publishes
+// user images, so a decode-bomb limit cannot be loosened in one place only.
+const MAX_INPUT_PIXELS = SHARP_MAX_INPUT_PIXELS;
 
 /** Longest edge kept. A board photo does not need to be a 48-megapixel one. */
 const MAX_WIDTH = 2000;
 const MAX_HEIGHT = 2000;
 
-const WEBP_QUALITY = 82;
+const WEBP_QUALITY = SHARP_WEBP_QUALITY;
 
 /** Everything is re-encoded, so this is the type of every STORED image. */
 export const STORED_POST_IMAGE_MIME = "image/webp";
