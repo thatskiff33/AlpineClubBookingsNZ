@@ -246,7 +246,8 @@ export const NON_RETRYABLE_EMAIL_LOG_TEMPLATES: ReadonlySet<string> = new Set([
 /**
  * Unmuteable admin alerts whose OWNER sends them again when no recipient
  * received them (#4669): the settlement marker (#4446), and Stripe's redelivery
- * for the two Stripe payment alerts (#4647, `INV-INT-032`, `INV-INT-033`).
+ * for the two Stripe payment alerts (#4647, `INV-INT-032`, `INV-INT-033`) and
+ * the Stripe dispute alert (#4911, `INV-PAY-154`).
  *
  * They always keep their bodies (`shouldPersistEmailHtml` reads this set first),
  * so the email retry cron replays the one copy a recipient lost while another
@@ -263,6 +264,7 @@ export const CALLER_RETRIED_ALERT_TEMPLATES: ReadonlySet<string> = new Set([
   "admin-bank-transfer-settlement-figure",
   "admin-unrecognised-stripe-payment",
   "admin-unmatched-app-stripe-payment",
+  "admin-stripe-dispute",
 ]);
 
 export function isCallerRetriedAlertTemplate(templateName: string): boolean {
