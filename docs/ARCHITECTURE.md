@@ -1108,7 +1108,8 @@ the three recovery-operation signals, the two stale group settlements and
 undelivered bank transfer amount alerts) name theirs only when the caller also
 passes `viewerCanViewFinance`. Each row set is read with the count's own
 `where` and capped at `STUCK_STATE_DETAIL_ROW_CAP`; the page says how many more
-there are (`INV-PAY-151`).
+there are (`INV-PAY-151`). The payment counts, their row reads and the shared
+row shape live in `src/lib/stuck-state-payment-signals.ts`.
 The page also lists the card refunds Stripe gave up on (#3372), each with its
 "Paid another way" close: the list names bookings and money still owed, so the
 page loads it only for `{ area: "finance", level: "view" }`, and the close
