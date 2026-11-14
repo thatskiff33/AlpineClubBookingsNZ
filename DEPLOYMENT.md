@@ -936,9 +936,11 @@ admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
 seasons/rates, email, Stripe, Xero). Optionally run `pnpm run setup:wizard`
 against the migrated database to bootstrap the club identity, capacity, and age
 tiers from the CLI — it writes those database settings rows (no `config/club.json`
-is written). `config/club.json` remains an optional seed/fallback only: copy
-`config/club.example.json` to `config/club.json` and edit it if you want to pin
-a boot-time fallback, but it is no longer required.
+is written). `config/club.json` remains an optional seed/fallback only, and only
+a process run from the checkout reads it (a host-run seed, or the app run
+outside Docker). The Docker app container has no `config/` folder, so editing
+the file on a Docker host changes nothing there. Copy `config/club.example.json`
+to `config/club.json` and edit it only for those cases; it is no longer required.
 
 Create or seed accounts only for the intended environment. The first admin
 from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
@@ -1905,12 +1907,12 @@ Configure webhook endpoints for the deployed domain:
 
 The SES SNS topic is env-configured (`SES_SNS_TOPIC_ARN`). The **Stripe**
 webhook signing secret is captured in-app (Admin > Integrations > Stripe) and
-stored encrypted; the `STRIPE_WEBHOOK_SECRET` env var is ignored. Rotate either
-if exposed. The **Xero** webhook key is **not**
-an env var since #2079 — it is captured in-app (Admin > Integrations) and stored
-encrypted, and the `/api/webhooks/xero` route resolves it from there and stays
-**fail-closed** (a missing/unreadable key rejects every delivery, it never
-accepts).
+stored encrypted; the `STRIPE_WEBHOOK_SECRET` env var is ignored. The **Xero**
+webhook key is **not** an env var since #2079 — it is captured in-app
+(Admin > Integrations) and stored encrypted, and the `/api/webhooks/xero` route
+resolves it from there and stays **fail-closed** (a missing/unreadable key
+rejects every delivery, it never accepts). Rotate the Stripe signing secret and
+the Xero key if either is exposed.
 
 The guided setup wizard (**Admin → Xero → Setup**, step 4 "Webhooks", #2081)
 shows the exact delivery URL to paste into Xero, captures the webhook signing

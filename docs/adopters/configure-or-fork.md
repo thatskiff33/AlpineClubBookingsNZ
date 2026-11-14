@@ -129,7 +129,7 @@ usernames, filesystem paths, server topology, or credentials.
 | --- | --- | --- |
 | We don't want this feature at all | Module toggle | [Modules](../guides/modules.md) |
 | We want it, with our own value or policy | Setting | The relevant admin area, [Setup](../guides/setup.md) |
-| We need it before an admin can log in | Install-time config | [`../../CONFIGURATION.md`](../../CONFIGURATION.md) |
+| We need the club's starting values (name, beds, age tiers) | Install-time config | [Setup](../guides/setup.md), then [`../../CONFIGURATION.md`](../../CONFIGURATION.md) |
 | The shipped starting value is wrong for everyone | Seed default | `prisma/seed.ts`, then upstream |
 | Our branding and wording | Setting | [Site Style](../guides/site-style.md), [Page Content](../guides/page-content.md) |
 | No configuration surface exists | Code change | [Contribute upstream](upstream-contributions.md) |

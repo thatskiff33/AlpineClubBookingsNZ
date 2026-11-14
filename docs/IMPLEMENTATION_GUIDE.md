@@ -23,16 +23,18 @@ for installing it).
 ## 2. Configure Club Identity
 
 Club configuration lives in the database, not in a file. After the first
-migrate and seed, sign in and set the club's identity, beds and age tiers at
-`/admin/setup` and its linked editors. Set nightly rates at `/admin/seasons`.
+migrate and seed (section 4), sign in and set the club's identity, beds and age
+tiers at `/admin/setup` and its linked editors. Set nightly rates at
+`/admin/seasons`.
 [`CONFIGURATION.md`](../CONFIGURATION.md#club-config) is the reference for what
 each layer controls.
 
 `config/club.json` is optional. Only a process run from the checkout reads it,
 such as a host-run seed or `pnpm run dev`. On the Docker path in section 4 the
 app container holds no `config/` folder, so the seed run inside it fills in
-placeholder values ("Example Mountain Club", 20 beds, default rates). Check and
-correct each one in `/admin/setup` before opening bookings.
+placeholder values ("Example Mountain Club", 20 beds, default rates). Check
+each one from `/admin/setup` (rates are edited at `/admin/seasons`) and correct
+it before opening bookings.
 
 Keep all money values in cents. Keep booking dates as New Zealand date-only
 lodge nights unless you intentionally rework the booking model.
@@ -49,12 +51,12 @@ For a guided config pass, run:
 pnpm run setup:wizard
 ```
 
-Run it against the migrated database. The wizard writes the same settings rows
-as the admin editors (identity, time zone, capacity and age tiers), writes no
-files and does not set rates. Before the database is migrated it writes nothing
-and points you at `/admin/setup`. Keep provider keys, OAuth secrets, SMTP
-credentials, and deployment secrets in environment variables, your deployment
-secret store, or the in-app integration wizards.
+Run it against the migrated database from section 4. The wizard writes the same
+settings rows as the admin editors (identity, time zone, capacity and age
+tiers), writes no files and does not set rates. Before the database is migrated
+it writes nothing and points you at `/admin/setup`. Keep provider keys, OAuth
+secrets, SMTP credentials, and deployment secrets in environment variables, your
+deployment secret store, or the in-app integration wizards.
 
 After the first administrator can sign in, the club name, short name, and
 hut-leader label can also be overridden at runtime from Admin > Appearance >
