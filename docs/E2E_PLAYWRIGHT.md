@@ -246,8 +246,9 @@ providers, and `scripts/e2e-stack.sh` refuses to run if it sees `sk_live`/
   `DEMO_SEED_PASSWORD`.
 - Personas: the suite signs in as `alice@demo.alpineclub.test` (PAID
   subscription; books and pays), `bob@demo.alpineclub.test` (drives TOTP
-  two-factor enrollment), and `evan@demo.alpineclub.test` (drives email-code
-  two-factor enrollment). TOTP secrets and recovery codes captured during
+  two-factor enrollment), `evan@demo.alpineclub.test` (drives email-code
+  two-factor enrollment) and `pip-passkey@demo.alpineclub.test` (enrols a
+  passkey). TOTP secrets and recovery codes captured during
   enrollment are stored under `e2e/.auth/` (gitignored) and cleared at the
   start of each run; the email-code persona needs no stored secret because its
   code is read live from mailpit each time.
@@ -589,7 +590,7 @@ two mechanisms below**, and in four of the five a *single* transient failure was
 turned into three by the retry policy. Neither mechanism is a "timing" problem,
 so neither is fixed by a longer timeout, an extra retry, or a `waitForTimeout`.
 The third invariant — no fixed dates — is the standing rule that stops a further
-class from joining them; invariants 4–6 were learned from later flakes.
+class from joining them; invariants 4–7 were learned from later flakes.
 
 ### 1. Retries re-run against the database the failed attempt left behind
 
@@ -1022,6 +1023,22 @@ Two rules follow:
   wizard specs await `wizardCursorSave` (`e2e/helpers/wizard-cursor.ts`)
   before pressing Connect, because the post-OAuth page resumes on the stored
   step.
+
+### 7. A spec must not consume a seeded precondition another spec asserts (issue #5160)
+
+Each CI shard has its own database, but spec files are dealt to shards by
+duration, so adding one spec can move two others into the same shard and
+change their order. `two-factor-login.spec.ts` asserts that Bob has never
+enrolled a second factor. `passkey-second-factor.spec.ts` signed Bob in, which
+enrolled him, and when a reshuffle ran it first the TOTP spec failed all three
+attempts.
+
+If a spec asserts a seeded starting state, no other spec may change it. A spec
+that needs the same starting state gets its own seeded persona or creates its
+own account (`two-factor-navigation.spec.ts`), and the persona's comment in
+`e2e/helpers/personas.ts` says which spec owns it. The passkey spec now signs
+in as Pip (`PASSKEY_ENROLLEE`). Test this by running the two specs in both
+orders against one fresh seed.
 
 ### What is deliberately NOT the fix
 
