@@ -42,8 +42,10 @@ import {
   refundPaymentTransactions,
   reserveCardRefundAttempt,
   upsertPaymentIntentTransaction,
+  planCardRefundFromLedger,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 // #3372: the one plan parser, shared with the "Refunds owed" net-out.
 import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { checkCardRefundResend, holdSupersededRowSizedOnAnotherRefund, preflightCardRefundResend, UnattributedCardRefundBeforeResendError } from "@/lib/card-refund-resend-preflight";
@@ -89,7 +91,7 @@ import { replayNotingEachRefund } from "@/lib/card-refund-own-note";
 import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-refund-credit-note";
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
 import { supersededMachineryOwnsCapture } from "@/lib/superseded-capture-ownership";
-import { compareLedgerRowsNewestFirst, LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -2212,65 +2214,77 @@ async function processBookingModificationRefundOperation(
   if (plan) plan = preflightPlan;
 
   if (!plan) {
-    // Preflight records refunds from other doors. Size a new plan on that
-    // committed balance, rather than the snapshot used to check Stripe (#4713).
-    const recordedPayment = await readPayment();
-    if (!recordedPayment) {
-      throw new Error(`Payment ${operation.paymentId} not found after refund preflight`);
-    }
-    const refundableTransactions = recordedPayment.transactions
-      .filter((transaction) =>
-        isCapturedTransactionStatus(transaction.status),
-      )
-      .filter(
-        (transaction) =>
-          transaction.amountCents - transaction.refundedAmountCents > 0,
-      )
-      .sort(compareLedgerRowsNewestFirst); // #4132 (INV-PAY-133): a tie's last-inserted row first
-
-    // A capture arriving during preflight has no checked Stripe evidence yet.
-    // Retry with that charge included, rather than freezing an unchecked slice.
-    const checkedChargeIds = new Set(preflightPlan.map((slice) => slice.paymentTransactionId));
-    if (refundableTransactions.some((transaction) =>
-      transaction.source === PaymentSource.STRIPE && !checkedChargeIds.has(transaction.id),
-    )) {
-      throw new Error("Refundable charges changed during refund preflight; retry before planning");
-    }
-
-    const refundableCents = refundableTransactions.reduce(
-      (sum, transaction) =>
-        sum + (transaction.amountCents - transaction.refundedAmountCents),
-      0,
-    );
-
-    const outstandingCents = Math.min(operation.amountCents, refundableCents);
-
-    if (outstandingCents <= 0) {
-      await completePaymentRecoveryOperation(operation);
-      return;
-    }
-
-    let remainingCents = outstandingCents;
-    plan = [];
-    for (const transaction of refundableTransactions) {
-      if (remainingCents <= 0) break;
-      const sliceCents = Math.min(
-        remainingCents,
-        transaction.amountCents - transaction.refundedAmountCents,
-      );
-      plan.push({
-        paymentTransactionId: transaction.id,
-        amountCents: sliceCents,
+    // Preflight records refunds from other doors. Size a missing plan on a fresh
+    // read under the Payment row, with the superseded-capture hold-back (#4872).
+    // Only a captured Stripe charge can be frozen: this executor refunds those,
+    // and skipping a held-back charge must not fall through onto a bank row.
+    // A stored plan is never rewritten. Hold-back that would shrink what the
+    // card ledger could otherwise send keeps the debt for a retry; a shortfall
+    // caused only by refunds already recorded still closes or stores that smaller plan.
+    const derived = await prisma.$transaction(async (tx) => {
+      await lockPaymentForRefundedTotal(tx, operation.paymentId);
+      const recordedPayment = await tx.payment.findUnique({
+        where: { id: operation.paymentId },
+        include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } },
       });
-      remainingCents -= sliceCents;
-    }
+      if (!recordedPayment) {
+        throw new Error(`Payment ${operation.paymentId} not found after refund preflight`);
+      }
+      const capturedWithHeadroom = recordedPayment.transactions.filter((transaction) =>
+        isCapturedTransactionStatus(transaction.status) &&
+        transaction.amountCents - transaction.refundedAmountCents > 0,
+      );
+      // The executor can refund only these (`refundPaymentTransactions`).
+      const refundableTransactions = capturedStripeTransactions(capturedWithHeadroom);
 
-    // Persist the plan before any Stripe call: if the process dies mid-refund
-    // the retry replays these exact slices instead of re-deriving.
-    await prisma.paymentRecoveryOperation.update({
-      where: { id: operation.id },
-      data: { allocationPlan: plan as unknown as Prisma.InputJsonValue },
+      // A capture arriving during preflight has no checked Stripe evidence yet.
+      // Retry with that charge included, rather than freezing an unchecked slice.
+      const checkedChargeIds = new Set(preflightPlan.map((slice) => slice.paymentTransactionId));
+      if (capturedWithHeadroom.some((transaction) =>
+        transaction.source === PaymentSource.STRIPE && !checkedChargeIds.has(transaction.id),
+      )) {
+        throw new Error("Refundable charges changed during refund preflight; retry before planning");
+      }
+
+      const heldBack = await readSupersededCaptureHeldBack(tx, operation.paymentId);
+      // The shared card planner (`planCardRefundFromLedger`, INV-SSOT): the same
+      // newest-first slices, and so the same Stripe keys, as every other door.
+      const cardPlan = planCardRefundFromLedger(recordedPayment.transactions, operation.amountCents, heldBack.byTransaction);
+      const derivableWithoutHoldBack = refundableTransactions.reduce(
+        (sum, transaction) => sum + transaction.amountCents - transaction.refundedAmountCents, 0);
+      const wouldSendCents = Math.min(operation.amountCents, derivableWithoutHoldBack);
+      const canSendCents = cardPlan.plannedAmountCents;
+      if (canSendCents < wouldSendCents) {
+        throw new Error("A live superseded capture still owns part of this refund; retry before planning");
+      }
+      const nonCardHeadroom = capturedWithHeadroom.reduce((sum, transaction) =>
+        transaction.source === PaymentSource.STRIPE
+          ? sum
+          : sum + transaction.amountCents - transaction.refundedAmountCents, 0);
+      // A bank row still holding money is not a card slice and not a
+      // recorded-refund shortfall. If the card plan would fall short of what the
+      // payment still holds because of it, leave the whole debt for a retry
+      // rather than freezing (or closing on) a smaller card plan.
+      if (nonCardHeadroom > 0 && canSendCents < Math.min(operation.amountCents, derivableWithoutHoldBack + nonCardHeadroom)) {
+        throw new Error("A missing card-refund plan cannot be frozen onto a non-card charge; retry before planning");
+      }
+      if (canSendCents <= 0) {
+        await completePaymentRecoveryOperation(operation, { store: tx });
+        return null;
+      }
+
+      const slices = cardPlan.slices;
+
+      // Persist the plan before any Stripe call: if the process dies mid-refund
+      // the retry replays these exact slices instead of re-deriving.
+      await tx.paymentRecoveryOperation.update({
+        where: { id: operation.id },
+        data: { allocationPlan: slices as unknown as Prisma.InputJsonValue },
+      });
+      return slices;
     });
+    if (!derived) return;
+    plan = derived;
   }
 
   // #4083 (`INV-PAY-128`): a slice Stripe refused fails the attempt, retried under a fresh key.

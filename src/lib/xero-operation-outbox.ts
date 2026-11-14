@@ -80,6 +80,8 @@ import {
 } from "@/lib/xero-resolved-in-xero-fences";
 import { createXeroSupplementaryInvoice } from "@/lib/xero-supplementary-invoices";
 import { createXeroKeptLateCaptureInvoice } from "@/lib/xero-kept-late-capture-invoice";
+import { createXeroCardRefundReversalInvoice } from "@/lib/xero-card-refund-reversal-invoice";
+import { XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE } from "@/lib/xero-card-refund-reversal-outbox";
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
 import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
@@ -1005,9 +1007,9 @@ export async function enqueueXeroRefundCreditNoteOperation(
           `Refusing to queue a Xero refund note for payment ${paymentId}: its bank record ${options.paidAnotherWayTaskId} (a paid-another-way close, a shortfall, a re-confirmed refund or a completed hand-back) is not on this payment`
         );
       }
-      // #4104 review (MM2, ML1): never more than the caller asks for - a close
-      // of a refund Stripe failed later asks only for what the card refund
-      // note already in Xero does not answer (`queuePaidAnotherWayXero`).
+      // Never more than the caller asks for. A covered failed-later close asks
+      // for the whole amount (`INV-PAY-151`); the record no longer stores a
+      // card-note cover that would shrink it.
       noteAmountCents = Math.min(refundAmountCents, share.uncoveredCents);
     } else if (options?.cardRefundId) {
       // #4312 (`INV-ADDPAY-047`): sized by the refund alone, never the payment-wide gap.
@@ -3175,6 +3177,9 @@ export async function processQueuedXeroOutboxOperations(options?: {
           syncOperation: claimed,
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
         });
+      } else if (payload?.queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE) {
+        // #4369: a failed card refund's money back in the Stripe account.
+        await createXeroCardRefundReversalInvoice({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });
       } else if (payload?.queueType === XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE) {
         // #3953: a change's card capture nothing waited on, recorded against the invoice billing it.
         await recordAdditionalCaptureReceipt({ syncOperation: claimed, createdByMemberId: queuedOperation.createdByMemberId ?? undefined });

@@ -123,7 +123,7 @@ describe("admin drill-down BackLink conversions (client-gated)", () => {
       vi.fn(async () => ({ ok: true, json: async () => ({}) })),
     );
     const MemberMergePage = (
-      await import("@/app/(admin)/admin/members/[id]/merge/page")
+      await import("@/app/(admin)/admin/membership/members/[id]/merge/page")
     ).default;
 
     await act(async () => {
@@ -148,7 +148,7 @@ describe("admin drill-down BackLink conversions (client-gated)", () => {
       vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) })),
     );
     const MemberDetailPage = (
-      await import("@/app/(admin)/admin/members/[id]/page")
+      await import("@/app/(admin)/admin/membership/members/[id]/page")
     ).default;
 
     await act(async () => {
