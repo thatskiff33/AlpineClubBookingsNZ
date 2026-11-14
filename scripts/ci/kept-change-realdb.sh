@@ -21,6 +21,7 @@ files=(
   src/lib/__tests__/kept-change-capture-record.realdb.test.ts
   src/lib/__tests__/superseded-ask-invoice-carry.realdb.test.ts
   src/lib/__tests__/additional-capture-receipt.realdb.test.ts
+  src/lib/__tests__/additional-capture-receipt-legs.realdb.test.ts
   src/lib/__tests__/primary-invoice-edit-race.realdb.test.ts
   src/lib/__tests__/unpaid-edit-change-fee-owed.realdb.test.ts
   src/lib/__tests__/edit-quoted-figures.realdb.test.ts

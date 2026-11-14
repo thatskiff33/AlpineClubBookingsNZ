@@ -392,6 +392,8 @@ import "./primary-invoice-edit-race.realdb.test";
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3953-` fixtures.
 import "./additional-capture-receipt.realdb.test";
 import "./additional-capture-receipt-sweep-retry.realdb.test";
+// #4434: a receipt split across invoices, sent and retried leg by leg.
+import "./additional-capture-receipt-legs.realdb.test";
 // #3953 round 7: a change capture whose ledger row carries no change stamp - a
 // review charge (read to its change by its reason) or an older member ask (the
 // booking's lock, taken before the anchor's) - still has one recorder. Skipped
