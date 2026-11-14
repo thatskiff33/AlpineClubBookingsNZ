@@ -44,6 +44,7 @@ import {
 } from "@/lib/email";
 import { requestPartnerLink } from "@/lib/member-partner-link";
 import { POST as createGroup } from "@/app/api/members/family/create-group/route";
+import { DATE_OF_BIRTH_INVALID_MESSAGE } from "@/lib/date-only-schema";
 
 const mockedAuth = vi.mocked(auth);
 
@@ -320,10 +321,11 @@ describe("POST /api/members/family/create-group", () => {
     expect(body.error).toMatch(/yourself/i);
   });
 
+  // Caught at the schema (ALP-574), before any member/request lookup: a
+  // non-existent day such as Feb 31 never reaches the route's own
+  // parseDateOnly NaN check, let alone `prisma.$transaction`.
   it("rejects an impossible child date of birth", async () => {
     mockedAuth.mockResolvedValue(adultSession);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue(groupLessRequester() as any);
-    vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue(null);
 
     const res = await createGroup(
       makeRequest({
@@ -332,7 +334,23 @@ describe("POST /api/members/family/create-group", () => {
     );
     expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.error).toMatch(/real calendar date/i);
+    expect(body.details.children).toEqual([DATE_OF_BIRTH_INVALID_MESSAGE]);
+    expect(prisma.member.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("requires a child date of birth rather than accepting an empty string (ALP-574)", async () => {
+    mockedAuth.mockResolvedValue(adultSession);
+
+    const res = await createGroup(
+      makeRequest({
+        children: [{ firstName: "Sam", lastName: "Smith", dateOfBirth: "" }],
+      })
+    );
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.details.children).toEqual(["Date of birth is required"]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it("rejects a future child date of birth", async () => {

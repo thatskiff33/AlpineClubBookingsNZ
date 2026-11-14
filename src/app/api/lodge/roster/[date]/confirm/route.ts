@@ -7,8 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { lockRosterEligibilityMutation } from "@/lib/roster-lock";
-
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const allocationSchema = z.object({
   choreTemplateId: z.string().min(1),
@@ -42,7 +41,7 @@ export async function POST(
   if (tier !== "admin" && tier !== "hut-leader") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!dateSchema.safeParse(dateStr).success) {
+  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 

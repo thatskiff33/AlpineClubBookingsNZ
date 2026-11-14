@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth, kioskLodgeAuthErrorResponse, resolveKioskLodgeId } from "@/lib/lodge-auth";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
-
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /**
  * GET /api/lodge/roster/[date]/chores
@@ -29,7 +27,7 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!dateSchema.safeParse(dateStr).success) {
+  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 

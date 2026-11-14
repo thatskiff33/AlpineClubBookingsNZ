@@ -45,6 +45,7 @@ import {
   grantSelfDietaryAccess,
   readMemberDietaryRequirements,
 } from "@/lib/member-dietary";
+import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -54,9 +55,7 @@ const profileSchema = z.object({
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(15).optional().nullable(),
-  dateOfBirth: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+  dateOfBirth: dateOfBirthStringSchema
     .optional()
     .nullable()
     .or(z.literal("")),

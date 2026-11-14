@@ -122,15 +122,19 @@ describe("the payments list's applied-query vocabulary", () => {
   });
 
   it("agrees with the schema about which date strings are applied", () => {
-    for (const date of ["2026-08-01", "2026-13-45"]) {
-      // Both accept a well-shaped string without a calendar check — mirroring
-      // the schema means mirroring that too, not improving on it.
-      expect(
-        adminPaymentsQuerySchema.safeParse({ lastUpdatedFrom: date }).success,
-      ).toBe(true);
-      expect(isAppliedPaymentsDate(date)).toBe(true);
-    }
-    for (const date of ["13-45-2026", "2026-8-1", "", "2026-08-01T00:00:00Z"]) {
+    expect(
+      adminPaymentsQuerySchema.safeParse({ lastUpdatedFrom: "2026-08-01" }).success,
+    ).toBe(true);
+    expect(isAppliedPaymentsDate("2026-08-01")).toBe(true);
+    // Both refuse a well-shaped string that names no real day (ALP-574).
+    for (const date of [
+      "2026-13-45",
+      "2026-02-30",
+      "13-45-2026",
+      "2026-8-1",
+      "",
+      "2026-08-01T00:00:00Z",
+    ]) {
       expect(
         adminPaymentsQuerySchema.safeParse({ lastUpdatedFrom: date }).success,
       ).toBe(false);

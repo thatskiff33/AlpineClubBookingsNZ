@@ -31,6 +31,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
 import { POST as requestChild } from "@/app/api/members/family/request-child/route";
+import { DATE_OF_BIRTH_INVALID_MESSAGE } from "@/lib/date-only-schema";
 
 const mockedAuth = vi.mocked(auth);
 
@@ -119,6 +120,9 @@ describe("POST /api/members/family/request-child", () => {
     expect(JSON.stringify(body)).toMatch(/date/i);
   });
 
+  // Caught at the schema (ALP-574), before the requester is even looked up:
+  // a non-existent day such as Feb 31 never reaches the route's own
+  // parseDateOnly NaN check.
   it("rejects impossible dateOfBirth", async () => {
     mockedAuth.mockResolvedValue(adultSession);
     const res = await requestChild(makeRequest({
@@ -126,7 +130,9 @@ describe("POST /api/members/family/request-child", () => {
     }));
     expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.error).toMatch(/real calendar date/i);
+    expect(body.details.dateOfBirth).toEqual([DATE_OF_BIRTH_INVALID_MESSAGE]);
+    expect(prisma.member.findUnique).not.toHaveBeenCalled();
+    expect(prisma.familyGroupJoinRequest.create).not.toHaveBeenCalled();
   });
 
   it("rejects future dateOfBirth", async () => {
