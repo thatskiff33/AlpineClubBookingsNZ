@@ -74,7 +74,6 @@ import Link from "next/link";
 import { cn, formatCents } from "@/lib/utils";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminLoadError } from "@/components/admin/admin-load-error";
-import { formatAdminListRange } from "@/lib/admin-list-page";
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import {
@@ -1479,7 +1478,7 @@ export default function PaymentsPage() {
         page={page}
         totalPages={totalPages}
         onPageChange={setPage}
-        summary={formatAdminListRange({ page, pageSize, total })}
+        summary={`Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}`}
       />
     </div>
   );
