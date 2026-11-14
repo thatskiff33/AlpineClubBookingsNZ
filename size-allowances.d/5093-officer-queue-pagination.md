@@ -7,7 +7,9 @@ live once in `use-admin-queue-page.ts`, `admin-pagination.tsx`,
 `pinned-queue-record-note.tsx` and `admin-list-page.ts`. What stays in each
 screen is its own wiring: which filter resets the page, which URL keys it
 writes, and where the pager sits. Two other files that would have crossed
-their budget for the first time were cut back under it instead.
+their budget for the first time were cut back under it instead. The function
+entries further down are the same growth measured per component, because the
+size gate now also judges functions over 300 lines (#4927).
 
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
 lines: 982
