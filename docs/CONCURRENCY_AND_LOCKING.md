@@ -2288,6 +2288,25 @@ mispricing a booking.
   the store-failure fallback are unit-tested against a mocked client
   (`login-throttle.test.ts`), not on PostgreSQL.
 
+- **Second-factor member row** — `src/lib/officer-factor-reset.ts`
+  (`lockMemberFactorRow`, #4618, `INV-AUTH-012`): one
+  `SELECT 1 FROM "Member" WHERE "id" = … FOR UPDATE`, taken first and followed
+  by a re-read. The officer factor reset (`clearMemberSecondFactors`, from the
+  Full Admin route and `pnpm run auth:reset-factors`) takes it, clears every
+  factor and stamps `factorsResetAt` and `sessionsRevokedAt` (and, for a
+  required officer, a missing grace stamp, in the same `UPDATE`). Each enrolment
+  writer (`enrollTwoFactor`, `replaceRecoveryCodes`,
+  `verifyPasskeyRegistration`) takes it through `assertEnrolmentNotSuperseded`
+  and refuses a session issued before the reset. `deletePasskey` takes it
+  before counting what would remain, so two deletes cannot both remove a
+  required officer's last factors. Either order leaves no factor the old
+  session added. No advisory key and no other row lock in those transactions,
+  so INV-LOCK-001 and INV-LOCK-002 are not engaged; the grace start is a
+  separate set-if-null `UPDATE` with no lock. Proved on PostgreSQL by
+  `officer-two-factor.realdb.test.ts` (one grace stamp; a reset closes a
+  required officer's grace and leaves an ordinary member's first grace owed;
+  reset racing an enrolment).
+
 - **Member photo writer** — `src/app/api/members/[id]/photo/route.ts` (epic #171):
   the upload (POST) and remove (DELETE) transactions each take
   `$executeRaw`SELECT 1 FROM "Member" WHERE "id" = $1 FOR UPDATE`` and then read
@@ -5927,6 +5946,21 @@ queued) or waits until the email call finishes and then commits its VOID debt.
 No invoice construction, contact lookup, create, or VOID provider call is held
 inside that transaction.
 
+The bound is enforced, not assumed (#4919, `INV-INT-003`): one `emailInvoice`
+attempt with zero in-lock retries (no rate-limit sleep under the lock) and a
+3 s client deadline, in a transaction with an explicit 10 s timeout. Prisma's
+timeout counts the wait for `lock(1)`, so the send starts only while the
+deadline plus a 2 s commit margin still fits; otherwise it is not attempted.
+If the wait for `lock(1)` or a connection outlasts the 10 s timeout itself
+(another holder on a longer budget), Prisma refuses the fence with P2028 and
+nothing is attempted either. A missed deadline, a 429, a 408 or 5xx, a provider
+cooldown, a late start or that contention leaves the email owed: the fence
+commits at once, the CREATE row keeps an owed marker in `responsePayload` and
+returns to PENDING under `GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED`, and the
+outbox asks again a minute later through the same fence, re-running every
+in-lock check, with the same idempotency key. Usage rows for the call are
+written after the fence, not on a second connection inside it.
+
 A settlement waiting on its combined invoice is bound to it (`INV-PAY-105`,
 #3642). Every writer that could change it re-reads the settlement under the
 same `lock(1)`: the child-commit transaction (a card attempt is refused before
@@ -7375,6 +7409,32 @@ reduction commit (gap invoice, treasurer task); an edit paused right after its
 claim, with the create's real link save seen queued behind it (by
 `pg_blocking_pids`) and, once the edit commits, reading its worth back; and an
 edit queued behind a held link save, refused.
+
+## A Stripe dispute's record (#4911)
+
+A `charge.dispute.*` event (`INV-PAY-154`) keeps one `StripeDispute` row per
+Stripe dispute id (`recordStripeDispute`, `src/lib/stripe-dispute.ts`):
+
+- **Claim.** The charge's PaymentIntent is read from Stripe first, outside any
+  transaction. The row is then inserted with `createMany` and
+  `skipDuplicates` on the unique dispute id, so two first deliveries insert one
+  row.
+- **Merge.** Each event then locks that row alone (`SELECT 1 … FOR NO KEY
+  UPDATE`, the strength its UPDATE takes), re-reads it and merges the event's
+  snapshot. An event older than the one already applied changes no status;
+  the withdrawn and reinstated sums only grow. No advisory key, no other lock:
+  the writer touches no booking, payment, credit or capacity row.
+- **Alerts** are once-ever claims (`sendAdminAlertOnceEverWithTakeover`) sent
+  after the merge commits, outside the row lock.
+- **Readers.** Every card-refund door (`processRefund`,
+  `refundPaymentTransactions`) and the paid cancel read the holding disputes
+  through `disputedCaptureCents`, without locking the dispute row; the cancel
+  reads them inside its claim, after its own locks. A dispute recorded just
+  after a cancel's read is not seen by that cancel: its card refund is then
+  stopped at `processRefund`, which re-reads before every Stripe call, and the
+  recovery row is handed to the treasurer (`unretryableRecoveryCause`). An
+  account credit committed in that window stays, and the dispute's Finance
+  alert is what tells the treasurer to check it.
 
 ## Stripe refund-note link repair: deliberately lock-free (#2901)
 

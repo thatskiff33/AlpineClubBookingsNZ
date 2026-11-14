@@ -7,7 +7,7 @@ import type { Instant } from "@/lib/club-time";
 import { eachDateOnlyInRange } from "@/lib/date-only";
 import type { EmailMessageSettings } from "@/lib/email-message-settings";
 import { resolveBookingSelfRemovalCard } from "@/lib/booking-guest-self-removal";
-import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
+import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import {
   resolveBookingConsentCard,
   type MemberGuestConsentBadgeAudience,

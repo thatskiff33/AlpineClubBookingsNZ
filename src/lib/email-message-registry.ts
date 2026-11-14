@@ -1,5 +1,6 @@
 import { LATE_CAPTURE_REFUNDED_OUTSIDE_APP_NOTE } from "@/lib/late-capture-outside-app-note";
 import { UNMATCHED_APP_LEDGER_MATCH_LABEL, UNMATCHED_APP_STRIPE_PAYMENT_NOTE, UNRECOGNISED_STRIPE_PAYMENT_NOTE } from "@/lib/unrecognised-stripe-payment-note";
+import { STRIPE_DISPUTE_HOLD_NOTE, STRIPE_DISPUTE_NEXT_STEP, stripeDisputeSubjectLabel } from "@/lib/stripe-dispute-note";
 import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
@@ -143,6 +144,9 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-unrecognised-stripe-payment",
   // #4624: the app's own booking payment that matches no payment record.
   "admin-unmatched-app-stripe-payment",
+  // #4911: a cardholder's dispute (chargeback) of a card payment, when it opens
+  // and when it closes. Same audience, sender and lock.
+  "admin-stripe-dispute",
   "admin-pending-deadline",
   "admin-booking-bumped",
   "admin-capacity-warning",
@@ -245,6 +249,9 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-unrecognised-stripe-payment",
   // #4624: the same lock - a member was charged and the booking does not show it.
   "admin-unmatched-app-stripe-payment",
+  // #4911: the same lock - Stripe took the money back outside the app, nothing
+  // reaches Xero, and a dispute nobody answers in time is lost.
+  "admin-stripe-dispute",
   // #3638: the same lock for the same reason as #2774 — this alert says the
   // club may hold the price twice (a card payment and a Xero payment on one
   // booking), and nothing is refunded or credited automatically, so muting it
@@ -548,6 +555,7 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "joinerName", "changeSummary", "additionalAmount", "xeroInvoiceNumber",
   ],
   "password-reset": ["token"],
+  "officer-factor-reset": ["firstName"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
   // #2034: the tokenised /login/magic?token=<token> link is the essential body
@@ -705,6 +713,9 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "admin-unrecognised-stripe-payment": ["amount", "paymentIntentId", "unrecognisedPaymentNote"],
   // #4624: {{unmatchedAppPaymentNote}} says the money is the booking's and what to do.
   "admin-unmatched-app-stripe-payment": ["amount", "bookingId", "paymentIntentId", "unmatchedAppPaymentNote"],
+  // #4911: {{disputeNextStep}} says what to do for this stage and outcome, and
+  // {{disputeHoldNote}} that the app holds the payment's refunds and credits.
+  "admin-stripe-dispute": ["amount", "bookingId", "outcome", "disputeNextStep", "disputeHoldNote"],
   // #2774: {{handBackConflictNote}} is the whole message - it is the sentence
   // that says whether the money went out or was withheld. An override that drops
   // it turns a reconciliation notice into an unexplained mention of a booking, on
@@ -831,6 +842,9 @@ const REQUIRED_SUBJECT_TEMPLATE_TOKENS: Partial<
   "admin-late-capture-hand-back-conflict": ["handBackConflictLabel"],
   // #4042: a stored subject naming one situation would title the other's alert.
   "admin-manual-refund-task": ["handBackLabel"],
+  // #4911: one template for a dispute opening and closing; a stored subject
+  // naming one would title the other.
+  "admin-stripe-dispute": ["disputeSubjectLabel"],
 };
 
 /**
@@ -886,6 +900,11 @@ const FORBIDDEN_SUBJECT_PHRASES: Partial<
 const TEMPLATE_TRIGGER_METADATA: Partial<
   Record<EmailAuditTemplateName, { triggerSummary: string; frequency: string }>
 > = {
+  "officer-factor-reset": {
+    triggerSummary:
+      "A Full Admin, or the operator break-glass command, cleared this member's authenticator app and passkeys",
+    frequency: "Each time that reset commits",
+  },
   "admin-daily-digest": {
     triggerSummary: "Scheduled admin alert summary",
     frequency: "Daily at the configured cron time",
@@ -1040,6 +1059,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
       "A card payment the app started for a booking succeeded in Stripe, but no payment the app holds on that booking matches it, so the booking was not marked paid and nothing was sent to Xero",
     frequency:
       "Once ever per Stripe payment - claim-guarded; a send nobody received is retried by Stripe's redelivery of the payment's notification, and a copy one recipient missed while another got it is re-sent by the email retry job",
+  },
+  "admin-stripe-dispute": {
+    triggerSummary:
+      "A cardholder disputed a card payment with their bank (a chargeback), or a dispute closed - won, lost or closed with no funds taken - so Stripe took or returned the money outside the app; nothing is sent to Xero",
+    frequency:
+      "Twice ever per dispute - once when it opens and once when it closes, each claim-guarded; a send nobody received is retried by Stripe's redelivery of the dispute's notification, and a copy one recipient missed while another got it is re-sent by the email retry job",
   },
   "admin-unrecognised-stripe-payment": {
     triggerSummary:
@@ -1656,6 +1681,13 @@ export function sampleValue(token: string): string {
   if (token === "unmatchedAppPaymentNote") return UNMATCHED_APP_STRIPE_PAYMENT_NOTE;
   if (token === "ledgerMatch") return UNMATCHED_APP_LEDGER_MATCH_LABEL.APP_INTENT_NO_TRANSACTION;
   if (token === "chargeId") return "ch_example";
+  // #4911: previewed as the opened alert, the one every dispute sends first.
+  if (token === "disputeSubjectLabel") return stripeDisputeSubjectLabel("opened", "open");
+  if (token === "disputeNextStep") return STRIPE_DISPUTE_NEXT_STEP.OPEN;
+  if (token === "disputeHoldNote") return STRIPE_DISPUTE_HOLD_NOTE;
+  if (token === "outcome") return "open";
+  if (token === "disputeId") return "dp_example";
+  if (token === "bookingOwner") return "Sam Member";
   if (token === "checkoutSessionId") return "cs_example";
   if (token === "paymentLinkId") return "plink_example";
   if (token === "stripeDashboardUrl") return "https://dashboard.stripe.com/payments/pi_example";
@@ -1869,6 +1901,10 @@ const TEMPLATE_SAMPLE_VALUE_OVERRIDES: Partial<
   // {{refundSentence}} sample previews.
   "group-organiser-joiner-refund": {
     refundSentence: organiserJoinerAppealRefundSentence("$123.45", "Sam Joiner"),
+  },
+  // #4911: Stripe's reason code as the sender words it, not the bare token name.
+  "admin-stripe-dispute": {
+    reason: "fraudulent",
   },
   "group-organiser-extra-invoice": {
     joinerName: "Sam Joiner",
@@ -2246,6 +2282,15 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   // #4624: the unmatched app payment's instruction, and what the app found for it.
   "unmatchedAppPaymentNote",
   "ledgerMatch",
+  // #4911: a cardholder's dispute - which alert it is, what to do, what the
+  // app holds, and the facts a treasurer finds it by in Stripe.
+  "disputeSubjectLabel",
+  "disputeNextStep",
+  "disputeHoldNote",
+  "outcome",
+  "openedAt",
+  "bookingOwner",
+  "disputeId",
   "receivedAt",
   "chargeId",
   "checkoutSessionId",
