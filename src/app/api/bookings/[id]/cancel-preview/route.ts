@@ -33,6 +33,7 @@ import {
   readPartPaymentAtCancel,
 } from "@/lib/internet-banking-part-payment-at-cancel";
 import { checkRateLimit, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
+import { disputedCaptureCents, paymentCaptureIntentIds } from "@/lib/stripe-dispute-hold";
 
 /**
  * GET /api/bookings/[id]/cancel-preview
@@ -174,6 +175,7 @@ export async function GET(
     // no longer holds money.
     const organiserCard = paidByOrganiserCard(booking) ? await organiserChildCancelBasis(prisma, booking, booking.payment) : null;
     const organiserByBank = paidByOrganiserInternetBanking(booking); // #3949: refunded to the organiser by hand, on the card tiers
+    const disputed = (await disputedCaptureCents(prisma, await paymentCaptureIntentIds(prisma, booking.payment))).cents > 0; // #4911 (`INV-PAY-154`): the cancel's own read
     const preview = calculateCancellationPreview({
       // #3643: the cash the cancel will record, not the invoice's face value.
       payment: partPayment
@@ -225,7 +227,7 @@ export async function GET(
     return NextResponse.json({
       ...preview,
       ...groupCancellation,
-      ...(await cancelPreviewCardShortfall(prisma, { payment: booking.payment, organiserCard: organiserCard !== null, organiserByBank, refundAmountCents: preview.refundAmountCents })), // #4119: the card's part as the cancel plans it
+      ...(await cancelPreviewCardShortfall(prisma, { payment: booking.payment, organiserCard: organiserCard !== null, organiserByBank, disputed, refundAmountCents: preview.refundAmountCents })), // #4119: the card's part as the cancel plans it
       hasPayment: true,
       // B5 (#2262): this booking was settled in cash / by an off-Xero bank
       // transfer, so cancelling raises a hand-back task an admin pays by hand —
@@ -234,16 +236,14 @@ export async function GET(
       // tier, which is what the executed cancel uses), so preview parity holds;
       // this flag only lets the dialog say honestly what will happen.
       manualRefund: booking.payment.manuallyMarkedPaidAt !== null,
+      ...(disputed && organiserCard === null && !organiserByBank ? { refundDisputed: true } : {}), // #4911: to the treasurer on the credit tier, as a manual settlement is
       // The method the cancel will use whatever is chosen (an internet banking
       // payment refunds as account credit), from the cancel path's own home,
       // so the dialog offers only that option.
-      refundMethodForced: cancelRefundDisposition({ paymentSource: booking.payment.source, organiserCard: organiserCard !== null, organiserByBank, manuallyMarkedPaid: booking.payment.manuallyMarkedPaidAt !== null, requested: "card" }).forced, // #3949: the cancel's own helper
+      refundMethodForced: cancelRefundDisposition({ paymentSource: booking.payment.source, organiserCard: organiserCard !== null, organiserByBank, manuallyMarkedPaid: booking.payment.manuallyMarkedPaidAt !== null, disputed, requested: "card" }).forced, // #3949: the cancel's own helper
     });
   } catch (error) {
     logger.error({ err: error }, "Error generating cancel preview");
-    return NextResponse.json(
-      { error: "Failed to generate cancellation preview" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to generate cancellation preview" }, { status: 500 });
   }
 }

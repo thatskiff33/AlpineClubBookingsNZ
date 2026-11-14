@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getAuditRequestContext } from "@/lib/audit";
+import { enrolmentSessionIssuedAt } from "@/lib/two-factor-api";
 import { verifyPasskeyRegistration } from "@/lib/webauthn";
 
 import { guardPasskeyRequest, passkeyJsonError, registrationAllowed } from "../../guard";
@@ -39,6 +40,7 @@ export async function POST(request: NextRequest) {
     name: parsed.data.name,
     actor: { kind: "member", memberId: guard.member.id },
     request: getAuditRequestContext(request),
+    sessionIssuedAt: enrolmentSessionIssuedAt(guard.session),
   });
   if (!result.ok) return passkeyJsonError(result.status, result.error);
   return NextResponse.json({ ok: true });
