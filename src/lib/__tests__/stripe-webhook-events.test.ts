@@ -17,6 +17,15 @@ describe("the Stripe webhook events the endpoint must send (#4104)", () => {
     expect(new Set(STRIPE_WEBHOOK_EVENT_TYPES).size).toBe(STRIPE_WEBHOOK_EVENT_TYPES.length);
   });
 
+  it("#4911: carries the four dispute events", () => {
+    expect(STRIPE_WEBHOOK_EVENT_TYPES).toEqual(expect.arrayContaining([
+      "charge.dispute.created",
+      "charge.dispute.funds_withdrawn",
+      "charge.dispute.funds_reinstated",
+      "charge.dispute.closed",
+    ]));
+  });
+
   it.each([...STRIPE_WEBHOOK_EVENT_TYPES])("%s has a case in processStripeWebhookEvent", (eventType) => {
     expect(service, `#4104: "${eventType}" is required of the endpoint but the dispatcher has no case for it`).toContain(`case "${eventType}":`);
   });

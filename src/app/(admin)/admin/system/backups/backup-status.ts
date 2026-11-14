@@ -1,7 +1,7 @@
 /**
  * The backups screen's API paths and the status payload they return, shared by
  * `backups-client.tsx` and `local-backup-card.tsx`. A leaf so the two cards
- * import it rather than each other (#4930, INV-SSOT-007: no import loop).
+ * import it rather than each other (#4930, INV-SSOT-008: no import loop).
  */
 
 export interface BackupRunSummary {

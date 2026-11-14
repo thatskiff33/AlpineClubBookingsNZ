@@ -14,6 +14,7 @@ import {
   getBookingProviderMismatches,
 } from "@/lib/booking-provider-mismatches";
 import type { BookingDetailRecord } from "./load-booking-detail";
+import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
 import type { BookingDetailHistory } from "./booking-detail-history";
@@ -210,7 +211,15 @@ export async function loadBookingDetailAdminTools({
         ]
       : [];
 
+  // #4911 (`INV-PAY-154`): a cardholder's dispute on this booking's capture,
+  // including a group organiser's settlement, and how it ended, read from the
+  // durable record the dispute webhooks keep. Behind the same gate as the tools card.
+  const stripeDisputes = canSeeAdminTools
+    ? ((await readDisputesByBookingId(prisma, [booking.id])).get(booking.id) ?? [])
+    : [];
+
   return {
+    stripeDisputes,
     providerMismatches,
     financialReviewWarnings,
     withheldEmails,

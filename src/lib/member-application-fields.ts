@@ -3,7 +3,7 @@
  * shapes, the parsers that read them back out of their JSON columns, and the
  * error those parsers and the application flow throw. A leaf shared by
  * `nomination.ts` and `member-application-mapping.ts`, so the two do not
- * import each other (#4930, INV-SSOT-007: no import loop).
+ * import each other (#4930, INV-SSOT-008: no import loop).
  */
 import { z } from "zod";
 import { copyStreetAddressToPostal } from "@/lib/member-address";

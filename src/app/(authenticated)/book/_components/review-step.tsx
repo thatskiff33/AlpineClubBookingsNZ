@@ -15,6 +15,7 @@ import {
   pendingMemberGuestFirstNames,
 } from "@/components/book/member-guest-preview";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CancellationScheduleBlock } from "@/components/booking/cancellation-schedule-block";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
@@ -70,6 +71,7 @@ export function ReviewStep({
   priceQuote,
   lodgeId,
   selectedLodge,
+  cancellationSchedule,
   reviewGuestPayload,
   bookingDateStrings,
   perGuestDatesEnabled,
@@ -143,6 +145,11 @@ export function ReviewStep({
   priceQuote: PriceQuote;
   lodgeId: string | null;
   selectedLodge: LodgeOption | null;
+  /**
+   * #4946: the club's current cancellation schedule rows for THIS lodge and
+   * check-in, or null when unknown (the block then shows its neutral fallback).
+   */
+  cancellationSchedule: readonly string[] | null;
   reviewGuestPayload: GuestData[];
   bookingDateStrings: { checkIn: string; checkOut: string } | null;
   perGuestDatesEnabled: boolean;
@@ -1001,6 +1008,14 @@ export function ReviewStep({
       ) : null}
 
       {waitlistOnly ? waitlistAlternateLodges : null}
+
+      {/* #4946: the refund terms sit on the screen where the member commits,
+          directly above the primary button, on every payment path. Phrased as
+          what happens once paid, never as a refund of money not yet taken. */}
+      <CancellationScheduleBlock
+        rows={cancellationSchedule}
+        lead="If you pay and later cancel, the club's current cancellation schedule for this stay refunds what you have paid as follows:"
+      />
 
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={() => setStep("guests")}>

@@ -4,7 +4,7 @@
  * their text, and the one "does this capture cover the invoice?" check. A leaf
  * shared by the late-success release (`xero-supplementary-invoice-late-capture.ts`)
  * and the retired-row revive (`xero-supplementary-invoice-revive.ts`), so the
- * two import it rather than each other (#4930, INV-SSOT-007: no import loop).
+ * two import it rather than each other (#4930, INV-SSOT-008: no import loop).
  */
 import type { PaymentStatus, Prisma } from "@prisma/client";
 import { classifyEditReviewChargeCapture } from "@/lib/xero-booking-repair-payments";

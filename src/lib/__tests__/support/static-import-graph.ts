@@ -1,6 +1,6 @@
 /**
  * The static value-import graph of production source under `src/` (#4930,
- * INV-SSOT-007).
+ * INV-SSOT-008).
  *
  * A static import is evaluated when its importer loads, so two modules that
  * import each other statically load in an order set by whichever page or cron

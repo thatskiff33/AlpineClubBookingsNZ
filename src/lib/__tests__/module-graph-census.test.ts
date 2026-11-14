@@ -10,7 +10,7 @@ import {
 } from "./support/static-import-graph";
 
 /**
- * INV-SSOT-007 (#4930): the module graph's three boundary rules.
+ * INV-SSOT-008 (#4930): the module graph's three boundary rules.
  *
  * 1. Production modules form no static value-import cycle. A loop makes load
  *    order depend on which entry point ran first, so a module-level read across
@@ -90,7 +90,7 @@ function graphWith(file: string, extra: string): ImportGraph {
   };
 }
 
-describe("module graph census (#4930, INV-SSOT-007)", () => {
+describe("module graph census (#4930, INV-SSOT-008)", () => {
   it("walks every production subtree and resolves every local import", () => {
     for (const subtree of REQUIRED_SUBTREES) {
       expect(graph.files.some((file) => file.startsWith(subtree)), subtree).toBe(true);

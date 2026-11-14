@@ -393,6 +393,8 @@ describe("modify-quote prices the stored window, not a projected one (CT-4, #287
     expect(body.priceDiffCents).toBe(0);
     expect(body.netChargeCents).toBe(0);
     expect(body.itemizedChanges).toEqual([]);
+    // #4924 (`INV-MOD-062`): the no-change answer still hands Save its figures.
+    expect(body.quotedFigures).toMatchObject({ priceDiffCents: 0, changeFeeCents: 0, netChargeCents: 0 });
   });
 
   it("still quotes a real date change, so the guard is not vacuous", async () => {

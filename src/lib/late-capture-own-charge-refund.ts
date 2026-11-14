@@ -5,6 +5,7 @@ import { captureRefundState, isCapturedTransactionStatus, isRefusedRefundStatus 
 import { refundPaymentTransactions, type RefundAllocationSlice } from "@/lib/payment-transactions";
 import { isCardRefundReservationRefusal } from "@/lib/member-money";
 import { prisma } from "@/lib/prisma";
+import { disputedCaptureRefusal } from "@/lib/stripe-dispute-hold";
 
 /**
  * #4131 (`INV-PAY-106`, `INV-PAY-110`): A LATE CAPTURE IS REFUNDED FROM ITS OWN
@@ -52,6 +53,10 @@ export function lateCaptureOwnChargeSlice(
  * Throws when the capture's row is missing or not captured (the handler wrote
  * it just before), and as `refundPaymentTransactions` does: the webhook answers
  * 500 and Stripe redelivers under the same keys.
+ * Two refusals are answered instead, since a redelivery would meet them again:
+ * a refused reservation (`reservationRefused`, #4516) and a capture the
+ * cardholder disputes (`disputeRefused`, #4911); the caller holds either for a
+ * treasurer.
  */
 export async function refundLateCaptureFromOwnCharge(params: {
   format: ClubFormat;
@@ -71,6 +76,7 @@ export async function refundLateCaptureFromOwnCharge(params: {
   }
   const { slice, shortCents } = lateCaptureOwnChargeSlice(capture, params.amountCents);
   let reservationRefused = false;
+  let disputeRefused = false;
   const refunds =
     slice.amountCents > 0
       ? await refundPaymentTransactions({
@@ -83,6 +89,11 @@ export async function refundLateCaptureFromOwnCharge(params: {
           // #4516 (M4c): the capture's return; its R05 posts in the reservation step (the webhook defers it).
           obligation: { scope: "capture-return", id: params.paymentIntentId, ensureFaceCents: slice.amountCents },
         }).then((result) => result.refunds, (error: unknown) => {
+          // #4911: a disputed capture sent nothing either; the caller holds it rather than redeliver.
+          if (disputedCaptureRefusal(error)) {
+            disputeRefused = true;
+            return [];
+          }
           // #4516: a refused reservation sent nothing; the caller holds the capture rather than redeliver.
           if (!isCardRefundReservationRefusal(error)) throw error;
           reservationRefused = true;
@@ -98,6 +109,7 @@ export async function refundLateCaptureFromOwnCharge(params: {
   return {
     refunds,
     reservationRefused,
+    disputeRefused,
     audit: {
       refundedNowCents: refunds
         .filter((refund) => !isRefusedRefundStatus(refund.status))

@@ -443,8 +443,15 @@ vi.mock("@/lib/unrecognised-stripe-payment", () => ({
   recordUnrecognisedStripePayment: (...args: unknown[]) => mockRecordUnrecognisedStripePayment(...args),
   recordUnmatchedAppStripePayment: (...args: unknown[]) => mockRecordUnmatchedAppStripePayment(...args),
 }));
+// #4911: a cardholder's dispute, recorded and alerted on its own in
+// `stripe-dispute.test.ts`; here only the dispatch reaches it.
+const mockRecordStripeDispute = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined));
+vi.mock("@/lib/stripe-dispute", () => ({
+  recordStripeDispute: (...args: unknown[]) => mockRecordStripeDispute(...args),
+}));
 
 import { POST } from "@/app/api/webhooks/stripe/route";
+import logger from "@/lib/logger";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 describe("Stripe webhook Xero alerting", () => {
@@ -5140,6 +5147,60 @@ describe("a card refund Stripe accepted and failed later (#4104)", () => {
     expect(response.status).toBe(500);
     expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ eventId: "evt_refund_failed_retry", status: "PROCESSING" }) }),
+    );
+  });
+});
+
+// #4911: every dispute event Stripe sends reaches the dispute's recorder, under the
+// same once-per-event claim as every other event, and never the unhandled branch.
+describe("a cardholder's dispute (#4911)", () => {
+  const dispute = { id: "dp_1", object: "dispute", amount: 12000, currency: "nzd", status: "needs_response", charge: "ch_1", payment_intent: "pi_1" };
+  const request = () =>
+    new NextRequest("http://localhost/api/webhooks/stripe", {
+      method: "POST",
+      headers: { "stripe-signature": "test-sig" },
+      body: JSON.stringify({}),
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockProcessedWebhookCreate.mockResolvedValue({});
+    mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 1 });
+    mockProcessedWebhookUpdateMany.mockResolvedValue({ count: 1 });
+    mockProcessedWebhookFindFirst.mockResolvedValue({ status: "COMPLETED", processingStartedAt: new Date("2020-01-01T00:00:00.000Z") });
+    mockRecordStripeDispute.mockResolvedValue(undefined);
+  });
+
+  it.each(["charge.dispute.created", "charge.dispute.funds_withdrawn", "charge.dispute.funds_reinstated", "charge.dispute.closed"])(
+    "%s hands the dispute to its recorder and is acknowledged",
+    async (type) => {
+      const event = { id: `evt_${type}`, type, data: { object: dispute } } as any;
+      mockConstructWebhookEvent.mockReturnValue(event);
+      const response = await POST(request());
+      expect(response.status).toBe(200);
+      expect(mockRecordStripeDispute).toHaveBeenCalledTimes(1);
+      expect(mockRecordStripeDispute).toHaveBeenCalledWith(dispute, event, CLUB_FORMAT_TEST);
+      expect(vi.mocked(logger.info)).not.toHaveBeenCalledWith(expect.anything(), "Unhandled Stripe event type");
+      expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+      );
+    },
+  );
+
+  it("an event outside the four never reaches the recorder", async () => {
+    mockConstructWebhookEvent.mockReturnValue({ id: "evt_dispute_updated", type: "charge.dispute.updated", data: { object: dispute } } as any);
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(mockRecordStripeDispute).not.toHaveBeenCalled();
+  });
+
+  it("a recorder whose alert was not sent releases the claim and answers 500, so Stripe sends it again", async () => {
+    mockConstructWebhookEvent.mockReturnValue({ id: "evt_dispute_retry", type: "charge.dispute.created", data: { object: dispute } } as any);
+    mockRecordStripeDispute.mockRejectedValue(new Error("alert not sent"));
+    const response = await POST(request());
+    expect(response.status).toBe(500);
+    expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ eventId: "evt_dispute_retry", status: "PROCESSING" }) }),
     );
   });
 });

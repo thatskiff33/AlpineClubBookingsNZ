@@ -43,6 +43,7 @@ import { MemberGroupCard } from "./_components/member-group-card";
 import { MemberSummaryStrip } from "./_components/member-summary-strip";
 import { MemberContactGroup } from "./_components/member-contact-group";
 import { MemberAccountAccessGroup } from "./_components/member-account-access-group";
+import { OfficerFactorResetSlot } from "./_components/officer-factor-reset-button";
 import { MemberXeroContactSummary } from "./_components/member-xero-contact-summary";
 import { MemberSubscriptionHistoryTable } from "./_components/member-subscription-history-table";
 import { MemberHistoryGroup } from "./_components/member-history-group";
@@ -915,6 +916,7 @@ export default function MemberDetailPage({
             inheritEmail={inheritEmail}
             canEdit={canEditMembership}
           />
+          <OfficerFactorResetSlot member={member} isSelf={isSelf} actorIsFullAdmin={actorIsFullAdmin} />
           <MemberLodgeAccessCard memberId={id} ancestorRendersViewOnlyBanner />
         </MemberGroupCard>
 

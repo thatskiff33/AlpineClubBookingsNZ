@@ -60,6 +60,7 @@ import {
 import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
 import { allocateAppliedCreditForBooking } from "@/lib/xero-applied-credit-allocation";
 import { scanSpacesAdminGrantNotesAwaitingRetry } from "@/lib/admin-grant-credit-note";
+import { scanSpacesGroupInvoiceEmailsDeferred } from "@/lib/xero-group-settlement-invoice-outbox";
 import { createAdminGrantCreditNote } from "@/lib/xero-admin-grant-credit-note";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
@@ -2206,8 +2207,8 @@ export async function processQueuedXeroOutboxOperations(options?: {
       queueType: {
         in: [...XERO_OUTBOX_QUEUE_TYPES],
       },
-      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`).
-      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date())],
+      // Rows waiting their turn are looked at only every few minutes, not on every kick (#3954, #3953, #4692 `INV-INT-035`); an owed group invoice email every minute (#4919).
+      AND: [outboxScanLeavesAwaitingOwnNote(new Date()), outboxScanSpacesWaitingReceipts(new Date()), scanSpacesRefundNotesAwaitingResolve(new Date()), scanSpacesAdminGrantNotesAwaitingRetry(new Date()), scanSpacesGroupInvoiceEmailsDeferred(new Date())],
     },
     // Ties on `createdAt` (same ms; all rows under the frozen clock) fall to `id`:
     // deterministic, not insertion order (#4663; STATE_MACHINES.md).

@@ -5,7 +5,7 @@
  * primary-invoice gap check and the change-capture receipt both queue through
  * here, and the outbox worker's booking-invoice handler reaches both, so while
  * this lived in the outbox the worker and its own handlers imported each other
- * in a loop (INV-SSOT-007). The outbox imports this module; nothing here imports
+ * in a loop (INV-SSOT-008). The outbox imports this module; nothing here imports
  * the outbox. The lock is the same statement on the same key, taken by the same
  * callers on the same transaction client (docs/CONCURRENCY_AND_LOCKING.md,
  * "Xero supplementary invoice per anchor").

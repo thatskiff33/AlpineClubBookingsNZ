@@ -598,7 +598,7 @@ Every caller imports the focused module that owns the behaviour. The
 `src/lib/xero.ts` compatibility facade (re-exports only) was retired in #4930:
 it hid the subsystem's real dependency graph and closed one of the money-core
 import loops. `src/lib/__tests__/module-graph-census.test.ts` fails any import
-of it, of any kind, and any static import cycle (`INV-SSOT-007`); it replaced
+of it, of any kind, and any static import cycle (`INV-SSOT-008`); it replaced
 the `eslint.config.mjs` override #1208 added for the `xero-*` modules alone.
 The facade's `import "server-only"` marker moved to `xero-api-client`, the one
 module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
@@ -669,6 +669,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | `xero-group-settlement-invoice-lines` | The combined invoice's lines, built from the settlement's committed CONFIRMED children with each joiner's promotion lines (one per code, #3828), and their total; the create worker raises nothing unless it equals the settlement's (#3642). |
 | `xero-promo-adjustment-lines` | The promotion lines of a booking invoice: one coded line per promo code, or one recorded aggregate fallback (#3828, `INV-MONEY-040`). |
 | `xero-group-settlement-invoice-voids` | The combined invoice's replayable VOIDs — after the group is cancelled (`INV-PAY-035`) and after the settlement abandons it (`INV-PAY-105`, #3642) — and the one read of that invoice's state in Xero: both VOIDs read it first, so an already-void invoice completes and one carrying money alerts instead of failing for ever. Pre-#3642 code reads an abandon VOID row as a cancellation VOID and leaves it FAILED (fails closed; retry after roll-forward). |
+| `xero-group-settlement-invoice-email` | The combined invoice's email fence under `lock(1)` (#4919): re-reads cancellation, binding, the organiser's "No emails" switch and the environment policy, then makes one bounded `emailInvoice` attempt. A 429, a 408 or 5xx, a provider cooldown, a missed deadline, a late start or a lock wait past the timeout leaves the email owed for the outbox to re-drive with the same idempotency key. |
 | `xero-invoice-helpers` | Shared date/allocation helpers for the six modules above. |
 | `xero-account-class` | Leaf, pure: the ONE reading of a Xero account's CLASS (#2717), shared by the admin account pickers and the finance reports so they cannot come to disagree about what an expense account is. |
 | `xero-account-mapping-keys` | Leaf, pure data: the ONE registry of account mapping keys (#2717) — label, description, required account-CLASS filter (optionally narrowed to named types), default code, registered fallback, and which keys carry a Xero Item code. The admin picker, the API allowlist, `xero-mappings`, the setup checklist and the seed all derive from it, which is what makes `INV-INT-021`'s filter structural rather than policed. `mappingWriteViolation` is the write path's refusal rule. |

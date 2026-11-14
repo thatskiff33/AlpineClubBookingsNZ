@@ -5,7 +5,7 @@
  * A leaf module (#4930): the settlement core in `payment-reconciliation.ts`
  * throws it, and so do modules that payment-reconciliation itself imports, so
  * it lives below all of them. Keep it free of `@/lib` imports, or it can close
- * an import cycle again (INV-SSOT-007).
+ * an import cycle again (INV-SSOT-008).
  */
 export class ManualBookingPaymentError extends Error {
   status: number;

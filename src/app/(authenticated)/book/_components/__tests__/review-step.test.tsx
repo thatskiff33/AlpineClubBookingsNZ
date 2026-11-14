@@ -71,6 +71,7 @@ function renderReview(
       priceQuote={priceQuote}
       lodgeId={null}
       selectedLodge={null}
+      cancellationSchedule={null}
       reviewGuestPayload={guests}
       bookingDateStrings={{ checkIn: "2026-07-20", checkOut: "2026-07-22" }}
       waitlistOnly={false}
@@ -833,5 +834,59 @@ describe("ReviewStep working bee beside promo codes", () => {
     ];
     expect(JSON.parse(String(init.body))).toMatchObject({ workPartyEventId: "event-1", codes: [{ code: "NEW" }] });
     vi.unstubAllGlobals();
+  });
+});
+
+/**
+ * #4946: the refund terms are on the screen where the member commits money,
+ * before the primary button, phrased as what happens once paid. Which rows are
+ * current for the selection is the wizard's job, covered in
+ * `use-booking-wizard-cancellation-schedule.test.tsx`.
+ */
+describe("ReviewStep cancellation and refunds block (#4946)", () => {
+  const rows = [
+    "30+ days before stay: 100% refund",
+    "14-29 days: 50% card / 100% credit",
+    "Less than 14 days: 0% refund",
+  ];
+
+  function primaryButton() {
+    return screen.getByRole("button", {
+      name: /Continue to Payment|Confirm Booking/,
+    });
+  }
+
+  it.each([
+    ["a card payment", { remainingToPay: 20000 }],
+    ["a stay fully covered by credit", { remainingToPay: 0, useCredit: true, availableCreditCents: 20000, appliedCreditCents: 20000 }],
+  ] as const)("lists the schedule rows above the primary button for %s", (_path, overrides) => {
+    renderReview([memberGuest], undefined, { cancellationSchedule: rows, ...overrides });
+
+    const block = screen.getByRole("region", { name: "Cancellation and refunds" });
+    const items = Array.from(block.querySelectorAll("li")).map((li) => li.textContent);
+    expect(items).toEqual(rows);
+    expect(block).toHaveTextContent("If you pay and later cancel, the club's current cancellation schedule");
+    expect(block).toHaveTextContent(
+      "The exact amount for your booking is shown when you start a cancellation.",
+    );
+    expect(
+      block.compareDocumentPosition(primaryButton()) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it.each([
+    ["could not be loaded", null],
+    ["has no rules", []],
+  ] as const)("shows the neutral fallback, not rows, when the schedule %s", (_why, schedule) => {
+    renderReview([memberGuest], undefined, { cancellationSchedule: schedule });
+
+    const block = screen.getByRole("region", { name: "Cancellation and refunds" });
+    expect(block.querySelectorAll("li")).toHaveLength(0);
+    expect(block).toHaveTextContent(
+      "Cancellation terms depend on the club's policy; ask the club before booking if unsure.",
+    );
+    expect(block).not.toHaveTextContent("If you pay and later cancel");
+    // The member can still book.
+    expect(primaryButton()).toBeEnabled();
   });
 });

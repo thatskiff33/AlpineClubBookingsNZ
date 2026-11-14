@@ -29,6 +29,7 @@
 import "server-only";
 
 import { XeroClient } from "xero-node";
+import { xeroTestClientOverride } from "./xero-test-client-override";
 import logger from "@/lib/logger";
 import {
   recordXeroApiUsage,
@@ -240,6 +241,9 @@ export async function getAuthenticatedXeroClient(): Promise<{
 }> {
   throwIfXeroDailyLimitActive();
 
+  // Test-only seam (#4908): skips tokens; the latch, callXeroApi and retries still run.
+  const testClient = xeroTestClientOverride();
+  if (testClient) return testClient;
   const tokens = await loadXeroTokens();
   if (!tokens) {
     throw new XeroReconnectRequiredError("Xero is not connected. Please connect via admin panel.");
@@ -457,6 +461,8 @@ interface XeroRetryOptions {
 }
 
 export interface MeteredXeroCallOptions extends XeroRetryOptions {
+  /** A provider-spanning fence drains these after releasing its transaction. */
+  usageTasks?: Array<() => Promise<void>>;
   operation: string;
   resourceType: string;
   workflow?: string;
@@ -552,7 +558,7 @@ async function persistMeteredXeroApiUsage(
   err?: unknown,
   observedRateLimitCategory?: XeroRateLimitCategory
 ): Promise<void> {
-  await recordXeroApiUsage({
+  const persist = () => recordXeroApiUsage({
     operation: options.operation,
     resourceType: options.resourceType,
     workflow: options.workflow ?? options.context,
@@ -562,6 +568,8 @@ async function persistMeteredXeroApiUsage(
     durationMs,
     errorMessage: getXeroUsageErrorMessage(err),
   });
+  if (options.usageTasks) options.usageTasks.push(persist);
+  else await persist();
 }
 
 /**

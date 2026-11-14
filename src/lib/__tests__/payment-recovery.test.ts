@@ -171,6 +171,8 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => {
   };
 });
 // #4516 (M4c): the reservation step runs on PostgreSQL (`member-money-refunds.realdb.test.ts`).
+// #4911: the superseded refund's dispute check; undisputed unless a test says (the real read: stripe-dispute-hold.test.ts).
+const mockAssertCaptureNotDisputed = vi.hoisted(() => vi.fn(async (_paymentIntentId: string) => {}));
 const mockReserveCardRefundAttempt = vi.hoisted(() => vi.fn(async () => ({ outcome: "skipped", reason: "outside-population" })));
 vi.mock("@/lib/prisma", () => {
   const prisma = {
@@ -229,6 +231,10 @@ vi.mock("@/lib/prisma", () => {
   return { prisma: { ...prisma, $transaction } };
 });
 
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  assertCaptureNotDisputed: (paymentIntentId: string) => mockAssertCaptureNotDisputed(paymentIntentId),
+}));
 vi.mock("@/lib/recorded-card-refund-notes", () => ({ queueRecordedCardRefundNotes: vi.fn().mockResolvedValue({ queueOperationId: null }) }));
 vi.mock("@/lib/stripe", () => ({
   listRefundsForPaymentIntent: (...args: unknown[]) => mockListRefundsForPaymentIntent(...args),
@@ -3153,6 +3159,32 @@ describe("payment recovery worker", () => {
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: "recovery-refused", attempts: 1 }),
       data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.FAILED, lastError: CARD_REFUND_RESERVATION_REFUSED_CAUSE, nextRetryAt: null }),
+    }));
+  });
+
+  it("#4911: a superseded refund of a disputed capture is refused before anything is reserved, and the row stops dead", async () => {
+    const { DisputedCaptureRefundRefusedError } = await import("@/lib/stripe-dispute-hold");
+    const { disputedCaptureRefundCause } = await import("@/lib/recovery-unretryable-cause");
+    const disputes = [{ stripeDisputeId: "dp_1", stripePaymentIntentId: "pi_superseded", status: "OPEN" as const, amountCents: 10000 }];
+    const supersededOp = makeOperation({ id: "recovery-disputed", type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT, attempts: 1 });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(supersededOp);
+    mockPaymentRecoveryFindMany.mockImplementation((args?: { where?: { attempts?: { gte?: number } } }) =>
+      Promise.resolve(isStaleWorkerSweep(args) ? [] : [{ ...supersededOp, status: "PENDING" }]),
+    );
+    mockPaymentTransactionFindUnique.mockResolvedValue({
+      id: "txn-1", paymentId: "payment-1", stripePaymentIntentId: "pi_superseded", amountCents: 10000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED,
+    });
+    mockAssertCaptureNotDisputed.mockRejectedValueOnce(new DisputedCaptureRefundRefusedError("pi_superseded", disputes));
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(mockAssertCaptureNotDisputed).toHaveBeenCalledWith("pi_superseded");
+    expect(mockReserveCardRefundAttempt).not.toHaveBeenCalled();
+    expect(mockProcessRefund).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "recovery-disputed" }),
+      data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.FAILED, lastError: disputedCaptureRefundCause(disputes), nextRetryAt: null }),
     }));
   });
 

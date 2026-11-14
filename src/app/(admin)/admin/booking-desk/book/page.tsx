@@ -10,14 +10,7 @@ import { GuestForm, type GuestData } from "@/components/guest-form";
 import { partyNeedsSupervisionJustification } from "@/components/book/member-guest-preview";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -1600,64 +1593,57 @@ export default function AdminBookPage() {
 
       {/* Per-create member-email choice (#1695 / #1685 pattern). Shown for every
           on-behalf confirm; both choices create the booking. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => !submitting && setNotifyDialogOpen(open)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {selectedMember?.isNonMember
-                ? "Email this non-member about the booking?"
-                : "Email the member about this booking?"}
-            </DialogTitle>
-            <DialogDescription>
-              {selectedMember?.isNonMember ? (
-                <>
-                  This owner is a non-member with no account. The booking will be
-                  created either way; by default they are <strong>not</strong>{" "}
-                  emailed. Choose to send the standard confirmation / hold email
-                  to {selectedMember?.firstName ?? "them"} only if you want to —
-                  your choice is recorded in the audit log.
-                  {xeroInvoiceEmailNote}
-                </>
-              ) : (
-                <>
-                  The booking will be created either way. Choose whether{" "}
-                  {selectedMember?.firstName ?? "the member"} receives the
-                  standard confirmation / hold email — your choice is recorded in
-                  the audit log.
-                  {xeroInvoiceEmailNote}
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant={selectedMember?.isNonMember ? "default" : "outline"}
-              disabled={submitting}
-              onClick={() => {
-                setNotifyDialogOpen(false);
-                void submitBooking({ notifyMember: false });
-              }}
-            >
-              Create without emailing
-            </Button>
-            <Button
-              variant={selectedMember?.isNonMember ? "outline" : "default"}
-              disabled={submitting}
-              onClick={() => {
-                setNotifyDialogOpen(false);
-                void submitBooking({ notifyMember: true });
-              }}
-            >
-              {selectedMember?.isNonMember
-                ? "Create and email them"
-                : "Create and email member"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setNotifyDialogOpen}
+        submitting={submitting}
+        title={
+          selectedMember?.isNonMember
+            ? "Email this non-member about the booking?"
+            : "Email the member about this booking?"
+        }
+        description={
+          selectedMember?.isNonMember ? (
+            <>
+              This owner is a non-member with no account. The booking will be
+              created either way; by default they are <strong>not</strong>{" "}
+              emailed. Choose to send the standard confirmation / hold email
+              to {selectedMember?.firstName ?? "them"} only if you want to —
+              your choice is recorded in the audit log.
+              {xeroInvoiceEmailNote}
+            </>
+          ) : (
+            <>
+              The booking will be created either way. Choose whether{" "}
+              {selectedMember?.firstName ?? "the member"} receives the
+              standard confirmation / hold email — your choice is recorded in
+              the audit log.
+              {xeroInvoiceEmailNote}
+            </>
+          )
+        }
+        actions={{
+          kind: "choice",
+          withoutEmail: {
+            label: "Create without emailing",
+            variant: selectedMember?.isNonMember ? "default" : "outline",
+            onSelect: () => {
+              setNotifyDialogOpen(false);
+              void submitBooking({ notifyMember: false });
+            },
+          },
+          withEmail: {
+            label: selectedMember?.isNonMember
+              ? "Create and email them"
+              : "Create and email member",
+            variant: selectedMember?.isNonMember ? "outline" : "default",
+            onSelect: () => {
+              setNotifyDialogOpen(false);
+              void submitBooking({ notifyMember: true });
+            },
+          },
+        }}
+      />
       </div>
     </div>
   );
