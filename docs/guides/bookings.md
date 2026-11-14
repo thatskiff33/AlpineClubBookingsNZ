@@ -40,7 +40,11 @@ date-only lodge night (no times), matching the rules in
 
 2. The calendar shows the month with each night's remaining beds (for example
    "14 beds") and coloured bars for the bookings on those nights. The colour
-   legend under the calendar maps each colour to a booking status.
+   legend under the calendar maps each colour to a booking status. A row of
+   status pills above it switches each status on or off, including **Awaiting
+   Review**, whose bookings hold beds. Only **Cancelled** starts switched off.
+   The browser remembers which statuses you switched off, and a status added
+   later shows by default.
 
 ### Find a specific booking
 
