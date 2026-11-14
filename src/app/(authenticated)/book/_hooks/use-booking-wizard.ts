@@ -846,6 +846,13 @@ export function useBookingWizard() {
     advance: boolean;
   } | null>(null);
   const [restoredRequotePending, setRestoredRequotePending] = useState(false);
+  // The step restored work is on its way back to. Resuming re-runs the date
+  // check and quote, which takes a moment, and a save in that moment would keep
+  // the dates step in place of the step the member had reached. Until the wizard
+  // gets there (or the resume ends without getting there) the kept step is this.
+  const [restoredStepTarget, setRestoredStepTarget] = useState<
+    SavedWizardWork["step"] | null
+  >(null);
   function applyRestoredWork(work: SavedWizardWork) {
     // A kept party is the member's own choice, including one that leaves
     // themselves out, so the one-shot self seed is spent rather than run over
@@ -871,6 +878,9 @@ export function useBookingWizard() {
     setAttendingWorkParty(work.attendingWorkParty);
     setSelectedWorkPartyEventId(work.selectedWorkPartyEventId);
     setWaitlistAlternateLodgeIds(work.waitlistAlternateLodgeIds);
+    setRestoredStepTarget(
+      work.checkIn && work.checkOut && work.step !== "dates" ? work.step : null,
+    );
     restoredDatesRef.current =
       work.checkIn && work.checkOut
         ? {
@@ -896,7 +906,7 @@ export function useBookingWizard() {
             lodgeId,
             checkIn,
             checkOut,
-            step,
+            step: restoredStepTarget ?? step,
             guests,
             notes,
             perGuestDatesEnabled,
@@ -1800,6 +1810,7 @@ export function useBookingWizard() {
       void selectDates(restored.checkIn, restored.checkOut, true, advance).then(
         (advanced) => {
           if (advanced && restored.requote) setRestoredRequotePending(true);
+          if (!advanced) setRestoredStepTarget(null);
         },
       );
     },
@@ -1812,8 +1823,13 @@ export function useBookingWizard() {
     resumeRestoredDates(restored);
   }, [scopedLodgeId, workPersistence.restoreSettled, subscriptionStatus]);
   const resumeRestoredQuote = useEffectEvent(() => {
-    void handleGuestsDone();
+    void handleGuestsDone().finally(() => setRestoredStepTarget(null));
   });
+  useEffect(() => {
+    if (restoredStepTarget !== null && step === restoredStepTarget) {
+      setRestoredStepTarget(null);
+    }
+  }, [restoredStepTarget, step]);
   useEffect(() => {
     if (!restoredRequotePending) return;
     if (step === "dates") {

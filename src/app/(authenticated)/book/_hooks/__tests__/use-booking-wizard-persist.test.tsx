@@ -117,8 +117,11 @@ function stubFetch({
   subscriptionStatus = "PAID",
   rooms = null,
   bookingsReply = null,
+  availabilityDelayMs = 0,
 }: {
   policyValid?: boolean;
+  /** How long the availability check takes to answer. */
+  availabilityDelayMs?: number;
   internetBanking?: boolean;
   subscriptionStatus?: string;
   /** Rooms the lodge offers for a request, or null for room requests off. */
@@ -171,6 +174,9 @@ function stubFetch({
       return jsonResponse({ enabled: rooms !== null, rooms: rooms ?? [] });
     }
     if (u.includes("/api/availability/check")) {
+      if (availabilityDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, availabilityDelayMs));
+      }
       return jsonResponse({ lodgeCapacity: 20, nightDetails: [] });
     }
     if (u.includes("/api/booking-policies/check")) {
@@ -572,6 +578,31 @@ describe("the booking wizard keeps the member's work in this tab (#4950)", () =>
     await act(async () => undefined);
     expect(result.current.step).toBe("dates");
     expect(result.current.guests).toEqual([SELF, FRIEND]);
+  });
+
+  it("keeps the step the member had reached while a slow restore is still checking the dates", async () => {
+    saveWizardWork(savedWork({ step: "review" }));
+    stubFetch({ availabilityDelayMs: 700 });
+    const { result } = renderHook(() => useBookingWizard());
+    await waitFor(() => expect(result.current.restoredWorkNotice).toBe("kept"));
+
+    // Past the save debounce, with the date check still in flight.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(result.current.step).toBe("dates");
+    expect(storedRecord()).toMatchObject({ step: "review" });
+
+    await waitFor(() => expect(result.current.step).toBe("review"), { timeout: 5000 });
+    expect(storedRecord()).toMatchObject({ step: "review" });
+  });
+
+  it("keeps the dates step once a restore could not get back to the step it had", async () => {
+    saveWizardWork(savedWork({ step: "review" }));
+    stubFetch({ policyValid: false });
+    const { result } = renderHook(() => useBookingWizard());
+
+    await waitFor(() => expect(result.current.error).toBe("Choose different dates"));
+    await waitFor(() => expect(storedRecord()).toMatchObject({ step: "dates" }));
+    expect(result.current.step).toBe("dates");
   });
 
   it("tells the member the dates went when the date check refuses them on return", async () => {
