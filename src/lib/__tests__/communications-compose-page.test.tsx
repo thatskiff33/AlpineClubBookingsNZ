@@ -2,6 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -172,5 +173,69 @@ describe("Communications compose page (#4987)", () => {
     expect(screen.getByLabelText(/Club newsletter/i)).not.toBeChecked();
     expect(screen.getByLabelText(/Club notice/i)).not.toBeChecked();
     expect(preview()).toHaveTextContent(/Choose the kind of message/i);
+  });
+
+  // The count for each kind answers only when the test lets it, so the order
+  // of the answers is the test's to choose.
+  function holdCounts() {
+    const answer = new Map<string, () => void>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), "http://localhost");
+        if (url.pathname === "/api/admin/communications/history") {
+          return json({ history: [] });
+        }
+        const category = url.searchParams.get("category") as
+          | keyof typeof PREVIEW
+          | null;
+        if (!category) return json({ limit: 1, windowSeconds: 3600 });
+        return new Promise<Response>((resolve) => {
+          answer.set(category, () =>
+            resolve(json({ limit: 1, windowSeconds: 3600, ...PREVIEW[category] })),
+          );
+        });
+      }),
+    );
+    return answer;
+  }
+
+  it("does not show the previous kind's count while the new kind's count loads", async () => {
+    const answer = holdCounts();
+    render(<CommunicationsPage />);
+
+    fireEvent.click(await screen.findByLabelText(/Club notice/i));
+    await waitFor(() => expect(answer.has("clubNotice")).toBe(true));
+    await act(async () => answer.get("clubNotice")!());
+    await waitFor(() => expect(preview()).toHaveTextContent("Will be sent to 398 of 400 people"));
+
+    fireEvent.click(screen.getByLabelText(/Club newsletter/i));
+    await waitFor(() => expect(answer.has("newsletter")).toBe(true));
+
+    expect(preview()).toHaveTextContent("Counting recipients...");
+    expect(preview()).not.toHaveTextContent("398");
+  });
+
+  it("drops a count that arrives after a newer choice has replaced it", async () => {
+    const answer = holdCounts();
+    render(<CommunicationsPage />);
+
+    fireEvent.click(await screen.findByLabelText(/Club notice/i));
+    fireEvent.click(screen.getByLabelText(/Club newsletter/i));
+    await waitFor(() => expect(answer.has("newsletter")).toBe(true));
+
+    // The newest choice answers first; the earlier one arrives late.
+    await act(async () => answer.get("newsletter")!());
+    await waitFor(() =>
+      expect(preview()).toHaveTextContent(
+        "Will be sent to 3 of 400 people (397 never opted in).",
+      ),
+    );
+    await act(async () => answer.get("clubNotice")!());
+
+    expect(preview()).toHaveTextContent(
+      "Will be sent to 3 of 400 people (397 never opted in).",
+    );
+    expect(preview()).not.toHaveTextContent("398");
   });
 });
