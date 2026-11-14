@@ -1,7 +1,7 @@
 import { boundedStripeRequest, getStripe } from "@/lib/stripe";
 
 /**
- * #4911 (`INV-PAY-153`): the PaymentIntent behind a charge, for a dispute event
+ * #4911 (`INV-PAY-154`): the PaymentIntent behind a charge, for a dispute event
  * whose own `payment_intent` is empty. Bounded, no retries: a webhook's read.
  * It lives beside `stripe.ts` only to keep that module within its size budget.
  */

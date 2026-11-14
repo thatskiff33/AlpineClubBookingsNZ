@@ -315,7 +315,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Booking card payment the app could not match - check it: {{amount}}",
     "defaultBody": "Booking Card Payment the App Could Not Match\n\nA card payment the app started for a booking went through in Stripe, but the app has no matching payment on that booking, so it did not mark the booking paid and has sent nothing to Xero.\n\n{{unmatchedAppPaymentNote}}\n\nAmount: {{amount}}\nReceived: {{receivedAt}}\nBooking: {{bookingId}}\nFound in the app: {{ledgerMatch}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"
   },
-  // #4911 (`INV-PAY-153`): a cardholder's dispute (chargeback), when it opens and when it closes.
+  // #4911 (`INV-PAY-154`): a cardholder's dispute (chargeback), when it opens and when it closes.
   "admin-stripe-dispute": {
     "defaultSubject": "{{disputeSubjectLabel}}: {{amount}}",
     "defaultBody": "Card Payment Dispute\n\n{{disputeSubjectLabel}}.\n\n{{disputeNextStep}}\n\n{{disputeHoldNote}}\n\nStatus: {{outcome}}\nAmount: {{amount}}\nReason: {{reason}}\nOpened: {{openedAt}}\nBooking: {{bookingId}}\nBooked by: {{bookingOwner}}\nDispute: {{disputeId}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"

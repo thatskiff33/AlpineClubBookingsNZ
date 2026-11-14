@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof of #4911 (`INV-PAY-153`): a paid cancel of a booking
+ * Real-PostgreSQL proof of #4911 (`INV-PAY-154`): a paid cancel of a booking
  * whose card capture the cardholder disputes issues no card refund and no
  * account credit, and hands the whole refund due to the treasurer.
  *

@@ -115,7 +115,7 @@ export type OwnCardRefundMethod = "card" | "card_pending";
  * was minted; a hand-back task was raised). #3973: the organiser's card
  * refunds, and the organiser's Internet Banking settlement the club repays by
  * hand (`OrganiserRefundMethod`). #4084: the member's own card
- * (`OwnCardRefundMethod`). #4911 (`INV-PAY-153`): "disputed" is a card payment
+ * (`OwnCardRefundMethod`). #4911 (`INV-PAY-154`): "disputed" is a card payment
  * the cardholder is disputing with their bank, or has won back, so the refund
  * is with the treasurer: no card refund and no account credit were issued.
  */
@@ -217,7 +217,7 @@ export function bookingCancelledRefundMade(refundCents: number, refundMethod: Bo
 }
 
 /**
- * #4911 (`INV-PAY-153`): a cancel whose card payment is disputed - the email and
+ * #4911 (`INV-PAY-154`): a cancel whose card payment is disputed - the email and
  * the cancel dialog's confirmation (`INV-SSOT`). The treasurer checks the
  * dispute first, since the bank may already have returned the money.
  */

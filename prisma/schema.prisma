@@ -4916,7 +4916,7 @@ enum UnrecognisedStripePaymentReason {
   APP_INTENT_NOT_PRIMARY
 }
 
-// #4911 (`INV-PAY-153`): one row per Stripe dispute (chargeback), recorded from
+// #4911 (`INV-PAY-154`): one row per Stripe dispute (chargeback), recorded from
 // the `charge.dispute.*` webhooks. A record and a hold, not money: no ledger,
 // journal or Xero write reads it, and `Payment.refundedAmountCents` never
 // counts it. While its status is OPEN or LOST a paid cancel of the disputed
@@ -9084,6 +9084,9 @@ model PrivacyRetentionSettings {
   pruneLogsAndApplicationsEnabled    Boolean  @default(false)
   anonymiseMembersEnabled            Boolean  @default(false)
   sentryReplayEnabled                Boolean  @default(false)
+  bookingDietaryRetentionDays        Int      @default(30)
+  bookingDietaryClearEnabled         Boolean  @default(true)
+  bookingDietaryClearStartedAt       DateTime?
   pruneStartedAt                    DateTime?
   anonymiseStartedAt                DateTime?
   updatedByMemberId                  String?

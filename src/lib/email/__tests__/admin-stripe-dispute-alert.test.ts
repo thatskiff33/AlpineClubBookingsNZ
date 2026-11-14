@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * #4911 (`INV-PAY-153`): the alert for a cardholder's dispute of a Stripe
+ * #4911 (`INV-PAY-154`): the alert for a cardholder's dispute of a Stripe
  * payment, pinned at the real sender - its unmuteable path, its subject per
  * stage, its template name, its tokens and its Finance-editor audience.
  * Routing it through the muteable `sendToAdmins` fails here.

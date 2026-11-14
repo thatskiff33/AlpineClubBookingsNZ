@@ -1,5 +1,5 @@
 /**
- * #4911 (`INV-PAY-153`): the one read of "is this capture disputed".
+ * #4911 (`INV-PAY-154`): the one read of "is this capture disputed".
  *
  * A cardholder's dispute (chargeback) takes the disputed amount back through
  * Stripe, outside the app. While it is OPEN, or once it is LOST, a refund or an
@@ -82,7 +82,7 @@ export class DisputedCaptureRefundRefusedError extends Error {
     super(
       `Refund refused: the payment ${paymentIntentId} is disputed by the cardholder ` +
         `(${disputes.map((dispute) => `${dispute.stripeDisputeId}, ${dispute.status.toLowerCase()}`).join("; ")}). ` +
-        "The treasurer settles it by hand (INV-PAY-153).",
+        "The treasurer settles it by hand (INV-PAY-154).",
     );
     this.paymentIntentId = paymentIntentId;
     this.disputes = disputes;
@@ -122,7 +122,7 @@ export function disputedCaptureRefusal(error: unknown): DisputedCaptureRefundRef
 }
 
 /**
- * #4911 (`INV-PAY-153`): the disputes on these payments, newest first, keyed by
+ * #4911 (`INV-PAY-154`): the disputes on these payments, newest first, keyed by
  * payment - Finance -> Payments' dispute marker. A display read, not the hold.
  */
 export async function readDisputesByPaymentId(

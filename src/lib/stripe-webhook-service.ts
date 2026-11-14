@@ -314,7 +314,7 @@ export async function processStripeWebhookEvent(
         await recordRefusedCardRefund(event.data.object as Stripe.Refund);
         break;
 
-      // #4911 (`INV-PAY-153`): one record and two Finance alerts per dispute;
+      // #4911 (`INV-PAY-154`): one record and two Finance alerts per dispute;
       // the record holds the capture's refunds and credits. Never a refund.
       case "charge.dispute.created":
       case "charge.dispute.funds_withdrawn":

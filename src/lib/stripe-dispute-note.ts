@@ -1,5 +1,5 @@
 /**
- * #4911 (`INV-PAY-153`): what the treasurer does about a Stripe dispute, per
+ * #4911 (`INV-PAY-154`): what the treasurer does about a Stripe dispute, per
  * stage and outcome - one copy shared by the hand-built HTML
  * (`email-templates/admin-stripe-dispute.ts`), the `{{disputeNextStep}}` token
  * an admin's saved body renders, and the registry's preview sample. A leaf

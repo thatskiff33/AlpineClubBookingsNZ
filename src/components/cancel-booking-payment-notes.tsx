@@ -255,7 +255,7 @@ export function CardRefundShortfallSentence({
 }
 
 /**
- * B5 (#2262) and #4911 (`INV-PAY-153`): the preview's line for a refund the club
+ * B5 (#2262) and #4911 (`INV-PAY-154`): the preview's line for a refund the club
  * hands back by hand - a cash or off-Xero settlement, or a card payment the
  * cardholder disputes, which goes to the treasurer. Neither has a card refund
  * or account credit; the figure is the credit tier's.

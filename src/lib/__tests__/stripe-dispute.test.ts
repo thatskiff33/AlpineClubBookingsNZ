@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
 
 /**
- * #4911 (`INV-PAY-153`): the record and alerts of a cardholder's dispute - a
+ * #4911 (`INV-PAY-154`): the record and alerts of a cardholder's dispute - a
  * matched capture and an unknown charge, delivery out of order, each outcome,
  * the monotonic merge, redelivery and a lease takeover, and an alert nobody
  * received. The store is one in-memory table keyed as the unique index keys

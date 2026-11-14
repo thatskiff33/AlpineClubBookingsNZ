@@ -210,7 +210,7 @@ export async function loadBookingDetailAdminTools({
         ]
       : [];
 
-  // #4911 (`INV-PAY-153`): a cardholder's dispute on this booking's payment, and how it ended, read from the
+  // #4911 (`INV-PAY-154`): a cardholder's dispute on this booking's payment, and how it ended, read from the
   // durable record the dispute webhooks keep. Behind the same gate as the tools card.
   const stripeDisputes =
     canSeeAdminTools && booking.payment

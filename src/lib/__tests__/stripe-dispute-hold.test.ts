@@ -1,5 +1,5 @@
 /**
- * #4911 (`INV-PAY-153`): the one read of "is this capture disputed", and the
+ * #4911 (`INV-PAY-154`): the one read of "is this capture disputed", and the
  * refusal every card-refund door and the recovery runner act on. The cancel
  * door's use of it runs on PostgreSQL (`stripe-dispute-cancel.realdb.test.ts`);
  * the card-refund chokepoint's in `stripe.test.ts`.

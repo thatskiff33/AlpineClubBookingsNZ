@@ -1285,7 +1285,7 @@ export default function PaymentsPage() {
                       {p.source === "STRIPE" && (
                         <MiniChip tone="info" icon={CreditCard}>Stripe</MiniChip>
                       )}
-                      {/* #4911 (`INV-PAY-153`): a cardholder dispute, by Stripe's dispute id. */}
+                      {/* #4911 (`INV-PAY-154`): a cardholder dispute, by Stripe's dispute id. */}
                       {(p.disputes ?? []).map((dispute) => (
                         <span key={dispute.stripeDisputeId} title={`Stripe dispute ${dispute.stripeDisputeId} for ${formatCents(dispute.amountCents, format)}`}>
                           <MiniChip tone={disputeHoldsCapture(dispute.status) ? "warning" : "neutral"} icon={AlertTriangle}>

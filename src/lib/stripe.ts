@@ -215,7 +215,7 @@ export async function findOrCreateCustomer({
   });
 }
 
-/** Every card refund passes here, and a disputed capture is refused first (#4911, `INV-PAY-153`). */
+/** Every card refund passes here, and a disputed capture is refused first (#4911, `INV-PAY-154`). */
 export async function processRefund({
   paymentIntentId,
   amountCents,

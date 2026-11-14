@@ -1,5 +1,5 @@
 /**
- * #4911 (`INV-PAY-153`): a cardholder's dispute (chargeback) of a Stripe payment.
+ * #4911 (`INV-PAY-154`): a cardholder's dispute (chargeback) of a Stripe payment.
  *
  * Stripe takes a disputed amount back from the club's balance outside the app,
  * and before #4911 the webhook endpoint did not subscribe to `charge.dispute.*`,

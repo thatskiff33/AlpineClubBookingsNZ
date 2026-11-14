@@ -40,7 +40,7 @@ interface CancelPreview {
    * the club hands the refund back directly. The figures are unchanged.
    */
   manualRefund?: boolean;
-  /** #4911 (`INV-PAY-153`): disputed by the cardholder, so handed to the treasurer as `manualRefund` is. */
+  /** #4911 (`INV-PAY-154`): disputed by the cardholder, so handed to the treasurer as `manualRefund` is. */
   refundDisputed?: boolean;
   /**
    * The refund method the cancel will use whatever is chosen — "credit" for an
