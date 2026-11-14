@@ -108,7 +108,7 @@ function buildBookingApprovalsPath(
 }
 
 export function BookingApprovalsPanel({
-  basePath = "/admin/booking-requests",
+  basePath = adminHref("booking-requests"),
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
   canEdit = true,
@@ -356,7 +356,7 @@ export function BookingApprovalsPanel({
           <p className="mt-1 text-muted-foreground">
             Review bookings that need admin approval before they can be paid.
             See also{" "}
-            <Link className="underline" href="/admin/booking-requests?tab=changes">
+            <Link className="underline" href={`${adminHref("booking-requests")}?tab=changes`}>
               booking change requests
             </Link>{" "}
             and{" "}
@@ -443,7 +443,7 @@ export function BookingApprovalsPanel({
                       </CardTitle>
                       <p className="text-sm text-muted-foreground">
                         Created {clubTime.instantDateTime(new Date(booking.createdAt))} —{" "}
-                        <Link href={`/admin/bookings/${booking.id}`} className="underline">
+                        <Link href={`${adminHref("bookings")}/${booking.id}`} className="underline">
                           view booking
                         </Link>
                       </p>

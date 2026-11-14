@@ -2,7 +2,7 @@
 
 import { fireEvent } from "@testing-library/dom";
 import { describe, expect, it } from "vitest";
-import { createSyncedScrollGroup } from "@/app/(admin)/admin/bed-allocation/_components/use-synced-scroll";
+import { createSyncedScrollGroup } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/use-synced-scroll";
 
 function createScheduledGroup() {
   const callbacks: FrameRequestCallback[] = [];

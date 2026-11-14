@@ -6,6 +6,7 @@
 import { BookingStatus, PaymentSource, type Prisma } from "@prisma/client";
 
 import { deserializeRefundPlan } from "@/lib/group-settlement-refund-plan";
+import { CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
 import { EXCLUDED_LEDGER_REFUND_STATUSES } from "@/lib/payment-transaction-status";
 import { prisma } from "@/lib/prisma";
 
@@ -36,8 +37,11 @@ export type OrganiserChildRefundMirrorFinding = {
  *   for a reduction of a booking the organiser paid for. The value moved, to the
  *   wrong person; an officer decides.
  * - `unbacked`: nothing explains it - a mirror claiming cash went back that no
- *   provider refund shows. Never repaired automatically: only Stripe evidence
- *   may raise or settle a cash mirror.
+ *   provider refund, legacy plan, account credit or Stuck States bank close
+ *   shows. Never repaired automatically. The bank close is the one exception
+ *   that raises a child's mirror without a Stripe refund (`INV-PAY-114`): its
+ *   completed hand-back on this payment explains those cents, and a mirror it
+ *   fully explains is not a finding.
  */
 export async function findUnbackedOrganiserChildRefundMirrors(
   db: Db = prisma,
@@ -60,13 +64,17 @@ export async function findUnbackedOrganiserChildRefundMirrors(
       select: { id: true, settlement: { select: { refundPlan: true, stripePaymentIntentId: true } } },
     });
     if (!group) continue;
-    const [refunds, credits] = await Promise.all([
+    const [refunds, credits, handBacks] = await Promise.all([
       db.paymentRefund.aggregate({
         where: { paymentId: payment.id, status: { notIn: EXCLUDED_LEDGER_REFUND_STATUSES } },
         _sum: { amountCents: true },
       }),
       db.memberCredit.aggregate({
         where: { sourceBookingId: payment.booking.id, amountCents: { gt: 0 }, restoredFromBookingId: null },
+        _sum: { amountCents: true },
+      }),
+      db.manualRefundTask.aggregate({
+        where: { paymentId: payment.id, ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE },
         _sum: { amountCents: true },
       }),
     ]);
@@ -81,6 +89,10 @@ export async function findUnbackedOrganiserChildRefundMirrors(
     remaining -= legacyCancelPlanCents;
     const creditCents = Math.min(remaining, accountCreditCents);
     remaining -= creditCents;
+    const handBackCents = Math.min(remaining, Math.max(0, handBacks._sum.amountCents ?? 0));
+    remaining -= handBackCents;
+    // A mirror this bank close fully explains is not unbacked, and it is not a legacy cancel.
+    if (remaining <= 0 && legacyCancelPlanCents === 0 && creditCents === 0) continue;
     findings.push({
       bookingId: payment.booking.id,
       paymentId: payment.id,
