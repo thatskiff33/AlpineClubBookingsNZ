@@ -22,6 +22,7 @@ import { useClubTime } from "@/components/club-time-provider";
 import { formatAuditMetadataJson } from "@/lib/audit-metadata-amounts";
 import { useClubFormat } from "@/components/club-format-provider";
 
+import { adminHref } from "@/lib/admin-hubs";
 type AuditTimelineProps = {
   endpoint: string;
   pageSize?: number;
@@ -64,7 +65,7 @@ function getEntityHref(entry: AuditTimelineEntry, showAdminEntityLinks: boolean)
   }
 
   if (showAdminEntityLinks && entry.entityType === "Member") {
-    return `/admin/members/${entry.entityId}`;
+    return `${adminHref("member-detail", { id: entry.entityId })}`;
   }
 
   return null;

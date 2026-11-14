@@ -22,6 +22,7 @@ import { NextRequest } from "next/server";
  * Admin (`hasAdminAccess`).
  */
 const mocks = vi.hoisted(() => ({
+  readSupersededCaptureHeldBack: vi.fn().mockResolvedValue({ byTransaction: new Map(), totalCents: 0 }),
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
   bookingFindUnique: vi.fn(),
@@ -33,6 +34,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
+
+// #4872: the superseded-capture hold-back read; none unless a test says.
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mocks.readSupersededCaptureHeldBack(...args),
+}));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
