@@ -320,7 +320,7 @@ Screen: `/admin/communications`.
 
 Shows: Member communication composition and audience selection.
 
-Journey: Choose recipients (the help line says who each reaches) and compose a message; Send to Members opens a confirmation naming the recipient count, audience and subject, with Cancel focused; confirm to send. The result is announced in a status region.
+Journey: Choose recipients (the help line says who each reaches), choose the kind of message (club notice or club newsletter, nothing preselected; a live count shows who it reaches and who is left out) and compose a message; Send to Members opens a confirmation naming the recipient count, audience, kind and subject, with Cancel focused; confirm to send. The result is announced in a status region.
 
 [Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
