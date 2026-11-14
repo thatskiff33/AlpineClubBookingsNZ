@@ -13,9 +13,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { useClubTime } from "@/components/club-time-provider";
 import { useConfirm } from "@/components/confirm-dialog";
-import { requireInstant } from "@/lib/club-time";
 import { ACCESS_ROLE_LABELS } from "@/lib/access-roles";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +26,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { BulkRecipientFilter } from "@/lib/bulk-communication-recipients";
+import { SendHistoryCard } from "./_components/send-history-card";
+import { useCommunicationsData } from "./_hooks/use-communications-data";
 
 type OfferedAudience = Exclude<BulkRecipientFilter, "custom">;
 
@@ -66,21 +66,26 @@ function peopleCount(count: number) {
   return `${count} ${count === 1 ? "person" : "people"}`;
 }
 
-interface HistoryEntry {
-  id: string;
-  sentBy: string;
-  subject: string;
-  recipientFilter: string;
-  totalRecipients: number;
-  eligibleRecipients: number;
-  queued: number;
-  sentAt: string;
+// How many opted-in accounts the audience reaches, from the same query the
+// send uses. A GET: it sends nothing and spends none of the hourly quota.
+async function fetchEligibleCount(
+  audience: OfferedAudience,
+): Promise<number | null> {
+  try {
+    const res = await fetch(
+      `/api/admin/communications/send?recipientFilter=${encodeURIComponent(audience)}`,
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { eligibleRecipients?: unknown };
+    return typeof data.eligibleRecipients === "number"
+      ? data.eligibleRecipients
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export default function CommunicationsPage() {
-  // When a communication was sent — real INSTANTS, projected through the club's persisted zone rather
-  // than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
-  const clubTime = useClubTime();
   // Bulk send writes the communications route, which the route-area matrix maps
   // to the membership area; a view-only membership admin cannot send (#1997).
   const canEdit = useAdminAreaEditAccess("membership");
@@ -98,16 +103,11 @@ export default function CommunicationsPage() {
     success: boolean;
     message: string;
   } | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(true);
-  const [bulkSendLimit, setBulkSendLimit] = useState<number>(1);
+  // The hourly limit and the send history, loaded on mount.
+  const { history, loadingHistory, bulkSendLimit, refreshHistory } =
+    useCommunicationsData();
   // Where focus goes once a cancelled confirmation has settled (below).
   const returnFocusTo = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    fetchRateLimit();
-    fetchHistory();
-  }, []);
 
   // `useConfirm` opens its dialog without a trigger element, so Radix has
   // nothing to return focus to when Cancel closes it. Do it here, once the
@@ -118,52 +118,6 @@ export default function CommunicationsPage() {
     returnFocusTo.current?.focus();
     returnFocusTo.current = null;
   }, [sendPhase]);
-
-  async function fetchRateLimit() {
-    try {
-      const res = await fetch("/api/admin/communications/send");
-      if (!res.ok) return;
-      const data = (await res.json()) as { limit?: number };
-      if (typeof data.limit === "number" && data.limit > 0) {
-        setBulkSendLimit(data.limit);
-      }
-    } catch {
-      // ignore and keep fallback value
-    }
-  }
-
-  async function fetchHistory() {
-    try {
-      const res = await fetch("/api/admin/communications/history");
-      if (res.ok) {
-        const data = await res.json();
-        setHistory(data.history);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoadingHistory(false);
-    }
-  }
-
-  // How many opted-in accounts the audience reaches, from the same query the
-  // send uses. A GET: it sends nothing and spends none of the hourly quota.
-  async function fetchEligibleCount(
-    audience: OfferedAudience,
-  ): Promise<number | null> {
-    try {
-      const res = await fetch(
-        `/api/admin/communications/send?recipientFilter=${encodeURIComponent(audience)}`,
-      );
-      if (!res.ok) return null;
-      const data = (await res.json()) as { eligibleRecipients?: unknown };
-      return typeof data.eligibleRecipients === "number"
-        ? data.eligibleRecipients
-        : null;
-    } catch {
-      return null;
-    }
-  }
 
   // Submitting the form (the button, or Enter in Subject) only opens the
   // confirmation step; nothing is sent until the officer confirms (#4964).
@@ -226,7 +180,7 @@ export default function CommunicationsPage() {
         });
         setSubject("");
         setBody("");
-        fetchHistory();
+        refreshHistory();
       } else {
         setResult({ success: false, message: data.error });
       }
@@ -379,54 +333,7 @@ export default function CommunicationsPage() {
       </Card>
 
       {/* History */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Send History</CardTitle>
-          <CardDescription>Previous bulk communications</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loadingHistory ? (
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : history.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No bulk communications sent yet.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-4">Date</th>
-                    <th className="pb-2 pr-4">Subject</th>
-                    <th className="pb-2 pr-4">Filter</th>
-                    <th className="pb-2 pr-4">Recipients</th>
-                    <th className="pb-2">Sent</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((entry) => (
-                    <tr key={entry.id} className="border-b">
-                      <td className="py-2 pr-4 text-muted-foreground">
-                        {clubTime.instantDate(requireInstant(entry.sentAt))}
-                      </td>
-                      <td className="py-2 pr-4 font-medium">{entry.subject}</td>
-                      <td className="py-2 pr-4 text-muted-foreground">
-                        {entry.recipientFilter}
-                      </td>
-                      <td className="py-2 pr-4 text-muted-foreground">
-                        {entry.totalRecipients}
-                      </td>
-                      <td className="py-2 text-muted-foreground">
-                        {entry.eligibleRecipients}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <SendHistoryCard history={history} loading={loadingHistory} />
       </div>
     </div>
   );
