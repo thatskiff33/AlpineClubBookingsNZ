@@ -6,6 +6,7 @@
  * inside its line budget.
  */
 import type { Prisma } from "@prisma/client";
+import { isCalendarDate } from "@/lib/club-time";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 
 // Anchored on the Payment; the close record is in the payload and the
@@ -136,7 +137,10 @@ export function readCardRefundReversalInvoicePayload(
     !Number.isInteger(amountCents) ||
     amountCents <= 0 ||
     !closedOn ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(closedOn)
+    // A real day, not just the shape: the close writes `closedOn` from the club
+    // day, so a non-day can only be corruption, and the worker would date a Xero
+    // invoice from it.
+    !isCalendarDate(closedOn)
   ) {
     return null;
   }

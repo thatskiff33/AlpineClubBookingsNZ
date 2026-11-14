@@ -312,6 +312,21 @@ describe("xero operation outbox payload parsing", () => {
     );
   });
 
+  it("ALP-580: reads a card-refund reversal's close day only when it is a real day", () => {
+    const queued = {
+      queueType: "CARD_REFUND_REVERSAL_INVOICE",
+      bookingId: "booking_1",
+      paymentId: "payment_1",
+      closeTaskId: "task_close_1",
+      amountCents: 8000,
+      closedOn: "2026-07-01",
+    };
+    expect(readQueuedOutboxPayload(queued)).toEqual(queued);
+    for (const closedOn of [undefined, "", "01/07/2026", "2026-02-30"]) {
+      expect(readQueuedOutboxPayload({ ...queued, closedOn })).toBeNull();
+    }
+  });
+
   // #3971: the payload carries no charge id; a pre-fix row's blanked one is ignored.
   it("#3971: reads a subscription invoice as its queue type alone, whatever chargeId a stored row holds", () => {
     for (const stored of [
