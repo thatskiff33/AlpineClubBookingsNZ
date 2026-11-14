@@ -131,7 +131,7 @@ describe("the pay-link page announces its outcomes (#4949)", () => {
     await expectRecoveryAlertToHoldFocus(alert);
   });
 
-  it("announces the post-card check through a status region mounted before it", async () => {
+  it("announces the post-card check through a status region that takes focus", async () => {
     installFetch({
       "/api/pay/public-token": { ok: true, body: payableContext },
       "/api/pay/public-token/payment-intent": {
@@ -140,17 +140,18 @@ describe("the pay-link page announces its outcomes (#4949)", () => {
       },
     });
     render(<PayByLinkPage />);
-    await screen.findByRole("button", { name: "Pay by card" });
-    const status = document.getElementById("payment-link-check-status");
-    if (!status) throw new Error("the post-card check status region is not mounted");
-    expect(status).toHaveAttribute("role", "status");
-    expect(status).toHaveTextContent("");
+    await press(await screen.findByRole("button", { name: "Pay by card" }));
+    // The check replaces the whole card (#4955), so its region is not on the
+    // page before the card succeeds: the focus it takes covers that.
+    expect(document.getElementById("payment-link-check-status")).toBeNull();
 
-    await press(screen.getByRole("button", { name: "Pay by card" }));
     await press(screen.getByRole("button", { name: "trigger-card-success" }));
 
-    expect(document.getElementById("payment-link-check-status")).toBe(status);
+    const status = document.getElementById("payment-link-check-status");
+    if (!status) throw new Error("the post-card check status region is not shown");
+    expect(status).toHaveAttribute("role", "status");
     expect(status).toHaveTextContent("Checking your payment...");
+    expect(screen.queryByRole("button", { name: "Pay by card" })).toBeNull();
     // The card form that had focus is gone, so the check takes it.
     await expectToHoldFocus(status, "the post-card check");
     await act(async () => {

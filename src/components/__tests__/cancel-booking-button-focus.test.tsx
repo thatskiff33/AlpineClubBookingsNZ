@@ -194,7 +194,7 @@ describe("CancelBookingButton — announcements and focus (#4949)", () => {
     press(screen.getByRole("button", { name: "Cancel on behalf of member" }));
     await fetches.release("preview", previewBody);
     press(screen.getByRole("button", { name: "Confirm Cancellation" }));
-    press(await screen.findByRole("button", { name: "Cancel and email member" }));
+    press(await screen.findByRole("button", { name: "Cancel booking and email member" }));
 
     // The closing dialog restores focus in its own cleanup; the status region
     // must still hold focus once that has run.

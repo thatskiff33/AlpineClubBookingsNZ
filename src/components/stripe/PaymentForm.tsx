@@ -31,6 +31,10 @@ interface PaymentFormProps {
   // original single-total display.
   deferredGuestAmountCents?: number | null;
   onSuccess: (paymentIntentId: string) => void;
+  // #4955 — called when the confirmation resolves `processing` (the payment is
+  // submitted but not yet settled). Optional: a caller that omits it keeps the
+  // form's old behaviour of returning to idle.
+  onProcessing?: (paymentIntentId: string) => void;
   returnUrl: string;
 }
 
@@ -47,6 +51,7 @@ export default function PaymentForm({
   isSplit,
   deferredGuestAmountCents,
   onSuccess,
+  onProcessing,
   returnUrl,
 }: PaymentFormProps) {
   const format = useClubFormat();
@@ -108,6 +113,9 @@ export default function PaymentForm({
       setIsPaid(true);
       setIsProcessing(false);
       onSuccess(paymentIntent.id);
+    } else if (paymentIntent && paymentIntent.status === "processing" && onProcessing) {
+      setIsProcessing(false);
+      onProcessing(paymentIntent.id);
     } else {
       // Payment requires additional action (3D Secure, etc.)
       // The redirect will handle this

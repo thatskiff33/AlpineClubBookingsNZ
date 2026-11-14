@@ -41,7 +41,7 @@ export function CancelBookingSuccessPanel({
   const refund = result?.refundAmountCents || 0;
   const isCredit = result?.refundMethod === "credit";
   const detailId = `${idPrefix}-success-detail`;
-  // Issue #1705: when the admin chose "Cancel without emailing", the standard
+  // Issue #1705: when the admin chose "Cancel booking, no email", the standard
   // email-promise copy would be untrue — state the recorded choice instead.
   //
   // #2259: the switch has to count here too. Since H1 the suppressed path

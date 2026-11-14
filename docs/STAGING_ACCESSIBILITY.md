@@ -403,13 +403,18 @@ Stated limits:
   mounts already filled, so the "mounted before it is filled" rule cannot hold
   for it. The pay-link page's "Loading..." and `BookingPaymentWrapper`'s
   "Preparing payment..." carry `role="status"` but are not guaranteed to be read.
+  The same holds for the pay-link page's "Checking your payment...": it replaces
+  the whole page (a redirect return, #4955, or a card success), so the status
+  region is mounted with the text in it and takes the focus.
 - Not converted, because they are outside the locations #4949 lists: the
   "Preparing payment..." line in `StripeProvider`; in `AdditionalPaymentCard`, the
   "Loading payment details..." line, the box that reports a failure to load the
   payment form and its own "Payment successful!" panel; the "Payment complete"
   line on the organiser's group settlement; and the pay-link page's final
-  "Payment received" card, which replaces the whole page. Each is plain text, not
-  a status region.
+  "Payment received" card, which replaces the whole page; and the pay-link page's
+  "Your payment did not go through" notice after a failed redirect return (#4955),
+  which appears with the pay options, not after an action on that page. Each is
+  plain text, not a status region.
 - Several outcomes are both a live region and the element that takes focus (the
   cancel flow's loading line, the account-deletion confirmation, the fresh-link
   confirmation, "Checking your payment...", the payment success and the

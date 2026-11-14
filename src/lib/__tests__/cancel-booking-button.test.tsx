@@ -90,7 +90,7 @@ describe("CancelBookingButton — per-cancel member-email choice (#1705)", () =>
     return { calls };
   }
 
-  it("asks whether to email the member and posts notifyMember: false on 'Cancel without emailing'", async () => {
+  it("asks whether to email the member and posts notifyMember: false on 'Cancel booking, no email'", async () => {
     const { calls } = stubPreviewAndCancelFetch();
     render(
       <CancelBookingButton bookingId="bk_1" onBehalfOfMember canChooseMemberEmail />
@@ -113,7 +113,7 @@ describe("CancelBookingButton — per-cancel member-email choice (#1705)", () =>
     expect(calls.some((c) => c.url.endsWith("/cancel"))).toBe(false);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Cancel without emailing" })
+      screen.getByRole("button", { name: "Cancel booking, no email" })
     );
     await waitFor(() => {
       expect(
@@ -130,7 +130,7 @@ describe("CancelBookingButton — per-cancel member-email choice (#1705)", () =>
     });
   });
 
-  it("posts notifyMember: true on 'Cancel and email member'", async () => {
+  it("posts notifyMember: true on 'Cancel booking and email member'", async () => {
     const { calls } = stubPreviewAndCancelFetch();
     render(
       <CancelBookingButton bookingId="bk_1" onBehalfOfMember canChooseMemberEmail />
@@ -146,7 +146,7 @@ describe("CancelBookingButton — per-cancel member-email choice (#1705)", () =>
     });
     fireEvent.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Cancel and email member" })
+      screen.getByRole("button", { name: "Cancel booking and email member" })
     );
 
     await waitFor(() => {
@@ -158,6 +158,34 @@ describe("CancelBookingButton — per-cancel member-email choice (#1705)", () =>
       refundMethod: "card",
       notifyMember: true,
     });
+  });
+
+  it("#4966: 'Go back' closes the email choice without cancelling, and leaves the confirm step in place", async () => {
+    const { calls } = stubPreviewAndCancelFetch();
+    render(
+      <CancelBookingButton bookingId="bk_1" onBehalfOfMember canChooseMemberEmail />
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel on behalf of member" })
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Confirm Cancellation" })
+      ).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText("Email the member about this cancellation?")
+      ).toBeNull();
+    });
+    expect(calls.some((c) => c.url.endsWith("/cancel"))).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "Confirm Cancellation" })
+    ).toBeTruthy();
   });
 
   it("keeps the immediate always-notify confirm for a member self-cancel (no dialog, no flag)", async () => {
@@ -278,7 +306,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       await screen.findByRole("button", { name: "Confirm Cancellation" }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Cancel without emailing" }),
+      screen.getByRole("button", { name: "Cancel booking, no email" }),
     );
 
     await screen.findByText("Cancelling booking...");
@@ -314,7 +342,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       await screen.findByRole("button", { name: "Confirm Cancellation" }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Cancel without emailing" }),
+      screen.getByRole("button", { name: "Cancel booking, no email" }),
     );
     expect(await screen.findByText("ACB-OLD")).toBeTruthy();
     // #4949: the refusal lands focus on the reason the officer must give next.
@@ -349,7 +377,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       screen.getByText("Email the member about this cancellation?"),
     ).toBeTruthy();
     fireEvent.click(
-      screen.getByRole("button", { name: "Cancel and email member" }),
+      screen.getByRole("button", { name: "Cancel booking and email member" }),
     );
 
     expect(await screen.findByText("ACB-NEW")).toBeTruthy();
@@ -389,7 +417,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       await screen.findByRole("button", { name: "Confirm Cancellation" }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Cancel without emailing" }),
+      screen.getByRole("button", { name: "Cancel booking, no email" }),
     );
     expect(await screen.findByText("ACB-OLD")).toBeTruthy();
     expect(screen.queryByText("private-ACB-OLD")).toBeNull();
@@ -464,7 +492,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       await screen.findByRole("button", { name: "Confirm Cancellation" }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Cancel without emailing" }),
+      screen.getByRole("button", { name: "Cancel booking, no email" }),
     );
     expect(
       await screen.findByText("This cancellation would strand another booking."),
@@ -490,7 +518,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       await screen.findByRole("button", { name: "Confirm Cancellation" }),
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Cancel without emailing" }),
+      screen.getByRole("button", { name: "Cancel booking, no email" }),
     );
     expect(await screen.findByText("ACB-OLD")).toBeTruthy();
 
@@ -653,7 +681,7 @@ describe("CancelBookingButton — manual (cash / off-Xero) settlement copy (#226
     });
     fireEvent.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Cancel without emailing" })
+      screen.getByRole("button", { name: "Cancel booking, no email" })
     );
 
     await waitFor(() => {
