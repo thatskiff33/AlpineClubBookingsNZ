@@ -1,3 +1,5 @@
+// Vite types the global stylesheet import below; tsconfig.e2e.json loads only Node types.
+/// <reference types="vite/client" />
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { useConfirm } from "@/components/confirm-dialog";
