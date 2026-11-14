@@ -88,6 +88,19 @@ let recordSesEmailFeedback: (typeof import("@/lib/email-suppression"))["recordSe
     });
 
   const read = (id: string) => prisma.emailLog.findUniqueOrThrow({ where: { id } });
+
+  /**
+   * The review queue is a window over EVERY exhausted row in the database, newest
+   * attempt first, and realdb files share one database. Other suites leave
+   * exhausted rows behind with a real-clock `lastAttemptAt`, which sorts ahead of
+   * this file's frozen-clock rows and pushes them out of the 25-row view (the
+   * `Real-PostgreSQL suites` job on #5135 failed this way with a full run, though
+   * this file passes alone). Date the rows under test, which are this file's own
+   * fixtures, past anything else before reading the queue.
+   */
+  const FAR_FUTURE = new Date(Date.UTC(2100, 0, 1));
+  const pinToQueueHead = (...ids: string[]) =>
+    prisma.emailLog.updateMany({ where: { id: { in: ids } }, data: { lastAttemptAt: FAR_FUTURE } });
   const press = (id: string) =>
     review.requeueExhaustedEmailFailure(id, { requestedByMemberId: ADMIN_ID });
   const requeueAudits = (id: string) =>
@@ -210,6 +223,7 @@ let recordSesEmailFeedback: (typeof import("@/lib/email-suppression"))["recordSe
     expect(await read(row.id)).toEqual(
       expect.objectContaining({ status: "FAILED", attempts: 3, errorMessage: "SMTP still throttled" }),
     );
+    await pinToQueueHead(row.id);
     expect((await review.getExhaustedEmailFailureReviewQueue()).failures.map((failure) => failure.id)).toContain(row.id);
   });
 
@@ -280,6 +294,7 @@ let recordSesEmailFeedback: (typeof import("@/lib/email-suppression"))["recordSe
     );
     expect(retired.errorMessage).toMatch(/#2362/);
     // Back in review with no copy left, so Try again is not offered again.
+    await pinToQueueHead(row.id);
     const queued = (await review.getExhaustedEmailFailureReviewQueue()).failures.find(
       (failure) => failure.id === row.id,
     );
@@ -293,6 +308,7 @@ let recordSesEmailFeedback: (typeof import("@/lib/email-suppression"))["recordSe
     const row = await exhaustedBookingEmail({ bookingId: null, bookingRecipientMemberId: null });
     const account = await exhausted(`account@${P}.test`);
 
+    await pinToQueueHead(row.id, account.id);
     const queue = await review.getExhaustedEmailFailureReviewQueue();
     const recoveryOf = (id: string) => queue.failures.find((failure) => failure.id === id)?.recovery;
     expect(recoveryOf(row.id)).toBe("retired");
