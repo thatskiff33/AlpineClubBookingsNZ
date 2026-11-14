@@ -4035,6 +4035,57 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
     );
   });
 
+  // #4343: the clean-up asks the resolver to refuse a completion whose guest a
+  // later removal already credited. An officer's completion is warned in the
+  // queue, not refused (owner, 24 Oct 2026), so the refusal is opt-in.
+  function laterRemovalReview() {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        reviewContext: reviewContext({
+          occurrence: {
+            bookingId: "booking-1",
+            bookingGuestId: "guest-1",
+            cause: "INEXACT_STORED_NIGHT_PRICES",
+            surrenderedNightDates: ["2026-08-01"],
+            addedNightDates: [],
+            storedEvidence: {
+              guestTotalCents: 20_000,
+              nightPrices: [
+                { date: "2026-08-01", priceCents: 10_000 },
+                { date: "2026-08-02", priceCents: 10_000 },
+              ],
+            },
+          },
+        }),
+      }),
+    );
+  }
+
+  const laterRemovalCompletion = {
+    taskId: "task-1",
+    resolution: "completed" as const,
+    note: "Priced from the stored nights.",
+    actingMemberId: "admin-1",
+    confirmedAmountCents: 10_000,
+    direction: "REFUND_TO_MEMBER" as const,
+    recordedNightPrices: null,
+  };
+
+  it("MUTATION: refuses the clean-up's completion of an edit review whose guest was removed after it was raised", async () => {
+    laterRemovalReview();
+    await expect(
+      resolveManualRefundTask({ ...laterRemovalCompletion, refuseIfGuestRemovedSinceRaised: true }, CLUB_FORMAT_TEST),
+    ).rejects.toThrow(/removed after it was raised/);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not refuse an officer's completion of that review: the queue warns them instead (owner, 24 Oct 2026)", async () => {
+    laterRemovalReview();
+    await expect(resolveManualRefundTask(laterRemovalCompletion, CLUB_FORMAT_TEST)).resolves.toBeDefined();
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalled();
+  });
+
   it("SHAPE 2 (#3257): a surviving strand with NO night rows now RE-BASES from its stored total (#4317 review H1)", async () => {
     /*
       The strand carries $80.00 and no row saying what any night of it sold for.
