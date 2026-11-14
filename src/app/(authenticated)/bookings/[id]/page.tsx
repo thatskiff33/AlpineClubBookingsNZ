@@ -1,3 +1,4 @@
+import { adminHref } from "@/lib/admin-hubs";
 import { Suspense } from "react";
 import { bookingOwner } from "@/lib/booking-owner";
 import { auth } from "@/lib/auth";
@@ -25,7 +26,7 @@ import { resolveBookingDetailConsent } from "./_lib/booking-detail-consent";
 import { loadBookingDetailHistory } from "./_lib/booking-detail-history";
 import { resolveBookingDetailEditAccess } from "./_lib/booking-detail-edit-access";
 import { resolveBookingDetailPayment } from "./_lib/booking-detail-payment";
-import { loadOrganiserCardAppealCeiling } from "./_lib/booking-detail-organiser-card-appeal";
+import { loadOrganiserCardAppealCeiling, loadSupersededHeldBackCents } from "./_lib/booking-detail-organiser-card-appeal";
 import { resolveBookingDetailLinkedParty } from "./_lib/booking-detail-linked-party";
 import { buildBookingDetailEditorData } from "./_lib/booking-detail-editor-data";
 import { renderBookingDetailMessages } from "./_lib/booking-detail-messages";
@@ -196,7 +197,7 @@ export default async function BookingDetailPage({
   });
   const backHref = resolveInternalReturnPath(
     query.returnTo,
-    isAdmin ? "/admin/bookings" : "/bookings"
+    isAdmin ? adminHref("bookings") : "/bookings"
   );
   const canDeleteDraft =
     !isDeleted &&
@@ -242,6 +243,7 @@ export default async function BookingDetailPage({
     party,
     // #3991: the same read the narrative quoted, so the two cannot disagree.
     amountOwed: history.amountOwed,
+    supersededHeldBackCents: await loadSupersededHeldBackCents(booking),
   });
   // #3956 (`INV-PAY-123`): an appeal on a booking the organiser paid for by card
   // is capped at what the organiser's combined payment can still return.

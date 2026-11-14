@@ -4,7 +4,8 @@ import { getPrivacyRetentionPreview } from "@/lib/privacy-retention";
 import {
   getPrivacyRetentionSettings, savePrivacyRetentionSettings,
 } from "@/lib/privacy-retention-settings";
-import { MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema } from "@/lib/privacy-retention-shared";
+import { BOOKING_RETENTION_FIELDS, MEMBERSHIP_RETENTION_FIELDS, privacyRetentionSettingsSchema, type PrivacyRetentionSettingsValues } from "@/lib/privacy-retention-shared";
+import { revalidatePublicSite } from "@/lib/public-content-revalidation";
 import { requireAdmin } from "@/lib/session-guards";
 
 export async function GET(request: Request) {
@@ -31,6 +32,7 @@ export async function GET(request: Request) {
   });
   return NextResponse.json({
     settings,
+    clearedBookingDietary: preview.clearedBookingDietary,
     preview: {
       emailLogs: preview.emailLogs,
       ...(canViewMembership ? {
@@ -67,12 +69,19 @@ export async function PUT(request: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid retention settings", details: parsed.error.flatten() }, { status: 400 });
   }
-  if (!hasAdminAreaAccess(guard.session.user, { area: "membership", level: "edit" })) {
-    const current = await getPrivacyRetentionSettings();
-    if ([...MEMBERSHIP_RETENTION_FIELDS].some(field => parsed.data[field] !== current[field])) {
-      return NextResponse.json({ error: "Membership edit access is required to change member or application retention." }, { status: 403 });
+  let current: PrivacyRetentionSettingsValues | undefined;
+  for (const [area, fields, error] of [
+    ["membership", MEMBERSHIP_RETENTION_FIELDS, "Membership edit access is required to change member or application retention."],
+    ["bookings", BOOKING_RETENTION_FIELDS, "Bookings edit access is required to change stay dietary retention."],
+  ] as const) {
+    if (hasAdminAreaAccess(guard.session.user, { area, level: "edit" })) continue;
+    const saved = current ??= await getPrivacyRetentionSettings();
+    if ([...fields].some(field => parsed.data[field] !== saved[field])) {
+      return NextResponse.json({ error }, { status: 403 });
     }
   }
   const settings = await savePrivacyRetentionSettings(parsed.data, guard.session.user.id);
+  // #4914: stored CMS pages render {{email-log-retention}} from these settings.
+  revalidatePublicSite();
   return NextResponse.json({ settings });
 }
