@@ -150,10 +150,21 @@ container_cpus() {
 # so neither repeats the seeder's default. The pattern comes from the same two
 # constants the seeder and k6 use, so it matches exactly the accounts they name.
 volume_member_count() {
-  local pattern
-  pattern="$(pnpm exec tsx -e 'import { DEMO_SEED_DOMAIN } from "./src/lib/demo-seed-guard"; import { LOAD_VOLUME_EMAIL_PREFIX } from "./load/lib/volume-users.js"; console.log(LOAD_VOLUME_EMAIL_PREFIX + "%@" + DEMO_SEED_DOMAIN)')"
-  stub_compose exec -T postgres psql -U tac -d tacbookings -tA -v ON_ERROR_STOP=1 \
-    -c "SELECT count(*) FROM \"Member\" WHERE email LIKE '${pattern}'"
+  # Callers run this inside $(...), where bash clears `set -e`, so every step
+  # checks itself: an empty pattern would otherwise count 0 and look like a result.
+  local pattern count
+  pattern="$(pnpm exec tsx -e 'import { DEMO_SEED_DOMAIN } from "./src/lib/demo-seed-guard"; import { LOAD_VOLUME_EMAIL_PREFIX } from "./load/lib/volume-users.js"; console.log(LOAD_VOLUME_EMAIL_PREFIX + "%@" + DEMO_SEED_DOMAIN)')" || return 1
+  if [[ -z "$pattern" ]]; then
+    echo "Could not work out the volume member address pattern." >&2
+    return 1
+  fi
+  count="$(stub_compose exec -T postgres psql -U tac -d tacbookings -tA -v ON_ERROR_STOP=1 \
+    -c "SELECT count(*) FROM \"Member\" WHERE email LIKE '${pattern}'")" || return 1
+  if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+    echo "Expected a member count from Postgres, got: $count" >&2
+    return 1
+  fi
+  printf '%s' "$count"
 }
 
 case "${1:-}" in

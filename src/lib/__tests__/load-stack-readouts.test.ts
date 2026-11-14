@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -63,8 +64,19 @@ beforeAll(() => {
     symlinkSync(path.join(repo, entry), path.join(root, entry));
   }
   // `pnpm exec <bin> ...` is `<bin> ...` here, so the test needs no pnpm on PATH.
-  writeFileSync(path.join(root, "bin", "pnpm"), '#!/usr/bin/env bash\n[ "$1" = exec ] && shift\nexec "$@"\n');
+  // FAKE_PNPM_FAIL makes it fail, for the case where the address pattern cannot be built.
+  writeFileSync(
+    path.join(root, "bin", "pnpm"),
+    '#!/usr/bin/env bash\n[ -n "${FAKE_PNPM_FAIL:-}" ] && exit 1\n[ "$1" = exec ] && shift\nexec "$@"\n',
+  );
   chmodSync(path.join(root, "bin", "pnpm"), 0o755);
+  // Plays `docker compose ... exec -T postgres psql`: records the arguments it was
+  // given and answers with a count, or fails (or answers rubbish) when told to.
+  writeFileSync(
+    path.join(root, "bin", "docker"),
+    '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$FAKE_DOCKER_LOG"\n[ -n "${FAKE_DOCKER_FAIL:-}" ] && exit 1\necho "${FAKE_DOCKER_ANSWER:-42}"\n',
+  );
+  chmodSync(path.join(root, "bin", "docker"), 0o755);
 });
 
 afterAll(() => {
@@ -90,6 +102,39 @@ describe("load-stack.sh read-outs", () => {
     expect(run("demo-password", { DEMO_SEED_PASSWORD: "from-the-shell" }).stdout).toBe("from-the-shell");
     // Nothing anywhere: the seeders' published default, read from the seeders' module.
     expect(run("demo-password").stdout).toBe("demo1234");
+  }, 120_000);
+
+  it("volume-members counts the seeded accounts in the stack's own database", () => {
+    stackEnv(["DB_PASSWORD=x"]);
+    const log = path.join(root, "docker.log");
+    rmSync(log, { force: true });
+    const result = run("volume-members", { FAKE_DOCKER_LOG: log });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("42");
+    const call = readFileSync(log, "utf8");
+    // The load project's own Postgres, and the prefix and domain the seeder and k6 share.
+    expect(call).toMatch(/-p load-issue4940 /);
+    expect(call).toContain("exec -T postgres psql -U tac -d tacbookings");
+    expect(call).toContain(`LIKE 'load-%@demo.alpineclub.test'`);
+  }, 120_000);
+
+  it("volume-members fails rather than reporting a count it could not take", () => {
+    stackEnv(["DB_PASSWORD=x"]);
+    const log = path.join(root, "docker.log");
+    // Postgres unreachable: a non-zero exit, not an empty or zero count.
+    const down = run("volume-members", { FAKE_DOCKER_LOG: log, FAKE_DOCKER_FAIL: "1" });
+    expect(down.status).not.toBe(0);
+    expect(down.stdout).toBe("");
+    // An answer that is not a number is refused.
+    const rubbish = run("volume-members", { FAKE_DOCKER_LOG: log, FAKE_DOCKER_ANSWER: "ERROR" });
+    expect(rubbish.status).not.toBe(0);
+    expect(rubbish.stderr).toMatch(/Expected a member count/);
+    // The address pattern cannot be built: no query runs against an empty pattern.
+    rmSync(log, { force: true });
+    const noPattern = run("volume-members", { FAKE_DOCKER_LOG: log, FAKE_PNPM_FAIL: "1" });
+    expect(noPattern.status).not.toBe(0);
+    expect(noPattern.stdout).toBe("");
+    expect(existsSync(log)).toBe(false);
   }, 120_000);
 
   it("refuses every read-out when no load stack has been prepared", () => {
