@@ -63,7 +63,11 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { setXeroInvoicingEnabled } from "@/lib/__tests__/helpers/xero-invoicing-guard-mock";
-import { SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE } from "@/lib/xero-invoicing-off";
+import {
+  SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+  XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE,
+  XeroInvoicingOffError,
+} from "@/lib/xero-invoicing-off";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { GET, POST } from "@/app/api/admin/subscription-billing/route";
 
@@ -439,6 +443,23 @@ describe("subscription billing with Xero off (#4986)", () => {
     expect(mocks.buildPreview).not.toHaveBeenCalled();
     expect(mocks.confirmPreview).not.toHaveBeenCalled();
     expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  // Review finding: a switch-off racing a confirm that already passed the entry
+  // check. The charges are committed, so the answer must not say "refused".
+  it("Xero switched off between the check and the enqueue: 200, says the charges wait for Xero", async () => {
+    setXeroInvoicingEnabled(true);
+    mocks.enqueue.mockRejectedValueOnce(new XeroInvoicingOffError());
+    const response = await POST(request(confirmBody));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      chargeIds: ["charge-1"],
+      queued: [],
+      xeroSwitchedOffDuringConfirm: true,
+      message: `1 immutable charge created; 0 exceptions recorded. ${XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE}`,
+    });
+    expect(mocks.confirmPreview).toHaveBeenCalled();
   });
 
   it("RETRY_CHARGE refuses without queueing", async () => {

@@ -22,7 +22,7 @@ import {
   assertSubscriptionInvoicingEnabled,
   isXeroInvoicingEnabled,
 } from "@/lib/xero-invoicing-guard";
-import { XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
+import { XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE, XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
 import {
   closeAlreadyPaidSubscriptionCharge,
   CloseAlreadyPaidChargeError,
@@ -360,12 +360,29 @@ export async function POST(request: Request) {
       source: "ANNUAL_BATCH",
       confirmedByMemberId: guard.session.user.id,
     });
-    const queued = await Promise.all(result.chargeIds.map((chargeId) =>
-      enqueueMembershipSubscriptionChargeOperation(chargeId, { createdByMemberId: guard.session.user.id })));
+    const createdMessage = `${result.chargeIds.length} immutable charge${result.chargeIds.length === 1 ? "" : "s"} created; ${result.exceptionCount} exception${result.exceptionCount === 1 ? "" : "s"} recorded.`;
+    let queued: Awaited<ReturnType<typeof enqueueMembershipSubscriptionChargeOperation>>[];
+    try {
+      queued = await Promise.all(result.chargeIds.map((chargeId) =>
+        enqueueMembershipSubscriptionChargeOperation(chargeId, { createdByMemberId: guard.session.user.id })));
+    } catch (error) {
+      if (!(error instanceof XeroInvoicingOffError)) throw error;
+      // #4986 review: Xero was switched off after the check above but before the
+      // enqueue. The charges and their outbox rows are already committed, so
+      // say so truthfully rather than answer "refused" (`INV-INT-039`).
+      invalidate();
+      return NextResponse.json({
+        success: true,
+        message: `${createdMessage} ${XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE}`,
+        ...result,
+        queued: [],
+        xeroSwitchedOffDuringConfirm: true,
+      });
+    }
     invalidate();
     return NextResponse.json({
       success: true,
-      message: `${result.chargeIds.length} immutable charge${result.chargeIds.length === 1 ? "" : "s"} created; ${result.exceptionCount} exception${result.exceptionCount === 1 ? "" : "s"} recorded.`,
+      message: createdMessage,
       ...result,
       queued,
     });

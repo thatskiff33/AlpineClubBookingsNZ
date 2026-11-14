@@ -364,7 +364,7 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
             ) : null}
             {xeroInvoicingOff && awaitingXeroCount > 0 ? (
               <Alert variant="warning" title={`${awaitingXeroCount} charge${awaitingXeroCount === 1 ? " is" : "s are"} waiting for Xero`}>
-                {awaitingXeroCount === 1 ? "This charge was" : "These charges were"} queued for this season before Xero was switched off. When Xero is switched back on, the invoice{awaitingXeroCount === 1 ? " is" : "s are"} raised and emailed automatically. Before switching it on, record every member who has already paid with Mark as paid (manual): a charge not yet invoiced in Xero is then held for your review instead of being invoiced.
+                {awaitingXeroCount === 1 ? "This charge was" : "These charges were"} queued for this season before Xero was switched off. When Xero is switched back on, the invoice{awaitingXeroCount === 1 ? " is" : "s are"} raised (if not already) and emailed automatically. Before switching it on, record every member who has already paid with Mark as paid (manual): a charge not yet invoiced in Xero is then held for your review instead of being invoiced.
               </Alert>
             ) : null}
             <div className="grid gap-3 sm:grid-cols-5">

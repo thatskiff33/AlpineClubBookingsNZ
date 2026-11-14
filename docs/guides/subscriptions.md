@@ -105,8 +105,10 @@ integration** module is off (see [Modules](modules.md)), the billing panel says
   season, such as one approved while Xero was off, cannot be recorded in the
   app yet.
 - If charges were queued before Xero was switched off, the panel says how many
-  are **waiting for Xero**. They are raised and emailed automatically when Xero
-  is switched back on. Before switching it on, mark every member who has already
+  are **waiting for Xero**. They are raised (if not already) and emailed
+  automatically when Xero is switched back on. If Xero is switched off while a
+  batch is being confirmed, the batch's charges are still created and the
+  confirm says they are waiting for Xero. Before switching it on, mark every member who has already
   paid: a charge not yet invoiced in Xero is then held as **Conflict** for you
   to close, instead of being invoiced.
 

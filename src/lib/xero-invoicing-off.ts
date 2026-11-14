@@ -14,6 +14,14 @@ export const SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE =
   "Subscription invoicing is off because Xero is not enabled. Bill any subscription owed outside the app.";
 
 /**
+ * The annual-batch confirm's answer when Xero was switched off after its entry
+ * check but before its charges were enqueued: the charges and their outbox
+ * rows are already committed, so the officer is told they wait for Xero.
+ */
+export const XERO_SWITCHED_OFF_DURING_CONFIRM_MESSAGE =
+  "Xero was switched off while this batch was being confirmed, so these charges are waiting for Xero. Check them before switching Xero back on.";
+
+/**
  * The refusal a subscription writer throws while Xero is off; routes map it to
  * a 409 with its message. Lives here, not in the guard, so a test can replace
  * the guard without losing the class.

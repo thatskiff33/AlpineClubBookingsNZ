@@ -7,11 +7,13 @@ shared helper. The shared logic itself went into new, small modules
 `slug.ts`), so nothing here is a copy of it.
 
 file: src/app/api/admin/subscription-billing/route.ts
-lines: 388
+lines: 405
 reason: the guard has to run inside `CONFIRM_ANNUAL_BATCH` and `RETRY_CHARGE`
   before the confirm writes its immutable charges, the 409 mapping sits in the
   catch with the route's other error classes, and the GET reports the module
   state plus the count of charges still waiting for Xero, which the panel reads.
+  The confirm also answers truthfully when Xero is switched off after its check
+  but before its enqueue (the charges are already committed).
   Splitting the route's actions out would change far more than this fix needs.
 
 file: src/lib/nomination.ts

@@ -874,6 +874,8 @@ work written would wait and go out unchecked the day Xero comes back.
   batch and charge retry, and the Xero Operations retry of a subscription
   invoice, answer 409 with one plain message.
   `enqueueMembershipSubscriptionChargeOperation` refuses for any other caller.
+  A switch-off racing a confirm that passed the check leaves its charges
+  committed; the confirm answers 200 and says they wait for Xero.
 - **Approval still succeeds.** It creates no subscription charge and no
   joining-fee outbox row (the fee is SKIPPED and audited), and warns the
   officer to bill anything owed outside the app.
