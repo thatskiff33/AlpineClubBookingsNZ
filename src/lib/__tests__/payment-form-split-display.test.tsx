@@ -1,22 +1,25 @@
 // @vitest-environment jsdom
 
 import { render, screen } from "@/lib/__tests__/support/club-time-render";
+import { fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import PaymentForm from "@/components/stripe/PaymentForm";
 
 // The Stripe Elements hooks/components are the only external dependency of the
 // display logic under test (#1976). Stub them so the form renders headlessly;
 // the PaymentElement is irrelevant to the amount display.
+const confirmPayment = vi.hoisted(() => vi.fn());
+
 vi.mock("@stripe/react-stripe-js", () => ({
   PaymentElement: () => <div data-testid="payment-element" />,
-  useStripe: () => ({}),
+  useStripe: () => ({ confirmPayment }),
   useElements: () => ({}),
 }));
 
 const noop = () => undefined;
 
 describe("PaymentForm split-vs-non-split amount display (#1976)", () => {
-  it("non-split: shows the single 'Total' from amountCents, byte-for-byte unchanged", () => {
+  it("non-split: falls back to amountCents when the server figure is absent", () => {
     render(
       <PaymentForm
         amountCents={12500}
@@ -30,19 +33,30 @@ describe("PaymentForm split-vs-non-split amount display (#1976)", () => {
     expect(screen.queryByText(/closer to your stay/i)).toBeNull();
   });
 
-  it("non-split even with chargedAmountCents present: no deferred portion means the original display", () => {
+  it("non-split uses the server charge when it differs from the gross price", () => {
     render(
       <PaymentForm
-        amountCents={12500}
-        chargedAmountCents={12500}
+        amountCents={30000}
+        chargedAmountCents={20000}
+        isSplit={false}
         deferredGuestAmountCents={null}
         returnUrl="http://localhost/return"
         onSuccess={noop}
       />,
     );
 
-    expect(screen.getByText("Total: $125.00")).toBeTruthy();
+    expect(screen.getByText("Total: $200.00")).toBeTruthy();
+    expect(screen.queryByText(/300.00/)).toBeNull();
     expect(screen.queryByText(/Charged today/i)).toBeNull();
+  });
+
+  it("quotes the server charge in the payment success message", async () => {
+    confirmPayment.mockResolvedValueOnce({ paymentIntent: { id: "pi_paid", status: "succeeded" } });
+    render(<PaymentForm amountCents={30000} chargedAmountCents={20000} isSplit={false}
+      returnUrl="http://localhost/return" onSuccess={noop} />);
+    fireEvent.click(screen.getByRole("button", { name: "Pay Now" }));
+    expect(await screen.findByText("Your payment of $200.00 has been processed.")).toBeTruthy();
+    expect(screen.queryByText(/300.00/)).toBeNull();
   });
 
   it("split: headline shows the server-charged member portion, plus the deferred guest line", () => {

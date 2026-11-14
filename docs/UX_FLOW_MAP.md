@@ -86,6 +86,13 @@ Screen: Booking detail and its payment action, or an emailed payment link.
 
 Journey: Open the booking, check the lodge it names (`INV-CAP-039`), inspect what is owed and choose an available payment method. Switching an unpaid card booking to internet banking asks for confirmation first, because the member cannot switch back to card. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
 
+The card form and success message use the intent's server `chargedAmountCents`,
+including for non-split bookings. `creditElection` on fresh, reused, already-paid
+and the processing, superseded and below-minimum 409 responses explains the amount applied and any balance/price
+shortfall. Credit-only completion waits for **Continue**, so both the wizard
+and booking page let the member read the outcome before moving on. Recovery
+messages disclose credit already applied without promising another card charge.
+
 [Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Guest consent
