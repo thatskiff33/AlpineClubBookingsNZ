@@ -9,9 +9,9 @@ import {
 } from "@/lib/manual-settlement-reversal-event";
 import {
   getStuckStateDashboard,
-  STUCK_STATE_DETAIL_ROW_CAP,
   type StuckStateDashboardDependencies,
 } from "@/lib/stuck-state-dashboard";
+import { STUCK_STATE_DETAIL_ROW_CAP } from "@/lib/stuck-state-payment-signals";
 import { adminAnchorHref, adminHref } from "@/lib/admin-hubs";
 
 const modulesOn: FeatureFlags = {
