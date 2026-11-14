@@ -128,6 +128,8 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // state. `pg_locks` is a catalog view no Prisma model covers; its one boolean
   // is schema-decoded before the store decides.
   "src/lib/global-lock-held.ts": 1,
+  // Server role attributes are not Prisma models; decoded before readiness uses them.
+  "src/lib/setup-readiness-db.ts": 1,
 };
 
 /**
