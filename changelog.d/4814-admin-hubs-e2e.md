@@ -6,5 +6,5 @@
   that feature is built.
 
   The existing browser tests now ask the app where each admin page lives
-  instead of spelling out the address, so they keep passing on either side of
-  the switch. Nothing a club sees changes in this release.
+  instead of spelling out the address, so what they expect is right on either
+  side of the switch. Nothing a club sees changes in this release.

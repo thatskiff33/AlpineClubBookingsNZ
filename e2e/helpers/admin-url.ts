@@ -6,7 +6,8 @@
 // `adminHref` (the URL the app links, `INV-SSOT-002`) and turn it into an exact
 // URL expectation with `adminUrlPattern`, so one assertion holds before and
 // after the flip. `admin-url-census.test.ts` refuses a literal admin path in a
-// `toHaveURL` or `waitForURL`.
+// `toHaveURL`, a `waitForURL`, a `[href…]` selector and a
+// `toHaveAttribute("href", …)`; `adminHrefPattern` is the matcher for the last.
 import { escapeRegExp } from "@/lib/escape-regexp";
 
 export { adminHref, adminTabHref } from "@/lib/admin-hubs";
@@ -19,15 +20,14 @@ export interface AdminUrlPatternOptions {
 }
 
 /**
- * An anchored expectation for the URL a page is open at: any origin, exactly
- * `href`'s path (and its query, when it has one), then optionally more query
- * and a fragment. `/admin/payments` matches `/admin/payments?status=failed`
- * but not `/admin/payments-report` or `/admin/finance/payments`.
+ * The anchored source for `href`'s path (and its query, when it has one), then
+ * optionally more query and a fragment. Both public matchers are built from it,
+ * so a link's `href` attribute and a page's URL cannot be matched two ways.
  */
-export function adminUrlPattern(
+function targetSource(
   href: string,
-  { child = false, requiredParam }: AdminUrlPatternOptions = {},
-): RegExp {
+  { child = false, requiredParam }: AdminUrlPatternOptions,
+): string {
   const [path = "", query] = href.split("?", 2);
   if (!path.startsWith("/admin")) {
     throw new Error(`adminUrlPattern: ${href} is not an admin href`);
@@ -44,5 +44,29 @@ export function adminUrlPattern(
   } else {
     rest = "(?:[?#].*)?";
   }
-  return new RegExp(`^[a-z][a-z0-9+.-]*://[^/?#]+${escapeRegExp(path)}${segment}${rest}$`);
+  return `${escapeRegExp(path)}${segment}${rest}`;
+}
+
+/**
+ * An anchored expectation for the URL a page is open at: any origin, exactly
+ * `href`'s path (and its query, when it has one), then optionally more query
+ * and a fragment. `/admin/payments` matches `/admin/payments?status=failed`
+ * but not `/admin/payments-report` or `/admin/finance/payments`.
+ */
+export function adminUrlPattern(
+  href: string,
+  options: AdminUrlPatternOptions = {},
+): RegExp {
+  return new RegExp(`^[a-z][a-z0-9+.-]*://[^/?#]+${targetSource(href, options)}$`);
+}
+
+/**
+ * The same expectation for a link's `href` attribute, which the app writes as a
+ * root-relative path with no origin. `toHaveAttribute("href", …)` takes it.
+ */
+export function adminHrefPattern(
+  href: string,
+  options: AdminUrlPatternOptions = {},
+): RegExp {
+  return new RegExp(`^${targetSource(href, options)}$`);
 }

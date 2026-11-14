@@ -1,4 +1,4 @@
-import type { Browser, Page } from "@playwright/test";
+import type { Browser, BrowserContext, Page } from "@playwright/test";
 
 import { expect, test } from "./helpers/accessibility";
 import { adminHref, adminUrlPattern } from "./helpers/admin-url";
@@ -27,7 +27,10 @@ test.skip(
   !ADMIN_HUBS_LIVE,
   "Admin hubs are off: runs once C18 (#4815) sets ADMIN_HUBS_LIVE",
 );
-test.describe.configure({ mode: "serial" });
+
+// No serial group: nothing here hands state to the next test, so one failure
+// must not hide the rest (the first run, at C18, is the one that needs every
+// result). The two-role test sets its own roles and restores them in `finally`.
 
 // A private login bucket for E2E_ADMIN, the most shared login in the suite
 // (see submitLoginForm). Outside syntheticClientIp's 10.99.0.0/16.
@@ -56,27 +59,32 @@ async function adminSession(browser: Browser) {
   return browser.newContext({ storageState: storageStatePath(E2E_ADMIN.email) });
 }
 
+/** Every static, menu-listed page whose directory has moved under its hub. */
+const MOVED_PAGES = ADMIN_PAGES.filter(
+  (entry) => entry.moved && entry.kind === "page" && !entry.oldPath.includes("["),
+);
+
 test.describe("old addresses redirect once to the hubs", () => {
   test.use({ storageState: storageStatePath(E2E_ADMIN.email) });
 
-  // One static, menu-listed page per hub. Home's dashboard keeps its URL.
+  // Home's dashboard keeps its URL, so it has no moved page to find. A hub with
+  // none at all would leave its pages unchecked, so each one is named.
   for (const hub of ADMIN_HUBS.filter((entry) => entry.key !== "dashboard")) {
-    test(`a moved ${hub.label} page answers 307 to its hub path, query kept`, async ({
+    test(`${hub.label} has a moved page to check`, () => {
+      expect(
+        MOVED_PAGES.some((entry) => entry.hub === hub.key),
+        `${hub.label} has no moved static page: every hub's pages move before the switch`,
+      ).toBe(true);
+    });
+  }
+
+  // Every static, menu-listed page whose directory has moved (#4814 section 5).
+  for (const moved of MOVED_PAGES) {
+    test(`${moved.oldPath} answers 307 to its hub path, query kept`, async ({
       page,
     }) => {
-      const moved = ADMIN_PAGES.find(
-        (entry) =>
-          entry.hub === hub.key &&
-          entry.moved &&
-          entry.kind === "page" &&
-          !entry.oldPath.includes("["),
-      );
-      expect(
-        moved,
-        `${hub.label} has no moved static page: every hub's pages move before the switch`,
-      ).toBeDefined();
-      const oldHref = resolveAdminHref(moved!, false);
-      const hubHref = resolveAdminHref(moved!, true);
+      const oldHref = resolveAdminHref(moved, false);
+      const hubHref = resolveAdminHref(moved, true);
       expect(hubHref).not.toBe(oldHref);
 
       const res = await page.request.get(`${oldHref}?hub=1`, { maxRedirects: 0 });
@@ -160,35 +168,40 @@ test.describe("the role menu", () => {
   }) => {
     test.setTimeout(120_000);
     const treasurer = ROLE_PERSONAS.FINANCE_ADMIN;
-    const adminContext = await browser.newContext();
-    const adminPage = await adminContext.newPage();
-    // A fresh sign-in, so the role writes pass any recent-authentication check.
-    await loginPersona(adminPage, E2E_ADMIN.email, ADMIN_GRANT_IP);
-
-    const search = await adminPage.request.get(
-      `/api/admin/members?search=${encodeURIComponent(treasurer.email)}`,
-    );
-    expect(search.ok(), `member search (${search.status()})`).toBeTruthy();
-    const { members = [] } = (await search.json()) as {
-      members?: Array<{ id: string; email: string }>;
-    };
-    const memberId = members.find((member) => member.email === treasurer.email)?.id;
-    expect(memberId, "the seeded Treasurer").toBeTruthy();
-
-    const detail = await adminPage.request.get(`/api/admin/members/${memberId}`);
-    expect(detail.ok(), `member detail (${detail.status()})`).toBeTruthy();
-    const { accessRoles = [] } = (await detail.json()) as { accessRoles?: string[] };
-    // Without Content Manager, whatever an earlier run left behind.
-    const seeded = accessRoles.filter((token) => token !== "ADMIN_CONTENT");
-
-    const setRoles = async (tokens: string[]) => {
-      const res = await adminPage.request.put(`/api/admin/members/${memberId}`, {
-        data: { accessRoles: tokens },
-      });
-      expect(res.ok(), `set roles ${tokens.join(",")}: ${await res.text()}`).toBeTruthy();
-    };
-
+    // Opened inside the try, so a failed lookup still closes it and puts the
+    // Treasurer's roles back; each retry starts from the seeded roles.
+    let adminContext: BrowserContext | undefined;
+    let restoreRoles: (() => Promise<void>) | undefined;
     try {
+      adminContext = await browser.newContext();
+      const adminPage = await adminContext.newPage();
+      // A fresh sign-in, so the role writes pass any recent-authentication check.
+      await loginPersona(adminPage, E2E_ADMIN.email, ADMIN_GRANT_IP);
+
+      const search = await adminPage.request.get(
+        `/api/admin/members?search=${encodeURIComponent(treasurer.email)}`,
+      );
+      expect(search.ok(), `member search (${search.status()})`).toBeTruthy();
+      const { members = [] } = (await search.json()) as {
+        members?: Array<{ id: string; email: string }>;
+      };
+      const memberId = members.find((member) => member.email === treasurer.email)?.id;
+      expect(memberId, "the seeded Treasurer").toBeTruthy();
+
+      const detail = await adminPage.request.get(`/api/admin/members/${memberId}`);
+      expect(detail.ok(), `member detail (${detail.status()})`).toBeTruthy();
+      const { accessRoles = [] } = (await detail.json()) as { accessRoles?: string[] };
+      // Without Content Manager, whatever an earlier run left behind.
+      const seeded = accessRoles.filter((token) => token !== "ADMIN_CONTENT");
+
+      const setRoles = async (tokens: string[]) => {
+        const res = await adminPage.request.put(`/api/admin/members/${memberId}`, {
+          data: { accessRoles: tokens },
+        });
+        expect(res.ok(), `set roles ${tokens.join(",")}: ${await res.text()}`).toBeTruthy();
+      };
+      restoreRoles = () => setRoles(seeded);
+
       await setRoles([...seeded, "ADMIN_CONTENT"]);
       await loginPersona(page, treasurer.email);
       await page.goto(adminHref("dashboard"));
@@ -206,8 +219,11 @@ test.describe("the role menu", () => {
       await expect(hubLinks(page).filter({ hasText: "Finance" })).toHaveCount(1);
       await expect(hubLinks(page).filter({ hasText: "Website" })).toHaveCount(0);
     } finally {
-      await setRoles(seeded);
-      await adminContext.close();
+      try {
+        await restoreRoles?.();
+      } finally {
+        await adminContext?.close();
+      }
     }
   });
 });

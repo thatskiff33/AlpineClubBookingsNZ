@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "./helpers/accessibility";
-import { adminHref, adminUrlPattern } from "./helpers/admin-url";
+import { adminHref, adminHrefPattern, adminUrlPattern } from "./helpers/admin-url";
 import { loginPersona } from "./helpers/auth";
 import { ROLE_PERSONAS } from "./helpers/fixtures";
 import { personas } from "./helpers/personas";
@@ -21,7 +21,7 @@ async function openMemberDetail(page: Page, name: string) {
   // hydration in CI and wiped the input, so the first interaction is this
   // auto-waited click. Locate by href+text rather than accessible name.
   const memberLink = page
-    .locator('a[href*="/admin/members/"]')
+    .locator(`a[href^="${adminHref("members")}/"]`)
     .filter({ hasText: name })
     .first();
   await expect(memberLink).toBeVisible({ timeout: 30_000 });
@@ -40,7 +40,10 @@ test("member directory Open action lands read-only and keeps the name link", asy
   const nameLink = row.getByRole("link", { name, exact: true });
   const openLink = row.getByRole("link", { name: `Open ${name}` });
   await expect(nameLink).toBeVisible({ timeout: 30_000 });
-  await expect(openLink).toHaveAttribute("href", /\/admin\/members\/[^?]+\?returnTo=/);
+  await expect(openLink).toHaveAttribute(
+    "href",
+    adminHrefPattern(adminHref("members"), { child: true, requiredParam: "returnTo" }),
+  );
   await expect(openLink).not.toHaveAttribute("href", /edit=true/);
 
   await openLink.focus();
