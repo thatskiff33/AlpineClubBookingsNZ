@@ -224,7 +224,9 @@ async function readKnowledgeBundleState(
  * matters operationally: a deployment that reached `commit-sha` did not have
  * `RELEASE_ID` wired, and one that reached neither cannot be identified at all.
  *
- * No environment variable is read except the three named here, and no value from
+ * This function itself reads only `RELEASE_ID`, `GIT_COMMIT_SHA` and
+ * `APP_RUNTIME_ROLE` directly, plus the build's version through `getAppVersion()`
+ * (#4985); the bundle state comes from `readKnowledgeBundleState`. No value from
  * any other variable is projected. The public-website CSP nonce derived from the
  * release id (`release-nonce.ts`) is deliberately NOT read or reported: it is a
  * different concern, and a tool that returned it would be inviting the model to
