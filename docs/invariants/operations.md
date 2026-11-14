@@ -244,6 +244,20 @@ rules first written here. #2765 extended it with the measured-audience half.
   inside a client-taking helper to pass that client on - so a new
   in-transaction call site is a CI failure rather than the next audit's finding.
 
+## INV-LOCK-005
+
+- **Advisory-lock transactions use READ COMMITTED (#4920).** Do not set
+  `Serializable` or `RepeatableRead` on a transaction that takes an advisory
+  lock, directly or through a helper. Lock, re-read, claim depends on each
+  statement seeing commits made while the transaction waited. Snapshot isolation
+  fixes the view at the first statement, so a post-lock read can miss a newly
+  committed credit, refund or family link. Serializable checks do not rescue
+  readers racing READ COMMITTED writers in other tables.
+- Keep blocker reads after every applicable lock and retain status-guarded claims.
+  The source census `advisory-lock-isolation-census.test.ts` derives lock helpers
+  from the shared advisory-lock inventory matcher; its explicit exception list
+  is empty. Transactions without advisory locks are outside this restriction.
+
 ## INV-OPS-014
 
 - **The statement handed to a raw `Unsafe` call is visibly static at the call
@@ -519,7 +533,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
   A GENERAL "did a reclassification ship without a backfill" check is
-  **not available**: the audit-writer census pins only 130 of its 538 write sites
+  **not available**: the audit-writer census pins only 130 of its 542 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
@@ -748,3 +762,33 @@ grant check is not applicable; the check that no grantee but the owner, PUBLIC
 included, holds a right that changes a row always runs. It does not prove
 historical parity, writer-cohort coverage or accounting policy; those activate
 in later milestones.
+
+## INV-OPS-017
+
+Third-party container images run by deployment scripts or workflows carry a
+full `@sha256:` digest. A floating tag alone is insufficient. First-party
+images built locally or tagged by commit SHA are explicit exceptions.
+
+`scripts/ci/check-image-pins.mjs` enforces workflow service and job containers,
+image environment values, and Docker runs in workflows, the production deploy,
+the backup drill and CI shell scripts. Unsupported checked shapes fail closed.
+Variable references are checked at their definitions; computed sources must be
+explicitly recognised. The deploy's Caddy helpers read the Compose service image
+and refuse an unresolved or unpinned reference. CI PostgreSQL copies are tied
+to Compose by `deployment-image-contracts.test.ts`.
+
+Workflow and shell image digests need manual refresh where Dependabot cannot
+update them; see [the refresh procedure](../MAINTENANCE.md#refreshing-container-image-digests).
+
+## INV-OPS-018
+
+First Bootstrap sets `DATA_ENCRYPTION_KEYS` before the app first starts. It runs
+the first migrations as the operator, provisions least-privilege database roles,
+then sets the application user, migration user and audit-retention URL together
+before starting web slots and the cron leader. No credential is saved before
+these steps. Existing deployments retain their compatibility defaults and use
+the separate switch-over and key-rollout runbooks in
+[`DEPLOYMENT.md`](../../DEPLOYMENT.md#first-bootstrap). The database-role readiness
+check reads server privileges, including superuser membership and a superuser
+login narrowed by `SET ROLE`, and only warns; it never blocks an existing
+installation.
