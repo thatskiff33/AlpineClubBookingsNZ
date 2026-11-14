@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { APP_VERSION_ENV_VAR, getAppVersion } from "@/lib/app-version";
 
 const scheduledCronJobs = vi.hoisted(
   (): Array<{
@@ -654,6 +655,7 @@ describe("OBS-07: GET /api/admin/health", () => {
   afterEach(() => {
     resetHealthEnv();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("returns 403 for non-admin users", async () => {
@@ -961,6 +963,21 @@ describe("OBS-07: GET /api/admin/health", () => {
       orderBy: { startedAt: "desc" },
       take: 1,
     });
+  });
+
+  it("shows the build's version on the System Health page, not a constant (#4985)", async () => {
+    // The mocked health report below carries the old "0.1.0" fixture on purpose:
+    // `systemInfo.version` is the one the dashboard prints, and it must come from
+    // the build stamp, not from that report and not from a hard-coded fallback.
+    vi.stubEnv(APP_VERSION_ENV_VAR, "admin-health-build-under-test");
+    mockAdminSession();
+    mockAdminHealthDependencies();
+
+    const { GET } = await import("@/app/api/admin/health/route");
+    const data = await (await GET()).json();
+
+    expect(data.systemInfo.version).toBe(getAppVersion());
+    expect(data.systemInfo.version).toBe("admin-health-build-under-test");
   });
 
   it("uses cron leader runtime status when admin health is served by a web slot", async () => {

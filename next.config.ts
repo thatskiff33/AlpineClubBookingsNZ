@@ -5,6 +5,8 @@ import { ASSET_NOT_FOUND_REWRITES } from "./src/lib/asset-url-404";
 import { buildAdminUrlRules } from "./src/lib/admin-hubs";
 import { ADMIN_HUBS_LIVE } from "./src/lib/admin-hubs/release";
 import { PUBLIC_WEBSITE_NONCE_SEED_ENV_VAR } from "./src/lib/release-nonce-seed";
+import { APP_VERSION_ENV_VAR } from "./src/lib/app-version";
+import { version } from "./package.json";
 
 /**
  * The last-resort seed for the public website's fixed CSP nonce (#2352 slice-1
@@ -34,7 +36,9 @@ import { PUBLIC_WEBSITE_NONCE_SEED_ENV_VAR } from "./src/lib/release-nonce-seed"
  * contains `isPublicWebsitePath`) and `.next/server/chunks/ssr/[root-of-the-server]__*.js`
  * (the app graph) both contained
  * `let r = "build:c98caf18-…".trim(); return r ? { … source: "build-seed" }`.
- * Re-run that grep if this file's `env` block is ever touched.
+ * Re-run that grep if this file's `env` block is ever touched, and grep the same
+ * two chunks for the `package.json` version too (#4985): `getAppVersion()` must
+ * leave that literal behind, not a surviving `process.env` read.
  *
  * One artefact of the same measurement, recorded so nobody reads it as a bug: Next
  * evaluates this config MORE THAN ONCE per build, so `.next/required-server-files.json`
@@ -56,8 +60,18 @@ function resolvePublicWebsiteNonceSeed(): string {
 }
 
 const nextConfig: NextConfig = {
+  // Both values identify the build, so both are stamped here once and reach
+  // every compiler (see the docblock above). `APP_VERSION` is the `package.json`
+  // version (#4985): the production image runs `node server.js` with no package
+  // manager, so the version variable npm and pnpm set for scripts was never
+  // there and every release reported "0.1.0". Read it only through
+  // `getAppVersion()`.
+  // Next defines every `env` key for the client compiler too, so a value reaches
+  // a client bundle wherever client code reads it. The version is public. The
+  // nonce seed must not be: keep its readers out of client code.
   env: {
     [PUBLIC_WEBSITE_NONCE_SEED_ENV_VAR]: resolvePublicWebsiteNonceSeed(),
+    [APP_VERSION_ENV_VAR]: version,
   },
   images: {
     deviceSizes: [640, 750, 828, 1080, 1200, 1536, 1920, 2048, 3840],

@@ -1,4 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { APP_VERSION_ENV_VAR, getAppVersion } from "@/lib/app-version";
+
+beforeEach(() => vi.stubEnv(APP_VERSION_ENV_VAR, "health-build-under-test"));
+afterEach(() => vi.unstubAllEnvs());
 
 // Mock prisma
 vi.mock("@/lib/prisma", () => ({
@@ -117,7 +121,7 @@ describe("GET /api/health", () => {
     expect(data.checks.stripe).toBeUndefined();
     expect(data.checks.xero).toBeUndefined();
     expect(data.checks.smtp).toBeUndefined();
-    expect(data.version).toBeDefined();
+    expect(data.version).toBe(getAppVersion());
     expect(data.uptime).toBeTypeOf("number");
   });
 
@@ -189,6 +193,7 @@ describe("GET /api/health/ready", () => {
     expect(data.status).toBe("healthy");
     expect(data.checks.db.status).toBe("ok");
     expect(data.checks.config.status).toBe("ok");
+    expect(data.version).toBe(getAppVersion());
     expect(data.runtime).toBeUndefined();
     expect(JSON.stringify(data)).not.toContain("cronEnabled");
     expect(JSON.stringify(data)).not.toContain("web-blue");
@@ -241,6 +246,7 @@ describe("GET /api/health/ready", () => {
     expect(response.status).toBe(503);
     expect(data.status).toBe("unhealthy");
     expect(data.checks).toEqual({});
+    expect(data.version).toBe(getAppVersion());
     expect(data.runtime).toBeUndefined();
     expect(JSON.stringify(data)).not.toContain("cronEnabled");
     expect(JSON.stringify(data)).not.toContain("web-green");
