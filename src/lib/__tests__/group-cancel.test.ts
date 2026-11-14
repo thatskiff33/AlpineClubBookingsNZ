@@ -9,6 +9,7 @@ import {
 } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
+  releaseBookingPromoRedemptions: vi.fn(async () => 0),
   groupBookingFindUnique: vi.fn(),
   groupBookingUpdate: vi.fn(),
   bookingFindMany: vi.fn(),
@@ -76,6 +77,11 @@ const groupLedger = vi.hoisted(() => ({
   postGroupCancelChildLedgerLines: vi.fn<(tx: unknown, input: unknown) => Promise<void>>(async () => {}),
 }));
 vi.mock("@/lib/booking-ledger-group-settlement-sync", () => groupLedger);
+// Promo arithmetic is exercised against PostgreSQL in cancelled-booking-promo-release.realdb.test.ts.
+vi.mock("@/lib/promo", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/promo")),
+  releaseBookingPromoRedemptions: mocks.releaseBookingPromoRedemptions,
+}));
 
 // #4042: the hand-back's own rules (created, grown, supplemented; the row's
 // shape, the alert's wording) are proved in group-organiser-hand-back.test.ts and
@@ -1691,6 +1697,25 @@ describe("adult-member hosting on an organiser cancel (#3209)", () => {
       [{ bookingId: "child-1" }],
       [{ bookingId: "child-2" }],
     ]);
+  });
+
+  it("releases each cancelled child's promo uses inside that child's own transaction, and none for a lost claim (#4909)", async () => {
+    organiserPaysGroup();
+    mocks.bookingFindMany.mockResolvedValue([
+      child({ id: "child-1", status: BookingStatus.CONFIRMED }),
+      child({ id: "child-2", status: BookingStatus.CONFIRMED }),
+    ]);
+    // child-2 was already cancelled by someone else: its claim is lost.
+    mocks.bookingUpdate.mockImplementation(async (args: { where: { id: string } }) =>
+      ({ count: args.where.id === "child-2" ? 0 : 1 }),
+    );
+
+    await settleGroupBookingOnOrganiserCancel(ORG_BOOKING, ORGANISER, "1.2.3.4", CLUB_FORMAT_TEST);
+
+    expect(mocks.releaseBookingPromoRedemptions.mock.calls).toEqual([[txClient, "child-1"]]);
+    expect(mocks.bookingUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.releaseBookingPromoRedemptions.mock.invocationCallOrder[0],
+    );
   });
 
   it("never reconciles or drains for a child whose status claim was lost", async () => {

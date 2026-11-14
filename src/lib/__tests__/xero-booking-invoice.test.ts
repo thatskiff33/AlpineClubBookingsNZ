@@ -3553,6 +3553,11 @@ describe("createXeroCreditNoteForModification", () => {
         ],
       },
     });
+    // #3993: an edit's note first reads what the invoice still owes. These
+    // cases are about notes the invoice CAN take, so it is open for $100.
+    mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_1", status: "AUTHORISED", amountDue: 100 }] },
+    });
   });
 
   it("keeps created modification credit notes partial when allocation fails", async () => {

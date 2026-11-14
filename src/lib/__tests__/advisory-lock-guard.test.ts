@@ -1,13 +1,9 @@
-import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
+import { ADVISORY_LOCK_CALL, lockCensusSources, maskedSource } from "./support/advisory-lock-source";
 import { balancedBrackets } from "./support/balanced-brackets";
-import {
-  blankLiterals,
-  blankLiteralsWithSpans,
-  type BlankedSpan,
-} from "./support/strip-comments";
+import { blankLiterals, blankLiteralsWithSpans } from "./support/strip-comments";
 
 // #182 guard (process follow-up to upstream PR #1911 review finding H1): a
 // capacity ADMISSION path must use the per-lodge lock, while global-cohort
@@ -558,7 +554,7 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "lockDeadCardRefundRow#1",
     tier: "GLOBAL",
     reason:
-      "#4368 review D (INV-SSOT): the ONE lock(1) of every settlement of a dead card refund row, in card-refund-dead-row-lock.ts - 'Paid another way' (closeCardRefundPaidAnotherWay) and the two no-money settlements, each with its own refusals. 'PAID ANOTHER WAY': #3372 (owner, 7 Oct 2026: 'Count + add close action'): closing a dead card refund as paid another way moves the payment's refundedAmountCents and closes a refund debt in one commit, and every edit, acceptance, paid cancel and refund appeal reads those two separately to size a refund net of what is promised back - under lock(1) the close cannot commit between the two reads. First lock of its transaction, then the operation re-read, then the Payment row (lockPaymentForRefundedTotal, #3924 round 4) BEFORE the payment is read - every refunded-total writer without lock(1) - every Stripe refund recorder, and a cancellation hand-back's completion - takes the Payment row first, so the owed figure cannot move between the read and the allocation, and under it the owed figure is checked against the one the treasurer saw (expectedOwedCents, a 409 when it moved, #3924 round 7) - then, for a late capture's refund only (#3924 round 6), the approval task's row before it reads the capture's Xero receipt; under that row the close also puts a receipt row that failed before reaching Xero from FAILED back to PENDING (status-guarded; a lost claim is re-read, and an officer's resolve or withdrawal of that row is a 409, round 8); one that may already have reached Xero is left FAILED for an officer (round 9). The task row's note-step holders, each in a transaction of its own: the receipt's worker in two - the receipt's link, then the waiting close's note (round 7, C9) - and the same note step run by a change's invoice sent for the capture (round 8, including its retry from its own row, round 9), by the repair tool's QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE action (round 8), and by the nightly credit reconciliation (round 9); none of them holds another lock. Its other holders: the dismissal, reopen and approval claims (the resolution's status-fenced claim, whose dismissal queues the kept receipt under the row it holds; a late capture's task takes no lock(1) there, resolveManualRefundTask#1), and the kept-capture enqueue the repair tool's QUEUE_KEPT_LATE_CAPTURE_INVOICE runs in a transaction of its own; none of them takes lock(1) or the Payment row after the task row. Then the status-guarded claim, the allocation (re-taking the row it holds), and the close's hand-back task and ledger line; the Xero note, or the late capture's receipt, is an outbox row kicked after the commit, so no provider call runs under it. 'NOTHING LEFT OWED' AND 'TRY THE CARD AGAIN': #4368 (owner decision 25 Oct 2026, INV-PAY-149): the one lock(1) of the two no-money settlements of a dead card refund on Stuck States - 'Nothing left owed' (closeCardRefundNothingLeftOwed: the row to SUCCEEDED, naming the later Stripe refund that covers it) and 'Try the card again' (tryDeadCardRefundAgain: the row re-armed with rearmedPaymentRecoveryOperationData for the runner, whose INV-PAY-145 Stripe check runs before any send). Each changes whether a refund debt is open, owed or in flight, which every edit, acceptance, paid cancel and refund appeal reads separately to size a refund net of what is promised back, and each must exclude 'Paid another way' (closeCardRefundPaidAnotherWay#1) on the same row (#4492): all three claim it with the same status-guarded updateMany - dead (deadCardRefundOperationWhere) and on the plan read (onPlanWhere) - under the same keys, so whichever commits second matches nothing and writes nothing. First lock of its transaction, then the row re-read, then the Payment row (lockPaymentForRefundedTotal) BEFORE the payment is read - every refunded-total writer without lock(1), the failed-later writer among them, takes that row first - so the owed figure, the recorded refunds and the payment's other card refund rows cannot move between the read and the claim. Then the claim and the audit row; no money, no journal, no Xero row and no provider call.",
+      "#4368 review D (INV-SSOT): the ONE lock(1) of every settlement of a dead card refund row, in card-refund-dead-row-lock.ts - 'Paid another way' (closeCardRefundPaidAnotherWay) and the two no-money settlements, each with its own refusals. 'PAID ANOTHER WAY': #3372 (owner, 7 Oct 2026: 'Count + add close action'): closing a dead card refund as paid another way moves the payment's refundedAmountCents and closes a refund debt in one commit, and every edit, acceptance, paid cancel and refund appeal reads those two separately to size a refund net of what is promised back - under lock(1) the close cannot commit between the two reads. First lock of its transaction, then the operation re-read, then the Payment row (lockPaymentForRefundedTotal, #3924 round 4) BEFORE the payment is read - every refunded-total writer without lock(1) - every Stripe refund recorder, and a cancellation hand-back's completion - takes the Payment row first, so the owed figure cannot move between the read and the allocation, and under it the owed figure is checked against the one the treasurer saw (expectedOwedCents, a 409 when it moved, #3924 round 7) - then, for a late capture's refund only (#3924 round 6), the approval task's row before it reads the capture's Xero receipt; under that row the close also puts a receipt row that failed before reaching Xero from FAILED back to PENDING (status-guarded; a lost claim is re-read, and an officer's resolve or withdrawal of that row is a 409, round 8); one that may already have reached Xero is left FAILED for an officer (round 9). The task row's note-step holders, each in a transaction of its own: the receipt's worker in two - the receipt's link, then the waiting close's note (round 7, C9) - and the same note step run by a change's invoice sent for the capture (round 8, including its retry from its own row, round 9), by the repair tool's QUEUE_PAID_ANOTHER_WAY_REFUND_NOTE action (round 8), and by the nightly credit reconciliation (round 9); none of them holds another lock. Its other holders: the dismissal, reopen and approval claims (the resolution's status-fenced claim, whose dismissal queues the kept receipt under the row it holds; a late capture's task takes no lock(1) there, resolveManualRefundTask#1), and the kept-capture enqueue the repair tool's QUEUE_KEPT_LATE_CAPTURE_INVOICE runs in a transaction of its own; none of them takes lock(1) or the Payment row after the task row. Then the status-guarded claim, the allocation (re-taking the row it holds), and the close's hand-back task and ledger line; the Xero note, or the late capture's receipt, is an outbox row kicked after the commit, so no provider call runs under it. 'NOTHING LEFT OWED' AND 'TRY THE CARD AGAIN': #4368 (owner decision 25 Oct 2026, INV-PAY-149): the one lock(1) of the two no-money settlements of a dead card refund on Stuck States - 'Nothing left owed' (closeCardRefundNothingLeftOwed: the row to SUCCEEDED, naming the later Stripe refund that covers it) and 'Try the card again' (tryDeadCardRefundAgain: the row re-armed with rearmedPaymentRecoveryOperationData for the runner, whose INV-PAY-145 Stripe check runs before any send). Each changes whether a refund debt is open, owed or in flight, which every edit, acceptance, paid cancel and refund appeal reads separately to size a refund net of what is promised back, and each must exclude 'Paid another way' (closeCardRefundPaidAnotherWay#1) on the same row (#4492): all three claim it with the same status-guarded updateMany - dead (deadCardRefundOperationWhere) and on the plan read (onPlanWhere) - under the same keys, so whichever commits second matches nothing and writes nothing. First lock of its transaction, then the row re-read, then the Payment row (lockPaymentForRefundedTotal) BEFORE the payment is read - every refunded-total writer without lock(1), the failed-later writer among them, takes that row first - so the owed figure, the recorded refunds and the payment's other card refund rows cannot move between the read and the claim. Then the claim and the audit row; no money, no journal, no Xero row and no provider call. #4851: the same lock and claim also settle a dead refund out of the group organiser's card - closeGroupCardRefundPaidAnotherWay (accept either-group) and tryOrganiserChildCardRefundAgain (accept organiser-child). No new advisory key. Stripe is read before the transaction.",
     invariant: "INV-LOCK-001",
   },
   {
@@ -1031,7 +1027,14 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     site: "reopenManualRefundTask#1",
     tier: "GLOBAL",
     reason:
-      "DISMISSED -> OPEN re-arms assertNoPendingEditFinancialReview RETROACTIVELY, against money-affecting edits already in flight - unlike the closure it mirrors, which only relaxes that fence. Unlocked, an edit that read the fence while the task was dismissed can settle a credit under its own modification while the reopen commits, leaving an OPEN task whose context still points at the earlier anchor and whose completion credits the member twice. It makes no provider call, so the bounded exception that keeps resolveManualRefundTask lock-free does not apply. #4124: an approved appeal's task is measured by the appeal's ceiling, which nets the payment's open card refund debts, so for that task it takes the Payment row (lockPaymentForRefundedTotal) after this key and before the ceiling's reads, as the approval does.",
+      "DISMISSED -> OPEN re-arms assertNoPendingEditFinancialReview RETROACTIVELY, against money-affecting edits already in flight - unlike the closure it mirrors, which only relaxes that fence. Unlocked, an edit that read the fence while the task was dismissed can settle a credit under its own modification while the reopen commits, leaving an OPEN task whose context still points at the earlier anchor and whose completion credits the member twice. It makes no provider call, so the bounded exception that keeps resolveManualRefundTask lock-free does not apply. #4124: an approved appeal's task is measured by the appeal's ceiling, which nets the payment's open card refund debts, so for that task it takes the Payment row (lockPaymentForRefundedTotal) after this key and before the ceiling's reads, as the approval does. #4343: an EDIT_FINANCIAL_REVIEW is refused before the claim, so that kind cannot re-arm the fence; every other dismissed kind still can.",
+    invariant: "INV-LOCK-001",
+  },
+  {
+    site: "editReviewHeadlineRebase#1",
+    tier: "GLOBAL",
+    reason:
+      "#4343 (D5): the one-off headline re-base rewrites the booking's four money columns, which the cancellation cap and the bank-amount check read, so it takes the global settlement key first, re-reads the booking, and compare-and-sets through the closure's re-base. No provider call, no lodge key, no second advisory key. A miss rolls that booking back.",
     invariant: "INV-LOCK-001",
   },
   {
@@ -1651,10 +1654,20 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // (`FOR UPDATE`, the sixth) under a savepoint-scoped `lock_timeout` of what
   // is left of the 10s budget, then released, and the attempt retried. The bound still lands
   // on the same stable retry (#2623 T6).
-  // See docs/CONCURRENCY_AND_LOCKING.md → "Adult-member-hosting queue
-  // participant fencing", "Member merge" and "Merge never holds a Member row
-  // while waiting for another (#4855)".
+  // Still SIX after #4860: the booking statements the same attempt runs live in
+  // `member-merge-booking-lock.ts` (next entry), called from this wrapper.
   "src/lib/adult-member-hosting-queue-participants.ts": 6,
+  // #4860: the attempt try-locks the captured loser bookings before it re-points
+  // `Booking.member`. Three statements, no new advisory key: one sorted
+  // `FOR NO KEY UPDATE SKIP LOCKED` over that set, a row-by-row `SKIP LOCKED`
+  // probe for the first id it skipped, and a single-booking `FOR NO KEY UPDATE`
+  // under its own savepoint after the attempt has been rolled back. NO KEY, the
+  // `memberId` update's own strength, so a child insert's FK `KEY SHARE` on the
+  // booking is not blocked (#5004). A shortfall waits for that
+  // one booking while holding no rows, on the same 10s budget as the Member
+  // waits. See docs/CONCURRENCY_AND_LOCKING.md → "Merge never holds one of the
+  // duplicate's bookings while waiting for another (#4860)".
+  "src/lib/member-merge-booking-lock.ts": 3,
   // The hosting coverage drain locks the claimed owner and FK-less actor
   // `FOR KEY SHARE` after their sorted member-lifecycle keys and before the exact
   // typed queue refresh, so merge cannot re-point an identity between the claim
@@ -1723,7 +1736,9 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // (`assertLateCaptureHandBackStillOwed`, no lock(1)), before its claim.
   // #4368: and by a dead card refund's "Nothing left owed" and
   // "Try the card again" (`lockDeadCardRefundRow`), after their lock(1) and
-  // before the payment is read, as "Paid another way" takes it.
+  // before the payment is read, as "Paid another way" takes it. #4851: and by
+  // `closeGroupCardRefundPaidAnotherWay` and `tryOrganiserChildCardRefundAgain`,
+  // the same helper, no new key.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.
@@ -1780,115 +1795,6 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
 
 const CAPACITY_LOCK_MINT = "src/lib/lodge-capacity-lock.ts";
 
-function walk(dir: string, files: string[] = []): string[] {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === "node_modules") continue;
-      walk(full, files);
-    } else if (/\.(ts|tsx)$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
-      files.push(full);
-    }
-  }
-  return files;
-}
-
-/**
- * Test files are skipped by NAME, which is a stated limit of every census here.
- * `.integration.` anywhere in a path drops the file, so a production module named
- * `probe-fence.integration.ts` would take locks this scan never sees. Nothing in
- * this repository is named that way today — the integration modules that exist
- * spell it `integration-credentials.ts` — and the rule is kept because it is the
- * one the sibling guards use. It sits alongside the other boundary worth knowing:
- * only non-test `src/` is walked, so a lock taken in a migration's trigger or in
- * `scripts/` is outside every census in this file.
- */
-function isTestFile(relPath: string): boolean {
-  return (
-    relPath.includes("__tests__") ||
-    /\.(test|spec)\.tsx?$/.test(relPath) ||
-    relPath.includes(".integration.")
-  );
-}
-
-/**
- * Does this blanked run hold a RAW STATEMENT the census must be able to read,
- * rather than prose about one?
- *
- * A QUOTED LITERAL IS NOT CODE for this purpose, and #2623 T9(d) is where that
- * started to matter: `adult-member-hosting-queue-participants.ts` names its own
- * protocol inside an error message ("… must never be issued without its FOR KEY
- * SHARE NOWAIT lock"), which is prose about a statement, not a statement. A
- * counter that scored it would put a number in the inventory below that no reader
- * could reconcile against the file, and would fail the census when somebody
- * reworded a sentence. Every raw statement in this repository is written as a
- * BACKTICK template, so template text is always restored.
- *
- * QUOTED MEANS EITHER QUOTE, and that is deliberate rather than an oversight of
- * the double-quoted spelling this rule was written against.
- * `blankLiteralsWithSpans` reports `"` and `'` alike as `kind: "string"`, so the
- * test below is quote-agnostic and every clause here applies to both. Nothing
- * would be gained by narrowing it to one quote: a single-quoted sentence is as
- * much prose as a double-quoted one.
- *
- * BUT ONLY PROSE, NOT SQL (#2623 F7). Suppressing every quoted literal opened the
- * same hole T9(d) exists to close, one level down: `$executeRawUnsafe` takes a
- * plain string, so `const SQL = "SELECT … FOR UPDATE"; await
- * tx.$executeRawUnsafe(SQL)` would score ZERO and drop out of the census
- * silently. A literal containing `SELECT` is therefore restored and counted —
- * prose about the protocol does not contain it (the one live case, quoted above,
- * does not), and a raw statement always does. The narrower rule keeps the false
- * positive suppressed while refusing to suppress a real statement. **Both
- * spellings are counted**: `tx.$executeRawUnsafe('SELECT … FOR UPDATE')` scores
- * exactly as its double-quoted twin does, which the cases below pin so nobody
- * reads the paragraph above as a double-quote-only carve-out.
- *
- * A `comment` run is never restored, which is the whole point of masking, and a
- * `regex` run is never restored because a pattern is not a statement.
- */
-function holdsRawStatement(source: string, span: BlankedSpan): boolean {
-  if (span.kind === "template") return true;
-  if (span.kind !== "string") return false;
-  return /SELECT/i.test(source.slice(span.start, span.end));
-}
-
-/**
- * The one masking rule, shared by the per-site scan and the count inventories:
- * the file with every comment and every prose literal blanked to spaces, and the
- * raw SQL put back where {@link holdsRawStatement} recognises it.
- *
- * THE SCANNER IS THE SHARED ONE (#3196, `INV-SSOT-004`). Until then this census
- * carried the last private comment scanner in the tree, and it worked a LINE at a
- * time: a whole-line comment was dropped by its leading `//` or `*`, and
- * double-quoted literals were blanked with a regex. Both halves were wrong in
- * ways nothing here could see. A TRAILING comment was never dropped at all, nor
- * was a block-comment body line that did not begin with `*`, so prose in either
- * shape counted as code. And a line-local quote regex has no idea what a REGEX
- * LITERAL is: `.replace(/"/g, "")` reads as a string opener, which is the exact
- * defect #3155 removed from the shared scanner and #3180 then found LIVE in a
- * sibling census, where it hid a real database write five hundred lines further
- * down. The remedy is not a better local regex; it is not having a second
- * scanner. `blankLiteralsWithSpans` blanks with every offset preserved and hands
- * back the runs it blanked, so the SQL carve-out lives HERE — where a policy
- * about SQL belongs — and the lexing lives in the module that owns it.
- *
- * OFFSETS SURVIVE THE RESTORE, because every span is exactly as long as the
- * spaces standing in for it. That is what lets the scan below keep using the
- * masked text as a coordinate system for line numbers.
- */
-function maskedSource(source: string): string {
-  const { code, spans } = blankLiteralsWithSpans(source);
-  const pieces: string[] = [];
-  let cursor = 0;
-  for (const span of spans) {
-    if (!holdsRawStatement(source, span)) continue;
-    pieces.push(code.slice(cursor, span.start), source.slice(span.start, span.end));
-    cursor = span.end;
-  }
-  pieces.push(code.slice(cursor));
-  return pieces.join("");
-}
-
 /**
  * Count occurrences of `needle` in `source`, ignoring comments and the contents
  * of every literal but a raw statement (see {@link maskedSource}).
@@ -1933,9 +1839,6 @@ function routePathOf(rel: string): string | null {
     .filter((segment) => segment.length > 0 && !/^\(.*\)$/.test(segment));
   return `/${segments.join("/")}`;
 }
-
-/** Any acquisition of a transaction-scoped advisory lock, blocking or fail-fast. */
-const ADVISORY_LOCK_CALL = /pg_(?:try_)?advisory_xact_lock\(/g;
 
 /**
  * The first argument of a lock call, read across line breaks from the opening
@@ -2104,12 +2007,7 @@ function indexSitesByKey(sites: readonly AdvisoryLockSite[]): Map<string, Adviso
 const ROW_LOCK_STRENGTHS = /FOR (?:UPDATE|KEY SHARE|NO KEY UPDATE|SHARE)/g;
 
 describe("advisory lock guard (#182 / H1 regression class)", () => {
-  const sources = walk(SRC_DIR)
-    .map((file) => ({
-      rel: path.relative(process.cwd(), file).split(path.sep).join("/"),
-      text: fs.readFileSync(file, "utf8"),
-    }))
-    .filter(({ rel }) => !isTestFile(rel));
+  const sources = lockCensusSources(SRC_DIR);
 
   it("keeps every canonical global pg_advisory_xact_lock(1) site in the reviewed per-site registry", () => {
     const sites = collectAdvisoryLockSites(sources);

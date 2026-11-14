@@ -366,6 +366,99 @@ describe("resolved in Xero is never re-run (#3635, INV-INT-025)", () => {
   });
 });
 
+describe("a modification note the invoice cannot take is not retried (#3993)", () => {
+  const editNote = (overrides: Record<string, unknown>) =>
+    makeOperation({
+      status: "FAILED",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "BookingModification",
+      localId: "mod_1",
+      xeroObjectId: "cn_1",
+      requestPayload: { invoiceId: "inv_primary", refundAmountCents: 4000 },
+      ...overrides,
+    });
+  const shortfall = "The original invoice owes $0.00, less than this $40.00 modification credit note; nothing was created.";
+
+  it("MUTATION: refuses the shortfall and the paid-off validation, and retries the same row without them", () => {
+    expect(getXeroOperationRetryMeta(editNote({ lastErrorMessage: shortfall })).supported).toBe(false);
+    expect(getXeroOperationRetryMeta(editNote({
+      status: "PARTIAL",
+      responsePayload: { allocationError: "The invoice you are trying to allocate to has already been paid off" },
+    })).supported).toBe(false);
+    expect(getXeroOperationRetryMeta(editNote({
+      lastErrorMessage: "Credit Note cannot be allocated as amount is greater than amount outstanding",
+    })).supported).toBe(false);
+    expect(getXeroOperationRetryMeta(editNote({ lastErrorMessage: "503 Service Unavailable" })).supported).toBe(true);
+    expect(getXeroOperationRetryMeta(editNote({ status: "PARTIAL", lastErrorMessage: "503 Service Unavailable" })).supported).toBe(true);
+
+    const paymentNote = makeOperation({
+      status: "PARTIAL",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: "pay_1",
+      xeroObjectId: "cn_pay",
+      requestPayload: { allocation: { invoiceId: "inv_1", amount: 40 } },
+    });
+    expect(getXeroOperationRetryMeta({
+      ...paymentNote,
+      lastErrorMessage: "The invoice you are trying to allocate to has already been paid off",
+    })).toEqual(getXeroOperationRetryMeta(paymentNote));
+  });
+
+  it("MUTATION (#3993 review L2): an edit note's stand-alone allocation row refused as paid off is Resolved, not retried", () => {
+    const allocationRow = (overrides: Record<string, unknown> = {}) =>
+      makeOperation({
+        status: "FAILED",
+        entityType: "ALLOCATION",
+        operationType: "ALLOCATE",
+        localModel: "BookingModification",
+        localId: "mod_1",
+        requestPayload: { creditNoteId: "cn_1", invoiceId: "inv_primary", amountCents: 4000 },
+        ...overrides,
+      });
+    const paidOff = getXeroOperationRetryMeta(allocationRow({
+      lastErrorMessage: "The invoice you are trying to allocate to has already been paid off",
+    }));
+    expect(paidOff.supported).toBe(false);
+    // The allocation row records no method, so the reason names no refund note.
+    expect(paidOff.reason).toContain("Resolve");
+    expect(paidOff.reason).not.toContain("refund note");
+    expect(getXeroOperationRetryMeta(allocationRow({ lastErrorMessage: "503 Service Unavailable" })).supported).toBe(true);
+    // A payment's allocation row is not this rule's: the error changes nothing there.
+    const paymentAllocation = allocationRow({ localModel: "Payment", localId: "pay_1" });
+    expect(getXeroOperationRetryMeta({
+      ...paymentAllocation,
+      lastErrorMessage: "The invoice you are trying to allocate to has already been paid off",
+    })).toEqual(getXeroOperationRetryMeta(paymentAllocation));
+  });
+
+  it("MUTATION (#3993 review L1): the paid-off reason names the refund note only for a card note", () => {
+    const paidOff = { status: "PARTIAL", responsePayload: { allocationError: "has already been paid off" } };
+    const card = getXeroOperationRetryMeta(editNote({
+      ...paidOff,
+      requestPayload: { invoiceId: "inv_primary", refundAmountCents: 4000, refundMethod: "card" },
+    }));
+    expect(card.reason).toContain("Keep the refund note");
+    const bank = getXeroOperationRetryMeta(editNote({
+      ...paidOff,
+      requestPayload: { invoiceId: "inv_primary", refundAmountCents: 4000, refundMethod: "internet-banking" },
+    }));
+    expect(bank.supported).toBe(false);
+    expect(bank.reason).not.toContain("refund note");
+    expect(bank.reason).toContain("already paid off");
+  });
+
+  it("MUTATION (#3993 review M1): a re-run's 'may already exist' failure stays retryable and outside the refusal class", async () => {
+    const { ModificationNoteMayAlreadyExistError } = await import("@/lib/xero-modification-note-refusal");
+    const message = new ModificationNoteMayAlreadyExistError(4000, 0, CLUB_FORMAT_TEST).message;
+    expect(message).toContain("Check Xero for an existing note");
+    expect(message).not.toContain("nothing was created");
+    expect(getXeroOperationRetryMeta(editNote({ lastErrorMessage: message }))).toEqual({ supported: true, reason: null });
+  });
+});
+
 describe("getXeroOperationRetryMeta", () => {
   it("marks failed payment invoice operations as retryable", () => {
     expect(getXeroOperationRetryMeta(makeOperation())).toEqual({
@@ -1927,6 +2020,33 @@ describe("retryXeroSyncOperation", () => {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });
+  });
+
+  it("MUTATION (#3993 review M1): a retried row that already sent its create tells the writer a note may exist", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_sent",
+        requestPayload: {
+          invoiceId: "inv_primary",
+          refundAmountCents: 2500,
+          creditNotes: [{ reference: "Refunded - booking book_123" }],
+        },
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -2500,
+      changeFeeCents: 0,
+    });
+
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST, { createdByMemberId: "admin_1" });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingModificationId: "mod_sent", earlierCreateSent: true }),
+    );
   });
 
   it("replays a stored booking-edit wording with the credit note (#3536)", async () => {

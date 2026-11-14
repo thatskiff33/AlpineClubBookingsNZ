@@ -203,6 +203,8 @@ export async function cardShortfallSettlement(
     return { preferTransactionIds: [chargeId], onlyTransactionIds: [chargeId], nothingToAllocateMessage: capacityRaceNothingToAllocateMessage(xero) };
   }
   // A part to check settles only on what the bank-transfer part leaves (coordinator, PR #4122).
+  // #4872: the completion passes the superseded-capture hold-back into the allocation, so after
+  // these preferred non-card charges the newest-first fall-through does not take a live superseded capture.
   if (part === "check") {
     const bank = await store.manualRefundTask.findUnique({
       where: { occurrenceKey: cancelCardShortfallOccurrenceKey(task.bookingId, "bank") },

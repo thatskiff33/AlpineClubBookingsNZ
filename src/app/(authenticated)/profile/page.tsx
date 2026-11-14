@@ -12,7 +12,7 @@ import {
   ProfileDetailsProvider,
 } from "./profile-details-card";
 import { ProfileSectionCard } from "./profile-section-card";
-import { ChangeEmailForm } from "./change-email-form";
+import { ChangeEmailCard } from "./change-email-card";
 import { NotificationPreferences } from "./notification-preferences";
 import { PostLoginLandingPreference } from "./post-login-landing-preference";
 import { FamilyGroupSection } from "@/components/profile/family-group-section";
@@ -24,6 +24,7 @@ import { DeleteAccountButton } from "./delete-account-button";
 import { MembershipCancellationPanel } from "./membership-cancellation-panel";
 import { TwoFactorSecurityCard } from "./two-factor-security-card";
 import { GoogleAccountCard } from "./google-account-card";
+import { loadProfilePendingRequests } from "./pending-requests";
 import { googleCredentialsConfigured } from "@/lib/google-oauth";
 import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
 import { AuditTimeline } from "@/components/audit-timeline";
@@ -235,6 +236,10 @@ export default async function ProfilePage({
   // the member dashboard. Members with no accessible admin page have no
   // meaningful choice, so the control is hidden.
   const canChooseLanding = getFirstAccessibleAdminHref(member) !== null;
+
+  // #4956: a deletion request or email change still waiting on someone else.
+  const { pendingDeletionRequest, pendingEmailChange } =
+    await loadProfilePendingRequests({ memberId: member.id, isAdmin, club });
 
   const currentSub = member.subscriptions.find(
     (s) => s.seasonYear === currentSeasonYear,
@@ -632,19 +637,11 @@ export default async function ProfilePage({
           <NotificationPreferences />
         </ProfileSectionCard>
 
-        {/* Change Email */}
-        <Card id="change-email" className="scroll-mt-20">
-          <CardHeader>
-            <CardTitle>Change Email</CardTitle>
-            <CardDescription>
-              Update your email address. You will need to verify the new
-              address.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ChangeEmailForm currentEmail={member.email} />
-          </CardContent>
-        </Card>
+        {/* Change Email: no pending notice once the link was refused as "taken" */}
+        <ChangeEmailCard
+          currentEmail={member.email}
+          pendingChange={emailChangeError === "taken" ? null : pendingEmailChange}
+        />
 
         <div id="personal-details" className="scroll-mt-20">
           <ProfileDetailsCard
@@ -693,7 +690,9 @@ export default async function ProfilePage({
                 Request permanent deletion of your account. An admin will review
                 your request. This action is irreversible.
               </p>
-              {!isAdmin && <DeleteAccountButton />}
+              {!isAdmin && (
+                <DeleteAccountButton pendingRequest={pendingDeletionRequest} />
+              )}
               {isAdmin && (
                 <p className="text-sm text-muted-foreground italic">
                   Admin accounts cannot be self-deleted. Contact another admin.

@@ -48,6 +48,7 @@ function item(overrides: Partial<MyBookingItem> = {}): MyBookingItem {
     checkOut: "2026-08-12T00:00:00.000Z",
     guestCount: 2,
     finalPriceCents: 12000,
+    lodgeLabel: null,
     moneyReconciliation: {
       visibility: "VISIBLE",
       reconciliation: { state: "RECONCILED", reasons: [] },
@@ -302,5 +303,23 @@ describe("stored booking money reconciliation", () => {
       "recorded amount needs review",
     );
     expect(screen.getByRole("link", { name: /Aug 2026/ })).toHaveTextContent("$120.00");
+  });
+});
+
+// INV-CAP-039: the row prints the lodge the server decided it should, under its
+// dates, and nothing when it was told none.
+describe("MyBookingsList lodge line (INV-CAP-039)", () => {
+  it("names the lodge on a row the server labelled", () => {
+    render(<MyBookingsList bookings={[item({ lodgeLabel: "Second Lodge" })]} />);
+
+    expect(screen.getByRole("link", { name: /Aug 2026/ })).toHaveTextContent(
+      "Second Lodge",
+    );
+  });
+
+  it("prints no lodge line on a row the server left unlabelled", () => {
+    render(<MyBookingsList bookings={[item({ lodgeLabel: null })]} />);
+
+    expect(screen.queryByTestId("booking-list-lodge")).toBeNull();
   });
 });

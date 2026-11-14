@@ -215,6 +215,10 @@ regexes = [
   '''^c9d614901e6bb357d95bdef8c2b3bd0a$''',
 ]
 
+[[allowlists]]
+description = "The idempotency key of the fixture organiser-child `PaymentRecoveryOperation` in the #4851 group card-refund settle unit test (`src/lib/__tests__/card-refund-group-settle.test.ts`), commit 532b2b573 in PR #4901's history. It is a readable label - the `organiser_child_refund_` prefix the writer mints with, then `cancel_settle_child-1` - for a mocked row that never reaches a database, and it authorises nothing. `generic-api-key` fired on the `CHILD_KEY` identifier, not the value. The test now builds the key from `ORGANISER_CHILD_REFUND_KEY_PREFIX` at run time under the name `CHILD_ROW`, so the tree no longer carries it; the literal is forgiven only because history keeps it, and this file's header rules out fingerprints. Only this exact literal is forgiven."
+regexes = ['''^organiser_child_refund_cancel_settle_child-1$''']
+
 # ---------------------------------------------------------------------------
 # Repository-owned rules
 # ---------------------------------------------------------------------------

@@ -1189,18 +1189,13 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
 
     await Promise.resolve();
-    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-      {
-        bookingId: "bk1",
-        refundAmountCents: 3000,
-        bookingModificationId: "mod1",
-        // `INV-PAY-101`: a member's ordinary edit refunds the card.
-        refundMethod: "card",
-      },
-      {
-        createdByMemberId: "m1",
-      }
-    );
+    // #3993: a card refund of a price cut is the payment's refund note, not a
+    // modification note the card-paid invoice cannot take.
+    expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("p1", 3000, {
+      refundMethod: "card",
+      createdByMemberId: "m1",
+    });
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 
   it("limits a captured-payment date reduction to the cancellation-policy tier (#1024)", async () => {
@@ -1241,18 +1236,13 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     );
 
     await Promise.resolve();
-    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-      {
-        bookingId: "bk1",
-        refundAmountCents: 1500,
-        bookingModificationId: "mod1",
-        // `INV-PAY-101`: a member's ordinary edit refunds the card.
-        refundMethod: "card",
-      },
-      {
-        createdByMemberId: "m1",
-      },
-    );
+    // #3993: a card refund of a price cut is the payment's refund note, not a
+    // modification note the card-paid invoice cannot take.
+    expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("p1", 1500, {
+      refundMethod: "card",
+      createdByMemberId: "m1",
+    });
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 
   // #4057: a joiner's booking the group organiser paid for by card refunds the
