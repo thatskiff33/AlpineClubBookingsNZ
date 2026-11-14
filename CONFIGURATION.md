@@ -2652,9 +2652,17 @@ applies from. There is no environment variable and, for now, no screen.
   hard-code the inclusive 15% code until #4632.
 - **Nothing writes it yet,** on purpose. Changing it before Xero reads it would
   give the ledger and the invoices two different answers, so a census fails on
-  any code that writes the row. A club that is not GST-registered needs the
-  screen #4632 brings before the ledger starts recording its booking charges
-  (M3b). Until then the ledger posts nothing for any club.
+  any code that writes the row.
+- **Charges are already recorded.** Since M3b (#4627), the journal records each
+  booking door's charge lines for every club whose currency can be charged by
+  card. Until #4632 provides the tax screen, it uses the default GST-inclusive
+  15% treatment, matching the Xero invoices. A club that is not GST-registered
+  should expect its booking charges to be recorded with that same default tax
+  split in the meantime. That split does not match its real position until the
+  #4632 screen lets it change the setting, and no screen or Xero document uses
+  those tax figures yet. A journal refusal stops the booking or payment change
+  rather than being ignored
+  ([`INV-MONEY-044`](docs/invariants/money.md#inv-money-044)).
 
 ## Finance dashboard
 
@@ -2926,4 +2934,4 @@ variables, then Actions):
 
 | Variable | Description |
 | --- | --- |
-| `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it. While it is unset the job exits with a notice and writes nothing; it also refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |
+| `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it; see [status board setup](docs/agents/COORDINATION.md#the-status-board). While unset, the job warns and writes nothing. It refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |

@@ -320,7 +320,7 @@ const B: Charge = { id: TXN_B, intent: INTENT_B, charge: CHARGE_B, cents: CHARGE
     async function settleCredit(cents: number) {
       await prisma.$transaction(async (tx) => {
         await applyLocalRefundAllocation({ paymentId: PAYMENT_ID, amountCents: cents, store: tx });
-        await createCancellationCredit(MEMBER_ID, cents, BOOKING_ID, undefined, tx);
+        await createCancellationCredit(tx, MEMBER_ID, cents, BOOKING_ID);
       });
     }
 

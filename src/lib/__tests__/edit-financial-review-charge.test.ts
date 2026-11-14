@@ -168,6 +168,10 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => {
       mocks.writeRaisedAdditionalRequestAmount(...a),
   };
 });
+// #4872: no live superseded capture on these payments; the hold-back is empty.
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 }),
+}));
 vi.mock("@/lib/stripe", () => ({
   updatePaymentIntentAmount: (...a: unknown[]) =>
     mocks.updatePaymentIntentAmount(...a),
@@ -1104,6 +1108,7 @@ describe("a completed review that asks the member for money (#3170)", () => {
       paymentId: "payment-1",
       amountCents: 9000,
       store: tx,
+      heldBackByTransaction: new Map(),
     });
     const claim = mocks.manualRefundTaskUpdateMany.mock.calls[0][0];
     expect(claim.data.settlementDirection).toBe("REFUND_TO_MEMBER");
