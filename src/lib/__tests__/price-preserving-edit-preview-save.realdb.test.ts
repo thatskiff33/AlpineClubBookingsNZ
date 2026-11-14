@@ -5,8 +5,10 @@
  *
  * Each case sends the request through the real preview route
  * (`POST /api/bookings/[id]/modify-quote`), then the identical request through
- * the real save (`modifyBookingBatch`), and holds the save to what the preview
- * showed: the same price difference, change fee and final price, all of them
+ * the real save (`modifyBookingBatch`) carrying the preview's own
+ * `quotedFigures` (#4924, INV-MOD-062), so a disagreement is the 409
+ * `EditPriceChangedError` a member would hit. It also holds the save to what
+ * the preview showed: the same price difference, change fee and final price, all of them
  * the stored booking's, with nothing written to the ledger, no credit, no
  * refund task and no night repriced.
  *
@@ -33,6 +35,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { raceSession } from "@/lib/__tests__/support/race-session-double";
 
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
@@ -199,18 +202,19 @@ async function preview(body: Record<string, unknown>) {
       priceDiffCents: number;
       changeFeeCents: number;
       netChargeCents: number;
+      quotedFigures: EditQuotedFigures;
     };
   } finally {
     raceSession.current = null;
   }
 }
 
-/** The real save, for the same request. */
-async function save(body: Record<string, unknown>) {
+/** The real save, for the same request, carrying the preview's figures. */
+async function save(body: Record<string, unknown>, quotedFigures: EditQuotedFigures) {
   return batchService.modifyBookingBatch({
     bookingId: BOOKING_ID,
     actor: { id: OFFICER_ID, role: Role.ADMIN },
-    input: body as never,
+    input: { ...body, quotedFigures } as never,
     ipAddress: "127.0.0.1",
     todayAtClub: (await clubTimeServer.clubTime()).today(),
     format: CLUB_FORMAT_TEST,
@@ -225,7 +229,10 @@ async function save(body: Record<string, unknown>) {
 async function previewThenSave(body: Record<string, unknown>) {
   const before = await storedMoney();
   const quoted = await preview(body);
-  const result = await save(body);
+  // The member's save carries what they were shown; the save refuses with 409
+  // EDIT_PRICE_CHANGED (#4924) if its own figures differ.
+  expect(quoted.quotedFigures).toBeDefined();
+  const result = await save(body, quoted.quotedFigures);
   const after = await storedMoney();
 
   // The save settles exactly what the preview showed.
