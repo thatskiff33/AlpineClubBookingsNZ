@@ -330,6 +330,23 @@ export const CARRIED_ASK_CHALLENGE_RECHECK_MS = 15 * 60 * 1000;
  */
 export type CarriedAskChallengeSighting = { paymentIntentId: string; seenAt: Date };
 
+/** #4755: the recovery row's columns for a sighting (`null`: none). */
+export function carriedAskChallengeColumns(sighting: CarriedAskChallengeSighting | null) {
+  return {
+    carriedAskChallengeIntentId: sighting?.paymentIntentId ?? null,
+    carriedAskChallengeSeenAt: sighting?.seenAt ?? null,
+  };
+}
+
+/** #4755: the sighting a recovery row holds, or null unless both columns are set. */
+export function storedCarriedAskChallenge(row: {
+  carriedAskChallengeIntentId: string | null;
+  carriedAskChallengeSeenAt: Date | null;
+}): CarriedAskChallengeSighting | null {
+  const { carriedAskChallengeIntentId: paymentIntentId, carriedAskChallengeSeenAt: seenAt } = row;
+  return paymentIntentId && seenAt ? { paymentIntentId, seenAt } : null;
+}
+
 /**
  * What the replay does about the ask it would carry. Each answer names the
  * challenge sighting the recovery row should hold afterwards (`null`: none).
