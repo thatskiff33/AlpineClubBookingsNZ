@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
-// No application, database, credentials or network: specs fulfil their pages.
+// No application, database, credentials or external network: most specs fulfil
+// their pages through routing; dialog-viewport.pw.ts serves a local Vite page.
 export default defineConfig({
   testDir: ".",
   testMatch: "*.pw.ts",
