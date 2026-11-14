@@ -13,8 +13,9 @@ import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
  * member or charges what is owed (the saved-card charge takes the booking's
  * full worth by design, #3864, and does not read this): the `/pay/<token>` page and its card intent, the pay-link and
  * exception-approved emails, the booking page (its narrative, pay card and
- * `{amountDue}` token, read once per page load) and the member's card intent
- * (`create-payment-intent`, both reads, the second under its transaction). So
+ * `{amountDue}` token, read once per page load), the member's card intent
+ * (`create-payment-intent`, both reads, the second under its transaction) and
+ * the member dashboard's Payment Owed card (`member-dashboard.ts`, #4944). So
  * a page, the email a member opens it from and the charge cannot disagree.
  *
  * The credit is the LEDGER's (`deriveBookingAppliedCreditCents`, the sum of the

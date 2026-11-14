@@ -94,6 +94,8 @@ const ONE_READ_USERS = [
   "src/lib/cron-confirm-pending.ts",
   "src/lib/payment-link-reissue.ts",
   "src/lib/payment-link-split-guest.ts",
+  // #4944: the member dashboard's Payment Owed card.
+  "src/lib/member-dashboard.ts",
 ];
 // The files that still compose it themselves, named in `booking-amount-owed.ts`.
 const KNOWN_COMPOSERS = [

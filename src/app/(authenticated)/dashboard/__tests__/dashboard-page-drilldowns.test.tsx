@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   bookingFindMany: vi.fn(),
   calendarEventFindMany: vi.fn(),
   checkCapacity: vi.fn(),
+  deriveBookingAppliedCreditCents: vi.fn(),
   getAvailablePromoCodesForMember: vi.fn(),
   getMemberCreditBalance: vi.fn(),
   hasAccessRole: vi.fn(),
@@ -54,6 +55,9 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/member-credit", () => ({
   getMemberCreditBalance: mocks.getMemberCreditBalance,
+  // The ledger credit applied to a booking, which `readBookingAmountOwed` (real)
+  // nets from what the Payment Owed card quotes (#4944).
+  deriveBookingAppliedCreditCents: mocks.deriveBookingAppliedCreditCents,
   // #3369: the one home for the account-credit refusal four settlement paths
   // share. Real, not stubbed: the mock must not turn a refusal into a pass.
   requireMemberCreditRecipient: (memberId: string | null) => {
@@ -147,6 +151,7 @@ describe("DashboardPage summary card drill-downs", () => {
         },
       ]);
     mocks.getMemberCreditBalance.mockResolvedValue(2500);
+    mocks.deriveBookingAppliedCreditCents.mockResolvedValue(0);
     mocks.getAvailablePromoCodesForMember.mockResolvedValue([
       {
         code: "SAVE10",
@@ -199,6 +204,46 @@ describe("DashboardPage summary card drill-downs", () => {
     expect(html).toContain('href="/profile?returnTo=%2Fdashboard#promo-codes"');
     expect(html).toContain("SAVE10");
     expect(html).toContain("10% off per individual");
+  });
+
+  // #4944 (`INV-PAY-119`): the card quotes the booking page's Amount due -
+  // price less the ledger credit applied - not the bare price.
+  it("nets the credit applied to an owed booking from the Payment Owed card", async () => {
+    mocks.deriveBookingAppliedCreditCents.mockResolvedValue(5000);
+    const html = await renderDashboardPage();
+
+    expect(mocks.deriveBookingAppliedCreditCents).toHaveBeenCalledWith(
+      "owed-1",
+      expect.anything(),
+    );
+    expect(html).toContain("$130.00");
+    expect(html).toContain("1 booking needs payment");
+    expect(html).toContain('href="/bookings/owed-1?returnTo=%2Fdashboard"');
+  });
+
+  // The card's copy agrees in number: one booking "needs", several "need".
+  it("pluralises the Payment Owed count for more than one owed booking", async () => {
+    mocks.bookingFindMany.mockReset();
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: "owed-1", status: "CONFIRMED", finalPriceCents: 18000, payment: null },
+        { id: "owed-2", status: "CONFIRMED", finalPriceCents: 6000, payment: null },
+      ]);
+    const html = await renderDashboardPage();
+
+    expect(html).toContain("2 bookings need payment");
+    expect(html).not.toContain("1 booking needs payment");
+  });
+
+  it("neither counts nor links a booking its applied credit covers", async () => {
+    mocks.deriveBookingAppliedCreditCents.mockResolvedValue(18000);
+    const html = await renderDashboardPage();
+
+    expect(html).toContain("No payment due");
+    expect(html).not.toContain("owed-1");
   });
 
   it("offers the lodge roster under Open Kiosk while its module is on", async () => {
