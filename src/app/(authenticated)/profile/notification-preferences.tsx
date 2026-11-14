@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { CLUB_NOTICE_SCOPE } from "@/lib/email/bulk-audience";
 
 interface Preferences {
   bookingConfirmation: boolean;
@@ -44,8 +45,7 @@ const PREFERENCE_LABELS: Record<keyof Preferences, { label: string; description:
   },
   clubNotices: {
     label: "Club notices",
-    description:
-      "Club business such as AGM notices, lodge closures and subscription reminders",
+    description: CLUB_NOTICE_SCOPE,
   },
   marketingEmails: {
     label: "Club newsletters",

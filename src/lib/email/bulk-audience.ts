@@ -47,6 +47,14 @@ export type BulkAudiencePartition<T> = {
   neverOptedIn: T[];
 };
 
+/**
+ * What counts as club business, in one phrase. The compose page (sender) and the
+ * profile's Club notices switch (member) both show it, so the two readers never
+ * see different definitions of a club notice (INV-SSOT).
+ */
+export const CLUB_NOTICE_SCOPE =
+  "Club business such as AGM notices, lodge closures and subscription reminders";
+
 /** Plain wording for the compose page and the guides. */
 export const BULK_EMAIL_CATEGORY_LABELS: Record<
   BulkEmailCategory,
@@ -54,8 +62,7 @@ export const BULK_EMAIL_CATEGORY_LABELS: Record<
 > = {
   clubNotice: {
     label: "Club notice",
-    description:
-      "Club business such as AGM notices, lodge closures and subscription reminders. Sent to every member in the group except those who turned off Club notices.",
+    description: `${CLUB_NOTICE_SCOPE}. Sent to every member in the group except those who turned off Club notices.`,
   },
   newsletter: {
     label: "Club newsletter",

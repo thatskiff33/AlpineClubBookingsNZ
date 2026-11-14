@@ -60,11 +60,13 @@ the page but the **Send to Members** button is disabled.
    has the focus when the question opens. If nobody in the audience would
    receive it, or the count cannot be read, the page says so and offers no send.
 8. The result says how many were sent, and how many were left out because they
-   **opted out** (turned the preference off) or **never opted in** (never
-   turned Club newsletters on). It appears under the button and is announced to
-   screen readers. Sending is **rate limited** (by default one send per hour),
-   so a correction cannot follow straight away. Checking the count does not use
-   up the limit.
+   **opted out** (their saved preferences have that kind of email off; for a
+   newsletter this includes a member whose preferences were created just by
+   opening their profile page, who never chose) or **never opted in** (no saved
+   preferences at all, so a newsletter is not sent). It appears under the
+   button and is announced to screen readers. Sending is **rate limited** (by
+   default one send per hour), so a correction cannot follow straight away.
+   Checking the count does not use up the limit.
 
 ### Audiences
 
