@@ -17,7 +17,7 @@
  * Diagnostics as an applied filter would report a narrowing that never happened.
  */
 
-import { isDateOnlyString } from "@/lib/date-only";
+import { isCalendarDate } from "@/lib/club-time";
 
 export const APPLIED_PAYMENT_STATUS_VALUES = [
   "PENDING",
@@ -40,11 +40,13 @@ export function isAppliedPaymentStatus(
 
 /**
  * The dates the schema's `dateOnlyStringSchema` accepts: a real calendar day as
- * `YYYY-MM-DD`. Both use the same predicate, so `2026-02-30` is neither applied
- * nor published as applied (ALP-574).
+ * `YYYY-MM-DD`. Both end in the same predicate (`isDateOnlyString` is
+ * `isCalendarDate`), so `2026-02-30` is neither applied nor published as
+ * applied (ALP-574). The kernel module is taken rather than `date-only.ts`, the
+ * adapter CT-6 retires, and it is client-safe: no zod, no Prisma.
  */
 export function isAppliedPaymentsDate(value: string): boolean {
-  return isDateOnlyString(value);
+  return isCalendarDate(value);
 }
 
 /**
