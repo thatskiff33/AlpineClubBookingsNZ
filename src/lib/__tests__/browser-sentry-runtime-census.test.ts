@@ -12,7 +12,12 @@ const variable = "NEXT_PUBLIC_SENTRY_DSN";
 describe("browser Sentry never inherits an image builder's destination (#4982)", () => {
   it("reads the browser DSN only in its server-only runtime resolver", () => {
     const reads = walk(path.join(ROOT, "src"), name => CODE_EXTENSIONS.some(ext => name.endsWith(ext)) && !/\.(test|spec)\./.test(name))
-      .filter(file => new RegExp(`\\b(?:process\\s*\\.\\s*)?env\\s*(?:\\.\\s*${variable}\\b|\\[\\s*["']${variable}["']\\s*\\])`).test(stripComments(readFileSync(file, "utf8"))))
+      .filter(file => {
+        const code = stripComments(readFileSync(file, "utf8"));
+        return new RegExp(`\\b(?:process\\s*\\.\\s*)?env\\s*(?:\\.\\s*${variable}\\b|\\[\\s*["']${variable}["']\\s*\\])`).test(code)
+          // A string-keyed helper read such as hasEnv(env, "...") or readEnv("...") is a read too.
+          || new RegExp(`\\(\\s*(?:[\\w.]+\\s*,\\s*)?["']${variable}["']\\s*\\)`).test(code);
+      })
       .map(relative).sort();
     expect(reads).toEqual([serverConfig]);
     expect(readFileSync(path.join(ROOT, serverConfig), "utf8")).toMatch(/import ["']server-only["']/);

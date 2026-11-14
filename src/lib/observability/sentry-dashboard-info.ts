@@ -1,5 +1,5 @@
 import "server-only";
-import { getBrowserSentryDsn } from "@/lib/observability/browser-sentry-config";
+import { BROWSER_SENTRY_OFF_DETAIL, getBrowserSentryDsn } from "@/lib/observability/browser-sentry-config";
 
 // The admin System Health view of Sentry: whether the server reports, the
 // dashboard link when org and project are known, and a warning naming every
@@ -28,9 +28,7 @@ export function buildSentryDashboardInfo() {
     ...(missingFields.length > 0
       ? [`${missingFields.join(", ")} ${missingFields.length === 1 ? "is" : "are"} not configured; admin health cannot link directly to Sentry.`]
       : []),
-    ...(!getBrowserSentryDsn()
-      ? ["Browser Sentry is off: NEXT_PUBLIC_SENTRY_DSN is missing or blank at runtime."]
-      : []),
+    ...(!getBrowserSentryDsn() ? [BROWSER_SENTRY_OFF_DETAIL] : []),
   ];
 
   return {

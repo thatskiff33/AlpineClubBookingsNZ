@@ -45,6 +45,7 @@ import {
   detectLegacyProviderEnv,
 } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
+import { BROWSER_SENTRY_OFF_DETAIL, getBrowserSentryDsn } from "@/lib/observability/browser-sentry-config";
 import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/data-encryption-key-material";
 import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
 import { buildDatabaseRoleCheck, type DatabaseRoleSnapshot } from "@/lib/setup-readiness-database-role";
@@ -1841,12 +1842,15 @@ function buildSentryCheck(
   env: Env,
   progress: SetupProgressState,
 ): SetupStepCheck {
+  // The browser DSN is judged by its runtime resolver, so Setup agrees with the
+  // public config route and System Health on whether browser Sentry is on.
+  const browserSentryOn = getBrowserSentryDsn(env) !== null;
   const missing = [
     "SENTRY_DSN",
-    "NEXT_PUBLIC_SENTRY_DSN",
     "SENTRY_ORG",
     "SENTRY_PROJECT",
   ].filter((name) => !hasEnv(env, name));
+  const complete = browserSentryOn && missing.length === 0;
 
   return applyProgress(
     {
@@ -1854,16 +1858,16 @@ function buildSentryCheck(
       title: "Sentry",
       description:
         "Server, edge, browser error reporting, and source-map configuration. Both DSNs are read at runtime.",
-      status: missing.length === 0 ? "complete" : "warning",
+      status: complete ? "complete" : "warning",
       required: false,
       message:
-        missing.length === 0
+        complete
           ? "Sentry variables are present."
           : "Sentry can stay disabled, but production diagnostics will be limited.",
       details: [
-        hasEnv(env, "NEXT_PUBLIC_SENTRY_DSN")
+        browserSentryOn
           ? "Browser Sentry is configured at runtime; new pages use this deployment's browser DSN."
-          : "Browser Sentry is off: NEXT_PUBLIC_SENTRY_DSN is missing or blank at runtime.",
+          : BROWSER_SENTRY_OFF_DETAIL,
         ...missing.map((name) => `${name} is missing`),
       ],
       href: adminHref("health"),
