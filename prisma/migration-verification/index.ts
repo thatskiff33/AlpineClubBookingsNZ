@@ -29,8 +29,8 @@ import addXeroConnection from "./20261124010000_add_xero_connection";
 import memberMoneyApplications from "./20261210080000_member_money_applications";
 import memberMoneyJournal from "./20261127010000_member_money_journal";
 import stripeBalanceEvidence from "./20261211010000_stripe_balance_evidence";
-import summariseStarterFaqPersonalData from "./20261213010000_summarise_starter_faq_personal_data";
 import releaseCancelledBookingPromos from "./20261217010000_release_cancelled_booking_promos";
+import summariseStarterFaqPersonalData from "./20261218010000_summarise_starter_faq_personal_data";
 import correctStarterPrivacyRetentionAndHosting from "./20261214010000_correct_starter_privacy_retention_and_hosting";
 import type { DataMigrationVerification } from "./types";
 
@@ -83,7 +83,7 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   memberMoneyJournal,
   memberMoneyApplications,
   stripeBalanceEvidence,
-  summariseStarterFaqPersonalData,
   releaseCancelledBookingPromos,
+  summariseStarterFaqPersonalData,
   correctStarterPrivacyRetentionAndHosting,
 ];

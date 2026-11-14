@@ -112,8 +112,9 @@ const GENERICISE_LODGE_COPY_MIGRATION_PATH = join(
 );
 
 // Issue #4031: guarded update that corrects section 7's audit-log retention
-// schedule. It supersedes #1945 as the authoritative writer of the current
-// privacy seed text; #1945 still writes the current Terms.
+// schedule. It superseded #1945 as the writer of the privacy seed text, until
+// #4914's 20261214010000 migration took over as the current privacy writer;
+// #1945 still writes the current Terms.
 const PRIVACY_AUDIT_RETENTION_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
@@ -130,7 +131,7 @@ const FAQ_PERSONAL_DATA_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
   "migrations",
-  "20261213010000_summarise_starter_faq_personal_data",
+  "20261218010000_summarise_starter_faq_personal_data",
   "migration.sql",
 );
 
@@ -680,9 +681,10 @@ describe("starter lodge-copy genericise update migration (#1945)", () => {
   });
 
   it("writes the current club-agnostic, token-driven seed copy", () => {
-    // Privacy's current seed is written by the #4031 migration and the FAQ's
-    // by the #4914 follow-up; each guards on exactly the text this one writes
-    // (asserted there).
+    // Privacy's current seed is written by #4914's
+    // 20261214010000_correct_starter_privacy_retention_and_hosting migration
+    // (it guards on the #4031 body) and the FAQ's by the #4914 follow-up; each
+    // guards on exactly the text its predecessor wrote (asserted there).
     for (const slug of ["terms"]) {
       const page = starterPageContent.find((p) => p.slug === slug);
       expect(page, `expected starter page ${slug}`).toBeDefined();
@@ -768,9 +770,11 @@ describe("the starter FAQ's personal-data answer", () => {
     .split("<summary>What personal data does the club hold about me?</summary>")[1]
     ?.split("</details>")[0];
 
-  it("names every category of personal data the system holds", () => {
-    // The pre-fix answer omitted all but the first and last of these, telling
-    // members less than the club holds.
+  it("names the categories the summary promises", () => {
+    // The pre-fix answer lacked title, gender, occupation, addresses, photo,
+    // dietary or allergy information, family and membership history. The
+    // answer also names emails, guests and security logs, which this list does
+    // not pin; section 2 of the Privacy Policy is the full list.
     expect(answer).toBeDefined();
     for (const category of [
       "name",
@@ -798,6 +802,39 @@ describe("the starter FAQ's personal-data answer", () => {
     expect(answer).toContain('Section 2 of our <a href="/privacy">Privacy Policy</a>');
     const privacy = starterPageContent.find((p) => p.slug === "privacy")!;
     expect(privacy.contentHtml).toContain("<h2>2. What Information We Collect</h2>");
+  });
+
+  it("only points to a section 2 that itself lists each category the summary names", () => {
+    // The answer says section 2 "lists everything the club collects", so the
+    // privacy seed's section 2 must name every category the summary names, in
+    // the words section 2 uses. Editing either copy without the other fails here.
+    const privacy = starterPageContent.find((p) => p.slug === "privacy")!;
+    const section2 = privacy.contentHtml
+      .split("<h2>2. What Information We Collect</h2>")[1]
+      ?.split("<h2>3.")[0];
+    expect(section2).toBeDefined();
+    for (const wording of [
+      "first and last name",
+      "Title",
+      "gender",
+      "date of birth",
+      "occupation",
+      "email address",
+      "phone number",
+      "street and postal addresses",
+      "Profile photos",
+      "dietary or allergy information",
+      "family relationships",
+      "membership dates and history",
+      "Dates of stay",
+      "guest names",
+      "Payment status",
+      "Chore assignments",
+      "Emails sent to you",
+      "IP addresses and request logs",
+    ]) {
+      expect(section2, `section 2 lacks "${wording}"`).toContain(wording);
+    }
   });
 });
 
