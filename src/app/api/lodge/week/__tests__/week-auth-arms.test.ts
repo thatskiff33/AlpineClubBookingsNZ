@@ -152,4 +152,12 @@ describe("GET /api/lodge/week authorisation arms", () => {
       kioskAccessMocks.getKioskDateRange.mock.calls[0] ?? [];
     expect(grantedDate).toEqual(new Date("2026-07-04T00:00:00.000Z"));
   });
+
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    const response = await week("2026-02-30");
+
+    expect(response.status).toBe(400);
+    expect(lodgeAuthMocks.checkLodgeAuth).not.toHaveBeenCalled();
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
 });
