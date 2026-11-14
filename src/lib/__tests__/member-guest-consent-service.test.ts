@@ -1278,13 +1278,13 @@ describe("the operator's reason and the remedy an operator is offered", () => {
     // to exist, verbatim, in the source that raises it. A reword upstream fails
     // HERE, loudly, instead of quietly downgrading a named reason to OTHER.
     const removalSource = readRepoFile("src/lib/booking-guest-removal-service.ts");
-    const validationSource = readRepoFile("src/lib/booking-modify-validation.ts");
+    const quotePricedSource = readRepoFile("src/lib/booking-modify-quote-priced.ts");
 
     expect(removalSource).toContain(REFUSALS.SETTLED);
     expect(removalSource).toContain(REFUSALS.LAST_GUEST);
     expect(removalSource).toContain(REFUSALS.STAY_NOT_FUTURE);
     expect(removalSource).toContain(REFUSALS.BOOKING_STATUS);
-    expect(validationSource).toContain(REFUSALS.QUOTE_PRICED);
+    expect(quotePricedSource).toContain(REFUSALS.QUOTE_PRICED);
 
     expect(classifyConsentRemovalRefusal(REFUSALS.LAST_GUEST)).toBe("LAST_GUEST");
     expect(classifyConsentRemovalRefusal(REFUSALS.QUOTE_PRICED)).toBe("QUOTE_PRICED");

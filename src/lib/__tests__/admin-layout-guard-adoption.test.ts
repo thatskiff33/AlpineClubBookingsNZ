@@ -150,7 +150,9 @@ const FORBIDDEN_IN_LAYOUT = [
  */
 const GUARD_MUST_PERFORM = [
   "recordAuthBounce",
-  "isTwoFactorSessionBlocked",
+  // The combined gate: the club-wide challenge and the officer enrolment
+  // gate. `factorGateRedirect` is what performs `isTwoFactorSessionBlocked`.
+  "factorGateRedirect",
   "canOpenAdminPath",
   "getFirstAccessibleAdminHref",
   "MEMBER_ONBOARDING_GATE_SELECT",
