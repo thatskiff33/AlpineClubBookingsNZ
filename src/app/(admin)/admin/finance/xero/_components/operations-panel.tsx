@@ -209,9 +209,15 @@ export function OperationsPanel({
     setPage(1)
   }
 
-  const fetchOperations = useCallback(async () => {
+  // A press of the header's Refresh is an action, so its failure takes focus
+  // in the alert above the card (which stays mounted while it is collapsed)
+  // and the press clears the previous action's failure. A load the panel runs
+  // itself (opening, a filter, the page's refresh token, after an action)
+  // stays a passive notice (#4975).
+  const fetchOperations = useCallback(async (options?: { pressed?: boolean }) => {
     setLoading(true)
-    setLoadError("")
+    if (options?.pressed) clearActionError()
+    else setLoadError("")
     try {
       const params = new URLSearchParams({
         status: statusFilter,
@@ -231,16 +237,21 @@ export function OperationsPanel({
       setOperations(data.data ?? [])
       setTotal(data.total ?? 0)
       setHiddenFailedCount(data.hiddenFailedCount ?? 0)
+      setLoadError("")
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to load Xero operation history")
+      const message = err instanceof Error ? err.message : "Failed to load Xero operation history"
+      if (options?.pressed) failAction(message)
+      else setLoadError(message)
       setHiddenFailedCount(0)
     } finally {
       setLoading(false)
     }
   }, [
+    clearActionError,
     createdFrom,
     createdTo,
     entityFilter,
+    failAction,
     failureStateFilter,
     localIdFilter,
     localModelFilter,
@@ -395,8 +406,8 @@ export function OperationsPanel({
     <div>
       {viewOnlyBanner}
       {/* Outside the card's body, which unmounts while the section is collapsed:
-          Retry Active Failed and Reset stale running sit in its always-visible
-          header, so their failure needs somewhere to land. */}
+          Retry Active Failed, Reset stale running and Refresh sit in its
+          always-visible header, so their failure needs somewhere to land. */}
       <FocusedActionError id="xero-operations-action-error" className="mb-4" error={actionError} attentionKey={attentionKey} />
     <SectionCard
       id={xeroSectionId("operations")}
@@ -412,7 +423,7 @@ export function OperationsPanel({
           <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" onClick={() => void resetStaleRunning()} disabled={resettingStale}>
             {resettingStale ? "Resetting..." : "Reset stale running"}
           </ViewOnlyActionButton>
-          <Button variant="outline" size="sm" onClick={() => void fetchOperations()} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={() => void fetchOperations({ pressed: true })} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
           </Button>
         </>

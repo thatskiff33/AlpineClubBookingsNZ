@@ -126,14 +126,15 @@ async function api(body: unknown) {
 export default function XeroMemberGroupingPage() {
   // The Xero contact-group cache refresh stamp is a real INSTANT (CT-4, #2870).
   const clubTime = useClubTime();
-  // Mode/rule/bulk controls need finance:edit; the dry-run is read-only and
-  // matches the API's finance:view guard (E1 pattern, #1934 review).
+  // Mode/rule/bulk controls need finance:edit; the dry-run needs only
+  // finance:view, matching the API's guard (E1 pattern, #1934 review).
   const canEdit = useAdminAreaEditAccess("finance");
   const canView = useAdminAreaViewAccess("finance");
   const [config, setConfig] = useState<Config | null>(null);
-  // Reading the configuration and refreshing the group cache are GETs, so their
-  // failures are a passive notice. A mode, rule, dry-run or re-sync request is
-  // an action, and its failure takes focus (#4975).
+  // The configuration read this page runs itself is a passive notice. Every
+  // button press is an action whose failure takes focus: a mode, rule, dry-run
+  // or re-sync request, and Refresh from Xero, which rebuilds the group cache
+  // and spends Xero API calls (#4975).
   const [loadError, setLoadError] = useState<string | null>(null);
   const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure();
   const [busy, setBusy] = useState(false);
@@ -182,7 +183,7 @@ export default function XeroMemberGroupingPage() {
   // invalidates. Inline status callbacks — no toast lib (#2093, D-B3).
   const refreshFromXero = useCallback(async () => {
     setRefreshing(true);
-    setLoadError(null);
+    clearActionError();
     setRefreshStatus(null);
     try {
       const result = await loadAdminXeroContactGroups({ refreshFromXero: true });
@@ -193,11 +194,11 @@ export default function XeroMemberGroupingPage() {
           : "Refreshed from Xero. No active contact groups were returned.",
       );
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to refresh from Xero");
+      failAction(err instanceof Error ? err.message : "Failed to refresh from Xero");
     } finally {
       setRefreshing(false);
     }
-  }, [load]);
+  }, [clearActionError, failAction, load]);
 
   const run = useCallback(
     async (body: unknown, after?: (json: unknown) => void) => {

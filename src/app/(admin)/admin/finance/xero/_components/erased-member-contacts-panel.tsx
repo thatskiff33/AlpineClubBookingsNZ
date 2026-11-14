@@ -185,9 +185,15 @@ export function ErasedMemberContactsPanel({
   const [loadError, setLoadError] = useState("")
   const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
 
-  const load = useCallback(async () => {
+  // A press of the header's Refresh is an action: its failure takes focus in
+  // the alert above the card, and the press clears the previous action's
+  // failure. The load on first opening stays a passive notice (#4975). A
+  // pressed failure leaves `loadError` as it was, so the auto-load guard below
+  // does not fire a second read behind it.
+  const load = useCallback(async (options?: { pressed?: boolean }) => {
     setLoading(true)
-    setLoadError("")
+    if (options?.pressed) clearActionError()
+    else setLoadError("")
     try {
       const data = await fetchJson<{ review: ErasedMemberXeroContactReview }>(
         "/api/admin/xero/erased-member-contacts",
@@ -195,12 +201,15 @@ export function ErasedMemberContactsPanel({
         "Could not read the erased-member contact review.",
       )
       setReview(data.review)
+      setLoadError("")
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Could not read the erased-member contact review.")
+      const message = err instanceof Error ? err.message : "Could not read the erased-member contact review."
+      if (options?.pressed) failAction(message)
+      else setLoadError(message)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [clearActionError, failAction])
 
   /*
     The one control that reaches Xero, and it reaches it to ASK. Without it this
@@ -245,7 +254,7 @@ export function ErasedMemberContactsPanel({
   return (
     <>
     {/* Outside the card's body, which unmounts while the section is collapsed:
-        "Check these in Xero" sits in its always-visible header. */}
+        "Check these in Xero" and Refresh sit in its always-visible header. */}
     <FocusedActionError
       id="erased-member-contacts-action-error"
       className="mb-4"
@@ -260,7 +269,7 @@ export function ErasedMemberContactsPanel({
       onToggle={(nextOpen) => onToggle("erasedMemberContacts", nextOpen)}
       actions={
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={busy}>
+          <Button variant="outline" size="sm" onClick={() => void load({ pressed: true })} disabled={busy}>
             {loading ? (
               <Loader2 aria-hidden className="mr-2 size-4 animate-spin" />
             ) : (

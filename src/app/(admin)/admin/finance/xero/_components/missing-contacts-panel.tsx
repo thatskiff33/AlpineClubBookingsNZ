@@ -232,9 +232,9 @@ export function MissingContactsPanel({
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [notReady, setNotReady] = useState("")
   const [busy, setBusy] = useState<"dry-run" | "run" | null>(null)
-  // The dry run only reads, so its failure is a passive notice; the batch run
-  // writes to Xero, so its failure takes focus (#4975).
-  const [dryRunError, setDryRunError] = useState("")
+  // Both the dry run and the batch run happen only when the admin presses a
+  // button, so either failure takes focus (#4975). The dry run writes nothing,
+  // but a failure the admin cannot see still reads as a click that did nothing.
   const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
   const [result, setResult] = useState<RunResult | null>(null)
 
@@ -249,7 +249,7 @@ export function MissingContactsPanel({
   */
   const runDryRun = async (options?: { keepResult?: boolean }) => {
     setBusy("dry-run")
-    setDryRunError("")
+    clearActionError()
     if (!options?.keepResult) setResult(null)
     try {
       const data = await fetchJson<{ snapshot: Snapshot; notReadyMessage: string | null }>(
@@ -260,7 +260,7 @@ export function MissingContactsPanel({
       setSnapshot(data.snapshot)
       setNotReady(data.notReadyMessage ?? "")
     } catch (err) {
-      setDryRunError(err instanceof Error ? err.message : "The dry run could not be completed")
+      failAction(err instanceof Error ? err.message : "The dry run could not be completed")
     } finally {
       setBusy(null)
     }
@@ -336,6 +336,11 @@ export function MissingContactsPanel({
     result?.skipped.filter((row) => row.reason === "NO_LONGER_PUSHABLE") ?? []
 
   return (
+    <>
+    {/* Outside the card's body, which unmounts while the section is collapsed:
+        an alert inside it would remount on re-opening and take focus for a
+        stale failure. */}
+    <FocusedActionError id="xero-missing-contacts-action-error" className="mb-4" error={actionError} attentionKey={attentionKey} />
     <SectionCard
       id="missing-contacts"
       title="Members with no Xero contact"
@@ -400,8 +405,6 @@ export function MissingContactsPanel({
           </p>
         ) : null}
 
-        {dryRunError ? <p className="text-sm text-danger">{dryRunError}</p> : null}
-        <FocusedActionError id="xero-missing-contacts-action-error" error={actionError} attentionKey={attentionKey} />
         {notReady ? (
           <p className="flex items-start gap-2 text-sm text-warning">
             <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
@@ -585,5 +588,6 @@ export function MissingContactsPanel({
         ) : null}
       </div>
     </SectionCard>
+    </>
   )
 }

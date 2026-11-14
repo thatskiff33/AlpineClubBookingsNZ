@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 /**
- * Member grouping: a failed refresh of the Xero contact-group cache is a read
- * and stays a passive notice; a failed mode change is a write and takes focus,
- * again on every identical failure (#4975).
+ * Member grouping: a configuration read the page runs itself stays a passive
+ * notice; a failed press (Refresh from Xero, which rebuilds the contact-group
+ * cache, or a mode change) takes focus, again on every identical failure
+ * (#4975).
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -66,21 +67,33 @@ function actionAlert() {
 }
 
 describe("XeroMemberGroupingPage failure attention", () => {
-  it("leaves focus on Refresh from Xero when the read-only refresh fails", async () => {
+  it("leaves focus alone when the configuration cannot be read", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    render(<XeroMemberGroupingPage />);
+    expect(await screen.findByText("Failed to load configuration")).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("focuses a failed Refresh from Xero every time", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => CONFIG });
     mocks.loadGroups.mockRejectedValue(new Error("Xero contact groups unavailable"));
     render(<XeroMemberGroupingPage />);
     const refresh = () => screen.getByRole("button", { name: /refresh from xero/i });
     await waitFor(() => expect(refresh()).toBeEnabled());
 
+    fireEvent.click(refresh());
+    const alert = actionAlert();
+    await waitFor(() => expect(alert).toHaveTextContent("Xero contact groups unavailable"));
+    await expectRecoveryAlertToHoldFocus(alert);
+
+    await waitFor(() => expect(refresh()).toBeEnabled());
     act(() => refresh().focus());
     fireEvent.click(refresh());
-    expect(await screen.findByText("Xero contact groups unavailable")).toBeInTheDocument();
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    expect(document.activeElement).toBe(refresh());
-    expect(actionAlert()).toBeEmptyDOMElement();
+    await expectRecoveryAlertToHoldFocus(alert);
+    expect(alert).toHaveTextContent("Xero contact groups unavailable");
   });
 
   it("focuses a refused mode change every time it is refused", async () => {

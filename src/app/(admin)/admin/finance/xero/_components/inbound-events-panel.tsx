@@ -190,9 +190,14 @@ export function InboundEventsPanel({
     setPage(1)
   }
 
-  const fetchEvents = useCallback(async () => {
+  // A press of the header's Refresh is an action, so its failure takes focus
+  // in the alert above the card and the press clears the previous action's
+  // failure. A load the panel runs itself (opening, a filter or page change,
+  // the page's refresh token, after a replay) stays a passive notice (#4975).
+  const fetchEvents = useCallback(async (options?: { pressed?: boolean }) => {
     setLoading(true)
-    setLoadError("")
+    if (options?.pressed) clearActionError()
+    else setLoadError("")
     try {
       const params = new URLSearchParams({
         status: statusFilter,
@@ -210,16 +215,21 @@ export function InboundEventsPanel({
       const data = await fetchJson<{ data?: XeroInboundEvent[]; total?: number }>(`/api/admin/xero/inbound-events?${params.toString()}`, undefined, "Failed to fetch Xero inbound events")
       setEvents(data.data ?? [])
       setTotal(data.total ?? 0)
+      setLoadError("")
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to load Xero inbound events")
+      const message = err instanceof Error ? err.message : "Failed to load Xero inbound events"
+      if (options?.pressed) failAction(message)
+      else setLoadError(message)
     } finally {
       setLoading(false)
     }
   }, [
     categoryFilter,
+    clearActionError,
     createdFrom,
     createdTo,
     eventTypeFilter,
+    failAction,
     localIdFilter,
     localModelFilter,
     page,
@@ -268,18 +278,22 @@ export function InboundEventsPanel({
   )
 
   return (
+    <>
+    {/* Outside the card's body, which unmounts while the section is collapsed:
+        Refresh sits in its always-visible header, and an alert inside the body
+        would remount on re-opening and take focus for a stale failure. */}
+    <FocusedActionError id="xero-inbound-action-error" className="mb-4" error={actionError} attentionKey={attentionKey} />
     <SectionCard
       id={xeroSectionId("inbound")}
       title="Inbound Events"
       description="Stored webhook events and their reconciliation state."
       open={open}
       onToggle={(nextOpen) => onToggle("inbound", nextOpen)}
-      actions={<Button variant="outline" size="sm" onClick={() => void fetchEvents()} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</Button>}
+      actions={<Button variant="outline" size="sm" onClick={() => void fetchEvents({ pressed: true })} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</Button>}
     >
       {viewOnlyBanner}
       <div className="space-y-4">
         {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
-        <FocusedActionError id="xero-inbound-action-error" error={actionError} attentionKey={attentionKey} />
         <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
           <ul className="mt-2 space-y-1">
@@ -372,5 +386,6 @@ export function InboundEventsPanel({
         ) : null}
       </div>
     </SectionCard>
+    </>
   )
 }

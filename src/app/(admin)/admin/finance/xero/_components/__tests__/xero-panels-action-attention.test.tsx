@@ -3,17 +3,19 @@
 /**
  * Where a failure on the Xero panels sends the admin's attention (#4975).
  *
- * Every panel here both reads data in the background and offers actions that
- * write. The two failures are different events: a read that failed is a passive
- * notice that must not pull focus away from whatever the admin is doing, while
- * a Retry, Sync, Replay or Repair that failed is the next thing they have to act
- * on, so its explanation takes focus — and takes it AGAIN when a retry fails
- * with the identical message, which a bare message-change effect would miss.
+ * Every panel here both loads data by itself and offers buttons. The two
+ * failures are different events: a load the panel ran itself (opening, a
+ * filter, a background refresh) is a passive notice that must not pull focus
+ * away from whatever the admin is doing, while ANY button the admin pressed
+ * (Retry, Sync, Replay, Repair, a dry run, a scan, a Refresh) is the next thing
+ * they have to act on, so its explanation takes focus — and takes it AGAIN when
+ * a retry fails with the identical message, which a bare message-change effect
+ * would miss.
  *
- * The panels whose action buttons sit in the card header (Operations,
- * Membership sync, Erased members) are also pressed while COLLAPSED: the card
- * body is unmounted then, so a failure rendered inside it would have nowhere to
- * appear.
+ * Every alert sits OUTSIDE its card, because the card body unmounts while the
+ * section is collapsed: header buttons are pressed while collapsed, and an
+ * alert inside the body would remount on re-opening and take focus for a stale
+ * failure.
  */
 
 import "@testing-library/jest-dom/vitest"
@@ -27,6 +29,7 @@ import { MembershipSyncPanel } from "../membership-sync-panel"
 import { MissingContactsPanel } from "../missing-contacts-panel"
 import { OperationsPanel } from "../operations-panel"
 import { SetupPanels } from "../setup-panels"
+import type { XeroOperation } from "../types"
 
 const mocks = vi.hoisted(() => ({
   fetchJson: vi.fn(),
@@ -153,6 +156,49 @@ describe("MembershipSyncPanel", () => {
   })
 })
 
+function failedOperation(overrides: Partial<XeroOperation> = {}): XeroOperation {
+  return {
+    id: "op-1",
+    direction: "OUTBOUND",
+    entityType: "INVOICE",
+    operationType: "CREATE",
+    localModel: null,
+    localId: null,
+    localUrl: null,
+    status: "FAILED",
+    idempotencyKey: null,
+    correlationKey: null,
+    attemptCount: 1,
+    replayable: false,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    requestPayload: {},
+    responsePayload: {},
+    xeroObjectType: null,
+    xeroObjectId: null,
+    xeroObjectNumber: null,
+    xeroObjectUrl: null,
+    createdByMemberId: null,
+    startedAt: null,
+    completedAt: null,
+    manuallyResolvedAt: null,
+    manuallyResolvedReason: null,
+    manuallyResolvedById: null,
+    createdAt: "2026-06-30T00:00:00.000Z",
+    updatedAt: "2026-06-30T00:00:00.000Z",
+    supported: false,
+    reason: null,
+    failureState: "ACTIVE",
+    failureStateReason: null,
+    failureRootKey: null,
+    staleRunning: false,
+    resolveAsksCreditNoteNumber: false,
+    resolveCreditNoteAmountCents: null,
+    resolveRefusal: null,
+    ...overrides,
+  }
+}
+
 describe("OperationsPanel", () => {
   const props = {
     connected: true,
@@ -176,6 +222,54 @@ describe("OperationsPanel", () => {
       () => screen.getByRole("button", { name: "Retry Active Failed" }),
       "Queue is locked",
     )
+  })
+
+  it("focuses a failed Refresh pressed while the card is collapsed", async () => {
+    mocks.fetchJson.mockRejectedValue(new Error("History read failed"))
+    render(<OperationsPanel {...props} open={false} />)
+    await expectRepeatedFailureTakesFocus(
+      "xero-operations-action-error",
+      () => screen.getByRole("button", { name: "Refresh" }),
+      "History read failed",
+    )
+  })
+
+  it("clears a stale action failure when a pressed Refresh succeeds", async () => {
+    mocks.postJson.mockRejectedValue(new Error("Queue is locked"))
+    mocks.fetchJson.mockResolvedValue({ data: [], total: 0, hiddenFailedCount: 0 })
+    render(<OperationsPanel {...props} open={false} />)
+    const alert = alertById("xero-operations-action-error")
+    fireEvent.click(screen.getByRole("button", { name: "Retry Active Failed" }))
+    await waitFor(() => expect(alert).toHaveTextContent("Queue is locked"))
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled())
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }))
+    await waitFor(() => expect(alert).toBeEmptyDOMElement())
+  })
+
+  it("focuses a Resolve the row says will be refused, every time", async () => {
+    mocks.fetchJson.mockResolvedValue({
+      data: [failedOperation({ resolveRefusal: "This refund needs a credit note first" })],
+      total: 1,
+      hiddenFailedCount: 0,
+    })
+    render(<OperationsPanel {...props} open />)
+    const resolve = () => screen.getByRole("button", { name: "Resolve (fixed in Xero)" })
+    await waitFor(() => expect(resolve()).toBeEnabled())
+    await expectRepeatedFailureTakesFocus(
+      "xero-operations-action-error",
+      resolve,
+      "This refund needs a credit note first",
+    )
+    expect(mocks.postJson).not.toHaveBeenCalled()
+  })
+
+  it("focuses a Resolve the route refuses, every time", async () => {
+    mocks.fetchJson.mockResolvedValue({ data: [failedOperation()], total: 1, hiddenFailedCount: 0 })
+    mocks.postJson.mockRejectedValue(new Error("Resolve refused"))
+    render(<OperationsPanel {...props} open />)
+    const resolve = () => screen.getByRole("button", { name: "Resolve (fixed in Xero)" })
+    await waitFor(() => expect(resolve()).toBeEnabled())
+    await expectRepeatedFailureTakesFocus("xero-operations-action-error", resolve, "Resolve refused")
   })
 })
 
@@ -226,6 +320,16 @@ describe("InboundEventsPanel", () => {
       screen.getAllByRole("button").find((button) => button.closest(".rounded-md.border.p-3"))!
     await expectRepeatedFailureTakesFocus("xero-inbound-action-error", replayButton, "Replay refused")
   })
+
+  it("focuses a failed Refresh pressed while the card is collapsed", async () => {
+    mocks.fetchJson.mockRejectedValue(new Error("Events read failed"))
+    render(<InboundEventsPanel {...props} open={false} />)
+    await expectRepeatedFailureTakesFocus(
+      "xero-inbound-action-error",
+      () => screen.getByRole("button", { name: "Refresh" }),
+      "Events read failed",
+    )
+  })
 })
 
 describe("ErasedMemberContactsPanel", () => {
@@ -266,6 +370,16 @@ describe("ErasedMemberContactsPanel", () => {
     rerender(<ErasedMemberContactsPanel {...props} open={false} />)
     await expectRepeatedFailureTakesFocus("erased-member-contacts-action-error", checkButton, "Xero check failed")
   })
+
+  it("focuses a failed Refresh pressed while the card is collapsed", async () => {
+    mocks.fetchJson.mockRejectedValue(new Error("Review read failed"))
+    render(<ErasedMemberContactsPanel {...props} open={false} />)
+    await expectRepeatedFailureTakesFocus(
+      "erased-member-contacts-action-error",
+      () => screen.getByRole("button", { name: "Refresh" }),
+      "Review read failed",
+    )
+  })
 })
 
 describe("MissingContactsPanel", () => {
@@ -279,18 +393,14 @@ describe("MissingContactsPanel", () => {
     onRefreshOperations: vi.fn(),
   }
 
-  it("leaves focus on the dry-run button when the read-only dry run fails", async () => {
+  it("focuses a failed dry run every time: a press the admin made is an outcome", async () => {
     mocks.fetchJson.mockRejectedValue(new Error("Dry run failed"))
     render(<MissingContactsPanel {...props} />)
-    const dryRun = screen.getByRole("button", { name: /run the dry run/i })
-    act(() => dryRun.focus())
-    fireEvent.click(dryRun)
-    expect(await screen.findByText("Dry run failed")).toBeInTheDocument()
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: /run the dry run/i }))
-    expect(alertById("xero-missing-contacts-action-error")).toBeEmptyDOMElement()
+    await expectRepeatedFailureTakesFocus(
+      "xero-missing-contacts-action-error",
+      () => screen.getByRole("button", { name: /run the dry run/i }),
+      "Dry run failed",
+    )
   })
 
   it("focuses a failed contact creation every time", async () => {
@@ -351,19 +461,63 @@ describe("SetupPanels", () => {
     mocks.loadGroups.mockResolvedValue({ groups: [{ id: "group-1", name: "Adults", contactCount: 1 }] })
   })
 
-  it("leaves focus on the scan button when the read-only duplicate scan fails", async () => {
+  it("focuses a failed duplicate scan every time: a press the admin made is an outcome", async () => {
     mocks.fetchJson.mockRejectedValue(new Error("Scan failed"))
     render(<SetupPanels {...props} />)
     await screen.findByText("Adults")
-    const scan = () => screen.getByRole("button", { name: /scan for duplicates/i })
-    act(() => scan().focus())
-    fireEvent.click(scan())
-    expect(await screen.findByText("Scan failed")).toBeInTheDocument()
+    await expectRepeatedFailureTakesFocus(
+      "xero-setup-action-error",
+      () => screen.getByRole("button", { name: /scan for duplicates/i }),
+      "Scan failed",
+    )
+  })
+
+  it("focuses a failed Refresh Contact Groups from Xero, which rebuilds the cache", async () => {
+    mocks.fetchJson.mockResolvedValue({ membershipTypes: [] })
+    render(<SetupPanels {...props} />)
+    await screen.findByText("Adults")
+    mocks.loadGroups.mockRejectedValue(new Error("Xero groups unavailable"))
+    await expectRepeatedFailureTakesFocus(
+      "xero-setup-action-error",
+      () => screen.getByRole("button", { name: /refresh contact groups from xero/i }),
+      "Xero groups unavailable",
+    )
+  })
+
+  it("leaves focus alone when the contact groups cannot be loaded on opening", async () => {
+    mocks.fetchJson.mockResolvedValue({ membershipTypes: [] })
+    // One failure is enough to see where it lands; later automatic retries succeed.
+    mocks.loadGroups.mockReset()
+    mocks.loadGroups
+      .mockRejectedValueOnce(new Error("Groups read failed"))
+      .mockResolvedValue({ groups: [{ id: "group-1", name: "Adults", contactCount: 1 }] })
+    render(<SetupPanels {...props} />)
+    await screen.findByText("Adults")
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
-    expect(document.activeElement).toBe(scan())
+    expect(document.activeElement).toBe(document.body)
     expect(alertById("xero-setup-action-error")).toBeEmptyDOMElement()
+  })
+
+  it("does not take focus for an old failure when the card is collapsed and re-opened", async () => {
+    mocks.fetchJson.mockResolvedValue({ membershipTypes: [] })
+    mocks.postJson.mockRejectedValue(new Error("Repair failed"))
+    const { rerender } = render(<SetupPanels {...props} />)
+    await screen.findByText("Adults")
+    const alert = alertById("xero-setup-action-error")
+    fireEvent.click(screen.getByRole("button", { name: "Repair Canonical Links" }))
+    await waitFor(() => expect(alert).toHaveTextContent("Repair failed"))
+    await expectRecoveryAlertToHoldFocus(alert)
+
+    rerender(<SetupPanels {...props} open={false} />)
+    const toggle = () => screen.getByRole("button", { name: /setup tools/i })
+    act(() => toggle().focus())
+    rerender(<SetupPanels {...props} open />)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(document.activeElement).toBe(toggle())
   })
 
   it("focuses a failed link repair every time", async () => {
