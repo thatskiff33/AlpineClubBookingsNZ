@@ -47,8 +47,8 @@ export function hasWizardErrorActions({
 
 /**
  * What a refused booking offers the member to do about it (#4945): retry the
- * lodge lookup, fix a guest's profile, deal with a member-night conflict, or
- * pay a subscription. It is the body of the wizard's one error box
+ * lodge lookup, fix a guest's profile, deal with a member-night conflict, pay a
+ * subscription, or go to the Booking Officer request. It is the body of the wizard's one error box
  * (`FocusedActionError` in `page.tsx`), moved here so the page stays the shell
  * that wires the wizard together. The box owns the `role="alert"` region and
  * the focus; nothing here is a live region of its own.
