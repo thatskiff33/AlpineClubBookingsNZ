@@ -6,14 +6,14 @@ import { NextRequest } from "next/server";
 const {
   mockRecordWebhookLog,
   mockRecordXeroInboundEvent,
-  mockRunXeroInboundReconciliationCycle,
+  mockRunXeroWebhookInboundKick,
   mockIsXeroConnected,
   mockGetWebhookKey,
   mockRecordXeroWebhookValidation,
 } = vi.hoisted(() => ({
   mockRecordWebhookLog: vi.fn().mockResolvedValue(undefined),
   mockRecordXeroInboundEvent: vi.fn().mockResolvedValue(undefined),
-  mockRunXeroInboundReconciliationCycle: vi.fn().mockResolvedValue(undefined),
+  mockRunXeroWebhookInboundKick: vi.fn().mockResolvedValue(undefined),
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
   // DB-only resolution (#2079): the route resolves the webhook key here, not env.
   mockGetWebhookKey: vi.fn(),
@@ -40,9 +40,9 @@ vi.mock("@/lib/xero-sync", () => ({
     mockRecordXeroInboundEvent(...args),
 }));
 
-vi.mock("@/lib/xero-inbound-reconciliation", () => ({
-  runXeroInboundReconciliationCycle: (...args: unknown[]) =>
-    mockRunXeroInboundReconciliationCycle(...args),
+vi.mock("@/lib/xero-cron-runner", () => ({
+  runXeroWebhookInboundKick: (...args: unknown[]) =>
+    mockRunXeroWebhookInboundKick(...args),
 }));
 
 vi.mock("@/lib/xero", () => ({
@@ -454,6 +454,37 @@ describe("Xero webhook route", () => {
           "xero:webhook:INVOICE:UPDATE:invoice-1:2026-05-29T00:00:00.000Z",
       })
     );
+  });
+
+  // #4922: the kick shares the inbound run claim through the runner's helper.
+  it("kicks the claimed inbound helper after the response when Xero is connected", async () => {
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+    mockIsXeroConnected.mockResolvedValue(true);
+    const event = { eventType: "UPDATE", eventCategory: "INVOICE", eventDateUtc: "2026-05-29T00:00:00.000Z" };
+
+    const response = await POST(signedRequest({
+      events: [{ ...event, resourceId: "invoice-1" }, { ...event, resourceId: "invoice-2" }],
+    }));
+
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(mockRunXeroWebhookInboundKick).toHaveBeenCalledWith({ batchSize: 2, maxBatches: 3 }));
+    expect(mockRunXeroWebhookInboundKick).toHaveBeenCalledOnce();
+  });
+
+  it("does not kick when Xero is disconnected or the delivery has no events", async () => {
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+    mockIsXeroConnected.mockResolvedValue(false);
+    const response = await POST(signedRequest({
+      events: [{ eventType: "UPDATE", eventCategory: "INVOICE", resourceId: "invoice-1", eventDateUtc: "2026-05-29T00:00:00.000Z" }],
+    }));
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(mockIsXeroConnected).toHaveBeenCalledOnce());
+
+    mockIsXeroConnected.mockResolvedValue(true);
+    expect((await POST(signedRequest({ events: [] }))).status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockIsXeroConnected).toHaveBeenCalledOnce();
+    expect(mockRunXeroWebhookInboundKick).not.toHaveBeenCalled();
   });
 });
 

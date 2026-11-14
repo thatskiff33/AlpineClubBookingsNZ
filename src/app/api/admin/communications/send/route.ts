@@ -4,10 +4,14 @@
  * Admin-only. Rate limited to BULK_SENDMAIL_LIMIT sends per hour.
  * Respects marketingEmails notification preference.
  * Sanitises input to prevent HTML/header injection.
+ *
+ * GET returns the rate limit and, given `?recipientFilter=`, how many accounts
+ * that audience reaches, for the page's confirmation step (#4964). It sends
+ * nothing and never touches the hourly quota; it must stay a GET, because the
+ * POST spends the quota before it reads its body.
  */
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { checkRateLimit, type RateLimitConfig } from "@/lib/rate-limit";
 import {
@@ -15,7 +19,10 @@ import {
 } from "@/lib/email-templates/communications";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
+import {
+  BULK_RECIPIENT_FILTERS,
+  selectBulkCommunicationRecipients,
+} from "@/lib/bulk-communication-recipients";
 import { renderEmailHtml } from "@/lib/email-theme";
 
 const DEFAULT_BULK_SENDMAIL_LIMIT = 1;
@@ -44,19 +51,47 @@ const sendSchema = z.object({
     .string()
     .min(1, "Body is required")
     .max(10000, "Body must be under 10,000 characters"),
-  recipientFilter: z.enum(["all", "members-only", "admins-only", "custom"]),
+  recipientFilter: z.enum(BULK_RECIPIENT_FILTERS),
   memberIds: z.array(z.string()).optional(),
 });
 
-export async function GET() {
+// The page offers only the named audiences; `custom` needs a member list, which
+// a query string is no place for.
+const countQuerySchema = z.object({
+  recipientFilter: z.enum(BULK_RECIPIENT_FILTERS).exclude(["custom"]).optional(),
+});
+
+export async function GET(request: NextRequest) {
   const guard = await requireAdmin({
     permission: { area: "membership", level: "view" },
   });
   if (!guard.ok) return guard.response;
 
-  return NextResponse.json({
+  const parsed = countQuerySchema.safeParse(
+    Object.fromEntries(request.nextUrl.searchParams),
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  const rateLimit = {
     limit: bulkSendRateLimit.limit,
     windowSeconds: bulkSendRateLimit.windowSeconds,
+  };
+  const { recipientFilter } = parsed.data;
+  if (!recipientFilter) return NextResponse.json(rateLimit);
+
+  // Counts only, never addresses: a membership:view admin may call this.
+  const { total, eligible } =
+    await selectBulkCommunicationRecipients(recipientFilter);
+  return NextResponse.json({
+    ...rateLimit,
+    recipientFilter,
+    totalRecipients: total.length,
+    eligibleRecipients: eligible.length,
   });
 }
 
@@ -103,39 +138,18 @@ export async function POST(request: Request) {
     memberIds,
   } = parsed.data;
 
-  // Build recipient query
-  const whereClause: Record<string, unknown> = { active: true };
-  if (recipientFilter === "members-only") {
-    whereClause.role = { in: [...MEMBER_LEVEL_ROLE_VALUES] };
-  } else if (recipientFilter === "admins-only") {
-    whereClause.role = "ADMIN";
-  } else if (recipientFilter === "custom") {
-    if (!memberIds || memberIds.length === 0) {
-      return NextResponse.json(
-        { error: "memberIds required for custom filter" },
-        { status: 400 },
-      );
-    }
-    whereClause.id = { in: memberIds };
+  if (
+    recipientFilter === "custom" &&
+    (!memberIds || memberIds.length === 0)
+  ) {
+    return NextResponse.json(
+      { error: "memberIds required for custom filter" },
+      { status: 400 },
+    );
   }
-  // "all" uses just { active: true }
 
-  const recipients = await prisma.member.findMany({
-    where: whereClause,
-    select: {
-      id: true,
-      email: true,
-      notificationPreference: {
-        select: { marketingEmails: true },
-      },
-    },
-  });
-
-  // Filter out members who have marketingEmails: false
-  // Default (no preference record) is marketingEmails: false, so exclude those too
-  const eligibleRecipients = recipients.filter(
-    (r) => r.notificationPreference?.marketingEmails === true,
-  );
+  const { total: recipients, eligible: eligibleRecipients } =
+    await selectBulkCommunicationRecipients(recipientFilter, memberIds);
 
   // Generate the email HTML (using escapeHtml inside the template)
   const html = await renderEmailHtml(() => bulkCommunicationTemplate(subject, messageBody));

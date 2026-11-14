@@ -21,6 +21,14 @@ const mocks = vi.hoisted(() => ({
   supersededHeldBackCents: 0,
 }));
 
+// #4911: no capture here is disputed; the hold's own read is proved in
+// `stripe-dispute-hold.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  disputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+  paymentCaptureIntentIds: async () => [],
+}));
+
 vi.mock("@/lib/auth", () => ({ auth: async () => ({ user: { id: "member-1" } }) }));
 vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: async () => null }));
 // #4866: a live superseded capture's refund, none unless a case sets one (`superseded-capture-hold-back.test.ts`).

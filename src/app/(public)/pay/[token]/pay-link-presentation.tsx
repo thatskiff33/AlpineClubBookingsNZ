@@ -26,6 +26,7 @@
  */
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatusRegion } from "@/components/status-region";
 import {
   parseInstant,
   type BoundClubTime,
@@ -240,6 +241,34 @@ export function CardPaymentUnavailableNotice() {
       This booking is being paid by internet banking, so it can&apos;t be paid by
       card here. Use the bank-transfer details below.
     </p>
+  );
+}
+
+/** #4955: a redirect method came back declined or cancelled; shown above the pay options. */
+export function RedirectFailedNotice() {
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
+      <AlertTriangle className="h-5 w-5 shrink-0" />
+      <p>Your payment did not go through. You have not been charged. Choose how to pay below.</p>
+    </div>
+  );
+}
+
+/**
+ * The whole card while the server is asked what a payment did (#4300, #4955).
+ * It replaces the card form, or the page on a redirect return, so the status
+ * line takes the focus the form's Pay Now button held (#4949). One region serves
+ * both exits; it mounts already filled, a limit docs/STAGING_ACCESSIBILITY.md states.
+ */
+export function CheckingPaymentCard() {
+  return (
+    <Card className="w-full max-w-lg">
+      <CardContent className="py-8 text-center">
+        <StatusRegion id="payment-link-check-status" visible visibleClassName="text-muted-foreground" outcomeKey>
+          Checking your payment...
+        </StatusRegion>
+      </CardContent>
+    </Card>
   );
 }
 

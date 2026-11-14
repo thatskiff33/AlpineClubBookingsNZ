@@ -9,9 +9,13 @@ contacts. It records purpose, retention and the end action in one table.
 purpose; it does not introduce an automatic deletion period. Settings records
 are personal because they retain the updating officer's identifier.
 
+The starter Privacy Policy uses `{{email-log-retention}}` to describe the current
+email-log setting on every render. Edited policy pages should use this token too;
+see the [upgrade instructions](UPGRADING.md#correct-the-starter-privacy-policy-4914).
+
 ## Automatic retention and operator review
 
-The three new automatic jobs cover old email logs, rejected membership
+Four automatic jobs exist. Three cover old email logs, rejected membership
 applications and former-member profile anonymisation. They ship **OFF**.
 Their periods are club settings, with defaults of **2 years**, **1 year from
 reviewedAt**, and **7 years from explicit leavingDate**, respectively. Review
@@ -34,7 +38,23 @@ NULL until an officer explicitly records their leaving date. Anonymisation prese
 booking / payment links and financial references needed for reconciliation;
 it does not promise to scrub every historical narrative or provider record.
 
-Only those three jobs are added here. Existing token, audit, report,
+The fourth job clears each stay's dietary/allergy note (`BookingGuest.dietaryRequirements`)
+a club-set number of days after the stay ends, for member and non-member guests
+alike and on a booking of any status (`INV-PRIV-023`). It **ships ON** with a
+default of **30 days** (owner decision, 11 Nov 2026, on
+[#4916](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4916)), so
+the first nightly run after a club upgrades clears every past stay's note whose
+stay ended more than 30 days ago. A club that wants to keep them switches
+**Enable after-stay dietary clearing** off before or as part of upgrading.
+A stay that ends today or within the period keeps its note. The switch is
+separate from the dietary field itself: turning the field off hides notes and
+never clears them, and does not stop this job. Changing the period or switch
+requires support edit and bookings edit permission. The page shows how many
+notes the next run would clear, never the notes. A note an officer re-enters on
+an older stay is cleared the next night. Cleared notes cannot be restored except
+from a backup taken before the run.
+
+Only those four jobs are added here. Existing token, audit, report,
 communications and cron-run lifecycles continue under their own rules. A row
 marked “keep” has no new automatic cleanup. Approved member erasure remains a
 separate lifecycle. Backups and external providers have their own lifecycle;
@@ -76,7 +96,8 @@ see [backups](guides/backups.md), the
 | `MemberLifecycleActionRequest` | Membership lifecycle decisions, requesters, subjects and reviewers | Kept while member / for membership administration; no new automatic deletion for this model | Keep |
 | `Booking` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `BookingEvent` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
-| `BookingGuest` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `BookingGuest` | Stay participants, guest details, stay history and financial evidence (the dietary note is scheduled on its own line below) | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `BookingGuest.dietaryRequirements` | Per-stay dietary/allergy note for the kitchen and hut leader during the stay | Default 30 days after the stay's departure date (`stayEnd`), configurable 1–365, while the switch is on (ships on) | Clear the value; the guest row is kept |
 | `BookingGuestNight` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `BookingGuestNightAdjustment` | Stay participants, guest details, stay history and financial evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `GroupBooking` | Group organiser, joining contacts, guest snapshots and settlement | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
@@ -97,6 +118,7 @@ see [backups](guides/backups.md), the
 | `PaymentTransaction` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `PaymentRefund` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `UnrecognisedStripePayment` | Stripe payments no app path settled: provider references, amount, the description the payer saw or typed, and for the app's own payment its booking id | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `StripeDispute` | A cardholder's dispute (chargeback) of a card payment: Stripe references, amounts, Stripe's reason code and outcome, and the matched payment and booking ids | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `RateLimitCounter` | Pseudonymous requester keys for abuse prevention | Until counter reset / existing rate-limit cleanup | Delete through existing cleanup |
 | `LoginThrottle` | Pseudonymous per-account keys (an HMAC of the sign-in email, never the address) and a count of recent password attempts, for abuse prevention (#4609) | Until a valid password or a completed password reset; once idle for an hour, until the next daily `data-pruning` run at the latest | Delete on that sign-in or reset, by the daily `data-pruning` job, and sooner by a ten-minute sweep in a process handling password sign-ins |
 | `AlertCooldown` | Alert deduplication keys that may reference an entity | Kept for the operational purpose while needed; no new automatic deletion | Keep |
@@ -136,6 +158,7 @@ see [backups](guides/backups.md), the
 | `MirotalkSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `LodgeSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `EmailMessageSetting` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
+| `PrivacyHostingSettings` | Hosting disclosure and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubIdentitySettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubTimeSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `ClubFormatSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
@@ -215,6 +238,7 @@ see [backups](guides/backups.md), the
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
 | `MemberMoneyExportManifest` | Booking, sent Xero invoice id and what its lines cover | Kept for financial records | Keep |
 | `MemberMoneyExportCoverage` | Journal components a sent invoice bills | Kept for financial records | Keep |
+| `StripeBalanceTransactionEvidence` | Stripe balance-transaction figures and the payment intent, refund and payout they belong to | Kept for financial records | Keep |
 
 ## Maintaining coverage
 

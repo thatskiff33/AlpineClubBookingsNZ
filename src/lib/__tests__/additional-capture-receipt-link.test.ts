@@ -4,9 +4,12 @@ import {
   bookingHasPaidUnnamedSupplementary,
   bookingHasUnattributedCaptures,
   captureChangeId,
+  findAdditionalCaptureReceiptInvoiceId,
   keptInvoiceBillsChangeCapture,
+  readAdditionalCaptureReceiptLinkedInvoiceId,
 } from "@/lib/additional-capture-receipt-link";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
+import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
 
 // #3953 round 7 (INV-PAY-139): the change a capture pays for, and the reads
 // the per-anchor lock's callers make about captures no change can be read from.
@@ -234,5 +237,64 @@ describe("anchorCaptureHasReceipt", () => {
     await expect(
       anchorCaptureHasReceipt(store({ captures, receipts: [{ status: "PENDING", requestPayload: { plan: { invoiceId: "inv_1" } } }] }) as never, input),
     ).resolves.toBe(true);
+  });
+});
+
+describe("readAdditionalCaptureReceiptLinkedInvoiceId", () => {
+  it("names the link marked leg 0, whichever leg was linked first", async () => {
+    const findFirst = vi.fn(async (args: { where: { metadata?: unknown } }) => {
+      expect(args.where.metadata).toEqual({ path: ["leg"], equals: 0 });
+      return { metadata: { invoiceId: "inv_leg0", leg: 0 } };
+    });
+    await expect(
+      readAdditionalCaptureReceiptLinkedInvoiceId("ptx_1", { xeroObjectLink: { findFirst } } as never),
+    ).resolves.toBe("inv_leg0");
+    expect(findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the oldest payment link when none is marked leg 0 (a link from before legs)", async () => {
+    const findFirst = vi.fn(async (args: { where: { metadata?: unknown }; orderBy?: unknown }) => {
+      if (args.where.metadata) return null;
+      expect(args.orderBy).toEqual({ createdAt: "asc" });
+      return { metadata: { invoiceId: "inv_first" } };
+    });
+    await expect(
+      readAdditionalCaptureReceiptLinkedInvoiceId("ptx_1", { xeroObjectLink: { findFirst } } as never),
+    ).resolves.toBe("inv_first");
+  });
+
+});
+
+describe("findAdditionalCaptureReceiptInvoiceId", () => {
+  const storeWithPlan = (plan: Record<string, unknown>) => ({
+    paymentTransaction: { findUnique: vi.fn(async () => ({ id: "ptx_1" })) },
+    xeroObjectLink: { findFirst: vi.fn(async () => null) },
+    xeroSyncOperation: {
+      findFirst: vi.fn(async () => ({
+        requestPayload: {
+          queueType: XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
+          bookingId: "booking_1",
+          paymentId: "payment_1",
+          paymentTransactionId: "ptx_1",
+          paymentIntentId: "pi_change",
+          plan,
+        },
+      })),
+    },
+  });
+  const legs = [
+    { target: "GAP_INVOICE", invoiceId: "inv_leg0", amountCents: 5000 },
+    { target: "PRIMARY_INVOICE", invoiceId: "inv_leg1", amountCents: 3000 },
+  ];
+
+  it("names the plan's first leg when the payment is not linked yet", async () => {
+    const store = storeWithPlan({ ...legs[0], capturedCents: 8000, date: "2026-07-01", legs });
+    await expect(findAdditionalCaptureReceiptInvoiceId("pi_change", store as never)).resolves.toBe("inv_leg0");
+  });
+
+  it("MUTATION review nit (INV-SSOT): a plan the one reader rejects names no invoice", async () => {
+    // Its top-level copy disagrees with leg 0, so the worker would refuse it too.
+    const store = storeWithPlan({ ...legs[1], capturedCents: 8000, date: "2026-07-01", legs });
+    await expect(findAdditionalCaptureReceiptInvoiceId("pi_change", store as never)).resolves.toBeNull();
   });
 });
