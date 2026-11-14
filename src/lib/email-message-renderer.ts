@@ -171,6 +171,9 @@ const REQUIRED_SUBJECT_TOKEN_GUIDANCE: Record<string, string> = {
     "this email is sent in two opposite directions — a refund that was withheld, and one that may have paid a member twice — so its subject must keep {{handBackConflictLabel}}, which fills in whichever happened. A subject with the wording typed in by hand would title every double payment as a withheld refund",
   handBackLabel:
     "this email is sent for a cancelled cash booking, a cancelled group paid by Internet Banking, and a card booking whose card refund fell short, so its subject must keep {{handBackLabel}}, which names whichever it is. A subject typed in by hand would title the other two as whichever one it names",
+  // #4911: the dispute alert's two stages share one template.
+  disputeSubjectLabel:
+    "this email is sent once when a cardholder's dispute opens and once when it closes, so its subject must keep {{disputeSubjectLabel}}, which says which it is and how the dispute ended. A subject typed in by hand would title a closed dispute as a new one, or a new one as closed",
 };
 
 /**

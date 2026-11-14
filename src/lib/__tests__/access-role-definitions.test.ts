@@ -29,6 +29,7 @@ function definitionRecord(
     lodgeLevel: "EDIT",
     contentLevel: "NONE",
     supportLevel: "NONE",
+    requiresTwoFactor: null,
     sortOrder: 100,
     ...overrides,
   };

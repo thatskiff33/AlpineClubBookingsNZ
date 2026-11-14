@@ -660,7 +660,17 @@ const CENSUS_CEILING = {
   // `parseDateOnly`), and nine routes that imported this adapter only to declare
   // their own copy of it no longer import it at all. Re-measured by RUNNING this
   // suite on this tree.
-  dateOnlyImporters: 223, // 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
+  // 223 -> 224 (#4369, `INV-PAY-151`): one importer,
+  // `xero-card-refund-reversal-invoice.ts`, `formatDateOnly` alone and the
+  // zone-free direction. It renders the effective Xero lock date as
+  // `yyyy-MM-dd` to compare with the close's day. That lock date is a
+  // `@db.Date` column read back as a UTC-midnight date, the same decode
+  // `xero-period-lock-guard.ts` already makes through this adapter. The close's
+  // own day arrives as a `yyyy-MM-dd` string in the queued payload and is
+  // stepped with `club-time` (`addCalendarDays`), not this adapter. No
+  // `timeZone` is taken anywhere in the file's use of it. Re-measured by
+  // RUNNING this suite on the merged tree, not by adding one to the literal.
+  dateOnlyImporters: 224, // 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

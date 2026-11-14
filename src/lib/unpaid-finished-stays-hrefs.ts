@@ -7,10 +7,11 @@
  * the queues' Prisma `where` fragments, and since #4019 it composes the
  * whole-lodge "not yet paid" rule from `booking-payment-flow.ts`, whose graph
  * reaches the Prisma runtime. The client-side admin sidebar needs only these
- * strings, so they live here with NO imports at all, and the sidebar never
- * carries the server-side predicate graph. The `where` builders the links
+ * strings. The only import is `adminHref`, still with no Prisma, so the
+ * sidebar never carries the server-side predicate graph. The `where` builders the links
  * mirror stay in `unpaid-finished-stays.ts`; keep the two in step.
  */
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * Deep link to the bookings list pre-filtered to the unpaid-finished-stays
@@ -18,7 +19,7 @@
  * (YYYY-MM-DD).
  */
 export function buildUnpaidFinishedStaysHref(todayKey: string): string {
-  return `/admin/bookings?unpaid=finished&checkOutTo=${todayKey}`;
+  return `${adminHref("bookings")}?unpaid=finished&checkOutTo=${todayKey}`;
 }
 
 /**
@@ -28,7 +29,7 @@ export function buildUnpaidFinishedStaysHref(todayKey: string): string {
 export function buildUnsettledAdditionalFinishedStaysHref(
   todayKey: string,
 ): string {
-  return `/admin/bookings?additionalOwed=owed&checkOutTo=${todayKey}`;
+  return `${adminHref("bookings")}?additionalOwed=owed&checkOutTo=${todayKey}`;
 }
 
 /**
@@ -40,5 +41,5 @@ export function buildUnsettledAdditionalFinishedStaysHref(
  * split the list already sorts by check-out would be the worse trade.
  */
 export function buildUnsettledAdditionalStaysHref(): string {
-  return "/admin/bookings?additionalOwed=owed";
+  return `${adminHref("bookings")}?additionalOwed=owed`;
 }

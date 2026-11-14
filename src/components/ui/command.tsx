@@ -39,6 +39,13 @@ interface CommandDialogProps
   shouldFilter?: boolean
 }
 
+/**
+ * The dialog is a column that never outgrows the screen (#4967): the search box
+ * keeps its height and `CommandList` (`max-h-[320px]`, its own scroll area) is
+ * the one thing that shrinks. A grid here would let the list overflow the
+ * `overflow-hidden` dialog, clipping the last items and letting keyboard
+ * navigation scroll the search box off screen.
+ */
 const CommandDialog = ({
   title = "Command Palette",
   description = "Search for a command to run…",
@@ -51,7 +58,7 @@ const CommandDialog = ({
     <DialogContent
       showCloseButton={false}
       onCloseAutoFocus={onCloseAutoFocus}
-      className="overflow-hidden p-0 sm:max-w-[520px]"
+      className="flex flex-col overflow-hidden p-0 sm:max-w-[520px]"
     >
       <DialogHeader className="sr-only">
         <DialogTitle>{title}</DialogTitle>

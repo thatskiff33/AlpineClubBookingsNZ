@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { parseDateOnly } from "@/lib/date-only";
 import {
+  DATE_OF_BIRTH_INVALID_MESSAGE,
   DATE_ONLY_INVALID_MESSAGE,
+  dateOfBirthStringSchema,
   dateOnlyStringSchema,
   parsedDateOnlySchema,
 } from "@/lib/date-only-schema";
@@ -50,10 +52,48 @@ describe("parsedDateOnlySchema", () => {
   });
 });
 
-describe("census: no file declares its own date-only refine (#4931)", () => {
-  const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
-  const HOME = "src/lib/date-only-schema.ts";
+describe("dateOfBirthStringSchema", () => {
+  it("keeps a real date of birth as the string it arrived as", () => {
+    expect(dateOfBirthStringSchema.parse("1990-02-28")).toBe("1990-02-28");
+  });
 
+  it.each(NOT_DAYS)("refuses %j in words that name the field", (value) => {
+    const result = dateOfBirthStringSchema.safeParse(value);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual([DATE_OF_BIRTH_INVALID_MESSAGE]);
+  });
+});
+
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+const HOME = "src/lib/date-only-schema.ts";
+
+// Every non-test source file under `src/`, by walk rather than by name, so a
+// new route is in the population the moment it exists (`INV-SSOT-004`).
+const sourceFiles = (): string[] => {
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "__tests__" && entry.name !== "node_modules") walk(full);
+      } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+        found.push(path.relative(REPO_ROOT, full).split(path.sep).join("/"));
+      }
+    }
+  };
+  walk(path.join(REPO_ROOT, "src"));
+  return found.sort();
+};
+
+// Comments are stripped: the house style quotes a removed spelling at the
+// site it was removed from, which a raw-source scan would report (`INV-SSOT-004`).
+const sites = (pattern: RegExp) =>
+  sourceFiles().flatMap((file) => {
+    const code = stripComments(fs.readFileSync(path.join(REPO_ROOT, file), "utf8"));
+    return Array.from(code.matchAll(pattern), () => file);
+  });
+
+describe("census: no file declares its own date-only refine (#4931)", () => {
   /**
    * The files allowed to refine with `isDateOnlyString` themselves, each with
    * its reason. Shrinks only; a new entry needs a reason a reviewer accepts.
@@ -68,34 +108,9 @@ describe("census: no file declares its own date-only refine (#4931)", () => {
   const REFINE = /\.refine\(\s*(?:isDateOnlyString\b|\(?\s*\w+\s*\)?\s*=>\s*isDateOnlyString\s*\()/g;
   const MESSAGE = /["'`]Date must be YYYY-MM-DD["'`]/g;
 
-  // Every non-test source file under `src/`, by walk rather than by name, so a
-  // new route is in the population the moment it exists (`INV-SSOT-004`).
-  const sourceFiles = (): string[] => {
-    const found: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name !== "__tests__" && entry.name !== "node_modules") walk(full);
-        } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-          found.push(path.relative(REPO_ROOT, full).split(path.sep).join("/"));
-        }
-      }
-    };
-    walk(path.join(REPO_ROOT, "src"));
-    return found.sort();
-  };
-
-  // Comments are stripped: the house style quotes a removed spelling at the
-  // site it was removed from, which a raw-source scan would report (`INV-SSOT-004`).
-  const sites = (pattern: RegExp) =>
-    sourceFiles().flatMap((file) => {
-      const code = stripComments(fs.readFileSync(path.join(REPO_ROOT, file), "utf8"));
-      return Array.from(code.matchAll(pattern), () => file);
-    });
-
-  it("finds the home's own refine, so the scan is not blind", () => {
-    expect(sites(REFINE).filter((file) => file === HOME)).toEqual([HOME]);
+  it("finds the home's own refines, so the scan is not blind", () => {
+    // dateOnlyStringSchema and dateOfBirthStringSchema.
+    expect(sites(REFINE).filter((file) => file === HOME)).toEqual([HOME, HOME]);
   });
 
   it("finds no refine with isDateOnlyString outside the allowed files", () => {
@@ -111,8 +126,34 @@ describe("census: no file declares its own date-only refine (#4931)", () => {
   });
 });
 
+describe("census: no date field checks the YYYY-MM-DD shape only (ALP-574)", () => {
+  /**
+   * The files allowed a bare `z.string().regex(/^\d{4}-\d{2}-\d{2}$/)`, each
+   * with its reason. The shape alone lets through a day that does not exist,
+   * such as `2026-02-30`, which then becomes an Invalid Date further on (a 500,
+   * or a query that silently matches nothing). Shrinks only.
+   *
+   * The applications route's `calendarDayOfBirth` is deliberately its own
+   * validator too, but it tests the shape with `.test(` and then refuses a
+   * non-day itself, so it is outside this pattern and needs no entry.
+   */
+  const ALLOWED: Record<string, string> = {
+    "src/lib/nomination.ts":
+      "the read schema over stored application JSON, deliberately loose so a stored bad value cannot blank the nominating member's page (#3082; application-date-of-birth-refusal.test.ts)",
+  };
+
+  const SHAPE_ONLY = /\.regex\(\s*\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//g;
+
+  it("finds the bare shape check outside the allowed files nowhere", () => {
+    expect(sites(SHAPE_ONLY).filter((file) => !(file in ALLOWED))).toEqual([]);
+  });
+
+  it("finds every allowed file still using it, so a stale entry is removed", () => {
+    expect([...new Set(sites(SHAPE_ONLY))].sort()).toEqual(Object.keys(ALLOWED).sort());
+  });
+});
+
 describe("census: no hand-written date-only pattern outside the allowed files (ALP-580)", () => {
-  const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
   const SHAPE_HOME = "src/lib/club-time/calendar-date.ts";
 
   /**
@@ -123,7 +164,7 @@ describe("census: no hand-written date-only pattern outside the allowed files (A
    * to) for a bare check. Shrinks only; a new entry needs a reason a reviewer
    * accepts.
    *
-   * The `.regex(` spelling is not counted here; ALP-574's census owns it.
+   * The `.regex(` spelling is not counted here; the ALP-574 census above owns it.
    */
   const ALLOWED: Record<string, string> = {
     [SHAPE_HOME]: "the home of the shape check behind isCalendarDate, which isDateOnlyString delegates to",
@@ -134,37 +175,15 @@ describe("census: no hand-written date-only pattern outside the allowed files (A
       "strictDate pairs the shape with a real-day check, to tell an importer which of the two a cell fails",
     "src/lib/diagnostics/page-context/projections.ts":
       "one shape in a closed vocabulary of values safe to travel unredacted, not a date validator",
-    "src/app/(admin)/admin/finance/payments/_applied-query-vocabulary.ts":
-      "mirrors admin-payments-service's regex dateSchema; ALP-574 (#5089) moves both onto isDateOnlyString, and the entry goes with it",
   };
 
   // The literal, unless it is the argument of `.regex(`.
   const HAND_PATTERN = /(?<!\.regex\(\s*)\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//g;
 
-  const sourceFiles = (): string[] => {
-    const found: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name !== "__tests__" && entry.name !== "node_modules") walk(full);
-        } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-          found.push(path.relative(REPO_ROOT, full).split(path.sep).join("/"));
-        }
-      }
-    };
-    walk(path.join(REPO_ROOT, "src"));
-    return found.sort();
-  };
-
-  const sites = () =>
-    sourceFiles().flatMap((file) => {
-      const code = stripComments(fs.readFileSync(path.join(REPO_ROOT, file), "utf8"));
-      return Array.from(code.matchAll(HAND_PATTERN), () => file);
-    });
+  const handSites = () => sites(HAND_PATTERN);
 
   it("finds the shape home's own pattern, so the scan is not blind", () => {
-    expect(sites().filter((file) => file === SHAPE_HOME)).toEqual([SHAPE_HOME]);
+    expect(handSites().filter((file) => file === SHAPE_HOME)).toEqual([SHAPE_HOME]);
   });
 
   it("counts both spellings it refuses and skips the one ALP-574 owns", () => {
@@ -176,10 +195,10 @@ describe("census: no hand-written date-only pattern outside the allowed files (A
   });
 
   it("finds no hand-written pattern outside the allowed files", () => {
-    expect(sites().filter((file) => !(file in ALLOWED))).toEqual([]);
+    expect(handSites().filter((file) => !(file in ALLOWED))).toEqual([]);
   });
 
   it("finds every allowed file still spelling it, so a stale entry is removed", () => {
-    expect([...new Set(sites())].sort()).toEqual(Object.keys(ALLOWED).sort());
+    expect([...new Set(handSites())].sort()).toEqual(Object.keys(ALLOWED).sort());
   });
 });

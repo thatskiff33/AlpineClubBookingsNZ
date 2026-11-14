@@ -33,6 +33,7 @@ import {
   cleanHistories,
   createHistoryBooking,
   historyNames,
+  historyPromoCodePrefix,
   parkHistoryStrand,
   postHistoryEdit,
   seedHistoryFixtures,
@@ -598,7 +599,15 @@ async function lines(bookingId: string) {
       const [promoChild, edited] = g.children;
       // Two codes, priced together: the free night, then $5 off what is left.
       const priced = await prisma.booking.findUniqueOrThrow({ where: { id: promoChild! }, select: { totalPriceCents: true, promoAdjustmentCents: true } });
-      expect(await prisma.promoRedemption.count({ where: { bookingId: promoChild! } })).toBe(2);
+      // The organiser cancel hands both codes back in the child's own claim
+      // (#4909, INV-MONEY-005): no redemption is left and neither code counts a use.
+      expect(await prisma.promoRedemption.count({ where: { bookingId: promoChild! } })).toBe(0);
+      expect(
+        await prisma.promoCode.findMany({ where: { code: { startsWith: historyPromoCodePrefix(g.group) } }, orderBy: { code: "asc" }, select: { code: true, currentRedemptions: true } }),
+      ).toEqual([
+        { code: `${historyPromoCodePrefix(g.group)}FIVE`, currentRedemptions: 0 },
+        { code: `${historyPromoCodePrefix(g.group)}FREE`, currentRedemptions: 0 },
+      ]);
       expect(priced).toEqual({ totalPriceCents: GROUP_CHILD_CENTS, promoAdjustmentCents: -(GROUP_NIGHT_CENTS + 500) });
       expect(promoChildFinalCents).toBe(GROUP_CHILD_CENTS - GROUP_NIGHT_CENTS - 500);
       // The plan: half of each child's refundable base, the edited child's net of the $15 promised back.

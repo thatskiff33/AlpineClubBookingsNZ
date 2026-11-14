@@ -11,10 +11,7 @@ import { getDefaultLodgeCapacity } from "@/lib/lodge-capacity";
 import { hasAnyActiveLodgePinSession } from "@/lib/lodge-pin-session";
 import { prisma } from "@/lib/prisma";
 import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
-import {
-  buildTwoFactorGatePath,
-  isTwoFactorSessionBlocked,
-} from "@/lib/two-factor-gate";
+import { factorGateRedirect } from "@/lib/two-factor-gate";
 
 export default async function LodgeLayout({
   children,
@@ -52,19 +49,14 @@ export default async function LodgeLayout({
 
   const requestedPath =
     requestHeaders.get(REQUEST_PATH_HEADER) ?? "/lodge/kiosk";
-  if (
-    isTwoFactorSessionBlocked({
-      sessionUser: session.user,
-      member,
-    })
-  ) {
-    redirect(
-      buildTwoFactorGatePath({
-        sessionUser: session.user,
-        member,
-        callbackPath: requestedPath,
-      }),
-    );
+  const factorGate = factorGateRedirect({
+    sessionUser: session.user,
+    member,
+    callbackPath: requestedPath,
+    pathname: requestedPath,
+  });
+  if (factorGate) {
+    redirect(factorGate);
   }
 
   /*

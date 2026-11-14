@@ -26,6 +26,7 @@ import {
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubFormat } from "@/components/club-format-provider";
+import { BookingListLodgeName } from "@/components/booking/booking-list-lodge-name";
 import {
   calendarDateOfSerialisedDbDate,
   compareCalendarDates,
@@ -39,6 +40,11 @@ export interface MyBookingItem {
   checkOut: string;
   guestCount: number;
   finalPriceCents: number;
+  /**
+   * INV-CAP-039: the booking's own lodge name when the row shows it, else null
+   * — decided on the server by `bookingListLodgeLabel`, never here.
+   */
+  lodgeLabel: string | null;
   /**
    * #3278: the OFFICER-GATED view of this booking's stored-money verdict, not
    * the verdict. The list prints bookings the viewer merely appears on as a
@@ -123,6 +129,7 @@ function BookingSummary({
         <p className="font-medium">
           {formatDate(booking.checkIn, format)} - {formatDate(booking.checkOut, format)}
         </p>
+        <BookingListLodgeName lodgeLabel={booking.lodgeLabel} />
         <p className="text-sm text-muted-foreground">
           {booking.guestCount} guest{booking.guestCount !== 1 ? "s" : ""} &middot;{" "}
           {formatCents(booking.finalPriceCents, format)}
