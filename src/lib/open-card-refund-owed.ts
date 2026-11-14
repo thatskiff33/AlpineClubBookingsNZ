@@ -500,11 +500,11 @@ export function operationWindowTakes(
  * leaves the pool, so it can fill nothing else (an older row's slice of the
  * same transaction and amount included). A marked slice whose refund is not
  * recorded as made stays unfilled, and owed. Each other row fills at most one slice, and goes to the operation raised MOST
- * RECENTLY before it with a slice it fits (a tie on when rows were raised,
- * or on when refunds were recorded, is broken by one fixed order,
- * `compareCardRefundOperations` / `compareRecordedCardRefunds`, #4284) - so a
- * later operation's own refund,
- * open or closed, is never taken as an older open one's progress. Every card
+ * RECENTLY before it with a slice it fits - so a later operation's own refund,
+ * open or closed, is never taken as an older open one's progress. A tie on
+ * when rows were raised, or on when refunds were recorded, is broken by one
+ * fixed order (`compareCardRefundOperations`, `compareRecordedCardRefunds`,
+ * #4284), never by the order the rows arrive in. Every card
  * refund operation on the payment takes part, closed ones included, though only
  * open ones owe.
  *

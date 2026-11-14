@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 import {
   cardRefundSentAfterPaidAnotherWay,
   cardRefundSliceFilledBy,
+  cardRefundSlicesByOperation,
+  compareCardRefundOperations,
+  compareRecordedCardRefunds,
   parseRefundAllocationPlan,
   isOwedCardRefundOperation,
   openCardRefundOwedByOperation,
@@ -501,6 +504,26 @@ describe("a createdAt tie is attributed the same way whatever order the rows arr
 
     expect(owed(rows)).toEqual({ "op-a": 5_000, "op-b": 0 });
     expect(owed(reversed(rows))).toEqual({ "op-a": 5_000, "op-b": 0 });
+  });
+
+  it("the comparators take the earlier first, and on a tie the unique key by code unit, never by locale", () => {
+    // Code-unit order puts "B" (0x42) before "a" (0x61); `localeCompare` would not.
+    expect(compareCardRefundOperations({ id: "op-z", createdAt: at(1) }, { id: "op-a", createdAt: at(2) })).toBeLessThan(0);
+    expect(compareCardRefundOperations({ id: "op-B", createdAt: at(1) }, { id: "op-a", createdAt: at(1) })).toBeLessThan(0);
+    expect(compareCardRefundOperations({ id: "op-a", createdAt: at(1) }, { id: "op-B", createdAt: at(1) })).toBeGreaterThan(0);
+    expect(compareRecordedCardRefunds({ stripeRefundId: "re_z", createdAt: at(1) }, { stripeRefundId: "re_a", createdAt: at(2) })).toBeLessThan(0);
+    expect(compareRecordedCardRefunds({ stripeRefundId: "re_B", createdAt: at(1) }, { stripeRefundId: "re_a", createdAt: at(1) })).toBeLessThan(0);
+    expect(compareRecordedCardRefunds({ stripeRefundId: "re_a", createdAt: at(1) }, { stripeRefundId: "re_a", createdAt: at(1) })).toBe(0);
+  });
+
+  it("with no open row, tied rows are listed in one order whatever order they arrive in", () => {
+    const closed = (id: string) =>
+      operation({ id, status: "SUCCEEDED", amountCents: 5_000, allocationPlan: slice(5_000), createdAt: at(10), succeededAt: at(15) });
+    const rows = [closed("op-a"), closed("op-b")];
+    const ids = (ops: CardRefundOperationRow[]) => cardRefundSlicesByOperation(payment(ops, [])).map(({ operation }) => operation.id);
+
+    expect(ids(rows)).toEqual(["op-a", "op-b"]);
+    expect(ids(reversed(rows))).toEqual(["op-a", "op-b"]);
   });
 
   it("two refunds recorded at the same instant: each fills the same row in both read orders", () => {
