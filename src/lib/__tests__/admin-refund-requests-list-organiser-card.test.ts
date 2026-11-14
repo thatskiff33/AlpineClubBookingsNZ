@@ -6,6 +6,7 @@ import { NextRequest } from "next/server";
  * group joiner's appeal is only a wait for the group cancellation's own refund.
  */
 const mocks = vi.hoisted(() => ({
+  readSupersededCaptureHeldBack: vi.fn().mockResolvedValue({ byTransaction: new Map(), totalCents: 0 }),
   requireAdmin: vi.fn(),
   findMany: vi.fn(),
   count: vi.fn(),
@@ -16,6 +17,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
+
+// #4872: the superseded-capture hold-back read; none unless a test says.
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mocks.readSupersededCaptureHeldBack(...args),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     refundRequest: {
@@ -182,5 +188,26 @@ describe("GET /api/admin/refund-requests, a pending appeal's ceiling (#4124)", (
     expect(data[0].booking.payment).not.toHaveProperty("refunds");
     expect(data[0].booking.payment).not.toHaveProperty("manualRefundTasks");
     expect(data[0].booking.payment).toMatchObject({ id: "p-rq-1", amountCents: 10_000, refundedAmountCents: 0 });
+  });
+
+  it("nets a live superseded capture's hold-back, as the approval does (#4872)", async () => {
+    mocks.findMany.mockResolvedValue([{
+      id: "rq-held",
+      status: "PENDING",
+      booking: {
+        id: "b-rq-held",
+        creditsFromCancellation: [],
+        payment: { id: "p-rq-held", source: "STRIPE", status: "SUCCEEDED", amountCents: 20_000, refundedAmountCents: 0, manualRefundTasks: [], recoveryOperations: [], refunds: [] },
+      },
+    }]);
+    mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: new Map([["txn-superseded", 6_500]]), totalCents: 6_500 });
+
+    const response = await GET(new NextRequest("http://localhost/api/admin/refund-requests?status=PENDING"));
+    const { data } = (await response.json()) as { data: Array<{ booking: { appealCeilingCents: number; appealCardRefundOwedCents: number } }> };
+
+    expect(mocks.readSupersededCaptureHeldBack).toHaveBeenCalledWith(expect.anything(), "p-rq-held");
+    // $200 captured, $65 of it a superseded capture its own refund still owns.
+    expect(data[0].booking.appealCeilingCents).toBe(13_500);
+    expect(data[0].booking.appealCardRefundOwedCents).toBe(0);
   });
 });

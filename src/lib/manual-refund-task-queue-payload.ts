@@ -1,9 +1,9 @@
 import {
-  editFinancialReviewGuestsRemovedSinceRaised,
   parseEditFinancialReviewContext,
   toEditFinancialReviewEvidence,
   type EditFinancialReviewEvidence,
 } from "@/lib/edit-financial-review-context";
+import { editFinancialReviewGuestsRemovedSinceRaised } from "@/lib/edit-review-guest-removed-since-raised";
 import { bookingOwner } from "@/lib/booking-owner";
 import { editReviewRefundIsPaidBackByHand } from "@/lib/booking-payment-state";
 import {
