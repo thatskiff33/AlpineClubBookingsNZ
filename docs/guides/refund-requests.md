@@ -41,9 +41,11 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
 1. On a pending appeal, click **Review**. Set the **Refund Amount ($)** (pre-filled
    to the smaller of the requested and maximum refundable amount; the max is shown)
    and optional **Admin Notes** (visible to the member).
-2. Click **Approve & Refund** — a dialog asks whether to email the member; the
-   refund is processed either way and your choice is recorded in the audit log. Or
-   click **Reject** (also with an email choice).
+2. Click **Approve & Refund** — a dialog repeats the refund amount and asks
+   whether to email the member; the refund is processed either way and your
+   choice is recorded in the audit log. Or click **Reject** (also with an email
+   choice). Check the amount: if it is wrong, click **Go back**, which closes the
+   dialog without refunding and keeps what you typed.
 
    If the appeal's booking has **No emails** switched on
    ([Bookings](bookings.md#turn-off-all-emails-for-one-booking)), the outcome
