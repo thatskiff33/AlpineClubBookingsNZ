@@ -2,7 +2,7 @@
 
 // A late failure belongs to the lodge it was taken on (#4975 follow-up).
 //
-// Chores and Lockers are lodge-scoped. An admin clicks Save, Delete or Toggle
+// Chores, Lockers and Seasons are lodge-scoped. An admin clicks Save, Delete or Toggle
 // on lodge A, switches the lodge select to B, and only then does A's request
 // come back refused. The success paths already drop a late response for a lodge
 // the admin has left (#2887). A failure must too: it now lands in the
@@ -89,6 +89,7 @@ vi.mock("next/navigation", () => ({
 
 import ChoresPage from "@/app/(admin)/admin/chores/page";
 import LockersPage from "@/app/(admin)/admin/lockers/page";
+import SeasonsPage from "@/app/(admin)/admin/rules/seasons/page";
 
 type Answer = { status: number; body: unknown };
 
@@ -258,5 +259,91 @@ describe("a late failure after a lodge switch", () => {
     expect(screen.queryByText("Lodge A bulk create failed.")).toBeNull();
     expect(actionAlert("lockers-action-error")).toBeEmptyDOMElement();
     expect(document.activeElement).not.toBe(actionAlert("lockers-action-error"));
+  });
+
+  /*
+    Seasons has three refusable actions, each with its own catch-block guard
+    (`activeScopeRef.current !== requestedScope`). Each case is a mutation
+    probe for one guard: delete that guard and only its case fails.
+  */
+  const SEASON = {
+    id: "season-winter",
+    name: "Winter 2026",
+    type: "WINTER",
+    startDate: "2026-06-01T00:00:00.000Z",
+    endDate: "2026-09-30T00:00:00.000Z",
+    active: true,
+  };
+
+  function stubSeasonsFetch(heldMethod: "PUT" | "DELETE") {
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url === `/api/admin/seasons/${SEASON.id}` && method === heldMethod) {
+          return reply(await holdRequest());
+        }
+        if (url === "/api/admin/seasons?lodgeId=lodge-a") {
+          return reply({ status: 200, body: [SEASON] });
+        }
+        if (url === "/api/admin/seasons?lodgeId=lodge-b") {
+          return reply({ status: 200, body: [] });
+        }
+        throw new Error(`Unstubbed fetch in test: ${method} ${url}`);
+      }),
+    );
+  }
+
+  it.each([
+    [
+      "a toggle",
+      "PUT" as const,
+      async () =>
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Deactivate Winter 2026" }),
+        ),
+    ],
+    [
+      "a delete",
+      "DELETE" as const,
+      async () =>
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Delete Winter 2026" }),
+        ),
+    ],
+    [
+      "a window save",
+      "PUT" as const,
+      async () => {
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Edit window of Winter 2026" }),
+        );
+        fireEvent.click(await screen.findByRole("button", { name: "Update Season" }));
+      },
+    ],
+  ])("is dropped on Seasons for %s", async (_name, heldMethod, startAction) => {
+    stubSeasonsFetch(heldMethod);
+    render(<SeasonsPage />);
+    await startAction();
+    await waitFor(() => expect(heldStarted).toBe(true));
+
+    fireEvent.change(screen.getByLabelText("Lodge"), {
+      target: { value: LODGE_B.id },
+    });
+    expect(await screen.findByText(/No seasons configured yet/)).toBeVisible();
+
+    await refuseAfterSwitch({
+      status: 500,
+      body: { error: "Lodge A season failed." },
+    });
+
+    expect(screen.queryByText("Lodge A season failed.")).toBeNull();
+    expect(actionAlert("season-action-error")).toBeEmptyDOMElement();
+    expect(document.activeElement).not.toBe(actionAlert("season-action-error"));
   });
 });

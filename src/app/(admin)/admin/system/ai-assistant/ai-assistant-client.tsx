@@ -335,6 +335,8 @@ function BudgetCard() {
       const data = (await res.json()) as { monthlyBudgetCents: number };
       setSavedCents(data.monthlyBudgetCents);
       setDollars(centsToDollars(data.monthlyBudgetCents));
+      // The save landed, so a failed earlier read of the cap is moot.
+      setLoadError("");
       setSuccess("Monthly spend cap saved.");
     } catch {
       failSave("Could not save the spend cap.");

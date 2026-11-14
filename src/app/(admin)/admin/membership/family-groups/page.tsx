@@ -90,7 +90,7 @@ function FamilyGroupsTab() {
   const [selectedMembers, setSelectedMembers] = useState<MemberIdentityOption[]>([]);
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  // A refused create, kept apart from the passive list load (#4975).
+  // A refused create or edit is an action, so it is focused and re-announced (#4975).
   const saveFailure = useActionFailure();
   const clearSaveFailure = saveFailure.clear;
   // #2256: the create/edit form renders in the anchor below the filter card and

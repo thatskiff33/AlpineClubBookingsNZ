@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import RefundRequestsPage from "../finance/refund-requests/page";
 import AgeTierSettingsPage from "../rules/age-tier-settings/page";
+import { BackupsClient } from "../system/backups/backups-client";
 import { MountainConditionsPanel } from "../website/mountain-conditions/_components/mountain-conditions-panel";
 
 vi.mock("next/navigation", () => ({
@@ -204,6 +205,89 @@ describe("age tier settings", () => {
       refocus(save);
       fireEvent.click(save);
       await waitFor(() => expect(alert).toHaveTextContent("A member is still in that tier."));
+      await expectRecoveryAlertToHoldFocus(alert);
+    }
+  });
+});
+
+describe("age tier settings stale load message", () => {
+  it("retires a failed-load message once a save lands", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === "PUT" ? ok({ settings: [] }) : Promise.reject(new Error("offline")),
+      ),
+    );
+    render(<AgeTierSettingsPage />);
+    await screen.findByText("Failed to load settings");
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save Changes" }));
+
+    await screen.findByText("Age tier settings saved successfully.");
+    expect(screen.queryByText("Failed to load settings")).toBeNull();
+  });
+});
+
+describe("backups", () => {
+  const STATUS = {
+    enabled: true,
+    bucket: "club-backups",
+    region: "ap-southeast-2",
+    retentionDays: 30,
+    accessKeyIdSet: true,
+    secretAccessKeySet: true,
+    restoreValidationUrlSet: false,
+    localEnabled: false,
+    localPath: null,
+    localPathFromEnv: false,
+    anyDestinationEnabled: true,
+    localBackups: [],
+    localDiskSpace: null,
+    localError: null,
+    durable: true,
+    needsReentry: false,
+    running: false,
+    activeRun: null,
+    recentRuns: [],
+    legacyEnvVars: [],
+    legacyEnvUnmigrated: false,
+    cronSchedule: "0 2 * * *",
+    canManageDestination: true,
+  };
+
+  it("focuses a refused Run now, and focuses it again when it repeats", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === "POST" ? failing("A backup is already starting.", 409) : ok(STATUS),
+      ),
+    );
+    render(<BackupsClient />);
+    await screen.findByRole("button", { name: "Run backup now" });
+    const alert = document.getElementById("backup-run-error");
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const run = screen.getByRole("button", { name: "Run backup now" });
+      refocus(run);
+      fireEvent.click(run);
+      await waitFor(() => expect(alert).toHaveTextContent("A backup is already starting."));
+      await expectRecoveryAlertToHoldFocus(alert);
+    }
+  });
+
+  it("focuses an empty credentials save each time it is pressed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ok(STATUS)));
+    render(<BackupsClient />);
+    await screen.findByRole("button", { name: "Save credentials" });
+    const alert = document.getElementById("backup-credentials-save-error");
+
+    // The clear and the identical refusal land in one handler, so only the
+    // attention key tells the alert this is a new failure.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const save = screen.getByRole("button", { name: "Save credentials" });
+      refocus(save);
+      fireEvent.click(save);
+      await waitFor(() => expect(alert).toHaveTextContent("Enter at least one value to save."));
       await expectRecoveryAlertToHoldFocus(alert);
     }
   });

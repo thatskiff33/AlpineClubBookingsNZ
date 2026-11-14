@@ -29,7 +29,7 @@ reason: adds focused action-failure alerts and attention hooks to ten admin
   a refactor of its own, not part of this fix.
 
 function: src/app/(admin)/admin/rules/age-tier-settings/page.tsx#AgeTierSettingsPage
-lines: 432
+lines: 434
 reason: adds focused action-failure alerts and attention hooks to ten admin
   pages; those lines sit inside the function `AgeTierSettingsPage`, which was
   already over its limit before this change, and lifting it apart is a

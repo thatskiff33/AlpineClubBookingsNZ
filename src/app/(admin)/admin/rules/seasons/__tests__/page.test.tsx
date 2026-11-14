@@ -26,6 +26,7 @@ import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { divergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { addCalendarDays, clubToday } from "@/lib/club-time";
 
@@ -127,6 +128,35 @@ afterEach(() => {
 });
 
 describe("Seasons page: the windows in order, with their holes", () => {
+  it("focuses a refused toggle, and focuses it again when it repeats (#4975)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "PUT"
+        ? Response.json({ error: "That season is in use." }, { status: 409 })
+        : Response.json([season()]),
+    ));
+    renderPage();
+    const alert = () => document.getElementById("season-action-error");
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const toggle = await screen.findByRole("button", { name: "Deactivate Winter 2026" });
+      toggle.focus();
+      fireEvent.click(toggle);
+      await waitFor(() => expect(alert()).toHaveTextContent("That season is in use."));
+      await expectRecoveryAlertToHoldFocus(alert());
+    }
+  });
+
+  it("keeps a failed season load passive: nothing takes focus", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 500 })));
+    renderPage();
+    const loadMessage = await screen.findByText("Failed to fetch seasons");
+    expect(document.getElementById("season-action-error")).toBeEmptyDOMElement();
+    // The failed read moved no focus, and did not mark itself as the focus target.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(document.body);
+    expect(loadMessage.closest('[tabindex="-1"]')).toBeNull();
+  });
+
   it("keeps focus on the page after deleting the focused season", async () => {
     vi.stubGlobal("confirm", vi.fn(() => true));
     let removed = false;

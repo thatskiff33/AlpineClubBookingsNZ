@@ -313,7 +313,7 @@
   },
   "src/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card.tsx": {
     "design-system/no-raw-input": {
-      "count": 2
+      "count": 1
     }
   },
   "src/app/(admin)/admin/membership/members/[id]/_components/member-parent-link-dialog.tsx": {

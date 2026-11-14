@@ -25,11 +25,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useConfirm } from "@/components/confirm-dialog";
-import {
-  type AgeTierRow,
-  DEFAULT_SETTINGS,
-  normalizeAgeTierRows,
-} from "./_lib/age-tier-rows";
+import { AGE_TIER_DEFAULTS } from "@/lib/policies/age-tier";
+import { type AgeTierRow, normalizeAgeTierRows } from "./_lib/age-tier-rows";
 
 export default function AgeTierSettingsPage() {
   // Age-tier boundaries are a bookings-area setting; a bookings:view admin sees
@@ -64,7 +61,7 @@ export default function AgeTierSettingsPage() {
       .then((r) => r.json())
       .then((d) => {
         const rows = d.settings ?? [];
-        const data = normalizeAgeTierRows(rows.length > 0 ? rows : DEFAULT_SETTINGS);
+        const data = normalizeAgeTierRows(rows.length > 0 ? rows : AGE_TIER_DEFAULTS);
         setSettings(data);
         setSavedSettings(data);
       })
@@ -127,7 +124,7 @@ export default function AgeTierSettingsPage() {
       confirmLabel: "Restore defaults",
     });
     if (!confirmed) return;
-    setSettings(normalizeAgeTierRows(DEFAULT_SETTINGS));
+    setSettings(normalizeAgeTierRows(AGE_TIER_DEFAULTS));
     setSuccess(false);
     saveFailure.clear();
   }
@@ -164,6 +161,8 @@ export default function AgeTierSettingsPage() {
         setSavedSettings(data.settings);
         setEditing(false);
         setSuccess(true);
+        // The save landed, so a failed earlier read of the tiers is moot.
+        setLoadError("");
         setSavesLanded((count) => count + 1);
       }
     } catch {
@@ -403,7 +402,7 @@ export default function AgeTierSettingsPage() {
               <Button variant="outline" onClick={handleCancel} disabled={saving}>
                 Cancel
               </Button>
-              {settings.length < DEFAULT_SETTINGS.length ? (
+              {settings.length < AGE_TIER_DEFAULTS.length ? (
                 <Button
                   type="button"
                   variant="outline"
