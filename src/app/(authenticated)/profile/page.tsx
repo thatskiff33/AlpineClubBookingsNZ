@@ -52,7 +52,7 @@ import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTime } from "@/lib/club-time/server";
-import { formatOfficerGraceDeadline } from "@/lib/officer-two-factor-grace";
+import { officerTwoFactorCardProps } from "@/lib/officer-two-factor-grace";
 import { formatDateOnly } from "@/lib/date-only";
 import {
   grantSelfDietaryAccess,
@@ -266,26 +266,9 @@ export default async function ProfilePage({
     select: { id: true, name: true, createdAt: true },
     orderBy: { createdAt: "asc" },
   });
-  const officerTwoFactorRequired = session.user.officerTwoFactorRequired === true;
-  const officerTwoFactorSatisfied = session.user.twoFactorSatisfiesOfficer === true;
-  let officerGraceLabel: string | null = null;
-  if (
-    officerTwoFactorRequired &&
-    !officerTwoFactorSatisfied &&
-    typeof session.user.officerTwoFactorGraceEndsAt === "number"
-  ) {
-    const format = await clubFormatValues();
-    officerGraceLabel = formatOfficerGraceDeadline(
-      new Date(session.user.officerTwoFactorGraceEndsAt),
-      club.zone,
-      format,
-    );
-  }
-  const showTwoFactorSecurityCard =
-    modules.twoFactor ||
-    member.twoFactorEnabled ||
-    passkeyRows.length > 0 ||
-    officerTwoFactorRequired;
+  const officerTwoFactor = await officerTwoFactorCardProps(session.user, club.zone, clubFormatValues);
+  const showTwoFactorSecurityCard = officerTwoFactor.officerRequired ||
+    modules.twoFactor || member.twoFactorEnabled || passkeyRows.length > 0;
   // #4456: codes retired by a key change; the card tells the member to replace them.
   const recoveryCodesRetired =
     member.twoFactorEnabled && (await memberHoldsRetiredRecoveryCodes(member.id));
@@ -471,9 +454,7 @@ export default async function ProfilePage({
                 enabled={member.twoFactorEnabled}
                 method={member.twoFactorMethod}
                 moduleEnabled={modules.twoFactor}
-                officerRequired={officerTwoFactorRequired}
-                officerSatisfied={officerTwoFactorSatisfied}
-                officerGraceLabel={officerGraceLabel}
+                {...officerTwoFactor}
                 passkeys={passkeyRows.map((row) => ({
                   id: row.id,
                   name: row.name,

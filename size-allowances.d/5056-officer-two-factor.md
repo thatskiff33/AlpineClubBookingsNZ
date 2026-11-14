@@ -16,7 +16,7 @@ reason: the JWT refresh callback is where every session claim is recomputed;
   the refresh callback out of auth.ts is a security refactor of its own.
 
 file: src/lib/config-transfer/categories/club-settings.ts
-lines: 1206
+lines: 1228
 reason: the two officer policy columns must be named in the club-settings
   category's `excluded` map, with the reason they never travel; the transfer
   census reads that map in this file, so the entry cannot live elsewhere.
@@ -28,14 +28,29 @@ reason: the new officer-factor-reset message has to be registered in the
   one table by design and splitting it for one entry is worse.
 
 file: src/app/(authenticated)/profile/page.tsx
-lines: 731
+lines: 712
 reason: the profile page passes the officer requirement and the grace deadline
-  label into the two-factor card it already renders; the label is formatted
-  by formatOfficerGraceDeadline, and the remaining lines are the session reads
-  and props that only this server component can supply.
+  label into the two-factor card it already renders. Building those props is
+  delegated to officerTwoFactorCardProps in officer-two-factor-grace.ts; what
+  remains is that call, the import and one spread prop, which only this
+  server component can supply.
+
+function: src/app/(authenticated)/profile/page.tsx#ProfilePage
+lines: 583
+reason: two lines: the officerTwoFactorCardProps call and its spread into the
+  security card the page already renders. The props are built outside the
+  function; the card's other inputs are read in this body, so the call has to
+  sit beside them.
 
 file: src/app/(admin)/admin/membership/members/[id]/page.tsx
-lines: 1363
-reason: the reset button is rendered inline beside the member's other account
-  actions, gated on the switch, Full Admin, not self and not the kiosk; the
-  button itself is a separate component and only the gate and import remain.
+lines: 1356
+reason: the reset control is rendered inline beside the member's other account
+  actions. Its gate (switch, Full Admin, not self, not the kiosk) and the
+  button live in officer-factor-reset-button.tsx; only the import and the one
+  element remain here.
+
+function: src/app/(admin)/admin/membership/members/[id]/page.tsx#MemberDetailPage
+lines: 1246
+reason: one line, the OfficerFactorResetSlot element in the Account & Access
+  group; everything it decides lives in its own component, and moving the
+  group out of this page is a refactor of its own.

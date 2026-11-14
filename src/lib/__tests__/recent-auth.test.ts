@@ -83,7 +83,12 @@ describe("recent authentication window (#4616)", () => {
     const emailOnly = { twoFactorEnabled: true, twoFactorMethod: "EMAIL", hasPasskey: false };
     const none = { twoFactorEnabled: false, twoFactorMethod: null, hasPasskey: false };
     const owes = (
-      factors: typeof app,
+      // The production parameter's own factor fields: `twoFactorMethod` is a
+      // nullable column, so `typeof app` (method: string) was too narrow.
+      factors: Omit<
+        Parameters<typeof passwordSignInOwesStrongerFactor>[0],
+        "moduleRequired" | "officerRequired"
+      >,
       moduleRequired: boolean,
       officerRequired: boolean,
     ) => passwordSignInOwesStrongerFactor({ moduleRequired, officerRequired, ...factors });

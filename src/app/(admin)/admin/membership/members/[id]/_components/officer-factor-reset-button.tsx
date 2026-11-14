@@ -5,7 +5,28 @@ import { useRouter } from "next/navigation";
 
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import { Button } from "@/components/ui/button";
+import { isKioskSessionMember } from "@/lib/member-roles";
+import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import { REAUTH_REQUIRED_CODE } from "@/lib/recent-auth";
+
+/**
+ * The reset button where it may be offered: the officer sign-in release is
+ * on, the viewer is a Full Admin, it is not their own account, and the member
+ * is not the lodge kiosk. Otherwise nothing.
+ */
+export function OfficerFactorResetSlot({
+  member,
+  isSelf,
+  actorIsFullAdmin,
+}: {
+  member: Parameters<typeof isKioskSessionMember>[0] & { id: string };
+  isSelf: boolean;
+  actorIsFullAdmin: boolean;
+}) {
+  if (!OFFICER_SIGN_IN_ENFORCED || !actorIsFullAdmin || isSelf) return null;
+  if (isKioskSessionMember(member)) return null;
+  return <OfficerFactorResetButton memberId={member.id} />;
+}
 
 /**
  * Full Admin only. Resets another member's authenticator and passkeys (#4618).

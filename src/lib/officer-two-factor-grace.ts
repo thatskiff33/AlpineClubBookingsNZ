@@ -101,3 +101,40 @@ export function formatOfficerGraceDeadline(
 export function officerGraceHasEnded(now: Date, graceEndsAt: Date): boolean {
   return now.getTime() >= graceEndsAt.getTime();
 }
+
+/**
+ * The officer two-factor props for the profile security card: whether the
+ * rule requires this member, whether they already satisfy it, and the grace
+ * deadline as a club civil date while they do not. The format is loaded only
+ * when a deadline is shown; the caller passes its server loader, so this
+ * module stays importable from client components.
+ */
+export async function officerTwoFactorCardProps(
+  user: {
+    officerTwoFactorRequired?: boolean;
+    twoFactorSatisfiesOfficer?: boolean;
+    officerTwoFactorGraceEndsAt?: number | null;
+  },
+  zone: ClubTimeZone,
+  loadFormat: () => Promise<ClubDateFormat>,
+): Promise<{
+  officerRequired: boolean;
+  officerSatisfied: boolean;
+  officerGraceLabel: string | null;
+}> {
+  const officerRequired = user.officerTwoFactorRequired === true;
+  const officerSatisfied = user.twoFactorSatisfiesOfficer === true;
+  let officerGraceLabel: string | null = null;
+  if (
+    officerRequired &&
+    !officerSatisfied &&
+    typeof user.officerTwoFactorGraceEndsAt === "number"
+  ) {
+    officerGraceLabel = formatOfficerGraceDeadline(
+      new Date(user.officerTwoFactorGraceEndsAt),
+      zone,
+      await loadFormat(),
+    );
+  }
+  return { officerRequired, officerSatisfied, officerGraceLabel };
+}

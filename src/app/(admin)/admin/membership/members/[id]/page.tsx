@@ -25,10 +25,8 @@ import {
 } from "@/lib/admin-member-detail-helpers";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
-import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import {
   canAdminRequestMembershipCancellation,
-  isKioskSessionMember,
   NON_MEMBER_ROLE_VALUES,
 } from "@/lib/member-roles";
 import { defaultMembershipTypeNameForRole } from "@/lib/membership-types";
@@ -45,7 +43,7 @@ import { MemberGroupCard } from "./_components/member-group-card";
 import { MemberSummaryStrip } from "./_components/member-summary-strip";
 import { MemberContactGroup } from "./_components/member-contact-group";
 import { MemberAccountAccessGroup } from "./_components/member-account-access-group";
-import { OfficerFactorResetButton } from "./_components/officer-factor-reset-button";
+import { OfficerFactorResetSlot } from "./_components/officer-factor-reset-button";
 import { MemberXeroContactSummary } from "./_components/member-xero-contact-summary";
 import { MemberSubscriptionHistoryTable } from "./_components/member-subscription-history-table";
 import { MemberHistoryGroup } from "./_components/member-history-group";
@@ -918,12 +916,7 @@ export default function MemberDetailPage({
             inheritEmail={inheritEmail}
             canEdit={canEditMembership}
           />
-          {OFFICER_SIGN_IN_ENFORCED &&
-          actorIsFullAdmin &&
-          !isSelf &&
-          !isKioskSessionMember(member) ? (
-            <OfficerFactorResetButton memberId={member.id} />
-          ) : null}
+          <OfficerFactorResetSlot member={member} isSelf={isSelf} actorIsFullAdmin={actorIsFullAdmin} />
           <MemberLodgeAccessCard memberId={id} ancestorRendersViewOnlyBanner />
         </MemberGroupCard>
 

@@ -35,8 +35,14 @@ import {
   ACCESS_ROLE_DESCRIPTIONS,
   ACCESS_ROLE_LABELS,
 } from "@/lib/access-roles";
-import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
-import { isOfficerTwoFactorRequired } from "@/lib/second-factor-enrolment";
+import {
+  BUILT_IN_ROLES_TWO_FACTOR_NOTE,
+  RoleTwoFactorField,
+  RoleTwoFactorSummary,
+  twoFactorChoiceFromStored,
+  twoFactorRoleBody,
+  type TwoFactorChoice,
+} from "./access-role-two-factor";
 import type { AccessRole } from "@prisma/client";
 
 type ManagedAccessRole = {
@@ -52,52 +58,12 @@ type ManagedAccessRole = {
   memberCount: number;
 };
 
-type TwoFactorChoice = "default" | "required" | "not-required";
-
 type RoleFormState = {
   label: string;
   description: string;
   permissions: AdminPermissionMatrix;
   twoFactor: TwoFactorChoice;
 };
-
-const TWO_FACTOR_CHOICE_LABELS: Record<TwoFactorChoice, string> = {
-  default: "Default",
-  required: "Required",
-  "not-required": "Not required",
-};
-
-function twoFactorChoiceFromStored(value: boolean | null | undefined): TwoFactorChoice {
-  if (value === true) return "required";
-  if (value === false) return "not-required";
-  return "default";
-}
-
-function storedFromTwoFactorChoice(choice: TwoFactorChoice): boolean | null {
-  if (choice === "required") return true;
-  if (choice === "not-required") return false;
-  return null;
-}
-
-/** What Default means for this role, from the one officer rule. */
-function defaultTwoFactorSummary(permissions: AdminPermissionMatrix): string {
-  const required = isOfficerTwoFactorRequired({
-    releaseEnabled: true,
-    policyEnabled: true,
-    kiosk: false,
-    assignments: [
-      {
-        role: null,
-        requiresTwoFactor: null,
-        financeLevel: permissions.finance.toUpperCase(),
-        supportLevel: permissions.support.toUpperCase(),
-      },
-    ],
-  });
-  return required
-    ? "required, because this role can edit Finance or Support & System"
-    : "not required";
-}
 
 const EMPTY_PERMISSIONS: AdminPermissionMatrix = {
   overview: "none",
@@ -108,6 +74,22 @@ const EMPTY_PERMISSIONS: AdminPermissionMatrix = {
   content: "none",
   support: "none",
 };
+
+const EMPTY_FORM: RoleFormState = {
+  label: "",
+  description: "",
+  permissions: EMPTY_PERMISSIONS,
+  twoFactor: "default",
+};
+
+function formFromRole(role: ManagedAccessRole): RoleFormState {
+  return {
+    label: role.label,
+    description: role.description,
+    permissions: role.permissions,
+    twoFactor: twoFactorChoiceFromStored(role.requiresTwoFactor),
+  };
+}
 
 const LEVEL_LABELS: Record<AdminPermissionLevel, string> = {
   none: "None",
@@ -141,12 +123,7 @@ export function AccessRoleManager({
   const [editingRole, setEditingRole] = useState<ManagedAccessRole | null>(
     null,
   );
-  const [form, setForm] = useState<RoleFormState>({
-    label: "",
-    description: "",
-    permissions: EMPTY_PERMISSIONS,
-    twoFactor: "default",
-  });
+  const [form, setForm] = useState<RoleFormState>(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -178,24 +155,14 @@ export function AccessRoleManager({
 
   const openCreate = () => {
     setEditingRole(null);
-    setForm({
-      label: "",
-      description: "",
-      permissions: EMPTY_PERMISSIONS,
-      twoFactor: "default",
-    });
+    setForm(EMPTY_FORM);
     setFormError("");
     setDialogOpen(true);
   };
 
   const openEdit = (role: ManagedAccessRole) => {
     setEditingRole(role);
-    setForm({
-      label: role.label,
-      description: role.description,
-      permissions: role.permissions,
-      twoFactor: twoFactorChoiceFromStored(role.requiresTwoFactor),
-    });
+    setForm(formFromRole(role));
     setFormError("");
     setDialogOpen(true);
   };
@@ -215,11 +182,7 @@ export function AccessRoleManager({
             label: form.label,
             description: form.description,
             permissions: form.permissions,
-            // Sent only once the officer sign-in release is on, so an
-            // inert build never writes the column (#4618).
-            ...(OFFICER_SIGN_IN_ENFORCED
-              ? { requiresTwoFactor: storedFromTwoFactorChoice(form.twoFactor) }
-              : {}),
+            ...twoFactorRoleBody(form.twoFactor),
           }),
         },
       );
@@ -339,16 +302,7 @@ export function AccessRoleManager({
                       )
                       .join(" · ") || "No admin area access"}
                   </p>
-                  {OFFICER_SIGN_IN_ENFORCED ? (
-                    <p className="text-xs text-muted-foreground">
-                      Two-factor:{" "}
-                      {role.requiresTwoFactor === true
-                        ? "Required"
-                        : role.requiresTwoFactor === false
-                          ? "Not required"
-                          : `Default (${defaultTwoFactorSummary(role.permissions)})`}
-                    </p>
-                  ) : null}
+                  <RoleTwoFactorSummary role={role} />
                 </div>
                 <div className="flex shrink-0 gap-2">
                   <Button
@@ -399,9 +353,7 @@ export function AccessRoleManager({
           <p className="text-xs text-muted-foreground sm:col-span-2">
             These roles are built in and cannot be edited or deleted. Full
             Admin always keeps full permissions.
-            {OFFICER_SIGN_IN_ENFORCED
-              ? " Full Admins always need an authenticator app or a passkey while the club's officer two-factor policy is on; the lodge kiosk never does."
-              : null}
+            {BUILT_IN_ROLES_TWO_FACTOR_NOTE}
           </p>
         </CardContent>
       </Card>
@@ -497,39 +449,11 @@ export function AccessRoleManager({
                 ))}
               </div>
             </div>
-            {OFFICER_SIGN_IN_ENFORCED ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="access-role-two-factor">Two-factor</Label>
-                <Select
-                  value={form.twoFactor}
-                  onValueChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      twoFactor: value as TwoFactorChoice,
-                    }))
-                  }
-                >
-                  <SelectTrigger id="access-role-two-factor" className="w-[180px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(Object.keys(TWO_FACTOR_CHOICE_LABELS) as TwoFactorChoice[]).map(
-                      (choice) => (
-                        <SelectItem key={choice} value={choice}>
-                          {TWO_FACTOR_CHOICE_LABELS[choice]}
-                        </SelectItem>
-                      ),
-                    )}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Whether holders must use an authenticator app or a passkey.
-                  Default is {defaultTwoFactorSummary(form.permissions)}. Not
-                  required drops only this role; another role, or Full Admin,
-                  can still require it.
-                </p>
-              </div>
-            ) : null}
+            <RoleTwoFactorField
+              value={form.twoFactor}
+              permissions={form.permissions}
+              onChange={(twoFactor) => setForm((current) => ({ ...current, twoFactor }))}
+            />
             <AdminPermissionMatrixTable matrix={form.permissions} />
           </div>
           <DialogFooter>

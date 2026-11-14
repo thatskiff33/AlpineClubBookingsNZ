@@ -88,7 +88,7 @@ const officerClaimsOverride = vi.hoisted(() => ({
   claims: null as null | Record<string, unknown>,
 }));
 vi.mock("@/lib/officer-two-factor", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/officer-two-factor")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/officer-two-factor");
   return {
     ...actual,
     resolveOfficerTwoFactorClaims: async (
