@@ -157,7 +157,7 @@ export function AdditionalPaymentCard({
   return (
     <Card className="border-warning-6 bg-warning-3">
       <CardHeader>
-        <CardTitle className="text-warning-11">
+        <CardTitle headingLevel={2} className="text-warning-11">
           Additional Payment Required
         </CardTitle>
       </CardHeader>

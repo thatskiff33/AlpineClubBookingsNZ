@@ -49,7 +49,9 @@ export default async function NoticeDetailPage({
 
   // Defense in depth: bodyHtml is sanitised on save, but re-sanitise at render
   // so a bypass in the save path can never reach the browser as live markup.
-  const safeHtml = sanitizePageContentHtml(notice.bodyHtml);
+  // The notice title above is this page's h1, so an H1 an author put in the
+  // body is rendered as an h2 rather than a second level-1 heading (#4951).
+  const safeHtml = sanitizePageContentHtml(notice.bodyHtml, { underPageHeading: true });
 
   // `publishedAt` is a real INSTANT (a nullable `DateTime`, serialised to ISO by
   // `getNoticeForMember`), so the civil day it reads as comes from the club's

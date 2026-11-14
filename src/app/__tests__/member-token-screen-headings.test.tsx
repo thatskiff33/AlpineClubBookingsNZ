@@ -168,6 +168,24 @@ describe("/notices/[id]", () => {
     render(page!);
     expectOneLevelOneHeading("Working bee this weekend");
   });
+
+  // The body is admin-authored HTML and the editor offers an H1 button, so the
+  // page must not hand a second level-1 heading to a screen reader.
+  it("a notice body that contains an H1 still has one level-1 heading", async () => {
+    mocks.noticeForMember.mockResolvedValue({
+      id: "notice-2",
+      title: "Working bee this weekend",
+      bodyHtml: "<h1>Details</h1><p>Bring gloves.</p>",
+      pinned: false,
+      publishedAt: "2026-06-01T00:00:00.000Z",
+      read: false,
+      requiresAcknowledgement: false,
+    });
+    const page = await NoticeDetailPage({ params: Promise.resolve({ id: "notice-2" }) });
+    render(page!);
+    expectOneLevelOneHeading("Working bee this weekend");
+    expect(screen.getByRole("heading", { level: 2, name: "Details" })).toBeInTheDocument();
+  });
 });
 
 describe("/booking-requests token screens", () => {

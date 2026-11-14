@@ -16,6 +16,13 @@ import {
   formatConsentStayLabel,
 } from "@/lib/member-guest-consent-card";
 import { resolveDelegateConsentPageState } from "@/lib/member-guest-delegate-page";
+import type { Metadata } from "next";
+
+// A fixed page name (#4951): the guest's name and the booking never go in a tab
+// title, which lands in browser history.
+export const metadata: Metadata = {
+  title: "Guest consent request",
+};
 
 /**
  * The delegate consent page ("+ Add Member Guest", epic #2305, MG2 #2307,

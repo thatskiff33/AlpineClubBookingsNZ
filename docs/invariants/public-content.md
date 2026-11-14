@@ -60,9 +60,19 @@ environment, a credential, the backup region, the mail host or a cloud lookup.
 
 ## INV-PUB-005
 
-- Every member-facing page-level route has a page-specific tab title through
-  the root `%s | <Club>` template — a fixed string, never a name, amount or
-  token — and exactly one level-1 heading in every render state. Every
-  `CardTitle` declares a heading level or `"none"`; there is no default level
-  (#2796 D1). `card-title-classification-census.test.ts` forbids unclassified
-  titles under the member-facing roots and ratchets the rest down (#4951).
+- The screens a member reaches from an email link, and login, dashboard,
+  bookings and notices, each have a page-specific tab title through the root
+  `%s | <Club>` template (a fixed string, never a name, amount or token) and
+  exactly one level-1 heading in every render state. A new such route adds its
+  title and a row to `member-route-titles.test.ts`; member routes not listed
+  there still show the default tab title until swept.
+- Every `CardTitle` declares a heading level or `"none"`; there is no default
+  level (#2796 D1). `card-title-classification-census.test.ts` forbids
+  unclassified titles under the member-facing roots and in the member cards it
+  lists, and ratchets the rest down (#4951).
+- Limit: a notice body's H1 renders as an H2. Lodge and hut-leader instruction
+  bodies render as the admin wrote them, so an H1 there adds a second level-1
+  heading.
+- Proof: `member-route-titles.test.ts`,
+  `card-title-classification-census.test.ts`,
+  `member-token-screen-headings.test.tsx`, `single-card-screen-headings.test.tsx`.

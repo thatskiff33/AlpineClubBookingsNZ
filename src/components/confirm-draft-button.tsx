@@ -52,7 +52,7 @@ export function ConfirmDraftButton({ bookingId }: ConfirmDraftButtonProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Confirm Booking</CardTitle>
+        <CardTitle headingLevel={2}>Confirm Booking</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">

@@ -764,13 +764,17 @@ Four rules, and they are all deliberate:
 **The census enforces D1 while the sweep finishes** (#4951,
 `INV-PUB-005`). `src/components/ui/__tests__/card-title-classification-census.test.ts`
 fails when any `CardTitle` under `src/app/(public)`, `src/app/(authenticated)`,
-`src/app/(website-dynamic)` or the shared member cards omits `headingLevel`, and
-holds the count of unclassified titles everywhere else at exactly
-`UNCLASSIFIED_BASELINE` (263 when #4951 landed). It fails both ways: a new
-unclassified title must be classified rather than raise the number, and a sweep
-that classifies titles lowers the constant in the same change. The admin,
-finance and lodge screens are swept by area. When the baseline reaches zero,
-`headingLevel` becomes required by the type and the census retires.
+`src/app/(website-dynamic)` or in the shared member cards it lists omits
+`headingLevel`, and holds the count of unclassified titles everywhere else at
+exactly `UNCLASSIFIED_BASELINE` (253 when #4951 landed). It fails both ways: a
+new unclassified title must be classified rather than raise the number, and a
+sweep that classifies titles lowers the constant in the same change. The admin,
+finance and lodge screens are swept by area, as are the member components that
+several kinds of page share (the edit-booking panel, the booking editor and the
+guest-consent card). The public website under `src/app/(website)`, including the
+membership application page, is held at the baseline too, not forbidden. When
+the baseline reaches zero, `headingLevel` becomes required by the type and the
+census retires.
 
 A screen that is one card is the page: give that card's title
 `headingLevel={1}` in every render state, and give a loading state with no

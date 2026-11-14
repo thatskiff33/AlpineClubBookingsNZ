@@ -55,5 +55,10 @@ export function headingClassification(
 ): "omitted" | "none" | "heading" {
   const value = /\bheadingLevel\s*=\s*(\{\s*)?(["'])?([\w-]+)/.exec(attrs);
   if (!value) return "omitted";
+  // `{undefined}` and `{null}` pass no level at all; they compile, so a call
+  // site could otherwise satisfy the census while still being unclassified.
+  if (value[1] && !value[2] && (value[3] === "undefined" || value[3] === "null")) {
+    return "omitted";
+  }
   return value[3] === "none" ? "none" : "heading";
 }

@@ -49,7 +49,9 @@ export default async function NoticesPage() {
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle headingLevel={2} className="text-lg">Recent News</CardTitle>
+            {/* The page's h1 says the same words, so this title adds nothing to
+                the outline (#4951); a second "Recent News" heading would be noise. */}
+            <CardTitle headingLevel="none" className="text-lg">Recent News</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <ul className="divide-y divide-border">

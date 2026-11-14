@@ -273,6 +273,37 @@ describe("sanitizePageContentHtml — display img-src restriction (issue #161)",
   });
 });
 
+describe("sanitizePageContentHtml — underPageHeading (#4951)", () => {
+  it("renders an author's h1 as an h2 and leaves every other heading alone", () => {
+    expect(
+      sanitizePageContentHtml("<h1>Big</h1><h2>Two</h2><h3>Three</h3>", {
+        underPageHeading: true,
+      }),
+    ).toBe("<h2>Big</h2><h2>Two</h2><h3>Three</h3>");
+  });
+
+  it("keeps the class an author gave the heading", () => {
+    expect(
+      sanitizePageContentHtml('<h1 class="lead">Big</h1>', { underPageHeading: true }),
+    ).toBe('<h2 class="lead">Big</h2>');
+  });
+
+  it("leaves an h1 alone by default, where the content is the page", () => {
+    expect(sanitizePageContentHtml("<h1>Big</h1>")).toBe("<h1>Big</h1>");
+  });
+
+  it("keeps the link and image rewrites, and still strips scripts", () => {
+    const html = sanitizePageContentHtml(
+      '<h1>Hi</h1><a href="https://example.test">x</a><img src="https://example.test/a.png"><script>alert(1)</script>',
+      { underPageHeading: true },
+    );
+    expect(html).toContain("<h2>Hi</h2>");
+    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).toContain('alt="a"');
+    expect(html).not.toContain("script");
+  });
+});
+
 describe("pageContentHtmlToPlainText", () => {
   it("strips markup and collapses whitespace", () => {
     expect(

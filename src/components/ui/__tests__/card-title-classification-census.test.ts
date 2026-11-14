@@ -21,9 +21,17 @@ import {
  *    member reaches from an email link or their account, where #4951 found the
  *    screen-reader heading list empty.
  * 2. **Everywhere else is held at a falling baseline.** Admin and finance
- *    titles are swept area by area; each sweep lowers the baseline in the same
- *    change. When it reaches zero, `headingLevel` becomes required by the type
- *    and this census retires.
+ *    titles, and the member components used from more than one kind of page
+ *    (the edit-booking panel, the booking editor, the guest-consent card), are
+ *    swept area by area; each sweep lowers the baseline in the same change.
+ *    When it reaches zero, `headingLevel` becomes required by the type and
+ *    this census retires.
+ *
+ * Limits of a count. It is one number, so two sweeps that land together both
+ * edit it, and a change that classifies one title while adding another
+ * unclassified one in the same PR leaves it unchanged. Review a diff that
+ * touches `CardTitle` for the second case; the first is a plain merge conflict
+ * on one line.
  */
 
 /** Roots where an unclassified `CardTitle` is never allowed. */
@@ -42,13 +50,24 @@ const MEMBER_FACING_SHARED_FILES = [
   "src/components/membership-cancellation-confirm-card.tsx",
   "src/components/nomination-confirm-card.tsx",
   "src/components/partner-invite-claim-card.tsx",
+  // Cards that only /dashboard and /bookings/[id] render, directly under the
+  // page's h1, so each is level 2 like the cards declared in those pages.
+  "src/components/additional-payment-card.tsx",
+  "src/components/confirm-draft-button.tsx",
+  "src/components/dashboard/lodge-kiosk-card.tsx",
+  "src/components/group-booking/organiser-group-booking-card.tsx",
+  "src/components/message-board-card.tsx",
+  "src/components/recent-news-card.tsx",
+  "src/components/refund-appeal-button.tsx",
+  "src/components/self-remove-from-booking-card.tsx",
+  "src/components/waitlist-offer-card.tsx",
 ];
 
 /**
  * The number of production `CardTitle`s that still omit `headingLevel`. Only
  * ever lower it: a sweep that classifies titles sets it to the new count.
  */
-const UNCLASSIFIED_BASELINE = 263;
+const UNCLASSIFIED_BASELINE = 253;
 
 function isMemberFacing(file: string) {
   return (
@@ -120,6 +139,9 @@ describe("headingClassification reads every spelling a call site can use", () =>
     [' headingLevel="none"', "none"],
     [' headingLevel={"none"}', "none"],
     [" headingLevel={level}", "heading"],
+    [" headingLevel={undefined}", "omitted"],
+    [" headingLevel={ null }", "omitted"],
+    [' headingLevel="undefined"', "heading"],
   ] as const)("%j is %s", (attrs, expected) => {
     expect(headingClassification(attrs)).toBe(expected);
   });

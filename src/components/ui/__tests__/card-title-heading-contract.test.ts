@@ -66,8 +66,9 @@ describe("CardTitle heading semantics have exactly one spelling (#2796)", () => 
     const card = read("src/components/ui/card.tsx");
     expect(card).toContain("headingLevel?: CardTitleHeadingLevel");
     // No default level: `headingLevel` must be destructured bare. A default
-    // would silently give 167 call sites a level nobody chose, which is the
-    // decision #2796 leaves with the repository owner.
+    // would silently give hundreds of call sites a level nobody chose; the
+    // owner ruled it out as D1 on #2796 (docs/ARCHITECTURE.md, "Card titles and
+    // heading semantics").
     expect(card).toMatch(/\{\s*className,\s*headingLevel,\s*\.\.\.props\s*\}/);
     expect(card).toContain('role: "heading"');
   });

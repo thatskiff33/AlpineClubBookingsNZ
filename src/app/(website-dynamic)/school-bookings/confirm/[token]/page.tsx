@@ -9,6 +9,9 @@ import { SchoolAttendeeConfirmForm } from "./school-attendee-confirm-form";
 // indexed (#2421): keep it out of search results the same way the group-join and
 // booking-request token pages are.
 export const metadata: Metadata = {
+  // A fixed page name (#4951): a tab title lands in history, so it never
+  // carries the school's name or the token.
+  title: "Confirm your attendee list",
   robots: { index: false, follow: false },
 };
 

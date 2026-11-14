@@ -367,23 +367,36 @@ by #4951 below.
 
 ## #4951 Member Screen Headings and Tab Titles (2026-11-12)
 
-Static fix, no visual change. Two gaps a screen-reader user hits on the
-screens a member reaches from an email link or their account:
+Static fix. Two gaps a screen-reader user hits on the screens a member reaches
+from an email link or their account:
 
 - **No level-1 heading.** Each single-card screen's card title now renders as
-  the page's `<h1>` (`headingLevel={1}`) in every render state — loading,
+  the page's `<h1>` (`headingLevel={1}`) in every render state: loading,
   invalid link, form, success, error. A loading state with no visible title
-  carries an sr-only `<h1>`. Covered: `/pay/[token]`, `/reset-password`,
-  `/change-password`, `/verify-email`, `/confirm-email-change`,
+  carries an sr-only `<h1>`. Covered: `/pay/[token]` (including the "Checking
+  your payment..." and redirect-return answer screens), `/reset-password`,
+  `/change-password`, `/verify-email`, `/confirm-email-change`, `/login/magic`,
   `/family-invite/[token]`, `/membership-cancellation/[token]`,
-  `/lodge-maintenance/[token]`, `/nominations/[token]`, `/notices/[id]`,
-  `/join/[code]`, `/lodge-instructions`, and the `/booking-requests` respond
-  and verify screens. Pages that already had an `<h1>` (dashboard, bookings, a
-  single booking, the guest-consent screen) give their cards level 2.
-- **Identical tab titles.** Each of those routes, plus `/login`, `/dashboard`,
-  `/bookings` and `/bookings/[id]`, now sets a fixed page title that the root
-  template turns into "<Page> | <Club>". Client pages get theirs from a small
-  server `layout.tsx`. Titles never carry a name, amount or token, and
+  `/lodge-maintenance/[token]`, `/maintenance-report`, `/nominations/[token]`,
+  `/notices/[id]`, `/join/[code]`, `/join/verify/[token]`,
+  `/school-bookings/confirm/[token]`, `/lodge-instructions`,
+  `/hut-leader-instructions` and the `/booking-requests` respond and verify
+  screens. Pages that already had an `<h1>` (dashboard, bookings, a single
+  booking, the guest-consent screen) give their cards level 2, including the
+  shared cards only those pages render (recent news, message board, lodge
+  kiosk, additional payment, confirm booking, waitlist offer, refund appeal,
+  self-remove and group booking). A notice body is admin-written HTML, so an H1
+  an admin puts in it is rendered as an H2 and the notice keeps one level-1
+  heading. That is a small size change for that heading only.
+- **Identical tab titles.** These routes now set a fixed page title that the
+  root template turns into `<Page> | <Club>`: `/pay/[token]`,
+  `/reset-password`, `/change-password`, `/verify-email`,
+  `/confirm-email-change`, `/login`, `/login/magic`, `/family-invite/[token]`,
+  `/membership-cancellation/[token]`, `/nominations/[token]`, `/notices/[id]`,
+  `/dashboard`, `/bookings`, `/bookings/[id]`, `/bookings/consent/[guestId]`,
+  `/lodge-instructions`, `/school-bookings/confirm/[token]` and the
+  `/booking-requests` respond and verify screens. Client pages get theirs from a
+  small server `layout.tsx`. Titles never carry a name, amount or token, and
   `/notices/[id]` is a fixed "Notice" so the title needs no second access check.
 
 Pinned by `src/app/(public)/__tests__/single-card-screen-headings.test.tsx`,
@@ -391,12 +404,28 @@ Pinned by `src/app/(public)/__tests__/single-card-screen-headings.test.tsx`,
 `src/app/__tests__/client-loading-state-headings.test.tsx`, the `/pay` page
 suite, and `src/app/__tests__/member-route-titles.test.ts`. The
 `card-title-classification-census.test.ts` census keeps the member-facing
-roots fully classified and ratchets the admin and finance remainder
-(`docs/ARCHITECTURE.md` → "Card titles and heading semantics (#2796)").
+roots, and the shared member cards it lists, fully classified and ratchets the
+remainder (`docs/ARCHITECTURE.md` -> "Card titles and heading semantics (#2796)").
 
-Not done here: the admin and finance card titles (swept by area, each sweep
-lowering the census baseline), and a real screen-reader walkthrough, which
-stays a human manual-QA task.
+Not done here, and still true after it:
+
+- The admin and finance card titles, and the member components that several
+  kinds of page share (the edit-booking panel, the booking editor and the
+  guest-consent card), are swept by area, each sweep lowering the census
+  baseline.
+- These member routes still show the default tab title: `/profile`, `/book`,
+  `/induction`, `/maintenance-report`, `/forgot-password`, `/register`,
+  `/login/verify`, `/login/enroll` and `/chores/[token]`.
+- Lodge and hut-leader instruction bodies are admin-written HTML shown as
+  written, so an H1 inside one adds a second level-1 heading to that page.
+- The membership application page (`/join/apply`, under `src/app/(website)`)
+  is outside the census roots. Its "Application submitted" state has no
+  level-1 heading, and the right level depends on whether the page is embedded
+  in a CMS page that already has one.
+- The collapsible profile cards put their level-2 title inside a `<summary>`.
+  That is valid HTML, but whether each screen reader lists it in its heading
+  list is untested.
+- A real screen-reader walkthrough, which stays a human manual-QA task.
 
 ## #4949 Action Outcomes Announced (2026-11-14)
 

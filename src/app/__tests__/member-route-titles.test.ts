@@ -41,6 +41,7 @@ const ROUTES: Array<[route: string, load: () => Promise<{ metadata?: Metadata }>
   ],
   ["/nominations/[token]", () => import("../(authenticated)/nominations/[token]/page"), "Confirm a nomination"],
   ["/login", () => import("../(public)/login/page"), "Sign in"],
+  ["/login/magic", () => import("../(public)/login/magic/layout"), "Sign in with your email link"],
   ["/dashboard", () => import("../(authenticated)/dashboard/page"), "Dashboard"],
   ["/bookings", () => import("../(authenticated)/bookings/page"), "My bookings"],
   ["/bookings/[id]", () => import("../(authenticated)/bookings/[id]/page"), "Booking details"],
@@ -54,6 +55,16 @@ const ROUTES: Array<[route: string, load: () => Promise<{ metadata?: Metadata }>
     "/booking-requests/respond/[token]",
     () => import("../(website-dynamic)/booking-requests/respond/[token]/page"),
     "Your booking quote",
+  ],
+  [
+    "/bookings/consent/[guestId]",
+    () => import("../(authenticated)/bookings/consent/[guestId]/page"),
+    "Guest consent request",
+  ],
+  [
+    "/school-bookings/confirm/[token]",
+    () => import("../(website-dynamic)/school-bookings/confirm/[token]/page"),
+    "Confirm your attendee list",
   ],
   [
     "/booking-requests/verify/[token]",
