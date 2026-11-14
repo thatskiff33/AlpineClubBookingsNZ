@@ -966,6 +966,12 @@ Shows: Sign-in and account-security configuration.
 
 Journey: Inspect authentication controls and use the permitted security settings.
 
+Once #4620 switches officer sign-in on, the page also shows the **Officer
+two-factor** card (policy and grace days; Full Admin saves after confirming
+it is them) and, to a Full Admin, who has not set one up. A gated officer is
+sent to `/login/enroll`; during grace a banner names the deadline. A Full
+Admin resets a lost factor from the member's page.
+
 [Guide](guides/security.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Setup — setup
@@ -1202,6 +1208,46 @@ Each group's reason, recorded in `src/lib/route-group-boundaries.ts`:
 answers: it fails if a new route group arrives without an error screen and a
 loading decision, or if a group with a reason gains a `loading.tsx` (anywhere
 in the group, except the admin and member areas, whose per-page ones stay).
+
+### A list or total that fails to load (#4961)
+
+The screens above cover a whole page failing. A page that loads its own list
+on the client can also fail on one read while the page itself is fine. That
+failure is said in place, never shown as the list's empty state:
+
+- The shared `src/components/admin/admin-load-error.tsx` replaces the empty
+  state: a heading such as **Payments could not be loaded**, the reason, and
+  **Try again**, which re-runs that read. It is an error alert
+  (`role="alert"`), so a screen reader announces it. **Try again** keeps
+  keyboard focus while it runs, and a polite status says it is trying again
+  and, if it fails again, that the list still could not be loaded.
+- The previous query's rows and totals are cleared, and summary figures are
+  not drawn while the error shows, so no `$0.00` or zero count reads as a real
+  answer.
+- **Payments**: a refused filter (a 400 or 422) keeps its field message under
+  **More filters** and also says above the table to check the filters, so the
+  reason is visible with that panel closed. Any other failure is told above
+  the table only, and clears an older field message.
+- **Hut Leaders**: when the unassigned-nights check fails, the page says the
+  nights could not be checked, because no amber card means every night is
+  covered. While the assignments could not be loaded, the Confirm step says
+  its overlap check is unavailable.
+- **Subscriptions** and **Communications** send history follow the same rule.
+
+Stated limits of the rule as built in #4961:
+
+- Hut Leaders' per-month calendar overlay (red and covered nights) stays
+  silent when its own read fails. The amber card, or its "could not be
+  checked" error, is the page's statement about coverage.
+- While the Hut Leaders assignments could not be loaded, the overlap check in
+  the Confirm step has nothing to compare, so the step says it is unavailable.
+  The server still refuses an overlap when the assignment is made.
+- A 200 reply whose body is not the expected shape is the route's contract,
+  not a load failure, and is out of scope. So are other admin pages, which join
+  the rule when they adopt the shared component.
+
+The rule is `INV-SSOT-007` in
+[`invariants/single-source-of-truth.md`](invariants/single-source-of-truth.md#inv-ssot-007).
 
 ## Back-link convention (admin drill-down leaves) (#2046)
 
