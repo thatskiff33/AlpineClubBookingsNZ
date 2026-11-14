@@ -142,13 +142,38 @@ describe("Modules layout refresh", () => {
     expect(mocks.refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps Save disabled for support:view without triggering a refresh", async () => {
+  it.each([
+    ["a server error", () => response({ error: "Could not load" }, 500), "Could not load"],
+    ["a reply without settings", () => response({ modules: [] }), "Failed to load modules"],
+    ["a reply without modules", () => response({ settings: DEFAULT_MODULE_SETTINGS }), "Failed to load modules"],
+  ])("does not refresh the layout when Refresh gets %s", async (_name, reply, error) => {
+    render(<AdminModulesPage />);
+    await screen.findByRole("checkbox", { name: "Waitlist" });
+    fetchMock.mockResolvedValueOnce(reply());
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(error);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh the layout when Refresh hits a network error", async () => {
+    render(<AdminModulesPage />);
+    await screen.findByRole("checkbox", { name: "Waitlist" });
+    fetchMock.mockRejectedValueOnce(new Error("Connection lost"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it("keeps the toggles read-only for support:view, so no save or refresh can start", async () => {
+    // The gate itself (disabled toggles and the banner) is pinned in
+    // admin-view-only-controls.test.tsx; the toggle assertion below is what
+    // proves this page wires canEdit. Save is also disabled when nothing is dirty.
     mocks.canEdit = false;
     render(<AdminModulesPage />);
     expect(await screen.findByRole("checkbox", { name: "Waitlist" })).toBeDisabled();
-    const save = screen.getByRole("button", { name: "Save" });
-    expect(save).toBeDisabled();
-    fireEvent.click(save);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
