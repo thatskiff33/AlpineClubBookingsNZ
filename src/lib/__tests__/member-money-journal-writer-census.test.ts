@@ -98,7 +98,7 @@ const DOORS: Record<string, string> = {
   "src/app/api/admin/refund-requests/[id]/route.ts": "R05 (with its concession) for an approved appeal; withdrawn with release_claim",
   "src/lib/manual-refund-task-resolution.ts": "R05 for an edit review's card refund",
   // #4516 (M4d): moved out of the resolution for its size budget; the same steps, called from the same transaction.
-  "src/lib/manual-refund-task-hand-back-journal.ts": "R14 for a hand-back paid by hand (and a by-hand review's R05); a dismissed hand-back's R05 withdrawn",
+  "src/lib/manual-refund-task-hand-back-journal.ts": "R14 for a hand-back paid by hand (and a by-hand review's R05); a journal hand-back's dismissal is refused, so nothing is withdrawn",
   "src/lib/late-capture-refund-approval.ts": "R05 for a treasurer-approved late capture's return",
   "src/lib/card-refund-paid-another-way-rest.ts": "R14 for a paid-another-way close, its reservations closed, a kept rest's close-out",
   "scripts/member-money-refund-reservations.ts": "dry-run-first refund census; exact reconciliation of reservations",

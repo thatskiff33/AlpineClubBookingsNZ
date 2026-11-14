@@ -1032,7 +1032,7 @@ export async function removeBookingGuestInTransaction({
     bookingModificationId: bookingModification.id,
     adjusted: paymentImpact,
     editLabel: "guest removal", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
-    journal,
+    journal, actorMemberId, // #4516 (M4d): the R05 names the edit's actor, as its BookingModification does
   });
   // #3954, #4744: the re-issue, a folded increase's ask, and a billed-offset note are durable from this commit.
   await queueEditAskFollowUps(tx, {
