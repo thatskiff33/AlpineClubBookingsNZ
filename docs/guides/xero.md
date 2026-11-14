@@ -90,9 +90,11 @@ does not record a refund (#4315).
    Fix the cause, then **Retry in background**. Check Xero first if the stuck
    run may already have created a document. **Reset stale running** does the
    same for every stuck operation at once.
-   A stuck inbound `WEBHOOK_RECONCILE` operation needs none of this: the next time its
-   event is processed (a **Replay**, or the automatic retry of a failed event)
-   that attempt takes the operation over. Mark failed still works on it.
+   A stuck inbound `WEBHOOK_RECONCILE` operation needs none of this: **Replay** its
+   event and that attempt takes the operation over. A crashed event stays
+   Processing and is not retried by itself, so it waits for a Replay. The
+   automatic retry takes the operation over only for an event that has already
+   ended Failed. Mark failed still works on it.
    Mark one **resolved** only after you have fixed it in Xero yourself: it is
    then treated as done and is never retried or recreated automatically,
    though the repair tool still lists it for information. You cannot resolve
