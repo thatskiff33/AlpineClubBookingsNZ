@@ -121,7 +121,7 @@ async function chargedBooking(charges: ReadonlyArray<["STRIPE" | "INTERNET_BANKI
       { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: total, booking: where, debtor: { kind: "MEMBER", memberId: names.memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
       { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: total, booking: where, chargeIdentity: `booking:${id}:test`, evidence: {} },
     ] }));
-  const rows = [];
+  const rows: { id: string }[] = [];
   for (const [source, cents] of charges) {
     rows.push(await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source, kind: "PRIMARY", status: "SUCCEEDED", amountCents: cents,
       stripePaymentIntentId: source === "STRIPE" ? `pi_${id}_${rows.length}` : null } }));
