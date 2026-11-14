@@ -159,7 +159,7 @@ describe("finance/support/comms action route guards (#1997)", () => {
   });
 
   it("communications send GET requires membership:view", async () => {
-    const res = await commsGet();
+    const res = await commsGet(req("GET"));
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: MEMBERSHIP_VIEW,

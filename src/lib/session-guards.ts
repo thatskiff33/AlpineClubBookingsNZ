@@ -23,7 +23,8 @@ import {
 } from "@/lib/internal-return-path";
 import { prisma } from "@/lib/prisma";
 import {
-  isTwoFactorSessionBlocked,
+  factorGateRedirect,
+  type TwoFactorGateMember,
   type TwoFactorSessionUser,
 } from "@/lib/two-factor-gate";
 
@@ -174,6 +175,27 @@ function twoFactorRequiredResponse() {
   );
 }
 
+/**
+ * The club-wide challenge and the officer enrolment gate, as one answer.
+ * No path is passed: none of the allowlisted enrolment routes call these
+ * guards, and the path header is caller-supplied on API routes the proxy does
+ * not run on. A gated officer is therefore refused on every guarded API route.
+ */
+function factorGateResponse(params: {
+  sessionUser?: TwoFactorSessionUser | null;
+  member?: TwoFactorGateMember | null;
+  allowForcePasswordChange?: boolean;
+}): NextResponse | null {
+  const destination = factorGateRedirect({
+    sessionUser: params.sessionUser,
+    member: params.member,
+    allowForcePasswordChange: params.allowForcePasswordChange,
+    pathname: null,
+    callbackPath: null,
+  });
+  return destination ? twoFactorRequiredResponse() : null;
+}
+
 async function inferAdminAccessRequirement(
   options: RequireAdminOptions,
 ): Promise<AdminAccessRequirement | null> {
@@ -273,13 +295,12 @@ export async function requireAdmin(
     };
   }
 
-  if (
-    isTwoFactorSessionBlocked({
-      sessionUser: session.user,
-      member,
-    })
-  ) {
-    return { ok: false, response: twoFactorRequiredResponse() };
+  const factorGate = factorGateResponse({
+    sessionUser: session.user,
+    member,
+  });
+  if (factorGate) {
+    return { ok: false, response: factorGate };
   }
 
   return {
@@ -378,15 +399,13 @@ export async function requireActiveSessionUser(
   }
 
   const sessionUser = options.sessionUser ?? (await auth())?.user;
-  if (
-    sessionUser?.id === userId &&
-    isTwoFactorSessionBlocked({
+  if (sessionUser?.id === userId) {
+    const factorGate = factorGateResponse({
       sessionUser,
       member,
       allowForcePasswordChange: options.allowForcePasswordChange,
-    })
-  ) {
-    return twoFactorRequiredResponse();
+    });
+    if (factorGate) return factorGate;
   }
 
   return null;

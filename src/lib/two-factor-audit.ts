@@ -48,11 +48,16 @@ export type TwoFactorRequestContext = StructuredAuditEvent["request"];
  * factor or issues codes. Which job may record which action is
  * `assertTwoFactorActorMayAct`'s.
  */
+/** The operator command that clears a lost officer factor (#4618). May only clear. */
+export const OFFICER_FACTOR_RESET_JOB_NAME = "officer-factor-reset";
+
 export const TWO_FACTOR_SYSTEM_ACTORS = [
   /** The retention job anonymising a former member after their period (#4457). */
   FORMER_MEMBER_ANONYMISATION_JOB_NAME,
   /** The operator's re-encrypt moving stored data to the current data key (#4456). */
   DATA_KEY_REENCRYPT_JOB_NAME,
+  /** The operator command for a club whose Full Admin has lost their factor (#4618). */
+  OFFICER_FACTOR_RESET_JOB_NAME,
 ] as const;
 
 export type TwoFactorSystemActor = (typeof TWO_FACTOR_SYSTEM_ACTORS)[number];
@@ -389,7 +394,8 @@ export async function readTwoFactorClearEvidence(
 /**
  * Record the clear of a second factor read beforehand as `before`, on the
  * transaction that clears it. A member with no second factor has nothing
- * cleared and gets no row.
+ * cleared and gets no row, unless `recordWhenEmpty`: an officer reset still
+ * ends sessions and grace, so it always leaves a row (#4618).
  */
 export async function recordTwoFactorClear(
   tx: AuditLogClient,
@@ -398,17 +404,18 @@ export async function recordTwoFactorClear(
     actor: Exclude<TwoFactorActor, { kind: "member" }>;
     subjectMemberId: string;
     request?: TwoFactorRequestContext;
+    recordWhenEmpty?: boolean;
   },
 ): Promise<void> {
   const { before } = params;
-  if (!before || clearEvidenceIsEmpty(before)) return;
+  if (!params.recordWhenEmpty && (!before || clearEvidenceIsEmpty(before))) return;
   await recordTwoFactorMutation(tx, {
     action: TWO_FACTOR_AUDIT_ACTIONS.cleared,
     actor: params.actor,
     subjectMemberId: params.subjectMemberId,
-    method: before.twoFactorMethod,
-    authenticatorApp: before.authenticatorApp,
-    passkeyCount: before.passkeyCount,
+    method: before?.twoFactorMethod ?? null,
+    authenticatorApp: before?.authenticatorApp ?? false,
+    passkeyCount: before?.passkeyCount,
     request: params.request,
   });
 }

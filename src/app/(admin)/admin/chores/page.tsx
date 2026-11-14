@@ -23,6 +23,8 @@ import {
 } from "@/components/admin/view-only-action"
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 import { getAdminPage } from "@/lib/admin-hubs"
+import { FocusedActionError } from "@/components/focused-action-error"
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 
 interface ChoreTemplate {
   id: string
@@ -69,7 +71,26 @@ export default function ChoresPage() {
   const canEdit = useAdminAreaEditAccess("lodge")
   const [chores, setChores] = useState<ChoreTemplate[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
+  // A failed READ is passive: it is shown in the quiet box above the form and
+  // moves nothing. A failed save, delete or toggle is the admin's own action,
+  // so it takes focus through the permanently mounted recovery alert, and
+  // `actionAttention` re-takes it when the same failure repeats.
+  const [loadError, setLoadError] = useState("")
+  const [actionError, setActionError] = useState("")
+  const [actionAttention, setActionAttention] = useState(0)
+  // A save closes the form, taking the focused Save button with it, so a
+  // landed save positions at the top of the page; failure still wins (#2934).
+  const [savesLanded, setSavesLanded] = useState(0)
+  const pageRef = useRef<HTMLDivElement>(null)
+  useActionAttention({
+    // `FocusedActionError` owns the failure focus. The error is passed so a
+    // failure beats a landed save in one batch; no handler makes that batch
+    // today (a landed save clears the error first), so this is a guard only.
+    error: actionError,
+    errorTarget: null,
+    success: savesLanded,
+    successTarget: pageRef,
+  })
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -147,7 +168,8 @@ export default function ChoresPage() {
       setChores([])
       setShowForm(false)
       setEditingId(null)
-      setError("")
+      setLoadError("")
+      setActionError("")
       setLoading(false)
       return
     }
@@ -159,11 +181,12 @@ export default function ChoresPage() {
       if (!res.ok) throw new Error("Failed to fetch chores")
       const data = await res.json()
       setChores(data)
+      setLoadError("")
     } catch (err) {
       // An aborted request means the lodge changed (or the page unmounted);
       // a newer request owns the list now.
       if (err instanceof DOMException && err.name === "AbortError") return
-      setError(err instanceof Error ? err.message : "Unknown error")
+      setLoadError(err instanceof Error ? err.message : "Unknown error")
     } finally {
       setLoading(false)
     }
@@ -192,7 +215,16 @@ export default function ChoresPage() {
     setActive(true)
     setEditingId(null)
     setShowForm(false)
-    setError("")
+    setActionError("")
+  }
+
+  function failAction(message: string, requestedScope: string | null) {
+    // A failure belongs to the lodge the action was taken on: after a switch a
+    // late refusal would land as a focus-taking alert about a lodge nobody is
+    // looking at. The success paths fence the same way.
+    if (activeScopeRef.current !== requestedScope) return
+    setActionError(message)
+    setActionAttention((count) => count + 1)
   }
 
   function handleLodgeChange(nextLodgeId: string | null) {
@@ -228,7 +260,7 @@ export default function ChoresPage() {
     if (!scopedLodgeId) return
     const requestedScope = scopedLodgeId
     setSaving(true)
-    setError("")
+    setActionError("")
 
     const payload = {
       name,
@@ -260,7 +292,7 @@ export default function ChoresPage() {
       })
       if (!res.ok) {
         if (res.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope)
           return
         }
         const data = await res.json()
@@ -268,9 +300,10 @@ export default function ChoresPage() {
       }
       if (activeScopeRef.current !== requestedScope) return
       resetForm()
+      setSavesLanded((count) => count + 1)
       fetchChores()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+      failAction(err instanceof Error ? err.message : "Unknown error", requestedScope)
     } finally {
       setSaving(false)
     }
@@ -280,11 +313,12 @@ export default function ChoresPage() {
     if (!lodgeScopeReady) return
     const requestedScope = scopedLodgeId
     if (!confirm("Are you sure you want to delete this chore template?")) return
+    setActionError("")
     try {
       const res = await fetch(`/api/admin/chores/${id}`, { method: "DELETE" })
       if (!res.ok) {
         if (res.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope)
           return
         }
         const data = await res.json()
@@ -293,13 +327,14 @@ export default function ChoresPage() {
       if (activeScopeRef.current !== requestedScope) return
       fetchChores()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+      failAction(err instanceof Error ? err.message : "Unknown error", requestedScope)
     }
   }
 
   async function handleToggleActive(chore: ChoreTemplate) {
     if (!lodgeScopeReady) return
     const requestedScope = scopedLodgeId
+    setActionError("")
     try {
       const res = await fetch(`/api/admin/chores/${chore.id}`, {
         method: "PUT",
@@ -308,7 +343,7 @@ export default function ChoresPage() {
       })
       if (!res.ok) {
         if (res.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON)
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope)
           return
         }
         const data = await res.json()
@@ -317,7 +352,7 @@ export default function ChoresPage() {
       if (activeScopeRef.current !== requestedScope) return
       fetchChores()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+      failAction(err instanceof Error ? err.message : "Unknown error", requestedScope)
     }
   }
 
@@ -339,7 +374,7 @@ export default function ChoresPage() {
 
   if (loading && lodgeScopeReady) {
     return (
-      <div>
+      <div ref={pageRef}>
         {viewOnlyBanner}
         <div className="text-center py-8">Loading chore templates...</div>
       </div>
@@ -347,7 +382,7 @@ export default function ChoresPage() {
   }
 
   return (
-    <div>
+    <div ref={pageRef}>
       {viewOnlyBanner}
       <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -383,11 +418,18 @@ export default function ChoresPage() {
           />
       </div>
 
-      {error && (
+      {loadError && (
         <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
-          {error}
+          {loadError}
         </div>
       )}
+
+      <FocusedActionError
+        id="chores-action-error"
+        error={actionError}
+        attentionKey={actionAttention}
+        className="scroll-mt-20"
+      />
 
       {lodgeScopeReady && showForm && (
         <Card>
