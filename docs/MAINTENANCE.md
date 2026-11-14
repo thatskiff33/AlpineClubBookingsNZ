@@ -844,7 +844,7 @@ enforces is:
 
 > Current size debt may stay. New debt and debt growth may not appear silently.
 
-**No ceiling is written down.** For each file a change touches, the check reads
+**No per-file ceiling is written down.** For each file a change touches, the check reads
 how long that file was on `origin/main` and compares. From that:
 
 - a file that was **within** its budget may not go over it;
@@ -880,7 +880,9 @@ how long that file was on `origin/main` and compares. From that:
 Every run on a change also prints `Size debt change from this PR: +N lines`
 (or a negative number), pass or fail: how far the change moves the tree-wide
 figure `--report` totals. A run of small declared increases is invisible one
-change at a time; the running sum is not.
+change at a time; the tree-wide total, from `--report`, is not. A file moved out
+of the budgeted scope counts as debt removed, exactly as `--report` would count
+it, so check the diff before reading a negative figure as a split.
 
 ```bash
 pnpm run quality:budget                    # verify (also a step in CI's `verify` job)
@@ -1042,9 +1044,10 @@ format and the rules. In short:
 
 **The hard ceiling** (owner decision, 11 Nov 2026,
 [#4926](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4926)) exists
-because an escape judged one change at a time needs a limit on the total: in the
-81 days after the escape opened, 293 allowance files let money modules nearly
-double, each step reasonable on its own. The multiple is
+because an escape judged one change at a time needs a limit on the total. As
+measured in #4926 at 11 Nov 2026, `src/lib/payment-recovery.ts` went from 1,881
+lines on 21 Aug 2026 to 3,617 through 33 allowances, each step reasonable on its
+own. The multiple is
 `HARD_CEILING_MULTIPLE` in `scripts/lib/file-size-budget.ts`. A file at or past
 the ceiling can only stay or shrink, so the next change that needs it longer
 splits a cohesive part out first. There is no exemption mechanism — the owner
@@ -1135,7 +1138,8 @@ reason: the guard belongs inside the claim it protects until #4516 splits the
 
 The same rules apply as for a file allowance: the recorded length must be the
 function's real length, it is one-shot, an unneeded one fails, and it may not
-cover a new function or carry one over 300 for the first time.
+cover a new function or carry one over 300 for the first time. The hard ceiling
+is a file rule; a function allowance has no upper bound of its own.
 [`size-allowances.d/README.md`](../size-allowances.d/README.md) has the format.
 
 ### Quality report

@@ -130,7 +130,9 @@ export function renderAppliedAllowances(
 /**
  * The one line every run on a change prints, pass or fail (#4926): how far this
  * change moves the tree-wide debt that `--report` totals. A run of small
- * declared increases is invisible one at a time; their sum is not.
+ * declared increases is invisible one at a time; the total `--report` prints
+ * is not. A file moved out of the budgeted scope counts as debt removed, as it
+ * does there, so read the diff before taking a negative figure for a split.
  */
 export function renderDebtDelta(delta: number | null): string {
   if (delta === null) {

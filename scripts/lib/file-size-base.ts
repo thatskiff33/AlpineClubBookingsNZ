@@ -559,6 +559,26 @@ export type ComputedResult = {
 };
 
 /**
+ * Where a file that grew past its hard ceiling has to end up, said once for the
+ * two refusals that need it (#4926). Two lengths are in play and the advice has
+ * to name both. A file the base already left at or past the hard ceiling can
+ * only stay or shrink, so its own base length is the target. One below it may
+ * still use a declared allowance up to the ceiling, so splitting to just under
+ * the ceiling is not enough on its own: anything longer than the base length
+ * still needs that allowance.
+ */
+function hardCeilingEndState(baseLines: number, hardCeiling: number): string {
+  if (baseLines >= hardCeiling) {
+    return `so the file ends at or under ${baseLines} LOC, its length on the base`;
+  }
+  return (
+    `so the file ends at or under ${hardCeiling} LOC, its hard ceiling. Anything ` +
+    `longer than ${baseLines} LOC, its length on the base, also needs a declared ` +
+    `allowance`
+  );
+}
+
+/**
  * Judge only the files this change touched, against their length on the base.
  *
  * THE RULE IS UNCHANGED from the stored-ledger version: a file not previously
@@ -596,6 +616,13 @@ export function evaluateComputedRatchet(input: {
   /** Files whose classification the scan could not determine. */
   unclassified: ReadonlyArray<{ file: string; reason: string }>;
   isProductionFile: (file: string) => boolean;
+  /**
+   * Injectable so a test can state a flat budget. It decides the findings and
+   * the hard ceiling only: `debtDelta` is measured through `sizeDebtDelta` on
+   * the real budgets, as `--report` is, so a caller that injects a budget that
+   * disagrees with `file-size-budget.ts` gets findings on its own and a debt
+   * line on the real ones. Both real callers pass the real `budgetForFile`.
+   */
   budgetForFile: (file: string) => { category: string; limit: number };
   countLines: (root: string, file: string) => number;
   /** Declared growth from `size-allowances.d/`, and anything unreadable in it. */
@@ -835,9 +862,10 @@ export function evaluateComputedRatchet(input: {
               `an allowance cannot take a file past ${HARD_CEILING_MULTIPLE} ` +
               `times its budget`,
             action:
-              `split a cohesive part out first, so the file ends at or under ` +
-              `${Math.max(hardCeiling, previous.lines)} LOC, and delete the ` +
-              `allowance if it is then not needed`,
+              `split a cohesive part out first, ` +
+              `${hardCeilingEndState(previous.lines, hardCeiling)}. Then make the ` +
+              `allowance's lines match the file's real length, or delete the ` +
+              `allowance if it is no longer needed`,
           });
         } else if (allowance.lines !== current) {
           // The one rule that stops an allowance drifting from the tree the way
@@ -877,10 +905,10 @@ export function evaluateComputedRatchet(input: {
             "file over its budget for the first time, only let one already over " +
             "it grow"
           : current > hardCeiling
-          ? `split a cohesive part out first, so the file ends at or under ` +
-            `${Math.max(hardCeiling, previous.lines)} LOC. An allowance cannot ` +
-            `help: none may take a file past its hard ceiling of ${hardCeiling} ` +
-            `LOC (${HARD_CEILING_MULTIPLE} times its budget)`
+          ? `split a cohesive part out first, ` +
+            `${hardCeilingEndState(previous.lines, hardCeiling)}. No allowance ` +
+            `can take a file past its hard ceiling of ${hardCeiling} LOC ` +
+            `(${HARD_CEILING_MULTIPLE} times its budget)`
           : `split or reduce it. If the increase is genuinely necessary, say so ` +
             `out loud: add ${ALLOWANCE_DIR}/<pr-number>-<slug>.md containing ` +
             `${ALLOWANCE_FORMAT_HINT.replace(/\n/g, " ")} — one file per pull ` +

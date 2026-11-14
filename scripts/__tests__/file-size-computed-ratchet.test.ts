@@ -393,12 +393,32 @@ describe("evaluateComputedRatchet — the hard ceiling an allowance cannot pass"
     const file = "src/lib/huge.ts";
     const finding = change({ [file]: 2500 }, file, 2501).findings[0];
     expect(finding?.kind).toBe("grown-beyond-base");
-    expect(finding?.action).toContain("An allowance cannot help");
+    expect(finding?.action).toContain("No allowance can take a file past its hard ceiling of 2100 LOC");
+    expect(finding?.action).toContain("at or under 2500 LOC, its length on the base");
     expect(finding?.action).not.toContain(ALLOWANCE_DIR);
 
     // Below the ceiling, the allowance is still the advice it was.
     const under = change({ [file]: 1200 }, file, 1201).findings[0];
     expect(under?.action).toContain(`${ALLOWANCE_DIR}/<pr-number>-<slug>.md`);
+  });
+
+  it("names both lengths for a file below its ceiling on the base that grows past it", () => {
+    const file = "src/lib/mid.ts";
+    // 2,000 on the base, 2,150 now. Splitting to 2,050 would clear the hard
+    // ceiling but still be longer than the base, so the advice must not stop at
+    // "end at or under 2100": that would send the author round a second red run.
+    const bare = change({ [file]: 2000 }, file, 2150).findings[0];
+    expect(bare?.kind).toBe("grown-beyond-base");
+    expect(bare?.action).toContain("at or under 2100 LOC, its hard ceiling");
+    expect(bare?.action).toContain("longer than 2000 LOC, its length on the base, also needs a declared allowance");
+
+    const declared = change({ [file]: 2000 }, file, 2150, { allowance: 2150 }).findings[0];
+    expect(declared?.kind).toBe("allowance-over-hard-ceiling");
+    expect(declared?.action).toContain("at or under 2100 LOC, its hard ceiling");
+    expect(declared?.action).toContain("longer than 2000 LOC, its length on the base");
+
+    // And the advice is true: 2,050 with a matching allowance is accepted.
+    expect(change({ [file]: 2000 }, file, 2050, { allowance: 2050 }).findings).toEqual([]);
   });
 
   it("judges a file renamed within scope against the same hard ceiling", () => {
@@ -433,10 +453,15 @@ describe("evaluateComputedRatchet — the hard ceiling an allowance cannot pass"
 });
 
 describe("evaluateComputedRatchet — the change's effect on tree-wide size debt", () => {
-  function delta(build: (repo: ReturnType<typeof newRepo>) => void, now: Record<string, number>) {
+  function delta(
+    build: (repo: ReturnType<typeof newRepo>) => void,
+    now: Record<string, number>,
+    extraBase: Record<string, number> = {},
+  ) {
     const repo = newRepo();
     repo.write("src/lib/big.ts", 1200);
     repo.write("src/lib/small.ts", 100);
+    for (const [name, length] of Object.entries(extraBase)) repo.write(name, length);
     const base = repo.commit("base");
     build(repo);
     repo.commit("change");
@@ -470,6 +495,43 @@ describe("evaluateComputedRatchet — the change's effect on tree-wide size debt
       }, { "src/lib/__tests__/big.ts": 1200 }),
     ).toBe(-500);
     expect(delta((repo) => git(repo.root, "rm", "--quiet", "src/lib/big.ts"), {})).toBe(-500);
+  });
+
+  it("ignores a file the change touches outside the budgeted scope, on both sides", () => {
+    // 900 lines of docs would be 200 over a 700 budget if either side counted it.
+    expect(
+      delta((repo) => repo.write("docs/notes.md", 1000), {}, { "docs/notes.md": 900 }),
+    ).toBe(0);
+  });
+
+  it("counts a file renamed into the budgeted scope as new debt, not as the old file's", () => {
+    // 900 lines in scripts/ is out of scope, so the base side carries none of it;
+    // the same 900 lines in src/lib/ is 200 over its 700 budget.
+    expect(
+      delta(
+        (repo) => {
+          mkdirSync(path.join(repo.root, "src/lib"), { recursive: true });
+          git(repo.root, "mv", "scripts/tool.ts", "src/lib/tool.ts");
+        },
+        { "src/lib/tool.ts": 900 },
+        { "scripts/tool.ts": 900 },
+      ),
+    ).toBe(200);
+  });
+
+  it("judges a rename across budget categories on each side's own budget", () => {
+    // A 740-line route handler is 490 over its 250 budget. Moved into src/lib it
+    // is 40 over the 700 budget: the base side must use the OLD path's category.
+    expect(
+      delta(
+        (repo) => {
+          mkdirSync(path.join(repo.root, "src/lib"), { recursive: true });
+          git(repo.root, "mv", "src/app/api/thing/route.ts", "src/lib/thing.ts");
+        },
+        { "src/lib/thing.ts": 740 },
+        { "src/app/api/thing/route.ts": 740 },
+      ),
+    ).toBe(-450);
   });
 
   it("is null when the base cannot be resolved, rather than a reassuring zero", () => {

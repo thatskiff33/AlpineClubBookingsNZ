@@ -17,6 +17,7 @@ import {
   countLines,
   findOversizedProductionFiles,
   findUnclassifiedFiles,
+  hardCeilingFor,
   isProductionFile,
   isRatchetExcludedTestFile,
   scanRepository,
@@ -1238,5 +1239,35 @@ describe("this repository", () => {
     const scan = scanRepository(path.join(REPO_ROOT, "no-such-directory-2687"));
     expect(scan.gitError).not.toBeNull();
     expect(scan.productionStats).toEqual([]);
+  });
+});
+
+/**
+ * #4926 — the three ceilings are restated in prose on purpose: the issue asks the
+ * two docs to state them, and a reader of either should not have to multiply.
+ * A number repeated in prose drifts (INV-SSOT-001), so this is the pin that ties
+ * those restatements to `HARD_CEILING_MULTIPLE` instead of leaving the next
+ * change of the multiple, or of a budget, to remember every place.
+ */
+describe("the hard ceiling the docs state (#4926)", () => {
+  const [domain, handler, page] = [PRODUCTION_LIMIT, ROUTE_HANDLER_LIMIT, ROUTE_PAGE_LIMIT].map(
+    (limit) => hardCeilingFor({ limit }).toLocaleString("en-US"),
+  );
+  const prose = (doc: string) =>
+    readFileSync(path.join(REPO_ROOT, doc), "utf8").replace(/\s+/g, " ");
+
+  it.each(["docs/MAINTENANCE.md", "size-allowances.d/README.md"])(
+    "%s names the three ceilings the code derives",
+    (doc) => {
+      expect(prose(doc)).toContain(
+        `${domain} lines for a domain module, ${handler} for a route handler, ${page} for a page shell`,
+      );
+    },
+  );
+
+  it("MAINTENANCE.md also lists them beside the finding kind that refuses past them", () => {
+    expect(prose("docs/MAINTENANCE.md")).toContain(
+      `(${domain} / ${handler} / ${page} lines), refused as \`allowance-over-hard-ceiling\``,
+    );
   });
 });
