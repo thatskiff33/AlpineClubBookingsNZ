@@ -12,7 +12,7 @@
  */
 import { StripeDisputeStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { HOLDING_DISPUTE_STATUSES } from "@/lib/stripe-dispute-note";
+import { HOLDING_DISPUTE_STATUSES, namedDisputes } from "@/lib/stripe-dispute-note";
 
 type DisputeReader = Pick<Prisma.TransactionClient, "stripeDispute">;
 
@@ -81,7 +81,7 @@ export class DisputedCaptureRefundRefusedError extends Error {
   constructor(paymentIntentId: string, disputes: HoldingDispute[]) {
     super(
       `Refund refused: the payment ${paymentIntentId} is disputed by the cardholder ` +
-        `(${disputes.map((dispute) => `${dispute.stripeDisputeId}, ${dispute.status.toLowerCase()}`).join("; ")}). ` +
+        `(Stripe dispute ${namedDisputes(disputes)}). ` +
         "The treasurer settles it by hand (INV-PAY-154).",
     );
     this.paymentIntentId = paymentIntentId;
@@ -121,23 +121,30 @@ export function disputedCaptureRefusal(error: unknown): DisputedCaptureRefundRef
   return null;
 }
 
+/** One dispute as the booking page and Finance -> Payments mark it. */
+export type DisputeMarker = { stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number };
+
 /**
- * #4911 (`INV-PAY-154`): the disputes on these payments, newest first, keyed by
- * payment - Finance -> Payments' dispute marker. A display read, not the hold.
+ * #4911 (`INV-PAY-154`): the disputes on these bookings, newest first, keyed by
+ * booking - the one read behind both dispute markers. Keyed by booking, the
+ * id the Finance alert names, so a dispute on a group organiser's settlement
+ * (recorded with no `Payment`) still marks the organiser's booking; a dispute
+ * matched to a payment always carries that payment's booking. A display read,
+ * not the hold.
  */
-export async function readDisputesByPaymentId(
+export async function readDisputesByBookingId(
   db: DisputeReader,
-  paymentIds: string[],
-): Promise<Map<string, Array<{ stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number }>>> {
-  const byPayment = new Map<string, Array<{ stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number }>>();
-  if (paymentIds.length === 0) return byPayment;
+  bookingIds: string[],
+): Promise<Map<string, DisputeMarker[]>> {
+  const byBooking = new Map<string, DisputeMarker[]>();
+  if (bookingIds.length === 0) return byBooking;
   const disputes = await db.stripeDispute.findMany({
-    where: { paymentId: { in: paymentIds } },
-    select: { paymentId: true, stripeDisputeId: true, status: true, amountCents: true },
+    where: { bookingId: { in: bookingIds } },
+    select: { bookingId: true, stripeDisputeId: true, status: true, amountCents: true },
     orderBy: [{ stripeCreatedAt: "desc" }, { stripeDisputeId: "asc" }],
   });
-  for (const { paymentId, ...dispute } of disputes) {
-    if (paymentId) byPayment.set(paymentId, [...(byPayment.get(paymentId) ?? []), dispute]);
+  for (const { bookingId, ...dispute } of disputes) {
+    if (bookingId) byBooking.set(bookingId, [...(byBooking.get(bookingId) ?? []), dispute]);
   }
-  return byPayment;
+  return byBooking;
 }

@@ -359,7 +359,7 @@ describe("Stripe library", () => {
       const refused = processRefund({ paymentIntentId: "pi_test_123", amountCents: 5000, metadata: { bookingId: "booking_1" } });
 
       await expect(refused).rejects.toMatchObject({ name: "DisputedCaptureRefundRefusedError", paymentIntentId: "pi_test_123", lost: true });
-      await expect(refused).rejects.toThrow(/dp_1, lost/);
+      await expect(refused).rejects.toThrow(/Stripe dispute dp_1 \(lost\)/);
       expect(mockRefundsCreate).not.toHaveBeenCalled();
       expect(mockStripeDisputeFindMany).toHaveBeenCalledWith(expect.objectContaining({
         where: { stripePaymentIntentId: { in: ["pi_test_123"] }, status: { in: ["OPEN", "LOST"] } },

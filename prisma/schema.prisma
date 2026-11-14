@@ -4960,7 +4960,7 @@ model StripeDispute {
   updatedAt             DateTime            @updatedAt
 
   @@index([stripePaymentIntentId])
-  @@index([paymentId])
+  @@index([bookingId])
 }
 
 // #4911: a dispute's lifecycle. OPEN and LOST hold the capture's refunds.

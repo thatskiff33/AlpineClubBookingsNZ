@@ -31,7 +31,7 @@ CREATE TABLE "StripeDispute" (
 -- The claim: one row per Stripe dispute.
 CREATE UNIQUE INDEX "StripeDispute_stripeDisputeId_key" ON "StripeDispute"("stripeDisputeId");
 
--- The cancel guard and the refund chokepoint read by intent; the admin
--- payments list by payment.
+-- The cancel guard and the refund chokepoint read by intent; the booking page
+-- and the admin payments list by booking.
 CREATE INDEX "StripeDispute_stripePaymentIntentId_idx" ON "StripeDispute"("stripePaymentIntentId");
-CREATE INDEX "StripeDispute_paymentId_idx" ON "StripeDispute"("paymentId");
+CREATE INDEX "StripeDispute_bookingId_idx" ON "StripeDispute"("bookingId");

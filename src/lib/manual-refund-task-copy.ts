@@ -36,7 +36,7 @@ import {
   EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
   manualRefundTaskKindAllowsSettlement,
 } from "@/lib/manual-refund-task-settlement-rules";
-import { STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
+import { namedDisputes } from "@/lib/stripe-dispute-note";
 import { formatCents } from "@/lib/utils";
 import type { EditReviewStillOwedPreview } from "@/lib/edit-financial-review-still-owed";
 
@@ -448,6 +448,5 @@ export function disputedCancellationHandBackReason({ bookingId, refundPercentage
   refundPercentage: number;
   disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
 }): string {
-  const named = disputes.map((dispute) => `${dispute.stripeDisputeId} (${STRIPE_DISPUTE_STATUS_LABEL[dispute.status]})`).join(", ");
-  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${named}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time.`;
+  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time.`;
 }

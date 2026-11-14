@@ -8,7 +8,7 @@ the four files this change would otherwise have taken over budget for the
 first time were reduced instead.
 
 file: src/lib/booking-cancel.ts
-lines: 2893
+lines: 2880
 reason: the paid cancel reads the dispute hold inside its claim, under the
   locks it already holds (`INV-LOCK-001`), and its hand-back task, audit row,
   member sentence and result say why. Each line sits in the branch it changes;
@@ -27,7 +27,7 @@ reason: one entry in the required-subject-token guidance table, beside the
   other templates' entries the renderer reads from that table.
 
 file: src/lib/payment-recovery.ts
-lines: 3620
+lines: 3634
 reason: the superseded-payment recovery asks the dispute hold before it
   reserves its request, two lines in the step that reserves; elsewhere the
   read would no longer sit before the reservation it must precede.

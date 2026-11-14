@@ -16,6 +16,14 @@ export const STRIPE_DISPUTE_STATUS_LABEL: Record<StripeDisputeStatus, string> = 
 };
 
 /**
+ * The disputes a refusal, a recovery row's cause or a treasurer task names, as
+ * "dp_1 (open), dp_2 (lost)": one wording, so each surface names a dispute alike.
+ */
+export function namedDisputes(disputes: ReadonlyArray<{ stripeDisputeId: string; status: StripeDisputeStatus }>): string {
+  return disputes.map((dispute) => `${dispute.stripeDisputeId} (${STRIPE_DISPUTE_STATUS_LABEL[dispute.status]})`).join(", ");
+}
+
+/**
  * The statuses that hold a capture's refunds and credits: open, or lost to the
  * cardholder. The one rule the hold's query (`stripe-dispute-hold.ts`) and every
  * dispute marker read; kept here, a leaf, so client components can import it.

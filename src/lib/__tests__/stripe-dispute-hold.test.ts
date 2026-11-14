@@ -21,8 +21,10 @@ import {
   disputedCaptureRefusal,
   DisputedCaptureRefundRefusedError,
   paymentCaptureIntentIds,
+  readDisputesByBookingId,
 } from "@/lib/stripe-dispute-hold";
-import { HOLDING_DISPUTE_STATUSES, disputeHoldsCapture } from "@/lib/stripe-dispute-note";
+import { HOLDING_DISPUTE_STATUSES, STRIPE_DISPUTE_STATUS_LABEL, disputeHoldsCapture, namedDisputes } from "@/lib/stripe-dispute-note";
+import { disputedCancellationHandBackReason } from "@/lib/manual-refund-task-copy";
 import { disputedCaptureRefundCause, unretryableRecoveryCause } from "@/lib/recovery-unretryable-cause";
 import { PartialRefundError } from "@/lib/payment-transactions";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
@@ -68,6 +70,31 @@ describe("paymentCaptureIntentIds (#4911)", () => {
   });
 });
 
+describe("readDisputesByBookingId (#4911)", () => {
+  it("marks the booking the alert names, a group settlement's dispute with no payment included", async () => {
+    db.stripeDispute.findMany.mockResolvedValue([
+      // A group organiser's settlement: recorded with no Payment, only the organiser's booking.
+      { bookingId: "booking_organiser", stripeDisputeId: "dp_settlement", status: "OPEN", amountCents: 9000 },
+      { bookingId: "booking_member", stripeDisputeId: "dp_new", status: "LOST", amountCents: 3000 },
+      { bookingId: "booking_member", stripeDisputeId: "dp_old", status: "WON", amountCents: 1000 },
+    ]);
+
+    const byBooking = await readDisputesByBookingId(reader, ["booking_organiser", "booking_member"]);
+
+    expect(db.stripeDispute.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { bookingId: { in: ["booking_organiser", "booking_member"] } },
+      orderBy: [{ stripeCreatedAt: "desc" }, { stripeDisputeId: "asc" }],
+    }));
+    expect(byBooking.get("booking_organiser")).toEqual([{ stripeDisputeId: "dp_settlement", status: "OPEN", amountCents: 9000 }]);
+    expect(byBooking.get("booking_member")?.map((dispute) => dispute.stripeDisputeId)).toEqual(["dp_new", "dp_old"]);
+  });
+
+  it("asks nothing for no bookings", async () => {
+    expect((await readDisputesByBookingId(reader, [])).size).toBe(0);
+    expect(db.stripeDispute.findMany).not.toHaveBeenCalled();
+  });
+});
+
 describe("the refusal (#4911)", () => {
   it("throws for a held capture, naming each dispute, and passes one with none", async () => {
     await expect(assertCaptureNotDisputed("pi_1")).resolves.toBeUndefined();
@@ -75,7 +102,7 @@ describe("the refusal (#4911)", () => {
     db.stripeDispute.findMany.mockResolvedValue([OPEN]);
     const refused = assertCaptureNotDisputed("pi_1");
     await expect(refused).rejects.toBeInstanceOf(DisputedCaptureRefundRefusedError);
-    await expect(refused).rejects.toThrow(/dp_open, open/);
+    await expect(refused).rejects.toThrow(/Stripe dispute dp_open \(open\)\)/);
   });
 
   it("says a lost dispute will not release the refund, and an open one may", () => {
@@ -91,6 +118,18 @@ describe("the refusal (#4911)", () => {
     expect(disputedCaptureRefusal(wrapped)).toBe(bare);
     expect(disputedCaptureRefusal(new PartialRefundError({ completedRefundCents: 0, refunds: [], cause: new Error("Stripe down"), format: CLUB_FORMAT_TEST }))).toBeNull();
     expect(disputedCaptureRefusal(new Error("Stripe down"))).toBeNull();
+  });
+});
+
+describe("one wording for the disputes a refusal names (#4911)", () => {
+  it("names each dispute by its status label alike in the refusal, the recovery cause and the treasurer task", () => {
+    const named = namedDisputes([OPEN, LOST]);
+    expect(named).toBe(`dp_open (${STRIPE_DISPUTE_STATUS_LABEL.OPEN}), dp_lost (${STRIPE_DISPUTE_STATUS_LABEL.LOST})`);
+
+    expect(new DisputedCaptureRefundRefusedError("pi_1", [OPEN, LOST]).message).toContain(`Stripe dispute ${named})`);
+    expect(disputedCaptureRefundCause([OPEN, LOST])).toContain(`Stripe dispute ${named})`);
+    expect(disputedCancellationHandBackReason({ bookingId: "booking_1", refundPercentage: 100, disputes: [OPEN, LOST] }))
+      .toContain(`Stripe dispute ${named})`);
   });
 });
 
