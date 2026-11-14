@@ -7,7 +7,7 @@ import {
 } from "@/components/admin-sidebar";
 import { getNavBarLinks } from "@/components/nav-bar";
 import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
-import { ADMIN_PAGES, adminPageRoutePath } from "@/lib/admin-hubs";
+import { ADMIN_PAGES, adminPageRoutePath, getAdminPage } from "@/lib/admin-hubs";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
 import { requireCalendarDate } from "@/lib/club-time";
@@ -124,7 +124,10 @@ describe("feature-aware navigation", () => {
 
     expect(items).not.toContain("Bed Allocation");
     expect(items).not.toContain("Waitlist");
-    expect(items).not.toContain("Roster");
+    // #4968: the roster's name comes from the registry, so a rename cannot
+    // leave this check looking for a string the sidebar never shows. The next
+    // test proves the label does appear with chores on.
+    expect(items).not.toContain(getAdminPage("roster").label);
     expect(items).not.toContain("Chores");
     // #2216: the Integrations hub is deliberately ungated from xeroIntegration —
     // it stays visible so the Stripe/Google/Backups/AI cards remain reachable.
@@ -134,6 +137,14 @@ describe("feature-aware navigation", () => {
     expect(items).toContain("Stuck States");
     expect(items).not.toContain("Change Requests");
     expect(items).toContain("Modules");
+  });
+
+  it("shows the roster entry under its registry name when chores is on", () => {
+    const items = getVisibleAdminNavSections(CLUB_DAY, allOn).flatMap(
+      (section) => section.items.map((item) => item.label),
+    );
+
+    expect(items).toContain(getAdminPage("roster").label);
   });
 
   it("keeps feature-gated setup entries behind the same route visibility rules", () => {

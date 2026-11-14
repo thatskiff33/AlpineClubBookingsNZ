@@ -121,7 +121,7 @@ export default function ConfigTransferPage() {
   if (session && !fullAdmin) {
     return (
       <div className="rounded-md border bg-card p-6 text-sm text-muted-foreground">
-        Configuration Export &amp; Import is available to full administrators only.
+        {getAdminPage("config-transfer").label} is available to full administrators only.
       </div>
     );
   }

@@ -37,7 +37,7 @@ change settings and templates.
 1. Go to **Admin → Members → Induction**. The **Start an induction** card sits
    above the **Induction register** table.
 
-   ![Induction: the Start an induction card and the register table with Member, Type, Status, Sign-offs, Signers, Completed, and Actions columns](../images/admin/admin-induction.png)
+   ![Induction Register: the Start an induction card and the register table with Member, Type, Status, Sign-offs, Signers, Completed, and Actions columns](../images/admin/admin-induction.png)
 
 2. In **Find member**, type a name or email and click **Search**, then pick the
    member. Choose a **Type** (New member, Hut Leader Induction, Youth → full
@@ -127,7 +127,7 @@ register remains the right workflow for individual inductions.
 
 - Back to the [documentation hub](../README.md).
 - Sibling guides: [Members](members.md),
-  [Member Applications](member-applications.md), [Committee](committee.md).
+  [Applications](member-applications.md), [Committee](committee.md).
 - Maintenance runbook:
   [Trusted legacy induction baseline](../INDUCTION_BASELINE_RUNBOOK.md).
 - Reference: the

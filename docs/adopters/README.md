@@ -105,7 +105,7 @@ per-route index if you would rather start from a URL.
 - [Members](../guides/members.md) — the member directory, login-readiness
   status, safe read-only opening, CSV import, roles, seasonal membership, and
   merge.
-- [Member Applications](../guides/member-applications.md) — the join/nomination
+- [Applications](../guides/member-applications.md) — the join/nomination
   review queue and how approval maps people to member records.
 - [Member Fields](../guides/member-fields.md) — which extra profile fields are
   collected from members and applicants.

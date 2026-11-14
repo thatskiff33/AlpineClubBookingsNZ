@@ -33,7 +33,7 @@ model — lives in the [config-transfer feature hub](../config-transfer/README.m
 
 1. Go to **Admin → Setup & Configuration → Export & Import**.
 
-   ![Export & Import page with the export category checkboxes and the import upload / dry-run panel](../images/admin/admin-config-transfer.png)
+   ![Configuration Export & Import page with the export category checkboxes and the import upload / dry-run panel](../images/admin/admin-config-transfer.png)
 
 2. In **Export**, tick the categories to include. **Include lodge door codes** is
    an opt-in checkbox (physical-access information), off by default.

@@ -598,9 +598,9 @@ clears the previous query's rows and totals, and offers **Try again**. #4961.
 ## INV-SSOT-008
 
 An admin page's heading is its menu name: the registry label,
-`getAdminPage(id).label` from `src/lib/admin-hubs`, which the sidebar, the
-command palette and contextual help already show. A page reads the label rather
-than restating it. A retired page name stays findable as a `keywords` entry on
+`getAdminPage(id).label` from `src/lib/admin-hubs`, which the sidebar and the
+command palette already show. A page reads the label rather than restating it.
+Contextual help titles are typed by hand and are not covered. A retired page name stays findable as a `keywords` entry on
 the page's registry definition, never as a second heading. #4968.
 
 - **A census holds it.** `admin-page-headings.test.ts` parses each registry

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { IntegrationWizard } from "@/components/admin/integration-wizard";
+import { getAdminPage } from "@/lib/admin-hubs";
 import type { WizardStepConfig } from "@/components/admin/integration-wizard";
 import { useDisplayWizardContext } from "./use-display-wizard-context";
 import {
@@ -167,7 +168,7 @@ export function DisplaySetupWizard({
   return (
     <IntegrationWizard<DisplayWizardContext>
       wizardId={DISPLAY_WIZARD_ID}
-      title="Lodge Display setup"
+      title={getAdminPage("display-setup").label}
       description="A guided path from “the module is off” to a TV in the lodge showing the right board. Every step checks the real state of your club, so you can leave and come back — nothing here is a form you might lose."
       steps={steps}
       context={context}

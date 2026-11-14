@@ -44,7 +44,7 @@ rules — see
 1. Go to **Admin → Rates & Policies → Booking Policies**. Pick one of the five
    cards.
 
-   ![Booking Policies hub: five cards — Cancellation Policy, Booking Periods, Group Discount, Minimum Stay, Public Booking Requests](../images/admin/admin-booking-policies.png)
+   ![Booking Policies hub: five cards — Default Cancellation Policy, Date-Specific Periods, Group Discount, Minimum Night Stay, Public Booking Requests](../images/admin/admin-booking-policies.png)
 
    <!--
      The hub now carries a sixth card, Adult Member Hosting. Its own page is
@@ -58,7 +58,7 @@ rules — see
 
 1. Open **Cancellation Policy** and click **Edit**.
 
-   ![Cancellation Policy: the Members First toggle, non-member confirmation threshold, and the cancellation refund rules table with a plain-English preview](../images/admin/admin-booking-policies-cancellation.png)
+   ![Default Cancellation Policy: the Members First toggle, non-member confirmation threshold, and the cancellation refund rules table with a plain-English preview](../images/admin/admin-booking-policies-cancellation.png)
 
 2. Set the **Members First booking policy** toggle. When on, non-member guests
    outside the threshold are held provisionally; when off, mixed bookings run as
@@ -79,7 +79,7 @@ rules — see
 
 1. Open **Booking Periods** and click **Add Period**.
 
-   ![Booking Periods: the empty state explaining the default policy applies to all bookings, with an Add Period button](../images/admin/admin-booking-policies-periods.png)
+   ![Date-Specific Periods: the empty state explaining the default policy applies to all bookings, with an Add Period button](../images/admin/admin-booking-policies-periods.png)
 
 2. Give the period a name, start and end dates, its own hold setting, and its
    own refund rules, then click **Create Period**. Any booking whose check-in
@@ -119,7 +119,7 @@ rules — see
 
 1. Open **Minimum Stay** and click **Add Policy**.
 
-   ![Minimum Stay: the empty state and Add Policy button for weekday minimum-stay rules](../images/admin/admin-booking-policies-minimum-stay.png)
+   ![Minimum Night Stay: the empty state and Add Policy button for weekday minimum-stay rules](../images/admin/admin-booking-policies-minimum-stay.png)
 
 2. Name the policy, set the minimum nights, the date range, and which
    **Trigger Days** (Sun–Sat) activate it. Choose **Exception capacity

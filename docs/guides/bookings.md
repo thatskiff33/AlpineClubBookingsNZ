@@ -36,7 +36,7 @@ date-only lodge night (no times), matching the rules in
    Bookings** with the filter bar, the availability calendar, and the results
    table below it.
 
-   ![Bookings page: filter bar, monthly availability calendar with status legend, and the bookings table below](../images/admin/admin-bookings.png)
+   ![All Bookings page: filter bar, monthly availability calendar with status legend, and the bookings table below](../images/admin/admin-bookings.png)
 
 2. The calendar shows the month with each night's remaining beds (for example
    "14 beds") and coloured bars for the bookings on those nights. The colour

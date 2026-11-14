@@ -22,8 +22,9 @@ import {
 
 /**
  * The cards on the Setup page and its two drill-downs. A card that opens a
- * registry page is titled with its label (INV-SSOT-008). The Setup page is the checklist, so no card on a
- * drill-down links back to it — each drill-down's back link does (#4968).
+ * registry page is titled with its label (INV-SSOT-008). The Setup page is the
+ * checklist, so no card on a drill-down links back to it; each drill-down's
+ * back link does (#4968).
  */
 export const setupHubCards: AdminHubSection[] = [
   {

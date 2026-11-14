@@ -33,7 +33,7 @@ tiers but not change them.
    table at the bottom summarises every tier: its age range, whether a booking
    subscription is required, and its family-request-creation rule.
 
-   ![Age Groups: the per-tier boundary editor (Infant, Child, Youth, Adult) with min/max age and the two per-tier checkboxes, plus the Current Boundaries summary table](../images/admin/admin-age-tier-settings.png)
+   ![Age Group Settings: the per-tier boundary editor (Infant, Child, Youth, Adult) with min/max age and the two per-tier checkboxes, plus the Current Boundaries summary table](../images/admin/admin-age-tier-settings.png)
 
 ### Edit the boundaries
 

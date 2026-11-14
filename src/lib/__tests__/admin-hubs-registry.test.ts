@@ -2257,6 +2257,28 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/system/backups/setup/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/video-meetings/setup/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/setup/display-setup-wizard.tsx":
+      "#4968: the wizard card is titled with the page's registry label, as its page heading is",
+    "src/app/(admin)/admin/system/backups/setup/backup-setup-wizard.tsx":
+      "#4968: the wizard card is titled with the page's registry label, as its page heading is",
+    "src/components/admin/booking-policies/booking-periods-section.tsx":
+      "#4968: the card title is the Booking Periods registry label, as the page heading is",
+    "src/components/admin/booking-policies/minimum-night-stay-section.tsx":
+      "#4968: the card title is the Minimum Stay registry label, as the page heading is",
+    "src/components/admin/booking-policies/__tests__/list-editor-focus-return.test.tsx":
+      "#4968: finds the Booking Periods card by its registry label",
+    "src/components/admin/booking-policies/__tests__/list-scope-switch.test.tsx":
+      "#4968: checks the Booking Periods and Minimum Stay card titles by their registry labels",
+    "src/components/admin/booking-policies/__tests__/row-action-focus-return.test.tsx":
+      "#4968: finds the Booking Periods and Minimum Stay cards by their registry labels",
+    "e2e/admin-retroactive-booking.spec.ts":
+      "#4968: waits for the Book on Behalf heading by its registry label",
+    "e2e/book-on-behalf-nonmember.spec.ts":
+      "#4968: waits for the Book on Behalf heading by its registry label",
+    "e2e/dual-hat-booking.spec.ts":
+      "#4968: waits for the Book on Behalf heading by its registry label",
+    "e2e/config-transfer.spec.ts":
+      "#4968: waits for the Export & Import heading by its registry label",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

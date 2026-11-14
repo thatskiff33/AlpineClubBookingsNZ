@@ -23,7 +23,7 @@
   - Chore Templates → Chores
   - Visual builder → Display Builder
   - Display Layouts — Advanced mode → Display Layouts
-  - Reference (Lobby Display) → Display Reference
+  - Reference → Display Reference
   - Lodge Display setup → Display Setup
   - Database backup setup → Backup Setup
   - Alpine Central Server → Alpine Central Server Setup
@@ -34,8 +34,9 @@
   its page. The dashboard's Pending Review Queue card is now "Refunds &
   Credits: pending review". On the Booking Policies hub, the Cancellation
   Policy, Booking Periods and Minimum Stay cards use their page names, and the
-  Setup hub's cards are named Foundations Setup, Finance Setup and Cancellation
-  Requests. The Foundations Setup page drops its Setup Checklist card, which
-  only led back to Setup; use its "Setup" back link instead.
+  Setup hub's cards are named Foundations Setup, Finance Setup, Cancellation
+  Requests and Notifications & Email (it was Email Messages / Notifications).
+  The Foundations Setup page drops its Setup Checklist card, which only led
+  back to Setup; use its "Setup" back link instead.
 
   No address, permission or setting changed.

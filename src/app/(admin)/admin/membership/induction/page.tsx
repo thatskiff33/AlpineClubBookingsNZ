@@ -1,9 +1,8 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { InductionRegisterTable } from "@/components/admin/induction-register-table";
-import { getAdminPage } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 
-import { adminHref } from "@/lib/admin-hubs";
 export default function AdminInductionPage() {
   return (
     <div className="space-y-6">

@@ -139,8 +139,8 @@ The member-facing cancellation wording and Xero handling live on the
 also reached from the **Membership Cancellation** card under **Admin →
 Notifications & Email**, the Setup page's **Cancellation Requests** card,
 and the "Open Membership Cancellation settings" link on a blocked request. Until
-#4796 it was a separate page, `/admin/membership-cancellation`, and the Setup
-Wizard's **Cancellation** page linked to it; both old addresses open the tab.
+#4796 it was a separate page, `/admin/membership-cancellation`, and the
+**Cancellation** page in Setup linked to it; both old addresses open the tab.
 The tab writes **membership** settings, and holds a link to **Email Messages**
 (for an admin who can open it) for the wording of the emails these requests
 send.
