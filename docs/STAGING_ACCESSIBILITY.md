@@ -136,6 +136,22 @@ access. If a page depends on Stripe, Xero, SES, or finance data that is not
 configured in staging, record the dependency and use seeded or demo data instead
 of production credentials.
 
+### Dialogs at high zoom
+
+Every dialog built on the shared `DialogContent` caps its height to the viewport
+and scrolls inside, because the page behind it is locked (#4967). The command
+palette scrolls its own list instead, so its search box stays on screen. Side
+sheets (`sheet.tsx`) are separate and not covered. At 400% browser zoom (about
+320 × 256 CSS pixels), open a long confirmation, the manual-refund completion
+dialog and the admin command palette. Scroll each to its final button or item
+and activate it. Scroll back to the top to reach the close button, and check
+that dropdowns open fully and dialogs with their own height cap still fit.
+Dialogs that keep a fixed header and footer around an inner scrolling body
+(`flex max-h-[90vh] flex-col`) are unchanged by #4967, so look at each of
+those by hand: the body can get very little height at this size.
+`pnpm run test:e2e:a11y-fixture` checks the shared dialog, confirmation and
+command palette at 320 × 256 without a database.
+
 ## Shared Staging Notes
 
 When promoting this target from local staging to a shared host:
@@ -347,3 +363,77 @@ touches every card in ~167 files and would put the wrong level on many of them,
 so it is not a fix to make in passing — tracked in #2796, which also records
 that this same trap has now been patched per-page three times (#1242,
 `roster-editor.tsx`, and this one).
+
+## #4949 Action Outcomes Announced (2026-11-14)
+
+Member, payment and sign-in screens showed what had just happened (a declined
+card, a wrong sign-in code, a finished cancellation) as a coloured box that
+appeared already filled. Some screen-reader and browser pairs skip text inserted
+that way, so a blind member could not tell whether the action worked. The rule
+that now governs the surfaces below is in `docs/UX_FLOW_MAP.md` ("An outcome is
+never a bare styled box"): a failure goes in `FocusedActionError`, a result or
+progress line goes in a `StatusRegion` (a `role="status"` region mounted before
+the request, one home in `src/components/status-region.tsx`), and a control
+that disappears hands focus to the outcome that replaces it.
+
+Surfaces fixed, each with a component test in `src/components/__tests__/`,
+`src/lib/__tests__/` or beside its page:
+
+- **Card payments.** `PaymentForm` (decline alert, and a success status that
+  takes the focus Pay Now held), `SetupForm` (failed card save) and
+  `BookingPaymentWrapper` ("Preparing payment..." status). Both forms own their
+  failure, so the `onError` prop is gone and no caller shows the same decline a
+  second time.
+- **Pay-link page** (`/pay/[token]`). Loading and "Checking your payment..."
+  status lines, the card-start and fresh-link failures as alerts, and focus on
+  the "new link sent" confirmation and on "Checking your payment..." once the
+  card form is gone.
+- **Payment buttons.** Switch to internet banking and the guest payment link.
+- **Cancel booking.** One frame keeps a status region and an error alert
+  mounted across every step. Focus moves to each step's heading, back to
+  **Cancel Booking** after "Keep booking" or "Try Again", and to the override
+  reason when a cancellation is refused for want of a hosting override. The
+  success panel lives in `cancel-booking-success-panel.tsx` with its wording
+  unchanged.
+- **Sign-in and account.** Forgot, reset and change password, both
+  two-factor panels, the five profile cards (delete account, notification
+  preferences, Google account, two-factor security, data export) and delete
+  booking. Reset-password sets `aria-invalid` on each failing field, names its
+  own error first in `aria-describedby` and focuses the first failing field.
+  Change password has one form-level error and no field errors.
+- **Other public flows.** The contact form, the booking-request reply page,
+  and the membership-cancellation, nomination and partner-invite cards. Where the
+  reply or confirmation replaces the button that had focus (booking-request
+  reply, membership-cancellation and nomination cards), it takes the focus.
+
+Stated limits:
+
+- This is an automated, DOM-level check of roles, text and focus. It was not
+  run with a real screen reader (NVDA, JAWS or VoiceOver), which remains a human
+  manual-QA task as in the earlier sections.
+- The axe scan in the browser tests (#4466) checks a page as it first settles,
+  so it does not see text that appears only after an action. These component
+  tests are what hold the announcements in place.
+- Admin screens were out of scope.
+- A status line that is on screen from the moment its screen first renders
+  mounts already filled, so the "mounted before it is filled" rule cannot hold
+  for it. The pay-link page's "Loading..." and `BookingPaymentWrapper`'s
+  "Preparing payment..." carry `role="status"` but are not guaranteed to be read.
+  The same holds for the pay-link page's "Checking your payment...": it replaces
+  the whole page (a redirect return, #4955, or a card success), so the status
+  region is mounted with the text in it and takes the focus.
+- Not converted, because they are outside the locations #4949 lists: the
+  "Preparing payment..." line in `StripeProvider`; in `AdditionalPaymentCard`, the
+  "Loading payment details..." line, the box that reports a failure to load the
+  payment form and its own "Payment successful!" panel; the "Payment complete"
+  line on the organiser's group settlement; and the pay-link page's final
+  "Payment received" card, which replaces the whole page; and the pay-link page's
+  "Your payment did not go through" notice after a failed redirect return (#4955),
+  which appears with the pay options, not after an action on that page. Each is
+  plain text, not a status region.
+- Several outcomes are both a live region and the element that takes focus (the
+  cancel flow's loading line, the account-deletion confirmation, the fresh-link
+  confirmation, "Checking your payment...", the payment success and the
+  membership-cancellation and nomination confirmations). Whether a given screen
+  reader reads such a line once or twice is untested, so the manual screen-reader
+  pass should listen for it.

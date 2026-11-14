@@ -8,12 +8,16 @@
  * route shell past its 500-line budget for the first time, which the file-size
  * ratchet will not carry with an allowance. This branch was the cleanest seam:
  * its send state and its POST are read by nothing else on the page. Nothing
- * changed meaning in the move.
+ * changed meaning in the move. Its outcomes are announced (#4949): the sent
+ * confirmation in a status region and a failure in a recovery alert, both mounted
+ * before the request, and each takes focus where the button that asked went away.
  */
 import { useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 import { NarrativeCard, type Narrative } from "./pay-link-presentation";
 
 export function FreshLinkCard({ token, narrative }: { token: string; narrative: Narrative }) {
@@ -57,23 +61,24 @@ export function FreshLinkCard({ token, narrative }: { token: string; narrative: 
 
   return (
     <NarrativeCard narrative={narrative} tone="info">
-      {refreshState === "sent" ? (
-        <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
-          <CheckCircle2 className="h-5 w-5 shrink-0" />
-          <p>We&apos;ve emailed you a fresh payment link. Please check your inbox.</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
+      <div className="space-y-2">
+        {/* "Email me a new link" unmounts once the link is sent, so the
+            confirmation that replaces it takes focus. */}
+        <StatusRegion visible={refreshState === "sent"} outcomeKey={refreshState === "sent"}>
+          {refreshState === "sent" ? (
+            <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
+              <CheckCircle2 aria-hidden className="h-5 w-5 shrink-0" />
+              <p>We&apos;ve emailed you a fresh payment link. Please check your inbox.</p>
+            </div>
+          ) : null}
+        </StatusRegion>
+        {refreshState === "sent" ? null : (
           <Button onClick={requestFreshLink} disabled={refreshState === "sending"}>
             {refreshState === "sending" ? "Sending..." : "Email me a new link"}
           </Button>
-          {refreshError ? (
-            <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {refreshError}
-            </div>
-          ) : null}
-        </div>
-      )}
+        )}
+        <FocusedActionError id="payment-link-refresh-error" error={refreshError ?? ""} />
+      </div>
     </NarrativeCard>
   );
 }
