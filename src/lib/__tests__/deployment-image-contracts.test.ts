@@ -863,6 +863,17 @@ describe("deployment image contracts", () => {
       expect(publish).toContain("- secret-scan");
       expect(publish).not.toContain("- gitleaks-full-repo");
     });
+
+    it("releases only behind verify, which waits for the real-PostgreSQL suites (#4907)", () => {
+      // Since #4907 a red, cancelled or timed-out `realdb-all` run fails
+      // `verify`, and through it stops the release image. The verify half is
+      // pinned with verify's other steps above; this pins the release half,
+      // read from the parsed `needs:` so either YAML spelling counts.
+      const jobs = parseWorkflowYaml(readRepoFile(".github/workflows/ci.yml")).jobs;
+      const needs = jobs["publish-ghcr-images"]?.needs as string | string[] | undefined;
+
+      expect([needs ?? []].flat()).toContain("verify");
+    });
   });
 
   it("deploys the resolved commit SHA image references from the production script", () => {

@@ -1040,8 +1040,9 @@ jobs:
       # `realdb-all`. The script refuses absent, duplicate, skipped and failed
       # jobs, fails at once on the first failure, and times out rather than
       # making `verify` vacuously green. `realdb-all` is the slowest of them
-      # (17-26 minutes in Nov 2026); its 35-minute limit ends a hung run inside
-      # this poll's 45-minute wait, and both sit inside this job's 75.
+      # (18-25 minutes, median 23, over the 14 successful `main` push runs of
+      # 12-14 Nov 2026, measured for #4907); its 35-minute limit ends a hung
+      # run inside this poll's 45-minute wait, and both sit inside this job's 75.
       - name: Require the unit-test shards, typecheck, lint, build and real-PostgreSQL suites to pass
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1595,7 +1596,10 @@ jobs:
   # a cancellation, a timeout or a missing job included. So it never has a
   # job-level `if:` or `needs:` (a skip would fail `verify` on every PR), and
   # no job may name it in `needs:`; `realdb-ci-coverage-census.test.ts` fails
-  # on either, and on any reference besides that one poll.
+  # on either, and on any reference besides that one poll. Through `verify` it
+  # also gates the release: `publish-ghcr-images` needs `verify`, so a red,
+  # cancelled or timed-out run on `main` publishes no image for that commit
+  # (`deployment-image-contracts.test.ts` pins both links).
   #
   # The file list is `scripts/ci/realdb-files.mjs`: every realdb file minus
   # `scripts/ci/realdb-quarantine.txt`. The census reads the same two sources,
