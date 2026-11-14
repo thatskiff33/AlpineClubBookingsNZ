@@ -64,6 +64,7 @@ describe.skipIf(!RUN)("bed allocation lock preconditions in PostgreSQL", () => {
         where: { id: CLUB_MODULE_SETTINGS_ID },
         create: { id: CLUB_MODULE_SETTINGS_ID, bedAllocation: true },
         update: { bedAllocation: true },
+        select: { id: true },
       });
       const lodge = await tx.lodge.create({ data: { name: "Lock proof", slug: "lock-held-proof" } });
       const member = await tx.member.create({ data: {
