@@ -21,22 +21,28 @@ import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
   unreadable block fails instead of passing.
 */
 
-const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const WORKFLOWS = ["ci.yml", "e2e.yml", "money-coverage.yml"];
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
 
-function pushContext(branch, sha) {
+/** The `github` context values a concurrency expression may read. */
+type GithubContext = Record<string, string>;
+type Token = { kind: "string" | "op" | "name"; value: string };
+type ExpressionValue = string | boolean;
+type ConcurrencyBlock = Record<string, unknown>;
+
+function pushContext(branch: string, sha: string): GithubContext {
   return { event_name: "push", ref: `refs/heads/${branch}`, sha, workflow: "Workflow" };
 }
 
-function pullRequestContext(number, sha) {
+function pullRequestContext(number: number, sha: string): GithubContext {
   return { event_name: "pull_request", ref: `refs/pull/${number}/merge`, sha, workflow: "Workflow" };
 }
 
-function tokenize(source) {
-  const tokens = [];
+function tokenize(source: string): Token[] {
+  const tokens: Token[] = [];
   const pattern = /\s*(?:('(?:[^']|'')*')|(&&|\|\||==|!=)|([A-Za-z_][\w.-]*))/y;
   let index = 0;
   while (index < source.length) {
@@ -46,18 +52,18 @@ function tokenize(source) {
     if (!match) throw new Error(`Unsupported expression syntax at "${source.slice(index)}"`);
     if (match[1]) tokens.push({ kind: "string", value: match[1].slice(1, -1).replaceAll("''", "'") });
     else if (match[2]) tokens.push({ kind: "op", value: match[2] });
-    else tokens.push({ kind: "name", value: match[3] });
+    else tokens.push({ kind: "name", value: match[3] ?? "" });
     index = pattern.lastIndex;
   }
   return tokens;
 }
 
 /** A GitHub Actions expression over `github.*`: literals, ==, !=, && and ||, with their short-circuit values. */
-function evaluateExpression(source, github) {
+function evaluateExpression(source: string, github: GithubContext): ExpressionValue {
   const tokens = tokenize(source);
   let position = 0;
-  const peekOp = (op) => tokens[position]?.kind === "op" && tokens[position].value === op;
-  const primary = () => {
+  const peekOp = (op: string): boolean => tokens[position]?.kind === "op" && tokens[position]?.value === op;
+  const primary = (): ExpressionValue => {
     const token = tokens[position++];
     if (!token) throw new Error(`Expression ended early: ${source}`);
     if (token.kind === "string") return token.value;
@@ -66,11 +72,11 @@ function evaluateExpression(source, github) {
     if (token.kind === "name" && token.value.startsWith("github.")) {
       const key = token.value.slice("github.".length);
       if (!(key in github)) throw new Error(`The census has no value for ${token.value}`);
-      return github[key];
+      return github[key] as string;
     }
     throw new Error(`Unsupported token "${token.value}" in ${source}`);
   };
-  const equality = () => {
+  const equality = (): ExpressionValue => {
     const left = primary();
     for (const op of ["==", "!="]) {
       if (peekOp(op)) {
@@ -81,7 +87,7 @@ function evaluateExpression(source, github) {
     }
     return left;
   };
-  const and = () => {
+  const and = (): ExpressionValue => {
     let value = equality();
     while (peekOp("&&")) {
       position += 1;
@@ -90,7 +96,7 @@ function evaluateExpression(source, github) {
     }
     return value;
   };
-  const or = () => {
+  const or = (): ExpressionValue => {
     let value = and();
     while (peekOp("||")) {
       position += 1;
@@ -105,14 +111,14 @@ function evaluateExpression(source, github) {
 }
 
 /** A workflow value with its `${{ … }}` parts evaluated; a value that is one expression keeps its type. */
-function evaluateValue(value, github) {
+function evaluateValue(value: unknown, github: GithubContext): ExpressionValue {
   const text = String(value);
   const whole = /^\$\{\{(.*)\}\}$/s.exec(text.trim());
-  if (whole && !whole[1].includes("}}")) return evaluateExpression(whole[1], github);
-  return text.replace(/\$\{\{(.*?)\}\}/gs, (_, expression) => String(evaluateExpression(expression, github)));
+  if (whole?.[1] !== undefined && !whole[1].includes("}}")) return evaluateExpression(whole[1], github);
+  return text.replace(/\$\{\{(.*?)\}\}/gs, (_, expression: string) => String(evaluateExpression(expression, github)));
 }
 
-function cancels(concurrency, github) {
+function cancels(concurrency: ConcurrencyBlock, github: GithubContext): boolean {
   const value = evaluateValue(concurrency["cancel-in-progress"] ?? "false", github);
   return value === true || value === "true";
 }
@@ -122,30 +128,31 @@ function cancels(concurrency, github) {
  * replace another, or stops a pull request's newer run cancelling its older
  * one. Empty when the block keeps INV-OPS-019.
  */
-function concurrencyProblems(concurrency) {
-  if (!concurrency || typeof concurrency !== "object" || typeof concurrency.group !== "string") {
+function concurrencyProblems(concurrency: unknown): string[] {
+  if (!concurrency || typeof concurrency !== "object" || typeof (concurrency as ConcurrencyBlock).group !== "string") {
     return ["has no top-level concurrency block with a group"];
   }
-  const problems = [];
+  const block = concurrency as ConcurrencyBlock & { group: string };
+  const problems: string[] = [];
   for (const branch of ["main", "epic/example"]) {
-    const first = evaluateValue(concurrency.group, pushContext(branch, SHA_A));
-    const second = evaluateValue(concurrency.group, pushContext(branch, SHA_B));
+    const first = evaluateValue(block.group, pushContext(branch, SHA_A));
+    const second = evaluateValue(block.group, pushContext(branch, SHA_B));
     if (first === second) problems.push(`two pushes to ${branch} share the group "${first}", so one run replaces the other`);
     if (!String(first).includes(SHA_A)) problems.push(`a push to ${branch} has the group "${first}", which does not name its commit`);
-    if (cancels(concurrency, pushContext(branch, SHA_B))) problems.push(`a push to ${branch} cancels an in-progress run in its group`);
+    if (cancels(block, pushContext(branch, SHA_B))) problems.push(`a push to ${branch} cancels an in-progress run in its group`);
   }
   // An epic branch is usually cut at main's tip, so both push the same commit.
-  const mainPush = evaluateValue(concurrency.group, pushContext("main", SHA_A));
-  if (mainPush === evaluateValue(concurrency.group, pushContext("epic/example", SHA_A))) {
+  const mainPush = evaluateValue(block.group, pushContext("main", SHA_A));
+  if (mainPush === evaluateValue(block.group, pushContext("epic/example", SHA_A))) {
     problems.push(`a push to main and a push to epic/example of one commit share the group "${mainPush}"`);
   }
-  const older = evaluateValue(concurrency.group, pullRequestContext(7, SHA_A));
-  const newer = evaluateValue(concurrency.group, pullRequestContext(7, SHA_B));
+  const older = evaluateValue(block.group, pullRequestContext(7, SHA_A));
+  const newer = evaluateValue(block.group, pullRequestContext(7, SHA_B));
   if (older !== newer) problems.push(`a pull request's two runs fall in different groups ("${older}", "${newer}"), so the newer cannot cancel the older`);
-  if (older === evaluateValue(concurrency.group, pullRequestContext(8, SHA_A))) {
+  if (older === evaluateValue(block.group, pullRequestContext(8, SHA_A))) {
     problems.push(`two pull requests share the group "${older}"`);
   }
-  if (!cancels(concurrency, pullRequestContext(7, SHA_B))) problems.push("a pull request's newer run does not cancel its older one");
+  if (!cancels(block, pullRequestContext(7, SHA_B))) problems.push("a pull request's newer run does not cancel its older one");
   return problems;
 }
 

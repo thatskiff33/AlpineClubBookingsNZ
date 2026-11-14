@@ -812,6 +812,6 @@ token needs Actions read access.
   doc index) never judged its change. And a red `main` could not be traced to
   the merge that caused it. Being on `main`'s first-parent chain proved none of
   this.
-- Enforced by `scripts/ci/main-push-runs-complete.test.mjs`, which evaluates
+- Enforced by `scripts/ci/main-push-runs-complete.test.ts`, which evaluates
   each workflow's group for a push and a pull request, and by the
   `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
