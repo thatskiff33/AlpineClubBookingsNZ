@@ -211,8 +211,8 @@ blue/green production setup is in [`DEPLOYMENT.md`](DEPLOYMENT.md).
   migration-drift, static-analysis, and E2E checks are all required on `main`
   ([`docs/MAINTENANCE.md`](docs/MAINTENANCE.md)).
 - **Backups are drilled, not assumed.** S3-backed PostgreSQL backups are
-  configured in-app at Admin → Integrations → Database Backups (no `.env`
-  edits), run on demand or nightly, and ship with a scripted quarterly restore
+  configured in-app, through the Backup Setup wizard at Admin → Integrations
+  (no `.env` edits), run on demand or nightly, and ship with a scripted quarterly restore
   drill ([`DEPLOYMENT.md`](DEPLOYMENT.md),
   [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md)).
 

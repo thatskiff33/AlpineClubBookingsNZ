@@ -149,7 +149,7 @@ change one thing rather than set the whole thing up.
    (see below); the Display Layouts and Display Templates cards are the advanced,
    hand-authored path (Advanced mode).
 
-   ![Lobby Display hub showing the Display Devices, Display Builder, Display Layouts, Display Templates, and Display Reference cards](../images/admin/admin-display.png)
+   ![Lobby Display hub, captured before the cards were retitled: the Devices, Visual builder, Layouts (Advanced), Templates, and Reference cards](../images/admin/admin-display.png)
 
 ### 2. Pair a screen (Display Devices)
 

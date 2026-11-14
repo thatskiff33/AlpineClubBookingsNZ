@@ -23,7 +23,8 @@ import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permis
  * layout's own rule), so a Booking Officer keeps Rooms & Beds (lodge OR
  * bookings, #2937), which Booking Rules' per-area filter hid, and stops being
  * offered Booking Messages (`support`), which this page showed to every viewer.
- * Each card is titled with its page's registry label, the heading it opens.
+ * Each card is titled with its page's registry label, the name the command
+ * palette shows for that page.
  */
 const sections: AdminHubSection[] = [
   {
@@ -37,7 +38,7 @@ const sections: AdminHubSection[] = [
     href: adminHref("seasons"),
     title: getAdminPage("seasons").label,
     description:
-      "Maintain season windows and member/non-member nightly rates.",
+      "Maintain season windows (name, type, dates, and active state). Nightly rates are set under Fees.",
     icon: CalendarRange,
   },
   {

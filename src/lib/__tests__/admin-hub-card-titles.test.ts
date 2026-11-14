@@ -3,21 +3,30 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { ADMIN_PAGES, adminHref, getAdminPage, type AdminPageId } from "@/lib/admin-hubs";
+import { DISPLAY_GLOSSARY_LEAD } from "@/lib/lodge-display/display-terminology";
 
 /**
  * A hub card that opens a whole admin page is titled with that page's registry
- * label (follow-up to #4968): the name the sidebar, the palette and the page's
- * own heading show, so the card and the page it opens never disagree.
+ * label (follow-up to #4968): the name the command palette shows for that page,
+ * so a card and the registry never disagree about what a page is called.
  *
  * A hub card is an object literal with `href`, `title`, `description` and
  * `icon` (the `AdminHubSection` shape), in any production file under `src/`,
  * read as TSX so a comment cannot count. A setup-readiness step has no icon and
  * is named for the check, not the page it links to. A card's
- * `href` opens a whole page when it is `adminHref("<id>")` with no parameters,
- * or a string literal equal to a static page's old path or live href. A tab,
- * an anchor, a query string or a computed href opens a slice of a page, and
- * its card may name that slice; those are not checked. The title must be
- * `getAdminPage("<same id>").label`, or a string literal equal to the label.
+ * `href` opens a whole page when it is `adminHref("<id>")` or
+ * `adminLink("<id>").href` with no parameters, or a string literal equal to a
+ * static page's old path or live href. A tab, an anchor, a query string or a
+ * computed href opens a slice of a page, and its card may name that slice;
+ * those are not checked. The title must be `getAdminPage("<same id>").label`
+ * or `adminLink("<same id>").label`, or a string literal equal to the label.
+ *
+ * Why a census and not a helper that builds the whole card from one id: a card
+ * may name a slice of a page, so a helper that forced the label would be wrong
+ * for those; and the Display hub keeps literal hrefs, which the builder's
+ * `hardNavigate` guard reads from source, so it needs a census whatever the
+ * other hubs do. The census reads every form, so the older `adminLink` cards
+ * are held to the same rule as the new ones.
  */
 
 const ROOT = process.cwd();
@@ -77,16 +86,29 @@ interface HubCard {
   title: ts.Expression;
 }
 
+/** A property's name whether it is written bare, quoted or as a plain template. */
+function propertyName(name: ts.PropertyName): string | undefined {
+  return ts.isIdentifier(name) || ts.isStringLiteralLike(name) ? name.text : undefined;
+}
+
 function property(node: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
   for (const prop of node.properties) {
-    if (ts.isPropertyAssignment(prop) && prop.name.getText() === name) return prop.initializer;
+    if (ts.isPropertyAssignment(prop) && propertyName(prop.name) === name) return prop.initializer;
     if (ts.isShorthandPropertyAssignment(prop) && prop.name.text === name) return prop.name;
   }
   return undefined;
 }
 
-function isAdminHrefCall(node: ts.Expression): node is ts.CallExpression {
-  return ts.isCallExpression(node) && node.expression.getText() === "adminHref";
+/** `fn("<id>", …)`, the call itself, when `node` is one to the registry helper `fn`. */
+function registryCall(node: ts.Expression, fn: string): ts.CallExpression | undefined {
+  return ts.isCallExpression(node) && node.expression.getText() === fn ? node : undefined;
+}
+
+/** The call inside `adminLink("<id>").<member>`, when `node` is that. */
+function adminLinkMember(node: ts.Expression, member: "href" | "label"): ts.CallExpression | undefined {
+  return ts.isPropertyAccessExpression(node) && node.name.text === member
+    ? registryCall(node.expression, "adminLink")
+    : undefined;
 }
 
 /** Every hub card in `source`, and the page each opens whole. */
@@ -99,10 +121,11 @@ function hubCards(file: string, source: string): HubCard[] {
       const title = property(node, "title");
       if (href && title && property(node, "description") && property(node, "icon")) {
         const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1;
+        const call = registryCall(href, "adminHref") ?? adminLinkMember(href, "href");
         if (ts.isStringLiteralLike(href)) {
           cards.push({ line, href: href.text, pageId: STATIC_PAGE_BY_PATH.get(href.text) as AdminPageId, title });
-        } else if (isAdminHrefCall(href)) {
-          const [id, ...params] = href.arguments;
+        } else if (call) {
+          const [id, ...params] = call.arguments;
           const whole = id && ts.isStringLiteral(id) && params.length === 0;
           cards.push({ line, href: href.getText(tree), pageId: whole ? (id.text as AdminPageId) : undefined, title });
         }
@@ -118,11 +141,13 @@ function hubCards(file: string, source: string): HubCard[] {
 function titleValue(card: HubCard): string {
   const { title } = card;
   if (ts.isStringLiteralLike(title)) return title.text;
-  if (
-    ts.isPropertyAccessExpression(title) && title.name.text === "label" &&
-    ts.isCallExpression(title.expression) && title.expression.expression.getText() === "getAdminPage"
-  ) {
-    const [id] = title.expression.arguments;
+  // A page's label does not depend on the parameters its link takes.
+  const labelOf =
+    ts.isPropertyAccessExpression(title) && title.name.text === "label"
+      ? registryCall(title.expression, "getAdminPage") ?? adminLinkMember(title, "label")
+      : undefined;
+  if (labelOf) {
+    const [id] = labelOf.arguments;
     if (id && ts.isStringLiteral(id)) {
       if (id.text !== card.pageId) return `the label of ${id.text}, not of ${card.pageId}`;
       return getAdminPage(id.text as AdminPageId).label;
@@ -162,6 +187,9 @@ describe("admin hub cards are titled with their page's registry label", () => {
     // A literal href and an adminHref one, so both forms are seen.
     expect(checked).toContain("src/app/(admin)/admin/display/page.tsx: /admin/display/builder");
     expect(checked).toContain('src/app/(admin)/admin/integrations/page.tsx: adminHref("stripe-setup")');
+    expect(checked).toContain(
+      'src/app/(admin)/admin/membership/membership-setup/page.tsx: adminLink("membership-types").href',
+    );
     expect(checked.length).toBeGreaterThan(20);
   });
 
@@ -178,7 +206,19 @@ describe("admin hub cards are titled with their page's registry label", () => {
         .map((href) => `${file}: ${href}`)
         .filter((entry) => !exempted.includes(entry)),
     );
-    expect(stale, "a reviewed card is gone or now matches: drop it from EXEMPT").toEqual([]);
+    expect(
+      stale,
+      "a reviewed card is gone or now matches: drop it from EXEMPT. Once #4968 (PR #5107) and this test " +
+        "are both on main, set EXEMPT to {} and delete its comment.",
+    ).toEqual([]);
+  });
+
+  // The Display hub's lead is typed text, so it is pinned to the labels its
+  // cards now take from the registry: rename a page and this fails.
+  it("the Display hub's lead names its cards by their registry labels", () => {
+    for (const id of ["display-builder", "display-layouts", "display-templates", "display-reference"] as const) {
+      expect(DISPLAY_GLOSSARY_LEAD).toContain(getAdminPage(id).label);
+    }
   });
 
   it("reads each href and title form, and leaves slices of a page alone", () => {
@@ -192,6 +232,10 @@ describe("admin hub cards are titled with their page's registry label", () => {
       '  { href: `${adminHref("fees")}?lodgeId=1`, title: "x", description: "", icon },',
       '  { href: "/finance", title: "Finance Dashboard", description: "", icon },',
       '  { href: "/admin/display/builder", label: "not a card" },',
+      '  { href: adminLink("seasons").href, title: adminLink("seasons").label, description: "", icon },',
+      '  { href: adminLink("seasons").href, title: adminLink("fees").label, description: "", icon },',
+      '  { href: adminLink("seasons", { lodgeId: 1 }).href, title: "x", description: "", icon },',
+      '  { "href": adminHref("seasons"), "title": "Hut Fees", "description": "", "icon": icon },',
       "];",
     ].join("\n");
     const cards = hubCards("x.tsx", source);
@@ -201,12 +245,23 @@ describe("admin hub cards are titled with their page's registry label", () => {
       [4, 'adminHref("seasons")', "seasons"],
       [5, 'adminHref("fees")', "fees"],
       [8, "/finance", undefined],
+      [10, 'adminLink("seasons").href', "seasons"],
+      [11, 'adminLink("seasons").href', "seasons"],
+      [12, 'adminLink("seasons", { lodgeId: 1 }).href', undefined],
+      [13, 'adminHref("seasons")', "seasons"],
     ]);
-    expect(cards.slice(0, 4).map(titleValue)).toEqual([
+    const titles = cards.map(titleValue);
+    expect(titles.slice(0, 4)).toEqual([
       "Visual builder",
       getAdminPage("seasons").label,
       "the label of fees, not of seasons",
       "an unreadable title label",
+    ]);
+    expect(titles.slice(5)).toEqual([
+      getAdminPage("seasons").label,
+      "the label of fees, not of seasons",
+      "x",
+      "Hut Fees",
     ]);
   });
 });

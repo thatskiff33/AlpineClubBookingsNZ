@@ -48,8 +48,9 @@ module.
    - **Booking Policies** (`/admin/booking-policies`) — cancellation,
      minimum-stay, public-request and group-discount rules. See
      [Booking Policies](booking-policies.md).
-   - **Seasons** (`/admin/seasons`) — season windows and nightly
-     rates. See [Seasons](seasons.md).
+   - **Seasons** (`/admin/seasons`) — season windows (name, type, dates
+     and active state). Nightly rates are set under **Fees**, not here. See
+     [Seasons](seasons.md).
    - **Age Groups** (`/admin/age-tier-settings`) — age-tier boundaries and
      whether each tier needs a subscription to book.
    - **Promo Codes** (`/admin/promo-codes`) — booking discounts. See

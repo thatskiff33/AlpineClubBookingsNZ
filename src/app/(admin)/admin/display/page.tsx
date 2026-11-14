@@ -37,8 +37,8 @@ import {
 // all three. The definitions come from `display-terminology.ts` so the hub, the
 // Reference page and `docs/guides/display.md` cannot drift apart.
 //
-// Each card is titled with its destination's registry label, the heading the
-// admin lands on. The hrefs stay literal: the builder's `hardNavigate` guard in
+// Each card is titled with its destination's registry label, the name the
+// command palette shows for that page. The hrefs stay literal: the builder's `hardNavigate` guard in
 // `display-builder-csp-static.test.ts` reads them from source.
 const sections: AdminHubSection[] = [
   {

@@ -22,13 +22,13 @@ Reference**. Per-lodge display settings live on the lodge configuration hub
 
 ### 1. Pair the device
 
-1. In **Lobby Display → Devices** (`/admin/display/devices`), create a device
+1. In **Lobby Display → Display Devices** (`/admin/display/devices`), create a device
    record: give it a name (e.g. "Lobby TV") and it is bound to a lodge. The page
    shows the concrete display URL to open on the screen.
 2. On the TV/browser (or Raspberry Pi), open `/display`. Unpaired, it shows a
    short **pairing code**. The code expires after 15 minutes; a fresh one appears
    automatically.
-3. Back in the admin Devices page, enter/confirm that code against the device
+3. Back on the Display Devices page, enter/confirm that code against the device
    record. On its next poll the screen claims a long-lived, **hashed**,
    revocable display token (stored as an httpOnly cookie) and reloads into
    display mode. It survives reboots and network blips; re-pairing is only needed

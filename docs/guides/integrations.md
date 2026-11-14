@@ -9,8 +9,8 @@ provider-backed workflows. It holds a card per integration — **Xero Setup**,
 **Stripe Setup**, **Google Sign-in Setup**, **Google Analytics**, **Backup
 Setup**, **AI help assistant**, **Video Meetings Setup** and **Alpine Central
 Server Setup**. Most cards open that provider's own setup page and carry its
-name, the heading that page opens with; **Google Analytics** opens its settings
-in place, on the hub. Find it at **Admin → Setup &
+name from the admin page registry, the name admin search shows; **Google
+Analytics** opens its settings in place, on the hub. Find it at **Admin → Setup &
 Configuration → Integrations** (`/admin/integrations`).
 
 > **The hub itself is not feature-gated (#2216).** `/admin/integrations` is

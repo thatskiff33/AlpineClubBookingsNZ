@@ -3191,7 +3191,7 @@ dump file first; the script never touches S3 itself.
 To fetch a backup safely, use read-only S3 credentials from a workstation (never
 the production host) to copy one object out of the backup bucket. The backups
 live under the `tacbookings_s3backup/` prefix of the configured bucket. Read the
-destination **bucket** and **region** from **Admin → Integrations → Database
+destination **bucket** and **region** from **Admin → Monitoring & Support → Database
 Backups** (`/admin/backups`) — since #2095 the backup configuration lives in the
 encrypted in-app store, not in `BACKUP_S3_*` environment variables. Use your OWN
 read-only S3 credentials (from your operator secret store) rather than the app's

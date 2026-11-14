@@ -1831,7 +1831,9 @@ synthetic data.
 
 The app runs scheduled PostgreSQL dumps to S3-compatible storage. **Backups are
 configured in-app (#2095), not by environment variables.** Enable and configure
-them at **Admin → Integrations → Database Backups** (`/admin/backups`):
+them with the **Backup Setup** wizard (**Admin → Integrations → Backup Setup**),
+then edit them at **Admin → Monitoring & Support → Database Backups**
+(`/admin/backups`):
 
 - the **enabled** switch and the **retention** window (support-area edit),
 - the S3 **bucket** and **region** (Full Admin only — repointing the destination

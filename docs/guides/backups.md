@@ -26,14 +26,14 @@ received it.
 
 There are two ways in:
 
-- **Guided setup wizard** (`/admin/backups/setup`) — the **Database Backups** card
+- **Guided setup wizard** (`/admin/backups/setup`) — the **Backup Setup** card
   on **Admin → Integrations** opens this. It walks first-time setup step by step
   (S3 credentials → destination → turn on nightly backups → a real verification
   run) with the same guided experience as Stripe, Xero and Google sign-in, and
   will not let you jump ahead until each step is done.
-- **Flat backups page** (`/admin/backups`, also under the **System** section of
-  the admin sidebar) — the post-setup editing surface: status, configuration,
-  credentials, and run history all on one page.
+- **Flat backups page** (`/admin/backups`, the **Database Backups** link under
+  **Monitoring & Support** in the admin sidebar) — the post-setup editing
+  surface: status, configuration, credentials, and run history all on one page.
 
 Since #2095 the backup configuration lives entirely in the app (encrypted in the
 `IntegrationCredential` store) — there are no more `BACKUP_*` environment
@@ -99,7 +99,7 @@ ongoing configuration, credential rotation, and run history.
 The flat page exposes the same settings without the step gating, for edits after
 initial setup:
 
-1. Go to **Admin → Integrations → Database Backups**.
+1. Go to **Admin → Monitoring & Support → Database Backups**.
 2. In **AWS S3 Backup → Credentials (Full Admin only)**, enter the S3 **access
    key ID** and **secret access key**. These are write-only — once saved they are
    never shown again; leave a field blank to keep the current value.
@@ -117,8 +117,8 @@ initial setup:
 A local backup writes each dump to a directory on the machine running the app,
 as well as — or instead of — uploading it to S3.
 
-1. Go to **Admin → Integrations → Database Backups** and press **Edit** on the
-   **Local backup** panel.
+1. Go to **Admin → Monitoring & Support → Database Backups** and press **Edit**
+   on the **Local backup** panel.
 2. Tick **Enable local backups**.
 3. Check the **backup directory**. It is mandatory, and on a Docker deployment
    it is normally **already filled in** from `BACKUP_LOCAL_DIR` (see below) —

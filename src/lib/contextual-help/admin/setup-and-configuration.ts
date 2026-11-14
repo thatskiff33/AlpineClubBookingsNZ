@@ -158,7 +158,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         {
           name: "Seasons",
           description:
-            "Season windows and nightly rates used by booking pricing.",
+            "Season windows (name, type, dates, and active state) that booking pricing reads. Nightly rates are set under Fees.",
         },
         {
           name: "Rooms & Beds",

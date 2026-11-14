@@ -18,8 +18,8 @@ import { getIntegrationsNeedingReentry } from "@/lib/integration-credentials";
 import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permission-matrix";
 import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 
-// Each card is titled with its setup page's registry label, the heading the
-// admin lands on.
+// Each card is titled with its setup page's registry label, the name the
+// command palette shows for that page.
 const sections: AdminHubSection[] = [
   {
     href: adminHref("xero-setup"),
