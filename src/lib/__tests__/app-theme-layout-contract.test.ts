@@ -870,7 +870,7 @@ describe("database theme app-shell contract", () => {
     expect(themeSwitcher).not.toContain("text-foreground/75");
 
     const bedAllocationSources = listSourceFiles(
-      "src/app/(admin)/admin/bed-allocation/_components",
+      "src/app/(admin)/admin/booking-desk/bed-allocation/_components",
     ).map(readRepoFile);
     expect(bedAllocationSources.join("\n")).not.toContain("tintClassName");
     expect(bedAllocationSources.join("\n")).not.toMatch(

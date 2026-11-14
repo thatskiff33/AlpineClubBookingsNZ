@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
+  readSupersededCaptureHeldBack: vi.fn().mockResolvedValue({ byTransaction: new Map(), totalCents: 0 }),
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn().mockResolvedValue(null),
   bookingFindUnique: vi.fn(),
@@ -17,6 +18,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/auth", () => ({
   auth: mocks.auth,
+}));
+
+// #4872: the superseded-capture hold-back read; none unless a test says.
+vi.mock("@/lib/superseded-capture-hold-back", () => ({
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mocks.readSupersededCaptureHeldBack(...args),
 }));
 
 vi.mock("@/lib/session-guards", () => ({
@@ -58,6 +64,7 @@ describe("POST /api/bookings/[id]/refund-request", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.cardDebtPaymentFindUnique.mockResolvedValue(null);
+    mocks.readSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map(), totalCents: 0 });
     mocks.auth.mockResolvedValue({
       user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] },
     });
@@ -217,6 +224,25 @@ describe("POST /api/bookings/[id]/refund-request", () => {
     const response = await appealFor(7500);
 
     expect(response.status).toBe(201);
+    expect(mocks.refundRequestCreate).toHaveBeenCalledTimes(1);
+  });
+
+  // #4872 (`INV-PAY-150`): a live superseded capture is not cash the approval
+  // can approve against, so the member may not ask for it either.
+  it("caps the appeal net of a live superseded capture's hold-back (#4872)", async () => {
+    cancelledAfterEdit();
+    mocks.readSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map([["txn-superseded", 2000]]), totalCents: 2000 });
+
+    const refused = await appealFor(7500);
+    expect(refused.status).toBe(400);
+    await expect(refused.json()).resolves.toEqual({
+      error: "Requested amount exceeds maximum refundable amount of $55.00",
+    });
+    expect(mocks.readSupersededCaptureHeldBack).toHaveBeenCalledWith(expect.anything(), "payment-1");
+    expect(mocks.refundRequestCreate).not.toHaveBeenCalled();
+
+    const allowed = await appealFor(5500);
+    expect(allowed.status).toBe(201);
     expect(mocks.refundRequestCreate).toHaveBeenCalledTimes(1);
   });
 

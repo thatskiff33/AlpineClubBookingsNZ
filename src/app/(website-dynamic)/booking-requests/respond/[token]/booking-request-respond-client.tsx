@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion, useFocusOnOutcome } from "@/components/status-region";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirm } from "@/components/confirm-dialog";
 import { Label } from "@/components/ui/label";
@@ -85,6 +87,9 @@ function formatQuoteExpiry(value: string, club: BoundClubTime): string {
   }
 }
 
+// Shown on the accepted panel and spoken by the status region (#4949).
+const QUOTE_ACCEPTED = "Your quote has been accepted.";
+
 export function BookingRequestRespondClient({ token }: { token: string }) {
   const format = useClubFormat();
   /*
@@ -106,6 +111,15 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
   const [actioning, setActioning] = useState<Action | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // #4949: every outcome replaces the form, so it is also spoken from a status
+  // region mounted with the card rather than appearing silently.
+  const [announcement, setAnnouncement] = useState("");
+  // #4949: sending a reply replaces the whole form, and the button that had
+  // focus with it, by the outcome panel. The panel takes focus once; the
+  // announcement region below is what reads it out.
+  const outcomeRef = useRef<HTMLDivElement>(null);
+  const [outcomeCount, setOutcomeCount] = useState(0);
+  useFocusOnOutcome(outcomeRef, outcomeCount);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,6 +190,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
     setActioning(action);
     setError(null);
     setResult(null);
+    setAnnouncement("");
     try {
       const res = await fetch(`/api/booking-requests/respond/${encodeURIComponent(token)}`, {
         method: "POST",
@@ -202,12 +217,18 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
           declineReason: null,
           declinedAt: null,
         } : current);
-      } else if (data.outcome === "cancelled") {
-        setResult("Quote cancelled. We have let the booking team know.");
-      } else if (data.outcome === "modification_requested") {
-        setResult("Change request sent. The booking team will review it and send a new quote.");
+        setAnnouncement(QUOTE_ACCEPTED);
+        setOutcomeCount((count) => count + 1);
       } else {
-        setResult("Question sent. The booking team will reply or send an updated quote.");
+        const outcome =
+          data.outcome === "cancelled"
+            ? "Quote cancelled. We have let the booking team know."
+            : data.outcome === "modification_requested"
+              ? "Change request sent. The booking team will review it and send a new quote."
+              : "Question sent. The booking team will reply or send an updated quote.";
+        setResult(outcome);
+        setAnnouncement(outcome);
+        setOutcomeCount((count) => count + 1);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to send your response.");
@@ -251,16 +272,16 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
             <p>{error || "Unable to load this quote right now."}</p>
           </div>
         ) : result ? (
-          <div className="flex gap-3 text-success-11">
+          <div ref={outcomeRef} tabIndex={-1} className="flex gap-3 text-success-11 outline-none">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
             <p className="font-medium">{result}</p>
           </div>
         ) : context.accepted ? (
           <>
-            <div className="flex gap-3 text-success-11">
+            <div ref={outcomeRef} tabIndex={-1} className="flex gap-3 text-success-11 outline-none">
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
               <div>
-                <p className="font-medium">{context.declinedAfterAcceptance ? "The booking team could not approve this request." : "Your quote has been accepted."}</p>
+                <p className="font-medium">{context.declinedAfterAcceptance ? "The booking team could not approve this request." : QUOTE_ACCEPTED}</p>
                 <p className="text-sm text-muted-foreground">{context.declinedAfterAcceptance ? context.declineReason || "Please contact the club if you would like to discuss other dates." : "The booking team will review it before confirming your stay. Your places remain held while they review it."}</p>
                 {context.declinedAfterAcceptance && context.declinedAt ? (
                   <p className="text-sm text-muted-foreground">Declined {formatQuoteExpiry(context.declinedAt, clubTime)}</p>
@@ -364,11 +385,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
               />
             </div>
 
-            {error ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
+            <FocusedActionError id="booking-request-respond-error" error={error ?? ""} />
 
             <div className="flex flex-wrap gap-2">
               <Button
@@ -401,6 +418,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
             </div>
           </>
         )}
+        <StatusRegion>{announcement}</StatusRegion>
       </CardContent>
       {confirmDialog}
     </Card>

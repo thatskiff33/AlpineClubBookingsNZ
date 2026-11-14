@@ -10,6 +10,7 @@
  * in `XeroConnection`. The old `XeroToken` table is gone.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
@@ -28,6 +29,7 @@ import {
   withCredentialTransaction,
 } from "@/lib/integration-credentials";
 import { XERO_PROVIDER } from "@/lib/xero-config";
+import { xeroTestClientOverride } from "./xero-test-client-override";
 import {
   isConnectedTenant,
   readXeroConnection,
@@ -127,7 +129,7 @@ export type XeroTokenRefreshLeaseClaim =
 // container has just rotated can never be served stale from this process.
 
 /** The credential-store namespace for the Xero OAuth token set. */
-export const XERO_OAUTH_TOKEN_PROVIDER = "xero-oauth";
+export const XERO_OAUTH_TOKEN_PROVIDER = "xero-oauth" satisfies IntegrationCredentialNamespace;
 /** The one row in that namespace. */
 export const XERO_OAUTH_TOKEN_KEY = "token-set";
 
@@ -442,9 +444,11 @@ export async function releaseXeroTokenRefreshLease(lease: XeroRefreshLease): Pro
 }
 
 /**
- * Check if Xero is currently connected (a connection row that names a tenant).
+ * Check if Xero is currently connected (a connection row that names a tenant),
+ * or a test has installed an in-memory Xero session (#4908).
  */
 export async function isXeroConnected(): Promise<boolean> {
+  if (xeroTestClientOverride()) return true;
   return isConnectedTenant(await readXeroConnection());
 }
 
