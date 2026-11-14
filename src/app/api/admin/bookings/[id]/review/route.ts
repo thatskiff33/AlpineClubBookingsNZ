@@ -15,6 +15,7 @@ import {
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 
@@ -239,6 +240,7 @@ export async function PATCH(
 
     if (legacyDraft) {
       await reconcileBedAllocationsForBookingWithLodgeLockHeld({ bookingId, db: tx });
+      await releaseBookingPromoRedemptions(tx, bookingId);
     }
     return current;
   });

@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { enclosingFunction } from "./support/function-scope";
 
 // Discover Member write payloads, following local aliases, spreads, conditional
 // branches and property assignments. A new writer fails by identity instead of
@@ -15,12 +16,6 @@ function visit(root: ts.Node, fn: (node: ts.Node) => void): void {
 function key(node: ts.PropertyName): string {
   if (ts.isComputedPropertyName(node)) return node.expression.getText().replace(/["']/g, "");
   return node.getText().replace(/["']/g, "");
-}
-
-function scopeOf(node: ts.Node): ts.Node {
-  let current = node.parent;
-  while (current && !ts.isFunctionLike(current) && !ts.isSourceFile(current)) current = current.parent;
-  return current ?? node.getSourceFile();
 }
 
 type Fields = { active: ts.Expression[]; cancelledAt: ts.Expression[]; leavingDate: ts.Expression[]; opaque: string[] };
@@ -76,7 +71,7 @@ function payloadFields(expression: ts.Expression, seen = new Set<ts.Node>()): Fi
     }
     if (binding?.initializer) merge(payloadFields(binding.initializer, seen));
     if (!binding) result.opaque.push(expression.getText());
-    const owner = binding ? scopeOf(binding) : scopeOf(expression);
+    const owner = binding ? enclosingFunction(binding) : enclosingFunction(expression);
     visit(owner, (node) => {
       if (!ts.isBinaryExpression(node) || node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return;
       if (ts.isIdentifier(node.left) && node.left.text === expression.text) merge(payloadFields(node.right, seen));

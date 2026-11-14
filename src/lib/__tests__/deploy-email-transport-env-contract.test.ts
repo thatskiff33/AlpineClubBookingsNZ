@@ -206,7 +206,7 @@ function render(
     appService("app", 5),
     appService("app_blue", 10),
     appService("app_green", 10),
-    `  caddy:\n    environment:\n${env({ ...CADDY_ENV, ...options.caddy })}\n    image: caddy:2-alpine\n    volumes:\n      - type: volume`,
+    `  caddy:\n    environment:\n${env({ ...CADDY_ENV, ...options.caddy })}\n    image: caddy:2-alpine@sha256:${"a".repeat(64)}\n    volumes:\n      - type: volume`,
     `  migrate:\n    environment:\n${env({ DATABASE_URL: url(2) })}\n    image: migrate:local`,
     `  postgres:\n    command:\n${(options.postgresCommand ?? POSTGRES_COMMAND).map((item) => `      - ${item}`).join("\n")}\n    environment:\n      POSTGRES_DB: tacbookings\n    image: postgres:16-alpine`,
     "volumes:",
@@ -249,6 +249,8 @@ ${lift([
   "require_resolved_caddy_legacy_upstream",
   "require_integer_setting_in_range",
   "validate_resolved_postgres_max_connections",
+  "compose_service_image_ref",
+  "resolve_caddy_image_ref",
   "validate_caddy_contract",
 ])}
 ${exactLine('CADDY_VALIDATION_ENV_FILE=""')}

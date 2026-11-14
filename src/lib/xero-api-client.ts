@@ -13,6 +13,7 @@
  */
 
 import { XeroClient } from "xero-node";
+import { xeroTestClientOverride } from "./xero-test-client-override";
 import logger from "@/lib/logger";
 import {
   recordXeroApiUsage,
@@ -224,6 +225,9 @@ export async function getAuthenticatedXeroClient(): Promise<{
 }> {
   throwIfXeroDailyLimitActive();
 
+  // Test-only seam (#4908): skips tokens; the latch, callXeroApi and retries still run.
+  const testClient = xeroTestClientOverride();
+  if (testClient) return testClient;
   const tokens = await loadXeroTokens();
   if (!tokens) {
     throw new XeroReconnectRequiredError("Xero is not connected. Please connect via admin panel.");

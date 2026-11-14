@@ -272,7 +272,7 @@ actor. The store, `internal/store.ts`, is the one writer of these tables. It
 looks up a replay first, then completes corrections, then writes in the order
 the foreign keys need. `reverseMemberMoneyJournal` posts the exact whole-batch
 reversal under the journal's own key, so a retry replays. Outside the store a
-journal delegate is only ever read (`member-money-journal-inert-census.test.ts`).
+journal delegate is only ever read (`member-money-journal-writer-census.test.ts`).
 M4a (#4691) added applications, exact reversals and conservation checks. M4b
 (#4516) uses them for receipts through `postBookingReceipts`, and M4c for card
 refunds: R05 at the doors, a reservation before each slice, R12/R13 in the one
@@ -649,7 +649,9 @@ cash. The owner resolves the already-open private history decisions and runs
 production proof privately; agents use only synthetic fixtures here.
 
 [#4460](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4460)'s stateful
-Xero/Stripe fakes are prerequisites for activating each provider pair. Test
+Xero/Stripe fakes, served to the app's real provider clients by
+[#4908](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4908)'s test
+transports, are prerequisites for activating each provider pair. Test
 render → ingest → no new economic posting, and inbound fact → render → echo →
 no duplicate, for **every** row of sections 4/7 and section 9. Contract fixtures
 must exercise actual provider object shape/status restrictions; no live provider
@@ -707,7 +709,7 @@ rendering are active and its test passes; this design closes no bug by itself.
 | #4336 | Old live reading cannot revive a voided refund note | R23 and section 6: terminal tombstone before timestamp comparison |
 | #4347 | Old reading cannot revive/count a voided account-credit note | R09/R23: same object-head terminal rule; grant liability and document coverage stay distinct |
 | #4362 | Fully-credit-paid or zero-priced booking posts charges and balances zero | R01/R10: charges are independent of cash settle; credit applies equal liability, explicit zero event needs no fake receipt |
-| #4369 | Failed card refund then bank hand-back shows Stripe return and separate bank payment | R13 reverses the card refund; R14 pays the same RP by bank; section 7 renders #4361's reversal plus bank note |
+| #4369 | Failed card refund then bank hand-back shows Stripe return and separate bank payment | R13 reverses the card refund; R14 pays the same RP by bank; section 7 renders #4361's reversal plus bank note. The current queue (10 Nov 2026) reverses the covered cents and queues the bank note on this close; M13 must still render that reversal and that bank note from the ledger |
 | #4370 | Later Xero note cannot make failed card refund count again | R13/R23 and ownership: Stripe owns card cash; Xero changes coverage/applications only |
 | #4380 | Late 5000-cent capture/refund on cancelled booking leaves matching Xero pair, net zero | R24/R06/R12: matched source pair and per-capture manifest; no unrelated cancellation invoice credit |
 | #4381 | Paid-another-way close records kept 8000-cent change once on invoice already billing it | R24/R14: distinct retained receipt and bank hand-back with exact obligation/coverage; no repeated change revenue |
@@ -936,12 +938,12 @@ than opening a competing implementation lane.
 | M5 — Post member credit through one liability | R09–R11/R22 planning, funding lots, approvals, restore provenance and compatibility `MemberCredit` linkage; D4's member-merge transfer for the balances it posts; conservation report, no new provider authority. | M1, M3; M4 for refund-to-credit obligations; D4 (decided) | High: credit/money |
 | M6 — Post organiser receipts and child obligations | R15 with combined invoice/source coverage, one cash receipt and frozen child applications/refunds; prove group sums and avoid child double counting. | M3–M5 | High: group settlement |
 | M7 — Post subscriptions and joining/member fees | R18–R20 from immutable snapshots, family recipient/coverage, manual-paid/cancellation behaviour; local charge evidence works without Xero delivery. | M1; M4 for settlement adapters; D3 before tax activation | High: membership/money |
-| M8 — Record provider fees and clearing transfers | R16/R17, source-identity fee/payout evidence and reversal, settings/account coding; clearing report without bank-reconciliation UI. | M1, M4; #4460 contract fixtures before provider activation | High: provider/accounting |
+| M8 — Record provider fees and clearing transfers | R16/R17, source-identity fee/payout evidence and reversal, settings/account coding; clearing report without bank-reconciliation UI. | M1, M4; #4908: the provider transports and owner-captured `recorded-sandbox` fixtures before provider activation (#4460's fakes alone do not meet it) | High: provider/accounting |
 | M9 — Prove and back-post the complete journal | R26 dry-run/apply tool, exact adopted provider coverage, missing-source report and structural/legacy parity census, owner-run command card and tested rollback reconstruction. No read switch. | M2–M8; D3; discharge original #3584 history blockers | High: historical money |
-| M10 — Route every Xero member-money change through one door | Versioned inbox/object heads, ownership registry, echo/stale/void handling, outside-spend/reversal and tasks; cohort activation plus old-worker drain and journal-derived compatibility. Remove replaced recount mutations. | M4–M9, D2/D3, #4460 proofs for each pair | Critical: inbound authority/concurrency |
+| M10 — Route every Xero member-money change through one door | Versioned inbox/object heads, ownership registry, echo/stale/void handling, outside-spend/reversal and tasks; cohort activation plus old-worker drain and journal-derived compatibility. Remove replaced recount mutations. | M4–M9, D2/D3, per-pair proofs run through the #4908 transports (the #4460 fakes behind the app's real clients) | Critical: inbound authority/concurrency |
 | M11 — Establish #3584 reader projections and parity | Shared pure statement/balance/store and golden corpus, extend existing parity census to journal accounts without moving a surface. | M9; existing whole-history `GATE_OPEN` | High: reader correctness |
 | M12 — Move #3584 surfaces in their approved order | Separate reader PRs: officer panel, member panel, history, confirmation, finance, modification email and data export. Preserve blueprint pins, instrument reads and approval rules; each surface reverts alone. | M11; each surface's parity/decision gates; M10 before exposing newly accepted inbound facts | High: member-visible money |
-| M13 — Render all Xero member-money documents from manifests | Fold #3585 into pure rendering/coverage/adoption for bookings, groups, credit, subscriptions, fees and Stripe events. Ship separate document cohorts with legacy-key continuity and complete round-trip proof. | M9–M11, M10, #4460, D3; relevant #4361 stage approvals | Critical: external accounting |
+| M13 — Render all Xero member-money documents from manifests | Fold #3585 into pure rendering/coverage/adoption for bookings, groups, credit, subscriptions, fees and Stripe events. Ship separate document cohorts with legacy-key continuity and complete round-trip proof. | M9–M11, M10, #4908 (round-trip proof through the app's real clients over the #4460 fakes), D3; relevant #4361 stage approvals | Critical: external accounting |
 | M14 — Receive internet-banking payments without Xero | Configured bank details, stable unique references, finance permission/audit receipt workflow, partial receipt and duplicate/source association; journal-derived status and member instructions. No statement/invoice sending engine. | M4, M7, M11 and applicable M12 views; independent of M13 | High: money/auth/UI |
 | M15 — Move the remaining financial decision inputs | #3586 blueprint's C5b/C6b/C5c scopes: extra screens/SQL, Xero non-line amounts, refund/cancel/ask decisions, diagnostics, backup sentinels, operator tools; one cohort per PR, preserved collection policy and exact legacy-case resolution. | M10–M13, all relevant reader proof; reconcile #4361 exact-answer migration | Critical: decisions from money |
 | M16 — Stop writing mirrors and retire reconstruction | #3586 stop-writing release: compatible nullable/ignored columns, remove writes and mirror-only guards, contract census, remove drained repair arms, executable reconstruction/downgrade rehearsal and operator rollback records. | M15 deployed/drained, M14 behaviour covered or no old IB dependency, all source/repair inventories closed | Critical: blue/green money |
@@ -962,7 +964,7 @@ recorded on [#4898](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4
 "every formerly parked Xero and payment bug is released. Each may be fixed now,
 ordered by harm, ahead of the ledger steps." Section 9's scenarios remain
 acceptance tests the new writers must pass through PostgreSQL and the #4460
-fakes.
+fakes, behind the #4908 transports.
 
 ## 12. Related references
 
@@ -986,5 +988,6 @@ Read the complete threads before implementing: [#3527](https://github.com/thatsk
 [#4451](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4451),
 [#4453](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4453),
 [#4460](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4460),
-[#4461](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461) and
-[#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482).
+[#4461](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4461),
+[#4482](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4482) and
+[#4908](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4908).

@@ -11,6 +11,7 @@ the demo seed (`prisma/demo-seed.ts`).
 | Spec | Matrix row | Journey |
 | --- | --- | --- |
 | `e2e/booking-create-rate-isolation.spec.ts` | Booking-create retry isolation (#2599, Medium) | Provider-independent real-route proof: unauthenticated attempt/retry probes stop at the auth boundary only after the production `bookingCreate` limiter runs, and read-only snapshots prove each exact synthetic-IP key advanced in the shared PostgreSQL `RateLimitCounter` store rather than the in-process fallback. Run before the waitlist and whole-lodge specs on the same prepared isolated stack. |
+| `e2e/shared-network-sign-out.spec.ts` | Shared-network sign-in budget (#4917) | From a private synthetic address, a signed-in member spends the address sign-in budget with credential POSTs until one answers 429 with `ADDRESS_THROTTLED` and `Retry-After`. Log out still ends the session, and a password sign-in from that address shows the network wait. A retry takes a fresh address |
 | `e2e/passkey-second-factor.spec.ts` | Passkey as a second sign-in step (#4617) | Profile saves a passkey through a virtual authenticator (CDP `WebAuthn.addVirtualAuthenticator`, ctap2, internal transport, user verification, resident key, automatic presence). Sign out, then password and "Use your passkey", then the confirm-it's-you dialog uses the same passkey. The authenticator is attached before registration |
 | `e2e/two-factor-login.spec.ts` | Global two-factor enforcement (Critical) | Forced TOTP enrollment on first login, recovery codes, protected-route gating for unverified sessions, wrong-code rejection, TOTP re-login, single-use recovery codes; successful product actions must render the Payments heading or the protected **Confirm member details** dialog with its **Save and continue** or **Confirm details are correct** control (#4246) |
 | `e2e/two-factor-email.spec.ts` | Global two-factor enforcement — email method (Critical) | Forced **email-code** enrollment on first login (send → capture the emailed code from the mailpit SMTP capture → enroll → recovery codes), then an email-code re-login that rejects a wrong code and accepts the emailed one. The code is read back over mailpit's HTTP API (`e2e/helpers/mailpit.ts`); no live mail provider is used. Enrollment Continue and accepted verification must render the member dashboard |
@@ -117,12 +118,23 @@ each attempt. Stripe retains its test-mode credential prerequisite and loud skip
 when keys are absent. Neither project uses live provider credentials.
 
 For a small, database-free test of the fixture, run
-`pnpm run test:e2e:a11y-fixture`. It serves synthetic pages through Playwright
-routing and checks both clean pages and expected axe failures with attached
-reports. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` may select a preinstalled browser
-for this contract test. CI does not run it, so run it locally before pushing any
+`pnpm run test:e2e:a11y-fixture` from the repository root. The axe specs serve
+synthetic pages through Playwright routing and check both clean pages and
+expected axe failures with attached reports.
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` may select a preinstalled browser for
+this contract test. CI does not run it, so run it locally before pushing any
 change to `e2e/helpers/accessibility.ts`, its allowlist or the Playwright
-config: without it, broken instrumentation would leave the journeys green. Run real journeys against a prepared local stack via
+config: without it, broken instrumentation would leave the journeys green.
+
+The dialog-viewport spec (#4967) is different. It starts a local Vite server on
+127.0.0.1 and mounts the real shared dialog, confirmation, `Select` and command
+palette with the app's `globals.css`, then checks at 320 × 256 that their
+buttons, close button, search box and last items stay reachable. Run it
+locally before changing `src/components/ui/dialog.tsx`, `command.tsx`,
+`select.tsx`, `src/components/confirm-dialog.tsx` or `src/app/globals.css`.
+CI does not run it; `dialog-viewport-cap.test.tsx` is the CI guard.
+
+Run real journeys against a prepared local stack via
 `E2E_PRESERVE_AUTH_STATE=1 pnpm run test:e2e:run --project=mobile --no-deps` (setup storage states must
 already exist). CI discovers mobile through the existing Playwright config.
 
