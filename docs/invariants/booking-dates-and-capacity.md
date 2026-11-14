@@ -602,7 +602,7 @@ owner decisions on #3820):
   `INV-DATE-027`; adding days to a document date is `INV-DATE-028`; and *the
   member booking calendar and the admin kiosk deliberately derive today from the
   BROWSER's calendar day* (`src/components/booking-calendar.tsx`,
-  `src/app/(admin)/admin/book/page.tsx`, #2474, `INV-DATE-014`), so "one way to
+  `src/app/(admin)/admin/booking-desk/book/page.tsx`, #2474, `INV-DATE-014`), so "one way to
   ask" holds for server-side and club-facing derivations, not literally
   everywhere. Any comparison the SERVER then makes is still the club day.
 
@@ -672,7 +672,7 @@ owner decisions on #3820):
 - **Client-side, a selected lodge night is an NZ date-only `yyyy-MM-dd` string
   carried end-to-end.** The booking calendar (`src/components/booking-calendar.tsx`),
   the member booking wizard, and the admin "book on behalf" kiosk
-  (`src/app/(admin)/admin/book/page.tsx`) never hold a lodge night as a
+  (`src/app/(admin)/admin/booking-desk/book/page.tsx`) never hold a lodge night as a
   local-midnight `new Date(year, month, day)` (#2474): that is midnight in the
   BROWSER's zone, off by one for a booker far enough from New Zealand the moment
   it reaches an instant-based API. The value submitted, the club-pinned label,
@@ -823,6 +823,25 @@ owner decisions on #3820):
   cross-lodge in the surface that shows it. A single-lodge club is simply a
   club whose `Lodge` table has one active row — the same per-lodge rules apply
   with the lodge dimension hidden by the ADR-002 presentation rule.
+
+### INV-CAP-039
+
+- Every member- or guest-facing screen that shows or takes payment for an
+  existing booking names that booking's lodge, read from the booking row
+  (`booking.lodge.name`, or the payment-link context's `lodgeName`) and never
+  the club's default lodge (#2918, #2919). A screen that asks someone to review
+  or pay must show every fact that tells one booking from another, and the
+  lodge is one of them (#4948).
+- The booking page's Stay Details card, the public payment link's payable card
+  and the arrival card name the lodge **always**, in a one-lodge club too, as
+  the booking wizard's review step does (#2701): a screen that looks the same
+  whether or not the lodge is right cannot warn anyone.
+- Member booking **lists** (My Bookings and the dashboard's Next Stay, draft
+  and Recent Bookings rows) follow the ADR-002 presentation rule through one
+  helper, `bookingListLodgeLabel` in `src/lib/lodges.ts`: the name shows unless
+  exactly one lodge is active, and always on a row whose lodge is archived. The
+  active-lodge count is read on the server, never from a client-side list that
+  can fail to load. Admin booking screens and emails are outside this rule.
 
 ### INV-CAP-002
 

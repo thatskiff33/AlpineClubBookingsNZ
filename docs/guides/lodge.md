@@ -327,6 +327,7 @@ whom.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| Sign-in says too many attempts from this network | Members on shared wifi have used the network sign-in budget | Wait a few minutes before retrying. For an emailed sign-in link, leave the wait screen open and press **Try again** after waiting, or reopen the email link while it is valid. Signing out still works |
 | Lodge Kiosk is missing from the sidebar / 404s | The `kiosk` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view the lodge kiosk accounts but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | "Lodge account not found. Run the database seed to create it." | The kiosk account row is missing | Seed the database, or create the account (multi-lodge) |

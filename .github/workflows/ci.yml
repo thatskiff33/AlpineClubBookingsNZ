@@ -180,7 +180,7 @@ jobs:
       contents: read
       security-events: write # upload Semgrep SARIF to GitHub code scanning
     env:
-      SEMGREP_IMAGE: semgrep/semgrep:1.161.0
+      SEMGREP_IMAGE: semgrep/semgrep:1.161.0@sha256:326e5f41cc972bb423b764a14febbb62bbad29ee1c01820805d077dd868fea48
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -630,7 +630,9 @@ jobs:
           cache: pnpm
 
       - name: Check action SHA pins
-        run: node scripts/ci/check-action-pins.mjs
+        run: |
+          node scripts/ci/check-action-pins.mjs
+          node scripts/ci/check-image-pins.mjs
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -1062,7 +1064,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -1075,7 +1077,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       concurrency-race-postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -1287,6 +1289,18 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-moved-row-races.realdb.test.ts
+      # #4860: member merge try-locks the duplicate's captured bookings inside
+      # the attempt and, on a shortfall, rolls that attempt back before waiting
+      # for the one busy booking. Only this suite shows PostgreSQL forms no
+      # wait-for cycle with a writer that holds one of those bookings and then
+      # updates the other, and that the old crossed order still deadlocks once
+      # merge is taken out of it. It self-skips without the env vars (same
+      # #1881 harness and database), so `review-findings-contracts.test.ts`
+      # fails if this step goes missing.
+      - name: Test member-merge booking-row races against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-merge-booking-row-races.realdb.test.ts
 
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by
@@ -1486,7 +1500,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -1598,7 +1612,7 @@ jobs:
       contents: read
     services:
       concurrency-race-postgres:
-        image: postgres:16-alpine
+        image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

@@ -904,9 +904,22 @@ reduction gives back applied credit through the same deallocation - all of a
 credit-paid booking's tiered reduction, or what a card-and-credit booking's
 card basis could not return - and `queueXeroBookingEditSettlement` takes it as
 `appliedCreditGiveBackCents`: always an allocated note of its own, worded as
-account credit - alone where nothing else was refunded, or beside the card or
-bank refund's note or a credit election's unallocated one, since one note names
-one method (`INV-PAY-101`). It rides the per-share key slot
+account credit - alone where nothing else was refunded, or beside a bank, cash,
+or invoice-correction modification note, or beside the refund note a Stripe card
+refund raises (#3993), or beside a credit election's unallocated one, since one
+note names one method (`INV-PAY-101`). Since #3993 a Stripe card refund of a
+price cut, an ordinary edit and a live booking's edit review alike, is that
+cancellation refund note: unallocated, settled from the Stripe clearing account,
+capped by cash evidence, and queued only after the `PaymentRefund` row exists.
+Bank, cash, and invoice-correction notes stay allocated modification notes, and
+are not created when the original invoice owes less than the note. During a
+deploy the previous colour can still raise a modification note for an edit it
+handles; the repair tool then reports that row for an officer and does not
+offer its retry. After a rollback, an edit that has only the refund note is
+reported as a missing modification credit note for manual review, and that
+finding is not applied automatically. Officers must not raise a modification
+note for those refunds. The operator remedy for a case that already has both
+notes is in [Maintenance](../MAINTENANCE.md). It rides the per-share key slot
 (`reviewTaskKeyParts`) under the scope `applied-credit-give-back` (nested under
 a review task's where there is one), so one key identifies it everywhere: the
 edit's own note never answers for it, and the repair pass reads it only there,
@@ -1240,7 +1253,10 @@ Xero pushes CONTACT, INVOICE, and CREDITNOTE events (the credit-note
 category has no underscore); the webhook stores each signed event as sent and
 returns fast. A category this app does not reconcile is logged and left
 processed, so it is visible without being retried forever. Reconciliation
-happens in a bounded worker kicked after the response and swept by cron.
+happens in a bounded worker kicked after the response and swept by cron. The
+kick shares the cron's `xero-inbound-reconcile` run claim
+(`runXeroWebhookInboundKick`, #4922); while another sync holds it, the kick
+applies stored events only and leaves the cursor reconciliations to the holder.
 
 **A voided refund note (#4091, `INV-ADDPAY-041`).** A credit-note void
 deactivates a payment's refund-note mirror whatever the payment: a card
@@ -2643,9 +2659,10 @@ Stated limits, all listing a payment rather than missing one: a link written
 before amounts were recorded counts as nothing; a refund of a late capture Xero
 never received deliberately has no note (`INV-PAY-110`); a review refunded by
 card counts twice (its task and its card refund), and one the booking was
-cancelled after was answered by the edit's note; an edit's card refund is
-answered by the edit's own modification note, which the query does not read,
-so check the booking's edits in Xero before raising anything for a card refund;
+cancelled after was answered by the edit's note; an edit's Stripe card refund is answered by that payment's refund note, which
+this query counts (#3993); a bank or cash hand-back is still a modification
+note this query does not read, so check those edits in Xero before raising a
+note;
 a voided note still waiting for the nightly follow-up, or answered with its
 cash kept, is left out of the notes while its refund still counts - leave those
 to the refund list and Stuck States.
@@ -2959,8 +2976,10 @@ Stated limits:
 - **A dashboard refund that settles a row Stripe gave up on is noted in
   full.** A re-send that failed too is owed by a row raised dead
   (`raised-dead`), which is never sent again; the treasurer is told to pay the
-  member another way and close it as "Paid another way", whose note is sized
-  against the failed refund's card note. A refund made in the Stripe dashboard
+  member another way and close it as "Paid another way". A close no card note
+  covers is sized by the task less its own notes. When the failed refund's
+  card note covers some of the close, the close queues a Stripe reversal for
+  the covered cents and a bank note for the whole amount (`INV-PAY-151`). A refund made in the Stripe dashboard
   instead is linked to nothing the app made, so it gets its own note and the
   failed refund's note still stands: Xero credits that amount twice until an
   officer voids one (owner decision, 25 Oct 2026). #4361 plans the automated
@@ -3044,7 +3063,10 @@ when its records hold neither; #3001/#3467) and
 refunds missing credit notes (flagged when the provider-backed CASH refund
 evidence — never the refunded-amount mirror, #2902/INV-PAY-050 — still exceeds
 the cents already covered by active refund credit notes, so multi-note refunds
-are handled and account-credit-only cancellations are excluded), and
+are handled and account-credit-only cancellations are excluded; one set-based
+read first drops payments whose active links' recorded amounts, less any live
+card-refund reversal invoice (`INV-PAY-151`), already cover the refunded
+mirror, so the per-payment reader runs only on open or unclear gaps, #4936), and
 per-record activity shows the ledger for one booking/payment/member.
 
 Owner-substitution alert (operator runbook): when a booking request's held owner
