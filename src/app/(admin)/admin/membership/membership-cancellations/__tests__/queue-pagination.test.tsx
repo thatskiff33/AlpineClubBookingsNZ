@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChangeEvent, ReactNode } from "react";
 
 /**
- * #4960 / INV-OPS-017: the cancellation and archive queues are each capped at
+ * #4960 / INV-OPS-019: the cancellation and archive queues are each capped at
  * 25 rows a page by their routes. Each shows its total, pages on its own,
  * keeps its page in the URL, and the cancellation filter restarts at page 1.
  */

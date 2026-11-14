@@ -205,7 +205,7 @@ export function PolicyExceptionRequestsPanel({
   const [items, setItems] = useState<QueueItem[]>([]);
   const [filter, setFilter] = useState<StatusFilter>("REQUESTED");
   const [loadedFilter, setLoadedFilter] = useState<StatusFilter | null>(null);
-  // INV-OPS-017: the shared pager replaces the old fixed 100-row read. Like the
+  // INV-OPS-019: the shared pager replaces the old fixed 100-row read. Like the
   // status filter, the page lives in this panel's state, not the URL.
   const queuePage = useAdminQueuePage({ filterKey: filter });
   const { page, receive } = queuePage;

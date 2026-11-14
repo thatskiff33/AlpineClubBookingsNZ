@@ -1196,7 +1196,7 @@ describe("an approved appeal whose card refund is still partly owed (#4117)", ()
 
 
 /*
-  #4960 / INV-OPS-017: refund appeals are capped at 25 a page by their route.
+  #4960 / INV-OPS-019: refund appeals are capped at 25 a page by their route.
   The list asks for a page, shows the total, keeps the page in the URL, and
   goes back to page 1 when the filter changes. Credit approvals stay unbounded.
 */

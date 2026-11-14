@@ -147,7 +147,7 @@ export function BookingApprovalsPanel({
     initialPage: parseAdminListPageParam(searchParams.get("page")),
   });
   const { page, setPage, receive, beginLoad } = queuePage;
-  // INV-OPS-017: a deep-linked booking that is not on the loaded page is read
+  // INV-OPS-019: a deep-linked booking that is not on the loaded page is read
   // by id and pinned above it, so the link always lands on its booking.
   const [pinnedBooking, setPinnedBooking] = useState<BookingReviewData | null>(null);
   const [loading, setLoading] = useState(true);

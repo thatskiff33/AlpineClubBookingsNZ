@@ -1885,7 +1885,7 @@ submit-style form rather than a staged section; no staged section uses the
 layer yet.
 
 **A row-capped admin list shows its total and reaches every row
-(`INV-OPS-017`, #4960).** An admin route that answers one page of a list
+(`INV-OPS-019`, #4960).** An admin route that answers one page of a list
 answers through `adminListPage` (`src/lib/admin-list-page.ts`), and every
 screen that reads it for that list pages through `useAdminQueuePage`
 (`src/components/admin/use-admin-queue-page.ts`) and renders the shared

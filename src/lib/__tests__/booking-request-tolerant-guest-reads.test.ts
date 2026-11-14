@@ -438,7 +438,7 @@ describe("GET /api/admin/booking-requests — the list path (#2342)", () => {
     expect(db.bookingRequest.findMany.mock.calls[0][0].where).toBeUndefined();
   });
 
-  it("reads the officer queue oldest first and ALL newest first (INV-OPS-017)", async () => {
+  it("reads the officer queue oldest first and ALL newest first (INV-OPS-019)", async () => {
     db.bookingRequest.findMany.mockResolvedValue([]);
     db.bookingRequest.count.mockResolvedValue(0);
 

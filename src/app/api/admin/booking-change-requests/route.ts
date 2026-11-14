@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
     ...(status === "ALL" ? {} : { status }),
     ...(requestId ? { id: requestId } : {}),
   };
-  // The pending queue reads oldest first (INV-OPS-017).
+  // The pending queue reads oldest first (INV-OPS-019).
   const direction = adminQueueCreatedOrder(status === "REQUESTED");
   const [requests, total] = await Promise.all([
     prisma.bookingChangeRequest.findMany({

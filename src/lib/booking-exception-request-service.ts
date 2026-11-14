@@ -2150,7 +2150,7 @@ function summaryFromRequestedChanges(value: unknown): string | null {
  * shape, merge-sorted by age (REQUESTED oldest first, others newest first),
  * then paged in memory — correct across two tables, which a single SQL OFFSET
  * cannot be. Returns the same
- * `adminListPage` envelope as the other officer queues (INV-OPS-017) so the
+ * `adminListPage` envelope as the other officer queues (INV-OPS-019) so the
  * officer UI reads one shape.
  */
 export async function readUnifiedExceptionQueue(input: {

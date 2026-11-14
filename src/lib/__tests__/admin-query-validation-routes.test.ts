@@ -267,7 +267,7 @@ describe("admin query validation and pagination", () => {
       expect(mocks.refundRequestFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: "PENDING" },
-          // INV-OPS-017: the pending queue reads oldest first.
+          // INV-OPS-019: the pending queue reads oldest first.
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           take: 25,
           skip: 0,
@@ -476,7 +476,7 @@ describe("admin query validation and pagination", () => {
       });
     });
 
-    it("reads the pending-admin queue oldest first (INV-OPS-017)", async () => {
+    it("reads the pending-admin queue oldest first (INV-OPS-019)", async () => {
       await getMemberApplications(
         request("/api/admin/member-applications?status=PENDING_ADMIN")
       );

@@ -181,7 +181,7 @@ export function buildBookingRequestDatasetPath({
   defaultStatus: string
   recordKey: "bookingId" | "requestId"
   recordId: string | null
-  /** The queue page (INV-OPS-017); page 1 leaves `page` out of the URL. */
+  /** The queue page (INV-OPS-019); page 1 leaves `page` out of the URL. */
   page?: number
 }): string {
   const params = new URLSearchParams(currentSearch)

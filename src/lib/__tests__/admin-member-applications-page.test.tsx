@@ -292,7 +292,7 @@ describe("MemberApplicationsPage", () => {
 });
 
 /*
-  #4960 / INV-OPS-017: the route returns 25 applications a page. The worked
+  #4960 / INV-OPS-019: the route returns 25 applications a page. The worked
   example: 40 pending applications after an open day. The list says so, and
   the next page holds the other 15.
 */

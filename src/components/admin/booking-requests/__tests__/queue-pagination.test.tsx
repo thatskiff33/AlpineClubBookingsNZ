@@ -12,7 +12,7 @@ import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/
 import { PINNED_QUEUE_RECORD_NOTE } from "@/lib/admin-list-page";
 
 /**
- * #4960 / INV-OPS-017 — every booking-requests queue pages through its rows,
+ * #4960 / INV-OPS-019 — every booking-requests queue pages through its rows,
  * shows its total, restarts at page 1 on a filter change, and a deep link to a
  * record beyond page 1 still lands on that record.
  */

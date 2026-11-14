@@ -130,7 +130,7 @@ export function BookingChangeRequestsPanel({
   );
   const pageParam = parseAdminListPageParam(searchParams.get("page"));
   const { page, setPage, receive, beginLoad, pagination } = useAdminQueuePage({ filterKey: filter, initialPage: pageParam });
-  // INV-OPS-017: a deep-linked request off the loaded page is pinned above it.
+  // INV-OPS-019: a deep-linked request off the loaded page is pinned above it.
   const [pinnedRequest, setPinnedRequest] = useState<BookingChangeRequestData | null>(null);
   const shownRequests = pinnedRequest ? [pinnedRequest, ...requests] : requests;
   const [loading, setLoading] = useState(true);

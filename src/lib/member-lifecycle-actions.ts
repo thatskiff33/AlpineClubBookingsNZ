@@ -730,7 +730,7 @@ export async function getAdminMemberLifecycleRequests({
           action,
           status,
         };
-  // INV-OPS-017: pending archive requests read oldest first; deletion (outside #4960) keeps newest first.
+  // INV-OPS-019: pending archive requests read oldest first; deletion (outside #4960) keeps newest first.
   const direction = adminQueueCreatedOrder(action === MemberLifecycleAction.ARCHIVE && status === MemberLifecycleActionRequestStatus.REQUESTED);
 
   const [requests, total, pendingCount] = await Promise.all([

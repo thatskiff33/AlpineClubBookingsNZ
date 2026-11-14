@@ -24,7 +24,7 @@ the meaning of a stored value (an audit `category`, a status string) so that the
 rows already written no longer match the code, deploying to production,
 choosing credentials or data for CI and local validation, mocking a money
 seam in a test that asserts money, or capping the rows an admin list route
-returns (`INV-OPS-017`).
+returns (`INV-OPS-019`).
 
 A Prisma `startsWith` is SQL `LIKE` too, and Prisma does not escape it: a
 prefix carrying an id or typed text goes through `exactPrefix`
@@ -456,7 +456,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   the CLI census's 38 roots reach `server-only`, and every published way of
   running each of them carries the condition.
 
-## INV-OPS-017
+## INV-OPS-019
 
 - **A row-capped admin list shows its total and reaches every row (#4960).**
   When an admin route answers one page of a list, every screen that reads it

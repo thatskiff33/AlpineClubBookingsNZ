@@ -52,7 +52,7 @@ export interface PaginationProps {
   summary?: React.ReactNode
   /**
    * Render the summary even when everything fits on one page, so a capped
-   * list always states its total (INV-OPS-017).
+   * list always states its total (INV-OPS-019).
    */
   showSummaryOnSinglePage?: boolean
 

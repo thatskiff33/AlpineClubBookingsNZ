@@ -1,7 +1,7 @@
 # File-size allowances for #4960 (officer queue paging)
 
 Five already-over-budget queue screens grow because each now pages its list
-(INV-OPS-017). The shared parts — the page state, the total line, the pager,
+(INV-OPS-019). The shared parts — the page state, the total line, the pager,
 the off-page deep-link read, the pinned-record note, and the route page shape —
 live once in `use-admin-queue-page.ts`, `admin-pagination.tsx`,
 `pinned-queue-record-note.tsx` and `admin-list-page.ts`. What stays in each

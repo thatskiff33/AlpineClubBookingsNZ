@@ -1,6 +1,6 @@
 /**
  * Every officer queue that reads a row-capped admin route pages through it
- * (INV-OPS-017, #4960).
+ * (INV-OPS-019, #4960).
  *
  * #297 capped these routes at one page; the screens kept reading only the
  * first page with no total, so the oldest requests were silently out of
@@ -100,7 +100,7 @@ function queuePagingGaps(code: string): string[] {
   return gaps;
 }
 
-describe("row-capped officer queues page through every row (INV-OPS-017)", () => {
+describe("row-capped officer queues page through every row (INV-OPS-019)", () => {
   const readers = queueReaders();
 
   it("finds a reader for every capped route, so an empty walk cannot pass", () => {

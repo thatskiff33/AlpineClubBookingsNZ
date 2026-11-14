@@ -181,7 +181,7 @@ export default function MemberApplicationsPage() {
   const [filter, setFilter] = useState(() =>
     filterFromStatusParam(searchParams.get("status")),
   );
-  // INV-OPS-017: the route caps each read at one page; the page and filter
+  // INV-OPS-019: the route caps each read at one page; the page and filter
   // are mirrored into the URL so a refresh or shared link keeps the place.
   const queuePage = useAdminQueuePage({
     filterKey: filter,

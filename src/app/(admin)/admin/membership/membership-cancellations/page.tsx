@@ -377,7 +377,7 @@ function MembershipCancellationRequests() {
   const [filter, setFilter] = useState<RequestFilter>(
     isRequestFilter(initialStatus) ? initialStatus : "REQUESTED",
   );
-  // INV-OPS-017: both queues are capped per page by their routes. Each pages
+  // INV-OPS-019: both queues are capped per page by their routes. Each pages
   // on its own, and both pages ride in the URL beside the filter.
   const cancellationPage = useAdminQueuePage({
     filterKey: filter,

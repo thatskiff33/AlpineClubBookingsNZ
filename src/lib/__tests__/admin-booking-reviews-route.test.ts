@@ -44,7 +44,7 @@ const decidedWhere = {
 };
 
 /**
- * #4960 / INV-OPS-017: the booking approvals queue pages to every row, reads
+ * #4960 / INV-OPS-019: the booking approvals queue pages to every row, reads
  * PENDING oldest first, and on ALL keeps PENDING ahead of decided rows.
  */
 describe("GET /api/admin/booking-reviews paging and order", () => {

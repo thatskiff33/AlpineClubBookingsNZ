@@ -7,7 +7,7 @@ import {
   parseAdminListPageParam,
 } from "@/lib/admin-list-page";
 
-describe("admin list page helpers (INV-OPS-017)", () => {
+describe("admin list page helpers (INV-OPS-019)", () => {
   it("derives totalPages from the total and page size", () => {
     expect(adminListPage({ page: 1, pageSize: 25, total: 40 })).toEqual({
       page: 1,

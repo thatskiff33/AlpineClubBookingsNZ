@@ -19,7 +19,7 @@ const querySchema = z.object({
   ...adminListPageQueryFields,
   // A focused deep link (`?bookingId=`) reads its one booking, inside the same
   // review scope, so the panel can pin it when it is not on the page
-  // (INV-OPS-017).
+  // (INV-OPS-019).
   bookingId: adminQueueFocusIdField,
 });
 
@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
   const idFilter = bookingId ? { id: bookingId } : {};
 
   /*
-    INV-OPS-017: PENDING reads oldest first so the longest wait is on page 1.
+    INV-OPS-019: PENDING reads oldest first so the longest wait is on page 1.
     ALL keeps every PENDING row ahead of the decided ones — PENDING oldest
     first, then APPROVED/REJECTED newest first — by reading the two groups
     separately and slicing the one page across them.

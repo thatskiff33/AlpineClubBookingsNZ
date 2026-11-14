@@ -188,7 +188,7 @@ export default function RefundRequestsPage() {
   const [filter, setFilter] = useState<ReviewFilter>(
     isReviewFilter(initialFilter) ? initialFilter : "PENDING"
   )
-  // INV-OPS-017: refund appeals are capped per page; credit approvals are not.
+  // INV-OPS-019: refund appeals are capped per page; credit approvals are not.
   const refundPage = useAdminQueuePage({
     filterKey: filter,
     initialPage: parseAdminListPageParam(searchParams.get("page")),

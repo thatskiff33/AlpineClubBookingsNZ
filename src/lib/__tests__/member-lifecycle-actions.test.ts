@@ -1790,7 +1790,7 @@ describe("admin member lifecycle request list (#1938)", () => {
     ).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { action: "ARCHIVE", status: "REQUESTED" },
-        // INV-OPS-017: the archive queue's pending filter reads oldest first.
+        // INV-OPS-019: the archive queue's pending filter reads oldest first.
         orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
       }),
     );

@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
 
   const { status, page, pageSize } = parsed.data;
   const where = status === "ALL" ? {} : { status };
-  // The pending queue reads oldest first (INV-OPS-017).
+  // The pending queue reads oldest first (INV-OPS-019).
   const direction = adminQueueCreatedOrder(status === "PENDING");
 
   const [requests, total] = await Promise.all([
