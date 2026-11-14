@@ -20,7 +20,7 @@ import {
 } from "@/lib/hosting-coverage-override-client";
 import { formatCents } from "@/lib/utils";
 import { useClubFormat } from "@/components/club-format-provider";
-import { CardRefundShortfallRows, CardRefundShortfallSentence, cardShortfallOptionLabel, ForcedRefundNote, NoRefundablePaymentNote } from "@/components/cancel-booking-payment-notes";
+import { CardRefundShortfallRows, CardRefundShortfallSentence, cardShortfallOptionLabel, ForcedRefundNote, HandBackRefundNote, NoRefundablePaymentNote } from "@/components/cancel-booking-payment-notes";
 import type { CancelCardRefundSplit } from "@/lib/cancel-card-refund-shortfall";
 
 interface CancelPreview {
@@ -39,6 +39,8 @@ interface CancelPreview {
    * the club hands the refund back directly. The figures are unchanged.
    */
   manualRefund?: boolean;
+  /** #4911 (`INV-PAY-154`): disputed by the cardholder, so handed to the treasurer as `manualRefund` is. */
+  refundDisputed?: boolean;
   /**
    * The refund method the cancel will use whatever is chosen — "credit" for an
    * internet banking payment, decided in `cancel-refund-method.ts` and returned
@@ -335,6 +337,7 @@ export function CancelBookingButton({
         setResult({
           refundAmountCents: data.refundAmountCents || 0,
           refundMethod: data.refundMethod || "card",
+          refundDisputed: data.refundDisputed === true,
           creditAmountCents: data.creditAmountCents,
           creditRestoredCents: data.creditRestoredCents,
           organiserRefund: data.organiserRefund,
@@ -406,7 +409,9 @@ export function CancelBookingButton({
     const hasCardRefund =
       preview.refundAmountCents > 0 || preview.creditRefundAmountCents > 0;
     const hasRefund = hasCardRefund || preview.creditRestoredCents > 0;
-    const cardShortfall = hasCardRefund && !preview.manualRefund && refundMethod === "card" ? preview.cardShortfall : undefined; // #4119
+    // #4911: a disputed card payment is handed back as a manual settlement is, on the same figures.
+    const handBack = Boolean(preview.manualRefund || preview.refundDisputed);
+    const cardShortfall = hasCardRefund && !handBack && refundMethod === "card" ? preview.cardShortfall : undefined; // #4119
 
     return renderWithHostingOverrideRegion(
       <div className="rounded-md border border-danger-6 bg-danger-3 p-4 space-y-3">
@@ -460,21 +465,13 @@ export function CancelBookingButton({
             {/* Refund method selection — only meaningful when a card/bank slice
                 can be refunded. A credit-only cancel (#1164) has no card slice,
                 so the radios are hidden and only the restored-credit row shows. */}
-            {preview.manualRefund && hasCardRefund && (
-              <p className="text-sm text-muted-foreground">
-                This booking was paid in cash or by bank transfer, so there is no
-                card payment to reverse and no account credit is added. The club
-                will arrange{" "}
-                <span className="font-medium text-success-11">
-                  {formatCents(preview.creditRefundAmountCents, format)}
-                </span>{" "}
-                back to {onBehalfOfMember ? "the member" : "you"} directly.
-              </p>
+            {handBack && hasCardRefund && (
+              <HandBackRefundNote disputed={preview.refundDisputed === true} amountCents={preview.creditRefundAmountCents} format={format} onBehalfOfMember={onBehalfOfMember} />
             )}
-            {!preview.manualRefund && hasCardRefund && preview.refundMethodForced && (
+            {!handBack && hasCardRefund && preview.refundMethodForced && (
               <ForcedRefundNote preview={preview} forced={preview.refundMethodForced} format={format} />
             )}
-            {!preview.manualRefund && hasCardRefund && !preview.refundMethodForced && (
+            {!handBack && hasCardRefund && !preview.refundMethodForced && (
               <div className="space-y-2">
                 <p className="font-medium text-muted-foreground">Choose refund method:</p>
                 <label className="flex items-start gap-2 cursor-pointer">
@@ -525,7 +522,7 @@ export function CancelBookingButton({
                 with the paragraph above and with what the club will actually
                 hand back. */}
             <div className="border-t border-danger-6 pt-2 space-y-1">
-              {hasCardRefund && preview.manualRefund && (
+              {hasCardRefund && handBack && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">
                     Refund arranged by the club:
@@ -535,7 +532,7 @@ export function CancelBookingButton({
                   </span>
                 </div>
               )}
-              {preview.manualRefund &&
+              {handBack &&
                 preview.totalPaidCents - preview.creditRefundAmountCents > 0 && (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">
@@ -549,7 +546,7 @@ export function CancelBookingButton({
                     </span>
                   </div>
                 )}
-              {cardShortfall ? <CardRefundShortfallRows split={cardShortfall} format={format} /> : hasCardRefund && !preview.manualRefund && (
+              {cardShortfall ? <CardRefundShortfallRows split={cardShortfall} format={format} /> : hasCardRefund && !handBack && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">
                     {refundMethod === "credit" ? "Credit to account:" : "Refund to card:"}
@@ -566,7 +563,7 @@ export function CancelBookingButton({
               )}
               {preview.keptAmountCents > 0 &&
                 refundMethod === "card" &&
-                !preview.manualRefund && (
+                !handBack && (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">
                       Amount kept ({preview.refundPercentage}% refund):

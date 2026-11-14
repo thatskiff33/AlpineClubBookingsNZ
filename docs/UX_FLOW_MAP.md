@@ -327,7 +327,7 @@ Screen: `/admin/communications`.
 
 Shows: Member communication composition and audience selection.
 
-Journey: Choose recipients and compose a message; review the audience before sending.
+Journey: Choose recipients (the help line says who each reaches) and compose a message; Send to Members opens a confirmation naming the recipient count, audience and subject, with Cancel focused; confirm to send. The result is announced in a status region.
 
 [Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
