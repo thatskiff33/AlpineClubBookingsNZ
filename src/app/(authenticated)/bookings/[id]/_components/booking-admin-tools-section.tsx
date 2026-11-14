@@ -2,6 +2,7 @@ import { AdminBookingToolsCard } from "@/components/admin/admin-booking-tools-ca
 import { XeroSyncNowButton } from "@/components/admin/xero-sync-now-button";
 import { BookingWithheldEmailsBanner } from "@/components/admin/booking-withheld-emails-banner";
 import { BookingStripeDisputeNotice } from "@/components/admin/booking-stripe-dispute-notice";
+import { BookingFreshEmailCopiesPanel } from "@/components/admin/booking-fresh-email-copies-panel";
 import { bookingOwner } from "@/lib/booking-owner";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
@@ -38,7 +39,7 @@ export function BookingAdminToolsSection({
   adminTools: BookingDetailAdminTools;
   payment: BookingDetailPayment;
 }) {
-  const { canSeeAdminTools } = viewer;
+  const { canSeeAdminTools, canAdminEditBookings } = viewer;
   const { isDeleted } = access;
   const { savedCard } = payment;
   const {
@@ -52,6 +53,7 @@ export function BookingAdminToolsSection({
     showReturnToWaitlist,
     exclusiveHoldConflicts,
     stripeDisputes,
+    freshEmailCopyOptions,
   } = adminTools;
   return (
     <>
@@ -150,6 +152,16 @@ export function BookingAdminToolsSection({
           isWaitlisted={noEmailsState.isWaitlisted}
           total={withheldEmails.total}
           groups={withheldEmailGroups}
+        />
+      )}
+
+      {/* The never-kept booking emails an officer can send again, rendered
+          fresh. Booking edit access sends; any other admin sees it view-only. */}
+      {canSeeAdminTools && freshEmailCopyOptions.length > 0 && (
+        <BookingFreshEmailCopiesPanel
+          bookingId={booking.id}
+          options={freshEmailCopyOptions}
+          canEdit={canAdminEditBookings}
         />
       )}
     </>

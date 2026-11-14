@@ -130,7 +130,7 @@ export const SPLIT_GUEST_PAYMENT_LINK_TEMPLATE =
   "split-guest-payment-link" satisfies EmailAuditTemplateName;
 
 export type IssueSplitGuestPaymentLinkResult =
-  | { outcome: "sent" }
+  | { outcome: "sent"; emailLogId: string | null; recipientMemberId: string | null; sentTo: string }
   | { outcome: "just_sent" }
   | { outcome: "suppressed" }
   // #2258: the booking carries the "No emails" switch, so no link was minted
@@ -418,5 +418,10 @@ export async function issueSplitGuestPaymentLink(
     return { outcome: "suppressed" };
   }
 
-  return { outcome: "sent" };
+  return {
+    outcome: "sent",
+    emailLogId: emailOutcome.emailLogId,
+    recipientMemberId: bookingOwner(booking).memberId,
+    sentTo: bookingOwner(booking).member.email,
+  };
 }

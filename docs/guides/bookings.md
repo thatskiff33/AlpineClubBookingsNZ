@@ -16,6 +16,12 @@ date-only lodge night (no times), matching the rules in
 [`money.md`](../invariants/money.md) and
 [`booking-dates-and-capacity.md`](../invariants/booking-dates-and-capacity.md).
 
+Officers with Bookings edit access can also send a new booking confirmation,
+pre-arrival reminder or separate guest payment link from the booking's
+**Send a fresh copy of a booking email** panel. See
+[Email Deliverability](email-deliverability.md#send-a-fresh-copy-of-a-booking-email)
+for recipients, link replacement and failure history.
+
 ## When you'd use it
 
 - A member calls to ask about their booking and you need to find it by name or

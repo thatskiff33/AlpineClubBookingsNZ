@@ -1,23 +1,17 @@
-import { BookingStatus, type Prisma } from "@prisma/client";
-import { bookingOwner } from "@/lib/booking-owner";
-import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
-import { ASK_CAUSE_ROWS, additionalAskCause } from "@/lib/additional-ask-cause";
-import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
-import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
-import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { formatDateOnly } from "@/lib/date-only";
+import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendPreArrivalReminderEmail } from "@/lib/email";
 import logger from "@/lib/logger";
-import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
 import { clubFormatValues } from "@/lib/club-format-server";
-
-const PRE_ARRIVAL_REMINDER_DAYS = 3;
-
-const PRE_ARRIVAL_REMINDER_STATUSES = [
-  BookingStatus.CONFIRMED,
-  BookingStatus.PAID,
-] as const;
+import {
+  PRE_ARRIVAL_REMINDER_BOOKING_INCLUDE,
+  PRE_ARRIVAL_REMINDER_DAYS,
+  PRE_ARRIVAL_REMINDER_STATUSES,
+  preArrivalReminderEmailParams,
+  preArrivalReminderWindow,
+} from "@/lib/pre-arrival-reminder-email";
 
 export interface PreArrivalReminderResult {
   reminderDays: number;
@@ -33,10 +27,8 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
   const now = new Date();
-  const windowStart = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
-  const windowEndExclusive = addDaysDateOnly(
-    windowStart,
-    PRE_ARRIVAL_REMINDER_DAYS + 1,
+  const { windowStart, windowEndExclusive } = preArrivalReminderWindow(
+    clubToday(await readClubTimeZoneOutsideRequest()),
   );
 
   const bookings = await prisma.booking.findMany({
@@ -49,38 +41,9 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
         lt: windowEndExclusive,
       },
     },
-    include: {
-      member: true,
-      // #3369: the owner may be an Organisation; bookingOwner() reads both.
-      organisation: { select: { name: true, email: true } },
-      // Owner decision D-12 (#2307): the reminder tells a member how many
-      // guests are arriving, so it counts the guests who will actually be
-      // there. A member guest whose consent is still PENDING holds a bed under
-      // D-4 but is not operationally present, and an inflated "Guests: 4" in an
-      // email is the club telling the booker something untrue. Filtering the
-      // include is what fixes `guests.length` below — the count has no separate
-      // query of its own.
-      guests: { where: { ...OPERATIONALLY_PRESENT_GUEST_WHERE } },
-      // #2350: an upward booking change may have left money uncollected. The
-      // pre-arrival note is the last thing most members read before they
-      // travel, so it says so when that is true. This is the booking's own
-      // balance, so it is unaffected by the guest filter above — a pending
-      // member guest still holds their bed, and the money owed for it is still
-      // owed.
-      payment: {
-        select: {
-          additionalAmountCents: true,
-          additionalPaymentStatus: true,
-          // #4253: the request's cause words the note (a change, or credit used elsewhere).
-          transactions: {
-            where: { kind: "ADDITIONAL" },
-            orderBy: [...LEDGER_ROWS_NEWEST_FIRST] as Prisma.PaymentTransactionOrderByWithRelationInput[],
-            take: ASK_CAUSE_ROWS,
-            select: { reason: true, carriedAskCents: true, withdrawnAt: true },
-          },
-        },
-      },
-    },
+    // Shared with the officer's fresh-copy action (`pre-arrival-reminder-email.ts`),
+    // so both render the same guest count and outstanding-balance note.
+    include: PRE_ARRIVAL_REMINDER_BOOKING_INCLUDE,
     orderBy: [{ checkIn: "asc" }, { createdAt: "asc" }],
   });
 
@@ -114,24 +77,10 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
     }
 
     try {
-      const outcome = await sendPreArrivalReminderEmail({
-        bookingId: booking.id,
-        recipientMemberId: bookingOwner(booking).memberId,
-        email: bookingOwner(booking).member.email,
-        firstName: bookingOwner(booking).member.firstName,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-        guestCount: booking.guests.length,
-        expectedArrivalTime: booking.expectedArrivalTime,
-        lodgeId: booking.lodgeId,
-        outstandingAdditionalAmountCents: isAdditionalPaymentOwed({
-          bookingStatus: booking.status,
-          payment: booking.payment,
-        })
-          ? booking.payment?.additionalAmountCents ?? 0
-          : 0,
-        outstandingAdditionalCause: additionalAskCause(booking.payment?.transactions ?? []),
-      }, format);
+      const outcome = await sendPreArrivalReminderEmail(
+        preArrivalReminderEmailParams(booking),
+        format,
+      );
       /*
         THE CLAIM ABOVE IS THE ONLY THING THAT WILL EVER SELECT THIS BOOKING
         (#3035). It stamps `preArrivalReminderSentAt` BEFORE the send, and the

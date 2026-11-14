@@ -816,6 +816,12 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/lib/member-lodge-roster.ts:112",
   "src/lib/payment-link.ts:81",
   "src/lib/payment-reconciliation.ts:103",
+    // The pre-arrival reminder's include, moved out of the daily cron so the
+  // officer's fresh-copy action reads the booking the same way. Verified by
+  // hand: written `satisfies Prisma.BookingInclude`, read back through
+  // `Prisma.BookingGetPayload`, and passed as `include` to `booking.findMany`
+  // and `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/pre-arrival-reminder-email.ts:54",
   "src/lib/stuck-state-dashboard.ts:629",
   "src/lib/xero-booking-repair-types.ts:246",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",

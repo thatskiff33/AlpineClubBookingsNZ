@@ -670,7 +670,9 @@ describe("no site uses the NULL-hostile `not: PENDING` form", () => {
       "src/lib/bed-allocation-placement.ts",
       "src/lib/cron-hut-leader-auto-assign.ts",
       "src/app/api/admin/hut-leaders/eligible-members/route.ts",
-      "src/lib/cron-pre-arrival-reminders.ts",
+      // The reminder's guest filter lives in the include the daily cron and the
+      // officer's fresh copy share, so the guest count cannot differ between them.
+      "src/lib/pre-arrival-reminder-email.ts",
       "src/lib/cron-checkin-reminders.ts",
       "src/lib/lodge-display-state.ts",
       "src/app/api/lodge/week/route.ts",

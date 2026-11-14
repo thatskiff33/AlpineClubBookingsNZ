@@ -942,6 +942,13 @@ past its size ceiling, and made the wizard reject any incomplete test fixture â€
 it broke a passing back-link test on a lodge row that simply had not bothered to
 include `doorCode`.
 
+Booking fresh email copies (`booking-fresh-email-copy.ts`, ALP-588) use the
+selected booking's persisted `lodgeId` for confirmations and pre-arrival
+reminders. The shared reminder projection carries that same lodge to the
+sender. Split payment links delegate to `issueSplitGuestPaymentLink`, which
+uses each split child's lodge and existing per-lodge mint lock. These actions
+never accept a lodge from the caller.
+
 ## Presentation Rule
 
 When exactly one active lodge exists, member and admin UI must not show

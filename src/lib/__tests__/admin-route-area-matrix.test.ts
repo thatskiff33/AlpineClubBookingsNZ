@@ -200,6 +200,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/copy": "bookings",
   "/api/admin/bookings/[id]/eligible-family": "bookings",
   "/api/admin/bookings/[id]/exclusive-hold": "bookings",
+  "/api/admin/bookings/[id]/fresh-email-copy": "bookings",
   "/api/admin/bookings/[id]/force-confirm": "bookings",
   // #3029: one guest's dietary/allergy note for this stay, bookings:edit.
   "/api/admin/bookings/[id]/guest-dietary": "bookings",

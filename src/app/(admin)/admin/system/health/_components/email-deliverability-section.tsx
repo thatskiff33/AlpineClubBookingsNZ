@@ -366,6 +366,18 @@ export function EmailDeliverabilitySection({
                       <CheckCircle className="h-3.5 w-3.5" />
                       Archive
                     </button>
+                    {failure.freshCopyHref ? (
+                      <p className="col-span-full text-xs text-muted-foreground">
+                        This email carries a door code or payment link, so it cannot
+                        be retried.{" "}
+                        <a
+                          href={failure.freshCopyHref}
+                          className="font-medium text-primary underline-offset-2 hover:underline"
+                        >
+                          Send a fresh copy from the booking
+                        </a>
+                      </p>
+                    ) : null}
                     {failure.errorMessage ? (
                       <p className="col-span-full text-xs text-muted-foreground">
                         <span className="font-medium text-foreground">

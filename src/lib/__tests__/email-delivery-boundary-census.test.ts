@@ -516,6 +516,9 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
     /** Inspects the outcome before it advances state. */
     const INSPECTS_THE_OUTCOME = [
       "src/lib/additional-payment-resend-service.ts",
+      // An officer's fresh pre-arrival copy stamps the reminder only after a send
+      // that actually went out.
+      "src/lib/booking-fresh-email-copy.ts",
       "src/lib/cron-additional-payment-reminders.ts",
       "src/lib/cron-pre-arrival-reminders.ts",
       "src/lib/cron-quote-expiry-reminders.ts",
