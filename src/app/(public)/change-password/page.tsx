@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePasswordPolicyHints } from "@/hooks/use-password-policy-hints";
 
@@ -18,11 +19,14 @@ export default function ChangePasswordPage() {
     confirmPassword: "",
   });
   const [error, setError] = useState("");
+  // A repeat of the same refusal must still take focus, so it is read again.
+  const [attempt, setAttempt] = useState(0);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setAttempt((n) => n + 1);
 
     if (form.newPassword.length < policy.minPasswordLength) {
       setError(
@@ -131,7 +135,7 @@ export default function ChangePasswordPage() {
               />
             </div>
 
-            {error && <p className="text-sm text-danger-11">{error}</p>}
+            <FocusedActionError id="change-password-error" error={error} attentionKey={attempt} />
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Changing..." : "Change Password"}
