@@ -46,7 +46,8 @@ export function LodgePropertiesCard<T extends ListedLodge>({
   loading: boolean;
   /** A failed read hides the list; the page shows the message itself. */
   loadFailed: boolean;
-  canEdit: boolean;
+  /** Tri-state, as `ViewOnlyActionButton` takes it: undefined while the session resolves. */
+  canEdit: boolean | undefined;
   saving: boolean;
   onEdit: (lodge: T) => void;
   onSetActive: (lodge: T, active: boolean) => void;
