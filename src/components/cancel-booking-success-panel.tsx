@@ -4,11 +4,13 @@ import type { Ref } from "react";
 import { formatCents } from "@/lib/utils";
 import type { OrganiserRefundMethod, OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
 import type { useClubFormat } from "@/components/club-format-provider";
-import { OrganiserRefundConfirmation, OwnCardRefundConfirmation } from "@/components/cancel-booking-payment-notes";
+import { HandBackRefundConfirmation, OrganiserRefundConfirmation, OwnCardRefundConfirmation } from "@/components/cancel-booking-payment-notes";
 
 export interface CancelResult {
   refundAmountCents: number;
   refundMethod: string;
+  /** #4911 (`INV-PAY-154`): the card payment is disputed, so the refund went to the treasurer. */
+  refundDisputed?: boolean;
   creditAmountCents?: number;
   creditRestoredCents?: number;
   organiserRefund?: { method: OrganiserRefundMethod; amountCents: number };
@@ -72,13 +74,11 @@ export function CancelBookingSuccessPanel({
         {/* B5 (#2262): a manual (cash / off-Xero) settlement has no card to
             refund to and mints no account credit — the club hands the money
             back directly. The plan-forbidden sentence ("processed to your
-            original payment method") must never render for this outcome. */}
-        {refund > 0 && result?.refundMethod === "manual" && !result.organiserRefund ? (
-          <p className="text-sm text-success-11">
-            {onBehalfOfMember
-              ? `The club will arrange the member's refund of ${formatCents(refund, format)} directly — they'll hear from the club about how it will be paid back.`
-              : `The club will arrange your refund of ${formatCents(refund, format)} directly — you'll hear from them about how it will be paid back.`}
-          </p>
+            original payment method") must never render for this outcome.
+            #4911: a disputed card payment is handed to the treasurer the same
+            way, and says so, even when an organiser would otherwise be refunded. */}
+        {refund > 0 && result?.refundMethod === "manual" && (result.refundDisputed || !result.organiserRefund) ? (
+          <HandBackRefundConfirmation disputed={result.refundDisputed === true} amountCents={refund} format={format} onBehalfOfMember={onBehalfOfMember} />
         ) : result?.organiserRefund ? (
           <OrganiserRefundConfirmation organiserRefund={result.organiserRefund} format={format} emailNote={emailNote} />
         ) : refund > 0 && isCredit ? (
