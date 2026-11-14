@@ -3276,8 +3276,10 @@ phases print their whole plan and change nothing without `--execute`.
    exactly one `## Unreleased`, with only its fixed guide sections above it and
    no release-specific `(#NNNN)` section there, and
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md`'s opening paragraph must either say
-   "This runbook is release-agnostic" or name a release no older than
-   `origin`'s latest tag. Fix them in a pull request to `main`, then re-run. The version is the
+   "This runbook is release-agnostic" or name a release no older than the
+   version being cut (the census in step 3 holds the release-prep pull request
+   to the same threshold, through `package.json`). Fix them in a pull request
+   to `main`, then re-run. The version is the
    latest `vX.Y.Z` tag **on `origin`** (never this clone's tags) plus a minor
    bump when any fragment
    is named `*.feature.md`, or a patch bump otherwise
@@ -3330,12 +3332,15 @@ phases print their whole plan and change nothing without `--execute`.
      re-scoped to one release, re-scope it to the new tag, templates included.
      Never write a rehearsal date, result or "confirmed by" into it: only the
      owner attests a rehearsal, and not in the public repository.
-   - **Every windowed migration is reached.** List the ledger's windowed rows
-     with `awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`.
-     Each one added since the previous tag must have a bullet in the runbook's
-     [§2.4](PRODUCTION_UPGRADE_RUNBOOK.md#24-windowed-migration-deploy-sequence)
-     and be reached from the checklist's window part. The checklist links; it
-     never copies a migration's text.
+   - **Every windowed migration is reached.** A census
+     (`src/lib/__tests__/upgrade-docs-scope.test.ts`) fails a pull request when
+     a windowed ledger row is not named in the runbook's
+     [§2.4](PRODUCTION_UPGRADE_RUNBOOK.md#24-windowed-migration-deploy-sequence).
+     It cannot judge the checklist. List the ledger's windowed rows with
+     `awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
+     and confirm that each one added since the previous tag is reached from the
+     checklist's "During the window" part. The checklist links; it never copies
+     a migration's text.
 4. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
    guide, `docs/ARCHITECTURE.md`, `docs/UPGRADING.md` and
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md` for dependency, release, GHCR, migration,

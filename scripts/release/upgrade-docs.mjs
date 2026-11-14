@@ -12,7 +12,8 @@
  *   - `release:cut prepare` refuses a release while a rule is broken, and folds
  *     the guide's `## Unreleased` block into the release's own heading;
  *   - the census `src/lib/__tests__/upgrade-docs-scope.test.ts` fails a pull
- *     request that breaks one.
+ *     request that breaks one, and alone enforces the one rule that needs the
+ *     migration ledger (`runbookWindowedProblems`).
  *
  * Pure text functions only: no file system, git or network access.
  */
@@ -44,6 +45,9 @@ export const UPGRADE_CHECKLIST_HEADING = "### Upgrade checklist for this release
  * the current one.
  */
 export const RUNBOOK_RELEASE_AGNOSTIC_MARKER = "This runbook is release-agnostic";
+
+/** The runbook section that must name every windowed migration (its number may move). */
+const RUNBOOK_WINDOWED_SECTION = /^### \d+\.\d+ Windowed migration deploy sequence$/;
 
 const FENCE = /^\s*(```|~~~)/;
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
@@ -186,14 +190,53 @@ export function runbookScopeProblem(text, version) {
 }
 
 /**
- * Every problem with the two documents, one sentence each. `releasedVersion`
- * is the newest release (`X.Y.Z`) the runbook must not predate; `null` skips
- * that comparison. A missing document (`null` text) is not checked.
+ * The migrations the ledger (`docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`) declares
+ * `windowed`, in file order. Column 4, `old_code_compatible`, says so; the
+ * header and the explanatory `#` lines are not rows.
  */
-export function upgradeDocsProblems({ upgradingText, runbookText, releasedVersion }) {
+export function windowedLedgerMigrations(ledgerText) {
+  return ledgerText
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "" && !line.startsWith("#"))
+    .map((line) => line.split("\t"))
+    .filter((columns) => columns[3] === "windowed")
+    .map((columns) => columns[0]);
+}
+
+/**
+ * What the runbook's windowed-migration section (§2.4, with its sub-sections)
+ * leaves out, one sentence each: it must name every migration the ledger
+ * declares `windowed`, because an operator running a window works from that
+ * section and from nowhere else.
+ */
+export function runbookWindowedProblems(ledgerText, runbookText) {
+  const headings = markdownHeadings(runbookText);
+  const section = headings.find((heading) => RUNBOOK_WINDOWED_SECTION.test(heading.line));
+  if (section === undefined) {
+    return [`${RUNBOOK_PATH} has no "### N.N Windowed migration deploy sequence" section.`];
+  }
+  const next = headings.find((heading) => heading.level <= section.level && heading.index > section.index);
+  const lines = runbookText.split("\n");
+  const body = lines.slice(section.index, next ? next.index : lines.length).join("\n");
+  return windowedLedgerMigrations(ledgerText)
+    .filter((migration) => !body.includes(migration))
+    .map(
+      (migration) =>
+        `${RUNBOOK_PATH}'s "${section.line.replace(/^#+ /, "")}" section does not name the windowed migration ${migration}. ` +
+        `Add its bullet there: an operator running the window works from that section.`,
+    );
+}
+
+/**
+ * Every problem with the two documents, one sentence each. `releaseVersion` is
+ * the release (`X.Y.Z`) being cut, which the runbook must not predate: the one
+ * threshold both `release:cut prepare` and the census use. `null` skips that
+ * comparison. A missing document (`null` text) is not checked.
+ */
+export function upgradeDocsProblems({ upgradingText, runbookText, releaseVersion }) {
   const problems = upgradingText === null ? [] : upgradingLayoutProblems(upgradingText);
-  if (runbookText !== null && releasedVersion !== null) {
-    const stale = runbookScopeProblem(runbookText, releasedVersion);
+  if (runbookText !== null && releaseVersion !== null) {
+    const stale = runbookScopeProblem(runbookText, releaseVersion);
     if (stale !== null) problems.push(stale);
   }
   return problems;
@@ -202,7 +245,9 @@ export function upgradeDocsProblems({ upgradingText, runbookText, releasedVersio
 /**
  * The guide with its `## Unreleased` block renamed to the release's heading and
  * a fresh, empty `## Unreleased` above it, ready for the next release's steps.
- * Throws when the layout is broken or the release heading already exists.
+ * The lines it adds end the way the heading they replace ends, so a CRLF
+ * checkout is never left with mixed line endings. Throws when the layout is
+ * broken or the release heading already exists.
  */
 export function foldUpgradingUnreleased(text, { fromVersion, toVersion }) {
   const block = unreleasedBlock(text);
@@ -212,6 +257,8 @@ export function foldUpgradingUnreleased(text, { fromVersion, toVersion }) {
     throw new Error(`${UPGRADING_PATH} already has "${heading}".`);
   }
   const lines = text.split("\n");
-  lines.splice(block.start, 1, UNRELEASED_HEADING, "", "---", "", heading);
+  const carriageReturn = lines[block.start].endsWith("\r") ? "\r" : "";
+  const folded = [UNRELEASED_HEADING, "", "---", "", heading].map((line) => `${line}${carriageReturn}`);
+  lines.splice(block.start, 1, ...folded);
   return lines.join("\n");
 }

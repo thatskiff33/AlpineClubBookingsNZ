@@ -15,7 +15,9 @@
  *  - any `## ` section above `## Unreleased` other than the guide's fixed
  *    sections, in order, and any heading there that cites an issue;
  *  - a runbook whose opening paragraph names a release older than
- *    `package.json`'s version without saying it is release-agnostic.
+ *    `package.json`'s version without saying it is release-agnostic;
+ *  - a migration the ledger declares `windowed` that the runbook's windowed
+ *    section (§2.4) does not name: a window is run from that section alone.
  *
  * WHAT IT IS NOT. It does not judge the content of a release's steps or of the
  * checklist; the release checklist in `docs/MAINTENANCE.md` asks a person to.
@@ -31,13 +33,17 @@ import {
   RUNBOOK_RELEASE_AGNOSTIC_MARKER,
   runbookScope,
   runbookScopeProblem,
+  runbookWindowedProblems,
   unreleasedBlock,
   UPGRADE_CHECKLIST_HEADING,
   upgradeDocsProblems,
   UPGRADING_GUIDE_HEADINGS,
   UPGRADING_PATH,
   upgradingLayoutProblems,
+  windowedLedgerMigrations,
 } from "../../../scripts/release/upgrade-docs.mjs";
+
+const LEDGER_PATH = "docs/BLUE_GREEN_MIGRATION_SAFETY.tsv";
 
 const read = (relative: string) => readFileSync(path.join(process.cwd(), relative), "utf8");
 
@@ -59,6 +65,17 @@ describe("the committed upgrade documents", () => {
   it("keep the runbook's scope no older than package.json's version", () => {
     const { version } = JSON.parse(read("package.json")) as { version: string };
     expect(runbookScopeProblem(read(RUNBOOK_PATH), version)).toBeNull();
+  });
+
+  it("name every migration the ledger declares windowed in the runbook's windowed section", () => {
+    expect(runbookWindowedProblems(read(LEDGER_PATH), read(RUNBOOK_PATH))).toEqual([]);
+  });
+
+  it("still find windowed ledger rows to check", () => {
+    // A floor, not a census: the count grows with each windowed migration, and
+    // without it the check above is vacuous the moment the column parse breaks.
+    // 12 rows were windowed when this census was written.
+    expect(windowedLedgerMigrations(read(LEDGER_PATH)).length).toBeGreaterThanOrEqual(12);
   });
 });
 
@@ -119,8 +136,56 @@ describe("runbookScope and runbookScopeProblem", () => {
 
   it("skips the runbook comparison when there is no released version", () => {
     expect(
-      upgradeDocsProblems({ upgradingText: null, runbookText: runbook("Up to `v0.1.0`."), releasedVersion: null }),
+      upgradeDocsProblems({ upgradingText: null, runbookText: runbook("Up to `v0.1.0`."), releaseVersion: null }),
     ).toEqual([]);
+  });
+});
+
+describe("runbookWindowedProblems", () => {
+  const ledger = [
+    "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan",
+    "20260101010000_expand_a\texpand\tn/a\tyes\tAdditive.",
+    "20260101020000_contract_b\tcontract\t20260101010000_expand_a\twindowed\tWindowed.",
+    "20260101030000_contract_c\tcontract\tn/a\twindowed\tAlso windowed.",
+  ].join("\n");
+  const runbookWith = (...bullets: string[]) =>
+    [
+      "# Runbook",
+      "",
+      "## 2. Migrate",
+      "",
+      "### 2.4 Windowed migration deploy sequence",
+      "",
+      ...bullets,
+      "",
+      "#### 2.4.1 Detail",
+      "",
+      "Text.",
+      "",
+      "### 2.5 Next",
+      "",
+      "20260101030000_contract_c is named here, outside the window section.",
+    ].join("\n");
+
+  it("reads only the windowed rows, in file order, ignoring the header", () => {
+    expect(windowedLedgerMigrations(ledger)).toEqual(["20260101020000_contract_b", "20260101030000_contract_c"]);
+  });
+
+  it("accepts a section that names every windowed migration, sub-sections included", () => {
+    const runbook = runbookWith("- `20260101020000_contract_b`", "- `20260101030000_contract_c`");
+    expect(runbookWindowedProblems(ledger, runbook)).toEqual([]);
+  });
+
+  it("names a windowed migration the section leaves out, even when a later section mentions it", () => {
+    expect(runbookWindowedProblems(ledger, runbookWith("- `20260101020000_contract_b`"))).toEqual([
+      expect.stringContaining("does not name the windowed migration 20260101030000_contract_c"),
+    ]);
+  });
+
+  it("reports a runbook with no windowed section", () => {
+    expect(runbookWindowedProblems(ledger, "# Runbook\n\n## 2. Migrate\n")).toEqual([
+      expect.stringContaining("has no"),
+    ]);
   });
 });
 
@@ -136,6 +201,15 @@ describe("foldUpgradingUnreleased", () => {
 
   it("reports the block's steps and whether the checklist opens it", () => {
     expect(unreleasedBlock(text)).toMatchObject({ hasSteps: true, opensWithChecklist: true });
+  });
+
+  it("ends the lines it adds the way the heading it replaces ends, so a CRLF checkout is not left mixed", () => {
+    const crlf = text.replace(/\n/g, "\r\n");
+    const folded = foldUpgradingUnreleased(crlf, { fromVersion: "0.2.0", toVersion: "0.3.0" });
+    expect(folded.split("\n").slice(0, -1).every((line) => line.endsWith("\r"))).toBe(true);
+    expect(upgradingLayoutProblems(folded)).toEqual([]);
+    expect(unreleasedBlock(folded)).toMatchObject({ hasSteps: false });
+    expect(foldUpgradingUnreleased(text, { fromVersion: "0.2.0", toVersion: "0.3.0" })).not.toContain("\r");
   });
 
   it("refuses to fold into a heading that already exists", () => {

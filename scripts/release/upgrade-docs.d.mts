@@ -22,10 +22,12 @@ export declare function unreleasedBlock(text: string): UnreleasedBlock | null;
 export declare function upgradingLayoutProblems(text: string): string[];
 export declare function runbookScope(text: string): RunbookScope;
 export declare function runbookScopeProblem(text: string, version: string): string | null;
+export declare function windowedLedgerMigrations(ledgerText: string): string[];
+export declare function runbookWindowedProblems(ledgerText: string, runbookText: string): string[];
 export declare function upgradeDocsProblems(input: {
   upgradingText: string | null;
   runbookText: string | null;
-  releasedVersion: string | null;
+  releaseVersion: string | null;
 }): string[];
 export declare function foldUpgradingUnreleased(
   text: string,

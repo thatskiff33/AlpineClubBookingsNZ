@@ -126,11 +126,16 @@ points at the section that explains it; none of them repeats it. The
 production runbook ([`PRODUCTION_UPGRADE_RUNBOOK.md`](PRODUCTION_UPGRADE_RUNBOOK.md)) is the procedure these steps
 fit into.
 
-**Before the deploy**
+#### Before the deploy
 
 1. Rehearse the upgrade on staging first. The minimum is
-   `pnpm run db:rehearse-epic --database-url <throwaway> --base <from-tag>`
+   `pnpm run db:rehearse-epic --database-url <throwaway> --base <from-tag>`,
+   run from a full-history checkout of the release you are moving to
    ([what it proves](BLUE_GREEN_MIGRATION_POLICY.md#rehearsing-an-epics-deploy)).
+   The old release cannot read what a windowed migration drops or renames, and
+   this release carries windowed migrations, so expect the rehearsal to report
+   those models as broken. That is expected for those models only: write down
+   which models it names, and treat any other broken model as a real failure.
    Keep your own record of it in the runbook's
    [§7 template](PRODUCTION_UPGRADE_RUNBOOK.md#7-staging-rehearsal-record) if
    you keep one.
@@ -157,7 +162,7 @@ fit into.
 4. Optional, and only if you choose it:
    [Optional: stop connecting the app as the database superuser (#4453)](#optional-stop-connecting-the-app-as-the-database-superuser-4453).
 
-**During the window**
+#### During the window
 
 1. This release carries windowed migrations, so it needs an announced
    maintenance window. Which migrations are windowed is the ledger's answer
@@ -173,26 +178,29 @@ fit into.
    - [The old Xero token table is dropped (#3806)](#the-old-xero-token-table-is-dropped-3806)
    - [The app records which payment settled each booking (#4211)](#the-app-records-which-payment-settled-each-booking-4211)
    - [A card refund on a bank-transfer payment gets its own Xero credit note (#4312)](#a-card-refund-on-a-bank-transfer-payment-gets-its-own-xero-credit-note-4312)
+   - [The obsolete family-group "role" column is removed (#2520)](#the-obsolete-family-group-role-column-is-removed-2520)
    - [Do not mark an edit's refund task paid back until cutover completes (#3827)](#do-not-mark-an-edits-refund-task-paid-back-until-cutover-completes-3827)
    - [Family email inheritance becomes direct-parent only (#2716)](#family-email-inheritance-becomes-direct-parent-only-and-re-resolves-itself-2716)
    - [The subscription booking lockout becomes a three-way choice (#2543)](#the-subscription-booking-lockout-becomes-a-three-way-choice-2543)
 
-**After the deploy**
+#### After the deploy
 
-1. Work through the runbook's
+1. Decide on after-stay dietary clearing first, and before the next 03:30 club
+   time. It ships on, and its first run is the first nightly pruning run after
+   the upgrade. A cleared note cannot be restored except from a backup:
+   [Old stays' dietary notes are cleared on the first night after upgrading (#4916)](#old-stays-dietary-notes-are-cleared-on-the-first-night-after-upgrading-4916).
+2. Work through the runbook's
    [§3 post-upgrade checklist](PRODUCTION_UPGRADE_RUNBOOK.md#3-post-upgrade-checklist),
    including the
    [§3.4 money and integrations spot-check](PRODUCTION_UPGRADE_RUNBOOK.md#34-spot-check-money-and-integrations).
-2. Review privacy retention before switching on any cleanup job:
+3. Review privacy retention before switching on any cleanup job:
    [Review privacy retention before enabling cleanup (#4457)](#review-privacy-retention-before-enabling-cleanup-4457).
    Deleted data cannot be restored.
-3. Decide on after-stay dietary clearing straight after the deploy. It ships on,
-   and its first run is the first nightly pruning run after the upgrade:
-   [Old stays' dietary notes are cleared on the first night after upgrading (#4916)](#old-stays-dietary-notes-are-cleared-on-the-first-night-after-upgrading-4916).
 4. Do the after-the-deploy part of each of these sections:
    - [Cancelled bookings give back their promo uses; re-run the repair after cutover (#4909)](#cancelled-bookings-give-back-their-promo-uses-re-run-the-repair-after-cutover-4909)
    - [Privacy-incident guide and hosting disclosure settings (#4918)](#privacy-incident-guide-and-hosting-disclosure-settings-4918)
    - [Correct the starter privacy policy (#4914)](#correct-the-starter-privacy-policy-4914)
+   - [One-off update of the starter FAQ's personal-data answer (#4914 follow-up)](#one-off-update-of-the-starter-faqs-personal-data-answer-4914-follow-up)
    - [Member money journal foundation (#4513)](#member-money-journal-foundation-4513)
    - [Stripe balance evidence tables (#4520)](#stripe-balance-evidence-tables-4520)
    - [Member-money applications and refund reservations (#4691)](#member-money-applications-and-refund-reservations-4691)
@@ -225,7 +233,7 @@ fit into.
 ### Review privacy retention before enabling cleanup (#4457)
 
 The three automatic jobs from #4457 ship OFF. (The after-stay dietary clear
-from #4916 ships ON; see its entry under Unreleased.) After upgrading, review the
+from #4916 ships ON; see [its entry](#old-stays-dietary-notes-are-cleared-on-the-first-night-after-upgrading-4916).) After upgrading, review the
 [personal-data retention schedule](PRIVACY_RETENTION.md) and visit
 **Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
 member candidates and the configured periods before enabling any job. Defaults

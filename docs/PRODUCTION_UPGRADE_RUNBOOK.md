@@ -6,9 +6,10 @@ release-agnostic: it names no release pair. Take your "from" and "to" tags from
 [§1.4](#14-capture-the-current-versiontag), and list the migrations your jump
 applies by comparing `prisma/migrations` between the two tags
 (`git diff --name-only <from-tag> <to-tag> -- prisma/migrations`). The steps
-for that jump are the release headings in `docs/UPGRADING.md`, each opening
-with its upgrade checklist. Sections below that name a particular release say
-so, and apply only when your jump crosses it. It is written for the operator of
+for that jump are the release headings in `docs/UPGRADING.md`. The newest
+release's block opens with an ordered before / during / after checklist; the
+older headings have none, so read each one you cross in full. Sections below
+that name a particular release say so, and apply only when your jump crosses it. It is written for the operator of
 a private deployment fork, and it is deliberately generic: substitute your own
 values for placeholders such as `<owner>` (GitHub owner) and
 `https://your-domain.example` (your public domain).
@@ -169,7 +170,7 @@ version). The deploy script snapshots the resolved `origin/main` commit and
 selects the matching GHCR image tags, so pin exactly which commit you are
 deploying and note it in the execution record for rollback reasoning.
 
-### 1.5 Confirm the staging dress rehearsal is recorded
+### 1.5 Rehearse on staging before production
 
 Rehearse this upgrade on staging before production, and do not run production
 without a rehearsal you trust. The rehearsal runs the same pending migrations
@@ -1736,8 +1737,9 @@ every `BookingGuest.dietaryRequirements` value whose stay ended more than 30
 days ago. If the club wants to keep them, untick **Enable after-stay dietary
 clearing** in **Admin → Privacy retention** before that run; nothing already
 cleared can be restored except from the pre-migrate backup. The previous colour
-never reads the new columns. See [`UPGRADING.md`](UPGRADING.md#unreleased) and
-`INV-PRIV-023`.
+never reads the new columns. See
+[its upgrade note](UPGRADING.md#old-stays-dietary-notes-are-cleared-on-the-first-night-after-upgrading-4916)
+and `INV-PRIV-023`.
 
 ### 3.2 Re-run the audit category backfills
 
@@ -1990,6 +1992,19 @@ The minimum rehearsal is
 `pnpm run db:rehearse-epic --database-url <throwaway> --base <from-tag>`
 against a throwaway database
 ([what it proves and what it does not](BLUE_GREEN_MIGRATION_POLICY.md#rehearsing-an-epics-deploy)).
+Run it from a full-history checkout of the **to-tag**: it compares that
+checkout's migrations with the base's, so a checkout of any other release
+rehearses a different jump.
+
+Where your jump crosses a windowed migration
+([§2.4](#24-windowed-migration-deploy-sequence)), the old release cannot read
+what that migration drops or renames, so the rehearsal reports those models as
+broken and prints `REHEARSAL FAILED`. That is expected for those models only.
+Write them under "Notable findings / deviations", record PASS only when every
+broken model is one of them, and treat any other broken model as a real
+failure. The rehearsal reads only, so it says nothing about the writes the old
+release makes during a window; the windowed section covers those.
+
 A staging run against a copy of your own data adds the evidence that the
 migrate step behaves on your data shape.
 

@@ -410,10 +410,11 @@ function readOptional(repoRoot, relative) {
 /**
  * Refuse while the upgrade documents are not ready for a release (#4979): the
  * guide's layout is broken, or the runbook names a release older than
- * `releasedVersion`. The rules are `upgrade-docs.mjs`'s, shared with the census.
+ * `releaseVersion`, the release being cut. The rules are `upgrade-docs.mjs`'s,
+ * shared with the census.
  */
-function refuseUnreadyUpgradeDocs(upgradeDocs, releasedVersion) {
-  const problems = upgradeDocsProblems({ ...upgradeDocs, releasedVersion });
+function refuseUnreadyUpgradeDocs(upgradeDocs, releaseVersion) {
+  const problems = upgradeDocsProblems({ ...upgradeDocs, releaseVersion });
   if (problems.length > 0) {
     throw new ReleaseCutError(
       `The upgrade documents are not ready for a release:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`,
@@ -550,7 +551,10 @@ export function prepareRelease({
       log(`  Note: package.json says ${packageVersion}, not the latest tag's ${plan.previousTag.slice(1)}.`);
     }
   }
-  refuseUnreadyUpgradeDocs(upgradeDocs, latest?.version ?? null);
+  // The runbook must not predate the release being cut: package.json carries
+  // that version once the release-prep pull request is open, which is what the
+  // census (`upgrade-docs-scope.test.ts`) compares against.
+  refuseUnreadyUpgradeDocs(upgradeDocs, plan.version);
   // A fresh prepare folds the guide's "## Unreleased" steps into the release's
   // own heading, as the compiler folds the changelog. Late steps on --amend, or
   // a first release with no previous tag to name, are folded by hand.

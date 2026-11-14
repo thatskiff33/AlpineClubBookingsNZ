@@ -7,7 +7,9 @@
   ordered checklist for the release.
 
   `pnpm run release:cut prepare` now refuses while the runbook names a release
-  older than the current one or a release-specific section sits outside the
+  older than the one being cut or a release-specific section sits outside the
   Unreleased block, and it moves the Unreleased steps under the new release's
-  heading as part of the release commit. The release checklist in
-  `docs/MAINTENANCE.md` adds the upgrade-documents step.
+  heading as part of the release commit. A test now also fails a pull request
+  that adds a windowed migration the runbook's windowed section does not name.
+  The release checklist in `docs/MAINTENANCE.md` adds the upgrade-documents
+  step.
