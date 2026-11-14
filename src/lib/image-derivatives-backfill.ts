@@ -65,7 +65,7 @@ async function backfillDirectory(
 ): Promise<void> {
   const entries = await fs.readdir(absDir, { withFileTypes: true });
   const originals = new Set<string>();
-  const derivatives = await listImageDerivatives(absDir);
+  const derivatives = await listImageDerivatives(absDir, { root });
   let wroteCopies = false;
 
   for (const entry of entries) {
@@ -120,7 +120,9 @@ async function backfillDirectory(
       continue;
     }
     const bytes = await fs.readFile(filePath);
-    const written = await writeImageDerivatives(bytes, absDir, entry.name);
+    const written = await writeImageDerivatives(bytes, absDir, entry.name, {
+      root,
+    });
     if (sameWidths(written, planned)) {
       report.refreshed.push(label);
       wroteCopies ||= written.length > 0;
@@ -139,7 +141,7 @@ async function backfillDirectory(
         ),
       ),
     );
-    if (apply) await removeImageDerivatives(absDir, original);
+    if (apply) await removeImageDerivatives(absDir, original, { root });
   }
 
   if (wroteCopies) await matchDirectoryOwnership(absDir);

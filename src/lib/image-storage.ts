@@ -112,10 +112,19 @@ export type ImageDerivative = {
  */
 export async function listImageDerivatives(
   absDir: string,
-  { strict = false }: { strict?: boolean } = {},
+  {
+    strict = false,
+    root = IMAGES_ROOT,
+  }: { strict?: boolean; root?: string } = {},
 ): Promise<Map<string, ImageDerivative[]>> {
   const result = new Map<string, ImageDerivative[]>();
-  const sizesDir = path.join(absDir, IMAGE_DERIVATIVES_DIRECTORY);
+  // Containment checked here, at the filesystem calls below, not only by the
+  // caller's resolver: CodeQL `js/path-injection` cannot follow a guard across
+  // a function boundary, and these helpers are reached from public routes.
+  const sizesDir = path.resolve(absDir, IMAGE_DERIVATIVES_DIRECTORY);
+  if (!sizesDir.startsWith(path.resolve(root) + path.sep)) {
+    throw new Error("image-storage: copies folder outside the images root");
+  }
   let entries;
   try {
     entries = await fs.readdir(sizesDir, { withFileTypes: true });
@@ -145,15 +154,27 @@ export async function listImageDerivatives(
  * Remove every copy of one original, optionally keeping some widths. Missing
  * files and a missing folder are not errors: the outcome wanted is "no copy of
  * this image remains", and it already holds.
+ *
+ * `root` is the trusted images folder `absDir` must sit in: `IMAGES_ROOT`
+ * unless the operator backfill was pointed at another one. A folder outside it
+ * throws before anything is removed.
  */
 export async function removeImageDerivatives(
   absDir: string,
   fileName: string,
-  keepWidths: readonly number[] = [],
+  {
+    keepWidths = [],
+    root = IMAGES_ROOT,
+  }: { keepWidths?: readonly number[]; root?: string } = {},
 ): Promise<void> {
+  const sizesDir = path.resolve(absDir, IMAGE_DERIVATIVES_DIRECTORY);
+  if (!sizesDir.startsWith(path.resolve(root) + path.sep)) {
+    throw new Error("image-storage: copies folder outside the images root");
+  }
   const copies =
-    (await listImageDerivatives(absDir, { strict: true })).get(fileName) ?? [];
-  const sizesDir = path.join(absDir, IMAGE_DERIVATIVES_DIRECTORY);
+    (await listImageDerivatives(absDir, { strict: true, root })).get(
+      fileName,
+    ) ?? [];
   for (const copy of copies) {
     if (keepWidths.includes(copy.width)) continue;
     try {

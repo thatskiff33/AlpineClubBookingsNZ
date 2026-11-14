@@ -3918,7 +3918,11 @@ name in any case, and every Image Manager endpoint refuses a `dir`, `parent` or
 officer cannot list, plant, rename or delete a copy except through its original;
 a gallery token naming that folder renders no photos. Copy paths are built from
 a contained directory and a `readdir` or sanitised file name, never request
-input.
+input. The copy helpers in `image-storage.ts` and `image-derivatives.ts` also
+re-check, at their own filesystem calls, that the copies folder sits under the
+trusted root (`IMAGES_ROOT`, or the backfill's `--root`), because CodeQL cannot
+follow the caller's resolver across the function boundary; a folder outside it
+is refused before any read, write or delete.
 
 ### MiroTalk meeting tokens
 

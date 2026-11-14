@@ -10,7 +10,11 @@ import {
   writeImageDerivatives,
 } from "@/lib/image-derivatives";
 import { backfillImageDerivatives } from "@/lib/image-derivatives-backfill";
-import { IMAGE_DERIVATIVES_DIRECTORY } from "@/lib/image-storage";
+import {
+  IMAGE_DERIVATIVES_DIRECTORY,
+  listImageDerivatives,
+  removeImageDerivatives,
+} from "@/lib/image-storage";
 
 // #4935 (INV-PUB-005). Real sharp, real files in a temporary directory: the
 // properties that matter — which widths exist, that nothing is upscaled, that
@@ -58,7 +62,7 @@ describe("plannedDerivativeWidths", () => {
 describe("writeImageDerivatives", () => {
   it("writes a WebP copy at each fixed width below the source, at that width", async () => {
     const bytes = await solid(2000, 1500).jpeg().toBuffer();
-    const widths = await writeImageDerivatives(bytes, dir, "lodge.jpg");
+    const widths = await writeImageDerivatives(bytes, dir, "lodge.jpg", { root: dir });
 
     expect(widths).toEqual([400, 800, 1600]);
     expect(await copiesOnDisk()).toEqual([
@@ -76,18 +80,18 @@ describe("writeImageDerivatives", () => {
 
   it("does not upscale: a 900 px photo gets 400 and 800 only, and a 300 px one nothing", async () => {
     expect(
-      await writeImageDerivatives(await solid(900, 600).png().toBuffer(), dir, "mid.png"),
+      await writeImageDerivatives(await solid(900, 600).png().toBuffer(), dir, "mid.png", { root: dir }),
     ).toEqual([400, 800]);
     expect(
-      await writeImageDerivatives(await solid(300, 200).png().toBuffer(), dir, "tiny.png"),
+      await writeImageDerivatives(await solid(300, 200).png().toBuffer(), dir, "tiny.png", { root: dir }),
     ).toEqual([]);
     expect(await copiesOnDisk()).toEqual(["mid.png.400.webp", "mid.png.800.webp"]);
   });
 
   it("stores no copy of a GIF (it may be animated) or an AVIF", async () => {
     const gif = await solid(2000, 1500).gif().toBuffer();
-    expect(await writeImageDerivatives(gif, dir, "anim.gif")).toEqual([]);
-    expect(await writeImageDerivatives(gif, dir, "photo.avif")).toEqual([]);
+    expect(await writeImageDerivatives(gif, dir, "anim.gif", { root: dir })).toEqual([]);
+    expect(await writeImageDerivatives(gif, dir, "photo.avif", { root: dir })).toEqual([]);
     expect(await copiesOnDisk()).toEqual([]);
   });
 
@@ -98,7 +102,7 @@ describe("writeImageDerivatives", () => {
       .toBuffer();
     expect((await sharp(bytes).metadata()).exif).toBeDefined();
 
-    await writeImageDerivatives(bytes, dir, "phone.jpg");
+    await writeImageDerivatives(bytes, dir, "phone.jpg", { root: dir });
     for (const name of await copiesOnDisk()) {
       const file = await fs.readFile(path.join(dir, IMAGE_DERIVATIVES_DIRECTORY, name));
       const meta = await sharp(file).metadata();
@@ -113,7 +117,7 @@ describe("writeImageDerivatives", () => {
     // is applied — so it gets 400 and 800, rotated, not 400/800 of a sideways
     // image.
     const bytes = await solid(1200, 900).jpeg().withMetadata({ orientation: 6 }).toBuffer();
-    expect(await writeImageDerivatives(bytes, dir, "portrait.jpg")).toEqual([400, 800]);
+    expect(await writeImageDerivatives(bytes, dir, "portrait.jpg", { root: dir })).toEqual([400, 800]);
     const meta = await sharp(
       path.join(dir, IMAGE_DERIVATIVES_DIRECTORY, "portrait.jpg.800.webp"),
     ).metadata();
@@ -127,7 +131,7 @@ describe("writeImageDerivatives", () => {
       (await solid(1000, 800).jpeg().toBuffer()).subarray(0, 200),
       Buffer.alloc(200, 0x61),
     ]);
-    await expect(writeImageDerivatives(corrupt, dir, "broken.jpg")).resolves.toEqual([]);
+    await expect(writeImageDerivatives(corrupt, dir, "broken.jpg", { root: dir })).resolves.toEqual([]);
     expect(await copiesOnDisk()).toEqual([]);
     expect(warn).toHaveBeenCalled();
   });
@@ -137,27 +141,54 @@ describe("writeImageDerivatives", () => {
     // the PNG itself small — exactly the decompression-bomb shape.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const bomb = await solid(8000, 6500).png({ compressionLevel: 9 }).toBuffer();
-    expect(await writeImageDerivatives(bomb, dir, "bomb.png")).toEqual([]);
+    expect(await writeImageDerivatives(bomb, dir, "bomb.png", { root: dir })).toEqual([]);
     expect(await copiesOnDisk()).toEqual([]);
     expect(String(warn.mock.calls[0]?.slice(1))).toMatch(/pixel limit/i);
   });
 
   it("replaces a photo's copies rather than accumulating them", async () => {
-    await writeImageDerivatives(await solid(2000, 1500).jpeg().toBuffer(), dir, "lodge.jpg");
+    await writeImageDerivatives(await solid(2000, 1500).jpeg().toBuffer(), dir, "lodge.jpg", { root: dir });
     // The officer replaces lodge.jpg with a narrower photo: its 1600 px copy
     // would otherwise keep serving the OLD photo.
-    await writeImageDerivatives(await solid(1000, 750).jpeg().toBuffer(), dir, "lodge.jpg");
+    await writeImageDerivatives(await solid(1000, 750).jpeg().toBuffer(), dir, "lodge.jpg", { root: dir });
     expect(await copiesOnDisk()).toEqual(["lodge.jpg.400.webp", "lodge.jpg.800.webp"]);
 
     // And a replacement that cannot be copied leaves none of the old ones.
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    await writeImageDerivatives(Buffer.from("not an image"), dir, "lodge.jpg");
+    await writeImageDerivatives(Buffer.from("not an image"), dir, "lodge.jpg", { root: dir });
     expect(await copiesOnDisk()).toEqual([]);
   });
 
   it("leaves no temporary file behind", async () => {
-    await writeImageDerivatives(await solid(900, 600).jpeg().toBuffer(), dir, "a.jpg");
+    await writeImageDerivatives(await solid(900, 600).jpeg().toBuffer(), dir, "a.jpg", { root: dir });
     expect((await copiesOnDisk()).some((name) => name.endsWith(".part"))).toBe(false);
+  });
+});
+
+// The copy helpers re-check containment at their own filesystem calls rather
+// than trusting the caller's resolver (CodeQL js/path-injection on #5087).
+describe("copies folder containment", () => {
+  it("writes nothing for a folder outside the trusted root", async () => {
+    const root = path.join(dir, "images");
+    await fs.mkdir(root);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const bytes = await solid(2000, 1500).jpeg().toBuffer();
+    expect(await writeImageDerivatives(bytes, dir, "lodge.jpg", { root })).toEqual([]);
+    expect(await copiesOnDisk()).toEqual([]);
+  });
+
+  it("refuses to list or remove copies outside the trusted root", async () => {
+    await writeImageDerivatives(await solid(900, 600).jpeg().toBuffer(), dir, "a.jpg", { root: dir });
+    const root = path.join(dir, "images");
+    await expect(listImageDerivatives(dir, { root })).rejects.toThrow(/outside the images root/);
+    await expect(removeImageDerivatives(dir, "a.jpg", { root })).rejects.toThrow(/outside the images root/);
+    expect(await copiesOnDisk()).toEqual(["a.jpg.400.webp", "a.jpg.800.webp"]);
+  });
+
+  it("refuses a sibling folder that merely shares the root's name as a prefix", async () => {
+    const root = path.join(dir, "images");
+    const sibling = path.join(dir, "imagesEvil");
+    await expect(listImageDerivatives(sibling, { root })).rejects.toThrow(/outside the images root/);
   });
 });
 

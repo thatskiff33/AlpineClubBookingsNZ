@@ -5,6 +5,7 @@ import path from "path";
 import sharp from "sharp";
 
 import {
+  IMAGES_ROOT,
   IMAGE_DERIVATIVES_DIRECTORY,
   derivativeFileName,
   removeImageDerivatives,
@@ -96,8 +97,16 @@ export async function writeImageDerivatives(
   bytes: Buffer,
   absDir: string,
   fileName: string,
+  { root = IMAGES_ROOT }: { root?: string } = {},
 ): Promise<number[]> {
-  const sizesDir = path.join(absDir, IMAGE_DERIVATIVES_DIRECTORY);
+  const sizesDir = path.resolve(absDir, IMAGE_DERIVATIVES_DIRECTORY);
+  // The caller's containment, re-checked at the writes below: a folder outside
+  // the trusted images root (IMAGES_ROOT, or the backfill's --root) gets no
+  // copies and no write. Not fail-open: nothing is written, so nothing leaks.
+  if (!sizesDir.startsWith(path.resolve(root) + path.sep)) {
+    console.warn("image-derivatives: folder outside the images root; no copies made");
+    return [];
+  }
   try {
     const widths = await plannedDerivativeWidthsFor(bytes, fileName);
     if (widths.length > 0) {
@@ -116,7 +125,10 @@ export async function writeImageDerivatives(
         encoded,
       );
     }
-    await removeImageDerivatives(absDir, fileName, widths);
+    await removeImageDerivatives(absDir, fileName, {
+      keepWidths: widths,
+      root,
+    });
     return widths;
   } catch (err) {
     console.warn(
@@ -124,7 +136,9 @@ export async function writeImageDerivatives(
       fileName,
       err instanceof Error ? err.message : err,
     );
-    await removeImageDerivatives(absDir, fileName).catch(() => undefined);
+    await removeImageDerivatives(absDir, fileName, { root }).catch(
+      () => undefined,
+    );
     return [];
   }
 }
