@@ -6,14 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { useConfirm } from "@/components/confirm-dialog";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import {
@@ -281,62 +274,72 @@ export function ConfirmPendingGuestsButton({
           #2259: with the booking's "No emails" switch on there is no choice to
           make — the mailer withholds the confirmation either way — so the
           dialog states that and offers only the send-nothing action. */}
-      <Dialog open={notifyDialogOpen} onOpenChange={setNotifyDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {noEmails
-                ? "Confirm pending guests?"
-                : "Email the member about this confirmation?"}
-            </DialogTitle>
-            <DialogDescription>
-              {noEmails ? (
-                <>
-                  The pending guests will be confirmed
-                  {willCharge ? ", and the saved card charged" : ""}.
-                </>
-              ) : (
-                <>
-                  The booking will be confirmed either way
-                  {willCharge ? ", and the saved card is charged regardless" : ""}
-                  . Choose whether the member receives the standard booking
-                  confirmation email — your choice is recorded in the audit log.
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          {noEmails && <BookingNoEmailsNotice />}
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setNotifyDialogOpen(false);
-                // #2259 H1: with the switch on, send NO choice at all rather
-                // than notifyMember:false. `false` makes the route skip the
-                // send outright, so the mailer's gate never runs and no
-                // withheld row is recorded — the banner would then omit the
-                // very confirmation the admin just suppressed. Omitting the
-                // flag lets the send be attempted and WITHHELD, which both
-                // produces the audit row and records honestly that the admin
-                // made no choice, because none was offered.
-                void performConfirm(noEmails ? undefined : false);
-              }}
-            >
-              {noEmails ? "Confirm pending guests" : "Confirm without emailing"}
-            </Button>
-            {!noEmails && (
-              <Button
-                onClick={() => {
-                  setNotifyDialogOpen(false);
-                  void performConfirm(true);
-                }}
-              >
-                Confirm and email member
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NotifyChoiceDialog
+        open={notifyDialogOpen}
+        onOpenChange={setNotifyDialogOpen}
+        title={
+          noEmails
+            ? "Confirm pending guests?"
+            : "Email the member about this confirmation?"
+        }
+        description={
+          noEmails ? (
+            <>
+              The pending guests will be confirmed
+              {willCharge ? ", and the saved card charged" : ""}.
+            </>
+          ) : (
+            <>
+              The booking will be confirmed either way
+              {willCharge ? ", and the saved card is charged regardless" : ""}
+              . Choose whether the member receives the standard booking
+              confirmation email — your choice is recorded in the audit log.
+            </>
+          )
+        }
+        notice={noEmails ? <BookingNoEmailsNotice /> : null}
+        actions={
+          noEmails
+            ? {
+                kind: "single",
+                action: {
+                  label: "Confirm pending guests",
+                  variant: "outline",
+                  onSelect: () => {
+                    setNotifyDialogOpen(false);
+                    // #2259 H1: with the switch on, send NO choice at all
+                    // rather than notifyMember:false. `false` makes the route
+                    // skip the send outright, so the mailer's gate never runs
+                    // and no withheld row is recorded — the banner would then
+                    // omit the very confirmation the admin just suppressed.
+                    // Omitting the flag lets the send be attempted and
+                    // WITHHELD, which both produces the audit row and records
+                    // honestly that the admin made no choice, because none was
+                    // offered.
+                    void performConfirm(undefined);
+                  },
+                },
+              }
+            : {
+                kind: "choice",
+                withoutEmail: {
+                  label: "Confirm without emailing",
+                  variant: "outline",
+                  onSelect: () => {
+                    setNotifyDialogOpen(false);
+                    void performConfirm(false);
+                  },
+                },
+                withEmail: {
+                  label: "Confirm and email member",
+                  onSelect: () => {
+                    setNotifyDialogOpen(false);
+                    void performConfirm(true);
+                  },
+                },
+              }
+        }
+      />
       </Card>
     </div>
   );

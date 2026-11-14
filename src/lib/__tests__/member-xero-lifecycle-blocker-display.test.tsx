@@ -21,8 +21,8 @@ import { describe, expect, it, vi } from "vitest";
 // and has its own tests (`xero-sync-now-button.test.tsx`); this file pins the blocker.
 vi.mock("@/components/admin/xero-sync-now-button", () => ({ XeroSyncNowButton: () => null }));
 
-import { MemberXeroContactSummary } from "@/app/(admin)/admin/members/[id]/_components/member-xero-contact-summary";
-import type { MemberDetail } from "@/app/(admin)/admin/members/[id]/_types";
+import { MemberXeroContactSummary } from "@/app/(admin)/admin/membership/members/[id]/_components/member-xero-contact-summary";
+import type { MemberDetail } from "@/app/(admin)/admin/membership/members/[id]/_types";
 
 function member(overrides: Partial<MemberDetail>): MemberDetail {
   return {
