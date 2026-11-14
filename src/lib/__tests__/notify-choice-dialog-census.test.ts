@@ -41,16 +41,16 @@ const HAND_ROLLED_WITH_THEIR_OWN_WAY_BACK = [
   // Has a ghost Cancel and a second, non-email step in the same dialog.
   "src/app/(admin)/admin/finance/subscriptions/_components/manual-payment-dialog.tsx",
   // Deletion requests are out of #4966's scope; its reject footer has Cancel.
-  "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx",
+  "src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx",
 ];
 
 const MIGRATED_SCREENS = [
-  "src/app/(admin)/admin/book/page.tsx",
+  "src/app/(admin)/admin/booking-desk/book/page.tsx",
   "src/app/(admin)/admin/finance/refund-requests/page.tsx",
-  "src/app/(admin)/admin/member-applications/page.tsx",
-  "src/app/(admin)/admin/members/[id]/_components/member-lifecycle-card.tsx",
-  "src/app/(admin)/admin/members/[id]/_components/member-partner-link-card.tsx",
-  "src/app/(admin)/admin/membership-cancellations/page.tsx",
+  "src/app/(admin)/admin/membership/member-applications/page.tsx",
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-lifecycle-card.tsx",
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-partner-link-card.tsx",
+  "src/app/(admin)/admin/membership/membership-cancellations/page.tsx",
   "src/components/admin/booking-requests/booking-approvals-panel.tsx",
   "src/components/admin/booking-requests/public-booking-requests-panel.tsx",
   "src/components/admin/confirm-pending-guests-button.tsx",
