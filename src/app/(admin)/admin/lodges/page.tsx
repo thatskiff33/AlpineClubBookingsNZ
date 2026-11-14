@@ -1,10 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Building2, Pencil, Plus, Settings2, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -29,6 +27,7 @@ import {
   parseConfiguredLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
 import { AddLodgeCapacityField } from "./_components/add-lodge-capacity-field";
+import { LodgePropertiesCard } from "./_components/lodge-properties-card";
 import { OtherLodgesPanel } from "./_components/other-lodges-panel";
 
 /**
@@ -441,77 +440,16 @@ export default function AdminLodgesPage() {
         </Card>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5" />
-            Lodge properties
-          </CardTitle>
-          <CardDescription>
-            At least one lodge must stay active. Deactivated lodges are kept
-            for history but cannot take new bookings.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <p className="text-sm text-muted-foreground">Loading lodges...</p>
-          ) : loadError ? null : lodges.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No lodges found.</p>
-          ) : (
-            <ul className="divide-y">
-              {lodges.map((lodge) => (
-                <li
-                  key={lodge.id}
-                  className="flex flex-wrap items-center justify-between gap-2 py-3"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{lodge.name}</span>
-                      <Badge variant={lodge.active ? "default" : "secondary"}>
-                        {lodge.active ? "Active" : "Inactive"}
-                      </Badge>
-                    </div>
-                    {lodge.travelNote ? (
-                      <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-                        {lodge.travelNote}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button asChild variant="outline" size="sm">
-                      <Link href={`/admin/lodges/${lodge.id}`}>
-                        <Settings2 className="mr-2 h-4 w-4" />
-                        Configure
-                      </Link>
-                    </Button>
-                    <ViewOnlyActionButton
-                      canEdit={canEdit}
-                      describeReason={false}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => startEdit(lodge)}
-                      disabled={saving}
-                    >
-                      <Pencil className="mr-2 h-4 w-4" />
-                      Edit
-                    </ViewOnlyActionButton>
-                    <ViewOnlyActionButton
-                      canEdit={canEdit}
-                      describeReason={false}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void setActive(lodge, !lodge.active)}
-                      disabled={saving}
-                    >
-                      {lodge.active ? "Deactivate" : "Activate"}
-                    </ViewOnlyActionButton>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <LodgePropertiesCard
+        lodges={lodges}
+        loading={loading}
+        loadFailed={loadError !== null}
+        canEdit={canEdit}
+        saving={saving}
+        onEdit={startEdit}
+        onSetActive={(lodge, active) => void setActive(lodge, active)}
+        ancestorRendersViewOnlyBanner
+      />
 
       <OtherLodgesPanel ancestorRendersViewOnlyBanner />
       </div>
