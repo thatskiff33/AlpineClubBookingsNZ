@@ -315,7 +315,10 @@ describe("the documents a club follows install a release, not main", () => {
   it.each(["docs/IMPLEMENTATION_GUIDE.md", "DEPLOYMENT.md"])(
     "%s checks out the latest release tag after git clone",
     (file) => {
-      const lines = readRepoFile(file).split("\n");
+      // Trimmed, because a snippet inside a numbered step is indented.
+      const lines = readRepoFile(file)
+        .split("\n")
+        .map((line) => line.trim());
       const clone = lines.findIndex((line) => line.startsWith("git clone "));
       expect(clone, `${file} must have an install snippet`).toBeGreaterThan(-1);
       expect(lines[clone + 1]).toMatch(/^cd /);
