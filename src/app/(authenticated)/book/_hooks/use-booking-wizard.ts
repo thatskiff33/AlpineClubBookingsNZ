@@ -22,6 +22,7 @@ import {
   createRequestPromoFields,
 } from "@/components/promo-code-list-client";
 import { useWorkingBeeDiscount } from "./use-working-bee-discount";
+import { useSelectionCancellationSchedule } from "./use-selection-cancellation-schedule";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -191,10 +192,6 @@ function clearGuestNights(guestList: GuestData[]): GuestData[] {
   });
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
 // Booking wizard state machine (#1209). Extracted verbatim from the /book page
 // shell: the same 51 useState, 9 useEffect (identical bodies, deps, and order),
 // and handlers. The page renders the _components step views with this hook's
@@ -318,24 +315,10 @@ export function useBookingWizard() {
   // (#2474), never a local-midnight `Date`.
   const [checkIn, setCheckIn] = useState<string | null>(null);
   const [checkOut, setCheckOut] = useState<string | null>(null);
-  /**
-   * #4946: the club's current cancellation schedule rows for the selection the
-   * policy check answered, shown on the review step before the member commits.
-   * Stored WITH that selection and read back only while it is still the one on
-   * screen (`cancellationSchedule` below), so a schedule for earlier dates or
-   * another lodge is never shown, even for the render before a clear lands.
-   */
-  const [cancellationScheduleState, setCancellationScheduleState] = useState<{
-    lodgeId: string;
-    checkIn: string;
-    rows: string[];
-  } | null>(null);
-  const cancellationSchedule =
-    cancellationScheduleState &&
-    cancellationScheduleState.lodgeId === scopedLodgeId &&
-    cancellationScheduleState.checkIn === checkIn
-      ? cancellationScheduleState.rows
-      : null;
+  // #4946: refund terms for the selection the policy check answered; shown
+  // only while that lodge and check-in are still the ones on screen.
+  const { cancellationSchedule, recordCancellationSchedule, clearCancellationSchedule } =
+    useSelectionCancellationSchedule(scopedLodgeId, checkIn);
   const [guests, setGuests] = useState<GuestData[]>([]);
   const [notes, setNotes] = useState("");
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
@@ -548,7 +531,7 @@ export function useBookingWizard() {
     setStep("dates");
     setCheckIn(null);
     setCheckOut(null);
-    setCancellationScheduleState(null);
+    clearCancellationSchedule();
     setError("");
     setGuestProfileBlocks([]);
     setAppliedPromos([]);
@@ -1405,7 +1388,7 @@ export function useBookingWizard() {
     };
     setCheckIn(ci);
     setCheckOut(co);
-    setCancellationScheduleState(null);
+    clearCancellationSchedule();
     setError("");
     setGuestProfileBlocks([]);
     setMemberNightConflicts([]);
@@ -1456,11 +1439,7 @@ export function useBookingWizard() {
       if (policyRes.ok) {
         const policyData = await policyRes.json();
         if (lostSelectionOwnership()) return;
-        setCancellationScheduleState(
-          isStringArray(policyData.cancellationSchedule)
-            ? { lodgeId: requestedLodgeId, checkIn: ci, rows: policyData.cancellationSchedule }
-            : null,
-        );
+        recordCancellationSchedule(requestedLodgeId, ci, policyData.cancellationSchedule);
         if (!policyData.valid) {
         // #2562: the date precheck must not strand a member before they can
         // describe the party that the officer would review. Reuse the ONE
