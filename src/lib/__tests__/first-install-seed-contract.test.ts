@@ -2,7 +2,11 @@ import { execFileSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-import { firstInstallCommands } from "../../../scripts/ci/first-install-smoke.mjs";
+import {
+  fillPlaceholders,
+  firstBootstrapBlocks,
+  firstInstallSteps,
+} from "../../../scripts/ci/first-install-smoke.mjs";
 import {
   appEnvironmentAnchor,
   BASE_COMPOSE,
@@ -118,10 +122,57 @@ describe("the first-install seed service (#4977, INV-OPS-019)", () => {
 });
 
 describe("the docs that tell an operator how to seed (#4977, INV-OPS-019)", () => {
-  it("gives DEPLOYMENT.md First Bootstrap the seed command, after migrate", () => {
-    const commands = firstInstallCommands(readRepoFile("DEPLOYMENT.md"));
-    expect(commands.seed).toBe(DOCKER_SEED_COMMAND);
-    expect(commands.migrate).toBe("docker compose run --rm migrate");
+  it("gives DEPLOYMENT.md First Bootstrap the seed command, once the roles are on and before the app starts", () => {
+    // firstInstallSteps itself throws if a step is missing or out of order, so
+    // reading the doc is the order check: migrate, provision, switch the roles
+    // on in .env, seed, start.
+    const steps = firstInstallSteps(readRepoFile("DEPLOYMENT.md"));
+    expect(steps.seed.line).toBe(DOCKER_SEED_COMMAND);
+    expect(steps.migrate.line).toBe(
+      "docker compose --profile migrate run --rm -e DATABASE_URL migrate",
+    );
+  });
+
+  it("holds the smoke to the doc's order: a seed after the app starts, or none, is refused", () => {
+    // Mutation probe on the doc's own blocks, so it cannot pass vacuously.
+    const steps = firstInstallSteps(readRepoFile("DEPLOYMENT.md"));
+    const document = (names: string[]) =>
+      `\n## First Bootstrap\n\n${names.map((n) => `\`\`\`bash\n${steps[n].text}\n\`\`\``).join("\n\n")}\n\n## Next\n`;
+    const inOrder = ["copy", "postgres", "migrate", "provision", "switch", "seed", "start"];
+    expect(() => firstInstallSteps(document(inOrder))).not.toThrow();
+    const swapped = [...inOrder.slice(0, 5), "start", "seed"];
+    expect(() => firstInstallSteps(document(swapped))).toThrow(/out of order/);
+    expect(() => firstInstallSteps(document(inOrder.filter((n) => n !== "seed")))).toThrow(
+      /no seed step/,
+    );
+  });
+
+  it("fills every placeholder the doc's run steps use, and refuses one it does not know", () => {
+    const steps = firstInstallSteps(readRepoFile("DEPLOYMENT.md"));
+    const values = {
+      DB_PASSWORD: "operator-pw",
+      APP_DB_PASSWORD: "app-pw",
+      MIGRATION_DB_PASSWORD: "migration-pw",
+      AUDIT_RETENTION_DB_PASSWORD: "retention-pw",
+    };
+    for (const name of ["migrate", "provision", "switch"]) {
+      expect(() => fillPlaceholders(steps[name].text, values), name).not.toThrow();
+    }
+    expect(() => fillPlaceholders("export X=<your-unknown-password>", values)).toThrow(
+      /cannot fill/,
+    );
+    expect(firstBootstrapBlocks(readRepoFile("DEPLOYMENT.md")).length).toBeGreaterThanOrEqual(7);
+  });
+
+  it(".env.example gives Compose no empty value followed by a comment", () => {
+    // `cp .env.example .env` is the doc's first step. Compose reads `KEY=   # note`
+    // as the value `# note`, so an unedited line made `docker compose up` fail
+    // on an undefined volume and set a role name to the comment's text. A
+    // comment sits on its own line instead.
+    const offenders = readRepoFile(".env.example")
+      .split("\n")
+      .filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=[ \t]+#/.test(l));
+    expect(offenders).toEqual([]);
   });
 
   it.each(OPERATOR_SEED_DOCS)("%s seeds with `run --rm seed`", (doc) => {

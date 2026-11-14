@@ -791,25 +791,27 @@ installation.
 
 A Docker-only install can create its first admin with Docker alone, and the
 commands that do it are the ones CI runs. `DEPLOYMENT.md` "First Bootstrap"
-gives the seed as one plain line, `docker compose run --rm seed`, after
-`run --rm migrate`. The `seed` service runs on the builder image, the same image
-and build as `migrate`, because the runner image holds no source. It sits
-behind a profile, so `docker compose up` never starts it and an upgrade never
-runs it. It reads the `SEED_` secrets from `.env` through `environment:` only,
-never as a build argument or on the command line. Its database pool is bounded
-and counted in the connection budget.
+gives the seed as one plain line, `docker compose run --rm seed`, after the
+database roles are provisioned and switched on in `.env` and before the web
+slots start. The `seed` service runs on the builder image, the same image and
+build as `migrate`, because the runner image holds no source. It sits behind a
+profile, so `docker compose up` never starts it and an upgrade never runs it.
+It connects as the application role with a bounded pool counted in the
+connection budget, and reads the `SEED_` secrets from `.env` through
+`environment:` only, never as a build argument or on the command line.
 
 Every operator doc that tells somebody how to seed a Compose install names that
-service. None runs the seed in the app container (`exec app`), whose image
-cannot run it. The setup checklist names the Docker command and the developer
-command from one module, `src/lib/seed-commands.ts`.
+service; none runs the seed in the app container (`exec app`), whose image
+cannot run it. The setup checklist names the Docker and developer commands from
+`src/lib/seed-commands.ts`. `.env.example` is copied by the first step, so no
+line gives Compose an empty value followed by a comment: Compose reads the
+comment as the value.
 
-- Why: #4977. "First Bootstrap" had lost its seed step, and three docs gave an
-  `exec app` command that fails in the runner image. CI seeded from the host, so
-  no check ran what an operator is told to run, and a new club could not sign in.
-- Enforced by `scripts/ci/first-install-smoke.mjs`, which reads the three
-  commands out of `DEPLOYMENT.md` and runs them verbatim on an empty database in
-  the `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
+- Why: #4977. "First Bootstrap" had lost its seed step, three docs gave an
+  `exec app` command that fails in the runner image, and CI seeded from the
+  host, so no check ran what an operator is told to run.
+- Enforced by `scripts/ci/first-install-smoke.mjs`, which reads the steps out of
+  `DEPLOYMENT.md` and runs them on an empty database in the
+  `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
   nothing written; a second run must change nothing. Also enforced by
-  `first-install-seed-contract.test.ts`, which holds the compose service and
-  every doc to this rule.
+  `first-install-seed-contract.test.ts`.
