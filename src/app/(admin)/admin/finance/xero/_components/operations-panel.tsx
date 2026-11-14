@@ -28,7 +28,6 @@ import { fetchJson, postJson } from "./api"
 import {
   FailureStateChip,
   FilterSelect,
-  formatJson,
   OperationStatusChip,
   SectionCard,
   shortId,
@@ -41,6 +40,7 @@ import type { XeroOperation } from "./types"
 import { useClubFormat } from "@/components/club-format-provider"
 import { XeroFailureExplanation } from "@/components/admin/xero-failure-explanation"
 import { useResolveOperation } from "./use-resolve-operation"
+import { RawPayloads } from "./raw-payloads"
 
 export function OperationsPanel({
   connected,
@@ -689,21 +689,6 @@ export function OperationItem({
           <RawPayloads operation={operation} className="mt-2" />
         </details>
       )}
-    </div>
-  )
-}
-
-function RawPayloads({ operation, className }: { operation: XeroOperation; className?: string }) {
-  return (
-    <div className={`grid gap-3 lg:grid-cols-2${className ? ` ${className}` : ""}`}>
-      <div>
-        <p className="mb-1 text-xs font-medium text-foreground">Request</p>
-        <pre className="max-h-64 overflow-auto rounded border bg-background p-2 text-[11px]">{formatJson(operation.requestPayload)}</pre>
-      </div>
-      <div>
-        <p className="mb-1 text-xs font-medium text-foreground">Response</p>
-        <pre className="max-h-64 overflow-auto rounded border bg-background p-2 text-[11px]">{formatJson(operation.responsePayload)}</pre>
-      </div>
     </div>
   )
 }
