@@ -33,13 +33,14 @@
  * `mirotalk-exposure-contract.test.ts` is the behavioural half.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import {
   isBlockedDestinationHost,
   normaliseDestinationHost,
 } from "@/lib/private-destination-hosts";
 
 /** The provider namespace MiroTalk's secrets occupy in the credential store. */
-export const MIROTALK_PROVIDER = "mirotalk";
+export const MIROTALK_PROVIDER = "mirotalk" satisfies IntegrationCredentialNamespace;
 
 /**
  * The three secrets, and why the username is one of them.

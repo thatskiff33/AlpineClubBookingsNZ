@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { editDoorBooking, editDoorGuest } from "./support/edit-door-booking";
 import { ApiError } from "@/lib/api-error";
 import {
   InsufficientCapacityError,
@@ -55,7 +56,7 @@ async function pricedPricing(
 }
 
 function baseArgs() {
-  const guest = {
+  const guest = editDoorGuest({
     id: "g1",
     ageTier: "ADULT",
     isMember: true,
@@ -73,8 +74,8 @@ function baseArgs() {
       { stayDate: D("2026-09-11"), priceCents: 10000, priceSource: "SOLD" },
       { stayDate: D("2026-09-12"), priceCents: 10000, priceSource: "SOLD" },
     ],
-  };
-  const booking = {
+  });
+  const booking = editDoorBooking({
     id: "b1",
     memberId: "m1",
     lodgeId: "lodge-1",
@@ -85,7 +86,7 @@ function baseArgs() {
     promoAdjustmentCents: 0,
     finalPriceCents: 30000,
     guests: [guest],
-  } as never;
+  });
 
   return {
     booking,
@@ -292,13 +293,12 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
   };
 
   function existingGuest(stayStart: string, stayEnd: string, priceCents: number) {
-    return {
+    return editDoorGuest({
       id: "g1",
       ageTier: "ADULT",
       isMember: true,
       memberId: "m1",
       rateMembershipTypeId: MEMBER_TYPE,
-      rateSource: "OWN_TYPE",
       stayStart: D(stayStart),
       stayEnd: D(stayEnd),
       // #2736: the real query (`LoadedBookingForModify`) always includes the
@@ -327,7 +327,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
         }));
       })(),
       priceCents,
-    };
+    });
   }
 
   function inProgressArgs(opts: {
@@ -343,7 +343,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
     const price = opts.guestPriceCents ?? 4 * RATE;
     const guest = existingGuest(gStart, gEnd, price);
     return {
-      booking: {
+      booking: editDoorBooking({
         id: "b1",
         memberId: "m1",
         lodgeId: "lodge-1",
@@ -354,7 +354,7 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
         promoAdjustmentCents: 0,
         finalPriceCents: price,
         guests: [guest],
-      } as never,
+      }),
       bookingId: "b1",
       isInProgressEdit: true,
       editableFrom: D(opts.editableFrom),
@@ -499,13 +499,12 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
 
   /** Nights 08-20 and 08-22 — home on the 21st. */
   function sparseArgs(perNightCents: number) {
-    const guest = {
+    const guest = editDoorGuest({
       id: "g1",
       ageTier: "ADULT",
       isMember: true,
       memberId: "m1",
       rateMembershipTypeId: MEMBER_TYPE,
-      rateSource: "OWN_TYPE",
       stayStart: D("2026-08-20"),
       stayEnd: D("2026-08-23"),
       // #3031: the two nights carry what they were sold for, and `priceCents`
@@ -517,9 +516,9 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
         { stayDate: D("2026-08-22"), priceCents: perNightCents, priceSource: "SOLD" },
       ],
       priceCents: 2 * perNightCents,
-    };
+    });
     return {
-      booking: {
+      booking: editDoorBooking({
         id: "b1",
         memberId: "m1",
         lodgeId: "lodge-1",
@@ -530,7 +529,7 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
         promoAdjustmentCents: 0,
         finalPriceCents: 2 * perNightCents,
         guests: [guest],
-      } as never,
+      }),
       bookingId: "b1",
       isInProgressEdit: true,
       editableFrom: D("2026-08-21"),
@@ -580,21 +579,14 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
     const drifted = sparseArgs(RATE);
     const result = await pricedPricing(NO_DISCOUNT_TX, {
       ...drifted,
-      booking: {
-        ...(drifted.booking as unknown as { guests: Array<{ priceCents: number }> }),
+      booking: editDoorBooking({
+        ...drifted.booking,
         // The headline agrees with the guest's stored $10.01, as every writer
         // stores them; a gap between the two is carried forward (review H1).
         totalPriceCents: 1001,
         finalPriceCents: 1001,
-        guests: [
-          {
-            ...(drifted.booking as unknown as {
-              guests: Array<Record<string, unknown>>;
-            }).guests[0],
-            priceCents: 1001,
-          },
-        ],
-      } as never,
+        guests: [{ ...drifted.booking.guests[0], priceCents: 1001 }],
+      }),
     });
 
     expect(result.priceBreakdown.guests[0].nightDates).toEqual([
@@ -617,19 +609,10 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
     await expect(
       calculateModifiedPricing(NO_DISCOUNT_TX, {
         ...drifted,
-        booking: {
-          ...(drifted.booking as unknown as {
-            guests: Array<{ priceCents: number }>;
-          }),
-          guests: [
-            {
-              ...(drifted.booking as unknown as {
-                guests: Array<Record<string, unknown>>;
-              }).guests[0],
-              priceCents: 1001,
-            },
-          ],
-        } as never,
+        booking: editDoorBooking({
+          ...drifted.booking,
+          guests: [{ ...drifted.booking.guests[0], priceCents: 1001 }],
+        }),
       }),
     ).rejects.toThrow(/Not enough beds available/);
 
@@ -693,13 +676,12 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
   /** A guest built from the nights they hold, the way the writer derives them. */
   function guestOf(id: string, memberId: string, nights: string[]) {
     const sorted = [...nights].sort();
-    return {
+    return editDoorGuest({
       id,
       ageTier: "ADULT",
       isMember: true,
       memberId,
       rateMembershipTypeId: MEMBER_TYPE,
-      rateSource: "OWN_TYPE",
       stayStart: D(sorted[0]),
       stayEnd: D(
         new Date(D(sorted[sorted.length - 1]).getTime() + 86_400_000)
@@ -713,7 +695,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
         priceSource: "SOLD" as const,
       })),
       priceCents: sorted.length * RATE,
-    };
+    });
   }
 
   /**
@@ -727,7 +709,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
     ]);
     const totalPriceCents = gone.priceCents + present.priceCents;
     return {
-      booking: {
+      booking: editDoorBooking({
         id: "b1",
         memberId: "m1",
         lodgeId: "lodge-1",
@@ -738,7 +720,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
         promoAdjustmentCents: 0,
         finalPriceCents: totalPriceCents,
         guests: [gone, present],
-      } as never,
+      }),
       bookingId: "b1",
       isInProgressEdit: true,
       editableFrom: D("2026-08-22"),
@@ -850,13 +832,12 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
    * 23rd and 24th are bought now at HIGH.
    */
   function args({ withCompanion = false }: { withCompanion?: boolean } = {}) {
-    const guest = {
+    const guest = editDoorGuest({
       id: "g1",
       ageTier: "ADULT",
       isMember: true,
       memberId: "m1",
       rateMembershipTypeId: MEMBER_TYPE,
-      rateSource: "OWN_TYPE",
       stayStart: D("2026-08-20"),
       stayEnd: D("2026-08-23"),
       nights: [
@@ -864,10 +845,10 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
         { stayDate: D("2026-08-22"), priceCents: LOW, priceSource: "SOLD" },
       ],
       priceCents: 2 * LOW,
-    };
+    });
     // A second guest on the whole run, so taking g1 off does not leave the
     // booking with future nights nobody holds (which the plan refuses, #2736).
-    const companion = {
+    const companion = editDoorGuest({
       ...guest,
       id: "g2",
       memberId: "m2",
@@ -877,11 +858,11 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
         { stayDate: D("2026-08-22"), priceCents: LOW, priceSource: "SOLD" },
       ],
       priceCents: 3 * LOW,
-    };
+    });
     const guests = withCompanion ? [guest, companion] : [guest];
     const totalPriceCents = guests.reduce((sum, g) => sum + g.priceCents, 0);
     return {
-      booking: {
+      booking: editDoorBooking({
         id: "b1",
         memberId: "m1",
         lodgeId: "lodge-1",
@@ -892,7 +873,7 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
         promoAdjustmentCents: 0,
         finalPriceCents: totalPriceCents,
         guests,
-      } as never,
+      }),
       bookingId: "b1",
       isInProgressEdit: true,
       editableFrom: D("2026-08-21"),
@@ -957,13 +938,12 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
       editableFrom = D("2026-08-24"),
     }: { withNightRows?: boolean; editableFrom?: Date } = {},
   ) {
-    const guest = {
+    const guest = editDoorGuest({
       id: "g1",
       ageTier: "ADULT",
       isMember: true,
       memberId: "m1",
       rateMembershipTypeId: MEMBER_TYPE,
-      rateSource: "OWN_TYPE",
       stayStart: D("2026-08-23"),
       stayEnd: D("2026-08-25"),
       nights: withNightRows
@@ -973,11 +953,11 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
           ]
         : [],
       priceCents: 2 * LOW,
-    };
+    });
     // A companion on the same nights, so taking g1 off does not leave the
     // booking with future nights nobody holds (which the plan refuses, #2736).
     // Always rowed: the shape under test is g1's, not the booking's.
-    const companion = {
+    const companion = editDoorGuest({
       ...guest,
       id: "g2",
       memberId: "m2",
@@ -985,10 +965,10 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
         { stayDate: D("2026-08-23"), priceCents: LOW, priceSource: "SOLD" },
         { stayDate: D("2026-08-24"), priceCents: LOW, priceSource: "SOLD" },
       ],
-    };
+    });
     const totalPriceCents = 4 * LOW;
     return {
-      booking: {
+      booking: editDoorBooking({
         id: "b1",
         memberId: "m1",
         lodgeId: "lodge-1",
@@ -999,7 +979,7 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
         promoAdjustmentCents: 0,
         finalPriceCents: totalPriceCents,
         guests: [guest, companion],
-      } as never,
+      }),
       bookingId: "b1",
       isInProgressEdit: true,
       // The 24th is the only night this edit can still touch; the 23rd is slept.

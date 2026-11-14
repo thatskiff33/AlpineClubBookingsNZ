@@ -15,6 +15,7 @@ function makeBooking(
 ): BookingEditorData {
   return {
     id: "bk_hold_1",
+    lodgeName: "Ruapehu Lodge",
     checkIn: "2026-08-01",
     checkOut: "2026-08-03",
     nights: 2,

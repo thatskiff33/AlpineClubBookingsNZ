@@ -1,9 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { Mail, MapPin, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
+import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
@@ -60,6 +63,21 @@ export function ContactPageClient({
   // reads as an address the visitor has already given us, and it vanishes the
   // moment they start typing, which is when the example is still wanted.
   const emailHint = useFieldHint();
+  // #4949: sending unmounts the form and its focused button, so focus moves to
+  // "Send Another Message"; pressing that unmounts it in turn, so focus moves
+  // to the Name field. Neither step drops focus to the top of the page.
+  const sendAnotherRef = useRef<HTMLButtonElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const wasSent = useRef(false);
+
+  useEffect(() => {
+    if (status === "sent") {
+      focusAndKeepInView(sendAnotherRef.current);
+    } else if (wasSent.current) {
+      focusAndKeepInView(nameRef.current);
+    }
+    wasSent.current = status === "sent";
+  }, [status]);
 
   useEffect(() => {
     fetch("/api/committee")
@@ -170,16 +188,31 @@ export function ContactPageClient({
                 Send a Message
               </h2>
 
-              {status === "sent" ? (
-                <div className="rounded-2xl border border-success-6 bg-success-3 p-6">
-                  <h3 className="font-semibold text-success-11 mb-1">
-                    Message Sent
-                  </h3>
-                  <p className="text-success-11 text-sm">
-                    Thanks for getting in touch. We&apos;ll get back to you as
-                    soon as we can.
-                  </p>
+              {/* #4949: the status region stays mounted with the form, so the
+                  confirmation is announced rather than inserted already filled. */}
+              <div
+                className={
+                  status === "sent"
+                    ? "rounded-2xl border border-success-6 bg-success-3 p-6"
+                    : undefined
+                }
+              >
+                <StatusRegion visible={status === "sent"}>
+                  {status === "sent" ? (
+                    <>
+                      <h3 className="font-semibold text-success-11 mb-1">
+                        Message Sent
+                      </h3>
+                      <p className="text-success-11 text-sm">
+                        Thanks for getting in touch. We&apos;ll get back to you as
+                        soon as we can.
+                      </p>
+                    </>
+                  ) : null}
+                </StatusRegion>
+                {status === "sent" ? (
                   <Button
+                    ref={sendAnotherRef}
                     variant="outline"
                     size="sm"
                     className="mt-4 border-brand-charcoal/20 bg-card text-brand-charcoal hover:bg-brand-mist/35 hover:text-brand-charcoal"
@@ -187,8 +220,9 @@ export function ContactPageClient({
                   >
                     Send Another Message
                   </Button>
-                </div>
-              ) : (
+                ) : null}
+              </div>
+              {status === "sent" ? null : (
                 <form onSubmit={handleSubmit} className="space-y-5">
                   <div>
                     <Label htmlFor="recipient">Send to</Label>
@@ -213,6 +247,7 @@ export function ContactPageClient({
                     <Label htmlFor="name">Name</Label>
                     <Input
                       id="name"
+                      ref={nameRef}
                       required
                       value={form.name}
                       onChange={(e) =>
@@ -254,9 +289,10 @@ export function ContactPageClient({
                     />
                   </div>
 
-                  {status === "error" && (
-                    <p className="text-sm text-danger-11">{errorMessage}</p>
-                  )}
+                  <FocusedActionError
+                    id="contact-form-error"
+                    error={status === "error" ? errorMessage : ""}
+                  />
 
                   <Button type="submit" disabled={status === "sending"}>
                     {status === "sending" ? "Sending..." : "Send Message"}

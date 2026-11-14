@@ -605,8 +605,13 @@ client — it is a single `node` script over the tracked tree and its git base
 revision.
 
 Current-tree scans plus one fail-closed revision comparison. Pull-request CI
-uses the event's exact base SHA, main-push CI uses the event's exact pre-push
-SHA, and local feature work uses its merge-base with `origin/main` (or `main`).
+uses the merge base of `HEAD` and the event's exact base SHA (#5156), main-push
+CI uses the event's exact pre-push SHA, and local feature work uses its
+merge-base with `origin/main` (or `main`). A pull request's merge base is its
+branch point, the ids it is answerable for retaining: an id the base gained
+later is not reported as removed by a branch that is only behind, and when
+`HEAD` is the merge commit the merge base is the base SHA itself. No merge base
+(unrelated history or a shallow checkout) fails the gate.
 That is an exact statement about what one evaluation checks, not a promise that
 an old green evaluation stays current after another PR merges. Evaluated against
 the current base, a duplicate or deletion is rejected. Before merge, the house
@@ -620,7 +625,8 @@ feature commit made after an ID was deleted. Event identity is authoritative:
 `GITHUB_EVENT_NAME` chooses the pull-request or main-push contract before any
 payload field is interpreted. In particular, a pull-request `synchronize`
 payload's top-level `before` value is the previous PR head, not evidence of a
-second push event; the pull request still uses only `PR_BASE_SHA`. With no event
+second push event; the pull request's baseline still comes only from
+`PR_BASE_SHA`. With no event
 identity, conflicting PR and push SHA fields fail rather than being guessed. An
 inherited `DOC_INDEX_BASE_REF` at process, workflow, job or step scope makes
 an event run fail rather than overriding `PR_BASE_SHA` or `PUSH_BASE_SHA`. The

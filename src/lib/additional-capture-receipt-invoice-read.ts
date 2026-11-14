@@ -12,7 +12,11 @@ import { isLiveXeroPaymentStatus } from "@/lib/xero-payment-status";
 /** The invoice as the worker read it from Xero. */
 export type InvoiceRead = { status: string; amountDueCents: number; invoice: Invoice };
 
-/** An earlier run's live payment: matching reference, equal receipt cents, no active sweep link. */
+/**
+ * An earlier run's live payment for one receipt leg (#4435, and every leg of
+ * #4434): the reference matches, the amount equals this leg, and the payment
+ * id has no active credit-release link. A missing amount is not this leg.
+ */
 export function findRecordedPayment(
   read: InvoiceRead | null,
   reference: string,

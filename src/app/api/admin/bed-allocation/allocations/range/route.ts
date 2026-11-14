@@ -11,10 +11,7 @@ import {
   requireBedAllocationWrite,
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
-
-// Shape-checked here so a malformed range is refused by the schema, before the
-// lib is called at all (#2251 review C2): `.min(1)` accepted "9999999-01-01".
-const DATE_ONLY = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD");
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 // requireAdmin() is enforced by requireBedAllocationWrite().
 const rangeAllocationSchema = z
@@ -23,8 +20,10 @@ const rangeAllocationSchema = z
     bedId: z.string().min(1),
     // Date-only lodge nights: `from` is the first night, `to` the check-out
     // date (exclusive), matching every other bed-allocation endpoint.
-    from: DATE_ONLY,
-    to: DATE_ONLY,
+    // Checked here so a malformed range is refused by the schema, before the
+    // lib is called at all (#2251 review C2): `.min(1)` accepted "9999999-01-01".
+    from: dateOnlyStringSchema,
+    to: dateOnlyStringSchema,
     /*
      * The admin's explicit SECOND action after a refusal (#2251): the exact
      * nights they were shown as free and chose to assign. Never a default — the
@@ -34,7 +33,7 @@ const rangeAllocationSchema = z
      * written without the admin ever seeing it.
      */
     nights: z
-      .array(DATE_ONLY)
+      .array(dateOnlyStringSchema)
       .min(1)
       .max(MAX_BED_ALLOCATION_ASSIGN_RANGE_NIGHTS)
       .optional(),

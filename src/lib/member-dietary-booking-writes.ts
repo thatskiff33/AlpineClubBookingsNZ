@@ -34,7 +34,7 @@ import {
   type BookingGuestRowLockDb,
 } from "@/lib/booking-guest-row-lock";
 import { isLikelyTypoCorrection } from "@/lib/guest-name-similarity";
-import { isDietaryFieldEnabled } from "@/lib/member-dietary";
+import { DIETARY_ERASURE_PATCH, isDietaryFieldEnabled } from "@/lib/member-dietary";
 import { isPlaceholderGuestName } from "@/lib/placeholder-guest-names";
 
 type BookingGuestDb = Pick<Prisma.TransactionClient, "bookingGuest">;
@@ -567,4 +567,28 @@ export async function applyGuestMemberLinkDietary(
       data: { dietaryRequirements: memberId ? (profiles.get(memberId) ?? null) : null },
     });
   }
+}
+
+/** Count only; never select or disclose a stored health value. */
+export function countExpiredStayDietaryValues(db: BookingGuestDb, cutoff: Date) {
+  return db.bookingGuest.count({ where: expiredStayDietaryWhere(cutoff) });
+}
+
+function expiredStayDietaryWhere(cutoff: Date): Prisma.BookingGuestWhereInput {
+  return { stayEnd: { lt: cutoff }, dietaryRequirements: { not: null } };
+}
+
+/** Bounded single-column clear; recheck eligibility in the write itself. No advisory lock. */
+export async function clearExpiredStayDietaryValues(
+  tx: BookingGuestDb, { cutoff, take }: { cutoff: Date; take: number },
+): Promise<number> {
+  const where = expiredStayDietaryWhere(cutoff);
+  const rows = await tx.bookingGuest.findMany({
+    where, select: { id: true }, orderBy: { id: "asc" }, take,
+  });
+  if (!rows.length) return 0;
+  return (await tx.bookingGuest.updateMany({
+    where: { ...where, id: { in: rows.map(row => row.id) } },
+    data: { ...DIETARY_ERASURE_PATCH },
+  })).count;
 }
