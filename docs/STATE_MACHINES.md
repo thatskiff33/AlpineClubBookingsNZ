@@ -239,7 +239,8 @@ to internet banking, the school pay-on-account approval) post R01; an edit or
 the Internet Banking reconcile's flip, which now writes the confirmation's
 ledger lines as the settle does) links its lines to that charge rather than
 charging again. Every writer that sets `PAID` or `CANCELLED` is classified by
-`booking-sale-status-writer-census.test.ts`.
+`booking-sale-status-writer-census.test.ts`, which requires each posting write's
+own function to call its poster at least once per write.
 
 Waitlist confirmation and expiry serialize on the offered booking's lodge lock.
 Confirmation re-reads `WAITLIST_OFFERED` and the deadline after acquiring the
@@ -2571,7 +2572,12 @@ DISMISSED -> OPEN   (#3498, owner decision D2: an officer with finance:edit puts
                      clears all three off the row, so that entry is the only
                      place they survive. Everything the OPEN status governs
                      re-arms with it: the pending-review fence, and the
-                     member-facing banner. See `INV-PAY-099`.)
+                     member-facing banner. See `INV-PAY-099`. Since #4343 an
+                     `EDIT_FINANCIAL_REVIEW` is refused on this arm, before the
+                     claim, and nothing is written: officer edit reviews are
+                     retired. Remaining OPEN rows of that kind are settled or
+                     closed by `bookings:edit-review-cleanup`. Every other kind
+                     still uses this arm. A completion stays terminal.)
 OPEN -> DISMISSED   (#3643, owner decision 28 Sep 2026: the ONLY close of a
                      part-payment review - a `CANCELLED_BOOKING_HAND_BACK`
                      marked by `partPaymentReviewPaymentId`, raised with no
@@ -2874,7 +2880,11 @@ removal (`CONSENT_DECLINE` / `CONSENT_EXPIRY`): owner decision D-14 says a membe
 who never consented must always be able to come off a booking, so that removal
 proceeds rather than being held behind a pricing question nobody has answered.
 No removal parks its money since #4317, so the exemption's only effect is that
-the fence does not refuse it.
+the fence does not refuse it. The removal already credited the guest, so
+`bookings:edit-review-cleanup` dismisses the review that guest was on instead of
+settling it, and its own completion is refused under the same lock if a removal
+lands mid-run. An officer settling it by hand is warned, not refused (owner,
+24 Oct 2026).
 
 The transition is a status-fenced conditional update, so a double click can
 never double-apply the allocation, and the row is never processed by any cron —
@@ -4738,8 +4748,12 @@ PENDING|FAILED -> same (an open, claimed row that counted the refund is
                        recording the failure in failedRefundIds; compare-and-set
                        on the plan, status, attempts and nextRetryAt read)
 DEAD -> SUCCEEDED     ("Paid another way": finance:edit, lock(1), then the
-                       Payment row, refused (409) unless what is owed is the
-                       figure the treasurer saw, then a status-guarded claim on
+                       Payment row; refused (409) when the owed figure moved,
+                       or (#4492) a failed-later row is on the payment, a
+                       plan-less superseded row's sizing refund has not gone
+                       back to the card, or that row's charge was already
+                       returned by a superseded card-send with less left than
+                       it still owes; then a status-guarded claim on
                        PENDING|FAILED with attempts >= MAX; lastError is the
                        paid-another-way marker, nextRetryAt null, succeededAt
                        now; the amount - all of what is still owed, or part

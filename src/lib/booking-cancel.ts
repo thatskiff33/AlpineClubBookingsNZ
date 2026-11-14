@@ -1919,7 +1919,7 @@ async function performBookingCancellation(
         );
       }
       // #4685: the credit's id rides the account-credit note's row, whose stamp writes it by id.
-      cancellationCreditId = await createCancellationCredit(creditRecipientMemberId, refundAmountCents, bookingId, undefined, tx);
+      cancellationCreditId = await createCancellationCredit(tx, creditRecipientMemberId, refundAmountCents, bookingId);
     }
 
     // Card-path refund debt, ATOMIC with the claim (F2, #1349): persist the

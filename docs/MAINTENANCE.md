@@ -373,6 +373,28 @@ safe (`browserslist` above is the standing example).
   dropped `heroku-api-key` and a UUID `CRON_SECRET`. `targetRules` is not the fix
   either; in 8.28.0 it silently voids the allowlist entirely.
 
+### Refreshing container image digests
+
+Third-party containers use tag plus digest (`INV-OPS-017`). Dependabot updates
+Dockerfile and Compose references, but does not update workflow environment
+values, workflow services or shell assignments. When it changes Compose's
+PostgreSQL pin, copy that exact reference to every PostgreSQL service in
+`.github/workflows/ci.yml`; `deployment-image-contracts.test.ts` rejects drift.
+The deploy's Caddy helpers read Compose directly, so they need no copied pin.
+
+For Semgrep (`SEMGREP_IMAGE` in `ci.yml`) and the backup drill (`PG_IMAGE` in
+`scripts/backup-restore-drill.sh`), resolve the existing tag's registry manifest
+index digest, preserving its version and platform coverage. Use the digest of
+the multi-architecture index, rather than one platform's manifest. Keep the
+backup drill on Debian `postgres:16`; its measured restore baseline uses that
+variant. Review intentional version upgrades separately.
+
+Run `node scripts/ci/check-image-pins.mjs` and
+`pnpm run test:named scripts/ci/check-image-pins.test.mjs src/lib/__tests__/deployment-image-contracts.test.ts src/lib/__tests__/deploy-caddy-image-script-contract.test.ts`.
+The image check shares the existing action-pin CI step; required check and
+scanner step names stay unchanged. A rejected unsupported shape needs an
+explicit parser extension and test, rather than bypassing the check.
+
 ### Two Semgrep scans run per pull request, and only one of them blocks
 
 This trips up every reader of a `nosemgrep` annotation, so it is written down
@@ -1088,8 +1110,8 @@ were off by two orders of magnitude.
 | `src/lib/finance-sync-xero-datasets.ts` | Split (#1531, #1524 C3) into a re-export barrel over cohesive `src/lib/finance-sync-xero-datasets/` modules (`constants`, `types`, `date-format`, `report-snapshot`, `invoice-helpers`, `open-invoices`, `aged-invoices-snapshot`, `open-invoices-snapshot`, `report-sync`, `monthly-facts`, `chart-of-accounts`, `invoice-sync`). Behavior-preserving verbatim motion with an acyclic import graph (`constants`/`types`/`date-format` are leaves; the sync orchestrators sit on top); the barrel re-exports the unchanged public surface (29 functions/consts + the `FinanceMonthlyFactsWindowInput` type). The self-duplicated clone regions were deduped: the accounts-receivable and accounts-payable invoice builders now share one generic `buildFinanceOpenInvoicesSnapshot` (each snapshot's persisted invoice shape is supplied verbatim by the caller, keeping `expectedPaymentDate`/`plannedPaymentDate` divergent), and the aged + open-invoice builders share `updateContactDueDateRange`/`compareOpenInvoicePayloadsByDueDate`/`deriveSnapshotCurrency`. jscpd (min-tokens 70) dropped from 186 duplicated lines / 7 clones to 38 / 3 (2026-07-08); the 3 residual clones are the intentionally-separate AR-vs-AP payload literals plus two short prefix regions whose further extraction would over-abstract. |
 | `src/lib/finance-dashboard-page.ts` | Split (#2957) by **view**: the file keeps only the page-level loading (club zone, lodges, seasons, sync status), the selection labels and the `view` dispatch, and one module per dashboard view sits under `src/lib/finance-dashboard-page/` (`bookings-view`, `pnl-view` for revenue and costs, `ratios-view`, `pricing-sensitivity-view`, `balance-sheet-views` for cash, balance sheet and working capital, `sync-health-view`), with the shared view-model shapes and the projection helpers every view uses in `model.ts` and the derived chart palette in `series-colors.ts`. Every builder body moved verbatim, and there is **no barrel re-export**: the client, the route and the tests import the module that owns the symbol, so the old file cannot quietly become the dependency magnet again. A later view goes in its own module beside these; anything that two views need goes in `model.ts` (or a small named leaf, as the Xero reports source note does), never back into the facade. |
 | `src/app/(authenticated)/bookings/[id]/page.tsx` | Split (#2958) by **domain responsibility**, on the #2957/#2956 shape: the page keeps only the shell — auth, the club clock, the read, the viewer gate and redirect, the D-12 arrival-instructions gate, and the composition of sections — and everything else moved verbatim into two route-local directories. `_lib/` holds the server-side loading, projection and orchestration, one module per domain seam: `load-booking-detail` (the one `findUnique` and its `BookingDetailRecord`), `booking-detail-viewer` (who is looking), `booking-detail-consent` (the #2250 self-removal and #2307 consent cards), `booking-detail-history` (audit rows, events, the once-read #3033 review flag, narrative, timeline), `booking-detail-edit-access` (cancel/modify/override/room/name gates and the two panel gates), `booking-detail-linked-party` (split children and the organiser group), `booking-detail-payment` (the money projection and the pay-door gates), `booking-detail-editor-data` (the `BookingEditorData` payload with its admin-only spreads), `booking-detail-messages` (merge data and the rendered booking messages) and `booking-detail-admin-tools` (every admin-gated read the tools card is fed). `_components/` holds one server section per cohesive render block (`booking-status-banners`, `booking-admin-tools-section`, `booking-consent-cards`, `booking-linked-party-sections`, `booking-review-notices`, `booking-stay-preferences`, `booking-payment-cards`, `booking-lifecycle-actions`, `booking-cancellation-outcome`, `booking-notes-and-history`), each taking the projection groups it names and destructuring them at its top so the JSX moved byte-for-byte. **No barrel**; each module exports its result type and the page composes them in the order the section rail declares. Canonical booking lifecycle, settlement and authorization services stayed where they were and are called exactly as before. The thirteen source-contract suites that read the page were pointed at the module that now owns each pinned symbol, with no assertion changed in meaning. A new section goes in its own `_components/` module and a new server-side read in the `_lib/` module for its domain (or a new one), never back into the page. **Measured against the base at merge time: `page.tsx` went 2,792 -> 388 LOC** (route-page-shell budget 500), and the route directory's production files went 3 files / 2,915 LOC -> 23 files / 3,933 LOC. **This row is the one home for those numbers.** They are measurements rather than facts about the design, so a second copy goes stale silently: the branch first recorded 2,761, which was the page's length at the *branch point* and stopped being true once the branch merged the epic twice and took #3269's thirty-line addition into `load-booking-detail`. Nothing else states them — the changelog fragment and the split's own census docblock point here instead — and a later change re-measures here rather than adding a number of its own. |
-| `src/app/(admin)/admin/members/[id]/page.tsx` | Queued for future route-shell thinning as member-detail sections continue to move local state out. |
-| `src/app/(admin)/admin/family-groups/page.tsx` | Route-shell thinning completed (#1530, closes the #1524 C2 carry-over). The request-review duplication with `src/components/admin/family-group-editor.tsx` was extracted to a shared `FamilyGroupRequestReviewSection` (`src/components/admin/family-groups/request-review-section.tsx`) that both the admin page and the editor render; the per-request state and the approve/reject/search handlers now live there once (behaviour-preserving — the two prior copies differed only by a `member`/`adult` noun and their refresh callback, now props). jscpd (min-tokens 70) across the pair drops from the catalogued 225 duplicated lines / 7 clones to 29 lines / 3 clones — the residue is the unavoidable shared UI-import block plus the create/edit member-search combobox, left inline because its surrounding selected-member badges differ between the two forms. page.tsx thinned 786 → 565 LOC; editor 715 → 499 LOC. |
+| `src/app/(admin)/admin/membership/members/[id]/page.tsx` | Queued for future route-shell thinning as member-detail sections continue to move local state out. |
+| `src/app/(admin)/admin/membership/family-groups/page.tsx` | Route-shell thinning completed (#1530, closes the #1524 C2 carry-over). The request-review duplication with `src/components/admin/family-group-editor.tsx` was extracted to a shared `FamilyGroupRequestReviewSection` (`src/components/admin/family-groups/request-review-section.tsx`) that both the admin page and the editor render; the per-request state and the approve/reject/search handlers now live there once (behaviour-preserving — the two prior copies differed only by a `member`/`adult` noun and their refresh callback, now props). jscpd (min-tokens 70) across the pair drops from the catalogued 225 duplicated lines / 7 clones to 29 lines / 3 clones — the residue is the unavoidable shared UI-import block plus the create/edit member-search combobox, left inline because its surrounding selected-member badges differ between the two forms. page.tsx thinned 786 → 565 LOC; editor 715 → 499 LOC. |
 
 ## Operational Repair Tools
 
@@ -1901,6 +1923,45 @@ afterwards, first reset the rewritten rows from their audit rows (each
 `booking-payment.stored-night-price.rate-derived` strand entry carries
 `fromPriceCents` and `fromSource` per night), then route back.
 
+### Settle open edit reviews and re-base frozen headlines (#4343)
+
+`pnpm run bookings:edit-review-cleanup` is the owner's one-off for edit reviews
+left from before every edit was priced automatically. It does nothing until it
+is run. Census (the default) and `--dry-run` keep nothing. `--apply` needs
+`--actor <memberId>` and is the only mode that writes.
+
+Census reports open edit reviews, frozen headlines (a booking that has a review,
+none of them still open, and a total that is not the sum of its guests),
+dismissed shortenings whose money stayed inside the guest's stored total, and
+the existing ledger night-line census. Dry-run prints the decision for each
+open review and, for each frozen headline, the four money columns before and
+after. That preview runs inside a transaction it rolls back.
+
+Apply settles each open review through the ordinary refund, credit or charge
+path, and charges the change fee when the edit moved check-in and had not
+already charged one. That fee is priced on the club day the edit was saved,
+through the normal late-notice fee rule, so an unpaid booking carries none. A
+review it cannot price, and one whose guest was removed after the review was
+raised, is closed with a note and no money moved; a removal that lands during
+the run is caught under the settlement lock and the review is dismissed
+instead. A resolver refusal stays open and is listed. The headline pass then re-bases each
+frozen booking through the same writer a review closure uses. It moves no cash,
+card charge, account credit or Xero document. A second apply changes nothing.
+
+Run it only from the image that contains this change, after that colour is the
+only one serving, and never during a mixed-colour window. Point `DATABASE_URL`
+at a non-production copy for the dry-run. Name the database yourself:
+
+```bash
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --dry-run
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
+```
+
+The before-values are on the booking's `PRICE_REBASE` history row and the audit
+entry, which is how a headline can be put back by hand. Do not roll production
+back below `5bab5c49`.
+
 ### Census the booking money verdicts, night-price provenance and edit reviews (#3278, #3531)
 
 `pnpm run booking-money:census` is a READ-ONLY, repeatable-read census. It
@@ -2487,9 +2548,9 @@ Check the booking, the recorded refunds and Stripe before moving more money.
 If money remains owed, settle it with **Paid another way** in
 [Stuck States](guides/stuck-states.md), rather than another Stripe dashboard
 refund. If nothing remains owed, ask a developer to reconcile the held row. A
-row held under #4858 whose named refund has since failed (it then has a
-failed-later row of its own) is a developer's too, never a **Paid another way**
-close: that row asks for the same money again (#4492).
+row held under #4858 whose named refund has since failed stays on that list
+without **Paid another way** until the failed refund has gone back to the card.
+The row says why (#4492).
 A preflight read or recording failure uses normal backoff and sends nothing;
 an intent with more than 100 refunds requires investigation because the single
 page cannot establish complete evidence. No production repair runs automatically.
