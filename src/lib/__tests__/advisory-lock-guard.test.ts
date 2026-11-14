@@ -987,10 +987,10 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
-    site: "finishGroupSettlementInvoiceEmail#1",
+    site: "runGroupInvoiceEmailFence#1",
     tier: "GLOBAL",
     reason:
-      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime, or one the settlement no longer points at (#3642), is never emailed.",
+      "The email gate re-reads the settlement under the same fence, so an invoice for a group cancelled in the meantime, or one the settlement no longer points at (#3642), is never emailed. #4919: the fence transaction was split out of finishGroupSettlementInvoiceEmail unchanged; it is still that function's only lock(1) site.",
     invariant: "INV-LOCK-001",
   },
   {
