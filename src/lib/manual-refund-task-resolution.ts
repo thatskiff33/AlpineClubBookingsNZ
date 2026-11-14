@@ -59,10 +59,8 @@ import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-stor
  *
  * It sits beside `manual-booking-payment.ts` rather than inside it because the
  * two answer different questions — "the club has just taken cash for this
- * booking" versus "the club has just handed money back" — and share nothing but
- * the note-length rule and the error type, both of which have their own homes.
- * Only `MANUAL_PAYMENT_NOTE_MAX` is re-exported here; `ManualBookingPaymentError`
- * is imported from `manual-booking-payment-error.ts` (#4930).
+ * booking" versus "the club has just handed money back" — and share only the
+ * note-length rule, re-exported below; the error type lives in its own module.
  * `INV-PAY-051` is the invariant these rules belong to.
  */
 export { MANUAL_PAYMENT_NOTE_MAX };
