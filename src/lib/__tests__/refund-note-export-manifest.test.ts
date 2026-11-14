@@ -160,7 +160,7 @@ vi.mock("@/lib/club-time-zone-runtime", () => ({
 import { createXeroCreditNote } from "@/lib/xero-credit-notes";
 import { recordSentRefundNotePaymentManifest } from "@/lib/xero-refund-note-settlement";
 import { recordRefundNoteManifest, recordRefundNotePaymentManifest } from "@/lib/member-money/doors";
-import { refundDocumentLineItem } from "@/lib/xero-modification-line-items";
+import { hutFeeRefundLine } from "@/lib/xero-hut-fee-line-codes";
 
 const BOOKING_ID = "cmbooking0001xyz";
 const PAYMENT_ID = "cmpayment0001xyz";
@@ -301,7 +301,7 @@ function cardRefundEvent(obligation: { obligationKey: string; faceCents: number;
 }
 
 const DEBT = "refund-obligation|cancellation|cancel_1";
-const line = refundDocumentLineItem("Refund - Booking cmbookin", 5000, { code: "200", itemCode: null, codeExplicitlyConfigured: false });
+const line = hutFeeRefundLine("Refund - Booking cmbookin", 5000, { code: "200", itemCode: null, codeExplicitlyConfigured: false });
 
 describe("the refund note's manifest from the sender (createXeroCreditNote)", () => {
   beforeEach(() => {

@@ -575,8 +575,9 @@ object; a replay hashes the stored request's lines, never rebuilt ones. A note
 whose cents differ is `CENTS`; one naming no single debt (a watermark note) or a
 missing R05 or R12 is `COMPONENT_UNUSABLE`; a debt an earlier note already
 covers is `ALREADY_COVERED`. A payment left unsettled, part-settled or found
-already settled records nothing. `FAILED_LATER_REFUND_REVERSAL` is planned only
-(`planFailedLaterRefundReversal`, as the table below says): nothing sends it.
+already settled records nothing. The role `FAILED_LATER_REFUND_REVERSAL` is
+reserved: #4369's `createXeroCardRefundReversalInvoice` sends that reversal
+today, and recording its manifest is a later step.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
