@@ -43,14 +43,14 @@ reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call 
   Moving it out would split one route's error mapping across two files.
 
 file: src/app/api/admin/bookings/[id]/review/route.ts
-lines: 376
-reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
-  its import in this route's own catch, ordered against the route's other error
-  answers (captured-payment and committed-step recovery answers stay first).
-  Moving it out would split one route's error mapping across two files.
+lines: 398
+reason: the INV-LOCK-006 contention answers: the review claim's catch, and a
+  helper for the cancellation after a committed rejection that keeps the
+  reviewRecorded facts on its 503. Moving them out would split one route's
+  error mapping across two files.
 
 file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1324
+lines: 1314
 reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
   its import in this route's own catch, ordered against the route's other error
   answers (captured-payment and committed-step recovery answers stay first).
@@ -367,7 +367,7 @@ reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   handler split its own issue has to plan.
 
 function: src/app/api/admin/deletion-requests/[id]/route.ts#POST
-lines: 1044
+lines: 1036
 reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   ordered against its other error answers; lifting the catch out is the
   handler split its own issue has to plan.
