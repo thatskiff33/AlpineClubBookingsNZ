@@ -14,8 +14,8 @@ import {
   emptyForm,
   getBlankOptionalXeroFields,
   getMissingFieldsForXeroCreate,
-} from "@/app/(admin)/admin/members/_utils";
-import type { MemberForm } from "@/app/(admin)/admin/members/_types";
+} from "@/app/(admin)/admin/membership/members/_utils";
+import type { MemberForm } from "@/app/(admin)/admin/membership/members/_types";
 
 // A member/form that is complete for the OLD strict gate — used to prove the
 // new gate no longer flags any optional field.

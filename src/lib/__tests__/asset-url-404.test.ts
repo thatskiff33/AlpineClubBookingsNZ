@@ -418,6 +418,8 @@ describe("the shipped next.config.ts, through Next's own pipeline", () => {
         "/admin/system/health",
         "/admin/messages/notices",
         "/admin/messages/notices/:id",
+        "/admin/membership/members",
+        "/admin/membership/members/:id",
         "/admin/finance/xero/records/:localModel/:localId",
       ]),
     );

@@ -230,7 +230,7 @@ function toInstant(value: unknown): Date | null {
  * caller that did not pass one would have been answered from whichever container
  * the process happened to be in, silently, on the screen immediately before an
  * IRREVERSIBLE merge. The merge comparison screen
- * (`src/app/(admin)/admin/members/[id]/merge/page.tsx`) already handed all three
+ * (`src/app/(admin)/admin/membership/members/[id]/merge/page.tsx`) already handed all three
  * of its columns the club's persisted zone, so deleting the default cost the
  * production callers nothing and turned the remaining hazard into a compile
  * error. A required argument beats a lint rule — the same remedy #3123 applied

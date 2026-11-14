@@ -255,6 +255,12 @@ const NOT_ENVIRONMENT_SAFETY_READS: Allowance[] = [
       "Warn-only diagnostic on the seasonal-assignment path; changes no outcome.",
   },
   {
+    file: "src/lib/test-only-override.ts",
+    reads: 2,
+    reason:
+      "NODE_ENV === 'test' gates the in-memory Xero and Stripe client overrides (#4908): refusing them outside the test runner, not deciding whether this is production.",
+  },
+  {
     file: "src/app/(admin)/admin/rules/promo-codes/promo-codes-page-client.tsx",
     reads: 1,
     reason:

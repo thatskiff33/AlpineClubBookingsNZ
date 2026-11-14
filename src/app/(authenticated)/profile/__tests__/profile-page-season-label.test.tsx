@@ -56,6 +56,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findUnique: mocks.memberFindUnique },
     webAuthnCredential: { findMany: async () => [] },
+    deletionRequest: { findFirst: async () => null },
+    emailChangeToken: { findFirst: async () => null },
   },
 }));
 
