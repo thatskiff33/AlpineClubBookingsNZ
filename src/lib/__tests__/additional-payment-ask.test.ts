@@ -1,5 +1,6 @@
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 
 import {
   bookingLedgerCensusSql,
@@ -15,7 +16,6 @@ import {
 } from "@/lib/additional-payment-ask";
 import { applyPaymentAdjustments } from "@/lib/booking-modify-settlement";
 import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
-import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import type { CalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
@@ -466,7 +466,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
       xeroInvoiceId: string | null;
     }>,
   ) {
-    return {
+    return editDoorBooking({
       id: "booking_1",
       status: "PAID",
       checkIn: new Date("2026-08-01T00:00:00.000Z"),
@@ -484,7 +484,7 @@ describe("applyPaymentAdjustments sizes the real ask", () => {
         xeroInvoiceId: null,
         ...payment,
       },
-    } as unknown as LoadedBookingForModify;
+    });
   }
 
   /** No reduction here, so the #3809 give-back never reads these. */
