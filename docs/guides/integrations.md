@@ -6,9 +6,11 @@ Audience: Operator
 
 The hub for connected external services used by accounting and other
 provider-backed workflows. It holds a card per integration — **Xero Setup**,
-**Stripe Setup**, **Google sign-in Setup**, **Google Analytics**, and **Database
-Backups**. Most cards open that provider's own setup page; **Google Analytics**
-opens its settings in place, on the hub. Find it at **Admin → Setup &
+**Stripe Setup**, **Google Sign-in Setup**, **Google Analytics**, **Backup
+Setup**, **AI help assistant**, **Video Meetings Setup** and **Alpine Central
+Server Setup**. Most cards open that provider's own setup page and carry its
+name, the heading that page opens with; **Google Analytics** opens its settings
+in place, on the hub. Find it at **Admin → Setup &
 Configuration → Integrations** (`/admin/integrations`).
 
 > **The hub itself is not feature-gated (#2216).** `/admin/integrations` is
@@ -321,7 +323,7 @@ Alpine Central Server**, for you to check its bookings and **Hide** it.
    module off the setup page is not reachable and the nightly sync does not run,
    so this is your off switch as well as your on switch.
 2. Ask the central server's operator for a connection. They issue you an API key.
-3. Open **Integrations → Alpine Central Server** and enter the server address.
+3. Open **Integrations → Alpine Central Server Setup** and enter the server address.
    It must be an `https://` address on the public internet — the API key travels
    to it as a bearer token, so a plain `http://` address, or an internal one, is
    refused. **Changing the address clears the stored key**, because a key issued
@@ -465,9 +467,9 @@ between them they decide where a credential is sent.
 | --- | --- | --- |
 | Xero Setup | The Xero connection and accounting configuration (`/admin/xero/setup`) | The `xeroIntegration` module; Xero OAuth credentials and tenant tokens configured server-side |
 | Google Analytics | Its settings in place on the hub: GA4 measurement id, consent-banner mode, banner wording, and **Ask visitors to choose again** | The `analytics` module; finance **view** to see the status, finance **edit** to change anything |
-| Alpine Central Server | The ServerNZ connection and shared-data setup (`/admin/alpine-server/setup`), including the **Server software version** check that pauses syncing while the two sides differ | The `alpineCentralServer` module; finance **view** to see the versions, finance **edit** to enable an item or run a sync, **Full Admin** for the server address and API key |
-| Video meetings | The MiroTalk meeting server, join-link behaviour and host sign-in (`/admin/video-meetings/setup`) | Finance **view** to read where every value comes from, **Full Admin** to change any of it — including the three host sign-in secrets. See [Calendar and meetings](calendar.md) |
-| Database Backups | The guided backup setup wizard (`/admin/backups/setup`): S3 credentials, destination, nightly schedule, and a verification run | Support view; the S3 credentials and destination writes require Full Admin. See [Database Backups](backups.md) |
+| Alpine Central Server Setup | The ServerNZ connection and shared-data setup (`/admin/alpine-server/setup`), including the **Server software version** check that pauses syncing while the two sides differ | The `alpineCentralServer` module; finance **view** to see the versions, finance **edit** to enable an item or run a sync, **Full Admin** for the server address and API key |
+| Video Meetings Setup | The MiroTalk meeting server, join-link behaviour and host sign-in (`/admin/video-meetings/setup`) | Finance **view** to read where every value comes from, **Full Admin** to change any of it — including the three host sign-in secrets. See [Calendar and meetings](calendar.md) |
+| Backup Setup | The guided backup setup wizard (`/admin/backups/setup`): S3 credentials, destination, nightly schedule, and a verification run | Support view; the S3 credentials and destination writes require Full Admin. See [Database Backups](backups.md) |
 
 Integrations is a **support**/**finance** area hub; the Xero credentials
 themselves are configured outside this table (see [`CONFIGURATION.md`](../../CONFIGURATION.md)

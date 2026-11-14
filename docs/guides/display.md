@@ -22,8 +22,9 @@ The whole area is gated by the **`lobbyDisplay`** module, which is **off by
 default**. The **Lobby Display** sidebar entry and every page below it appear only
 once the module is enabled (**Admin → Setup → Modules**); until then the routes
 return 404. This guide documents what ships on `main`: the hub and its five cards
-— **Devices**, **Visual builder**, **Layouts (Advanced)**, **Templates**, and
-**Reference** — plus the template **preview**. The lobby
+— **Display Devices**, **Display Builder** (the visual builder), **Display
+Layouts**, **Display Templates**, and **Display Reference** — plus the template
+**preview**. Each card carries the name of the page it opens. The lobby
 display complements the interactive [Lodge Kiosk](lodge.md): the kiosk is a tablet
 someone taps; the lobby display is a read-only screen the whole room reads at a
 glance. For the deeper design and operating detail, see the
@@ -34,7 +35,7 @@ glance. For the deeper design and operating detail, see the
 
 The admin uses three words for what is really two stored things. They are
 defined the same way here, on the **Lobby Display** hub cards, and on the
-**Reference** page:
+**Display Reference** page:
 
 - **Layout** — A Layout is the structural skeleton of a board: an HTML body with
   named areas and a default CSS block. It sets the shape, not the words.
@@ -45,7 +46,7 @@ defined the same way here, on the **Lobby Display** hub cards, and on the
   on its Layout for the lodge that screen is paired to.
 
 Only Layouts and Templates are stored — a board is the two of them on a screen,
-which is why the **Visual builder** saves a Layout *and* a Template when you
+which is why the **Display Builder** saves a Layout *and* a Template when you
 compose one. The authoring model behind the split is
 [ADR-003](../lobby-display/decisions/ADR-003-layout-template-authoring-model.md).
 
@@ -142,16 +143,17 @@ change one thing rather than set the whole thing up.
 1. Enable **Lobby TV display** under **Admin → Setup → Modules** (it is off by
    default). The **Lobby Display** entry then appears in the sidebar.
 2. Open **Admin → Lodge Operations → Lobby Display**. The hub cards through to
-   **Devices**, the **Visual builder**, **Layouts (Advanced)**, **Templates**, and
-   **Reference**.
-   Most operators want the **Visual builder** — it composes a board without HTML
-   (see below); the Layouts/Templates cards are the advanced, hand-authored path.
+   **Display Devices**, **Display Builder**, **Display Layouts**, **Display
+   Templates**, and **Display Reference**.
+   Most operators want the **Display Builder** — it composes a board without HTML
+   (see below); the Display Layouts and Display Templates cards are the advanced,
+   hand-authored path (Advanced mode).
 
-   ![Lobby Display hub showing the Devices, Visual builder, Layouts (Advanced), Templates, and Reference cards](../images/admin/admin-display.png)
+   ![Lobby Display hub showing the Display Devices, Display Builder, Display Layouts, Display Templates, and Display Reference cards](../images/admin/admin-display.png)
 
-### 2. Pair a screen (Devices)
+### 2. Pair a screen (Display Devices)
 
-1. Open the **Devices** card. It pairs lobby screens per lodge, assigns each a
+1. Open the **Display Devices** card. It pairs lobby screens per lodge, assigns each a
    template, and sets each device's refresh interval; devices are read-only and
    individually revocable.
 
@@ -165,15 +167,15 @@ change one thing rather than set the whole thing up.
    committee notice, and `{{config:key}}` values) are edited on each lodge under
    **Admin → Lodges → [a lodge] → display**, not here.
 
-### 3. Compose a board without HTML (Visual builder)
+### 3. Compose a board without HTML (Display Builder)
 
-1. Open the **Visual builder** card — the guided, no-HTML way to build a board and
+1. Open the **Display Builder** card — the visual, guided, no-HTML way to build a board and
    the path most operators should use. You pick a board **shape**, drop the
    **modules** you want (arrivals, room occupancy, chores, notices, and the rest)
    into its zones, and watch a **live preview** update as you go. When you save, the
    builder writes a valid **Layout** and **Template** for you, so you never touch
    `{{area:key}}` placeholders or CSS by hand. Bind the result to a screen on the
-   **Devices** page exactly like any other template. For the full builder walk-through
+   **Display Devices** page exactly like any other template. For the full builder walk-through
    and the deeper authoring model, see the
    [Lobby Display feature hub](../lobby-display/README.md) — this guide keeps to the
    hub-level orientation rather than duplicating it.
@@ -185,16 +187,16 @@ change one thing rather than set the whole thing up.
    lodge's saved `{{config:…}}` keys, each row showing the value currently
    saved on that lodge, plus free-text entry that turns anything you type into
    `{{config:<your-key>}}`; on a CSS field the `var(--display-…)` and club
-   brand tokens the **Reference** page lists. A key with no saved value can
+   brand tokens the **Display Reference** page lists. A key with no saved value can
    still be inserted — the picker warns that the wall will show a visible
    `⟨config:key?⟩` placeholder until the value is saved under
    **Admin → Lodges → [a lodge] → display**. The picker follows the **Preview
    lodge** selector and is fully keyboard operable (arrow keys, Enter to
    insert, Esc to close).
 
-### 4. Author the structure by hand (Layouts — advanced)
+### 4. Author the structure by hand (Display Layouts — advanced)
 
-1. Open the **Layouts** card. A **Layout** is the structural skeleton of a
+1. Open the **Display Layouts** card. A **Layout** is the structural skeleton of a
    display: an HTML **body** with `{{area:key}}` placeholders, a **default CSS**
    block, and the named **areas** each Template will fill. Layouts define the
    shape; Templates supply the content.
@@ -205,14 +207,14 @@ change one thing rather than set the whole thing up.
    cover the common boards. Editing layouts is the advanced surface; see the
    [feature hub](../lobby-display/README.md) for the authoring model.
 
-### 5. Fill a board by hand (Templates — advanced)
+### 5. Fill a board by hand (Display Templates — advanced)
 
-1. Open the **Templates** card. A **Template** fills a Layout's areas with content
+1. Open the **Display Templates** card. A **Template** fills a Layout's areas with content
    or embedded modules, layers CSS overrides on the layout default, and carries the
    footer. The gallery lists the **built-in templates** that ship ready to use;
    each has **Preview**, **Builder**, **Edit (Advanced)**, and **Delete**. This raw **Key / Layout / CSS**
    authoring flow is the **advanced** path — most operators should compose a board
-   with the **Visual builder** (§3) instead, which produces the layout and template
+   with the **Display Builder** (§3) instead, which produces the layout and template
    for them; reach for Templates directly only when you need hand control.
 
    ![Display Templates page showing the seven built-in templates — Everyday board, Whole lodge, Singles house, Room by room, Nights ahead, Lodge operations, and Welcome kiosk — each with Preview, Builder, Edit (Advanced), and Delete actions, above the New template form](../images/admin/admin-display-templates.png)
@@ -240,16 +242,16 @@ change one thing rather than set the whole thing up.
    overrides**, and a **Footer HTML**. Content and footers use `{{config:key}}`
    tokens (per-lodge values) and `{{module:name}}` embeds; external URLs,
    `@import`, and scripts are stripped on save. The CSS and footer fields carry
-   the same **Insert token** picker as the Visual builder (§3): it offers the
+   the same **Insert token** picker as the Display Builder (§3): it offers the
    preview lodge's saved config keys and the theme's `var(--…)` tokens, and
    inserts at the cursor. A template stays lodge-agnostic — the picker only
    helps you type; it never binds the template to a lodge.
-5. Bind the finished template to a screen on the **Devices** page — a template
+5. Bind the finished template to a screen on the **Display Devices** page — a template
    renders against whichever lodge its display is bound to.
 
-### 6. Look up the vocabulary (Reference)
+### 6. Look up the vocabulary (Display Reference)
 
-1. Open the **Reference** card — a read-only page (nothing here changes a setting)
+1. Open the **Display Reference** card — a read-only page (nothing here changes a setting)
    opening with the **Layout vs Template** definitions above, then
    listing the embeddable **modules** (`{{module:…}}`) and their CSS hooks, the
    **conditions** that gate areas (with a live true/false status for the selected
@@ -267,7 +269,7 @@ change one thing rather than set the whole thing up.
 
    ![Template preview page showing the "No template to preview" prompt and the Reload preview button](../images/admin/admin-display-preview.png)
 
-2. The Visual builder's **Live preview** button uses the same sandboxed frame for
+2. The Display Builder's **Live preview** button uses the same sandboxed frame for
    your unsaved draft, so it is isolated from your admin session in exactly the
    same way. If a draft has a problem, the builder lists what to fix instead of
    opening a frame.
@@ -276,11 +278,11 @@ change one thing rather than set the whole thing up.
 
 | Page / card | What it controls | Notes / constraints |
 | --- | --- | --- |
-| Devices | Pairs and revokes lobby screens per lodge, assigns a template, sets refresh interval | Read-only screens; individually revocable; pairing uses a six-character code |
-| Visual builder | Composes a board with no HTML: pick a shape, drop modules into zones, live preview; saves a valid layout + template | The recommended authoring path for most operators; deeper walk-through in the [feature hub](../lobby-display/README.md). The Footer HTML / CSS overrides / zone HTML fields carry the **Insert token** picker |
-| Layouts (Advanced) | The structural skeleton: body HTML with `{{area:key}}`, default CSS, named areas | Advanced hand-authoring; built-in layouts cover the common boards |
-| Templates | Fills a layout's areas with content/modules, CSS overrides, and footer | Advanced hand-authoring; Key fixed after creation; layout locked after creation; external URLs/`@import`/scripts stripped on save; the CSS/footer fields carry the **Insert token** picker |
-| Reference | Read-only vocabulary: modules, area conditions (live status), CSS tokens | Changes nothing; for authoring reference only |
+| Display Devices | Pairs and revokes lobby screens per lodge, assigns a template, sets refresh interval | Read-only screens; individually revocable; pairing uses a six-character code |
+| Display Builder | Composes a board with no HTML: pick a shape, drop modules into zones, live preview; saves a valid layout + template | The recommended authoring path for most operators; deeper walk-through in the [feature hub](../lobby-display/README.md). The Footer HTML / CSS overrides / zone HTML fields carry the **Insert token** picker |
+| Display Layouts | The structural skeleton: body HTML with `{{area:key}}`, default CSS, named areas | Advanced hand-authoring; built-in layouts cover the common boards |
+| Display Templates | Fills a layout's areas with content/modules, CSS overrides, and footer | Advanced hand-authoring; Key fixed after creation; layout locked after creation; external URLs/`@import`/scripts stripped on save; the CSS/footer fields carry the **Insert token** picker |
+| Display Reference | Read-only vocabulary: modules, area conditions (live status), CSS tokens | Changes nothing; for authoring reference only |
 | Preview | Renders a template in a sandboxed frame against a chosen lodge | Isolated from the admin session; opened from a template's Preview |
 | Per-lodge display values | Guest-name granularity, committee notice, `{{config:key}}` values | Edited on each lodge (**Admin → Lodges → [a lodge] → display**), not on this hub |
 
@@ -299,12 +301,12 @@ change one thing rather than set the whole thing up.
 | --- | --- | --- |
 | Lobby Display is missing from the sidebar / every display page 404s | The `lobbyDisplay` module is off (the default) | Enable **Lobby TV display** under **Admin → Setup → Modules** — see [Modules](modules.md) and [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | The TV keeps showing the pairing code | The device wasn't bound, or its token was revoked | Enter the code into a device's **Pair** box; a revoked device returns to the pairing screen and must be re-paired |
-| A screen shows another lodge's board | The device is bound to the wrong lodge | Re-pair/assign the device to the correct lodge on **Devices** |
-| An area on the board is blank | Its template leaves the slot empty, or its condition is false | Check the template's areas and the **Reference** page's live condition status |
+| A screen shows another lodge's board | The device is bound to the wrong lodge | Re-pair/assign the device to the correct lodge on **Display Devices** |
+| An area on the board is blank | Its template leaves the slot empty, or its condition is false | Check the template's areas and the **Display Reference** page's live condition status |
 | My CSS or a link didn't take effect on save | External URLs, `@import`, and scripts are stripped for safety | Use the provided `var(--display-…)`/brand tokens and inline content only |
 | Editing a built-in warns me | Built-ins are rewritten from code whenever the seed runs again or **Restore built-in boards** is pressed | Duplicate the built-in to a custom template and edit the copy |
 | A key I want is refused as "reserved for a built-in board" | The seven built-in keys (`everyday-board`, `whole-lodge`, `singles-house`, `room-by-room`, `nights-ahead`, `operations-board`, `welcome-kiosk`) are reserved, because **Restore built-in boards** overwrites whatever is saved under them | Choose a different key — e.g. `foyer-board` |
-| The gallery is empty and my club is an older install | The built-in boards are only created by the database seed, which upgrading does not re-run | Press **Restore built-in boards** on the **Templates** page |
+| The gallery is empty and my club is an older install | The built-in boards are only created by the database seed, which upgrading does not re-run | Press **Restore built-in boards** on the **Display Templates** page |
 | I am new to this and don't know which card to start with | Nothing is wrong — the cards are a menu, not an order | Use **Guided setup** (`/admin/display/setup`), which walks the whole path in the order it happens |
 | The guided wizard opened on a step I didn't leave it on | The resume position is shared by the whole club, not per admin | Expected. Click any earlier step in the stepper; nothing is lost, because each step re-checks real state |
 | Step 1 offers me no way to turn the module on | Changing modules needs system-settings (support) edit access; the rest of the wizard only needs lodge access | Ask an admin with support edit to turn on **Lobby TV display**, then reopen the wizard |

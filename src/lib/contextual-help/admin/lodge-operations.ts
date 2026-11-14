@@ -261,9 +261,9 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
       "Lobby Display pairs the TVs in your lodges and authors the boards they show. Three words, two of them stored: a Layout is the skeleton, a Template is a Layout filled in, and a board is what a screen actually shows.",
       [
         "Setting up a screen for the first time, or replacing one? Open the guided setup wizard at /admin/display/setup — it walks the whole path from the module being off to a TV showing the right board, and it can be re-run safely at any time.",
-        "Use Devices to pair a screen, swap which board it shows, change its refresh interval, or revoke a screen that has left the building.",
-        "Use the Visual builder to compose a board without writing HTML; Layouts and Templates are the advanced, hand-authored equivalents.",
-        "Restore built-in boards on the Templates page if the shipped boards are missing — it never runs by itself, and it overwrites anything saved under a reserved built-in key.",
+        "Use Display Devices to pair a screen, swap which board it shows, change its refresh interval, or revoke a screen that has left the building.",
+        "Use the Display Builder to compose a board without writing HTML; Display Layouts and Display Templates are the advanced, hand-authored equivalents.",
+        "Restore built-in boards on the Display Templates page if the shipped boards are missing — it never runs by itself, and it overwrites anything saved under a reserved built-in key.",
       ],
       [
         {

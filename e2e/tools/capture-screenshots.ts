@@ -252,9 +252,10 @@ const CAPTURES: Capture[] = [
   //
   // The committed images were re-captured at batch-3 finalisation against a
   // capture stack rebuilt from this branch (which carries #2047 + #2048):
-  //   - `admin-display` (the hub) shows the FIVE-card hub — Devices, **Visual
-  //     builder** (#2048), Layouts (Advanced), Templates, and Reference — matching
-  //     the five-card hub the display guide documents.
+  //   - `admin-display` (the hub) shows the FIVE-card hub — then titled Devices,
+  //     **Visual builder** (#2048), Layouts (Advanced), Templates, and Reference.
+  //     The cards now carry their pages' registry labels (Display Devices,
+  //     Display Builder, …); a re-capture picks those up.
   //   - `admin-display-templates` shows the FULL SEVEN built-ins from the #2047
   //     template pack: Everyday board, Whole lodge, Singles house, Room by room,
   //     Nights ahead, Lodge operations, and Welcome kiosk (each with a Builder

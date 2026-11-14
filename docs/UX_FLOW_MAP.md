@@ -486,7 +486,7 @@ Screen: `/admin/display`.
 
 Shows: The lobby-display hub, device management, templates, layouts and previews.
 
-Journey: Open Devices, Visual builder, Layouts, Templates or Reference from the display hub.
+Journey: Open Display Devices, Display Builder, Display Layouts, Display Templates or Display Reference from the display hub.
 
 [Guide](guides/display.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

@@ -16,54 +16,56 @@ import { canViewAdminHrefWithMatrix } from "@/lib/admin-permissions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getIntegrationsNeedingReentry } from "@/lib/integration-credentials";
 import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permission-matrix";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 
+// Each card is titled with its setup page's registry label, the heading the
+// admin lands on.
 const sections: AdminHubSection[] = [
   {
     href: adminHref("xero-setup"),
-    title: "Xero Setup",
+    title: getAdminPage("xero-setup").label,
     description:
       "Connect Xero and configure the accounting settings used by finance workflows.",
     icon: Plug,
   },
   {
-    href: "/admin/stripe/setup",
-    title: "Stripe Setup",
+    href: adminHref("stripe-setup"),
+    title: getAdminPage("stripe-setup").label,
     description:
       "Enter your Stripe keys, confirm the account, and connect the payment webhook.",
     icon: CreditCard,
   },
   {
-    href: "/admin/google/setup",
-    title: "Google sign-in Setup",
+    href: adminHref("google-setup"),
+    title: getAdminPage("google-setup").label,
     description:
       "Enter your Google OAuth credentials and verify a real sign-in round-trip — no environment variables.",
     icon: KeyRound,
   },
   {
     href: adminHref("backups-setup"),
-    title: "Database Backups",
+    title: getAdminPage("backups-setup").label,
     description:
       "Set up durable S3 backups step by step — credentials, destination, nightly schedule, and a real verification run.",
     icon: DatabaseBackup,
   },
   {
     href: adminHref("ai-assistant"),
-    title: "AI help assistant",
+    title: getAdminPage("ai-assistant").label,
     description:
       "Enter your Anthropic API key, set a monthly spend cap, and review AI usage. Hidden until the AI assistant module is enabled.",
     icon: Bot,
   },
   {
-    href: "/admin/video-meetings/setup",
-    title: "Video meetings",
+    href: adminHref("video-meetings-setup"),
+    title: getAdminPage("video-meetings-setup").label,
     description:
       "Point calendar meeting links at your MiroTalk server and store the host sign-in they use — no environment variables.",
     icon: Video,
   },
   {
-    href: "/admin/alpine-server/setup",
-    title: "Alpine Central Server",
+    href: adminHref("alpine-server-setup"),
+    title: getAdminPage("alpine-server-setup").label,
     description:
       "Connect to the Alpine Central Server (ServerNZ): request a connection, store your API key, and upload/download shared data such as the Other Clubs registry.",
     icon: Server,

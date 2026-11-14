@@ -4,7 +4,7 @@ import {
   type AdminHubSection,
 } from "@/components/admin-hub-page";
 import type { FeatureFlags } from "@/config/schema";
-import { adminHref, type AdminPageAnchor } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage, type AdminPageAnchor } from "@/lib/admin-hubs";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 
 /**
@@ -18,28 +18,28 @@ import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 const sections: AdminHubSection[] = [
   {
     href: adminHref("xero-setup"),
-    title: "Xero Setup",
+    title: getAdminPage("xero-setup").label,
     description:
       "Connect Xero and configure accounting settings used by provider-backed workflows.",
     icon: Plug,
   },
   {
     href: adminHref("xero"),
-    title: "Xero Sync",
+    title: getAdminPage("xero").label,
     description:
       "Review operational Xero sync status, mappings, and recent provider activity.",
     icon: RefreshCw,
   },
   {
     href: adminHref("modules"),
-    title: "Modules",
+    title: getAdminPage("modules").label,
     description:
       "Enable provider-backed modules only when the club is ready to operate them.",
     icon: Puzzle,
   },
   {
     href: adminHref("email-deliverability"),
-    title: "Email Deliverability",
+    title: getAdminPage("email-deliverability").label,
     description:
       "Review SES/SMTP delivery state and suppression diagnostics.",
     icon: MailCheck,

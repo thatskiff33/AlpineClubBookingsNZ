@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { getAdminPage } from "@/lib/admin-hubs";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -35,17 +36,21 @@ import {
 // and defined none of them, and the hub is the first place an operator meets
 // all three. The definitions come from `display-terminology.ts` so the hub, the
 // Reference page and `docs/guides/display.md` cannot drift apart.
+//
+// Each card is titled with its destination's registry label, the heading the
+// admin lands on. The hrefs stay literal: the builder's `hardNavigate` guard in
+// `display-builder-csp-static.test.ts` reads them from source.
 const sections: AdminHubSection[] = [
   {
     href: "/admin/display/devices",
-    title: "Devices",
+    title: getAdminPage("display-devices").label,
     description:
       "Pair lobby screens per lodge, assign templates, and set each device's refresh interval.",
     icon: Tv,
   },
   {
     href: "/admin/display/builder",
-    title: "Visual builder",
+    title: getAdminPage("display-builder").label,
     description: `${DISPLAY_TERM_BOARD.oneLiner} Compose one by picking a shape and dropping modules into zones — no HTML. Writes a valid Layout + Template for you.`,
     icon: LayoutTemplate,
     // The builder's Live preview needs the route-scoped `frame-src 'self'`
@@ -56,19 +61,19 @@ const sections: AdminHubSection[] = [
   },
   {
     href: "/admin/display/layouts",
-    title: "Layouts (Advanced)",
+    title: getAdminPage("display-layouts").label,
     description: `${DISPLAY_TERM_LAYOUT.oneLiner} Advanced mode: author one by hand.`,
     icon: LayoutTemplate,
   },
   {
     href: "/admin/display/templates",
-    title: "Templates",
+    title: getAdminPage("display-templates").label,
     description: `${DISPLAY_TERM_TEMPLATE.oneLiner} Author one here, or restore the built-in boards.`,
     icon: LayoutTemplate,
   },
   {
     href: "/admin/display/reference",
-    title: "Reference",
+    title: getAdminPage("display-reference").label,
     description:
       "The read-only display vocabulary: embeddable modules, area conditions, and CSS tokens.",
     icon: BookOpen,

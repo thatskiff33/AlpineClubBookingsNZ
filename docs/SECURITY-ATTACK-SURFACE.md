@@ -429,7 +429,7 @@ for recipients, data flows and enablement; they do not keep recipient lists.
 - `servernz` — the Alpine Central Server API key, issued by the central server
   to this club. Stranding it stops the nightly Other Clubs sync (upload and
   download) until an admin re-enters it under Admin → Integrations → Alpine
-  Central Server. The same namespace holds `push_secret`, the secret the
+  Central Server Setup. The same namespace holds `push_secret`, the secret the
   central server issued when this install registered for pushes; it verifies
   the posts and free-beds webhooks, and `push_registered_url`, the callback
   address that secret was issued for (a `NEXTAUTH_URL` on another origin, host name or port, never takes the
@@ -3965,7 +3965,7 @@ calendar managers and audited per mint, which is why this stays low severity.
 
 **What #2940 changed, and what it deliberately did not.** The key, the host
 username and the host password are now club-editable: a Full Admin sets them on
-**Admin → Integrations → Video meetings**, where they are stored in the encrypted
+**Admin → Integrations → Video Meetings Setup**, where they are stored in the encrypted
 `IntegrationCredential` store under provider `mirotalk`, and the environment
 variables become a per-field fallback. Four properties are worth stating because
 they are what makes that safe rather than merely convenient.
