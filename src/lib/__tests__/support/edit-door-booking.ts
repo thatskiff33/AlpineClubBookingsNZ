@@ -1,3 +1,12 @@
+/**
+ * A typed fixture for the booking every edit door re-reads under its locks
+ * (`EDIT_DOOR_BOOKING_INCLUDE`, #4925). Each row is written out in full on
+ * purpose: the compiler checks it against the generated Prisma types, so this
+ * is a second FORM of the row shape, not a second definition of what an edit
+ * door loads (`INV-SSOT-001`). The cost is that a migration adding a required
+ * column to `Member`, `Payment` or `Booking` fails test typecheck here, and its
+ * author adds the column below.
+ */
 import type { LoadedBookingForLifecycle } from "@/lib/booking-modify-validation";
 
 type LoadedGuest = LoadedBookingForLifecycle["guests"][number];
@@ -161,9 +170,13 @@ function editDoorPayment(overrides: Partial<LoadedPayment> = {}): LoadedPayment 
 /** Complete, compiler-checked snapshot; each test states only the facts it varies. */
 export function editDoorBooking(overrides: EditDoorBookingOverrides = {}): LoadedBookingForLifecycle {
   const { guests = [], payment = null, ...booking } = overrides;
+  // The default member follows the booking's member id, so overriding `memberId`
+  // alone still gives one consistent owner. A null id gives no member row; a
+  // fixture owned by an organisation states `organisation` itself.
+  const memberId = booking.memberId === undefined ? "member_1" : booking.memberId;
   return {
     id: "booking_1",
-    memberId: "member_1",
+    memberId,
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
     checkOut: new Date("2026-08-02T00:00:00.000Z"),
     status: "PENDING",
@@ -218,7 +231,7 @@ export function editDoorBooking(overrides: EditDoorBookingOverrides = {}): Loade
     organisationId: null,
     createdAt: FIXED_NOW,
     updatedAt: FIXED_NOW,
-    member: editDoorMember(),
+    member: memberId === null ? null : editDoorMember({ id: memberId }),
     organisation: null,
     promoRedemptions: [],
     ...booking,
