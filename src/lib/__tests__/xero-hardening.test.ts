@@ -811,14 +811,14 @@ describe("buildXeroReconciliationReport", () => {
       armResolved({ links: [], resolved: [{ refundAmountCents: 150 }] });
       const { count, items } = await overCoverage();
       expect(count).toBe(1);
-      expect(items[0]?.detail).toContain("$0.00 from active notes, $1.50 from notes resolved by hand in Xero");
+      expect(items[0]?.detail).toContain("$0.00 from active notes less Stripe reversals, $1.50 from notes resolved by hand in Xero");
     });
 
     it("reports over-coverage from links and resolved notes together", async () => {
       armResolved({ links: [{ amountCents: 90 }], resolved: [{ refundAmountCents: 50 }] });
       const { count, items } = await overCoverage();
       expect(count).toBe(1);
-      expect(items[0]?.detail).toContain("$0.90 from active notes, $0.50 from notes resolved by hand in Xero");
+      expect(items[0]?.detail).toContain("$0.90 from active notes less Stripe reversals, $0.50 from notes resolved by hand in Xero");
     });
 
     it("reports a resolved note whose amount cannot be read, never skipping it", async () => {

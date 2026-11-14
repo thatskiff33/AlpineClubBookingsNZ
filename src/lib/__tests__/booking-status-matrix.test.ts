@@ -3,10 +3,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   ACTIVE_BOOKING_STATUSES,
+  BOOKING_STATUSES_IN_LIFECYCLE_ORDER,
   CAPACITY_HOLDING_BOOKING_STATUSES,
   IMMEDIATE_PAYMENT_BOOKING_STATUSES,
   OPERATIONAL_STAY_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
+  bookingStatusLifecycleRank,
+  isBookingStatus,
   isCapacityHoldingBookingStatus,
   isOperationalStayBookingStatus,
   isPaymentOwedBookingStatus,
@@ -109,5 +112,32 @@ describe("booking status set matrix (issue #816)", () => {
     ];
 
     expect(allReferenced.filter((status) => !valid.has(status))).toEqual([]);
+  });
+});
+
+// #4923: the admin calendar's pills, its route's accepted statuses and the
+// list's status dropdown all read this one list, so it must hold every status
+// exactly once, in the #1215 lifecycle order the list sort also uses.
+describe("booking statuses in lifecycle order (#4923)", () => {
+  it("lists every BookingStatus exactly once, in lifecycle order", () => {
+    expect(BOOKING_STATUSES_IN_LIFECYCLE_ORDER).toEqual([
+      "DRAFT", "PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED",
+      "WAITLISTED", "WAITLIST_OFFERED", "AWAITING_REVIEW", "CANCELLED", "BUMPED",
+    ]);
+    expect(sorted(BOOKING_STATUSES_IN_LIFECYCLE_ORDER)).toEqual(sorted(ALL_STATUSES));
+  });
+
+  it("ranks by that order and puts anything else last", () => {
+    BOOKING_STATUSES_IN_LIFECYCLE_ORDER.forEach((status, index) => {
+      expect(bookingStatusLifecycleRank(status)).toBe(index);
+    });
+    expect(bookingStatusLifecycleRank("NOT_A_STATUS")).toBe(ALL_STATUSES.length);
+  });
+
+  it("recognises only real statuses in untrusted input", () => {
+    for (const status of ALL_STATUSES) expect(isBookingStatus(status)).toBe(true);
+    for (const value of ["NOT_A_STATUS", "paid", "", "toString", "__proto__", 42, null, undefined]) {
+      expect(isBookingStatus(value)).toBe(false);
+    }
   });
 });

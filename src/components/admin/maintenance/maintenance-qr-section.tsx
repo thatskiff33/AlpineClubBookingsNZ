@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { toDataURL } from "qrcode";
 import { Check, Copy, Printer, QrCode, RefreshCw } from "lucide-react";
 
 import {
@@ -20,6 +19,7 @@ import {
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useQrDataUrl } from "@/hooks/use-qr-data-url";
 import { useClubTime } from "@/components/club-time-provider";
 
 /**
@@ -128,7 +128,9 @@ export function MaintenanceQrSection() {
   const [busyLodgeId, setBusyLodgeId] = useState<string | null>(null);
 
   const [minted, setMinted] = useState<Minted | null>(null);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  // The bitmap is drawn in the browser after the mint lands, so the response
+  // reaches state without waiting on it.
+  const qrDataUrl = useQrDataUrl(minted?.signUrl ?? null, 512);
   const [copied, setCopied] = useState(false);
   const [printWarning, setPrintWarning] = useState("");
 
@@ -149,31 +151,6 @@ export function MaintenanceQrSection() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  // Draw the QR bitmap whenever a fresh URL is revealed. Kept in an effect so the
-  // async render never blocks the mint response landing in state.
-  useEffect(() => {
-    if (!minted) {
-      setQrDataUrl(null);
-      return;
-    }
-    let cancelled = false;
-    // margin: 4 bakes the QR spec's recommended 4-module white quiet zone INTO
-    // the (opaque-white) bitmap, so the code stays scannable without a raw white
-    // background utility behind it — which would not follow the club theme
-    // (brand-color contract). The preview img below therefore needs no raw
-    // neutral and rides on a theme-token border alone.
-    void toDataURL(minted.signUrl, { width: 512, margin: 4 })
-      .then((url) => {
-        if (!cancelled) setQrDataUrl(url);
-      })
-      .catch(() => {
-        if (!cancelled) setQrDataUrl(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [minted]);
 
   async function mint(lodgeId: string) {
     setBusyLodgeId(lodgeId);

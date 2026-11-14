@@ -1,9 +1,9 @@
 // The recovery-alert focus contract, as a single assertion (#2597, #2635).
 //
-// Eighteen admin and member surfaces render a permanently mounted `role="alert"`
+// Admin, member and public surfaces render a permanently mounted `role="alert"`
 // that a failed action populates and then takes focus, so a keyboard or
 // screen-reader user is not left on a control that has just been re-enabled while
-// the explanation appears somewhere else on the page. Sixteen of them use
+// the explanation appears somewhere else on the page. Nearly all of them use
 // `src/components/focused-action-error.tsx`; `policy-exception-requests-panel.tsx`
 // and `roster-editor.tsx` call the same failure primitive through
 // `useActionAttention`. All of them focus through `src/hooks/use-scroll-to-feedback.ts`

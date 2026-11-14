@@ -48,7 +48,7 @@ export function buildLocalAdminUrl(localModel: string | null, localId: string | 
 
   switch (localModel) {
     case "Member":
-      return `/admin/members/${encodeURIComponent(localId)}`;
+      return `${adminHref("member-detail", { id: localId })}`;
     case "Booking":
     case "Payment":
     case "BookingModification":
@@ -57,7 +57,7 @@ export function buildLocalAdminUrl(localModel: string | null, localId: string | 
       return buildXeroRecordActivityUrl(localModel, localId);
     case "MembershipCancellationRequest":
     case "MembershipCancellationRequestParticipant":
-      return buildXeroRecordActivityUrl(localModel, localId, "/admin/membership-cancellations?status=ALL");
+      return buildXeroRecordActivityUrl(localModel, localId, `${adminHref("membership-cancellations")}?status=ALL`);
     default:
       return null;
   }

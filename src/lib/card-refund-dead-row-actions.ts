@@ -11,15 +11,19 @@ import {
   foreignRefundsSizingSupersededRow,
   laterStripeRefundsCovering,
   tryCardAgainRefusal,
+  paidAnotherWayRefusal,
   unadoptedOwnStripeRefunds,
   type LaterStripeRefund,
   type ListedStripeRefund,
+  DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING,
+  DEAD_CARD_REFUND_CLOSED,
 } from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow, type DeadCardRefundRowRefusals } from "@/lib/card-refund-dead-row-lock";
 import logger from "@/lib/logger";
 import { parseRefundAllocationPlan } from "@/lib/open-card-refund-owed";
 import { prisma } from "@/lib/prisma";
 import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
+import { cardRefundFailedLaterRefundId } from "@/lib/payment-recovery-keys";
 import { listRefundsOnCardCharge } from "@/lib/card-refund-stripe-refunds";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 
@@ -73,12 +77,12 @@ export { DeadCardRefundActionError };
 const REFUSALS: DeadCardRefundRowRefusals = {
   notOwedKind: "This card refund cannot be settled here. Ask a developer to reconcile it.",
   organiserChild: "This card refund cannot be settled here. Ask a developer to reconcile it.",
-  closed: "This card refund has already been closed.",
+  closed: DEAD_CARD_REFUND_CLOSED,
   notGivenUp: "This card refund is being tried again, so it is not waiting for you. Refresh the list.",
   otherBooking: "This card refund's payment belongs to another booking, so it cannot be settled here. Ask a developer to reconcile it.",
 };
 
-const CHANGED_WHILE_SETTLING = "This card refund changed while you were settling it. The list has been refreshed: check it and try again.";
+const CHANGED_WHILE_SETTLING = DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING;
 
 export interface NothingLeftOwedInput {
   operationId: string;
@@ -202,7 +206,17 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
           })
         : null;
     const rowWithCharge = { ...operation, paymentTransaction: charge };
-    const refusal = tryCardAgainRefusal(payment, rowWithCharge, owed);
+    // Case 3 reads the charge. The other two refusals do not, so an ordinary re-arm takes no extra read.
+    const charges =
+      cardRefundFailedLaterRefundId(operation.idempotencyKey) === null
+        ? []
+        : await tx.paymentTransaction.findMany({
+            where: { paymentId: payment.id },
+            select: { id: true, amountCents: true, refundedAmountCents: true },
+            orderBy: [...LEDGER_ROWS_OLDEST_FIRST],
+          });
+    const bankCloseRefusal = paidAnotherWayRefusal(payment, operation, owed, charges);
+    const refusal = tryCardAgainRefusal(payment, rowWithCharge, owed, bankCloseRefusal);
     if (refusal) throw new DeadCardRefundActionError(refusal, 409);
     // Review F4: Stripe was read for the charges of the plan read then; a plan moved since is not the one checked.
     if (read !== null && JSON.stringify(read.allocationPlan ?? null) !== JSON.stringify(operation.allocationPlan ?? null)) {
@@ -213,7 +227,7 @@ export async function tryDeadCardRefundAgain(input: TryCardAgainInput): Promise<
     const foreign = foreignRefundsSizingSupersededRow(payment, operation, read?.listed ?? []);
     if (foreign.length > 0) {
       throw new DeadCardRefundActionError(
-        `This refund's card charge was part refunded by another refund (${foreign.join(", ")}), and if that refund failed later the app would owe it twice, so the card cannot be tried again. ${deadRowSettleHint(rowWithCharge, owed)}`,
+        `This refund's card charge was part refunded by another refund (${foreign.join(", ")}), and if that refund failed later the app would owe it twice, so the card cannot be tried again. ${deadRowSettleHint(rowWithCharge, owed, bankCloseRefusal)}`,
         409,
       );
     }
