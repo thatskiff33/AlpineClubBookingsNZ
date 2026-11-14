@@ -289,6 +289,34 @@ describe("MemberApplicationsPage", () => {
       );
     });
   });
+
+  it("#4966: Go back closes the email choice without reviewing the application", async () => {
+    render(<MemberApplicationsPage />);
+
+    await waitFor(() =>
+      expect(screen.queryByText("Stuck Nominators")).not.toBeNull()
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Reject application/i })
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Go back" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Email the applicant about this rejection?")
+      ).toBeNull()
+    );
+    expect(
+      fetchMock.mock.calls.some(
+        ([, init]) => (init as RequestInit | undefined)?.method === "PUT"
+      )
+    ).toBe(false);
+    // The row is untouched and can still be reviewed.
+    expect(
+      screen.getByRole("button", { name: /Reject application/i })
+    ).toBeTruthy();
+  });
 });
 
 /*

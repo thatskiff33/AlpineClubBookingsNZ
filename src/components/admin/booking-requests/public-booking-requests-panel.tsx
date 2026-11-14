@@ -17,14 +17,7 @@ import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-no
 import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -2711,54 +2704,43 @@ export function PublicBookingRequestsPanel({
           pattern. Declining always emails the requester (contactEmail is always
           present), so the dialog is shown on every decline. Both choices decline
           the request; the choice itself is recorded in the audit log. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={declineDialogOpen}
-        onOpenChange={(open) => {
-          if (!open) setDeclineDialogOpen(false);
+        onOpenChange={setDeclineDialogOpen}
+        submitting={actioningId !== null}
+        title="Email the requester about this decline?"
+        description="The request is declined either way. Choose whether the requester receives the standard decline email — your choice is recorded in the audit log."
+        summary={
+          // #2263: the whole-lodge consequence is folded INTO this dialog
+          // rather than chained after it as a second dialog — one decision,
+          // one prompt. It states what the member will and will not be told,
+          // because the officer writing the note needs to know the note is
+          // not what gets sent.
+          declineChoice && isMemberWholeLodgeRequest(declineChoice) ? (
+            <p className="text-sm text-muted-foreground">
+              This is a whole-lodge request. Declining it releases nothing and
+              changes no capacity — the lodge was never held for it. If you
+              email the member they receive one fixed sentence saying the
+              whole lodge was not available for those dates: never your note,
+              and never anything about who else has the lodge. Your note is
+              kept in the audit log.
+            </p>
+          ) : null
+        }
+        actions={{
+          kind: "choice",
+          withoutEmail: {
+            label: "Decline without emailing",
+            variant: "outline",
+            onSelect: () => confirmDecline(false),
+          },
+          withEmail: {
+            label: "Decline and email requester",
+            variant: "destructive",
+            onSelect: () => confirmDecline(true),
+          },
         }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Email the requester about this decline?</DialogTitle>
-            <DialogDescription>
-              The request is declined either way. Choose whether the requester
-              receives the standard decline email — your choice is recorded in
-              the audit log.
-            </DialogDescription>
-            {/* #2263: the whole-lodge consequence is folded INTO this dialog
-                rather than chained after it as a second dialog — one decision,
-                one prompt. It states what the member will and will not be told,
-                because the officer writing the note needs to know the note is
-                not what gets sent. */}
-            {declineChoice && isMemberWholeLodgeRequest(declineChoice) ? (
-              <p className="text-sm text-muted-foreground">
-                This is a whole-lodge request. Declining it releases nothing and
-                changes no capacity — the lodge was never held for it. If you
-                email the member they receive one fixed sentence saying the
-                whole lodge was not available for those dates: never your note,
-                and never anything about who else has the lodge. Your note is
-                kept in the audit log.
-              </p>
-            ) : null}
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={actioningId !== null}
-              onClick={() => confirmDecline(false)}
-            >
-              Decline without emailing
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={actioningId !== null}
-              onClick={() => confirmDecline(true)}
-            >
-              Decline and email requester
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      />
       </div>
     </div>
   );

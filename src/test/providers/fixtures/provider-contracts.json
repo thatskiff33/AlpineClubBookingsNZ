@@ -1,7 +1,9 @@
 {
   "provenance": {
-    "kind": "synthetic-contract-examples",
-    "sandboxCaptured": false,
+    "kind": "synthetic",
+    "capturedOn": null,
+    "apiVersions": { "xero": null, "stripe": null },
+    "reviewedIn": null,
     "description": "Manually specified API-shaped examples, not generated from the fakes and not recordings from a live account. IDs are local aliases. Only selected fields are pinned.",
     "references": [
       "https://developer.xero.com/documentation/api/accounting/creditnotes",

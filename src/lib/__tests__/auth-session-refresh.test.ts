@@ -82,6 +82,22 @@ vi.mock("@/lib/logger", () => ({
   default: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// #4618 review: lets one test stand in a required officer's refresh claims
+// while the release switch stays off; every other test uses the real resolver.
+const officerClaimsOverride = vi.hoisted(() => ({
+  claims: null as null | Record<string, unknown>,
+}));
+vi.mock("@/lib/officer-two-factor", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/officer-two-factor");
+  return {
+    ...actual,
+    resolveOfficerTwoFactorClaims: async (
+      input: Parameters<typeof actual.resolveOfficerTwoFactorClaims>[0],
+    ) =>
+      officerClaimsOverride.claims ?? actual.resolveOfficerTwoFactorClaims(input),
+  };
+});
+
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: mockLoadEffectiveModuleFlags,
 }));
@@ -191,6 +207,9 @@ describe("auth session refresh", () => {
         // #4612: with role and the rows, the record's classification, which
         // decides the lodge kiosk account's longer idle window.
         financeAccessLevel: true,
+        // #4618: the officer grace stamp and the last factor reset.
+        twoFactorGraceStartedAt: true,
+        factorsResetAt: true,
       },
     });
     expect(refreshedToken).toEqual(
@@ -564,6 +583,10 @@ describe("auth session refresh", () => {
       hasPasskey: false,
       twoFactorMethod: null,
       postLoginLanding: null,
+      // #4618: a token without the officer claims projects as not required.
+      officerTwoFactorRequired: false,
+      officerTwoFactorGraceEndsAt: null,
+      twoFactorSatisfiesOfficer: false,
     });
   });
 
@@ -959,6 +982,7 @@ describe("auth session refresh", () => {
   function signedInMember(security?: {
     twoFactorEnabled?: boolean;
     twoFactorMethod?: "TOTP" | "EMAIL" | null;
+    passkey?: boolean;
   }) {
     mockFindUnique.mockResolvedValue({
       role: "MEMBER",
@@ -968,6 +992,7 @@ describe("auth session refresh", () => {
       passwordChangedAt: null,
       twoFactorEnabled: security?.twoFactorEnabled ?? false,
       twoFactorMethod: security?.twoFactorMethod ?? null,
+      webAuthnCredentials: security?.passkey ? [{ id: "passkey-1" }] : [],
     });
   }
 
@@ -1017,6 +1042,30 @@ describe("auth session refresh", () => {
     const signedIn = await signIn("credentials");
     expect(signedIn?.id).toBe("member-1");
     expect(signedIn).not.toHaveProperty("lastAuthenticatedAt");
+  });
+
+  it("does not stamp a required officer's password sign-in when they hold a passkey (#4618 review)", async () => {
+    signedInMember({ passkey: true });
+    officerClaimsOverride.claims = {
+      officerTwoFactorRequired: true,
+      twoFactorSatisfiesOfficer: true,
+      officerTwoFactorGraceEndsAt: null,
+      shouldStampGrace: false,
+    };
+    try {
+      const signedIn = await signIn("credentials");
+      expect(signedIn?.id).toBe("member-1");
+      expect(signedIn).not.toHaveProperty("lastAuthenticatedAt");
+    } finally {
+      officerClaimsOverride.claims = null;
+    }
+  });
+
+  it("still stamps a passkey holder's password sign-in when only the module is on", async () => {
+    signedInMember({ passkey: true });
+    mockLoadEffectiveModuleFlags.mockResolvedValue({ twoFactor: true });
+    const signedIn = await signIn("credentials");
+    expect(signedIn).toEqual(expect.objectContaining({ lastAuthenticatedAt: Date.now() }));
   });
 
   it("does not stamp an emailed-link sign-in", async () => {

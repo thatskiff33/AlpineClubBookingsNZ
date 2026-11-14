@@ -1192,8 +1192,70 @@ describe("an approved appeal whose card refund is still partly owed (#4117)", ()
 
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(toast));
   });
-});
 
+  // #4966: the email-choice dialog is the last step before the money moves.
+  describe("the approve dialog", () => {
+    const refundPuts = () =>
+      fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
+
+    async function openApproveDialog(amount: string) {
+      render(<RefundRequestsPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /Refund Amount/i }), {
+        target: { value: amount },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Approve & Refund" }));
+      return screen.findByRole("dialog");
+    }
+
+    it("repeats the amount typed, as money, and refunds exactly that many cents", async () => {
+      mocks.currentSearch = "";
+      serve("PENDING", [appeal({})], {
+        ...appeal({ status: "APPROVED", approvedAmountCents: 1250 }),
+        cardRefundOwedCents: 0,
+        cardRefundQueued: true,
+      });
+
+      const dialog = await openApproveDialog("12.5");
+
+      expect(within(dialog).getByTestId("refund-appeal-confirm-amount")).toHaveTextContent(
+        "Refund amount: $12.50",
+      );
+      fireEvent.click(within(dialog).getByRole("button", { name: "Approve without emailing" }));
+
+      await waitFor(() => expect(refundPuts()).toHaveLength(1));
+      const body = JSON.parse(String((refundPuts()[0]![1] as RequestInit).body));
+      expect(body.approvedAmountCents).toBe(1250);
+      expect(body.notifyMember).toBe(false);
+    });
+
+    it("Go back closes it with no request and keeps the typed amount", async () => {
+      mocks.currentSearch = "";
+      serve("PENDING", [appeal({})]);
+
+      const dialog = await openApproveDialog("50.00");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Go back" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(refundPuts()).toHaveLength(0);
+      expect(
+        (screen.getByRole("textbox", { name: /Refund Amount/i }) as HTMLInputElement).value,
+      ).toBe("50.00");
+    });
+
+    it("shows no amount when rejecting", async () => {
+      mocks.currentSearch = "";
+      serve("PENDING", [appeal({})]);
+
+      render(<RefundRequestsPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+      fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).queryByTestId("refund-appeal-confirm-amount")).toBeNull();
+    });
+  });
+});
 
 /*
   #4960 / INV-OPS-019: refund appeals are capped at 25 a page by their route.
