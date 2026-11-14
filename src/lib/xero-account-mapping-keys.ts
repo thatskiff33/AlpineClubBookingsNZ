@@ -178,7 +178,7 @@ export type AccountMappingKey =
 
 /**
  * Account-mapping keys the member-money ledger design PROPOSES (#4513, M1),
- * named once so the inert journal's account chart can point at them. They are
+ * named once so the journal's account chart can point at them. They are
  * NOT settings: none is in `XERO_ACCOUNT_MAPPING_DEFINITIONS`, so none reaches
  * the picker, the API allowlist, the seed, the setup checklist or any other
  * list derived from it. Each is registered as a full definition by the ledger

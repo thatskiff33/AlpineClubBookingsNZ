@@ -10,6 +10,7 @@
  * in `XeroConnection`. The old `XeroToken` table is gone.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
@@ -127,7 +128,7 @@ export type XeroTokenRefreshLeaseClaim =
 // container has just rotated can never be served stale from this process.
 
 /** The credential-store namespace for the Xero OAuth token set. */
-export const XERO_OAUTH_TOKEN_PROVIDER = "xero-oauth";
+export const XERO_OAUTH_TOKEN_PROVIDER = "xero-oauth" satisfies IntegrationCredentialNamespace;
 /** The one row in that namespace. */
 export const XERO_OAUTH_TOKEN_KEY = "token-set";
 
