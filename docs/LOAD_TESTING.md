@@ -111,11 +111,12 @@ creates historical fixture rows, without contacting providers. This gives
 queries realistic row counts; it does **not** load-test bank settlement or
 historical card refunds. The seeder refuses repeat runs; reset the stack first.
 
-To seed an already prepared disposable stack directly:
+To seed an already prepared disposable stack directly (replace the
+placeholder with the `DB_PASSWORD` in that stack's env file):
 
 ```bash
 LOAD_TEST_CONFIRM_TARGET=1 ALLOW_DEMO_SEED=1 \
-  DATABASE_URL=postgresql://tac:local-password@localhost:5433/tacbookings \
+  DATABASE_URL=postgresql://tac:<your-stack-db-password>@localhost:5433/tacbookings \
   pnpm run load:seed-volume
 ```
 
