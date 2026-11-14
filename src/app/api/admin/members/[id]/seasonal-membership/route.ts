@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getAuditRequestContext } from "@/lib/audit";
 import { saveSeasonalMembershipAssignment } from "@/lib/seasonal-membership-assignments";
 import { requireAdmin } from "@/lib/session-guards";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -12,9 +13,7 @@ const saveSchema = z
   .object({
     seasonYear: z.number().int().min(2020).max(2040),
     membershipTypeId: z.string().min(1),
-    applyFrom: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
+    applyFrom: dateOnlyStringSchema
       .nullable()
       .optional(),
     reason: z.string().trim().min(1).max(1000),
