@@ -7,7 +7,7 @@ lives in `src/lib/booking-wizard-work.ts`, when it is saved and restored in
 wizard's state is.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2503
+lines: 2567
 reason: restoring work writes nineteen pieces of the wizard's own state and then
   re-runs the wizard's own date check and quote, so the member's restored inputs
   are checked exactly as a click would check them. Those setters and functions
@@ -17,7 +17,7 @@ reason: restoring work writes nineteen pieces of the wizard's own state and then
   which the restore needs and a click ignores.
 
 file: src/app/(authenticated)/book/page.tsx
-lines: 713
+lines: 712
 reason: the notice itself is its own component; the page gains only the import,
   the two values it reads from the hook and the one line that places it above
   the steps, which is page layout and belongs in the page.
