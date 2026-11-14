@@ -4,7 +4,6 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
-import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import {
   type Booking,
   type BookingGuest,
@@ -38,7 +37,6 @@ import {
   resolveTargetDates,
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
-  type LoadedBookingForLifecycle,
   type LoadedBookingForModify,
   type ResolvedGuestNameUpdate,
   type PricingResult,
@@ -48,6 +46,8 @@ import {
   GUEST_MEMBER_LINK_MEMBER_WHOLE_LODGE_ONLY_MESSAGE,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+// Imported directly, not through the barrel: route tests mock the barrel whole.
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 // Pure readers of the request, imported from their home rather than the barrel
 // so a test that stubs the barrel's pipeline still reads the request for real.
 import {
@@ -1045,34 +1045,21 @@ export async function modifyBookingBatch({
 
     // Re-read the full booking under the lock; everything below consumes ONLY
     // this post-lock snapshot.
-    const booking = (await tx.booking.findUnique({
+    const booking = await tx.booking.findUnique({
       where: { id: bookingId },
       include: {
+        ...EDIT_DOOR_BOOKING_INCLUDE,
         // Per-night sets (issue #713): preserve unedited guests' gaps and
         // re-sync edited guests' nights. Deterministic order (#2266 MED-4):
         // pricing, promo targeting and the client's guest list must all agree
-        // on guest order, so never rely on the planner's unordered scan.
+        // on guest order, so never rely on the planner's unordered scan. Only
+        // this door orders guests; the shared include deliberately does not.
         guests: {
-          include: { nights: { select: { stayDate: true, priceCents: true, priceSource: true } } },
+          ...EDIT_DOOR_BOOKING_INCLUDE.guests,
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
-        payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
-        member: true,
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        organisation: { select: { name: true, email: true } },
-        promoRedemptions: {
-          include: {
-            promoCode: {
-              include: {
-                assignments: { select: { memberId: true } },
-                lodges: { select: { lodgeId: true } },
-              },
-            },
-            guestTargets: { select: { bookingGuestId: true } },
-          },
-        },
       },
-    })) as LoadedBookingForLifecycle | null;
+    });
 
     assertBookingModifiable(booking, {
       role: actor.role,
@@ -2642,7 +2629,7 @@ async function dispatchBatchPostTransactionSideEffects({
     datesChanged: result.datesChanged,
     guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment,
+    refundedThroughStripe: result.hasSucceededPayment, paymentId: result.paymentId,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,

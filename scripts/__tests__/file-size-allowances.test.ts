@@ -115,6 +115,7 @@ describe("readSizeAllowances", () => {
     // not the same as an unreadable one.
     expect(readSizeAllowances(newTree())).toEqual({
       allowances: [],
+      functionAllowances: [],
       problems: [],
     });
   });
@@ -208,7 +209,7 @@ describe("readSizeAllowances", () => {
       "2980-loose.md": "lines: 1200\nreason: a length with nothing to attach it to at all.\n",
     });
     expect(readSizeAllowances(root).problems[0]?.problem).toContain(
-      "before any `file:`",
+      "before any `file:` or `function:`",
     );
   });
 
@@ -225,5 +226,63 @@ describe("readSizeAllowances", () => {
     expect(problems).toEqual([]);
     expect(allowances[0]?.file).toBe("src/lib/a.ts");
     expect(allowances[0]?.lines).toBe(1200);
+  });
+});
+
+describe("readSizeAllowances — `function:` entries for the function-length ratchet (#4927)", () => {
+  it("reads a function entry beside a file entry in one fragment, keeping the two apart", () => {
+    const root = newTree({
+      "4927-both.md": [
+        "file: src/lib/a.ts",
+        "lines: 1200",
+        "reason: the file-size half of the same change, kept for contrast.",
+        "",
+        "function: src/lib/a.ts#Door.cancel",
+        "lines: 2114",
+        "reason: the guard has to sit in the claim transaction it protects;",
+        "  the split is #4927's own follow-up.",
+      ].join("\n"),
+    });
+    const { allowances, functionAllowances, problems } = readSizeAllowances(root);
+    expect(problems).toEqual([]);
+    // The file entry must not swallow the function entry's fields, and the
+    // function entry must not read as a second file allowance.
+    expect(allowances.map((a) => `${a.file} ${a.lines}`)).toEqual(["src/lib/a.ts 1200"]);
+    expect(functionAllowances).toEqual([
+      {
+        source: `${ALLOWANCE_DIR}/4927-both.md`,
+        file: "src/lib/a.ts",
+        name: "Door.cancel",
+        key: "src/lib/a.ts#Door.cancel",
+        lines: 2114,
+        reason:
+          "the guard has to sit in the claim transaction it protects; the split is #4927's own follow-up.",
+      },
+    ]);
+  });
+
+  it("refuses a function entry without a `#<name>`, rather than guessing which function", () => {
+    const root = newTree({
+      "4927-bare.md":
+        "function: src/lib/a.ts\nlines: 400\nreason: names a file where a function was meant.\n",
+    });
+    const { functionAllowances, problems } = readSizeAllowances(root);
+    expect(functionAllowances).toEqual([]);
+    expect(problems[0]?.problem).toContain("<path>#<name>");
+  });
+
+  it("refuses two entries for one function in one fragment", () => {
+    const entry = "function: src/lib/a.ts#run\nlines: 400\nreason: long enough to be weighed by a reviewer.\n";
+    const root = newTree({ "4927-twice.md": `${entry}\n${entry}` });
+    expect(readSizeAllowances(root).problems[0]?.problem).toContain(
+      "one function, one allowance",
+    );
+  });
+
+  it("refuses a function entry missing its reason", () => {
+    const root = newTree({ "4927-short.md": "function: src/lib/a.ts#run\nlines: 400\n" });
+    const { functionAllowances, problems } = readSizeAllowances(root);
+    expect(functionAllowances).toEqual([]);
+    expect(problems[0]?.problem).toContain("missing reason");
   });
 });
