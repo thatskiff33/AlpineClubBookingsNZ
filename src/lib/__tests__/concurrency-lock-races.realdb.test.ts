@@ -833,6 +833,12 @@ import "./edit-quoted-figures.realdb.test";
 // changed underneath it (no side effect, retried), and two writers forced to meet
 // at the claim. It owns and cleans its own `race-4456` credential rows.
 import "./data-encryption-key-ring.realdb.test";
+// #4911 reuses it to prove a paid cancel of a booking whose card capture the
+// cardholder disputes (a lost dispute) issues no card refund and no account
+// credit, by either refund method, and raises one treasurer task naming the
+// dispute; a won dispute restores the credit path. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4911-` fixtures.
+import "./stripe-dispute-cancel.realdb.test";
 // INV-INT-038 (the #4921 prerequisite) reuses it to prove an abandoned inbound
 // Xero reconcile operation is recovered under a fresh claim: one winner among
 // racing takeovers or a racing Mark failed, and the abandoned attempt's late

@@ -459,14 +459,14 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:236",
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
-  "src/app/(authenticated)/bookings/[id]/page.tsx:206",
+  "src/app/(authenticated)/bookings/[id]/page.tsx:205",
   "src/app/(authenticated)/bookings/page.tsx:196",
   "src/app/api/bookings/[id]/additional-payment-secret/route.ts:83",
   "src/app/api/bookings/[id]/arrival-time/route.ts:140",
   "src/app/api/bookings/[id]/arrival-time/route.ts:248",
   "src/app/api/bookings/[id]/arrival-time/route.ts:298",
   "src/app/api/bookings/[id]/arrival-time/route.ts:367",
-  "src/app/api/bookings/[id]/cancel-preview/route.ts:78",
+  "src/app/api/bookings/[id]/cancel-preview/route.ts:79",
   "src/app/api/bookings/[id]/change-requests/quote/route.ts:76",
   "src/app/api/bookings/[id]/change-requests/route.ts:179",
   "src/app/api/bookings/[id]/change-requests/route.ts:504",
@@ -487,8 +487,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/switch-to-internet-banking/route.ts:127",
   "src/lib/adult-member-hosting-review.ts:3256",
   "src/lib/booking-batch-modification-service.ts:1081",
-  "src/lib/booking-cancel.ts:2527",
-  "src/lib/booking-cancel.ts:567",
+  "src/lib/booking-cancel.ts:2548",
+  "src/lib/booking-cancel.ts:570",
   "src/lib/booking-date-modification-service.ts:394",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
@@ -523,8 +523,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1355",
-  "src/lib/payment-recovery.ts:2765",
-  "src/lib/payment-recovery.ts:2817",
+  "src/lib/payment-recovery.ts:2768",
+  "src/lib/payment-recovery.ts:2820",
   "src/lib/xero-admin-health.ts:423",
 ];
 
