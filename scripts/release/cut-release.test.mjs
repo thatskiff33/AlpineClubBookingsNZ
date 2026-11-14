@@ -21,6 +21,12 @@ import {
   ReleaseCutError,
 } from "./cut-release.mjs";
 import { releaseSection } from "./compile-changelog.mjs";
+import {
+  RUNBOOK_RELEASE_AGNOSTIC_MARKER,
+  UNRELEASED_HEADING,
+  UPGRADE_CHECKLIST_HEADING,
+  UPGRADING_GUIDE_HEADINGS,
+} from "./upgrade-docs.mjs";
 
 // Every test runs against a throwaway fixture: a bare "origin" and a clone of
 // it. The clone's origin URL is a GitHub URL that git's `insteadOf` rewrites to
@@ -76,11 +82,38 @@ function configure(cwd) {
   git(cwd, "config", "core.hooksPath", path.join(cwd, ".no-hooks"));
 }
 
+// The two upgrade documents prepare checks (#4979), cut down to what it reads.
+// Their headings and marker come from upgrade-docs.mjs, so a rename there moves
+// this fixture with it instead of leaving two files that disagree about the shape.
+const GUIDE_TOP = ["# Upgrading", "", ...UPGRADING_GUIDE_HEADINGS.flatMap((heading) => [heading, ""])].join("\n");
+const UPGRADING_READY = [
+  GUIDE_TOP,
+  UNRELEASED_HEADING,
+  "",
+  UPGRADE_CHECKLIST_HEADING,
+  "",
+  "1. Rehearse.",
+  "",
+  "---",
+  "",
+  "## v0.13.1 → v0.13.2",
+  "",
+  "Older steps.",
+  "",
+].join("\n");
+const RUNBOOK_AGNOSTIC = `# Production Upgrade Runbook\n\n${RUNBOOK_RELEASE_AGNOSTIC_MARKER}.\n\n## 0. Scope\n`;
+const READY_DOCS = { "docs/UPGRADING.md": UPGRADING_READY, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": RUNBOOK_AGNOSTIC };
+
 /**
  * A bare origin holding one release-tagged commit plus pending fragments, and a
  * clean clone of it. Returns `{ origin, repo }`.
  */
-function makeFixture({ fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" }, tags = ["v0.13.2"], changelog = CHANGELOG } = {}) {
+function makeFixture({
+  fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" },
+  tags = ["v0.13.2"],
+  changelog = CHANGELOG,
+  docs = {},
+} = {}) {
   const origin = path.join(tempDir("release-cut-origin-"), "origin.git");
   execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
   const seed = tempDir("release-cut-seed-");
@@ -93,6 +126,10 @@ function makeFixture({ fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body
   fs.mkdirSync(path.join(seed, "size-allowances.d"));
   fs.writeFileSync(path.join(seed, "size-allowances.d", "README.md"), "# Allowances\n");
   fs.writeFileSync(path.join(seed, "size-allowances.d", "4300-spent.md"), "lines: 900\n");
+  for (const [relative, body] of Object.entries(docs)) {
+    fs.mkdirSync(path.dirname(path.join(seed, relative)), { recursive: true });
+    fs.writeFileSync(path.join(seed, relative), body);
+  }
   git(seed, "add", "--all");
   git(seed, "commit", "-qm", "released base");
   for (const tag of tags) git(seed, "tag", "-a", tag, "-m", tag);
@@ -457,6 +494,95 @@ describe("release:cut prepare on a fixture repository", () => {
     expect(error.recovery).toContain("git tag -d v0.13.3");
   });
 
+  it("folds the upgrade guide's Unreleased steps into the release's heading (#4979)", () => {
+    const { repo } = makeFixture({ docs: READY_DOCS });
+    const dryLog = silentLog();
+    prepareRelease({ repoRoot: repo, date: "2026-10-31", run: fixtureRunner(repo), log: dryLog });
+    expect(dryLog.text()).toContain(
+      `4. fold docs/UPGRADING.md "${UNRELEASED_HEADING}" into "## v0.13.2 → v0.13.3", leaving an empty "${UNRELEASED_HEADING}"`,
+    );
+    expect(dryLog.text()).toContain("git add --all -- CHANGELOG.md package.json changelog.d size-allowances.d docs/UPGRADING.md");
+    expect(dryLog.text()).not.toContain("it does NOT yet");
+
+    prepareRelease({ repoRoot: repo, execute: true, date: "2026-10-31", run: fixtureRunner(repo), log: silentLog() });
+
+    const folded = fs.readFileSync(path.join(repo, "docs", "UPGRADING.md"), "utf8");
+    expect(folded).toContain(
+      [UNRELEASED_HEADING, "", "---", "", "## v0.13.2 → v0.13.3", "", UPGRADE_CHECKLIST_HEADING].join("\n"),
+    );
+    expect(folded.split("\n").filter((line) => line === UNRELEASED_HEADING)).toHaveLength(1);
+    expect(git(repo, "show", "--name-status", "--format=", "HEAD").split("\n")).toContain("M\tdocs/UPGRADING.md");
+    expect(git(repo, "status", "--porcelain", "--untracked-files=all")).toBe("");
+  });
+
+  it("does not fold an empty Unreleased block, and warns when the checklist is missing", () => {
+    const empty = makeFixture({
+      docs: { ...READY_DOCS, "docs/UPGRADING.md": `${GUIDE_TOP}${UNRELEASED_HEADING}\n\n---\n\n## v0.13.1 → v0.13.2\n` },
+    });
+    const emptyLog = silentLog();
+    prepareRelease({ repoRoot: empty.repo, date: "2026-10-31", run: fixtureRunner(empty.repo), log: emptyLog });
+    expect(emptyLog.text()).not.toContain("fold docs/UPGRADING.md");
+
+    const bare = makeFixture({
+      docs: { ...READY_DOCS, "docs/UPGRADING.md": `${GUIDE_TOP}${UNRELEASED_HEADING}\n\n### A step (#4500)\n\nDo it.\n` },
+    });
+    const bareLog = silentLog();
+    prepareRelease({ repoRoot: bare.repo, date: "2026-10-31", run: fixtureRunner(bare.repo), log: bareLog });
+    expect(bareLog.text()).toContain("(it does NOT yet: write one)");
+  });
+
+  it("refuses a release-specific section above the guide's Unreleased block, dry run included", () => {
+    const misplaced = UPGRADING_READY.replace(UNRELEASED_HEADING, `### Review this first (#4457)\n\n${UNRELEASED_HEADING}`);
+    const { repo } = makeFixture({ docs: { ...READY_DOCS, "docs/UPGRADING.md": misplaced } });
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /upgrade documents are not ready[\s\S]*"### Review this first \(#4457\)"/,
+    );
+    expect(error.recovery).toContain("Public Reference Release Checklist");
+    expect(snapshot(repo)).toEqual(before);
+  });
+
+  it("refuses a runbook still scoped to a release older than the one being cut", () => {
+    const stale = "# Production Upgrade Runbook\n\nFrom `v0.9.0` up to `v0.10.0`.\n\n## 0. Scope\n";
+    const { repo } = makeFixture({ docs: { ...READY_DOCS, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": stale } });
+    expectRefusal(
+      () => prepareRelease({ repoRoot: repo, execute: true, run: fixtureRunner(repo), log: silentLog() }),
+      /scopes it to v0\.10\.0, older than v0\.13\.3/,
+    );
+    expect(git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+  });
+
+  it("holds the runbook to the release being cut, the census's threshold, not origin's latest tag", () => {
+    // v0.13.2 is origin's latest tag and passes a check against it, but the
+    // release being cut is v0.13.3, and package.json carries that once the
+    // release-prep pull request is open, where the census would then fail.
+    const scopedToPrevious = "# Production Upgrade Runbook\n\nFrom `v0.13.1` up to `v0.13.2`.\n\n## 0. Scope\n";
+    const previous = makeFixture({ docs: { ...READY_DOCS, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": scopedToPrevious } });
+    expectRefusal(
+      () => prepareRelease({ repoRoot: previous.repo, run: fixtureRunner(previous.repo), log: silentLog() }),
+      /scopes it to v0\.13\.2, older than v0\.13\.3/,
+    );
+
+    const scopedToNew = "# Production Upgrade Runbook\n\nFrom `v0.13.2` up to `v0.13.3`.\n\n## 0. Scope\n";
+    const current = makeFixture({ docs: { ...READY_DOCS, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": scopedToNew } });
+    expect(prepareRelease({ repoRoot: current.repo, run: fixtureRunner(current.repo), log: silentLog() })).toMatchObject({
+      version: "0.13.3",
+    });
+  });
+
+  it("explains a refusal to fold into a release heading that already exists, and changes nothing", () => {
+    const taken = UPGRADING_READY.replace("## v0.13.1 → v0.13.2", "## v0.13.2 → v0.13.3\n\nSteps already placed by hand.\n\n## v0.13.1 → v0.13.2");
+    const { repo } = makeFixture({ docs: { ...READY_DOCS, "docs/UPGRADING.md": taken } });
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /Cannot fold docs\/UPGRADING\.md: .*already has "## v0\.13\.2 → v0\.13\.3"\. Its "## Unreleased" steps would have nowhere to go\./,
+    );
+    expect(error.recovery).toContain('into "## v0.13.2 → v0.13.3" in a pull request to main, then re-run.');
+    expect(snapshot(repo)).toEqual(before);
+  });
+
   it("refuses when there is nothing to release", () => {
     const { repo } = makeFixture({ fragments: {} });
     expectRefusal(
@@ -498,8 +624,8 @@ function mergedReleaseFixture(options) {
  * release-prep PR is open, then the prep PR merges with a merge commit.
  * Returns the prep commit (never main's tip) and the merge commit.
  */
-function lateFragmentFixture({ lateName = "4500-late.md", bump = null } = {}) {
-  const fixture = makeFixture();
+function lateFragmentFixture({ lateName = "4500-late.md", bump = null, docs = {} } = {}) {
+  const fixture = makeFixture({ docs });
   const plan = prepareRelease({ repoRoot: fixture.repo, execute: true, bump, date: "2026-10-31", run: fixtureRunner(fixture.repo), log: silentLog() });
   const prep = git(fixture.repo, "rev-parse", "HEAD");
   git(fixture.repo, "switch", "-q", "--detach", "origin/main");
@@ -559,6 +685,31 @@ describe("late fragments: release:cut prepare --amend and publish --carry-late-f
     const published = publishRelease({ repoRoot: repo, execute: true, run: fixtureRunner(repo), writeNotes, log: silentLog() });
     expect(published).toMatchObject({ executed: true, tag: "v0.13.3", state: "fresh" });
     expect(fs.readFileSync(writeNotes.file, "utf8")).toBe("- **A fix (#4400).** Body.\n- **Late (#4500).**\n");
+  });
+
+  it("does not fold the upgrade guide on --amend: it prints the late steps to move by hand (#4979)", () => {
+    const { repo } = lateFragmentFixture({ docs: READY_DOCS });
+    // A late pull request adds a step under the fresh, empty "## Unreleased" the first prepare left.
+    const guide = path.join(repo, "docs", "UPGRADING.md");
+    fs.writeFileSync(
+      guide,
+      fs.readFileSync(guide, "utf8").replace(`${UNRELEASED_HEADING}\n\n---`, `${UNRELEASED_HEADING}\n\n### A late step (#4500)\n\nDo it.\n\n---`),
+    );
+    git(repo, "commit", "-qam", "Merge pull request #4502");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+    const lateGuide = fs.readFileSync(guide, "utf8");
+
+    const dry = silentLog();
+    prepareRelease({ repoRoot: repo, amend: true, run: fixtureRunner(repo), log: dry });
+    expect(dry.text()).toContain(
+      `docs/UPGRADING.md has steps under "${UNRELEASED_HEADING}" this phase does not fold; move the ones that belong to v0.13.3 into its section by hand and commit.`,
+    );
+    expect(dry.text()).not.toContain("fold docs/UPGRADING.md");
+    expect(dry.text()).not.toContain("git add --all -- CHANGELOG.md package.json changelog.d size-allowances.d docs/UPGRADING.md");
+
+    prepareRelease({ repoRoot: repo, amend: true, execute: true, date: "2026-11-02", run: fixtureRunner(repo), log: silentLog() });
+    expect(git(repo, "show", "--name-status", "--format=", "HEAD").split("\n")).not.toContain("M\tdocs/UPGRADING.md");
+    expect(fs.readFileSync(guide, "utf8")).toBe(lateGuide);
   });
 
   it("publishes anyway with --carry-late-fragments and names what is carried", () => {

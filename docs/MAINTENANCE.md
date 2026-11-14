@@ -3270,7 +3270,16 @@ phases print their whole plan and change nothing without `--execute`.
    local tag for the version that `origin` does not have, and a release that
    is prepared but not yet tagged (`package.json` ahead of `origin`'s latest
    tag, with that version's section in `CHANGELOG.md`) — publish that one, or
-   fold late fragments into it, rather than planning a lower version. The version is the
+   fold late fragments into it, rather than planning a lower version. It also
+   refuses, dry run included, while the upgrade documents are not ready
+   (`scripts/release/upgrade-docs.mjs`, #4979): `docs/UPGRADING.md` must have
+   exactly one `## Unreleased`, with only its fixed guide sections above it and
+   no release-specific `(#NNNN)` section there, and
+   `docs/PRODUCTION_UPGRADE_RUNBOOK.md`'s opening paragraph must either say
+   "This runbook is release-agnostic" or name a release no older than the
+   version being cut (the census in step 3 holds the release-prep pull request
+   to the same threshold, through `package.json`). Fix them in a pull request
+   to `main`, then re-run. The version is the
    latest `vX.Y.Z` tag **on `origin`** (never this clone's tags) plus a minor
    bump when any fragment
    is named `*.feature.md`, or a patch bump otherwise
@@ -3278,7 +3287,7 @@ phases print their whole plan and change nothing without `--execute`.
    overrides it and `--date YYYY-MM-DD` overrides the release date. With
    `--execute` it creates `release/v<version>`, sets `package.json`'s
    `"version"` (`pnpm-lock.yaml` does not record it), compiles the changelog
-   (step 2) and commits. It never pushes. If it stops part way it prints how to
+   (step 2), folds `docs/UPGRADING.md` (step 3) and commits. It never pushes. If it stops part way it prints how to
    inspect the branch or abandon it.
 2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
@@ -3308,18 +3317,43 @@ phases print their whole plan and change nothing without `--execute`.
    If a file removal fails during apply, the compiler restores the original
    changelog and fragments so you can fix the I/O cause and retry. If that
    restoration itself fails, stop and inspect the named files before retrying.
-3. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
-   guide, and `docs/ARCHITECTURE.md` for dependency, release, GHCR, migration,
+3. The same commit brings the upgrade documents up to date (#4979):
+
+   - **The upgrade guide is folded.** `release:cut prepare` renames
+     `docs/UPGRADING.md`'s `## Unreleased` block to
+     `## v<previous> → v<version>` and leaves a fresh, empty `## Unreleased`
+     above it, when the block holds any steps. Read the folded section: it
+     should open with `### Upgrade checklist for this release`, the ordered
+     before / during / after list, and the plan says so when it does not.
+     `--amend` does not fold; it prints the steps to move by hand.
+   - **The runbook stays release-agnostic.**
+     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair; its §7 and §8
+     are blank templates an operator fills in offline. If it has been
+     re-scoped to one release, re-scope it to the new tag, templates included.
+     Never write a rehearsal date, result or "confirmed by" into it: only the
+     owner attests a rehearsal, and not in the public repository.
+   - **Every windowed migration is reached.** A census
+     (`src/lib/__tests__/upgrade-docs-scope.test.ts`) fails a pull request when
+     a windowed ledger row is not named in the runbook's
+     [§2.4](PRODUCTION_UPGRADE_RUNBOOK.md#24-windowed-migration-deploy-sequence).
+     It cannot judge the checklist. List the ledger's windowed rows with
+     `awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
+     and confirm that each one added since the previous tag is reached from the
+     checklist's "During the window" part. The checklist links; it never copies
+     a migration's text.
+4. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
+   guide, `docs/ARCHITECTURE.md`, `docs/UPGRADING.md` and
+   `docs/PRODUCTION_UPGRADE_RUNBOOK.md` for dependency, release, GHCR, migration,
    validation, and public/private workflow drift.
-4. Confirm any new or changed migrations that touch hot tables or potentially
+5. Confirm any new or changed migrations that touch hot tables or potentially
    breaking SQL are represented in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`, or
    document why no ledger entry is needed.
-5. Run local release validation without live provider credentials, then rely on
+6. Run local release validation without live provider credentials, then rely on
    GitHub Actions for Docker image build, static analysis, secret scanning,
    dependency review, and GHCR publication.
-6. Push `release/v<version>` and open the release-prep pull request from the
+7. Push `release/v<version>` and open the release-prep pull request from the
    template (`pnpm run pr:check <body-file>` first). It merges like any other.
-7. After it merges, tag the merged commit and publish the GitHub release:
+8. After it merges, tag the merged commit and publish the GitHub release:
 
    ```bash
    git fetch origin main
@@ -3371,7 +3405,7 @@ phases print their whole plan and change nothing without `--execute`.
    version's notes.
    Add validation evidence, migration notes, image names and non-blocking
    maintainability follow-ups to the published release by hand.
-8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
+9. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
 
 ## GitHub Actions Availability
 
