@@ -1075,6 +1075,9 @@ modules split out in issue #1138 — `booking-modify-validation.ts`
 (the in-transaction guest/pricing/promo pipeline), and
 `booking-modify-settlement.ts` (settlement handoff and lifecycle
 transitions) — so importers keep using `@/lib/booking-modify` unchanged.
+`booking-modify-quote-priced.ts` (#4924) holds the booking-request-origin
+fences (the quote-priced edit block and the member whole-lodge test) behind
+the same barrel.
 
 `src/lib/booking-payment-cleanup.ts` queues superseded Stripe PaymentIntents
 when booking edits replace or zero out pending payment work.

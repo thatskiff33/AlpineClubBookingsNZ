@@ -487,6 +487,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-059` | A guest's dietary value is seeded once, then carried by identity |
 | `INV-MOD-060` | An ordinary price ask's door and replay send one Stripe request |
 | `INV-MOD-061` | An edit's card refund and its replay send one Stripe request |
+| `INV-MOD-062` | An edit settles only the figures its preview showed |
 
 ### Adult-member hosting
 
@@ -1028,6 +1029,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-004` | Two instruments claiming independence must measure the same way; `stripComments` lives once |
 | `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
+| `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
 
 ## Authentication
 

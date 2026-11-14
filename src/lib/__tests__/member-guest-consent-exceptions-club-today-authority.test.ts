@@ -38,7 +38,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: { clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique } },
 }));
-vi.mock("@/lib/booking-modify-validation", () => ({
+vi.mock("@/lib/booking-modify-quote-priced", () => ({
   isQuotePricedBooking: mocks.isQuotePricedBooking,
 }));
 
