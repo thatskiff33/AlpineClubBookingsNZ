@@ -1916,7 +1916,7 @@ describe("the registry is inert", () => {
   const REGISTRY_DIR = "src/lib/admin-hubs/";
   /** Every file outside the registry that may import it, and why. */
   const IMPORTERS: Record<string, string> = {
-    "src/app/(admin)/admin/bed-allocation/page.tsx": "#4972: the empty-lodge alert links to Lodges",
+    "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx": "#4972: the empty-lodge alert links to Lodges",
     "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the mapping step id with shortcuts",
     "src/lib/admin-permissions.ts":
       "C2: the route map's page half, the admission paths and the landing page are generated",
