@@ -7,6 +7,7 @@ import {
 import { strandNightPriceOffersForBooking } from "@/lib/stored-night-price-strand-reconcile";
 import { getBookingManualPaymentState } from "@/lib/manual-booking-payment-state";
 import { getWithheldBookingEmailSummary } from "@/lib/booking-email-suppression";
+import { loadBookingFreshCopyOptions } from "@/lib/booking-fresh-email-copy";
 import { bookingHasLiveWaitlistOffer } from "@/lib/booking-no-emails-service";
 import { findUnresolvedWaitlistStrandReport, hasStrandedWaitlistConfirmShape } from "@/lib/waitlist-return-contract";
 import {
@@ -218,6 +219,14 @@ export async function loadBookingDetailAdminTools({
     ? ((await readDisputesByBookingId(prisma, [booking.id])).get(booking.id) ?? [])
     : [];
 
+  /*
+    The "send a fresh copy" panel: which of the never-kept booking emails can be
+    sent again, and how many earlier copies failed. Admin-gated like every other
+    input here; the route re-checks every condition when the officer sends.
+  */
+  const freshEmailCopyOptions =
+    canSeeAdminTools && !isDeleted ? await loadBookingFreshCopyOptions(booking.id) : [];
+
   return {
     stripeDisputes,
     providerMismatches,
@@ -229,6 +238,7 @@ export async function loadBookingDetailAdminTools({
     storedNightPriceOffers,
     showReturnToWaitlist,
     exclusiveHoldConflicts,
+    freshEmailCopyOptions,
   };
 }
 

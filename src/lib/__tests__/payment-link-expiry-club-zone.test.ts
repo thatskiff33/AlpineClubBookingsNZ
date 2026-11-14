@@ -350,7 +350,7 @@ describe("the mint stores the CLUB's end of the check-in day", () => {
 
     const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
 
-    expect(result).toEqual({ outcome: "sent" });
+    expect(result).toMatchObject({ outcome: "sent" });
     const stored = mocks.paymentLinkCreate.mock.calls[0]?.[0]?.data?.expiresAt;
     const emailed =
       emailMocks.sendSplitGuestPaymentLinkEmail.mock.calls[0]?.[0]?.expiresAt;

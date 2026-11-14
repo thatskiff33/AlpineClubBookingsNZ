@@ -765,7 +765,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // 542 -> 543 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
   // two-factor policy save, `tx.auditLog.create` in the route's transaction like the
   // password-policy writer beside it, `security`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 543,
+  // 543 -> 545 (ALP-588): a booking's fresh email copy - `booking.email.freshCopySent`
+  // after an actual send (`booking-fresh-email-copy.ts`), and the archive record for each
+  // exhausted failure it supersedes (`email-failure-review.ts`); both `createAuditLog`,
+  // both `communication`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 545,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -992,7 +996,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
     // 174 -> 176 (#4368): the two dead card refund settlements.
     // 176 -> 177 (#4916): the after-stay dietary clear's count row. 177 -> 179 (#4851): the group organiser's close and re-arm.
-    createAuditLog: { total: 179, uncategorised: 0 },
+    // 179 -> 181 (ALP-588): the booking fresh-copy send and its superseded-failure archive.
+    createAuditLog: { total: 181, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1519,7 +1524,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // 20 -> 21 (epic #2992 federation): club_post_image.upload. Still a
     // membership+support read; it records only who uploaded and how many
     // bytes, never what the picture was of.
-    communication: 21,
+    // 21 -> 23 (ALP-588): booking.email.freshCopySent and the superseded
+    // exhausted-failure archive. Still a membership+support read; neither
+    // records a message body, token or link.
+    communication: 23,
     // 14 -> 15 (#2627): `member.deletion_approval_claim_released`. Still a
     // membership+support read, like every other deletion-decision row beside it,
     // so this widens nobody's access.

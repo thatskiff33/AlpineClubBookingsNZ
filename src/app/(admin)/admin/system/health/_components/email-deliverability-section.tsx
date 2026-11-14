@@ -366,16 +366,7 @@ export function EmailDeliverabilitySection({
                       <CheckCircle className="h-3.5 w-3.5" />
                       Archive
                     </button>
-                    {failure.errorMessage ? (
-                      <p className="col-span-full text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          Failure reason:
-                        </span>{" "}
-                        <span className="whitespace-pre-wrap break-words">
-                          {failure.errorMessage}
-                        </span>
-                      </p>
-                    ) : null}
+                    <EmailFailureRowNotes failure={failure} />
                   </div>
                 ))}
               </div>
@@ -448,5 +439,38 @@ export function EmailDeliverabilitySection({
         )}
       </div>
     </div>
+  );
+}
+
+/*
+  The full-width notes under one exhausted-failure row: why a token-bearing
+  email offers a fresh copy from its booking instead of a retry, and the
+  provider's failure reason.
+*/
+function EmailFailureRowNotes({
+  failure,
+}: {
+  failure: HealthData["emailFailures"]["failures"][number];
+}) {
+  return (
+    <>
+      {failure.freshCopyHref ? (
+        <p className="col-span-full text-xs text-muted-foreground">
+          This email carries a door code or payment link, so it cannot be retried.{" "}
+          <a
+            href={failure.freshCopyHref}
+            className="font-medium text-primary underline-offset-2 hover:underline"
+          >
+            Send a fresh copy from the booking
+          </a>
+        </p>
+      ) : null}
+      {failure.errorMessage ? (
+        <p className="col-span-full text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Failure reason:</span>{" "}
+          <span className="whitespace-pre-wrap break-words">{failure.errorMessage}</span>
+        </p>
+      ) : null}
+    </>
   );
 }

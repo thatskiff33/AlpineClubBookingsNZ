@@ -4026,6 +4026,22 @@ application rollback -> old worker cannot select quarantined new-version booking
 exhausted or suppressed -> admin-visible failure/suppression
 ```
 
+An exhausted failure of `booking-confirmed`, `pre-arrival-reminder` or
+`split-guest-payment-link` is never replayed. An officer with bookings edit access
+sends a fresh copy from the booking page instead (ALP-588): rendered again from
+the booking's current owner and data through its normal sender and `sendEmail`,
+with the payment link re-issued by the existing revoke-and-remint workflow. Only
+an outcome of `sent` archives that booking's earlier exhausted failures of the
+same email (an `email.failure.reviewed` audit row each) and writes
+`booking.email.freshCopySent`; the old `FAILED` rows stay as history. A
+pre-arrival copy sent inside the daily window also stamps
+`preArrivalReminderSentAt`, so the cron does not send a second.
+
+```text
+exhausted sensitive booking email -> fresh copy sent -> earlier failures archived + audit row
+exhausted sensitive booking email -> fresh copy withheld or failed -> nothing archived, nothing recorded
+```
+
 The organiser's extra-invoice notice (#4299) starts as a durable `FAILED` row
 with a pending-delivery reason, retained retry HTML, and an id derived from the
 template and booking change. Only the retry worker sends it, after its normal
