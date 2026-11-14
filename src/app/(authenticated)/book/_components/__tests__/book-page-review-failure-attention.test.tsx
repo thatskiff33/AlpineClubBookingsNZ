@@ -13,7 +13,7 @@ import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import {
   BOOKING_EXCEPTION_REQUEST_ID,
   BOOKING_WIZARD_ERROR_ID,
-} from "@/app/(authenticated)/book/_components/types";
+} from "@/components/book/booking-wizard-types";
 
 // #4945. The review step is several screens long on a phone, and its buttons are
 // the last thing on it. A refusal used to land in a static block at the very top

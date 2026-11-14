@@ -12,8 +12,8 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { FamilyGroupSection } from "@/app/(authenticated)/profile/family-group-section";
-import { ProfileForm } from "@/app/(authenticated)/profile/profile-form";
+import { FamilyGroupSection } from "@/components/profile/family-group-section";
+import { ProfileForm } from "@/components/profile/profile-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {

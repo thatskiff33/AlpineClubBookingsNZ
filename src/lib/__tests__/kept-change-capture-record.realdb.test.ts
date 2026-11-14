@@ -81,7 +81,7 @@ let prisma: PrismaClient;
 let observerClient: PrismaClient;
 let keep: typeof import("@/lib/late-capture-kept-xero");
 let release: typeof import("@/lib/xero-supplementary-invoice-late-capture");
-let outbox: typeof import("@/lib/xero-operation-outbox");
+let supplementary: typeof import("@/lib/xero-supplementary-invoice-enqueue");
 let kept: typeof import("@/lib/xero-kept-late-capture-invoice");
 let recorder: typeof import("@/lib/additional-capture-recorder");
 let worker: typeof import("@/lib/additional-capture-xero-receipt");
@@ -303,7 +303,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     ({ prisma } = (await import("@/lib/prisma")) as unknown as { prisma: PrismaClient });
     keep = await import("@/lib/late-capture-kept-xero");
     release = await import("@/lib/xero-supplementary-invoice-late-capture");
-    outbox = await import("@/lib/xero-operation-outbox");
+    supplementary = await import("@/lib/xero-supplementary-invoice-enqueue");
     kept = await import("@/lib/xero-kept-late-capture-invoice");
     recorder = await import("@/lib/additional-capture-recorder");
     worker = await import("@/lib/additional-capture-xero-receipt");
@@ -357,10 +357,10 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
   it("the keep and the repair tool's supplementary invoice for the change, at once: one recorder", { timeout: 30_000 }, async () => {
     // A change that never had a supplementary invoice, which the repair tool now raises.
     await seed("OPEN", { marked: false });
-    const holder = await holdLock((tx) => outbox.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+    const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
     const both = Promise.allSettled([
       dismiss(),
-      outbox.enqueueXeroSupplementaryInvoiceOperation({
+      supplementary.enqueueXeroSupplementaryInvoiceOperation({
         bookingId: BOOKING_ID,
         bookingModificationId: MODIFICATION_ID,
         priceDiffCents: 8_000,
@@ -401,7 +401,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     // `withdrawAdditionalPaymentAsk` makes), so on its own the keep reads
     // "nothing bills the change" and would raise the kept-capture invoice.
     await seed("OPEN", { marked: false });
-    const withdrawnAsk = await outbox.enqueueXeroSupplementaryInvoiceOperation(
+    const withdrawnAsk = await supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: 8_000, changeFeeCents: 0 },
       { paymentIntentId: "pi_race_4324_superseded", waitForConfirmedAdditionalPayment: true },
     );
@@ -415,12 +415,12 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     // the change's anchor; the keep starts only once it is queued there. The
     // keep's decision serialises on that anchor and NOT on anything the repair
     // enqueue holds, so only the anchor lock puts it behind the invoice.
-    const holder = await holdLock((tx) => outbox.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+    const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
     let queuedBehind = 0;
     let keepOutcome: PromiseSettledResult<Awaited<ReturnType<typeof dismiss>>> | undefined;
     let invoiceOutcome: PromiseSettledResult<unknown> | undefined;
     try {
-      const reRaise = outbox.enqueueXeroSupplementaryInvoiceOperation({
+      const reRaise = supplementary.enqueueXeroSupplementaryInvoiceOperation({
         bookingId: BOOKING_ID,
         bookingModificationId: MODIFICATION_ID,
         priceDiffCents: 8_000,
@@ -521,7 +521,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
   it("MUTATION #3403 LANE-SYNC: the change's invoice moved off the capture's intent onto a carrier answers the keep - the release takes it back and pays it, and nothing else records the capture", async () => {
     await seed("OPEN", { marked: false });
     // The change's invoice, parked on its ask (the real enqueue) ...
-    const parked = await outbox.enqueueXeroSupplementaryInvoiceOperation(
+    const parked = await supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: 8_000, changeFeeCents: 0 },
       { paymentIntentId: CHANGE_INTENT, waitForConfirmedAdditionalPayment: true },
     );
@@ -577,7 +577,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
 
   it("a re-kept capture whose named invoice was issued unpaid gets a receipt, not a second invoice", async () => {
     await seed("OPEN", { marked: false });
-    const invoice = await outbox.enqueueXeroSupplementaryInvoiceOperation(
+    const invoice = await supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: 8_000, changeFeeCents: 0 },
       { paymentIntentId: CHANGE_INTENT, recordPayment: false },
     );
@@ -669,7 +669,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     // The worker queues first on the change's anchor, then the re-keep (its
     // OPEN -> DISMISSED claim uncommitted behind it). Released, the worker
     // reads the task as OPEN - the re-keep has not committed - and decides.
-    const holder = await holdLock((tx) => outbox.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+    const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
     const paid: unknown[] = [];
     let workerOutcome: PromiseSettledResult<string | null> | undefined;
     let keepOutcome: PromiseSettledResult<Awaited<ReturnType<typeof dismiss>>> | undefined;
@@ -721,7 +721,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
 
   it("MUTATION item 11: the keep's kept-capture invoice for a withdrawn change, then the repair tool's supplementary enqueue: no second invoice", { timeout: 30_000 }, async () => {
     await seed("OPEN", { marked: false });
-    const withdrawnAsk = await outbox.enqueueXeroSupplementaryInvoiceOperation(
+    const withdrawnAsk = await supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: 8_000, changeFeeCents: 0 },
       { paymentIntentId: "pi_race_4324_superseded", waitForConfirmedAdditionalPayment: true },
     );
@@ -731,7 +731,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     });
     await expect(dismiss()).resolves.toMatchObject({ kind: "kept-invoice-queued" });
 
-    const reRaise = await outbox.enqueueXeroSupplementaryInvoiceOperation({
+    const reRaise = await supplementary.enqueueXeroSupplementaryInvoiceOperation({
       bookingId: BOOKING_ID,
       bookingModificationId: MODIFICATION_ID,
       priceDiffCents: 8_000,
@@ -752,7 +752,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     // on the refund, and the change's own ask was withdrawn: on its own the
     // close would queue the kept-capture invoice as the capture's receipt.
     await seed("COMPLETED", { marked: false });
-    const withdrawnAsk = await outbox.enqueueXeroSupplementaryInvoiceOperation(
+    const withdrawnAsk = await supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: 8_000, changeFeeCents: 0 },
       { paymentIntentId: "pi_race_4324_superseded", waitForConfirmedAdditionalPayment: true },
     );
@@ -780,11 +780,11 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     // action can) queues first on the change's anchor; the close starts once it
     // is queued there. Under the lock the close's plan waits on that anchor too;
     // without it the close plans at once and waits only to queue.
-    const holder = await holdLock((tx) => outbox.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
+    const holder = await holdLock((tx) => supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID));
     let closeOutcome: PromiseSettledResult<Awaited<ReturnType<typeof paidAnotherWay.closeCardRefundPaidAnotherWay>>> | undefined;
     let invoiceOutcome: PromiseSettledResult<unknown> | undefined;
     try {
-      const invoice = outbox
+      const invoice = supplementary
         .enqueueXeroSupplementaryInvoiceOperation(
           { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: 8_000, changeFeeCents: 0 },
           { paymentIntentId: CHANGE_INTENT },
@@ -831,7 +831,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
 
   it("#4382: a retired change invoice is re-queued in the keep's commit, and a rolled-back keep leaves it retired", async () => {
     await seed("OPEN", { marked: false });
-    const queued = await outbox.enqueueXeroSupplementaryInvoiceOperation(
+    const queued = await supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, bookingModificationId: MODIFICATION_ID, priceDiffCents: 8_000, changeFeeCents: 0 },
       { paymentIntentId: CHANGE_INTENT, waitForConfirmedAdditionalPayment: true },
     );

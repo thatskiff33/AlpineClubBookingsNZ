@@ -169,8 +169,8 @@ vi.mock("@/lib/audit", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/xero", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/xero");
+vi.mock("@/lib/xero-token-store", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-token-store");
   return { ...actual, isXeroConnected: () => Promise.resolve(false) };
 });
 

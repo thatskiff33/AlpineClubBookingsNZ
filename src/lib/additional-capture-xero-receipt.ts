@@ -550,7 +550,7 @@ export async function recordAdditionalCaptureReceipt(
     });
     // Stored BEFORE the Xero call, under the same anchor lock, after the
     // ordered target list is read again. No new key. A lost claim sends nothing.
-    const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+    const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
     const stored = await prisma.$transaction(async (tx) => {
       const changeId = captureChangeId(transaction);
       await lockSupplementaryInvoiceAnchor(tx, keptCaptureAnchorId(transaction, bookingId));

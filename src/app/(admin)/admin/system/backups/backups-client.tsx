@@ -30,59 +30,13 @@ import { requireInstant, type BoundClubTime } from "@/lib/club-time";
 import { LocalBackupCard } from "@/app/(admin)/admin/system/backups/local-backup-card";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { adminHref } from "@/lib/admin-hubs";
-
-interface BackupRunSummary {
-  id: string;
-  status: "RUNNING" | "SUCCESS" | "FAILURE" | "SKIPPED";
-  trigger: "scheduled" | "manual";
-  startedAt: string;
-  completedAt: string | null;
-  durationMs: number | null;
-  error: string | null;
-  resultSummary: unknown;
-  triggeredByMemberId: string | null;
-}
-
-export interface LocalBackupFileSummary {
-  filename: string;
-  sizeBytes: number;
-  modifiedAt: string;
-}
-
-export interface LocalBackupDiskSpaceSummary {
-  availableBytes: number;
-  totalBytes: number;
-  level: "ok" | "warning" | "critical";
-}
-
-export interface BackupStatus {
-  enabled: boolean;
-  bucket: string | null;
-  region: string;
-  retentionDays: number;
-  accessKeyIdSet: boolean;
-  secretAccessKeySet: boolean;
-  restoreValidationUrlSet: boolean;
-  localEnabled: boolean;
-  localPath: string | null;
-  /** The path came from the deployment's mount rather than a saved value. */
-  localPathFromEnv: boolean;
-  /** Either destination switched on — what actually decides whether a run happens. */
-  anyDestinationEnabled: boolean;
-  localBackups: LocalBackupFileSummary[];
-  /** Null when the directory could not be measured — shown as unknown, never as fine. */
-  localDiskSpace: LocalBackupDiskSpaceSummary | null;
-  localError: string | null;
-  durable: boolean;
-  needsReentry: boolean;
-  running: boolean;
-  activeRun: BackupRunSummary | null;
-  recentRuns: BackupRunSummary[];
-  legacyEnvVars: string[];
-  legacyEnvUnmigrated: boolean;
-  cronSchedule: string;
-  canManageDestination: boolean;
-}
+import {
+  CONFIG_URL,
+  RUN_URL,
+  STATUS_URL,
+  type BackupRunSummary,
+  type BackupStatus,
+} from "@/app/(admin)/admin/system/backups/backup-status";
 
 interface ConfigDraft {
   enabled: boolean;
@@ -91,9 +45,6 @@ interface ConfigDraft {
   region: string;
 }
 
-export const STATUS_URL = "/api/admin/backups/status";
-export const CONFIG_URL = "/api/admin/backups/config";
-export const RUN_URL = "/api/admin/backups/run";
 const CREDENTIALS_URL = "/api/admin/integrations/credentials";
 
 // Backup completion and run-start stamps are real INSTANTS, shown in the

@@ -155,7 +155,7 @@ async function readBooking() {
     const realFlags = modules.loadEffectiveModuleFlags;
     const flagsSpy = vi.spyOn(modules, "loadEffectiveModuleFlags").mockImplementation(async () => ({ ...await realFlags(), xeroIntegration: true, internetBankingPayments: true }));
     restore.push(() => flagsSpy.mockRestore());
-    const xero = await import("@/lib/xero");
+    const xero = await import("@/lib/xero-token-store");
     const connected = vi.spyOn(xero, "isXeroConnected").mockResolvedValue(false);
     restore.push(() => connected.mockRestore());
     const outbox = await import("@/lib/xero-operation-outbox");

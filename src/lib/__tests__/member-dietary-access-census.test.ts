@@ -149,7 +149,7 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   "src/app/(authenticated)/profile/page.tsx": "self reader, ON only",
   "src/app/(authenticated)/profile/profile-details-card.tsx":
     "passes the self value to the form",
-  "src/app/(authenticated)/profile/profile-form.tsx":
+  "src/components/profile/profile-form.tsx":
     "self form state; sends the key only while ON",
   "src/app/api/member/onboarding/route.ts": "self reader for onboarding, ON only",
   "src/components/member-onboarding-wizard.tsx": "onboarding form props",

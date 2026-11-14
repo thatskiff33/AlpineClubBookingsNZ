@@ -222,8 +222,10 @@ vi.mock("@/lib/email", () => ({
   sendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-booking-invoices", () => ({
   createXeroInvoiceForBooking: vi.fn().mockResolvedValue("inv-1"),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({

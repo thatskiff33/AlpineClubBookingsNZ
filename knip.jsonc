@@ -175,13 +175,6 @@
     // runXeroInboundReconciliationCycle/replayStoredXeroInboundEvent/
     // XeroInboundReplayError; the five flagged *Result types are internal
     // plumbing types re-exported for parity, not currently consumed by name.
-    "src/lib/xero-inbound-reconciliation.ts": ["types"],
-    // "Xero Integration Library — compatibility facade" (see the file's own
-    // header docblock): re-exports the focused xero-* modules' public surface
-    // "so existing callers can continue to import from @/lib/xero without
-    // churn." The flagged names are still fully live in their true home
-    // modules (xero-token-store, xero-mappings, xero-contacts,
-    // xero-member-import), just not currently reached via this facade path.
-    "src/lib/xero.ts": ["exports", "types"]
+    "src/lib/xero-inbound-reconciliation.ts": ["types"]
   }
 }

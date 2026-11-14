@@ -33,7 +33,7 @@ import {
   type EditReviewChargeSyncOutcome,
 } from "@/lib/edit-financial-review-charge-sync";
 import logger from "@/lib/logger";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { enqueueEditFinancialReviewChargeRecovery } from "@/lib/payment-recovery";
 import { isCapturedTransactionStatus } from "@/lib/payment-transactions";
 import {
@@ -42,9 +42,9 @@ import {
 } from "@/lib/xero-supplementary-invoice-statuses";
 import {
   enqueueEditReviewChargeInvoiceInTransaction,
-  kickQueuedXeroOutboxOperationsIfConnected,
-  type XeroSupplementaryInvoiceEnqueueOutcome,
-} from "@/lib/xero-operation-outbox";
+} from "@/lib/xero-supplementary-invoice-enqueue";
+import type { XeroSupplementaryInvoiceEnqueueOutcome } from "@/lib/xero-supplementary-invoice-statuses";
+import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 import type { Prisma } from "@prisma/client";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import type { ClubFormat } from "@/lib/club-format";

@@ -60,10 +60,10 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/components/website/embedded-page-content-parts", () => ({
   EmbeddedPageContentParts: () => <div>CMS body rendered</div>,
 }));
-vi.mock("@/app/(website)/contact/contact-page-client", () => ({
+vi.mock("@/components/website/contact-page-client", () => ({
   ContactPageClient: () => <div>Default contact form</div>,
 }));
-vi.mock("@/app/(website)/join/apply/join-apply-page-client", () => ({
+vi.mock("@/components/website/join-apply-page-client", () => ({
   JoinApplyPageClient: () => <div>Default application form</div>,
 }));
 

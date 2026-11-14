@@ -327,8 +327,10 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   // the real attach helper below loads against a complete double.
   OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES: ["PENDING", "RUNNING", "WAITING_PAYMENT"],
   hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent: vi.fn(),
-  lockSupplementaryInvoiceAnchor: vi.fn(),
   releaseWaitingSupplementaryInvoiceOperations: vi.fn(),
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  lockSupplementaryInvoiceAnchor: vi.fn(),
 }));
 
 /**

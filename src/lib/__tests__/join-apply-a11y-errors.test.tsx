@@ -7,8 +7,8 @@
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JOIN_APPLY_INPUT_IDS } from "@/app/(website)/join/apply/join-apply-input-ids";
-import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
+import { JOIN_APPLY_INPUT_IDS } from "@/components/website/join-apply-input-ids";
+import { JoinApplyPageClient } from "@/components/website/join-apply-page-client";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { expectRecoveryAlertToHoldFocus, expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
 

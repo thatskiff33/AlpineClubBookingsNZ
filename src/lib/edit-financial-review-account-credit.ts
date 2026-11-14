@@ -32,7 +32,7 @@ import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-sett
 import { dispatchEditReviewAccountCreditXero } from "@/lib/edit-financial-review-xero-leg";
 import { createBookingModificationCredit, giveBackAppliedCredit } from "@/lib/member-credit";
 import { cancellationCreditRestoreWhere } from "@/lib/member-credit-booking-rows";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 
 /**
  * What the account-credit route moved: applied credit given back, and credit

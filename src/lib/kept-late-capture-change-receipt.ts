@@ -92,7 +92,7 @@ export async function keptReceiptStillKeptElseClosed(
   details: Record<string, unknown>,
 ): Promise<boolean> {
   // Imported here: the outbox dispatches to the workers that import this.
-  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
   return prisma.$transaction(async (tx) => {
     await lockSupplementaryInvoiceAnchor(tx, input.anchorId);
     if (await lateCaptureStillKept(tx, input.paymentIntentId)) return true;
@@ -162,7 +162,7 @@ export async function lockKeptCaptureAnchor(
   ]);
   if (!capture || !task || (options?.additionalOnly && capture.kind !== "ADDITIONAL")) return false;
   // Imported here: the outbox dispatches to the workers that import this.
-  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
   await lockSupplementaryInvoiceAnchor(db, keptCaptureAnchorId(capture, task.bookingId));
   return true;
 }

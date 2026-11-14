@@ -106,7 +106,7 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "./xero-operation-outbox";
-import { isXeroConnected } from "./xero";
+import { isXeroConnected } from "./xero-token-store";
 import {
   enqueueGroupSettlementRefundRecovery,
   markGroupSettlementRefundRecoverySucceeded,

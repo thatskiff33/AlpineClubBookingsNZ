@@ -3,9 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { hashActionToken } from "@/lib/action-tokens";
-import {
-  parseApplicationFamilyMembers,
-} from "@/lib/nomination";
+import { parseApplicationFamilyMembers } from "@/lib/member-application-fields";
 import { prisma } from "@/lib/prisma";
 import { type ClubDateFormat, formatStayDateOrNull } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";

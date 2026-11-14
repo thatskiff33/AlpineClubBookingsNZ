@@ -2834,7 +2834,7 @@ describe("AID-6B booking/membership pack: read-only (#2376)", () => {
       "stripe",
       "@/lib/stripe",
       "xero-node",
-      "@/lib/xero",
+      "@/lib/xero-api-client",
       "@aws-sdk/client-ses",
       "nodemailer",
       "@sentry/node",

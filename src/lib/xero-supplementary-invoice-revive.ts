@@ -22,7 +22,7 @@ import {
   STALE_WAITING_PAYMENT_ERROR_CODE,
   type CapturedTransaction,
   type IssueRefusal,
-} from "@/lib/xero-supplementary-invoice-late-capture";
+} from "@/lib/xero-supplementary-invoice-capture-rules";
 
 export type RetiredInvoiceRevival =
   | { outcome: "requeued" }

@@ -20,12 +20,9 @@ import {
   lockXeroContactHome,
   XeroContactTwoHomesError,
 } from "@/lib/xero-contact-home";
-import {
-  callXeroApi,
-  getAuthenticatedXeroClient,
-  refreshXeroContactCachesFromContact,
-  syncMemberSubscriptionHistoryForLinkedContact,
-} from "@/lib/xero";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { refreshXeroContactCachesFromContact } from "@/lib/xero-contact-cache";
+import { syncMemberSubscriptionHistoryForLinkedContact } from "@/lib/xero-membership-sync";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import {
   importedMemberRecovery,

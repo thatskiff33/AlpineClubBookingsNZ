@@ -71,7 +71,7 @@ let prisma: PrismaClient;
 let observerClient: PrismaClient;
 let release: typeof import("@/lib/xero-supplementary-invoice-late-capture");
 let enqueue: typeof import("@/lib/additional-capture-receipt-enqueue");
-let outbox: typeof import("@/lib/xero-operation-outbox");
+let supplementary: typeof import("@/lib/xero-supplementary-invoice-enqueue");
 let gapCheck: typeof import("@/lib/xero-primary-invoice-fee-gap");
 let invoiceKey: typeof import("@/lib/xero-booking-invoice-key");
 let worker: typeof import("@/lib/additional-capture-xero-receipt");
@@ -170,7 +170,7 @@ async function untilQueuedBehind(blockerPid: number, target = 1): Promise<number
     ({ prisma } = (await import("@/lib/prisma")) as unknown as { prisma: PrismaClient });
     release = await import("@/lib/xero-supplementary-invoice-late-capture");
     enqueue = await import("@/lib/additional-capture-receipt-enqueue");
-    outbox = await import("@/lib/xero-operation-outbox");
+    supplementary = await import("@/lib/xero-supplementary-invoice-enqueue");
     gapCheck = await import("@/lib/xero-primary-invoice-fee-gap");
     invoiceKey = await import("@/lib/xero-booking-invoice-key");
     worker = await import("@/lib/additional-capture-xero-receipt");
@@ -236,7 +236,7 @@ async function untilQueuedBehind(blockerPid: number, target = 1): Promise<number
       async (tx) => {
         const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
         holderPid = rows[0]?.pid ?? 0;
-        await outbox.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID);
+        await supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID);
         locked();
         await held;
       },
@@ -296,7 +296,7 @@ async function untilQueuedBehind(blockerPid: number, target = 1): Promise<number
       async (tx) => {
         const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
         holderPid = rows[0]?.pid ?? 0;
-        await outbox.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID);
+        await supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID);
         locked();
         await held;
         await tx.xeroSyncOperation.create({
@@ -353,7 +353,7 @@ async function untilQueuedBehind(blockerPid: number, target = 1): Promise<number
     });
 
     // The repair tool's arm, from a sweep that read no receipt: it asks to record the payment.
-    await outbox.enqueueXeroSupplementaryInvoiceOperation(
+    await supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, priceDiffCents: 8_000, changeFeeCents: 0, bookingModificationId: MODIFICATION_ID },
       { recordPayment: true, paymentIntentId: CHANGE_INTENT },
     );
@@ -406,7 +406,7 @@ async function untilQueuedBehind(blockerPid: number, target = 1): Promise<number
       async (tx) => {
         const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
         holderPid = rows[0]?.pid ?? 0;
-        await outbox.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID);
+        await supplementary.lockSupplementaryInvoiceAnchor(tx, MODIFICATION_ID);
         locked();
         await held;
         await tx.xeroSyncOperation.create({
@@ -785,7 +785,7 @@ async function untilQueuedBehind(blockerPid: number, target = 1): Promise<number
         async (tx) => {
           const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
           holderPid = rows[0]?.pid ?? 0;
-          await outbox.lockSupplementaryInvoiceAnchor(tx, BOOKING_ID);
+          await supplementary.lockSupplementaryInvoiceAnchor(tx, BOOKING_ID);
           locked();
           await held;
         },

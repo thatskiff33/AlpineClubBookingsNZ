@@ -11,7 +11,7 @@ import type { OwnDependantCollision } from "@/lib/booking-dependant-identity";
 import {
   PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
   type FamilyMember,
-} from "./types";
+} from "@/components/book/booking-wizard-types";
 
 /**
  * "You have typed a name the club records as your own dependant — which person

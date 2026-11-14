@@ -61,7 +61,7 @@ const {
     .fn<(memberId: string) => Promise<Response | null>>()
     .mockResolvedValue(null),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   getXeroContactIdsForGroup: mockGetXeroContactIdsForGroup,
 }));

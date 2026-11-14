@@ -23,10 +23,10 @@ const mockFindPotential = vi.fn();
 const mockFlush = vi.fn();
 const mockSyncHistory = vi.fn();
 const mockLogAudit = vi.fn();
-// Fully stub the Xero barrel. XeroContactValidationError is defined HERE so the
-// route's `instanceof` check (which imports the same mocked class) matches when
-// the test rejects createXeroContactForMember with it.
-vi.mock("@/lib/xero", () => {
+// Fully stub the Xero contact modules. XeroContactValidationError is defined HERE
+// so the route's `instanceof` check (which imports the same mocked class) matches
+// when the test rejects createXeroContactForMember with it.
+vi.mock("@/lib/xero-contacts", () => {
   class XeroContactValidationError extends Error {
     missingFields: string[];
     constructor(missingFields: string[]) {
@@ -52,13 +52,17 @@ vi.mock("@/lib/xero", () => {
     XeroContactCreatePartialSuccessError,
     XeroContactValidationError,
     createXeroContactForMember: (...a: unknown[]) => mockCreate(...a),
-    findPotentialXeroContactsForMember: (...a: unknown[]) =>
-      mockFindPotential(...a),
-    flushMemberSubscriptionHistory: (...a: unknown[]) => mockFlush(...a),
-    syncMemberSubscriptionHistoryForLinkedContact: (...a: unknown[]) =>
-      mockSyncHistory(...a),
   };
 });
+vi.mock("@/lib/xero-duplicate-contacts", () => ({
+  findPotentialXeroContactsForMember: (...a: unknown[]) =>
+    mockFindPotential(...a),
+}));
+vi.mock("@/lib/xero-membership-sync", () => ({
+  flushMemberSubscriptionHistory: (...a: unknown[]) => mockFlush(...a),
+  syncMemberSubscriptionHistoryForLinkedContact: (...a: unknown[]) =>
+    mockSyncHistory(...a),
+}));
 
 vi.mock("@/lib/audit", () => ({
   logAudit: (...args: unknown[]) => mockLogAudit(...args),
@@ -87,7 +91,7 @@ import { POST } from "@/app/api/admin/members/[id]/xero-push/route";
 import {
   XeroContactCreatePartialSuccessError,
   XeroContactValidationError,
-} from "@/lib/xero";
+} from "@/lib/xero-contacts";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,

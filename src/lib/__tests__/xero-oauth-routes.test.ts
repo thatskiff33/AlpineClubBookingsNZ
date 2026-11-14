@@ -26,7 +26,7 @@ vi.mock("@/lib/session-guards", async () => ({
   requireActiveSessionUser: mockRequireActiveSessionUser,
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-oauth", () => ({
   getXeroConsentUrl: mockGetXeroConsentUrl,
   handleXeroCallback: mockHandleXeroCallback,
   disconnectXero: mockDisconnectXero,

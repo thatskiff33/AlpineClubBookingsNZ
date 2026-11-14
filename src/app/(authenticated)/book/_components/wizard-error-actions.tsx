@@ -13,7 +13,7 @@ import type { useBookingWizard } from "../_hooks/use-booking-wizard";
 import {
   BOOKING_EXCEPTION_REQUEST_ID,
   PROFILE_FAMILY_GROUP_RETURN_TO_BOOK,
-} from "./types";
+} from "@/components/book/booking-wizard-types";
 
 type Wizard = ReturnType<typeof useBookingWizard>;
 

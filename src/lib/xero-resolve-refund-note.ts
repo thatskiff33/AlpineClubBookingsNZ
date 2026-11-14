@@ -37,7 +37,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import logger from "@/lib/logger";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import type { ClubFormat } from "@/lib/club-format";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";

@@ -98,26 +98,36 @@ class MockXeroContactCreatePartialSuccessError extends Error {
   }
 }
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: () => mockGetAuthenticatedXeroClient(),
   withXeroRetry: (fn: () => unknown) => mockWithXeroRetry(fn),
   callXeroApi: (fn: () => unknown, _opts: unknown) => mockCallXeroApi(fn, _opts),
+}));
+vi.mock("@/lib/xero-membership-sync", () => ({
   flushMemberSubscriptionHistory: (memberId: string) =>
     mockFlushMemberSubscriptionHistory(memberId),
-  refreshXeroContactCachesFromContact: (contact: unknown) =>
-    mockRefreshXeroContactCachesFromContact(contact),
   syncMemberSubscriptionHistoryForLinkedContact: (
     memberId: string,
     options?: unknown
   ) => mockSyncMemberSubscriptionHistoryForLinkedContact(memberId, options),
+}));
+vi.mock("@/lib/xero-contact-cache", () => ({
+  refreshXeroContactCachesFromContact: (contact: unknown) =>
+    mockRefreshXeroContactCachesFromContact(contact),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   createXeroContactForMember: (id: string, options?: unknown) =>
     mockCreateXeroContactForMember(id, options),
-  findPotentialXeroContactsForMember: (id: string) => mockFindPotentialXeroContactsForMember(id),
   XeroContactValidationError: MockXeroContactValidationError,
   XeroContactCreatePartialSuccessError:
     MockXeroContactCreatePartialSuccessError,
-  syncContactsFromXero: () => mockSyncContactsFromXero(),
+}));
+vi.mock("@/lib/xero-duplicate-contacts", () => ({
+  findPotentialXeroContactsForMember: (id: string) => mockFindPotentialXeroContactsForMember(id),
   findDuplicateContacts: () => mockFindDuplicateContacts(),
+}));
+vi.mock("@/lib/xero-bulk-contact-sync", () => ({
+  syncContactsFromXero: () => mockSyncContactsFromXero(),
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -775,7 +785,7 @@ describe("#28: Xero Push API", () => {
 
 describe("#29: SyncReport structure and return type", () => {
   it("syncContactsFromXero is exported and callable", async () => {
-    const xeroModule = await import("@/lib/xero");
+    const xeroModule = await import("@/lib/xero-bulk-contact-sync");
     expect(xeroModule).toHaveProperty("syncContactsFromXero");
     expect(typeof xeroModule.syncContactsFromXero).toBe("function");
   });

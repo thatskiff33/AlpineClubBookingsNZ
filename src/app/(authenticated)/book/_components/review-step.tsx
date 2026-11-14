@@ -13,7 +13,7 @@ import {
 import {
   memberGuestConsentPreviewColumns,
   pendingMemberGuestFirstNames,
-} from "./member-guest-preview";
+} from "@/components/book/member-guest-preview";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CancellationScheduleBlock } from "@/components/booking/cancellation-schedule-block";
 import { Input } from "@/components/ui/input";
@@ -60,8 +60,8 @@ import type {
   PriceQuote,
   RoomOption,
   WorkPartyEvent,
-} from "./types";
-import { BOOKING_EXCEPTION_REQUEST_ID, BOOKING_WIZARD_ERROR_ID } from "./types";
+} from "@/components/book/booking-wizard-types";
+import { BOOKING_EXCEPTION_REQUEST_ID, BOOKING_WIZARD_ERROR_ID } from "@/components/book/booking-wizard-types";
 
 export function ReviewStep({
   checkIn,

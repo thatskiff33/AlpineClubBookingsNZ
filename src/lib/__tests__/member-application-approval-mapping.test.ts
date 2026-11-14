@@ -39,7 +39,8 @@ vi.mock("@/lib/age-tier", () => ({
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01T00:00:00.000Z")),
 }));
 vi.mock("@/lib/email", () => emailMock);
-vi.mock("@/lib/xero", () => xeroMock);
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: xeroMock.isXeroConnected }));
+vi.mock("@/lib/xero-contacts", () => ({ findOrCreateXeroContact: xeroMock.findOrCreateXeroContact }));
 vi.mock("@/lib/xero-operation-outbox", () => xeroOutboxMock);
 vi.mock("@/lib/membership-subscription-billing", () => billingMock);
 vi.mock("@/lib/audit", () => auditMock);

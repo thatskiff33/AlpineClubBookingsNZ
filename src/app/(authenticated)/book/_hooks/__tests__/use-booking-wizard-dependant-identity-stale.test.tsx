@@ -9,7 +9,7 @@ import {
   DEPENDANT_IDENTITY_UNRESOLVED_CODE,
   DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE,
 } from "@/lib/booking-dependant-identity";
-import type { FamilyMember } from "@/app/(authenticated)/book/_components/types";
+import type { FamilyMember } from "@/components/book/booking-wizard-types";
 
 /*
   #2721 review — THE REFUSAL HANDLER, driven against a STALE client list.

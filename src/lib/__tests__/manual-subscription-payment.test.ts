@@ -42,7 +42,7 @@ vi.mock("server-only", () => ({}));
 // If any Xero module were imported by the manual-payment path, these mocks would
 // register; we assert they are never called.
 const xeroCall = vi.fn();
-vi.mock("@/lib/xero", () => new Proxy({}, { get: () => xeroCall }));
+vi.mock("@/lib/xero-api-client", () => new Proxy({}, { get: () => xeroCall }));
 vi.mock("@/lib/xero-membership-sync", () => new Proxy({}, { get: () => xeroCall }));
 vi.mock("@/lib/xero-subscription-invoices", () => new Proxy({}, { get: () => xeroCall }));
 

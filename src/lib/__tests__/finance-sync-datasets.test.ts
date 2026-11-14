@@ -21,7 +21,7 @@ const { mockCallXeroApi, mockLoadFinanceMonthlyChartContext } = vi.hoisted(
   })
 );
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-api-client", () => ({
   callXeroApi: (fn: () => unknown, options: unknown) =>
     mockCallXeroApi(fn, options),
 }));

@@ -594,3 +594,33 @@ clears the previous query's rows and totals, and offers **Try again**. #4961.
 - **Not every page is covered yet.** The four pages from #4961 are; others
   join the census when they adopt the component. Its stated limits are in
   [`UX_FLOW_MAP.md`](../UX_FLOW_MAP.md#a-list-or-total-that-fails-to-load-4961).
+
+## INV-SSOT-008
+
+Production modules under `src/` form no static value-import cycle, nothing
+imports the retired `@/lib/xero` facade, and nothing under `src/components`
+imports from `src/app`. `src/lib/__tests__/module-graph-census.test.ts` holds
+all three. #4930.
+
+- **Why a loop is a defect.** Two modules that import each other load in the
+  order a page or cron job first reached them, so a module-level read across
+  the loop can fail on one entry point and not another. A loop also means
+  neither module is the owner of what they share.
+- **Break a loop by moving the shared piece down.** Put it in a leaf module
+  both sides import (`manual-booking-payment-error.ts`,
+  `booking-request-hold.ts`, `xero-supplementary-invoice-enqueue.ts`). A new
+  `await import()` added to dodge the census is not a fix; nor is a permanent
+  re-export left behind. A temporary one names its removal issue.
+- **What counts.** The census reads each file with the TypeScript parser.
+  Value imports, bare side-effect imports and `export … from` are edges.
+  `import type`, all-`type` specifier lists and `import()` load nothing at
+  module evaluation and are not. The facade and route-folder rules count every
+  kind, type imports included.
+- **The allowlist only shrinks.** `ALLOWED_CYCLES` is empty. An entry names
+  its issue and its exact sorted module set, and fails once the cycle is gone.
+- **Mutation probes** in the same file prove each rule fails when its defect
+  is added back, in every spelling listed above.
+- **Blind spots.** Files outside `src/`, test files and `src/test` are not
+  walked. A loop through a package, or through `require()`, is not seen. Test
+  files get one text scan: none may name the facade in a quoted specifier, so
+  a `vi.mock` of it cannot pass vacuously.

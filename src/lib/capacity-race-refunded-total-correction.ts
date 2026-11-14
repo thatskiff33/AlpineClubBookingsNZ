@@ -9,7 +9,7 @@ import { READ_BACK_TIMEOUT_MS } from "@/lib/card-refund-status-sync";
 import type { ClubFormat } from "@/lib/club-format";
 import logger from "@/lib/logger";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { CAPTURED_TRANSACTION_STATUS_LIST, predatesRefundLedger } from "@/lib/payment-transaction-status";
 import {
   compareAndSetRefundedAmount,

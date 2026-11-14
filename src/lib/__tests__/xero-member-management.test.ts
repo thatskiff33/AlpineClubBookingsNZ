@@ -97,16 +97,26 @@ const {
   mockUpsertXeroObjectLink: vi.fn().mockResolvedValue({}),
   mockDeactivateXeroObjectLinks: vi.fn().mockResolvedValue({ count: 1 }),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mockIsXeroConnected,
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   getXeroContactIdsForGroup: mockGetXeroContactIdsForGroup,
+}));
+vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: mockGetAuthenticatedXeroClient,
   callXeroApi: mockCallXeroApi,
+}));
+vi.mock("@/lib/xero-membership-sync", () => ({
   flushMemberSubscriptionHistory: mockFlushMemberSubscriptionHistory,
-  refreshXeroContactCachesFromContact: mockRefreshXeroContactCachesFromContact,
   syncMemberSubscriptionHistoryForLinkedContact:
     mockSyncMemberSubscriptionHistoryForLinkedContact,
+}));
+vi.mock("@/lib/xero-contact-cache", () => ({
+  refreshXeroContactCachesFromContact: mockRefreshXeroContactCachesFromContact,
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   findOrCreateXeroContact: vi.fn(),
 }));
 vi.mock("@/lib/xero-sync", async (importOriginal) => {

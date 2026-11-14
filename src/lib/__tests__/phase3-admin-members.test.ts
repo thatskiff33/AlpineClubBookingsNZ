@@ -136,11 +136,17 @@ const {
     skipped: 0,
   }),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mockIsXeroConnected,
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   syncManagedXeroContactGroupForMember: mockSyncManagedXeroContactGroupForMember,
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: mockUpdateXeroContact,
+}));
+vi.mock("@/lib/xero-entrance-fee-invoices", () => ({
   createXeroEntranceFeeInvoice: mockCreateXeroEntranceFeeInvoice,
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({

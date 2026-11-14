@@ -1,6 +1,8 @@
 import type { BookingModification, Prisma } from "@prisma/client";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
-import { enqueueOrganiserExtraInvoiceInTransaction } from "@/lib/xero-operation-outbox";
+import {
+  enqueueOrganiserExtraInvoiceInTransaction,
+} from "@/lib/xero-supplementary-invoice-enqueue";
 
 /** Queue with the change, under its existing global lock, so provider outages cannot lose the bill. */
 export async function queueOrganiserExtraForChange(

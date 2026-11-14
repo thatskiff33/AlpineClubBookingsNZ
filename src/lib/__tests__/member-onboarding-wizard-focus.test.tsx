@@ -13,11 +13,11 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-vi.mock("@/app/(authenticated)/profile/profile-form", () => ({
+vi.mock("@/components/profile/profile-form", () => ({
   ProfileForm: () => <div data-testid="profile-form" />,
 }));
 
-vi.mock("@/app/(authenticated)/profile/family-group-section", () => ({
+vi.mock("@/components/profile/family-group-section", () => ({
   FamilyGroupSection: () => <div data-testid="family-group-section" />,
 }));
 

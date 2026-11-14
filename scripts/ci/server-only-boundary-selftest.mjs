@@ -153,7 +153,7 @@ export const MARKED_ROOTS = [
   "./src/lib/environment-role.ts",
   "./src/lib/prisma.ts",
   "./src/lib/stripe.ts",
-  "./src/lib/xero.ts",
+  "./src/lib/xero-api-client.ts",
 ];
 
 /**

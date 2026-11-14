@@ -126,21 +126,47 @@ vi.mock("@/lib/xero-mappings", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contacts", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-contacts")),
   findOrCreateXeroContact: mocks.findOrCreateXeroContact,
   updateXeroContact: mocks.updateXeroContact,
+}));
+vi.mock("@/lib/xero-booking-invoices", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-booking-invoices")),
   createXeroInvoiceForBooking: mocks.createXeroInvoiceForBooking,
   updateXeroBookingInvoiceForBooking: mocks.updateXeroBookingInvoiceForBooking,
+}));
+vi.mock("@/lib/xero-entrance-fee-invoices", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-entrance-fee-invoices")),
   createXeroEntranceFeeInvoice: mocks.createXeroEntranceFeeInvoice,
+}));
+vi.mock("@/lib/xero-supplementary-invoices", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-supplementary-invoices")),
   createXeroSupplementaryInvoice: mocks.createXeroSupplementaryInvoice,
+}));
+vi.mock("@/lib/xero-invoice-payments", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-invoice-payments")),
   createXeroPaymentForInvoice: mocks.createXeroPaymentForInvoice,
+}));
+vi.mock("@/lib/xero-credit-notes", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-credit-notes")),
   createXeroCreditNote: mocks.createXeroCreditNote,
   createUnappliedXeroCreditNote: mocks.createUnappliedXeroCreditNote,
   createUnappliedXeroCreditNoteForModification:
     mocks.createUnappliedXeroCreditNoteForModification,
-  createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
-  finishRefundCreditNoteSettlement: mocks.finishRefundCreditNoteSettlement,
   allocateCreditNoteToInvoice: mocks.allocateCreditNoteToInvoice,
+}));
+vi.mock("@/lib/xero-modification-credit-notes", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-modification-credit-notes")),
+  createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
+}));
+vi.mock("@/lib/xero-refund-note-settlement", async (importOriginal) => ({
+  // refundCreditNoteCompletion is a pure builder the retry path imports from here too.
+  ...((await importOriginal()) as typeof import("@/lib/xero-refund-note-settlement")),
+  finishRefundCreditNoteSettlement: mocks.finishRefundCreditNoteSettlement,
+}));
+vi.mock("@/lib/xero-membership-sync", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-membership-sync")),
   checkMembershipStatus: mocks.checkMembershipStatus,
 }));
 

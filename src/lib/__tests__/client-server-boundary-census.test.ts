@@ -59,7 +59,8 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
 /**
  * The leaves a browser bundle must never reach. Since #2850 six of them —
- * `@/lib/auth`, `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and
+ * `@/lib/auth`, `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` (the
+ * facade, whose marker #4930 moved to `@/lib/xero-api-client`) and
  * `@/lib/stripe` — also fail the Next build on their own, and since #3204 the
  * three environment readers at the end of the list do too. `@/lib/session` and
  * `@/lib/env` name no file, so they are the two that would ship silently if
@@ -113,7 +114,7 @@ const FORBIDDEN_MODULES = new Set(
     "audit",
     "session",
     "email",
-    "xero",
+    "xero-api-client",
     "stripe",
     "env",
     "club-time-zone-env",
@@ -559,8 +560,8 @@ describe("#3567: no browser module reaches @/config/operational, at any depth", 
  * `scripts/ci/server-only-boundary-selftest.mjs` proves the production build
  * refuses a client component reaching `@/lib/auth` or `@/lib/prisma`, because
  * those are the two roots its fixture imports. The other seven roots this
- * invariant names — `@/lib/audit`, `@/lib/email`, `@/lib/stripe`, `@/lib/xero`
- * and, since #3204, `@/lib/club-time-zone-env`,
+ * invariant names — `@/lib/audit`, `@/lib/email`, `@/lib/stripe`,
+ * `@/lib/xero-api-client` (the retired facade's marker, #4930) and, since #3204, `@/lib/club-time-zone-env`,
  * `@/lib/environment-role-declaration` and `@/lib/environment-role` — carry the
  * same marker, and nothing checked that they still did. Measured: delete it
  * from the first four and every boundary suite in this repository stayed green.

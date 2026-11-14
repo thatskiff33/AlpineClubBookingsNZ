@@ -39,7 +39,7 @@ import {
 } from "@/lib/edit-review-cleanup";
 import { EDIT_REVIEW_LATER_REMOVAL_COMPLETION_REFUSAL } from "@/lib/edit-review-guest-removed-since-raised";
 import { editReviewHeadlineRebase } from "@/lib/edit-review-cleanup-headline";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const TODAY = requireCalendarDate("2026-07-01");

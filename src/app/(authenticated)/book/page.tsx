@@ -18,7 +18,7 @@ import {
   hasWizardErrorActions,
   WizardErrorActions,
 } from "./_components/wizard-error-actions";
-import { BOOKING_WIZARD_ERROR_ID } from "./_components/types";
+import { BOOKING_WIZARD_ERROR_ID } from "@/components/book/booking-wizard-types";
 import { useBookingWizard } from "./_hooks/use-booking-wizard";
 
 const PROFILE_RETURN_TO_BOOK = buildProfilePathWithReturnTo("/book");

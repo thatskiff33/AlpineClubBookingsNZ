@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
+import { ContactPageClient } from "@/components/website/contact-page-client";
 import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { setupInProgressMetadata } from "@/lib/website-setup-metadata";

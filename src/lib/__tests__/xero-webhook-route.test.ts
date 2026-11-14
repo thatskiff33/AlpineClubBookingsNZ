@@ -45,7 +45,7 @@ vi.mock("@/lib/xero-cron-runner", () => ({
     mockRunXeroWebhookInboundKick(...args),
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
 }));
 

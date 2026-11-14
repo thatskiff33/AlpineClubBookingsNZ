@@ -34,8 +34,8 @@ const DB_CAPACITY = 47;
 
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
-import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
-import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/school-booking-form";
+import { BookingRequestForm } from "@/components/website/booking-request-form";
+import { SchoolBookingForm } from "@/components/website/school-booking-form";
 import { LODGE_NOT_SET_UP_FOR_BOOKINGS_MESSAGE } from "@/lib/lodge-booking-readiness";
 
 // The club identity a DEDICATED page injects: it resolves the real capacity and

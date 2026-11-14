@@ -241,7 +241,7 @@ describe("adult-supervision callers: the declared set, and the shape each passes
     "src/lib/booking-modify-plan.ts": "consentStatus: proposedConsentStatus(guest),",
     // The clients' one door to the rule: each row states the consent its add will
     // produce (the wizard's preview) or carries (the edit panel's kept rows).
-    "src/app/(authenticated)/book/_components/member-guest-preview.tsx":
+    "src/components/book/member-guest-preview.tsx":
       "memberGuestConsentPreviewColumns(guest)?.consentStatus",
   };
 

@@ -746,7 +746,7 @@ describe("AID-6C finance pack: read-only (#2377)", () => {
     const forbiddenImports = [
       "@/lib/stripe",
       "stripe",
-      "@/lib/xero",
+      "@/lib/xero-api-client",
       "xero-node",
       "node-fetch",
       "undici",

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   parseApplicationAddress,
   parseApplicationFamilyMembers,
-} from "@/lib/nomination";
+} from "@/lib/member-application-fields";
 import { NOMINATION_AUTOMATIC_REMINDER_LIMIT } from "@/lib/nomination-token-policy";
 import { formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";

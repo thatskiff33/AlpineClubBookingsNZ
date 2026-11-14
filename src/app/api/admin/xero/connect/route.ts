@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { getXeroConsentUrl } from "@/lib/xero";
+import { getXeroConsentUrl } from "@/lib/xero-oauth";
 import {
   createXeroOAuthState,
   getXeroOAuthStateCookieOptions,

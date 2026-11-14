@@ -1,4 +1,4 @@
-import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
+import { BookingRequestForm } from "@/components/website/booking-request-form";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { clubFormatValues } from "@/lib/club-format-server";

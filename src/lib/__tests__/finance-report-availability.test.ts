@@ -30,7 +30,7 @@ vi.mock("@/lib/finance-sync-diagnostics", () => ({
   getFinanceSyncDiagnosticsStatus: mockGetFinanceSyncDiagnosticsStatus,
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   getXeroConnectionStatus: mockGetXeroConnectionStatus,
 }));
 

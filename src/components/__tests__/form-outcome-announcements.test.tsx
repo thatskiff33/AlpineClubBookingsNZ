@@ -22,7 +22,7 @@ import ForgotPasswordPage from "@/app/(public)/forgot-password/page";
 import ChangePasswordPage from "@/app/(public)/change-password/page";
 import ResetPasswordPage from "@/app/(public)/reset-password/page";
 import { TwoFactorEnrollPanel, TwoFactorVerifyPanel } from "@/app/(public)/login/two-factor-panels";
-import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
+import { ContactPageClient } from "@/components/website/contact-page-client";
 import { BookingRequestRespondClient } from "@/app/(website-dynamic)/booking-requests/respond/[token]/booking-request-respond-client";
 import type { ClubIdentity } from "@/config/club-identity-types";
 

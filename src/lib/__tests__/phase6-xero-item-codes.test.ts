@@ -1,6 +1,7 @@
 import type { AgeTier } from "@prisma/client";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { buildEntranceFeeLineItem, buildInvoiceLineItems } from "../xero";
+import { buildEntranceFeeLineItem } from "@/lib/xero-entrance-fee-invoices";
+import { buildInvoiceLineItems } from "@/lib/xero-booking-invoices";
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 

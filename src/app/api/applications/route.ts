@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  createMemberApplication,
-  MembershipApplicationError,
-} from "@/lib/nomination";
+import { createMemberApplication } from "@/lib/nomination";
+import { MembershipApplicationError } from "@/lib/member-application-fields";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { isCalendarDate } from "@/lib/club-time";

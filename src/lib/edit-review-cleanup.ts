@@ -20,7 +20,7 @@ import {
 } from "@/lib/payment-recovery-keys";
 import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { prisma } from "@/lib/prisma";
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
 import { rerunnableOperationWhere } from "@/lib/xero-active-operation-statuses";

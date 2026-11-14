@@ -134,11 +134,19 @@ vi.mock("@/lib/member-credit", () => ({
     return memberId;
   },
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-supplementary-invoices", () => ({
   createXeroSupplementaryInvoice: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-modification-credit-notes", () => ({
   createXeroCreditNoteForModification: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-booking-invoices", () => ({
   createXeroInvoiceForBooking: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-credit-notes", () => ({
   createXeroCreditNote: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/logger", () => ({

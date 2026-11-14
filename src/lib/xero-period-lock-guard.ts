@@ -47,7 +47,7 @@ import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { wouldQueueCheckInDatedInvoiceUpdate } from "@/lib/xero-booking-edit-conditions";
-// The source domain module, not the @/lib/xero facade (#1208 lint rule).
+// The source domain module; the @/lib/xero facade is gone (#1208, #4930).
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import {

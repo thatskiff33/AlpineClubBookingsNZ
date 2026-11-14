@@ -15,7 +15,7 @@ import { ProfileSectionCard } from "./profile-section-card";
 import { ChangeEmailCard } from "./change-email-card";
 import { NotificationPreferences } from "./notification-preferences";
 import { PostLoginLandingPreference } from "./post-login-landing-preference";
-import { FamilyGroupSection } from "./family-group-section";
+import { FamilyGroupSection } from "@/components/profile/family-group-section";
 import { PartnerLinkSection } from "./partner-link-section";
 import { AccountCreditSection } from "./account-credit-section";
 import { ProfilePhotoSection } from "./profile-photo-section";

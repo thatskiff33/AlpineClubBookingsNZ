@@ -1336,7 +1336,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // Inventory row and stated residual in docs/CONCURRENCY_AND_LOCKING.md; the
   // serialisation itself is proven against real PostgreSQL by
   // `edit-financial-review-races.realdb.test.ts`.
-  "src/lib/xero-operation-outbox.ts": 1,
+  //
+  // #4930 (`INV-SSOT-008`): the enqueue and `lockSupplementaryInvoiceAnchor`
+  // moved, verbatim, out of `xero-operation-outbox.ts` into their own module so
+  // the outbox stops closing an import loop. Same statement, key, callers and
+  // transaction client; only the file changed.
+  "src/lib/xero-supplementary-invoice-enqueue.ts": 1,
   //
   // #3641 (`INV-PAY-104`): the ONE site is now `lockSupplementaryInvoiceAnchor`,
   // which both the enqueue and the late-capture re-queue
