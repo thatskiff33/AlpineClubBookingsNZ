@@ -4219,6 +4219,11 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
      row on the anchor it holds; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
+  PROCESSING left by a dead worker past the webhook lease -> RECEIVED
+  (INV-INT-039): the worker's takeover before it selects a batch, or a
+  Replay, in one updateMany guarded on status and the stale updatedAt (one
+  winner, a loser skips or answers 409); the winner deletes its xero dedup
+  row in the same transaction, so the reprocess applies the event
   its WEBHOOK_RECONCILE row is this attempt's own (INV-INT-038): an INBOUND
   row left RUNNING past the stale threshold by a dead attempt is re-claimed
   in place under a fresh startedAt (one guarded write, one winner; the dead

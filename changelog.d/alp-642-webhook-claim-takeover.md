@@ -1,0 +1,3 @@
+- **Webhook events interrupted by a server restart are now picked up again automatically (#4921).**
+  A Xero event left **Processing** because its server stopped mid-run is now reset and processed again by the inbound worker once it has been stuck for 15 minutes. You no longer need to Replay it, though Replay still works at once for an event already past those 15 minutes. Its stuck operation is taken over too, so nothing is applied twice.
+  Bounce and complaint notices from Amazon SES now follow the same rule as Stripe payments: a notice whose first attempt was cut off is processed when SES sends it again, instead of being dropped as a duplicate. A repeated copy of the same bounce is no longer counted twice towards blocking an address.
