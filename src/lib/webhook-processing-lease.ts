@@ -14,8 +14,14 @@
  * Sized well above a live attempt's runtime (seconds; a Xero reconcile makes a
  * few calls of at most `XERO_HTTP_TIMEOUT_MS` each, plus rate-limit waits) and
  * far below Stripe's redelivery backoff, so a live attempt is not normally
- * pre-empted. A pre-empted one is harmless: every handler behind a lease is
- * idempotent on replay.
+ * pre-empted. A pre-empted one is replay-safe (every handler behind a lease is
+ * idempotent), though a still-live Xero attempt can overlap its successor.
+ *
+ * SNS's default HTTP/S delivery policy gives up within about a minute, before
+ * this lease expires, so an SES/SNS takeover only happens under the longer
+ * subscription delivery policy `CONFIGURATION.md` documents. Xero's
+ * `STALE_RUNNING_XERO_OPERATION_MINUTES` must not exceed this value, or a
+ * takeover's reprocess would find the dead attempt's operation still live.
  *
  * A leaf module (#4647), so a handler that sizes its own window from the lease
  * (`unrecognised-stripe-payment.ts`) reads the one value without importing the

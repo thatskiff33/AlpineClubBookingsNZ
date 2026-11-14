@@ -773,8 +773,11 @@ as a duplicate and never applied twice by racing takeovers.
 - **The operation row** the dead attempt left is recovered by `INV-INT-038`.
 - **Replays are harmless.** Handlers are idempotent; the same SES feedback
   (message id and event type) is not counted twice toward suppression.
-- **Limits.** An event that kills its worker is retaken each lease; Xero
-  outcome writes are not fenced on the event claim.
+- **Limits.** An event that kills its worker is retaken each lease. Xero
+  outcome writes are not fenced, so a live attempt past the lease can overlap
+  its successor. SNS's default HTTP/S policy stops retrying within a minute, so
+  SES takeover needs the longer delivery policy `CONFIGURATION.md` gives. The
+  operation threshold must not exceed the lease.
 
 Pinned by `ses-sns-webhook.test.ts`, `stripe-webhook-events.test.ts`,
 `xero-inbound-stale-event-takeover.test.ts`, `email-suppression-replay.test.ts`

@@ -2757,6 +2757,18 @@ read `MemberAccessRole` rows.
 | `SES_SNS_ALLOW_SIGNATURE_V1`             | Temporarily permit legacy SNS SignatureVersion 1 (SHA1). Default rejects v1; enable SignatureVersion 2 on the SNS topic and leave this unset in production.   |
 | `BULK_SENDMAIL_LIMIT`                    | Admin bulk-communication sends allowed per hour (default `1`).                                                                                               |
 
+**SNS delivery policy for SES feedback (#4921).** The SES/SNS route answers
+503 while an earlier attempt at the same notification still holds its
+15-minute processing lease, and takes the notification over only on a
+redelivery after the lease has run out. SNS's default HTTP/S delivery policy
+retries 3 times, 20 seconds apart, so a notification whose first attempt
+crashed is dropped before then. Set an HTTP/S delivery policy on the
+subscription (or topic) that keeps retrying past 15 minutes, within SNS's
+3,600-second hard limit, and attach a dead-letter queue. For example:
+`{"healthyRetryPolicy":{"minDelayTarget":20,"maxDelayTarget":120,"numRetries":30,"numNoDelayRetries":0,"numMinDelayRetries":3,"numMaxDelayRetries":20,"backoffFunction":"exponential"}}`
+retries for roughly 50 minutes. See
+[Amazon SNS message delivery retries](https://docs.aws.amazon.com/sns/latest/dg/sns-message-delivery-retries.html).
+
 ## Address Autocomplete
 
 | Variable          | Description                                     |
