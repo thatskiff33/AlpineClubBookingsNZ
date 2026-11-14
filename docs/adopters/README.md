@@ -238,6 +238,8 @@ procedure.
   baseline.
 - [`../XERO_MEMBER_GROUPING_RUNBOOK.md`](../XERO_MEMBER_GROUPING_RUNBOOK.md) —
   operating the Xero member-grouping cutover.
+- [Privacy incidents](../guides/privacy-incidents.md) — first-hour containment,
+  evidence preservation, credential replacement and notification.
 - [Backups](../guides/backups.md) — S3-backed PostgreSQL backups, configured
   in-app, run on demand or nightly, with a scripted restore drill.
 - [Club Time Zone](../guides/club-time.md) — the one time zone the club runs on,

@@ -302,6 +302,7 @@ describe("xero operation outbox payload parsing", () => {
       "GROUP_SETTLEMENT_INVOICE_VOID",
       "MEMBERSHIP_SUBSCRIPTION_INVOICE",
       "KEPT_LATE_CAPTURE_INVOICE",
+      "CARD_REFUND_REVERSAL_INVOICE",
       "ADDITIONAL_CAPTURE_RECEIPT",
       "ORGANISER_EXTRA_ADJUSTMENT",
       "ADMIN_GRANT_CREDIT_NOTE",
@@ -383,7 +384,9 @@ describe("xero operation outbox payload parsing", () => {
     };
     expect(readQueuedOutboxPayload(queued)).toEqual(queued);
     const plan = { target: "GAP_INVOICE", invoiceId: "inv_gap", amountCents: 8000, capturedCents: 8000, date: "2026-06-30" };
-    expect(readQueuedOutboxPayload({ ...queued, plan })).toEqual({ ...queued, plan });
+    // A legacy decision (#3953, before #4434) reads as its one leg.
+    const legacyLeg = { target: "GAP_INVOICE", invoiceId: "inv_gap", amountCents: 8000 };
+    expect(readQueuedOutboxPayload({ ...queued, plan })).toEqual({ ...queued, plan: { ...plan, legs: [legacyLeg] } });
     expect(readQueuedOutboxPayload({ ...queued, paymentIntentId: undefined })).toBeNull();
     // A decision that does not parse never lets a retry decide again.
     expect(readQueuedOutboxPayload({ ...queued, plan: { ...plan, amountCents: 12.5 } })).toBeNull();
@@ -416,6 +419,7 @@ describe("xero operation outbox payload parsing", () => {
       ["GROUP_SETTLEMENT_INVOICE_VOID", "INVOICE"],
       ["MEMBERSHIP_SUBSCRIPTION_INVOICE", "INVOICE"],
       ["KEPT_LATE_CAPTURE_INVOICE", "INVOICE"],
+      ["CARD_REFUND_REVERSAL_INVOICE", "INVOICE"],
       ["ADDITIONAL_CAPTURE_RECEIPT", "PAYMENT"],
       ["ADMIN_GRANT_CREDIT_NOTE", "CREDIT_NOTE"],
     ]);

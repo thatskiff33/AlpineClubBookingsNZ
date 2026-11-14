@@ -120,7 +120,7 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
     // And the display renders it, so a refused member cannot look clean.
     expect(
       source(
-        "src/app/(admin)/admin/members/[id]/_components/member-xero-contact-summary.tsx",
+        "src/app/(admin)/admin/membership/members/[id]/_components/member-xero-contact-summary.tsx",
       ),
     ).toContain("member.xeroContactLifecycleBlocker");
   });

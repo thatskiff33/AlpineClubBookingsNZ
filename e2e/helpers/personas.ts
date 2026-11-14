@@ -1,7 +1,7 @@
 // Demo-seed personas (prisma/demo-seed.ts). Passwords come from the seed's
 // DEMO_SEED_PASSWORD default; override E2E_DEMO_PASSWORD if the seed was run
 // with a custom one.
-import { EMAIL_2FA_ENROLLEE } from "./fixtures";
+import { EMAIL_2FA_ENROLLEE, PASSKEY_ENROLLEE } from "./fixtures";
 
 export const DEMO_PASSWORD = process.env.E2E_DEMO_PASSWORD ?? "demo1234";
 
@@ -36,5 +36,13 @@ export const personas = {
     email: EMAIL_2FA_ENROLLEE.email,
     firstName: EMAIL_2FA_ENROLLEE.firstName,
     lastName: EMAIL_2FA_ENROLLEE.lastName,
+  },
+  // Pip is a third never-enrolled member, finance VIEWER like Bob, for the
+  // passkey spec (#5160). Bob must stay unused by any other sign-in: the TOTP
+  // spec asserts he has never enrolled, whatever order the specs run in.
+  passkeyEnrollee: {
+    email: PASSKEY_ENROLLEE.email,
+    firstName: PASSKEY_ENROLLEE.firstName,
+    lastName: PASSKEY_ENROLLEE.lastName,
   },
 } satisfies Record<string, Persona>;

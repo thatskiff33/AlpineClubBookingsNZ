@@ -1,0 +1,1 @@
+- Cancelled bookings return their promo-code uses in the cancellation transaction, including expired bank-payment holds and capacity cancellations. Repair historical uses left on cancelled bookings.

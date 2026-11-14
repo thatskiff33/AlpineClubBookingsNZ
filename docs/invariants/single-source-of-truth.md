@@ -204,7 +204,7 @@ History, measurements and rejected alternatives: #3126 (and #3123, #3131,
   code DOES, and classify its matches rather than converging every hit.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
   `stripComments`. Use it; do not write a second.**
-  169 test files, six test helpers and one CI script import it.
+  175 test files, seven test helpers and one CI script import it.
   `ssot-comment-stripper-guard.test.ts` requires that sentence and the module's
   docblock to state the count it measures by IMPORT SPECIFIER, not path text.
   **Measure it; never increment it.**
@@ -304,3 +304,30 @@ case-sensitive default. #4146, #4165, #4190.
 - **Scope the query as well where an indexed column allows.** An exact prefix
   still matches a longer id beginning with the same id and delimiter; the
   duplicate-capture lookup also scopes by `bookingId`.
+
+## INV-SSOT-007
+
+An admin page that loads a list or totals on the client has three outcomes:
+rows, no rows, and "could not load". The third never renders as either of the
+others. A failed read shows the shared `AdminLoadError`
+(`src/components/admin/admin-load-error.tsx`) in place of the empty state,
+clears the previous query's rows and totals, and offers **Try again**. #4961.
+
+- **One component, one wording.** The alert carries `role="alert"`. Its
+  sentence comes from `src/lib/api-error-message.ts` or
+  `src/lib/admin-query-error.ts`, the only home of the two fixed fallbacks. A
+  page writes no private reader. Neither fallback says what was saved: each
+  read re-runs after a write, beside the page's own success message.
+- **No fake answers.** Totals are not drawn while the error shows, nor is a
+  warning whose absence means "all clear", such as Hut Leaders' unassigned
+  nights. A failure after a filter change used to leave the previous search's
+  rows under the new filters, which is the same defect.
+- **Try again keeps focus.** The button is `aria-disabled`, never `disabled`,
+  and the page keeps the error mounted while the retry runs.
+- **A census keeps it one.** `admin-load-error-census.test.ts` fails if a file
+  imports the component without being listed, or a listed empty state is no
+  longer behind its load-error gate. `admin-list-load-failure.test.tsx` proves
+  each page. The census is disk-scanning: run it with `pnpm run test:named`.
+- **Not every page is covered yet.** The four pages from #4961 are; others
+  join the census when they adopt the component. Its stated limits are in
+  [`UX_FLOW_MAP.md`](../UX_FLOW_MAP.md#a-list-or-total-that-fails-to-load-4961).
