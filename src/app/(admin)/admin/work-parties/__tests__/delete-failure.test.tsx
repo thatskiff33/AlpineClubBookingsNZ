@@ -81,6 +81,19 @@ describe("Work parties: a refused delete says why", () => {
     expect(await screen.findByText("Work party event not found")).toBeInTheDocument();
   });
 
+  it("announces a refused delete in an alert region, so a screen reader hears it", async () => {
+    mockDelete(
+      () =>
+        new Response("<html><body>Bad Gateway</body></html>", {
+          status: 502,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    await deleteBee();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to delete work party event");
+  });
+
   it("keeps the permission sentence for a 403", async () => {
     mockDelete(() => Response.json({ error: "Forbidden" }, { status: 403 }));
     await deleteBee();
