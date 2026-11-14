@@ -4,12 +4,16 @@ import { NextRequest } from "next/server";
 const {
   mockProcessedWebhookCreate,
   mockProcessedWebhookDeleteMany,
+  mockProcessedWebhookFindFirst,
+  mockProcessedWebhookUpdateMany,
   mockVerifySnsWebhookMessage,
   mockIngestSesSnsEmailFeedback,
   mockRecordWebhookLog,
 } = vi.hoisted(() => ({
   mockProcessedWebhookCreate: vi.fn(),
   mockProcessedWebhookDeleteMany: vi.fn(),
+  mockProcessedWebhookFindFirst: vi.fn(),
+  mockProcessedWebhookUpdateMany: vi.fn(),
   mockVerifySnsWebhookMessage: vi.fn(),
   mockIngestSesSnsEmailFeedback: vi.fn(),
   mockRecordWebhookLog: vi.fn().mockResolvedValue(undefined),
@@ -20,6 +24,8 @@ vi.mock("@/lib/prisma", () => ({
     processedWebhookEvent: {
       create: (...args: unknown[]) => mockProcessedWebhookCreate(...args),
       deleteMany: (...args: unknown[]) => mockProcessedWebhookDeleteMany(...args),
+      findFirst: (...args: unknown[]) => mockProcessedWebhookFindFirst(...args),
+      updateMany: (...args: unknown[]) => mockProcessedWebhookUpdateMany(...args),
     },
   },
 }));
@@ -84,6 +90,8 @@ describe("SES/SNS webhook route", () => {
     vi.clearAllMocks();
     mockProcessedWebhookCreate.mockResolvedValue({});
     mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 1 });
+    mockProcessedWebhookFindFirst.mockResolvedValue(null);
+    mockProcessedWebhookUpdateMany.mockResolvedValue({ count: 1 });
     mockVerifySnsWebhookMessage.mockResolvedValue({
       ok: true,
       topicArnConfigured: true,
@@ -161,11 +169,27 @@ describe("SES/SNS webhook route", () => {
         eventId: "sns-message-1",
         source: "ses-sns",
         eventType: "Notification",
+        status: "PROCESSING",
+        processingStartedAt: new Date(Date.now()),
       },
     });
     expect(mockIngestSesSnsEmailFeedback).toHaveBeenCalledWith(
       expect.objectContaining({ MessageId: "sns-message-1" })
     );
+    // INV-INT-039: the claim is completed, fenced on this attempt's lease
+    // token, only after the feedback was recorded.
+    expect(mockProcessedWebhookUpdateMany).toHaveBeenCalledWith({
+      where: {
+        source: "ses-sns",
+        eventId: "sns-message-1",
+        status: "PROCESSING",
+        processingStartedAt: new Date(Date.now()),
+      },
+      data: { status: "COMPLETED", processedAt: expect.any(Date) },
+    });
+    expect(
+      mockIngestSesSnsEmailFeedback.mock.invocationCallOrder[0]
+    ).toBeLessThan(mockProcessedWebhookUpdateMany.mock.invocationCallOrder[0]);
     expect(mockRecordWebhookLog).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "ses-sns",
@@ -176,8 +200,12 @@ describe("SES/SNS webhook route", () => {
     );
   });
 
-  it("deduplicates repeated SNS notifications", async () => {
+  it("deduplicates repeated SNS notifications whose claim was completed", async () => {
     mockProcessedWebhookCreate.mockRejectedValueOnce({ code: "P2002" });
+    mockProcessedWebhookFindFirst.mockResolvedValueOnce({
+      status: "COMPLETED",
+      processingStartedAt: new Date(Date.now() - 60 * 60_000),
+    });
 
     const { POST } = await import("@/app/api/webhooks/ses-sns/route");
     const response = await POST(makeRequest(snsEnvelope()));
@@ -233,7 +261,88 @@ describe("SES/SNS webhook route", () => {
       error: "Failed to process SES/SNS webhook",
     });
     expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
-      where: { eventId: "sns-message-1", source: "ses-sns" },
+      where: {
+        eventId: "sns-message-1",
+        source: "ses-sns",
+        status: "PROCESSING",
+        processingStartedAt: new Date(Date.now()),
+      },
+    });
+    expect(mockProcessedWebhookUpdateMany).not.toHaveBeenCalled();
+  });
+
+  describe("processing lease (INV-INT-039, #4921)", () => {
+    it("MUTATION: a redelivery while a sibling's lease is live is never ACKed as a duplicate", async () => {
+      mockProcessedWebhookCreate.mockRejectedValueOnce({ code: "P2002" });
+      mockProcessedWebhookFindFirst.mockResolvedValueOnce({
+        status: "PROCESSING",
+        processingStartedAt: new Date(Date.now() - 5 * 60_000),
+      });
+
+      const { POST } = await import("@/app/api/webhooks/ses-sns/route");
+      const response = await POST(makeRequest(snsEnvelope()));
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        error: "Webhook processing already in progress",
+      });
+      expect(mockIngestSesSnsEmailFeedback).not.toHaveBeenCalled();
+      expect(mockProcessedWebhookUpdateMany).not.toHaveBeenCalled();
+      expect(mockProcessedWebhookDeleteMany).not.toHaveBeenCalled();
+      expect(mockRecordWebhookLog).toHaveBeenCalledWith(
+        expect.objectContaining({ source: "ses-sns", status: "failure" })
+      );
+    });
+
+    it("takes over a crashed attempt's expired claim and records the feedback once", async () => {
+      // The prior attempt claimed 16 minutes ago and died before ingesting or
+      // releasing: the old marker made this redelivery a silent duplicate.
+      const crashedClaim = new Date(Date.now() - 16 * 60_000);
+      mockProcessedWebhookCreate.mockRejectedValueOnce({ code: "P2002" });
+      mockProcessedWebhookFindFirst.mockResolvedValueOnce({
+        status: "PROCESSING",
+        processingStartedAt: crashedClaim,
+      });
+
+      const { POST } = await import("@/app/api/webhooks/ses-sns/route");
+      const response = await POST(makeRequest(snsEnvelope()));
+
+      expect(response.status).toBe(200);
+      expect(mockIngestSesSnsEmailFeedback).toHaveBeenCalledTimes(1);
+      // The guarded takeover, then the completion fenced on the new token.
+      expect(mockProcessedWebhookUpdateMany).toHaveBeenNthCalledWith(1, {
+        where: {
+          source: "ses-sns",
+          eventId: "sns-message-1",
+          status: "PROCESSING",
+          processingStartedAt: { lt: new Date(Date.now() - 15 * 60_000) },
+        },
+        data: { processingStartedAt: new Date(Date.now()), eventType: "Notification" },
+      });
+      expect(mockProcessedWebhookUpdateMany).toHaveBeenNthCalledWith(2, {
+        where: {
+          source: "ses-sns",
+          eventId: "sns-message-1",
+          status: "PROCESSING",
+          processingStartedAt: new Date(Date.now()),
+        },
+        data: { status: "COMPLETED", processedAt: expect.any(Date) },
+      });
+    });
+
+    it("answers 503 when a racing redelivery wins the takeover", async () => {
+      mockProcessedWebhookCreate.mockRejectedValueOnce({ code: "P2002" });
+      mockProcessedWebhookFindFirst.mockResolvedValueOnce({
+        status: "PROCESSING",
+        processingStartedAt: new Date(Date.now() - 16 * 60_000),
+      });
+      mockProcessedWebhookUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+      const { POST } = await import("@/app/api/webhooks/ses-sns/route");
+      const response = await POST(makeRequest(snsEnvelope()));
+
+      expect(response.status).toBe(503);
+      expect(mockIngestSesSnsEmailFeedback).not.toHaveBeenCalled();
     });
   });
 });
