@@ -874,6 +874,66 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
     ).toEqual({ supported: true, reason: null });
   });
 
+  /**
+   * ALP-580: the kept-late-capture charge day this row stored is read back
+   * strictly. This code wrote it from a real Stripe charge day, so a right-shaped
+   * day that does not exist can only be corruption. It must not be dated onto the
+   * Xero invoice; the real day is re-read from Stripe and stored in its place.
+   */
+  describe("a stored kept-late-capture charge day (ALP-580)", () => {
+    const keptLate = (keptLateCaptureDay: string) => ({
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: false,
+      paymentIntentId: "pi_late",
+      keptLateCaptureDay,
+    });
+
+    const runWithStoredDay = async (keptLateCaptureDay: string) => {
+      mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+        requestPayload: keptLate(keptLateCaptureDay),
+      });
+      mocks.manualRefundTaskFindUnique.mockResolvedValue({ status: "DISMISSED" });
+      mocks.readStripeCaptureDocumentDate.mockResolvedValue("2026-06-10");
+      mocks.retryXeroWriteWithContactRepair.mockRejectedValue(new Error("sentinel-stop"));
+
+      await expect(
+        createXeroSupplementaryInvoice({
+          format: CLUB_FORMAT_TEST,
+          bookingId: "bk1",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: false,
+          syncOperation: xeroClaim("op_q"),
+        }),
+      ).rejects.toThrow("sentinel-stop");
+    };
+
+    it("re-reads the real day from Stripe when the stored one does not exist, and stores that instead", async () => {
+      await runWithStoredDay("2026-02-30");
+
+      expect(mocks.readStripeCaptureDocumentDate).toHaveBeenCalledWith("pi_late", expect.any(String));
+      // The first update is the corrected payload, stored before any Xero call.
+      const stored = mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload;
+      expect(stored.keptLateCaptureDay).toBe("2026-06-10");
+      // The last is the invoice the run recorded: dated the real day, never 30 February.
+      const recorded = mocks.xeroSyncOperationUpdate.mock.calls.at(-1)![0].data.requestPayload;
+      expect(recorded.invoices[0].date).toBe("2026-06-10");
+    });
+
+    it("uses a real stored day as it stands, without asking Stripe", async () => {
+      await runWithStoredDay("2026-06-09");
+
+      expect(mocks.readStripeCaptureDocumentDate).not.toHaveBeenCalled();
+      const recorded = mocks.xeroSyncOperationUpdate.mock.calls.at(-1)![0].data.requestPayload;
+      expect(recorded.invoices[0].date).toBe("2026-06-09");
+    });
+  });
+
   describe("#4494: a gap invoice whose payment would overlap the credit-release sweep's share", () => {
     const gapPayload = {
       queueType: "SUPPLEMENTARY_INVOICE",

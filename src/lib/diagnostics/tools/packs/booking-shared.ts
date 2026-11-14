@@ -303,13 +303,16 @@ export const AID6B_DEFAULT_SEARCH_WINDOW: Aid6bSearchWindow = "7d";
  * in SQL, where the comparison is against a `date` column and is therefore
  * timezone-independent by construction.
  *
- * The regex is shape only; PostgreSQL rejects `2026-02-30` itself, and a rejection
- * surfaces as `query_failed`. The bounding years exist so a typo cannot become a
- * scan of a range no booking can occupy.
+ * The regex bounds the shape and the years, and `isCalendarDate` refuses a day
+ * that does not exist (`2026-02-30`, `2026-02-29`) at argument parse. Without
+ * it the value would pass to PostgreSQL, which rejects it itself and surfaces as
+ * `query_failed`, a failed query rather than a refused argument. The bounding
+ * years exist so a typo cannot become a scan of a range no booking can occupy.
  */
 export const NZ_DATE_ONLY = z
   .string()
-  .regex(/^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/);
+  .regex(/^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/)
+  .refine((value) => isCalendarDate(value), { message: "Not a real calendar day." });
 
 /**
  * A NAME search term. Letters, spaces, hyphens and apostrophes — the characters

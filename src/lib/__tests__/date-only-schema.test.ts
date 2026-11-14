@@ -170,7 +170,6 @@ describe("census: no hand-written date-only pattern outside the allowed files (A
     [SHAPE_HOME]: "the home of the shape check behind isCalendarDate, which isDateOnlyString delegates to",
     "src/app/api/applications/route.ts":
       "calendarDayOfBirth, its own validator: tells an applicant a mistyped shape from a non-existent day",
-    "src/app/api/display/state/route.ts": "already pairs the shape with isDateOnlyString",
     "src/lib/config-transfer/values.ts":
       "strictDate pairs the shape with a real-day check, to tell an importer which of the two a cell fails",
     "src/lib/diagnostics/page-context/projections.ts":
