@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { WEBHOOK_PROCESSING_LEASE_MINUTES } from "@/lib/webhook-processing-lease";
 import {
   XERO_ORPHANED_STALE_RUNNING_ERROR_CODE,
   XERO_REFUND_NOTE_UNRECORDED_ERROR_CODE,
@@ -339,12 +340,11 @@ export async function countStaleRunningXeroOperations(
 
 // Issue #819/#815: an inbound webhook event is claimed by flipping it from
 // RECEIVED/FAILED to PROCESSING (which restamps @updatedAt). If the worker dies
-// mid-reconciliation the row stays PROCESSING forever, manual replay refuses it
-// ("already being processed"), and no sweep resets it. The inbound
-// reconciliation cycle runs on roughly the same cadence as the outbox worker, so
-// a PROCESSING row whose updatedAt is older than this threshold is almost
-// certainly orphaned rather than genuinely in flight.
-export const STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES = 15;
+// mid-reconciliation the row stays PROCESSING. A PROCESSING row whose updatedAt
+// is older than this threshold is a dead attempt's, and the automatic worker
+// takes it over (`INV-INT-039`, `xero-inbound/stale-event-takeover.ts`). It is
+// the one webhook processing lease, shared with the Stripe and SES/SNS claims.
+export const STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES = WEBHOOK_PROCESSING_LEASE_MINUTES;
 
 // test seam
 /**
@@ -365,8 +365,10 @@ export function staleProcessingXeroInboundEventFilter(now: Date = new Date()) {
 
 /**
  * Count inbound events stuck in PROCESSING past the staleness threshold. Pure
- * visibility; it does not reset or mutate the events. Recovery happens via the
- * guarded manual replay takeover in `replayStoredXeroInboundEvent`.
+ * visibility; it does not reset or mutate the events. The automatic inbound
+ * worker takes each over on its next run (`INV-INT-039`), and an officer's
+ * Replay takes one over at once, through the same guarded helper. A count that
+ * stays above zero means that worker is not running.
  */
 export async function countStaleProcessingXeroInboundEvents(
   now: Date = new Date(),
@@ -378,7 +380,7 @@ export async function countStaleProcessingXeroInboundEvents(
 
 /**
  * True when a PROCESSING inbound event's last update is older than the staleness
- * threshold, i.e. it is safe for an operator to take over and replay it. A null
+ * threshold, i.e. it is safe to take over and reprocess it. A null
  * updatedAt is treated as not-stale so a genuinely fresh claim is never stolen.
  */
 export function isStaleProcessingXeroInboundEvent(
