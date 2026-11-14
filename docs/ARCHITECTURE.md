@@ -1209,12 +1209,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **107 components render a banner, and
- 336 of the 391 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **108 components render a banner, and
+ 341 of the 396 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 336 split by WHICH rule
-covers them: **296** pass the literal
+test currently pins, which is the only authority.) Those 341 split by WHICH rule
+covers them: **301** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **40**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
@@ -1274,6 +1274,13 @@ default** (`describeReason` left at `true`), in three shapes:
   dead buttons. Any second banner for the finance scope would break the owner's
   one-banner-per-page decision and trip the nesting rule, so the per-button
   reason stays. Bucket by SCOPE, not by folder, when reading this figure.
+
+The Setup Wizard gates checklist progress, provider tests and completion on
+`support` edit access (#4971). Its support banner stays mounted through loading
+and errors. The embedded `LodgeCapacityCard` keeps its own `lodge` edit banner:
+support edit access does not grant lodge edit access, or the reverse. The
+banner census checks this specific cross-area pair separately from duplicate
+banners covering the same permission.
 
 Every figure in this section is asserted mechanically by
 `src/components/admin/__tests__/view-only-banner-contract.test.ts` — the totals,

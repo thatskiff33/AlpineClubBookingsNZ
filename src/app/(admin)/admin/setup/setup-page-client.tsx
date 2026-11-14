@@ -31,6 +31,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
@@ -260,6 +265,7 @@ export function SetupPageClient({
   permissionMatrix: AdminPermissionMatrix;
   features: FeatureFlags;
 }) {
+  const canEdit = useAdminAreaEditAccess("support");
   const [readiness, setReadiness] = useState<SetupReadiness | null>(null);
   const [progress, setProgress] = useState<SetupProgressState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -406,18 +412,9 @@ export function SetupPageClient({
     }
   }
 
-  if (loading && !readiness) {
-    return (
-      <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading setup readiness
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div>
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Setup Wizard</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
@@ -430,7 +427,9 @@ export function SetupPageClient({
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
             onClick={finishSetup}
             disabled={
               finishing || setupCompleted || requiredBlockers.length > 0 || !readiness
@@ -442,225 +441,245 @@ export function SetupPageClient({
               <CheckCircle2 className="h-4 w-4" />
             )}
             {setupCompleted ? "Setup Complete" : "Mark Setup Complete"}
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </div>
 
-      {error ? (
-        <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
-          {error}
-        </div>
-      ) : null}
-
-      {setupCompleted ? (
-        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
-          Setup has been marked complete.
-        </div>
-      ) : null}
-
-      {readiness ? (
-        <>
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-md border bg-card p-4">
-              <div className="flex items-center gap-2">
-                <StatusIcon status={overallStatus} />
-                <p className="text-sm font-medium text-muted-foreground">Overall</p>
-              </div>
-              <p className="mt-2 text-2xl font-semibold capitalize text-foreground">
-                {overallStatus.replace("_", " ")}
-              </p>
-            </div>
-            <div className="rounded-md border bg-card p-4">
-              <p className="text-sm font-medium text-muted-foreground">Progress</p>
-              <p className="mt-2 text-2xl font-semibold text-foreground">
-                {completionPercent}%
-              </p>
-            </div>
-            <div className="rounded-md border bg-card p-4">
-              <p className="text-sm font-medium text-muted-foreground">Blocked</p>
-              <p className="mt-2 text-2xl font-semibold text-foreground">
-                {readiness.summary.blocked}
-              </p>
-            </div>
-            <div className="rounded-md border bg-card p-4">
-              <p className="text-sm font-medium text-muted-foreground">Skipped</p>
-              <p className="mt-2 text-2xl font-semibold text-foreground">
-                {readiness.summary.skipped}
-              </p>
-            </div>
+      <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6" />
+      <div role="alert">
+        {error ? (
+          <div className="mb-6 rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
+            {error}
           </div>
+        ) : null}
+      </div>
 
-          {requiredBlockers.length > 0 ? (
-            <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
-              Resolve or explicitly skip required blocked steps before marking setup complete.
+      {loading && !readiness ? (
+        <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading setup readiness
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {setupCompleted ? (
+            <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
+              Setup has been marked complete.
             </div>
           ) : null}
 
-          <SetupHubCards
-            features={features}
-            permissionMatrix={permissionMatrix}
-          />
-
-          {/* The lodge-capacity card remains on the setup page and keeps the
-              #1548 matrix gate because its backing API is lodge-area while
-              /admin/setup itself is support-area. */}
-          {permissionMatrix.lodge !== "none" ? <LodgeCapacityCard /> : null}
-
-          <section id="setup-checks" className="space-y-6">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">
-                Readiness checks
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                Work through the live checks after choosing the matching setup
-                hub.
-              </p>
-            </div>
-            {readiness.categories.map((category) => (
-              <section key={category.id} className="space-y-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h2 className="text-xl font-semibold text-foreground">
-                      {category.title}
-                    </h2>
-                    <p className="text-sm text-muted-foreground">{category.description}</p>
+          {readiness ? (
+            <>
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-md border bg-card p-4">
+                  <div className="flex items-center gap-2">
+                    <StatusIcon status={overallStatus} />
+                    <p className="text-sm font-medium text-muted-foreground">Overall</p>
                   </div>
-                  <Badge variant={statusVariant(category.status)} className="w-fit capitalize">
-                    {category.status.replace("_", " ")}
-                  </Badge>
+                  <p className="mt-2 text-2xl font-semibold capitalize text-foreground">
+                    {overallStatus.replace("_", " ")}
+                  </p>
                 </div>
+                <div className="rounded-md border bg-card p-4">
+                  <p className="text-sm font-medium text-muted-foreground">Progress</p>
+                  <p className="mt-2 text-2xl font-semibold text-foreground">
+                    {completionPercent}%
+                  </p>
+                </div>
+                <div className="rounded-md border bg-card p-4">
+                  <p className="text-sm font-medium text-muted-foreground">Blocked</p>
+                  <p className="mt-2 text-2xl font-semibold text-foreground">
+                    {readiness.summary.blocked}
+                  </p>
+                </div>
+                <div className="rounded-md border bg-card p-4">
+                  <p className="text-sm font-medium text-muted-foreground">Skipped</p>
+                  <p className="mt-2 text-2xl font-semibold text-foreground">
+                    {readiness.summary.skipped}
+                  </p>
+                </div>
+              </div>
 
-                <div className="grid gap-3 xl:grid-cols-2">
-                  {category.checks.map((check) => {
-                    const result = check.action
-                      ? providerResults[check.action.provider]
-                      : null;
-                    const progress = progressLabel(check.progress);
-                    const isSaving = savingStep === check.id;
-                    return (
-                      <Card key={check.id}>
-                        <CardHeader className="space-y-3">
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="flex gap-3">
-                              <StatusIcon status={check.status} />
-                              <div>
-                                <CardTitle className="text-base">
-                                  {check.title}
-                                </CardTitle>
-                                <CardDescription>{check.description}</CardDescription>
+              {requiredBlockers.length > 0 ? (
+                <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
+                  Resolve or explicitly skip required blocked steps before marking setup complete.
+                </div>
+              ) : null}
+
+              <SetupHubCards
+                features={features}
+                permissionMatrix={permissionMatrix}
+              />
+
+              {/* The lodge-capacity card remains on the setup page and keeps the
+                  #1548 matrix gate because its backing API is lodge-area while
+                  /admin/setup itself is support-area. */}
+              {permissionMatrix.lodge !== "none" ? <LodgeCapacityCard /> : null}
+
+              <section id="setup-checks" className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-semibold text-foreground">
+                    Readiness checks
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    Work through the live checks after choosing the matching setup
+                    hub.
+                  </p>
+                </div>
+                {readiness.categories.map((category) => (
+                  <section key={category.id} className="space-y-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h2 className="text-xl font-semibold text-foreground">
+                          {category.title}
+                        </h2>
+                        <p className="text-sm text-muted-foreground">{category.description}</p>
+                      </div>
+                      <Badge variant={statusVariant(category.status)} className="w-fit capitalize">
+                        {category.status.replace("_", " ")}
+                      </Badge>
+                    </div>
+
+                    <div className="grid gap-3 xl:grid-cols-2">
+                      {category.checks.map((check) => {
+                        const result = check.action
+                          ? providerResults[check.action.provider]
+                          : null;
+                        const progress = progressLabel(check.progress);
+                        const isSaving = savingStep === check.id;
+                        return (
+                          <Card key={check.id}>
+                            <CardHeader className="space-y-3">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="flex gap-3">
+                                  <StatusIcon status={check.status} />
+                                  <div>
+                                    <CardTitle className="text-base">
+                                      {check.title}
+                                    </CardTitle>
+                                    <CardDescription>{check.description}</CardDescription>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  <Badge variant={statusVariant(check.status)} className="capitalize">
+                                    {check.status.replace("_", " ")}
+                                  </Badge>
+                                  {check.required ? (
+                                    <Badge variant="outline">Required</Badge>
+                                  ) : null}
+                                  {progress ? (
+                                    <Badge variant="secondary">{progress}</Badge>
+                                  ) : null}
+                                </div>
                               </div>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Badge variant={statusVariant(check.status)} className="capitalize">
-                                {check.status.replace("_", " ")}
-                              </Badge>
-                              {check.required ? (
-                                <Badge variant="outline">Required</Badge>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                              <p className="text-sm text-muted-foreground">{check.message}</p>
+                              {check.details.length > 0 ? (
+                                <ul className="space-y-1 text-sm text-muted-foreground">
+                                  {check.details.map((detail) => (
+                                    <li key={detail}>{detail}</li>
+                                  ))}
+                                </ul>
                               ) : null}
-                              {progress ? (
-                                <Badge variant="secondary">{progress}</Badge>
+
+                              {result ? (
+                                <div
+                                  className={`rounded-md border px-3 py-2 text-sm ${
+                                    result.ok
+                                      ? "border-success-6 bg-success-3 text-success-11"
+                                      : "border-danger-6 bg-danger-3 text-danger-11"
+                                  }`}
+                                >
+                                  {result.message}
+                                </div>
                               ) : null}
-                            </div>
-                          </div>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          <p className="text-sm text-muted-foreground">{check.message}</p>
-                          {check.details.length > 0 ? (
-                            <ul className="space-y-1 text-sm text-muted-foreground">
-                              {check.details.map((detail) => (
-                                <li key={detail}>{detail}</li>
-                              ))}
-                            </ul>
-                          ) : null}
 
-                          {result ? (
-                            <div
-                              className={`rounded-md border px-3 py-2 text-sm ${
-                                result.ok
-                                  ? "border-success-6 bg-success-3 text-success-11"
-                                  : "border-danger-6 bg-danger-3 text-danger-11"
-                              }`}
-                            >
-                              {result.message}
-                            </div>
-                          ) : null}
-
-                          <div className="flex flex-wrap gap-2">
-                            {check.href && canFollowCheckHref(permissionMatrix, check.href) ? (
-                              <Button asChild variant="outline" size="sm">
-                                <a href={check.href}>
-                                  <ExternalLink className="h-4 w-4" />
-                                  Open
-                                </a>
-                              </Button>
-                            ) : null}
-                            {check.action ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => runProviderTest(check.action!.provider)}
-                                disabled={runningProvider === check.action.provider}
-                              >
-                                {runningProvider === check.action.provider ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <PlayCircle className="h-4 w-4" />
-                                )}
-                                {check.action.label}
-                              </Button>
-                            ) : null}
-                            {check.progress !== "completed" ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => updateProgress("complete", check.id)}
-                                disabled={isSaving}
-                              >
-                                {isSaving ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <CheckCircle2 className="h-4 w-4" />
-                                )}
-                                Acknowledge
-                              </Button>
-                            ) : null}
-                            {check.progress !== "skipped" ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => updateProgress("skip", check.id)}
-                                disabled={isSaving}
-                              >
-                                <SkipForward className="h-4 w-4" />
-                                Skip
-                              </Button>
-                            ) : null}
-                            {check.progress !== "open" ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => updateProgress("reopen", check.id)}
-                                disabled={isSaving}
-                              >
-                                <RotateCcw className="h-4 w-4" />
-                                Reopen
-                              </Button>
-                            ) : null}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
+                              <div className="flex flex-wrap gap-2">
+                                {check.href && canFollowCheckHref(permissionMatrix, check.href) ? (
+                                  <Button asChild variant="outline" size="sm">
+                                    <a href={check.href}>
+                                      <ExternalLink className="h-4 w-4" />
+                                      Open
+                                    </a>
+                                  </Button>
+                                ) : null}
+                                {check.action ? (
+                                  <ViewOnlyActionButton
+                                    canEdit={canEdit}
+                                    describeReason={false}
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => runProviderTest(check.action!.provider)}
+                                    disabled={runningProvider === check.action.provider}
+                                  >
+                                    {runningProvider === check.action.provider ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <PlayCircle className="h-4 w-4" />
+                                    )}
+                                    {check.action.label}
+                                  </ViewOnlyActionButton>
+                                ) : null}
+                                {check.progress !== "completed" ? (
+                                  <ViewOnlyActionButton
+                                    canEdit={canEdit}
+                                    describeReason={false}
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => updateProgress("complete", check.id)}
+                                    disabled={isSaving}
+                                  >
+                                    {isSaving ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <CheckCircle2 className="h-4 w-4" />
+                                    )}
+                                    Acknowledge
+                                  </ViewOnlyActionButton>
+                                ) : null}
+                                {check.progress !== "skipped" ? (
+                                  <ViewOnlyActionButton
+                                    canEdit={canEdit}
+                                    describeReason={false}
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => updateProgress("skip", check.id)}
+                                    disabled={isSaving}
+                                  >
+                                    <SkipForward className="h-4 w-4" />
+                                    Skip
+                                  </ViewOnlyActionButton>
+                                ) : null}
+                                {check.progress !== "open" ? (
+                                  <ViewOnlyActionButton
+                                    canEdit={canEdit}
+                                    describeReason={false}
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => updateProgress("reopen", check.id)}
+                                    disabled={isSaving}
+                                  >
+                                    <RotateCcw className="h-4 w-4" />
+                                    Reopen
+                                  </ViewOnlyActionButton>
+                                ) : null}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ))}
               </section>
-            ))}
-          </section>
-        </>
-      ) : null}
+            </>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

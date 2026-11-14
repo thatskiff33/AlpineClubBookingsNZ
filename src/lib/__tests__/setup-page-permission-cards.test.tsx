@@ -18,6 +18,11 @@ vi.mock("@/components/admin/finance-report-mappings-panel", () => ({
   FinanceReportMappingsPanel: () => <div data-testid="finance-panel" />,
 }));
 
+vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
+  useAdminAreaEditAccess: () => false,
+}));
+
 import { SetupPageClient } from "@/app/(admin)/admin/setup/setup-page-client";
 
 const setupBody = {
