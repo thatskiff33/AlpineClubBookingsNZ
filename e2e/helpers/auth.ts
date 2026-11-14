@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import * as OTPAuth from "otpauth";
+import { adminHref, adminUrlPattern } from "./admin-url";
 import { DEMO_PASSWORD, type Persona } from "./personas";
 
 // Matches the app's TOTP parameters (src/lib/two-factor.ts): SHA1, 6 digits,
@@ -253,5 +254,5 @@ export async function signIn(page: Page, persona: Persona): Promise<void> {
   // two-factor-login.spec.ts.) This helper's only caller (auth.setup.ts) just
   // needs a completed sign-in, so asserting her deterministic landing keeps it
   // a real gate.
-  await expect(page).toHaveURL(/\/admin\/dashboard/);
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("dashboard")));
 }

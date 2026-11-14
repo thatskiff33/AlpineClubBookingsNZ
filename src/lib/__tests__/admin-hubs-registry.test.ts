@@ -2245,6 +2245,12 @@ describe("the registry is inert", () => {
     "src/lib/unpaid-finished-stays-hrefs.ts": "C10: the unpaid-stays links are adminHref",
     "src/lib/__tests__/booking-requests-stub-redirect.test.ts":
       "C10: pins each stub's target and buildBookingRequestsHref in both switch states",
+    "e2e/helpers/admin-url.ts":
+      "C17: the browser suite's one source of admin URLs re-exports adminHref and adminTabHref",
+    "e2e/admin-hubs.spec.ts":
+      "C17: the on-state hub specs are generated from ADMIN_PAGES, ADMIN_RETIRED_PAGES and ADMIN_HUBS_LIVE",
+    "src/lib/__tests__/admin-url-census.test.ts":
+      "C17: pins adminUrlPattern against the registry in both switch states",
   };
   const SOURCE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
   const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["'][^"']*admin-hubs(?:\/[^"']*)?["']/m;

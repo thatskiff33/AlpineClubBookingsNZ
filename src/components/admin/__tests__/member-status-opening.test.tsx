@@ -46,9 +46,11 @@ describe("finance-only E2E boundary", () => {
     expect(financeOnlyBlock).toBeDefined();
     expect(financeOnlyBlock).toContain("ROLE_PERSONAS.FINANCE_USER.email");
     expect(financeOnlyBlock).not.toContain("ROLE_PERSONAS.FINANCE_ADMIN.email");
-    expect(financeOnlyBlock).toContain('page.goto("/admin/subscriptions")');
+    // The spec asks the hub registry where Subscriptions and the member detail
+    // pages live (C17, #4814), so it holds before and after `ADMIN_HUBS_LIVE`.
+    expect(financeOnlyBlock).toContain('page.goto(adminHref("subscriptions"))');
     expect(financeOnlyBlock).toContain('name: "Subscriptions"');
-    expect(financeOnlyBlock).toContain('a[href^="/admin/members/"]');
+    expect(financeOnlyBlock).toContain('a[href^="${adminHref("members")}/"]');
     expect(financeOnlyBlock).toContain('name: "Incremental Sync"');
     expect(financeOnlyBlock).toContain('name: "Repair Stale Linked Members"');
     expect(financeOnlyBlock?.match(/toBeDisabled\(\)/g)).toHaveLength(2);
