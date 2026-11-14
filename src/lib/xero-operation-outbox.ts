@@ -1,4 +1,4 @@
-import { bookingHasExternalSettlement } from "@/lib/booking-external-settlement";
+import { bookingHasExternalSettlement, externalSettlementCause } from "@/lib/booking-external-settlement";
 import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL, resolveOrganiserBilling } from "@/lib/organiser-billing";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { organiserExtraWaivedBeforeRaised } from "@/lib/organiser-extra-state";
@@ -561,10 +561,7 @@ export async function enqueueXeroBookingInvoiceOperation(
     );
     return {
       queueOperationId: null,
-      message:
-        booking.payment.manuallyMarkedPaidAt === null
-          ? "Booking was imported as settled outside the app — no Xero invoice is expected."
-          : "Booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected.",
+      message: `Booking was ${externalSettlementCause(booking.payment)} — no Xero invoice is expected.`,
     };
   }
 

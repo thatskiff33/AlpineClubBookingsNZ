@@ -6,7 +6,7 @@
 // behavior-preserving-move rule; that one-off extraction constraint no
 // longer binds — the body has since gained behavior deliberately (#1356
 // supplementary-invoice arms, #1427 evidence-first credit-note sizing).
-import { bookingHasExternalSettlement } from "@/lib/booking-external-settlement";
+import { bookingHasExternalSettlement, externalSettlementCause } from "@/lib/booking-external-settlement";
 import { isResolvedInXero } from "@/lib/xero-operation-resolution";
 import { isClearingAllocationShortfall } from "@/lib/xero-clearing-allocations";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
@@ -260,10 +260,7 @@ export function classifyBookingContext(
       addFinding(findings, {
         code: "MANUALLY_SETTLED_NO_XERO_EXPECTED",
         severity: "info",
-        // #5005: an imported free stay shares this arm; it has no manual stamp.
-        summary: payment.manuallyMarkedPaidAt
-          ? "The booking was manually marked paid (cash / off-Xero) — no Xero invoice is expected."
-          : "The booking was imported as settled outside the app — no Xero invoice is expected.",
+        summary: `The booking was ${externalSettlementCause(payment)} — no Xero invoice is expected.`,
         safeToAutoApply: false,
         details: {
           paymentId: payment.id,

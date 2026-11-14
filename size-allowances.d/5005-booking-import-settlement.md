@@ -7,5 +7,5 @@ lines: 1688
 reason: The shared external-settlement predicate extends the existing invoice fence to imported free stays; moving this guard away from its handler would reopen the provider call.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 3478
+lines: 3475
 reason: The import-row selection and refusal extend the existing invoice choke point; moving that guard outside the queue would leave other enqueuers uncovered.
