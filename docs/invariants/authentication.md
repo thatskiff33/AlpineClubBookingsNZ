@@ -84,8 +84,9 @@ This file holds only the rules.
   budget** (#4640). Change-password uses the authenticated member's stored
   email after session validation; a refused claim answers HTTP 429 with
   `LOGIN_THROTTLED` without comparing the password. Emailed sign-in links, Google, two-factor code
-  entry and lodge PIN sign-in are unaffected, and the per-address limiter is
-  unchanged.
+  entry and lodge PIN sign-in are unaffected by this per-account count.
+  Emailed sign-in links and Google share the Auth.js address limit
+  (`INV-AUTH-011`); two-factor code entry and lodge PIN sign-in have their own.
 - **A store failure never becomes a sign-in outage.** The claim falls back to a
   bounded per-process count at the budget divided as the auth-sensitive
   limiters divide theirs (#1142).
@@ -240,3 +241,21 @@ This file holds only the rules.
   #4620 sets it true. While it is false the check does not read the session.
   While it is true a missing stamp fails closed. Refreshing a Xero token
   (`saveXeroTokens`) is not a listed operation. Typed confirmations stay.
+
+## INV-AUTH-011
+
+- **The Auth.js per-address sign-in limiter exempts only exact `signout` and
+  `session` POST actions.** Neither action consumes its counter or is refused
+  by it. Match the full parsed path after `/api/auth/`, never a query, header or
+  body field. Credential callbacks, magic-link callbacks, provider sign-in
+  starts and unknown POST actions count by default. GETs remain uncounted.
+- **The budget is `rateLimiters.login` in `rate-limit.ts`: 30 per 15 minutes.**
+  Keep counter id `login`, the shared store and its reduced per-process
+  fallback. The per-account password throttle remains a separate control.
+- **A refusal is a wait, never a bad-password or invalid-link claim.** Return
+  HTTP 429 with the standard retry/rate-limit headers and a next-auth-readable
+  `url`, carrying `ADDRESS_THROTTLED` as both error and code. The code and
+  message live in `login-throttle-policy.ts` (`INV-SSOT`), distinct from
+  `LOGIN_THROTTLED`. The message is identical for every account. A refused
+  magic-link attempt never reaches token consumption and offers a deliberate
+  retry with the token retained only in memory after URL scrubbing.

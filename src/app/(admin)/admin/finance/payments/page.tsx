@@ -1207,7 +1207,7 @@ export default function PaymentsPage() {
                   <TableCell className="font-medium">
                     {owner.id ? (
                       <Link
-                        href={buildHrefWithReturnTo(`/admin/members/${owner.id}`, currentPaymentsPath)}
+                        href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: owner.id })}`, currentPaymentsPath)}
                         className="rounded-sm text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         {owner.lastName}, {owner.firstName}

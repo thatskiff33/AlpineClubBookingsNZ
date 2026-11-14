@@ -50,6 +50,7 @@ vi.mock("@/lib/payment-transactions", () => ({
 import {
   REOPEN_ALREADY_OPEN_MESSAGE,
   REOPEN_EDIT_REFUND_EXCEEDS_CASH_MESSAGE,
+  REOPEN_EDIT_REVIEW_RETIRED_MESSAGE,
   REOPEN_NOTE_REQUIRED_MESSAGE,
   REOPEN_ONLY_DISMISSED_MESSAGE,
   REOPEN_ONLY_OFFICER_DISMISSAL_MESSAGE,
@@ -95,7 +96,7 @@ const tx = {
 const DISMISSED_BY_OFFICER = {
   id: "task-1",
   bookingId: "booking-1",
-  kind: "EDIT_FINANCIAL_REVIEW",
+  kind: "CANCELLED_BOOKING_HAND_BACK",
   status: ManualRefundTaskStatus.DISMISSED,
   amountCents: null,
   raisedAmountCents: null,
@@ -266,6 +267,27 @@ describe("reopening a dismissed money task (#3498 D2)", () => {
 
     await expect(reopen()).rejects.toMatchObject({ status: 404 });
     expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: refuses a dismissed edit review, officer-closed or machine-closed, and writes nothing", async () => {
+    // #4343. Delete the EDIT_FINANCIAL_REVIEW check in reopenManualRefundTask
+    // and this reopen succeeds.
+    for (const completedByMemberId of ["officer-9", null]) {
+      mocks.updateMany.mockClear();
+      mocks.createAuditLog.mockClear();
+      mocks.findUnique.mockResolvedValue({
+        ...DISMISSED_BY_OFFICER,
+        kind: "EDIT_FINANCIAL_REVIEW",
+        completedByMemberId,
+      });
+
+      await expect(reopen()).rejects.toMatchObject({
+        message: REOPEN_EDIT_REVIEW_RETIRED_MESSAGE,
+        status: 409,
+      });
+    }
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
   });
 });
 
@@ -444,7 +466,7 @@ describe("reopening a dismissed refund APPEAL hand-back (#3827, D-3813-7, INV-PA
   it("CONTROL: an edit's hand-back takes no Payment row (its cap reads no card refund debt)", async () => {
     mocks.findUnique.mockResolvedValue({
       ...dismissedAppeal({ amountCents: 20000, refundedAmountCents: 10000 }),
-      kind: "EDIT_FINANCIAL_REVIEW",
+      kind: "CANCELLED_BOOKING_HAND_BACK",
       occurrenceKey: "edit-refund-hand-back:mod-1",
       booking: { memberId: "member-1", status: "CONFIRMED", organisation: null },
     });

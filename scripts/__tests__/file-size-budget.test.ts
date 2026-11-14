@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { run } from "../ci/check-file-size-budget";
 import { evaluateComputedRatchet } from "../lib/file-size-base";
 import { ALLOWANCE_DIR } from "../lib/file-size-allowances";
+import { FUNCTION_LENGTH_LIMIT } from "../lib/function-length-ratchet";
 
 import {
   PRODUCTION_LIMIT,
@@ -286,7 +287,7 @@ describe("budget classification", () => {
       limit: ROUTE_HANDLER_LIMIT,
     });
     expect(
-      budgetForFile("src/app/(admin)/admin/members/page.tsx"),
+      budgetForFile("src/app/(admin)/admin/membership/members/page.tsx"),
     ).toMatchObject({
       slug: "route-page-shell",
       limit: ROUTE_PAGE_LIMIT,
@@ -297,7 +298,7 @@ describe("budget classification", () => {
     });
     // A co-located client component under app/ is a domain module, not a shell.
     expect(
-      budgetForFile("src/app/(admin)/admin/members/members-client.tsx"),
+      budgetForFile("src/app/(admin)/admin/membership/members/members-client.tsx"),
     ).toMatchObject({
       slug: "domain-module",
       limit: PRODUCTION_LIMIT,
@@ -387,6 +388,26 @@ describe("summariseSizeDebt", () => {
 });
 
 describe("the gate, end to end, against real commits", () => {
+  it("judges function length in the same run, failing a function that grew past the limit (#4927)", () => {
+    // The function-length ratchet is a phase of this command, not a command of
+    // its own, so the CI step and the epic-sync census run it unwired. A file
+    // well inside its budget proves the failure is the function phase's.
+    const repo = newRepo();
+    const door = (lines: number) =>
+      ["export function cancel(n: number) {", ...Array(lines - 2).fill("  n += 1;"), "}", ""].join("\n");
+    mkdirSync(path.join(repo.root, "src/lib"), { recursive: true });
+    writeFileSync(path.join(repo.root, "src/lib/door.ts"), door(FUNCTION_LENGTH_LIMIT), "utf8");
+    const base = repo.commit("base");
+    writeFileSync(path.join(repo.root, "src/lib/door.ts"), door(FUNCTION_LENGTH_LIMIT + 1), "utf8");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("File-size budget ratchet: OK");
+    expect(result.stderr).toContain("Function-length ratchet: FAILED");
+    expect(result.stderr).toContain("src/lib/door.ts#cancel");
+    expect(result.stderr).toContain("the function grew past the limit");
+  });
+
   it("passes on a clean checkout of the base ref", () => {
     // #2979 acceptance criterion 2, in its most important form: a tree with 283
     // over-budget files and nothing changed since the base must be GREEN,

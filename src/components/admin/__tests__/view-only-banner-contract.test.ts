@@ -424,8 +424,8 @@ const FIGURES = {
    * 377 -> 378 (#4162): the stuck-states page's "Record the answer" on a voided
    * bank refund note. MEASURED by re-running this census.
    */
-  // 12 Nov 2026, #4971: 388 -> 393. Setup gates its five support write controls. MEASURED by running this census.
-  callSites: 393, // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
+  // 12 Nov 2026, #4971: 390 -> 395 after merging main (#4918). Setup gates its five support write controls. MEASURED by running this census.
+  callSites: 395, // 388 -> 390 (#4918): Where members' data is held adds Edit and Save under its own banner. MEASURED. // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -482,8 +482,8 @@ const FIGURES = {
    */
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
   // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
-  // 12 Nov 2026, #4971: 333 -> 338. The five Setup controls use their support section banner. MEASURED by running this census.
-  optOuts: 338, // 331 -> 333 (#4368): the same two, static opt-outs. MEASURED. // #4457 adds two section-banner opt-outs. 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
+  // 12 Nov 2026, #4971: 335 -> 340 after merging main (#4918). The five Setup controls use their support section banner. MEASURED by running this census.
+  optOuts: 340, // 333 -> 335 (#4918): the same two, static opt-outs. MEASURED. // 331 -> 333 (#4368): the same two, static opt-outs. MEASURED. // #4457 adds two section-banner opt-outs. 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -574,8 +574,8 @@ const FIGURES = {
    * 286 -> 287 (#4162): "Record the answer" sits beside the voided bank refund
    * notes panel's own banner. MEASURED by re-running this census.
    */
-  // 12 Nov 2026, #4971: 295 -> 300. The Setup controls and support banner share one file. MEASURED by running this census.
-  staticOptOuts: 300, // 293 -> 295 (#4368): the dead card refund panel's "Try the card again" and "Nothing left owed", under its own banner. MEASURED. // 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. MEASURED. // #4457 adds two local-banner opt-outs. 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
+  // 12 Nov 2026, #4971: 297 -> 302 after merging main (#4918). The Setup controls and support banner share one file. MEASURED by running this census.
+  staticOptOuts: 302, // 295 -> 297 (#4918): Where members' data is held's Edit and Save, under its own banner. MEASURED. // 293 -> 295 (#4368): the dead card refund panel's "Try the card again" and "Nothing left owed", under its own banner. MEASURED. // 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. MEASURED. // #4457 adds two local-banner opt-outs. 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -670,8 +670,8 @@ const FIGURES = {
    * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,
    * finance-gated inside a support page for the same reason.
    */
-  // 12 Nov 2026, #4971: 105 -> 106. Setup adds its support section banner; the lodge card keeps its own. MEASURED by running this census.
-  bannerComponents: 106, // 104 -> 105 (#4368): "Card refunds paid back twice" moved out of the dead card refund panel into its own file, banner and all. MEASURED. // #4457 adds the retention banner alongside #4555’s Xero banners. 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
+  // 12 Nov 2026, #4971: 106 -> 107 after merging main (#4918). Setup adds its support section banner; the lodge card keeps its own. MEASURED by running this census.
+  bannerComponents: 107, // 105 -> 106 (#4918): the privacy hosting panel renders its own banner. MEASURED. // 104 -> 105 (#4368): "Card refunds paid back twice" moved out of the dead card refund panel into its own file, banner and all. MEASURED. // #4457 adds the retention banner alongside #4555’s Xero banners. 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
@@ -1622,7 +1622,7 @@ describe("view-only section banner coverage (#2160)", () => {
                commit rather than left as a hole in the chain: #2597 ADDED a
                control — the "Resume approval" button, which finishes a deletion
                approval that started and did not finish, in
-               `app/(admin)/admin/deletion-requests/deletion-requests-client.tsx`.
+               `app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx`.
                It is a `describeReason={false}` static opt-out in the same file
                as that page's own unconditional banner, so callSites
                310 -> 311, optOuts 261 -> 262 and staticOptOuts 234 -> 235,
@@ -1852,15 +1852,15 @@ describe("view-only section banner coverage (#2160)", () => {
       "member-parent-links-card",
       "member-partner-link-card",
       "member-seasonal-membership-card",
-    ].map((name) => `app/(admin)/admin/members/[id]/_components/${name}.tsx`);
+    ].map((name) => `app/(admin)/admin/membership/members/[id]/_components/${name}.tsx`);
 
     // Controls inside a dialog, sheet, popover, or dropdown menu — a separate
     // accessibility container that a banner in the page body does not reach.
     const SEPARATE_A11Y_CONTAINER = [
-      "app/(admin)/admin/bookings/page.tsx",
+      "app/(admin)/admin/booking-desk/bookings/page.tsx",
       "app/(admin)/admin/system/issue-reports/page.tsx",
-      "app/(admin)/admin/member-applications/_components/approval-mapping-panel.tsx",
-      "app/(admin)/admin/membership-types/page.tsx",
+      "app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel.tsx",
+      "app/(admin)/admin/membership/membership-types/page.tsx",
       "components/admin/bed-allocation-move-dialog.tsx",
     ];
 

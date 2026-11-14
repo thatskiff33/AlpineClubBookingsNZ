@@ -389,9 +389,9 @@ async function runWizard() {
 
     const missingEnv = getSetupRequiredEnvNames().filter((name) => {
       if (name === "AUTH_SECRET or NEXTAUTH_SECRET") {
-        return !process.env.AUTH_SECRET && !process.env.NEXTAUTH_SECRET;
+        return !process.env.AUTH_SECRET?.trim() && !process.env.NEXTAUTH_SECRET?.trim();
       }
-      return !process.env[name];
+      return !process.env[name]?.trim();
     });
     if (missingEnv.length > 0) {
       console.log("\nStill missing or unset:");
