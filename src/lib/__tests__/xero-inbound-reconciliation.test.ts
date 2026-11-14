@@ -211,7 +211,9 @@ vi.mock("@/lib/prisma", () => ({
           roles.includes("MODIFICATION_CREDIT_NOTE_ALLOCATION") &&
           roles.includes("CREDIT_NOTE_ALLOCATION") &&
           where.metadata != null;
-        if (snapshotRead || unlistedAllocationRead) return Promise.resolve([]);
+        // #4370: the recount's bulk read of each payment's card refund reversals.
+        const reversalRead = where.role === "CARD_REFUND_REVERSAL_INVOICE" && typeof where.localId === "object";
+        if (snapshotRead || unlistedAllocationRead || reversalRead) return Promise.resolve([]);
         return mocks.linkFindMany(args);
       },
       // #3642: the group-settlement arm looks up an abandoned invoice's link.
@@ -255,6 +257,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     // #4215: the refunded-total recount reads refund requests paid back; none here.
     manualRefundTask: {
+      findMany: () => Promise.resolve([]),
+    },
+    // #4370: the recount reads card refunds Stripe failed later; none here.
+    paymentRecoveryOperation: {
       findMany: () => Promise.resolve([]),
     },
     $transaction: mocks.transaction,
