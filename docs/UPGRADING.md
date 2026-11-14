@@ -165,6 +165,53 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Starter privacy policy lists its recipients and names your host (#5007)
+
+**Deploy the release containing #4918 first.** That release adds the
+`{{data-hosting}}` token and the **Where members' data is held** setting this
+change relies on. An app that does not know the token shows it as raw braces.
+
+`20261222030000_rewrite_starter_privacy_recipients` is a **data-only
+correction**. It adds and removes no schema and is safe to run in the ordinary
+deploy window with the previous app colour still serving, because that colour
+already knows the token.
+
+**What changes.** The migration rewrites the privacy page's body only where it
+still holds, byte for byte, the starter text that #4914 wrote or the earlier
+text from #4031. On such a page:
+
+- section 5 lists every outside service in the
+  [recipient register](PRIVACY_RECIPIENTS.md) that can receive members'
+  information, links each to its privacy notice, and marks the optional ones
+  "Only if the club turns it on";
+- section 5 names your host and data location through `{{data-hosting}}`, and
+  says the System does not fix the country your data is held in;
+- section 6 refers to the hosting provider named in section 5, its backup line
+  moves to section 5's list, and its admin note is removed;
+- the header's "Last updated" date moves to 15 November 2026, unless the header
+  was edited, in which case it is kept.
+
+**An edited privacy page keeps every byte**, including its header. Check its
+sections 5 and 6 against the recipient register and your hosting yourself.
+
+**Post-upgrade action: fill in Where members' data is held, then read
+`/privacy`.** The setting is on **Admin → Setup & Configuration → Site
+Appearance & Content → Club Identity**. Until it is filled in, section 5 tells
+members to ask your Privacy Officer which company hosts the System and where
+their information is held. Then remove from section 5 any optional service your
+club does not use, or leave the "Only if the club turns it on" marking.
+
+The migration runs once. Two things can write the old text back afterwards:
+
+- an admin who had **Privacy** open in the Page Content editor *before* the
+  upgrade and presses Save *afterwards*;
+- importing a configuration bundle exported before this release. The import
+  now skips a privacy body that exactly matches either replaced starter text
+  and warns in the preview (#2511), but an older starter body still imports.
+
+Re-export your configuration bundle after upgrading, and re-check `/privacy`
+after any bundle import.
+
 ### Privacy-incident guide and hosting disclosure settings (#4918)
 
 This release adds the [privacy-incident guide](guides/privacy-incidents.md), the
@@ -176,9 +223,10 @@ page-body token publishes these values, with fallback wording for blanks.
 
 **This change does not alter your published privacy policy or the starter
 privacy text.** The separate starter-policy correction (#4914) has
-[its own note](#correct-the-starter-privacy-policy-4914). A later release will
-update unedited starter policies to use the token, only after a published
-release contains #4918. Continue upgrading one release at a time.
+[its own note](#correct-the-starter-privacy-policy-4914). The next release
+updates unedited starter policies to use the token
+([its note](#starter-privacy-policy-lists-its-recipients-and-names-your-host-5007)).
+Continue upgrading one release at a time.
 
 Rollback is code-only; the additive settings table can stay. If you manually
 insert `{{data-hosting}}` into a page and then roll back to an earlier release
