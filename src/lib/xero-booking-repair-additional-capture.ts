@@ -50,15 +50,31 @@ import { addAction, addFinding, buildManualReviewAction, buildRetryAction } from
 import { getBlockingOperation } from "./xero-booking-repair-object-resolution";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 
-/** Worker and repair both match links to each planned invoice, including on cancelled bookings. */
-function incompleteReceiptSummary(
+/** Rows no worker will pick up again: whatever legs they left unlinked stay unsent. */
+const SETTLED_RECEIPT_STATUSES: ReadonlySet<string> = new Set(["SUCCEEDED", "CANCELLED"]);
+
+/**
+ * A part-sent split receipt: a stored plan with at least one leg linked and at
+ * least one not. Worker and repair both match links to each planned invoice,
+ * including on cancelled bookings. A plan with no leg linked is not part-sent:
+ * the unrecorded, retry and refused paths already name that capture once.
+ * `settled` says no worker will send the rest (the row completed or was
+ * withdrawn, for example an old release completing it on one link), so only an
+ * officer can; otherwise the row is queued, running or failed, and the
+ * ordinary retry and refused paths apply, the worker resending only unlinked legs.
+ */
+function partSentReceipt(
   operations: readonly XeroOperationRecord[],
   links: readonly { metadata: unknown }[],
-): string | undefined {
-  return operations.map((operation) => {
+): { summary: string; settled: boolean } | undefined {
+  for (const operation of operations) {
     const plan = readAdditionalCaptureReceiptPayload(operation.requestPayload)?.plan;
-    return plan ? splitReceiptLegsSummary(plan, linkedReceiptLegCount(plan.legs, links)) : null;
-  }).find((summary): summary is string => summary != null);
+    if (!plan) continue;
+    const linkedCount = linkedReceiptLegCount(plan.legs, links);
+    const summary = linkedCount > 0 ? splitReceiptLegsSummary(plan, linkedCount) : null;
+    if (summary) return { summary, settled: SETTLED_RECEIPT_STATUSES.has(operation.status) };
+  }
+  return undefined;
 }
 
 /** What the repair pass knows about one booking's change captures in Xero. */
@@ -225,19 +241,22 @@ export function addUnrecordedAdditionalCaptureFindings({
     const details = { paymentId, paymentIntentId, paymentTransactionId: capture.id, capturedCents: capture.amountCents };
     const links = evidence.linksByTransactionId.get(capture.id) ?? [];
     const operations = evidence.operationsByTransactionId.get(capture.id) ?? [];
-    const split = incompleteReceiptSummary(operations, links);
-    if (split) {
-      const action = addAction(actionMap, buildManualReviewAction(booking.id, split));
+    const partSent = partSentReceipt(operations, links);
+    if (partSent?.settled) {
+      const action = addAction(actionMap, buildManualReviewAction(booking.id, partSent.summary));
       addFinding(findings, {
         code: "ADDITIONAL_CAPTURE_NOT_RECORDED_IN_XERO",
         severity: "manual_review",
-        summary: split,
+        summary: partSent.summary,
         safeToAutoApply: false,
         details,
         actionKeys: [action.key],
       });
+      continue;
     }
-    if (evidence.recordedTransactionIds.has(capture.id)) continue;
+    // A part-sent row still in the worker's hands is not recorded yet: it
+    // takes the retry or refused path below rather than this skip.
+    if (!partSent && evidence.recordedTransactionIds.has(capture.id)) continue;
     if (operations.length > 0) {
       const blocking = getBlockingOperation(operations, "PAYMENT", "CREATE", {
         payloadQueueType: XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE,
@@ -495,9 +514,9 @@ export function addKeptChangeCaptureFinding({
   };
   // Its receipt, whichever route the evidence reads now, is its record; and
   // (review M-F1) another writer's, the #4253 sweep's included, is too.
-  const split = found && incompleteReceiptSummary(found.receiptOperations, found.receiptLinks);
-  if (split) return manualReview(split);
-  if (found?.receiptLinked || found?.recordedElsewhere) return;
+  const partSent = found && partSentReceipt(found.receiptOperations, found.receiptLinks);
+  if (partSent?.settled) return manualReview(partSent.summary);
+  if ((!partSent && found?.receiptLinked) || found?.recordedElsewhere) return;
   // Review D-F3: the booking counts as invoiced by its active link, but the
   // payment lacks the invoice's id, so nothing more can be read until it is synced.
   if (!found?.primaryInvoiceIdSynced) return payment.xeroInvoiceId ? undefined : manualReview(PRIMARY_INVOICE_ID_NOT_SYNCED_SUMMARY);

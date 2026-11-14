@@ -10,7 +10,7 @@ import { LIVE_KEPT_LATE_CAPTURE_INVOICE_WHERE } from "@/lib/late-capture-kept-xe
 import { prisma } from "@/lib/prisma";
 import { asRecord } from "@/lib/xero-json";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
-import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
+import { readAdditionalCaptureReceiptPayload, XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { SUPPLEMENTARY_INVOICE_PAYMENT_ROLE } from "@/lib/xero-inbound/object-links";
@@ -75,10 +75,8 @@ export async function findAdditionalCaptureReceiptInvoiceId(
     orderBy: { createdAt: "desc" },
     select: { requestPayload: true },
   });
-  const plan = asRecord(asRecord(pending?.requestPayload)?.plan);
-  const firstLeg = asRecord(Array.isArray(plan?.legs) ? plan.legs[0] : null)?.invoiceId;
-  const planned = typeof firstLeg === "string" && firstLeg.length > 0 ? firstLeg : plan?.invoiceId;
-  return typeof planned === "string" && planned.length > 0 ? planned : null;
+  // The one plan reader (`INV-SSOT`): its top-level invoice is leg 0 by construction.
+  return readAdditionalCaptureReceiptPayload(pending?.requestPayload)?.plan?.invoiceId ?? null;
 }
 
 /** The reason an officer's review charge carries, less its change: `buildEditFinancialReviewChargeReason`'s one spelling. */

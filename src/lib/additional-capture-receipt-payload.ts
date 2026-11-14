@@ -25,7 +25,10 @@ export interface AdditionalCaptureReceiptLeg {
  * and Xero keys - and never decides again. The top-level fields copy the first
  * leg, so a previous release that does not know about `legs` still sends that
  * leg and only that leg. A row stored before legs existed has no `legs` field:
- * it is one leg, the top-level fields.
+ * it is one leg, the top-level fields. In the deploy window an older release
+ * that picks up a retry finds leg 0's link and completes the row without the
+ * later legs or an alert; the repair dry run names such a finished row with
+ * unlinked legs for an officer (`xero-booking-repair-additional-capture`).
  */
 export interface AdditionalCaptureReceiptPlan {
   target: AdditionalCaptureReceiptTarget;

@@ -6446,7 +6446,7 @@ describe("runBookingXeroRepair", () => {
             route: "kept-invoice",
             receiptOperations: [],
             receiptLinked: false,
-          receiptLinks: [],
+            receiptLinks: [],
             recordedElsewhere: false,
             alreadyRecordedCents: 0,
             primaryInvoiceIdSynced: true,

@@ -16,18 +16,6 @@ export type ReceiptCandidate = {
 };
 
 /**
- * THE ONE-INVOICE DECISION, pure: the first candidate with room, in the order
- * given, and the capture's cents capped at that room. Null when none has any.
- */
-export function chooseAdditionalCaptureReceiptTarget(
-  capturedCents: number,
-  candidates: readonly ReceiptCandidate[],
-): { target: AdditionalCaptureReceiptTarget; invoiceId: string; amountCents: number } | null {
-  const [leg] = fillAdditionalCaptureReceiptLegs(capturedCents, candidates);
-  return leg ?? null;
-}
-
-/**
  * The capture across the candidates, in order, each capped at its own room.
  * An invoice with no room is skipped. Nothing is recorded past a room, and the
  * same invoice is never a second leg.

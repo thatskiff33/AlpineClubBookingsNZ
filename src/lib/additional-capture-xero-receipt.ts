@@ -114,7 +114,6 @@ export function additionalCapturePaymentKey(paymentIntentId: string, invoiceId: 
   return buildXeroIdempotencyKey("payment-intent", paymentIntentId, "additional-capture-payment", invoiceId, "v1");
 }
 
-export { chooseAdditionalCaptureReceiptTarget } from "@/lib/additional-capture-receipt-legs";
 
 /** The reference the payment is recorded under, as every Stripe payment the app records is. */
 export function additionalCapturePaymentReference(paymentIntentId: string): string {
@@ -573,8 +572,11 @@ export async function recordAdditionalCaptureReceipt(
     });
     if (stored === "change-unknown" || stored === "naming-unreadable") return refuse(stored);
     if (stored === "not-kept") return null;
-    if (stored === "target-moved" || stored === "lost-claim") {
+    if (stored === "target-moved") {
       throw waitFor("The invoice this card payment belongs to changed while it was being decided; it is decided again on the next run");
+    }
+    if (stored === "lost-claim") {
+      throw waitFor("This run no longer holds the receipt's claim; nothing was stored or sent");
     }
     if (stored !== "stored") return standDown("SUCCEEDED", `recorded-by-${stored}`, { decidedAgainUnderLock: true });
     return plan;

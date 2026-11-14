@@ -100,7 +100,6 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 
 import {
   ADDITIONAL_CAPTURE_RECEIPT_REFUSED_CODE,
-  chooseAdditionalCaptureReceiptTarget,
   recordAdditionalCaptureReceipt,
   type AdditionalCaptureReceiptProviders,
 } from "@/lib/additional-capture-xero-receipt";
@@ -302,19 +301,19 @@ const expectWait = async (seam = providers()) => {
   expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
 };
 
-describe("chooseAdditionalCaptureReceiptTarget", () => {
-  it("takes the first candidate with room, capped at the room", () => {
+describe("fillAdditionalCaptureReceiptLegs", () => {
+  it("skips a candidate with no room and caps the next at its room", () => {
     expect(
-      chooseAdditionalCaptureReceiptTarget(8000, [
+      fillAdditionalCaptureReceiptLegs(8000, [
         { target: "GAP_INVOICE", invoiceId: GAP, roomCents: 0 },
         { target: "PRIMARY_INVOICE", invoiceId: PRIMARY, roomCents: 5000 },
       ]),
-    ).toEqual({ target: "PRIMARY_INVOICE", invoiceId: PRIMARY, amountCents: 5000 });
+    ).toEqual([{ target: "PRIMARY_INVOICE", invoiceId: PRIMARY, amountCents: 5000 }]);
   });
 
   it("chooses nothing where no invoice has room or nothing was captured", () => {
-    expect(chooseAdditionalCaptureReceiptTarget(8000, [{ target: "PRIMARY_INVOICE", invoiceId: PRIMARY, roomCents: 0 }])).toBeNull();
-    expect(chooseAdditionalCaptureReceiptTarget(0, [{ target: "PRIMARY_INVOICE", invoiceId: PRIMARY, roomCents: 100 }])).toBeNull();
+    expect(fillAdditionalCaptureReceiptLegs(8000, [{ target: "PRIMARY_INVOICE", invoiceId: PRIMARY, roomCents: 0 }])).toEqual([]);
+    expect(fillAdditionalCaptureReceiptLegs(0, [{ target: "PRIMARY_INVOICE", invoiceId: PRIMARY, roomCents: 100 }])).toEqual([]);
   });
 
   it("fills each invoice only up to its room, and never the same invoice twice", () => {
