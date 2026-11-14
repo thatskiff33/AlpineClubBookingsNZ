@@ -35,7 +35,7 @@ reason: the profile page passes the officer requirement and the grace deadline
   and props that only this server component can supply.
 
 file: src/app/(admin)/admin/membership/members/[id]/page.tsx
-lines: 1362
+lines: 1363
 reason: the reset button is rendered inline beside the member's other account
   actions, gated on the switch, Full Admin, not self and not the kiosk; the
   button itself is a separate component and only the gate and import remain.

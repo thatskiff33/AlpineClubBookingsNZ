@@ -2,8 +2,9 @@
  * Real-PostgreSQL proofs for the officer two-factor rule (#4618).
  *
  * The grace stamp is one set-if-null `UPDATE … NOW()`: two concurrent
- * refreshes store one stamp and both read it back. A recorded reset stops any
- * later stamp. A reset racing an enrolment from a session issued before it
+ * refreshes store one stamp and both read it back. A reset of a required
+ * officer closes their grace with the reset's own NOW(); a member reset before
+ * the rule reached them is still stamped on first exposure. A reset racing an enrolment from a session issued before it
  * leaves no factor: either the enrolment commits first and the reset clears
  * it, or the reset commits first and the enrolment is refused under the same
  * member row lock. No advisory lock (`INV-LOCK-001`).
@@ -30,6 +31,7 @@ const savedAuthSecret: { saved: boolean; value: string | undefined } = {
 
 let prisma: PrismaClient;
 let officer: typeof import("@/lib/officer-two-factor");
+let officerGrace: typeof import("@/lib/officer-two-factor-grace");
 let reset: typeof import("@/lib/officer-factor-reset");
 let twoFactor: typeof import("@/lib/two-factor");
 
@@ -52,6 +54,7 @@ let twoFactor: typeof import("@/lib/two-factor");
       prisma = new SeparatePrismaClient({ adapter: createPrismaPgAdapter(url.toString()) });
       await prisma.$connect();
       officer = await import("@/lib/officer-two-factor");
+      officerGrace = await import("@/lib/officer-two-factor-grace");
       reset = await import("@/lib/officer-factor-reset");
       twoFactor = await import("@/lib/two-factor");
 
@@ -64,6 +67,8 @@ let twoFactor: typeof import("@/lib/two-factor");
             firstName: "Race",
             lastName: "Officer",
             passwordHash: "not-a-real-password",
+            // The officer rule only covers someone who can sign in.
+            canLogin: true,
           },
           {
             id: ADMIN,
@@ -77,6 +82,7 @@ let twoFactor: typeof import("@/lib/two-factor");
     }, 60_000);
 
     beforeEach(async () => {
+      await prisma.memberAccessRole.deleteMany({ where: { memberId: MEMBER } });
       await prisma.webAuthnCredential.deleteMany({ where: { memberId: MEMBER } });
       await prisma.twoFactorRecoveryCode.deleteMany({ where: { memberId: MEMBER } });
       await prisma.member.update({
@@ -121,14 +127,48 @@ let twoFactor: typeof import("@/lib/two-factor");
       expect(again.graceStartedAt?.getTime()).toBe(first.graceStartedAt?.getTime());
     });
 
-    it("starts no grace after a reset", async () => {
+    it("closes a required officer's grace at the reset", async () => {
+      // Full Admin: required whatever a role definition says.
+      await prisma.memberAccessRole.create({ data: { memberId: MEMBER, role: "ADMIN" } });
       await reset.clearMemberSecondFactors({
         memberId: MEMBER,
         actor: { kind: "admin", memberId: ADMIN },
       });
       const stamped = await officer.stampOfficerGraceStart(MEMBER);
-      expect(stamped.graceStartedAt).toBeNull();
       expect(stamped.factorsResetAt).toBeInstanceOf(Date);
+      expect(stamped.graceStartedAt?.getTime()).toBe(stamped.factorsResetAt?.getTime());
+      expect(officerGrace.officerGraceClosedByReset(stamped)).toBe(true);
+    });
+
+    it("keeps an earlier grace stamp when a required officer is reset", async () => {
+      await prisma.memberAccessRole.create({ data: { memberId: MEMBER, role: "ADMIN" } });
+      const first = await officer.stampOfficerGraceStart(MEMBER);
+      await reset.clearMemberSecondFactors({
+        memberId: MEMBER,
+        actor: { kind: "admin", memberId: ADMIN },
+      });
+      const after = await officer.stampOfficerGraceStart(MEMBER);
+      expect(after.graceStartedAt?.getTime()).toBe(first.graceStartedAt?.getTime());
+      expect(officerGrace.officerGraceClosedByReset(after)).toBe(true);
+    });
+
+    it("still owes first grace to a member reset before the rule reached them", async () => {
+      await reset.clearMemberSecondFactors({
+        memberId: MEMBER,
+        actor: { kind: "admin", memberId: ADMIN },
+      });
+      const cleared = await prisma.member.findUnique({
+        where: { id: MEMBER },
+        select: { twoFactorGraceStartedAt: true, factorsResetAt: true },
+      });
+      expect(cleared?.twoFactorGraceStartedAt).toBeNull();
+      expect(cleared?.factorsResetAt).toBeInstanceOf(Date);
+
+      // Promoted later: the first refresh that reaches them stamps grace.
+      await prisma.memberAccessRole.create({ data: { memberId: MEMBER, role: "ADMIN" } });
+      const stamped = await officer.stampOfficerGraceStart(MEMBER);
+      expect(stamped.graceStartedAt).toBeInstanceOf(Date);
+      expect(officerGrace.officerGraceClosedByReset(stamped)).toBe(false);
     });
 
     it("leaves no factor when a reset races an enrolment from an older session", async () => {

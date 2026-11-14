@@ -31,15 +31,18 @@ export function clampOfficerTwoFactorGraceDays(value: unknown): number {
 
 /**
  * A reset does not start another grace period. True when a reset is recorded
- * and it is later than the grace stamp, or the stamp was never written.
+ * at or after the grace stamp. A reset of a required officer writes the stamp
+ * in the same transaction if it was still null, so the two are equal and
+ * grace is closed. With no stamp the rule had not reached the member when they
+ * were reset, so their first grace period is still owed: not closed.
  */
 export function officerGraceClosedByReset(input: {
   graceStartedAt: Date | null;
   factorsResetAt: Date | null;
 }): boolean {
   if (!(input.factorsResetAt instanceof Date)) return false;
-  if (!(input.graceStartedAt instanceof Date)) return true;
-  return input.factorsResetAt.getTime() > input.graceStartedAt.getTime();
+  if (!(input.graceStartedAt instanceof Date)) return false;
+  return input.factorsResetAt.getTime() >= input.graceStartedAt.getTime();
 }
 
 /** The exclusive end of grace. Days of 0 return the stamp itself. */

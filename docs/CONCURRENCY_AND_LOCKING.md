@@ -2293,7 +2293,8 @@ mispricing a booking.
   `SELECT 1 FROM "Member" WHERE "id" = … FOR UPDATE`, taken first and followed
   by a re-read. The officer factor reset (`clearMemberSecondFactors`, from the
   Full Admin route and `pnpm run auth:reset-factors`) takes it, clears every
-  factor and stamps `factorsResetAt` and `sessionsRevokedAt`. Each enrolment
+  factor and stamps `factorsResetAt` and `sessionsRevokedAt` (and, for a
+  required officer, a missing grace stamp, in the same `UPDATE`). Each enrolment
   writer (`enrollTwoFactor`, `replaceRecoveryCodes`,
   `verifyPasskeyRegistration`) takes it through `assertEnrolmentNotSuperseded`
   and refuses a session issued before the reset. `deletePasskey` takes it
@@ -2302,8 +2303,9 @@ mispricing a booking.
   session added. No advisory key and no other row lock in those transactions,
   so INV-LOCK-001 and INV-LOCK-002 are not engaged; the grace start is a
   separate set-if-null `UPDATE` with no lock. Proved on PostgreSQL by
-  `officer-two-factor.realdb.test.ts` (one grace stamp; reset racing an
-  enrolment).
+  `officer-two-factor.realdb.test.ts` (one grace stamp; a reset closes a
+  required officer's grace and leaves an ordinary member's first grace owed;
+  reset racing an enrolment).
 
 - **Member photo writer** — `src/app/api/members/[id]/photo/route.ts` (epic #171):
   the upload (POST) and remove (DELETE) transactions each take

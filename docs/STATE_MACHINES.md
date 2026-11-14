@@ -5149,20 +5149,23 @@ requirement is recomputed on every session refresh. Nothing here runs until
 
 ```text
 not required -> required: becomes Full Admin, gains a role that requires it, or the club turns the policy on
-required, no app or passkey, no grace stamp, no reset -> in grace (twoFactorGraceStartedAt = NOW(), set once)
+required, no app or passkey, no grace stamp -> in grace (twoFactorGraceStartedAt = NOW(), set once)
 in grace -> gated: club midnight after (first club date + grace days); 0 days gates at once
 gated -> only /login/enroll, /login/verify, /profile, sign-out and the enrolment APIs answer
 in grace or gated -> enrolled: authenticator app or passkey saved (an emailed code does not count)
 enrolled -> enrolled: removing the last app or passkey is refused with 400
 enrolled -> reset: another Full Admin after step-up, or `auth:reset-factors`
-  factors cleared, sessions ended, factorsResetAt = NOW(), member emailed
-reset -> gated: the next sign-in; a reset never starts a new grace period
+  factors cleared, sessions ended, factorsResetAt = NOW(), member emailed;
+  a required officer's missing grace stamp is set to the same NOW()
+reset -> gated: the next sign-in of a required officer; no new grace period
+reset -> in grace: a member reset before the rule reached them, on first exposure
 reset -> enrolled: enrolment from a session issued after the reset; an older session gets 409
 required -> not required: the role or policy goes, or the member can no longer sign in
 ```
 
 To verify: `officer-two-factor-required.test.ts` (who is required, grace on the
-club calendar at 0, 14 and 60 days, no grace after a reset),
+club calendar at 0, 14 and 60 days, no grace after a reset, first grace for a
+member reset before promotion),
 `officer-two-factor-gate-callers.test.ts` (the allowlist and every gate
 caller), `officer-factor-reset-route.test.ts` (each refusal of the reset
 route), and `webauthn.test.ts` (the last passkey is kept, under the member lock).

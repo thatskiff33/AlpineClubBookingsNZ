@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ACCESS_ROLE_DEFINITIONS } from "@/lib/access-role-definitions";
+import { getAdminPermissionMatrix } from "@/lib/admin-permissions";
+import { officerAssignmentFromAccessRole } from "@/lib/officer-two-factor";
 import { requireClubTimeZone } from "@/lib/club-time";
+import { normalizeOfficerTwoFactorPolicy } from "@/lib/login-security-settings";
 import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
+import {
+  buildOfficerTwoFactorClaims,
+  officerClaimsAreGated,
+} from "@/lib/officer-two-factor-claims";
 import {
   officerGraceClosedByReset,
   officerGraceHasEnded,
@@ -124,6 +131,32 @@ describe("isOfficerTwoFactorRequired (#4618)", () => {
         }),
         role,
       ).toBe(required.has(role));
+    }
+  });
+
+  // #4618 review (INV-SSOT): the officer rule reads Finance and Support from
+  // the same per-row resolution `requireAdmin` does, for a bare enum row and a
+  // definition-backed one, including a definition that differs from its bundle.
+  it("reads each role's Finance and Support exactly as the admin matrix does", () => {
+    const rows = DEFAULT_ACCESS_ROLE_DEFINITIONS.flatMap((definition) => [
+      { role: definition.systemRole, roleDefinition: null },
+      {
+        role: definition.systemRole,
+        roleDefinition: {
+          financeLevel: definition.financeLevel,
+          supportLevel: definition.supportLevel,
+        },
+      },
+      {
+        role: definition.systemRole,
+        roleDefinition: { financeLevel: "EDIT" as const, supportLevel: "NONE" as const },
+      },
+    ]);
+    for (const row of rows) {
+      const matrix = getAdminPermissionMatrix({ accessRoles: [row], canLogin: true });
+      const resolved = officerAssignmentFromAccessRole(row);
+      expect(resolved.financeLevel ?? "NONE").toBe(matrix.finance.toUpperCase());
+      expect(resolved.supportLevel ?? "NONE").toBe(matrix.support.toUpperCase());
     }
   });
 
@@ -267,8 +300,10 @@ describe("officer grace (#4618)", () => {
     expect(
       officerGraceClosedByReset({ graceStartedAt: started, factorsResetAt: reset }),
     ).toBe(true);
+    // A required officer's reset writes a null stamp with the reset's own
+    // NOW(), so the two are equal and grace is closed.
     expect(
-      officerGraceClosedByReset({ graceStartedAt: null, factorsResetAt: reset }),
+      officerGraceClosedByReset({ graceStartedAt: reset, factorsResetAt: reset }),
     ).toBe(true);
     expect(
       officerGraceClosedByReset({ graceStartedAt: reset, factorsResetAt: started }),
@@ -276,6 +311,65 @@ describe("officer grace (#4618)", () => {
     expect(
       officerGraceClosedByReset({ graceStartedAt: null, factorsResetAt: null }),
     ).toBe(false);
+  });
+
+  // #4618 review: an ordinary member reset before any officer role still gets
+  // the grace the admin card promises, on first exposure after promotion.
+  it("gives a member reset before promotion their first grace period", () => {
+    const reset = new Date("2026-03-01T00:00:00.000Z");
+    expect(
+      officerGraceClosedByReset({ graceStartedAt: null, factorsResetAt: reset }),
+    ).toBe(false);
+
+    const promoted = {
+      releaseEnabled: true,
+      policyEnabled: true,
+      graceDays: 14,
+      kiosk: false,
+      canLogin: true,
+      assignments: [assignment("ADMIN", null, null, null)],
+      twoFactorEnabled: true,
+      twoFactorMethod: "EMAIL",
+      hasPasskey: false,
+      factorsResetAt: reset,
+      zone: ZONE,
+      now: FROZEN_NOW,
+    };
+    const firstRefresh = buildOfficerTwoFactorClaims({ ...promoted, graceStartedAt: null });
+    expect(firstRefresh.shouldStampGrace).toBe(true);
+    expect(firstRefresh.officerTwoFactorGraceEndsAt).toBeNull();
+
+    const stamped = buildOfficerTwoFactorClaims({ ...promoted, graceStartedAt: FROZEN_NOW });
+    expect(stamped.shouldStampGrace).toBe(false);
+    expect(stamped.officerTwoFactorGraceEndsAt).toBe(
+      officerTwoFactorGraceEnd({ startedAt: FROZEN_NOW, graceDays: 14, zone: ZONE }).getTime(),
+    );
+    expect(officerClaimsAreGated(stamped, FROZEN_NOW)).toBe(false);
+
+    // The same officer reset while required: grace closed at the reset.
+    const resetWhileRequired = buildOfficerTwoFactorClaims({
+      ...promoted,
+      graceStartedAt: reset,
+    });
+    expect(resetWhileRequired.officerTwoFactorGraceEndsAt).toBe(reset.getTime());
+    expect(officerClaimsAreGated(resetWhileRequired, FROZEN_NOW)).toBe(true);
+  });
+});
+
+// #4618 review (INV-SSOT): one reading of the policy row for the refresh, the
+// report, the reset and the last-factor refusal.
+describe("normalizeOfficerTwoFactorPolicy (#4618)", () => {
+  it("reads an absent row as on and 14 days, and clamps a stored grace", () => {
+    expect(normalizeOfficerTwoFactorPolicy(null)).toEqual({ policyEnabled: true, graceDays: 14 });
+    expect(
+      normalizeOfficerTwoFactorPolicy({ officerTwoFactorPolicy: false, officerTwoFactorGraceDays: 0 }),
+    ).toEqual({ policyEnabled: false, graceDays: 0 });
+    expect(
+      normalizeOfficerTwoFactorPolicy({ officerTwoFactorPolicy: true, officerTwoFactorGraceDays: 90 }),
+    ).toEqual({ policyEnabled: true, graceDays: 60 });
+    expect(
+      normalizeOfficerTwoFactorPolicy({ officerTwoFactorPolicy: null, officerTwoFactorGraceDays: -3 }),
+    ).toEqual({ policyEnabled: true, graceDays: 0 });
   });
 });
 

@@ -11,9 +11,12 @@ import "server-only";
 import type { AccessRoleDefinitionLevelFields } from "@/lib/access-roles";
 import {
   ADMIN_CAPABLE_MEMBER_WHERE,
-  DEFAULT_ACCESS_ROLE_DEFINITIONS,
   MEMBER_PRIVILEGE_CHECK_SELECT,
 } from "@/lib/access-role-definitions";
+import {
+  getAssignmentPermissionMatrix,
+  type AdminPermissionLevel,
+} from "@/lib/admin-permissions";
 import { clubFormatValues } from "@/lib/club-format-server";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
@@ -22,13 +25,16 @@ import {
   type OfficerTwoFactorClaims,
 } from "@/lib/officer-two-factor-claims";
 import {
-  clampOfficerTwoFactorGraceDays,
   formatOfficerGraceDeadline,
   officerGraceClosedByReset,
   officerGraceHasEnded,
-  OFFICER_TWO_FACTOR_GRACE_DEFAULT_DAYS,
   officerTwoFactorGraceEnd,
 } from "@/lib/officer-two-factor-grace";
+import {
+  LOGIN_SECURITY_SETTINGS_ID,
+  normalizeOfficerTwoFactorPolicy,
+  OFFICER_TWO_FACTOR_POLICY_SELECT,
+} from "@/lib/login-security-settings";
 import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import { prisma } from "@/lib/prisma";
 import {
@@ -47,22 +53,27 @@ type AccessRoleRow = {
     | null;
 };
 
-/** Resolve one assignment, falling back to the seeded default at Default. */
+/**
+ * Resolve one assignment. Finance and Support come from the same per-row
+ * resolution the admin permission matrix uses (INV-SSOT); only
+ * `requiresTwoFactor` is the officer rule's own.
+ */
 export function officerAssignmentFromAccessRole(
   row: AccessRoleRow,
 ): OfficerTwoFactorAssignment {
-  const seeded = row.role
-    ? DEFAULT_ACCESS_ROLE_DEFINITIONS.find(
-        (definition) => definition.systemRole === row.role,
-      )
-    : undefined;
   const definition = row.roleDefinition ?? null;
+  const matrix = getAssignmentPermissionMatrix(row);
   return {
     role: row.role,
     requiresTwoFactor: definition ? (definition.requiresTwoFactor ?? null) : null,
-    financeLevel: definition?.financeLevel ?? seeded?.financeLevel ?? null,
-    supportLevel: definition?.supportLevel ?? seeded?.supportLevel ?? null,
+    financeLevel: definitionLevelOf(matrix.finance),
+    supportLevel: definitionLevelOf(matrix.support),
   };
+}
+
+/** The matrix's app level as the definition level the officer rule compares. */
+function definitionLevelOf(level: AdminPermissionLevel | undefined): string | null {
+  return level ? level.toUpperCase() : null;
 }
 
 export function officerAssignmentsFromMember(member: {
@@ -72,9 +83,12 @@ export function officerAssignmentsFromMember(member: {
 }
 
 /**
- * Set the grace stamp once, with the database clock, and only while it is
- * still null and no reset has been recorded. A second refresh updates nothing.
- * Returns the stamp now stored, which may be the other refresh's.
+ * Set the grace stamp once, with the database clock, only while it is still
+ * null. A second refresh updates nothing. Returns the stamp now stored, which
+ * may be the other refresh's. A reset of a required officer writes the stamp
+ * itself if it was still null (`clearMemberSecondFactors`), so this never
+ * opens grace after such a reset; a member reset before the rule reached them
+ * still gets their first grace period here.
  */
 export async function stampOfficerGraceStart(memberId: string): Promise<{
   graceStartedAt: Date | null;
@@ -85,7 +99,6 @@ export async function stampOfficerGraceStart(memberId: string): Promise<{
     SET "twoFactorGraceStartedAt" = NOW()
     WHERE "id" = ${memberId}
       AND "twoFactorGraceStartedAt" IS NULL
-      AND "factorsResetAt" IS NULL
   `;
   const row = await prisma.member.findUnique({
     where: { id: memberId },
@@ -167,19 +180,13 @@ export async function loadOfficerTwoFactorReport(): Promise<
   if (!OFFICER_SIGN_IN_ENFORCED) return [];
   const [policy, zone, format] = await Promise.all([
     prisma.loginSecuritySetting.findUnique({
-      where: { id: "default" },
-      select: {
-        officerTwoFactorPolicy: true,
-        officerTwoFactorGraceDays: true,
-      },
+      where: { id: LOGIN_SECURITY_SETTINGS_ID },
+      select: OFFICER_TWO_FACTOR_POLICY_SELECT,
     }),
     clubTimeZone(),
     clubFormatValues(),
   ]);
-  const policyEnabled = policy?.officerTwoFactorPolicy ?? true;
-  const graceDays = clampOfficerTwoFactorGraceDays(
-    policy?.officerTwoFactorGraceDays ?? OFFICER_TWO_FACTOR_GRACE_DEFAULT_DAYS,
-  );
+  const { policyEnabled, graceDays } = normalizeOfficerTwoFactorPolicy(policy);
   if (!policyEnabled) return [];
 
   const members = await prisma.member.findMany({

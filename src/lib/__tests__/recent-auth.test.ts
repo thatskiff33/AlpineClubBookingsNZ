@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import {
   isWithinRecentAuthWindow,
+  passwordSignInOwesStrongerFactor,
   RECENT_AUTH_WINDOW_MS,
   recentAuthSignInCounts,
   recentAuthSignInProofFromChallengeKind,
@@ -72,5 +73,32 @@ describe("recent authentication window (#4616)", () => {
     expect(recentAuthSignInProofFromChallengeKind("RECOVERY")).toBe("recovery");
     expect(recentAuthSignInProofFromChallengeKind(null)).toBeNull();
     expect(recentAuthSignInProofFromChallengeKind("password")).toBeNull();
+  });
+
+  // #4618 review: a passkey-only required officer must not get a password
+  // stamp, or a phished password reaches every step-up route for five minutes.
+  it("owes a required officer's app or passkey, and the module's app, never an emailed code", () => {
+    const passkeyOnly = { twoFactorEnabled: false, twoFactorMethod: null, hasPasskey: true };
+    const app = { twoFactorEnabled: true, twoFactorMethod: "TOTP", hasPasskey: false };
+    const emailOnly = { twoFactorEnabled: true, twoFactorMethod: "EMAIL", hasPasskey: false };
+    const none = { twoFactorEnabled: false, twoFactorMethod: null, hasPasskey: false };
+    const owes = (
+      factors: typeof app,
+      moduleRequired: boolean,
+      officerRequired: boolean,
+    ) => passwordSignInOwesStrongerFactor({ moduleRequired, officerRequired, ...factors });
+
+    // A required officer owes either strong factor, module on or off.
+    expect(owes(passkeyOnly, false, true)).toBe(true);
+    expect(owes(app, false, true)).toBe(true);
+    expect(owes({ ...emailOnly, hasPasskey: true }, false, true)).toBe(true);
+    // The club-wide module alone owes an app, as before this change.
+    expect(owes(app, true, false)).toBe(true);
+    expect(owes(passkeyOnly, true, false)).toBe(false);
+    // Nothing required, an emailed code, or no factor: nothing owed.
+    expect(owes(app, false, false)).toBe(false);
+    expect(owes(passkeyOnly, false, false)).toBe(false);
+    expect(owes(emailOnly, true, true)).toBe(false);
+    expect(owes(none, true, true)).toBe(false);
   });
 });

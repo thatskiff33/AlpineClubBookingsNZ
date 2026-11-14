@@ -11,6 +11,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { isKioskSessionMember } from "@/lib/session-idle-expiry";
 import { MEMBER_PRIVILEGE_CHECK_SELECT } from "@/lib/access-role-definitions";
+import { isMemberOfficerTwoFactorRequired } from "@/lib/second-factor-requirement";
 import {
   readTwoFactorClearEvidence,
   recordTwoFactorClear,
@@ -70,7 +71,8 @@ export type ClearMemberSecondFactorsResult =
 
 /**
  * Clear every factor a lost phone could still use, and end the member's
- * sessions, in one transaction. Email is the caller's job, after commit.
+ * sessions, in one transaction. Callers answer 404 or exit while the release
+ * switch is off, so the officer rule is read as on here. Email is the caller's job, after commit.
  * An empty factor still stamps the reset and the revocation, and still
  * records the audit row. A lost claim writes neither.
  */
@@ -123,9 +125,19 @@ export async function clearMemberSecondFactors(params: {
     });
     await tx.webAuthnCredential.deleteMany({ where: { memberId: params.memberId } });
     await tx.webAuthnChallenge.deleteMany({ where: { memberId: params.memberId } });
+    // "A reset never starts a new grace period" is about officers. A required
+    // officer whose grace never started gets the stamp now, with the same
+    // NOW() as the reset, so grace is closed. Anyone else keeps a null stamp
+    // and gets their first grace period when the rule first reaches them.
+    const officerRequired = await isMemberOfficerTwoFactorRequired(params.memberId, tx);
     await tx.$executeRaw`
       UPDATE "Member"
-      SET "factorsResetAt" = NOW(), "sessionsRevokedAt" = NOW()
+      SET "factorsResetAt" = NOW(),
+          "sessionsRevokedAt" = NOW(),
+          "twoFactorGraceStartedAt" = CASE
+            WHEN ${officerRequired} THEN COALESCE("twoFactorGraceStartedAt", NOW())
+            ELSE "twoFactorGraceStartedAt"
+          END
       WHERE "id" = ${params.memberId}
     `;
     await recordTwoFactorClear(tx, {

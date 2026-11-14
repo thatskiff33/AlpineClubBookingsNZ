@@ -51,6 +51,7 @@ import {
 } from "./session-idle-expiry";
 import { isSecondFactorEnrolled } from "./second-factor-enrolment";
 import {
+  passwordSignInOwesStrongerFactor,
   recentAuthSignInCounts,
   recentAuthSignInProofFromChallengeKind,
 } from "./recent-auth";
@@ -702,17 +703,16 @@ export const authConfig = {
             zone,
             now: new Date(),
           });
-          // An email factor does not count as owed: the password step is the
-          // proof, and the emailed code never starts or refreshes the clock.
           // A later refresh has no `user`, so it cannot stamp again. A required
-          // officer who already has an authenticator app does not get a
-          // password stamp even when the club-wide module is off. A passkey
-          // does not set twoFactorEnabled, so a passkey-only officer's
-          // password sign-in still stamps.
-          const owesAuthenticatorApp =
-            member.twoFactorEnabled === true &&
-            member.twoFactorMethod !== "EMAIL" &&
-            (twoFactorRequired || officerClaims.officerTwoFactorRequired);
+          // officer with an app or a passkey gets no password stamp even when
+          // the club-wide module is off (INV-AUTH-011).
+          const owesAuthenticatorApp = passwordSignInOwesStrongerFactor({
+            moduleRequired: twoFactorRequired,
+            officerRequired: officerClaims.officerTwoFactorRequired,
+            twoFactorEnabled: member.twoFactorEnabled,
+            twoFactorMethod: member.twoFactorMethod,
+            hasPasskey: member.hasPasskey,
+          });
           if (
             passwordSignIn &&
             recentAuthSignInCounts("password", owesAuthenticatorApp)

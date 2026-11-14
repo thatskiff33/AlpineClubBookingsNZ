@@ -15,7 +15,11 @@ import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import { prisma } from "@/lib/prisma";
 import { isOfficerTwoFactorRequired } from "@/lib/second-factor-enrolment";
 import { isKioskSessionMember } from "@/lib/session-idle-expiry";
-import { LOGIN_SECURITY_SETTINGS_ID } from "@/lib/login-security-settings";
+import {
+  LOGIN_SECURITY_SETTINGS_ID,
+  normalizeOfficerTwoFactorPolicy,
+  OFFICER_TWO_FACTOR_POLICY_SELECT,
+} from "@/lib/login-security-settings";
 
 export class LastOfficerFactorError extends Error {
   constructor() {
@@ -24,11 +28,19 @@ export class LastOfficerFactorError extends Error {
   }
 }
 
-export async function assertLastFactorRemovable(
+type OfficerRuleClient = Pick<Prisma.TransactionClient, "member" | "loginSecuritySetting">;
+
+/**
+ * Whether the officer rule covers this member now, read through `db` (a
+ * transaction client when the caller holds the member row lock). The release
+ * switch is the caller's check: every caller returns early or answers 404
+ * while it is off, so this reads the rule as if it were on. A missing member
+ * is not required.
+ */
+export async function isMemberOfficerTwoFactorRequired(
   memberId: string,
-  db: Pick<Prisma.TransactionClient, "member" | "loginSecuritySetting"> = prisma,
-): Promise<void> {
-  if (!OFFICER_SIGN_IN_ENFORCED) return;
+  db: OfficerRuleClient = prisma,
+): Promise<boolean> {
   const [member, policy] = await Promise.all([
     db.member.findUnique({
       where: { id: memberId },
@@ -40,16 +52,25 @@ export async function assertLastFactorRemovable(
     }),
     db.loginSecuritySetting.findUnique({
       where: { id: LOGIN_SECURITY_SETTINGS_ID },
-      select: { officerTwoFactorPolicy: true },
+      select: OFFICER_TWO_FACTOR_POLICY_SELECT,
     }),
   ]);
-  if (!member) return;
-  const required = isOfficerTwoFactorRequired({
+  if (!member) return false;
+  return isOfficerTwoFactorRequired({
     releaseEnabled: true,
-    policyEnabled: policy?.officerTwoFactorPolicy ?? true,
+    policyEnabled: normalizeOfficerTwoFactorPolicy(policy).policyEnabled,
     kiosk: isKioskSessionMember(member),
     canLogin: member.canLogin,
     assignments: officerAssignmentsFromMember(member),
   });
-  if (required) throw new LastOfficerFactorError();
+}
+
+export async function assertLastFactorRemovable(
+  memberId: string,
+  db: OfficerRuleClient = prisma,
+): Promise<void> {
+  if (!OFFICER_SIGN_IN_ENFORCED) return;
+  if (await isMemberOfficerTwoFactorRequired(memberId, db)) {
+    throw new LastOfficerFactorError();
+  }
 }

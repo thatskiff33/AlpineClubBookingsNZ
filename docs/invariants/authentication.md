@@ -252,10 +252,14 @@ This file holds only the rules.
 - **Only an authenticator app or a passkey satisfies it.** That check is
   `satisfiesOfficerSecondFactor` (`INV-AUTH-009`). An emailed code does not.
 - **Grace starts once, on first exposure, and a reset does not start another.**
-  The deadline is a club civil date (`INV-DATE`). After it, only the enrolment
-  pages, the profile security card, and sign-out stay open. While the release
+  Resetting a required officer closes their grace. A member reset before the
+  rule reached them still gets their first grace period. The deadline is a
+  club civil date (`INV-DATE`). After it, only the enrolment pages, the
+  profile security card, and sign-out stay open. While the release
   constant is off, nobody is required and nothing is stamped. #4620 is the edit
   that turns the constant on.
+- **A required officer's app or passkey is owed at a password sign-in.** That
+  password does not write the recent-proof stamp (`INV-AUTH-008`).
 - **A required officer cannot remove their last satisfying factor.**
   `assertLastFactorRemovable` refuses that delete. A member the rule does not
   require can still remove a passkey.

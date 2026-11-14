@@ -54,6 +54,32 @@ export async function loadLoginSecuritySettings(): Promise<LoginSecuritySettings
   };
 }
 
+/** The officer two-factor columns, for any read that feeds the rule (#4618). */
+export const OFFICER_TWO_FACTOR_POLICY_SELECT = {
+  officerTwoFactorPolicy: true,
+  officerTwoFactorGraceDays: true,
+} as const;
+
+/**
+ * The one reading of the officer policy row (#4618, INV-SSOT). An absent row
+ * is policy on and 14 days, matching the column defaults; a stored grace
+ * value is clamped into 0–60. The refresh, the report, the reset and the
+ * last-factor refusal all read the policy through this.
+ */
+export function normalizeOfficerTwoFactorPolicy(
+  record: {
+    officerTwoFactorPolicy?: boolean | null;
+    officerTwoFactorGraceDays?: number | null;
+  } | null,
+): { policyEnabled: boolean; graceDays: number } {
+  return {
+    policyEnabled: record?.officerTwoFactorPolicy ?? true,
+    graceDays: clampOfficerTwoFactorGraceDays(
+      record?.officerTwoFactorGraceDays ?? OFFICER_TWO_FACTOR_GRACE_DEFAULT_DAYS,
+    ),
+  };
+}
+
 /**
  * The club's maximum session age in hours (#4611, `INV-AUTH-007`) and the
  * officer two-factor policy (#4618), one read, for the `jwt` callback in
@@ -74,15 +100,13 @@ export async function loadLoginSecurityRefresh(): Promise<{
     where: { id: LOGIN_SECURITY_SETTINGS_ID },
     select: {
       sessionMaxAgeHours: true,
-      officerTwoFactorPolicy: true,
-      officerTwoFactorGraceDays: true,
+      ...OFFICER_TWO_FACTOR_POLICY_SELECT,
     },
   });
+  const officer = normalizeOfficerTwoFactorPolicy(record);
   return {
     sessionMaxAgeHours: normalizeLoginSecurityPolicy(record).sessionMaxAgeHours,
-    officerTwoFactorPolicy: record?.officerTwoFactorPolicy ?? true,
-    officerTwoFactorGraceDays: clampOfficerTwoFactorGraceDays(
-      record?.officerTwoFactorGraceDays ?? OFFICER_TWO_FACTOR_GRACE_DEFAULT_DAYS,
-    ),
+    officerTwoFactorPolicy: officer.policyEnabled,
+    officerTwoFactorGraceDays: officer.graceDays,
   };
 }

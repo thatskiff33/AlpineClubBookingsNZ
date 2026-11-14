@@ -26,7 +26,8 @@ import {
 
 type PolicyDraft = {
   officerTwoFactorPolicy: boolean;
-  officerTwoFactorGraceDays: number;
+  /** Null while the field is empty, so a cleared field is invalid, not 0. */
+  officerTwoFactorGraceDays: number | null;
 };
 
 /**
@@ -37,6 +38,7 @@ export function OfficerTwoFactorCard({ canEdit }: { canEdit: boolean }) {
   const section = useSectionEditState<PolicyDraft>({
     successMessage: "Officer two-factor policy saved.",
     isValid: (draft) =>
+      draft.officerTwoFactorGraceDays !== null &&
       Number.isInteger(draft.officerTwoFactorGraceDays) &&
       draft.officerTwoFactorGraceDays >= OFFICER_TWO_FACTOR_GRACE_MIN_DAYS &&
       draft.officerTwoFactorGraceDays <= OFFICER_TWO_FACTOR_GRACE_MAX_DAYS,
@@ -151,12 +153,15 @@ export function OfficerTwoFactorCard({ canEdit }: { canEdit: boolean }) {
                 inputMode="numeric"
                 min={OFFICER_TWO_FACTOR_GRACE_MIN_DAYS}
                 max={OFFICER_TWO_FACTOR_GRACE_MAX_DAYS}
-                value={draft.officerTwoFactorGraceDays}
+                value={draft.officerTwoFactorGraceDays ?? ""}
                 disabled={!editing || section.saving}
                 onChange={(event) =>
                   section.setDraft({
                     ...draft,
-                    officerTwoFactorGraceDays: Number(event.target.value),
+                    officerTwoFactorGraceDays:
+                      event.target.value.trim() === ""
+                        ? null
+                        : Number(event.target.value),
                   })
                 }
                 className="max-w-[8rem]"

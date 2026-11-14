@@ -619,7 +619,9 @@ confirming it is them (step-up, `INV-AUTH-010`). They cannot reset
 themselves. One transaction clears the authenticator, recovery and emailed
 codes and every passkey, ends the member's sessions and stamps
 `factorsResetAt`; the audit row names the admin. The member is emailed after
-commit. A reset never starts a new grace period, and an enrolment from a
+commit. Resetting a required officer never starts a new grace period (the
+reset writes a missing grace stamp with its own time); a member reset before
+the rule reached them still gets their first grace period. An enrolment from a
 session older than the reset is refused with 409. A club whose only Full
 Admin lost their factor runs, on the server,
 `pnpm run auth:reset-factors -- --member <email>`; its audit row names the

@@ -86,7 +86,7 @@ export default async function TwoFactorEnrollPage({
         twoFactorMethod: session.user.twoFactorMethod,
       })
     ) {
-      return <TwoFactorEnrollPanel callbackUrl={landing} />;
+      return <TwoFactorEnrollPanel callbackUrl={landing} appOnly />;
     }
     redirect(landing);
   }

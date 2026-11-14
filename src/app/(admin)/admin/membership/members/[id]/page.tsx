@@ -24,10 +24,11 @@ import {
   parseInviteAuditDetails as parseInviteAuditDetailsHelper,
 } from "@/lib/admin-member-detail-helpers";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
-import { deriveUserType, isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
+import { isFullAdmin, sessionPrivilegeInput } from "@/lib/access-roles";
 import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
 import {
   canAdminRequestMembershipCancellation,
+  isKioskSessionMember,
   NON_MEMBER_ROLE_VALUES,
 } from "@/lib/member-roles";
 import { defaultMembershipTypeNameForRole } from "@/lib/membership-types";
@@ -920,7 +921,7 @@ export default function MemberDetailPage({
           {OFFICER_SIGN_IN_ENFORCED &&
           actorIsFullAdmin &&
           !isSelf &&
-          deriveUserType(member.accessRoles ?? []) !== "lodge" ? (
+          !isKioskSessionMember(member) ? (
             <OfficerFactorResetButton memberId={member.id} />
           ) : null}
           <MemberLodgeAccessCard memberId={id} ancestorRendersViewOnlyBanner />
