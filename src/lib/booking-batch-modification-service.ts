@@ -1483,8 +1483,14 @@ export async function modifyBookingBatch({
         });
 
     // #4317: every edit is priced (`INV-MOD-028`), so the booking's new total
-    // is always the pricing pass's.
-    const newTotalPriceCents = pricingResult.newTotalPriceCents;
+    // is always the pricing pass's. On a price-preserving edit that pass is
+    // `buildIdentityOnlyPricing`, whose total IS `booking.totalPriceCents`;
+    // naming the stored figure here, under the same guard as the final price
+    // below, is what lets the money-writer census (`INV-MONEY-031`) see that
+    // this write stores the row's own total beside its own final price.
+    const newTotalPriceCents = pricePreservingModification
+      ? booking.totalPriceCents
+      : pricingResult.newTotalPriceCents;
     // ALP-573: EXCEPT the final price of a price-preserving edit, which is the
     // stored one, exactly as `modify-quote`'s echo reports it. The echo hands
     // back the stored total and promotion, so re-deriving here is a no-op on
