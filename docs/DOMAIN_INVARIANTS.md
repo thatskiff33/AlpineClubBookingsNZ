@@ -367,6 +367,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-151` | Paid another way reverses a covered failed card refund |
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
+| `INV-PAY-154` | A disputed capture is never refunded or credited |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -486,6 +487,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-059` | A guest's dietary value is seeded once, then carried by identity |
 | `INV-MOD-060` | An ordinary price ask's door and replay send one Stripe request |
 | `INV-MOD-061` | An edit's card refund and its replay send one Stripe request |
+| `INV-MOD-062` | An edit settles only the figures its preview showed |
 
 ### Adult-member hosting
 

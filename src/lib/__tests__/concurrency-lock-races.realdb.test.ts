@@ -822,12 +822,23 @@ import "./xero-account-credit-note-stamp.realdb.test";
 // line under the edit at the settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4661-` fixtures.
 import "./unpaid-edit-change-fee-owed.realdb.test";
+// #4924 reuses it to prove a save carrying figures its preview showed before the
+// club day crossed a change-fee band is refused with the fresh figures and writes
+// nothing. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its
+// own `race-4924-` fixtures.
+import "./edit-quoted-figures.realdb.test";
 // #4456 reuses it to prove a credential written under a data-encryption ring key
 // survives an AUTH_SECRET rotation and goes through the store's version-guarded
 // claim like any other: a re-key of a legacy row, a write that lost to a row
 // changed underneath it (no side effect, retried), and two writers forced to meet
 // at the claim. It owns and cleans its own `race-4456` credential rows.
 import "./data-encryption-key-ring.realdb.test";
+// #4911 reuses it to prove a paid cancel of a booking whose card capture the
+// cardholder disputes (a lost dispute) issues no card refund and no account
+// credit, by either refund method, and raises one treasurer task naming the
+// dispute; a won dispute restores the credit path. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4911-` fixtures.
+import "./stripe-dispute-cancel.realdb.test";
 // INV-INT-038 (the #4921 prerequisite) reuses it to prove an abandoned inbound
 // Xero reconcile operation is recovered under a fresh claim: one winner among
 // racing takeovers or a racing Mark failed, and the abandoned attempt's late

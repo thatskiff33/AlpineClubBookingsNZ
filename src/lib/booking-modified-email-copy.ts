@@ -115,9 +115,11 @@ export type OwnCardRefundMethod = "card" | "card_pending";
  * was minted; a hand-back task was raised). #3973: the organiser's card
  * refunds, and the organiser's Internet Banking settlement the club repays by
  * hand (`OrganiserRefundMethod`). #4084: the member's own card
- * (`OwnCardRefundMethod`).
+ * (`OwnCardRefundMethod`). #4911 (`INV-PAY-154`): "disputed" is a card payment
+ * the cardholder is disputing with their bank, or has won back, so the refund
+ * is with the treasurer: no card refund and no account credit were issued.
  */
-export type BookingCancelledRefundMethod = OwnCardRefundMethod | "credit" | "manual" | OrganiserRefundMethod;
+export type BookingCancelledRefundMethod = OwnCardRefundMethod | "credit" | "manual" | "disputed" | OrganiserRefundMethod;
 
 /**
  * #4097 (`INV-PAY-129`): the parts of an own-card cancel's refund its card
@@ -181,6 +183,8 @@ export function bookingCancelledRefundSentence(
   switch (refundMethod) {
     case "manual":
       return `You paid for this booking in cash or by bank transfer, so there is no card payment to reverse. The club will arrange your refund of ${amount} directly and will be in touch.`;
+    case "disputed":
+      return disputedRefundSentence(amount);
     case "organiser_card":
       return organiserCardRefundSentence(amount);
     case "organiser_card_pending":
@@ -210,6 +214,17 @@ export function bookingCancelledRefundSentence(
 export function bookingCancelledRefundMade(refundCents: number, refundMethod: BookingCancelledRefundMethod, shortfallCents = 0): boolean {
   if (refundCents <= 0 || shortfallCents > 0) return false;
   return refundMethod === "card" || refundMethod === "credit" || refundMethod === "organiser_card" || refundMethod === "group_cancel_refunded";
+}
+
+/**
+ * #4911 (`INV-PAY-154`): a cancel whose card payment is disputed - the email and
+ * the cancel dialog's confirmation (`INV-SSOT`). The treasurer checks the
+ * dispute first, since the bank may already have returned the money.
+ */
+export function disputedRefundSentence(amount: string, whose: OwnCardWhose = "your"): string {
+  return whose === "your"
+    ? `Your card payment for this booking is disputed with your card issuer, so the club cannot refund it to your card or as account credit. Your refund of ${amount} is with the club's treasurer, who will be in touch.`
+    : `The member's card payment for this booking is disputed with their card issuer, so no card refund or account credit was issued. The refund of ${amount} is with the club's treasurer, who will be in touch with the member.`;
 }
 
 /** Whose payment method a card refund sentence names: the member's own, or an officer's "the member's". */

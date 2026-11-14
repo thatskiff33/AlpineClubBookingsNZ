@@ -263,6 +263,16 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
     return calls;
   }
 
+  // The frame also mounts the flow's own recovery alert (#4949); these tests
+  // are about the hosting-override prompt's alert, so they pick that one.
+  function hostingOverrideAlert() {
+    const alerts = screen
+      .getAllByRole("alert")
+      .filter((alert) => alert.id !== "cancel-booking-bk_1-error");
+    expect(alerts).toHaveLength(1);
+    return alerts[0];
+  }
+
   it("keeps one empty alert mounted through the pending request before announcing the 409", async () => {
     let completeCancel!: (response: Response) => void;
     const pendingCancel = new Promise<Response>((resolve) => {
@@ -287,7 +297,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       />,
     );
 
-    const alert = screen.getByRole("alert");
+    const alert = hostingOverrideAlert();
     expect(alert.textContent).toBe("");
     fireEvent.click(
       screen.getByRole("button", { name: "Cancel on behalf of member" }),
@@ -300,7 +310,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
     );
 
     await screen.findByText("Cancelling booking...");
-    expect(screen.getByRole("alert")).toBe(alert);
+    expect(hostingOverrideAlert()).toBe(alert);
     expect(alert.textContent).toBe("");
     expect(alert.getAttribute("aria-busy")).toBe("true");
 
@@ -310,7 +320,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       );
     });
     expect(await screen.findByText("ACB-OLD")).toBeTruthy();
-    expect(screen.getByRole("alert")).toBe(alert);
+    expect(hostingOverrideAlert()).toBe(alert);
     expect(alert.getAttribute("aria-busy")).toBe("false");
   });
 
@@ -324,7 +334,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
         canOverrideHostingCoverage
       />,
     );
-    const alert = screen.getByRole("alert");
+    const alert = hostingOverrideAlert();
     fireEvent.click(
       screen.getByRole("button", { name: "Cancel on behalf of member" }),
     );
@@ -335,6 +345,12 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
       screen.getByRole("button", { name: "Cancel booking, no email" }),
     );
     expect(await screen.findByText("ACB-OLD")).toBeTruthy();
+    // #4949: the refusal lands focus on the reason the officer must give next.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByLabelText(/Private hosting override reason/i),
+      ),
+    );
     fireEvent.change(screen.getByLabelText(/Private hosting override reason/i), {
       target: { value: "Abandoned private override reason." },
     });
@@ -343,7 +359,7 @@ describe("CancelBookingButton — state-bound hosting override (#2576)", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Keep Booking" }));
-    expect(screen.getByRole("alert")).toBe(alert);
+    expect(hostingOverrideAlert()).toBe(alert);
     expect(alert.textContent).toBe("");
     expect(screen.queryByLabelText(/Private hosting override reason/i)).toBeNull();
 
@@ -676,6 +692,93 @@ describe("CancelBookingButton — manual (cash / off-Xero) settlement copy (#226
       ).toBeTruthy();
     });
     expect(screen.queryByText(/original payment method/i)).toBeNull();
+  });
+});
+
+// #4911 (`INV-PAY-154`): a card payment disputed with the card issuer is handed
+// to the treasurer on the credit tier, as a manual settlement is, and both the
+// preview and the success panel (#4949's `CancelBookingSuccessPanel`) say so.
+describe("CancelBookingButton — a disputed card payment (#4911)", () => {
+  const disputedPreview = {
+    refundAmountCents: 4500,
+    keptAmountCents: 500,
+    changeFeeCents: 0,
+    refundPercentage: 90,
+    creditRefundAmountCents: 4000,
+    creditRefundPercentage: 80,
+    creditRestoredCents: 0,
+    totalPaidCents: 5000,
+    hasPayment: true,
+    refundDisputed: true,
+  };
+
+  function stubDisputedFetch(result: Record<string, unknown> = { refundAmountCents: 4000, refundMethod: "manual", refundDisputed: true }) {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("cancel-preview")
+        ? { ok: true, json: async () => disputedPreview }
+        : { ok: true, json: async () => result },
+    ) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+  }
+
+  async function confirmCancel() {
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Confirm Cancellation" })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Cancellation" }));
+  }
+
+  it("preview names the dispute and the treasurer, at the credit tier, with no card row or method choice", async () => {
+    stubDisputedFetch();
+    render(<CancelBookingButton bookingId="bk_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Booking" }));
+    await waitFor(() => {
+      expect(screen.getByText(/Your card payment for this booking is disputed with your card issuer/)).toBeTruthy();
+    });
+    expect(screen.getByText(/goes to the club.s treasurer, who will be in touch/)).toBeTruthy();
+    expect(screen.getByText("Refund arranged by the club:")).toBeTruthy();
+    expect(screen.queryByText(/paid in cash or by bank transfer/i)).toBeNull();
+    expect(screen.queryByText("Refund to card:")).toBeNull();
+    expect(screen.queryByRole("radio")).toBeNull();
+  });
+
+  it("success panel says the refund is with the treasurer, and never the original-payment-method sentence", async () => {
+    stubDisputedFetch();
+    render(<CancelBookingButton bookingId="bk_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Booking" }));
+    await confirmCancel();
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Your card payment for this booking is disputed with your card issuer, so the club cannot refund it to your card or as account credit. Your refund of $40.00 is with the club's treasurer, who will be in touch.",
+        ),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText(/original payment method/i)).toBeNull();
+    expect(screen.queryByText(/The club will arrange your refund/)).toBeNull();
+    expect(screen.queryByText(/added to your account/i)).toBeNull();
+  });
+
+  it("frames the success panel for the member when an officer cancels, even when an organiser would otherwise be refunded", async () => {
+    stubDisputedFetch({
+      refundAmountCents: 4000,
+      refundMethod: "manual",
+      refundDisputed: true,
+      organiserRefund: { method: "organiser_by_hand", amountCents: 4000 },
+    });
+    render(<CancelBookingButton bookingId="bk_1" onBehalfOfMember canChooseMemberEmail />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel on behalf of member" }));
+    await confirmCancel();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel booking, no email" }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "The member's card payment for this booking is disputed with their card issuer, so no card refund or account credit was issued. The refund of $40.00 is with the club's treasurer, who will be in touch with the member.",
+        ),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText(/original payment method/i)).toBeNull();
+    expect(screen.queryByText(/organiser/i)).toBeNull();
   });
 });
 

@@ -7,6 +7,13 @@ vi.mock("@/lib/stripe-config", () => ({
   getOperationalStripeSecretKey: vi.fn().mockResolvedValue("sk_test_fake"),
 }));
 
+// #4911 (`INV-PAY-154`): `processRefund` reads the capture's holding disputes
+// first; none unless a test says otherwise.
+const mockStripeDisputeFindMany = vi.fn();
+vi.mock("@/lib/prisma", () => ({
+  prisma: { stripeDispute: { findMany: (...args: unknown[]) => mockStripeDisputeFindMany(...args) } },
+}));
+
 // Mock Stripe before importing the module
 const mockPaymentIntentsCreate = vi.fn();
 const mockSetupIntentsCreate = vi.fn();
@@ -340,6 +347,33 @@ describe("Stripe library", () => {
   });
 
   describe("processRefund", () => {
+    beforeEach(() => {
+      mockStripeDisputeFindMany.mockReset().mockResolvedValue([]);
+    });
+
+    it("#4911 (INV-PAY-154): refuses a capture with an open or lost dispute before Stripe is asked", async () => {
+      mockStripeDisputeFindMany.mockResolvedValue([
+        { stripeDisputeId: "dp_1", stripePaymentIntentId: "pi_test_123", status: "LOST", amountCents: 5000 },
+      ]);
+
+      const refused = processRefund({ paymentIntentId: "pi_test_123", amountCents: 5000, metadata: { bookingId: "booking_1" } });
+
+      await expect(refused).rejects.toMatchObject({ name: "DisputedCaptureRefundRefusedError", paymentIntentId: "pi_test_123", lost: true });
+      await expect(refused).rejects.toThrow(/Stripe dispute dp_1 \(lost\)/);
+      expect(mockRefundsCreate).not.toHaveBeenCalled();
+      expect(mockStripeDisputeFindMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { stripePaymentIntentId: { in: ["pi_test_123"] }, status: { in: ["OPEN", "LOST"] } },
+      }));
+    });
+
+    it("#4911: with no open or lost dispute on the capture (a won one is not read), the refund is sent", async () => {
+      mockRefundsCreate.mockResolvedValue({ id: "re_test_123", amount: 5000 });
+
+      await processRefund({ paymentIntentId: "pi_test_123", amountCents: 5000, metadata: { bookingId: "booking_1" } });
+
+      expect(mockRefundsCreate).toHaveBeenCalledTimes(1);
+    });
+
     it("creates a refund with correct params", async () => {
       const mockRefund = { id: "re_test_123", amount: 5000 };
       mockRefundsCreate.mockResolvedValue(mockRefund);

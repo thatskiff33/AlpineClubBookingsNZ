@@ -177,6 +177,8 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-unrecognised-stripe-payment": "adminUnrecognisedStripePaymentTemplate",
   // admin-alerts-unrecognised-stripe-payment (#4624), template in ./admin-unrecognised-stripe-payment
   "admin-unmatched-app-stripe-payment": "adminUnmatchedAppStripePaymentTemplate",
+  // admin-alerts-stripe-dispute (#4911), template in ./admin-stripe-dispute
+  "admin-stripe-dispute": "adminStripeDisputeTemplate",
   "admin-payment-failure": "adminPaymentFailureTemplate",
   "admin-refund-request": "adminRefundRequestTemplate",
   "admin-xero-reconciliation-report": "adminXeroReconciliationReportTemplate",
