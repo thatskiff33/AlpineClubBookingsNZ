@@ -60,7 +60,7 @@ const EMPTY_AVAILABILITY: LodgeAvailabilityState = {
  *
  * An unknown night renders honestly as `?` (#2930), but a night alone cannot
  * say whether its month is still loading or failed to load, so the grid had
- * nothing to hang an error message or a Retry on. The fetch's outcome is
+ * nothing to hang an error message or a Try again button on. The fetch's outcome is
  * recorded here instead. Keys are the `yyyy-MM` prefix the season merge uses;
  * tagged with the lodge for the same reason `LodgeAvailabilityState` is, so one
  * lodge's failure is never shown against another lodge.
@@ -88,6 +88,11 @@ function withMonth(
  * Try again. `month` is 0-based, as in the calendar's own `currentMonth`, and
  * `monthKey` is that month's `yyyy-MM` key, derived by the caller from the same
  * parts so this module never builds a calendar date itself.
+ *
+ * `year` and `month` build the request; `monthKey` tags the failure and the
+ * season merge. They are one fact in two spellings, so a caller must derive the
+ * key from the same `year` and `month` it passes: a key for another month would
+ * fetch one month and record its outcome against a different one.
  */
 export function useBookingCalendarAvailability(
   lodgeId: string | null | undefined,
@@ -104,7 +109,7 @@ export function useBookingCalendarAvailability(
     lodgeId: lodgeId ?? null,
     months: new Set(),
   });
-  // Bumped by Retry so the load effect runs again for the month on screen.
+  // Bumped by Try again so the load effect runs again for the month on screen.
   const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {

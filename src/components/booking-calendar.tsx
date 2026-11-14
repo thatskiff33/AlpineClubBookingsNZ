@@ -337,9 +337,20 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
 
   const visibleMonthFailed = !lodgeNotSetUp && monthFailedToLoad;
 
+  // A month that loaded, was paged away from and then failed on its refetch keeps
+  // its earlier figures on screen (a failed answer never clears them). The alert
+  // must not say nothing loaded over bed counts the member can see, so it says
+  // they may be out of date instead. Same test the grid uses for "has a figure":
+  // a night's count and the lodge's capacity both present.
+  const visibleMonthShowsFigures =
+    lodgeCapacity !== null &&
+    Array.from({ length: daysInMonth }, (_, i) =>
+      formatCalendarDayOnly(currentMonth.year, currentMonth.month, i + 1),
+    ).some((dateStr) => (availability.nights[dateStr] ?? null) !== null);
+
   function retryVisibleMonth() {
     retryMonth();
-    // The Retry button unmounts with the alert; keep keyboard focus in the
+    // The Try again button unmounts with the alert; keep keyboard focus in the
     // calendar rather than letting it fall back to the top of the page.
     monthHeadingRef.current?.focus();
   }
@@ -368,9 +379,17 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       <LodgeNotSetUpNotice show={lodgeNotSetUp} settingsHref={lodgeSettingsHref} />
 
       {visibleMonthFailed ? (
-        <Alert variant="error" title={`Bed availability for ${monthName} could not be loaded`}>
+        <Alert
+          variant="error"
+          title={`Bed availability for ${monthName} could not be ${
+            visibleMonthShowsFigures ? "refreshed" : "loaded"
+          }`}
+        >
           <p className="mb-3">
-            Days marked ? may already be full. Nothing has been booked or charged.
+            {visibleMonthShowsFigures
+              ? "The bed counts shown may be out of date, so a night may already be full."
+              : "Days marked ? may already be full."}{" "}
+            Nothing has been booked or charged.
           </p>
           <Button variant="outline" onClick={retryVisibleMonth}>
             Try again

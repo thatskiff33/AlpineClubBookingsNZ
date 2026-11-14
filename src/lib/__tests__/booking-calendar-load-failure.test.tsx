@@ -19,7 +19,7 @@ import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
   (honestly unknown since #2930) but nothing said WHY, and nothing offered a way
   to ask again — a member on a weak signal picked nights blind and learned they
   were full only at submit. The calendar now records each month's load outcome
-  for the lodge on screen, says so in an error alert with a Retry, and the
+  for the lodge on screen, says so in an error alert with Try again, and the
   legend explains `?`. Unknown nights stay selectable: the server re-checks
   capacity at submit, so a failed read must never block a booking.
 
@@ -95,7 +95,7 @@ function emptyLodge(month: number): Record<string, number> {
 
 /**
  * Serves each request by its month and lodge. `decide` is asked afresh on every
- * call, so a test can change its answer between a failure and the Retry.
+ * call, so a test can change its answer between a failure and Try again.
  */
 function serve(decide: (month: number, lodgeId: string | null) => Outcome) {
   const fetchMock = vi.fn((url: string) => {
@@ -111,7 +111,7 @@ beforeEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("a month whose availability fails to load says so and offers Retry (#4954)", () => {
+describe("a month whose availability fails to load says so and offers Try again (#4954)", () => {
   it.each<[Outcome]>([["refused"], ["offline"], ["bad-json"]])(
     "raises an announced error alert when the request is %s, and the ? nights stay selectable",
     async (outcome) => {
@@ -121,7 +121,10 @@ describe("a month whose availability fails to load says so and offers Retry (#49
       await goToMonth(1);
 
       await waitFor(() => expect(failureAlert()).not.toBeNull());
-      expect(failureAlert()!.textContent).toContain(monthHeading(1));
+      expect(failureAlert()!.textContent).toContain(
+        `Bed availability for ${monthHeading(1)} could not be loaded`,
+      );
+      expect(failureAlert()!.textContent).toContain("Days marked ? may already be full");
       expect(failureAlert()!.textContent).toContain("Nothing has been booked or charged");
 
       // Unchanged per-cell wording, and the night is still offered.
@@ -134,7 +137,7 @@ describe("a month whose availability fails to load says so and offers Retry (#49
     },
   );
 
-  it("Retry asks for the month again and clears the alert once it loads", async () => {
+  it("Try again asks for the month again and clears the alert once it loads", async () => {
     let nextMonthOutcome: Outcome = "refused";
     const fetchMock = serve((month) => (month === requestMonth(1) ? nextMonthOutcome : "ok"));
     render(<BookingCalendar onDateSelect={vi.fn()} lodgeId="lodge a" />);
@@ -157,7 +160,7 @@ describe("a month whose availability fails to load says so and offers Retry (#49
     expect(document.activeElement).toBe(screen.getByRole("heading", { name: monthHeading(1) }));
   });
 
-  it("a Retry that fails again raises the alert again", async () => {
+  it("a Try again that fails again raises the alert again", async () => {
     const fetchMock = serve((month) => (month === requestMonth(1) ? "offline" : "ok"));
     render(<BookingCalendar onDateSelect={vi.fn()} />);
     await goToMonth(1);
@@ -168,6 +171,41 @@ describe("a month whose availability fails to load says so and offers Retry (#49
 
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(callsBefore + 1));
     await waitFor(() => expect(failureAlert()).not.toBeNull());
+  });
+
+  it("says the counts may be out of date when a refetch fails over figures already loaded", async () => {
+    let nextMonthOutcome: Outcome = "ok";
+    const fetchMock = serve((month) => (month === requestMonth(1) ? nextMonthOutcome : "ok"));
+    render(<BookingCalendar onDateSelect={vi.fn()} />);
+    await goToMonth(1);
+    await waitFor(() =>
+      expect(dayButton(DAY).getAttribute("aria-label")).toContain("20 of 20 beds free"),
+    );
+    expect(failureAlert()).toBeNull();
+
+    // Page away and back with the signal gone. Paging back refetches the month,
+    // the refetch fails, and the earlier counts are still on the grid.
+    nextMonthOutcome = "offline";
+    await goToMonth(2);
+    const callsBefore = fetchMock.mock.calls.length;
+    await goToMonth(1, "Prev");
+    await waitFor(() => expect(failureAlert()).not.toBeNull());
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore);
+
+    // Not "could not be loaded" and not "days marked ?": there are no ? days, and
+    // the member can see figures that are now unconfirmed.
+    const text = failureAlert()!.textContent!;
+    expect(text).toContain(`Bed availability for ${monthHeading(1)} could not be refreshed`);
+    expect(text).toContain("The bed counts shown may be out of date");
+    expect(text).toContain("Nothing has been booked or charged");
+    expect(text).not.toContain("could not be loaded");
+    expect(text).not.toContain("Days marked ?");
+    expect(dayButton(DAY).getAttribute("aria-label")).toContain("20 of 20 beds free");
+
+    nextMonthOutcome = "ok";
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(failureAlert()).toBeNull());
+    expect(dayButton(DAY).getAttribute("aria-label")).toContain("20 of 20 beds free");
   });
 
   it("belongs to the month that failed, not the one on screen after paging", async () => {
