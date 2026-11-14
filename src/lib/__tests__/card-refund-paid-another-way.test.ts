@@ -37,7 +37,9 @@ const mocks = vi.hoisted(() => ({
   createStillOwedRow: vi.fn<(args: unknown) => Promise<{ id: string }>>(async () => ({ id: "op-rest" })),
   // #4879: no live superseded capture on these payments unless a test says so (its realdb proof:
   // `superseded-refund-other-doors-hold-back.realdb.test.ts`).
-  readSupersededCaptureHeldBack: vi.fn(async (..._args: unknown[]) => ({ byTransaction: new Map<string, number>(), totalCents: 0 })),
+  readSupersededCaptureHeldBack: vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(
+    async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 }),
+  ),
 }));
 
 vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({
