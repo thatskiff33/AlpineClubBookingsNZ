@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./helpers/accessibility";
+import { adminHref, adminHrefPattern, adminUrlPattern } from "./helpers/admin-url";
 import { loginPersona } from "./helpers/auth";
 import { ROLE_PERSONAS } from "./helpers/fixtures";
 import { personas } from "./helpers/personas";
@@ -20,12 +21,12 @@ async function openMemberDetail(page: Page, name: string) {
   // hydration in CI and wiped the input, so the first interaction is this
   // auto-waited click. Locate by href+text rather than accessible name.
   const memberLink = page
-    .locator('a[href*="/admin/members/"]')
+    .locator(`a[href^="${adminHref("members")}/"]`)
     .filter({ hasText: name })
     .first();
   await expect(memberLink).toBeVisible({ timeout: 30_000 });
   await memberLink.click();
-  await expect(page).toHaveURL(/\/admin\/members\/(?!$)[^/?#]+/);
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("members"), { child: true }));
 }
 
 test("member directory Open action lands read-only and keeps the name link", async ({
@@ -39,13 +40,18 @@ test("member directory Open action lands read-only and keeps the name link", asy
   const nameLink = row.getByRole("link", { name, exact: true });
   const openLink = row.getByRole("link", { name: `Open ${name}` });
   await expect(nameLink).toBeVisible({ timeout: 30_000 });
-  await expect(openLink).toHaveAttribute("href", /\/admin\/members\/[^?]+\?returnTo=/);
+  await expect(openLink).toHaveAttribute(
+    "href",
+    adminHrefPattern(adminHref("members"), { child: true, requiredParam: "returnTo" }),
+  );
   await expect(openLink).not.toHaveAttribute("href", /edit=true/);
 
   await openLink.focus();
   await expect(openLink).toBeFocused();
   await openLink.press("Enter");
-  await expect(page).toHaveURL(/\/admin\/members\/(?!$)[^/?#]+\?returnTo=/);
+  await expect(page).toHaveURL(
+    adminUrlPattern(adminHref("members"), { child: true, requiredParam: "returnTo" }),
+  );
   await expect(page.getByText("First Name", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save Changes" })).toHaveCount(0);
 });

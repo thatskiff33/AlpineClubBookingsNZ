@@ -5,6 +5,7 @@ import { clubTimeZone } from "@/lib/club-time/server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { requireAdmin } from "@/lib/session-guards";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -14,9 +15,7 @@ const previewSchema = z
   .object({
     seasonYear: z.number().int().min(2020).max(2040),
     membershipTypeId: z.string().min(1),
-    applyFrom: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
+    applyFrom: dateOnlyStringSchema
       .nullable()
       .optional(),
   })
