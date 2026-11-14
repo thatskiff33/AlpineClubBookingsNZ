@@ -20,6 +20,8 @@
     // unit-test project (tsconfig.test.json) is the one that stays off, and
     // #3363 is the one home for how many diagnostics it holds.
   },
-  "include": ["e2e/**/*.ts", "playwright.config.ts", "scripts/e2e-contracts/**/*.ts"],
+  // #4967: the dialog-viewport fixture is a React page (`.tsx`) that the contract
+  // spec serves through Vite, so the contracts directory lists `.tsx` too.
+  "include": ["e2e/**/*.ts", "playwright.config.ts", "scripts/e2e-contracts/**/*.ts", "scripts/e2e-contracts/**/*.tsx"],
   "exclude": ["node_modules"]
 }

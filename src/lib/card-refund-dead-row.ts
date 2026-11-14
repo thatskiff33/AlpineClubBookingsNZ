@@ -52,6 +52,13 @@ export class DeadCardRefundActionError extends Error {
   }
 }
 
+/** Every dead-row settlement's refusal when the row was settled first (`DeadCardRefundRowRefusals.closed`). */
+export const DEAD_CARD_REFUND_CLOSED = "This card refund has already been closed.";
+
+/** Every dead-row settlement's refusal when its status-guarded claim or a re-read lost: nothing was written. */
+export const DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING =
+  "This card refund changed while you were settling it. The list has been refreshed: check it and try again.";
+
 /** The dead row, as each action reads it. */
 export const DEAD_CARD_REFUND_OPERATION_SELECT = {
   id: true,
@@ -75,6 +82,10 @@ export const DEAD_CARD_REFUND_PAYMENT_SELECT = {
   id: true,
   xeroInvoiceId: true,
   ...netCollectedPaymentSelect,
+  recoveryOperations: {
+    ...netCollectedPaymentSelect.recoveryOperations,
+    select: { ...netCollectedPaymentSelect.recoveryOperations.select, lastError: true, paymentIntentId: true },
+  },
 } as const satisfies Prisma.PaymentSelect;
 
 export type DeadCardRefundPayment = Prisma.PaymentGetPayload<{ select: typeof DEAD_CARD_REFUND_PAYMENT_SELECT }>;
@@ -205,9 +216,10 @@ function raisedForAPerson(idempotencyKey: string): boolean {
  *   slices must add up to exactly the row's own unsent figure. A row with no
  *   stored plan cannot be checked, except a superseded intent's refund, whose
  *   runner sizes one request on its charge's ledger (review S1).
- * Where "Paid another way" cannot close the row either (a superseded intent's
- * refund whose charge does not hold exactly what it owes), the refusal points
- * to a developer instead (review S1).
+ * Where "Paid another way" cannot close the row either, the refusal says so
+ * (`deadRowSettleHint`): the three #4492 refusals do not ask a developer; a
+ * superseded charge that does not hold exactly what the row owes still does
+ * (review S1).
  * - #4492: ANY refund Stripe failed later (`card_refund_failed_later_<refund>`)
  *   on the same payment, open or closed: it may be the same money as this row
  *   (a refund this row's door made whose answer was lost, then failed), and
@@ -218,12 +230,13 @@ export function tryCardAgainRefusal(
   payment: { recoveryOperations: ReadonlyArray<{ id: string; idempotencyKey: string }> },
   operation: ReArmedRow & { id: string; idempotencyKey: string; lastError: string | null },
   owed: Pick<DeadCardRefundStillOwed, "ownCents" | "owedCents">,
+  bankCloseRefusal: string | null = null,
 ): string | null {
   if (owed.owedCents === 0) {
     return "Nothing is left owed on this card refund, so there is nothing to send to the card.";
   }
   // Review S1: where "Paid another way" cannot close it either, the refusal says so and points to a developer.
-  const settle = deadRowSettleHint(operation, owed);
+  const settle = deadRowSettleHint(operation, owed, bankCloseRefusal);
   if (raisedForAPerson(operation.idempotencyKey)) {
     return `The app raised this refund for a person to settle, not to send to the card again. Check what the member is owed. ${settle}`;
   }
@@ -250,6 +263,57 @@ export function tryCardAgainRefusal(
     return `A refund Stripe failed later is on this payment, and it may be the same money as this one. Do not try the card again: check what the member is owed. ${settle}`;
   }
   return null;
+}
+
+/** Charge figures read separately from Net Collected's additional-only transactions. */
+export interface DeadCardRefundCharge {
+  id: string;
+  amountCents: number;
+  refundedAmountCents: number;
+}
+
+/** Runner success (`succeededPaymentRecoveryData`). A bank close leaves a marker in `lastError`. */
+function paidBackToTheCard(row: { status: string; lastError: string | null }): boolean {
+  return row.status === "SUCCEEDED" && row.lastError === null;
+}
+
+/** #4492: one bank-close refusal for the list and the locked close. No money or provider calls. */
+export function paidAnotherWayRefusal(
+  payment: Pick<DeadCardRefundPayment, "recoveryOperations">,
+  operation: Pick<DeadCardRefundOperation, "id" | "type" | "status" | "idempotencyKey" | "allocationPlan" | "paymentTransactionId" | "paymentIntentId">,
+  owed: DeadCardRefundStillOwed,
+  charges: ReadonlyArray<DeadCardRefundCharge>,
+): string | null {
+  const siblings = payment.recoveryOperations.filter((other) => other.id !== operation.id);
+  const failedLater = siblings.filter((other) => cardRefundFailedLaterRefundId(other.idempotencyKey) !== null);
+  const onCharge = (other: (typeof siblings)[number], transactionId: string | null, intentId: string | null) =>
+    (!!transactionId && (other.paymentTransactionId === transactionId ||
+      (parseRefundAllocationPlan(other.allocationPlan) ?? []).some((slice) => slice.paymentTransactionId === transactionId))) ||
+    (!!intentId && other.paymentIntentId === intentId);
+
+  // Born-dead PENDING rows were never sent: a later superseded send does not explain their failure.
+  if (cardRefundFailedLaterRefundId(operation.idempotencyKey) !== null) {
+    if (operation.status !== "FAILED") return null;
+    for (const slice of owed.unsent) {
+      if (!siblings.some((other) => other.type === "REFUND_SUPERSEDED_PAYMENT" &&
+        paidBackToTheCard(other) &&
+        onCharge(other, slice.paymentTransactionId, operation.paymentIntentId))) continue;
+      const charge = charges.find(({ id }) => id === slice.paymentTransactionId);
+      if (!charge || charge.amountCents - charge.refundedAmountCents < slice.amountCents) {
+        return "The superseded charge was already sent back to the card, which is why this refund died. Closing it as paid another way would pay the member again, so it cannot be closed here.";
+      }
+    }
+    return null;
+  }
+  if (isSizedOnLedger(operation)) {
+    return failedLater.some((other) => onCharge(other, operation.paymentTransactionId, operation.paymentIntentId) &&
+      !paidBackToTheCard(other))
+      ? "Another refund on this charge failed later and has not gone back to the card yet, so this row cannot be closed as paid another way."
+      : null;
+  }
+  return failedLater.length > 0
+    ? "A refund Stripe failed later is on this payment, and it may be the same money. The card is asked for it again, so this row cannot be closed as paid another way."
+    : null;
 }
 
 /** What a re-arm's send is read from: the row's stored plan, or a superseded intent's own charge (review S1). */
@@ -299,14 +363,16 @@ export function supersededCloseFillsItsCharge(
 }
 
 /**
- * Review S1, R1: where "Paid another way" cannot close this row either - a
- * superseded intent's refund whose charge does not hold exactly what it owes
- * (`supersededCloseFillsItsCharge`) - a refusal points to a developer instead.
+ * Review S1, R1: where "Paid another way" cannot close this row either, say so.
+ * The three #4492 refusals stop there. A superseded charge that does not hold
+ * exactly what the row owes (`supersededCloseFillsItsCharge`) still asks a developer.
  */
 export function deadRowSettleHint(
   operation: Pick<ReArmedRow, "type" | "paymentId" | "paymentTransaction">,
   owed: Pick<DeadCardRefundStillOwed, "ownCents" | "owedCents">,
+  bankCloseRefusal: string | null = null,
 ): string {
+  if (bankCloseRefusal) return "Paid another way cannot close it either.";
   const canClose =
     operation.type !== "REFUND_SUPERSEDED_PAYMENT" ||
     supersededCloseFillsItsCharge(operation.paymentTransaction, operation.paymentId, owed);

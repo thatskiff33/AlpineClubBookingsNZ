@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   tryDeadCardRefundAgain: vi.fn(),
   closeCardRefundNothingLeftOwed: vi.fn(),
+  tryOrganiserChildCardRefundAgain: vi.fn(),
+  findUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
@@ -30,6 +32,16 @@ vi.mock("@/lib/card-refund-dead-row-actions", () => ({
     }
   },
 }));
+// #4851: both routes read the row's key to send a group organiser's refund its own way.
+vi.mock("@/lib/prisma", () => ({
+  prisma: { paymentRecoveryOperation: { findUnique: mocks.findUnique } },
+}));
+vi.mock("@/lib/card-refund-group-try-again", () => ({
+  tryOrganiserChildCardRefundAgain: mocks.tryOrganiserChildCardRefundAgain,
+}));
+vi.mock("@/lib/card-refund-group-paid-another-way", () => ({
+  closeGroupCardRefundPaidAnotherWay: vi.fn(),
+}));
 vi.mock("@/lib/card-refund-paid-another-way", () => ({
   closeCardRefundPaidAnotherWay: vi.fn(),
   CardRefundPaidAnotherWayError: class extends Error {},
@@ -38,6 +50,12 @@ vi.mock("@/lib/card-refund-paid-another-way", () => ({
 import { revalidatePath } from "next/cache";
 import type { NextRequest } from "next/server";
 import { DeadCardRefundActionError } from "@/lib/card-refund-dead-row-actions";
+import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
+import {
+  BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX,
+  GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX,
+  ORGANISER_CHILD_REFUND_KEY_PREFIX,
+} from "@/lib/payment-recovery-keys";
 import { POST as payAnotherWay } from "../[id]/paid-another-way/route";
 import { POST as nothingLeftOwed } from "../[id]/nothing-left-owed/route";
 import { POST as tryCardAgain } from "../[id]/try-card-again/route";
@@ -50,12 +68,17 @@ function request(path: string, body: unknown) {
 }
 
 const params = Promise.resolve({ id: "op-1" });
+// Built from the real prefixes, so the routing reads the keys the writers mint.
+const CHARGE_ROW = `${BOOKING_CANCELLATION_REFUND_RECOVERY_PREFIX}b-1`;
+const ORGANISER_CHILD_ROW = `${ORGANISER_CHILD_REFUND_KEY_PREFIX}c-1`;
+const LEGACY_GROUP_ROW = `${GROUP_SETTLEMENT_REFUND_RECOVERY_PREFIX}s-1`;
 const tryValid = { expectedOwedCents: 15_000, confirmed: true };
 const nothingValid = { expectedStripeRefundIds: ["re_later_1"], confirmed: true };
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "treasurer-1" } } });
+  mocks.findUnique.mockResolvedValue({ idempotencyKey: CHARGE_ROW });
   mocks.tryDeadCardRefundAgain.mockResolvedValue({ operationId: "op-1", bookingId: "b-1", paymentId: "p-1", owedCents: 15_000 });
   mocks.closeCardRefundNothingLeftOwed.mockResolvedValue({ operationId: "op-1", bookingId: "b-1", paymentId: "p-1", coveredBy: [] });
 });
@@ -114,6 +137,35 @@ describe("Try the card again: what it needs", () => {
     const failed = await tryCardAgain(request("try-card-again", tryValid), { params });
     expect(failed.status).toBe(500);
     await expect(failed.json()).resolves.toEqual({ error: "Could not try the card again." });
+  });
+});
+
+describe("Try the card again: which re-arm a row goes to (#4851)", () => {
+  it("re-arms a joiner's refund out of the organiser's card through the group re-arm", async () => {
+    mocks.findUnique.mockResolvedValue({ idempotencyKey: ORGANISER_CHILD_ROW });
+    mocks.tryOrganiserChildCardRefundAgain.mockResolvedValue({ operationId: "op-1" });
+
+    const response = await tryCardAgain(request("try-card-again", tryValid), { params });
+
+    expect(response.status).toBe(200);
+    expect(mocks.tryOrganiserChildCardRefundAgain).toHaveBeenCalledWith({
+      operationId: "op-1",
+      expectedOwedCents: 15_000,
+      actingMemberId: "treasurer-1",
+    });
+    expect(mocks.tryDeadCardRefundAgain).not.toHaveBeenCalled();
+  });
+
+  it("refuses a pre-#3653 whole-group refund with a 409 and its sentence, re-arming nothing", async () => {
+    mocks.findUnique.mockResolvedValue({ idempotencyKey: LEGACY_GROUP_ROW });
+
+    const response = await tryCardAgain(request("try-card-again", tryValid), { params });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL });
+    expect(mocks.tryOrganiserChildCardRefundAgain).not.toHaveBeenCalled();
+    expect(mocks.tryDeadCardRefundAgain).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });
 

@@ -4,7 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import MembersPage from "@/app/(admin)/admin/members/page";
+import MembersPage from "@/app/(admin)/admin/membership/members/page";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 
 const fetchMock = vi.fn();
@@ -88,11 +88,11 @@ const queryState = vi.hoisted(() => ({
   buildExportUrl: vi.fn(() => "/api/admin/members/export"),
 }));
 
-vi.mock("@/app/(admin)/admin/members/_hooks/use-members-query-state", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_hooks/use-members-query-state", () => ({
   useMembersQueryState: () => queryState,
 }));
 
-vi.mock("@/app/(admin)/admin/members/_hooks/use-xero-contact-groups", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_hooks/use-xero-contact-groups", () => ({
   useXeroContactGroups: () => ({
     xeroConnected: true,
     xeroFeatures: {},
@@ -103,7 +103,7 @@ vi.mock("@/app/(admin)/admin/members/_hooks/use-xero-contact-groups", () => ({
   }),
 }));
 
-vi.mock("@/app/(admin)/admin/members/_components/member-editor-dialog", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-editor-dialog", () => ({
   MemberEditorDialog: ({
     open,
     onRecoveryWarning,
@@ -143,32 +143,32 @@ vi.mock("@/app/(admin)/admin/members/_components/member-editor-dialog", () => ({
     ) : null,
 }));
 
-vi.mock("@/app/(admin)/admin/members/_components/member-bulk-action-bar", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-bulk-action-bar", () => ({
   MemberBulkActionBar: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-bulk-dialog", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-bulk-dialog", () => ({
   MemberBulkDialog: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-bulk-membership-dialog", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-bulk-membership-dialog", () => ({
   MemberBulkMembershipDialog: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-filter-toolbar", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-filter-toolbar", () => ({
   MemberFilterToolbar: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-import-dialog", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-import-dialog", () => ({
   MemberImportDialog: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-pagination", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-pagination", () => ({
   MemberPagination: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/member-password-action-dialog", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-password-action-dialog", () => ({
   MemberPasswordActionDialog: () => null,
 }));
-vi.mock("@/app/(admin)/admin/members/_components/xero-groups-refresh-hint", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/xero-groups-refresh-hint", () => ({
   XeroGroupsRefreshHint: () => null,
 }));
 
-vi.mock("@/app/(admin)/admin/members/_components/member-table", () => ({
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-table", () => ({
   MemberTable: () => <div>No affected member in this filtered page</div>,
 }));
 

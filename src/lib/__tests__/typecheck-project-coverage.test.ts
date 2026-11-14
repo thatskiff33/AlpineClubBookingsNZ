@@ -79,6 +79,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   "scripts/ci/check-action-pins.test.mjs",
   "scripts/ci/check-allow-builds.test.mjs",
   "scripts/ci/check-doc-index-integrity.test.mjs",
+  "scripts/ci/check-image-pins.test.mjs",
   "scripts/ci/check-pr-body.test.mjs",
   // #4053 tests the PR-body gates' file input (`pr-body.mjs`), a `.mjs` tool.
   "scripts/ci/pr-body-file.test.mjs",

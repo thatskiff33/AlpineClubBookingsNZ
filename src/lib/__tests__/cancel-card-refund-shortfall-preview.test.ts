@@ -296,11 +296,11 @@ describe("the mirror fold is one walk (#1491, #4119)", () => {
 describe("the preview asks only where the cancel raises the parts (#4119)", () => {
   const short = [card(14_000), bank(6_000)];
   const ask = (payment: { source: string; manuallyMarkedPaidAt: Date | null }, organiserCard = false, refundAmountCents = 20_000, organiserByBank = false) =>
-    cancelPreviewCardShortfall(store(short) as never, { payment: { id: "payment-1", ...payment }, organiserCard, organiserByBank, refundAmountCents });
+    cancelPreviewCardShortfall(store(short) as never, { payment: { id: "payment-1", ...payment }, organiserCard, organiserByBank, disputed: false, refundAmountCents });
 
   it("a card refund on the card branch: the split, read in one read-only RepeatableRead snapshot", async () => {
     const db = store(short);
-    expect(await cancelPreviewCardShortfall(db as never, { payment: { id: "payment-1", source: "STRIPE", manuallyMarkedPaidAt: null }, organiserCard: false, organiserByBank: false, refundAmountCents: 20_000 })).toEqual({
+    expect(await cancelPreviewCardShortfall(db as never, { payment: { id: "payment-1", source: "STRIPE", manuallyMarkedPaidAt: null }, organiserCard: false, organiserByBank: false, disputed: false, refundAmountCents: 20_000 })).toEqual({
       cardShortfall: { cardCents: 14_000, bankCents: 6_000, checkCents: 0 },
     });
     expect(db.$transaction).toHaveBeenCalledTimes(1);

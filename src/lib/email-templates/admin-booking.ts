@@ -5,6 +5,7 @@
  * manual-invoice figures come from `@/lib/booking-money-lines`, the same resolver the
  * member's own confirmation uses, so the two cannot state different amounts.
  */
+import { adminHref } from "@/lib/admin-hubs";
 import { wholeLodgeManualInvoiceAmountCents } from "@/lib/booking-money-lines";
 import { escapeHtml } from "./escape";
 import {
@@ -57,7 +58,7 @@ export function adminNewBookingTemplate(data: {
     ${paragraph("A new booking has been created.")}
     ${data.reviewReason ? alertBox(escapeHtml(data.reviewReason), "warning") : ""}
     ${infoTable(rows)}
-    ${button("View Bookings", BASE_URL + "/admin/bookings")}
+    ${button("View Bookings", BASE_URL + adminHref("bookings"))}
   `);
 }
 
@@ -82,7 +83,7 @@ export function adminMinorsReviewRequiredTemplate(data: {
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
     ])}
-    ${button("Review Bookings", BASE_URL + "/admin/bookings")}
+    ${button("Review Bookings", BASE_URL + adminHref("bookings"))}
   `);
 }
 
@@ -112,7 +113,7 @@ export function adminPartnerShareSweptTemplate(data: {
         value: data.nights.map((night) => emailCalendarDay(night)).join(", "),
       },
     ])}
-    ${button("Review Bed Allocation", BASE_URL + "/admin/bed-allocation")}
+    ${button("Review Bed Allocation", BASE_URL + adminHref("bed-allocation"))}
   `);
 }
 
@@ -172,7 +173,7 @@ export function adminOwnerSubstitutionTemplate(data: {
       { label: "Check-in", value: emailCalendarDay(data.checkIn) },
       { label: "Check-out", value: emailCalendarDay(data.checkOut) },
     ])}
-    ${button("Review Bookings", BASE_URL + "/admin/bookings")}
+    ${button("Review Bookings", BASE_URL + adminHref("bookings"))}
   `);
 }
 
@@ -213,7 +214,7 @@ export function adminPendingDeadlineTemplate(bookings: Array<{
       </tr>
       ${tableRowsHtml}
     </table>
-    ${button("View Bookings", BASE_URL + "/admin/bookings")}
+    ${button("View Bookings", BASE_URL + adminHref("bookings"))}
   `);
 }
 
@@ -236,7 +237,7 @@ export function adminBookingBumpedTemplate(data: {
       { label: "Guests", value: String(data.guestCount) },
       { label: "Triggered By", value: escapeHtml(data.triggeringMemberName) },
     ])}
-    ${button("View Bookings", BASE_URL + "/admin/bookings")}
+    ${button("View Bookings", BASE_URL + adminHref("bookings"))}
   `);
 }
 
@@ -277,7 +278,7 @@ export function adminCapacityWarningTemplate(days: Array<{
       </tr>
       ${tableRowsHtml}
     </table>
-    ${button("View Bookings", BASE_URL + "/admin/bookings")}
+    ${button("View Bookings", BASE_URL + adminHref("bookings"))}
   `);
 }
 
@@ -299,7 +300,7 @@ export function adminWaitlistOfferTemplate(data: {
       { label: "Queue Position", value: "#" + String(data.position) },
     ])}
     ${paragraph("The member has 48 hours to confirm their booking.")}
-    ${button("View Waitlist", BASE_URL + "/admin/waitlist")}
+    ${button("View Waitlist", BASE_URL + adminHref("waitlist"))}
   `);
 }
 
