@@ -3334,8 +3334,16 @@ phases print their whole plan and change nothing without `--execute`.
    repositories are refused. It refuses when:
 
    - the commit is not on `origin/main`'s **first-parent** chain — only a
-     commit CI pushed to `main` has GHCR images, so only its tag can be
-     deployed (a release-prep branch commit inside a merge never was);
+     commit pushed to `main` gets a CI run that publishes GHCR images (a
+     release-prep branch commit inside a merge never was);
+   - its `ci.yml` push run on `main` has not published its images: GitHub
+     reports no run whose `Publish GHCR images` job succeeded, because the run
+     is still going, failed, was cancelled by hand, or never started
+     (`INV-OPS-019`). The refusal names the commit and the run. Wait for the
+     run, or re-run it with `gh run rerun <run-id>` and publish once that job
+     succeeds. The check runs in the dry run too, on the commit that would be
+     tagged (on a resume, the tagged commit), and refuses when GitHub's
+     answer cannot be read — a fine-grained token needs **Actions: Read**;
    - `origin` already has the version's tag on another commit, or the version
      is not newer than `origin`'s latest tag — nothing new was prepared;
    - `CHANGELOG.md` has no section for the version, or still has entries
@@ -3353,10 +3361,11 @@ phases print their whole plan and change nothing without `--execute`.
      anyway and lists them as carried into the next release.
 
    The dry run also checks `gh auth status` and that `gh` can reach the
-   repository, and says which release body it will use: the section itself,
-   or — over 120,000 characters, below GitHub's 125,000 limit — a short body
-   with the entry count and a link to the section in `CHANGELOG.md` at the
-   tag. With `--execute` it writes the body to a file, creates the annotated
+   repository, prints the CI run that published the commit's images, and
+   says which release body it will use: the section itself, or — over
+   120,000 characters, below GitHub's 125,000 limit — a short body with the
+   entry count and a link to the section in `CHANGELOG.md` at the tag. With
+   `--execute` it writes the body to a file, creates the annotated
    `v<version>` tag, and only then pushes the tag and runs
    `gh release create`. A failure prints the re-run, always with
    `--commit <sha>` of the commit being tagged, and the re-run resumes: a

@@ -990,6 +990,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-016` | Member journal grants and database guards forbid mutation |
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
+| `INV-OPS-019` | Every main push run completes; releases tag only published commits |
 
 ## Product Configuration
 

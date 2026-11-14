@@ -60,8 +60,9 @@ on:
     #
     # Its head is `main` itself, so every merge into `main` fires `synchronize`
     # on every open sync pull request and starts its checks again — and `ci.yml`
-    # sets `cancel-in-progress: true`, so the run already in flight is thrown
-    # away rather than finishing. Measured over the fourteen days to 28 August
+    # cancels a pull request's run when a newer one starts (push runs no longer
+    # cancel, #4989), so the run already in flight is thrown away rather than
+    # finishing. Measured over the fourteen days to 28 August
     # 2026: the median merge-to-merge gap on `main` is 13.5 minutes and 184 of
     # 268 gaps are under 40 minutes, while the `CI` workflow alone takes 33-37.
     # So roughly seven times in ten the next merge arrives before the checks

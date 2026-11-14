@@ -19,9 +19,11 @@
  *
  *   pnpm run release:cut publish [--commit <sha>] [--carry-late-fragments] [--execute]
  *     After the pull request merges: tags the merged commit (default
- *     `origin/main`, always one CI built an image for), pushes the tag, and
- *     publishes the GitHub release on the repository `origin` names. A re-run
- *     after a partial failure resumes where it stopped.
+ *     `origin/main`), pushes the tag, and publishes the GitHub release on the
+ *     repository `origin` names. The commit must be on `main`'s first-parent
+ *     chain AND its `ci.yml` push run must have published its images (the
+ *     `Publish GHCR images` job succeeded) — GitHub is asked, not git history
+ *     (#4989). A re-run after a partial failure resumes where it stopped.
  *
  * Both phases print the whole plan and change nothing unless `--execute` is
  * given. With `--execute`, local steps run first and remote ones (tag push,
@@ -65,6 +67,22 @@ export const FEATURE_FRAGMENT_SUFFIX = ".feature.md";
  * body that links to the section in CHANGELOG.md at the tag instead.
  */
 export const MAX_RELEASE_NOTES_CHARS = 120_000;
+
+/** The workflow whose `main` push runs publish the GHCR images a release tag deploys. */
+export const CI_WORKFLOW_FILE = "ci.yml";
+
+/** That workflow's publishing job, by the display name GitHub's jobs API reports. */
+export const PUBLISH_IMAGES_JOB_NAME = "Publish GHCR images";
+
+/** The most runs or jobs one API page holds. */
+const API_PAGE = 100;
+
+/**
+ * The most pages read for one answer. A run's jobs list counts every attempt's
+ * jobs (`filter=all`), so a run re-run several times outgrows one page; past
+ * this many pages the check refuses rather than reading on.
+ */
+const API_MAX_PAGES = 10;
 
 const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const BUMPS = ["patch", "minor", "major"];
@@ -559,9 +577,10 @@ export function prepareRelease({
 }
 
 /**
- * `sha` when it is on main's first-parent chain. Only a commit CI pushed to
- * main has GHCR images, so only its tag can be deployed; a release-prep
- * branch commit inside a merge is on main but never was main's tip.
+ * `sha` when it is on main's first-parent chain. Only a commit pushed to main
+ * gets a CI run that can publish GHCR images; a release-prep branch commit
+ * inside a merge is on main but never was main's tip. Being on the chain is
+ * necessary, not sufficient: `requirePublishedImages` checks the run itself.
  */
 function requireFirstParent(firstParent, sha) {
   if (!firstParent.includes(sha)) {
@@ -572,6 +591,78 @@ function requireFirstParent(firstParent, sha) {
     );
   }
   return sha;
+}
+
+/**
+ * The `main` push run of `CI_WORKFLOW_FILE` for `sha` whose
+ * `PUBLISH_IMAGES_JOB_NAME` job succeeded: the only evidence that the images a
+ * deploy of its tag pulls exist (INV-OPS-019). A cancelled, failed or
+ * unfinished run published nothing, so this asks GitHub rather than trusting
+ * the first-parent chain. Any answer it cannot read refuses, never passes.
+ */
+function requirePublishedImages(cmd, repo, sha) {
+  const short = sha.slice(0, 12);
+  // One page of `endpoint`: its items and the total GitHub says the answer holds.
+  const page = (endpoint, number) => {
+    const args = ["api", "--hostname", repo.host, `repos/${repo.owner}/${repo.name}/${endpoint}${number > 1 ? `&page=${number}` : ""}`];
+    const text = cmd.gh(
+      args,
+      `Nothing was created. GitHub could not say whether CI published images for ${short}; gh's login needs read access to ${repo.slug}'s ` +
+        `Actions (a fine-grained token: "Actions: Read"). Fix it, then re-run.`,
+    );
+    const unexpected = () =>
+      new ReleaseCutError(
+        `\`${display("gh", args)}\` answered in a shape this script does not read, so it cannot tell whether CI published images for ${short}.`,
+        "Nothing was created. Re-run; if it persists, GitHub's API has changed and this check needs updating.",
+      );
+    let answer;
+    try {
+      answer = JSON.parse(text);
+    } catch {
+      throw unexpected();
+    }
+    const list = answer?.[endpoint.startsWith("actions/workflows/") ? "workflow_runs" : "jobs"];
+    if (!Array.isArray(list) || !Number.isInteger(answer.total_count)) throw unexpected();
+    if (list.some((item) => !Number.isInteger(item?.id) || typeof item.status !== "string")) throw unexpected();
+    return { list, total: answer.total_count, unexpected };
+  };
+  // Every page of `endpoint`. A page shorter than a full one while GitHub
+  // promises more is an answer this cannot read, and refuses.
+  const api = (endpoint) => {
+    const items = [];
+    for (let number = 1; number <= API_MAX_PAGES; number += 1) {
+      const { list, total, unexpected } = page(endpoint, number);
+      items.push(...list);
+      if (items.length >= total) return items;
+      if (list.length < API_PAGE) throw unexpected();
+    }
+    throw new ReleaseCutError(
+      `GitHub's answer to repos/${repo.owner}/${repo.name}/${endpoint} holds more than ${API_MAX_PAGES} pages of ${API_PAGE}, ` +
+        `more than this script reads, so it cannot tell whether CI published images for ${short}.`,
+      `Nothing was created. A run re-run this many times is unusual: check the run on GitHub, and if its "${PUBLISH_IMAGES_JOB_NAME}" job succeeded, raise API_MAX_PAGES in scripts/release/cut-release.mjs.`,
+    );
+  };
+
+  const runs = api(`actions/workflows/${CI_WORKFLOW_FILE}/runs?head_sha=${sha}&event=push&branch=${MAIN_BRANCH}&per_page=${API_PAGE}`);
+  const found = [];
+  for (const ciRun of runs) {
+    // Every attempt: a re-run of a run that already published must not hide
+    // the images an earlier attempt pushed. Otherwise report the latest one.
+    const attempts = api(`actions/runs/${ciRun.id}/jobs?filter=all&per_page=${API_PAGE}`).filter((job) => job.name === PUBLISH_IMAGES_JOB_NAME);
+    if (attempts.some((job) => job.conclusion === "success")) return { runId: ciRun.id, conclusion: "success" };
+    const publish = attempts.reduce((latest, job) => (latest && (latest.run_attempt ?? 0) >= (job.run_attempt ?? 0) ? latest : job), null);
+    const outcome = publish ? (publish.conclusion ?? publish.status) : "never ran";
+    found.push(`run ${ciRun.id} (${ciRun.conclusion ?? ciRun.status}): "${PUBLISH_IMAGES_JOB_NAME}" ${outcome}`);
+  }
+  throw new ReleaseCutError(
+    `${short} has no ${CI_WORKFLOW_FILE} push run on ${MAIN_BRANCH} whose "${PUBLISH_IMAGES_JOB_NAME}" job succeeded, ` +
+      `so no images were published for it and a deploy of its tag could not pull them. ` +
+      (found.length > 0 ? `Found: ${found.join("; ")}.` : "GitHub has no such run for it."),
+    found.length > 0
+      ? `Nothing was created. Wait for the run to finish, or re-run it if it was cancelled or failed: ` +
+          `gh run rerun ${runs[0].id} --repo ${repo.slug}. Publish once "${PUBLISH_IMAGES_JOB_NAME}" has succeeded.`
+      : `Nothing was created. Tag a ${MAIN_BRANCH} commit whose ${CI_WORKFLOW_FILE} run published its images.`,
+  );
 }
 
 /** Recovery for fragments that reached the target after the release-prep commit. */
@@ -663,6 +754,9 @@ export function publishRelease({
       `Delete it and re-run, and publish creates the annotated tag: git tag -d ${tag} && pnpm run release:cut publish --execute --commit ${target}`,
     );
   }
+  // After every resume decision and tag refusal, so it judges the commit that
+  // would be tagged — and before anything is created, in the dry run too.
+  const published = requirePublishedImages(cmd, repo, target);
 
   const changelog = cmd.git(["show", `${target}:CHANGELOG.md`]);
   const section = releaseSection(changelog, version);
@@ -711,6 +805,7 @@ export function publishRelease({
 
   log(`Publish ${tag} (${execute ? "EXECUTE" : "dry run — nothing is changed"})`);
   log(`  Commit: ${target} (on ${MAIN_REF}'s first-parent chain); latest release tag on ${REMOTE}: ${previous?.tag ?? "none"}`);
+  log(`  CI: ${CI_WORKFLOW_FILE} run ${published.runId} published its images ("${PUBLISH_IMAGES_JOB_NAME}": ${published.conclusion}).`);
   log(`  Repository: ${repo.slug} (from ${REMOTE})`);
   log(
     body.kind === "full"

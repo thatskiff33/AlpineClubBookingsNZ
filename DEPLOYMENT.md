@@ -780,7 +780,8 @@ Do not commit `.env` files or production secrets.
 
 ## GitHub Container Registry
 
-GitHub Actions publishes production images after CI passes on `main`:
+GitHub Actions publishes production images from each `main` commit's own CI
+run, once its gates pass (the `Publish GHCR images` job in `ci.yml`):
 
 ```text
 ghcr.io/<owner>/alpineclubbookingsnz-app:<commit-sha>
@@ -796,6 +797,14 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 ```
 
 Do not store that token in the repository or `.env`.
+
+Every push to `main` gets a CI run of its own that runs to completion; a later
+merge never cancels or replaces it (`INV-OPS-019`). So a `main` commit has
+images exactly when its run's `Publish GHCR images` job succeeded — not merely
+because it is on `main`. A run whose `Publish GHCR images` job did not succeed
+(skipped after a failed gate, failed, or cancelled by hand) published nothing;
+re-run it with `gh run rerun <run-id>`. `pnpm run release:cut publish`
+asks GitHub for that job's result and will not tag a commit without images.
 
 ### Supply chain
 
@@ -988,7 +997,9 @@ full order, its refusals and its recovery messages are in
    `origin/main` builds the `release/v<version>` commit; push it and merge it
    as the release-prep pull request.
 2. `pnpm run release:cut publish --execute` tags the merged commit, pushes the
-   tag and publishes the GitHub release.
+   tag and publishes the GitHub release. It first asks GitHub whether that
+   commit's CI run published its images, and refuses if not, so the deploy
+   below can pull them.
 3. Deploy that tag from the host's source checkout:
 
    ```bash
