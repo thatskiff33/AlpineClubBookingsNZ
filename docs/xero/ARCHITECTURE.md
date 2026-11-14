@@ -904,9 +904,22 @@ reduction gives back applied credit through the same deallocation - all of a
 credit-paid booking's tiered reduction, or what a card-and-credit booking's
 card basis could not return - and `queueXeroBookingEditSettlement` takes it as
 `appliedCreditGiveBackCents`: always an allocated note of its own, worded as
-account credit - alone where nothing else was refunded, or beside the card or
-bank refund's note or a credit election's unallocated one, since one note names
-one method (`INV-PAY-101`). It rides the per-share key slot
+account credit - alone where nothing else was refunded, or beside a bank, cash,
+or invoice-correction modification note, or beside the refund note a Stripe card
+refund raises (#3993), or beside a credit election's unallocated one, since one
+note names one method (`INV-PAY-101`). Since #3993 a Stripe card refund of a
+price cut, an ordinary edit and a live booking's edit review alike, is that
+cancellation refund note: unallocated, settled from the Stripe clearing account,
+capped by cash evidence, and queued only after the `PaymentRefund` row exists.
+Bank, cash, and invoice-correction notes stay allocated modification notes, and
+are not created when the original invoice owes less than the note. During a
+deploy the previous colour can still raise a modification note for an edit it
+handles; the repair tool then reports that row for an officer and does not
+offer its retry. After a rollback, an edit that has only the refund note is
+reported as a missing modification credit note for manual review, and that
+finding is not applied automatically. Officers must not raise a modification
+note for those refunds. The operator remedy for a case that already has both
+notes is in [Maintenance](../MAINTENANCE.md). It rides the per-share key slot
 (`reviewTaskKeyParts`) under the scope `applied-credit-give-back` (nested under
 a review task's where there is one), so one key identifies it everywhere: the
 edit's own note never answers for it, and the repair pass reads it only there,
@@ -2646,9 +2659,10 @@ Stated limits, all listing a payment rather than missing one: a link written
 before amounts were recorded counts as nothing; a refund of a late capture Xero
 never received deliberately has no note (`INV-PAY-110`); a review refunded by
 card counts twice (its task and its card refund), and one the booking was
-cancelled after was answered by the edit's note; an edit's card refund is
-answered by the edit's own modification note, which the query does not read,
-so check the booking's edits in Xero before raising anything for a card refund;
+cancelled after was answered by the edit's note; an edit's Stripe card refund is answered by that payment's refund note, which
+this query counts (#3993); a bank or cash hand-back is still a modification
+note this query does not read, so check those edits in Xero before raising a
+note;
 a voided note still waiting for the nightly follow-up, or answered with its
 cash kept, is left out of the notes while its refund still counts - leave those
 to the refund list and Stuck States.
@@ -3049,7 +3063,10 @@ when its records hold neither; #3001/#3467) and
 refunds missing credit notes (flagged when the provider-backed CASH refund
 evidence — never the refunded-amount mirror, #2902/INV-PAY-050 — still exceeds
 the cents already covered by active refund credit notes, so multi-note refunds
-are handled and account-credit-only cancellations are excluded), and
+are handled and account-credit-only cancellations are excluded; one set-based
+read first drops payments whose active links' recorded amounts, less any live
+card-refund reversal invoice (`INV-PAY-151`), already cover the refunded
+mirror, so the per-payment reader runs only on open or unclear gaps, #4936), and
 per-record activity shows the ledger for one booking/payment/member.
 
 Owner-substitution alert (operator runbook): when a booking request's held owner
