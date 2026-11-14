@@ -354,21 +354,24 @@ Member, payment and sign-in screens showed what had just happened (a declined
 card, a wrong sign-in code, a finished cancellation) as a coloured box that
 appeared already filled. Some screen-reader and browser pairs skip text inserted
 that way, so a blind member could not tell whether the action worked. The rule
-that now governs every surface is in `docs/UX_FLOW_MAP.md` ("An outcome is never
-a bare styled box"): a failure goes in `FocusedActionError`, a result or
-progress line goes in a `role="status"` region mounted before the request, and
-a control that disappears hands focus to the next stable element.
+that now governs the surfaces below is in `docs/UX_FLOW_MAP.md` ("An outcome is
+never a bare styled box"): a failure goes in `FocusedActionError`, a result or
+progress line goes in a `StatusRegion` (a `role="status"` region mounted before
+the request, one home in `src/components/status-region.tsx`), and a control
+that disappears hands focus to the outcome that replaces it.
 
 Surfaces fixed, each with a component test in `src/components/__tests__/`,
 `src/lib/__tests__/` or beside its page:
 
-- **Card payments.** `PaymentForm` (decline alert, success status),
-  `SetupForm` (failed card save) and `BookingPaymentWrapper` ("Preparing
-  payment..." status). Both forms own their failure, so the `onError` prop is
-  gone and no caller shows the same decline a second time.
+- **Card payments.** `PaymentForm` (decline alert, and a success status that
+  takes the focus Pay Now held), `SetupForm` (failed card save) and
+  `BookingPaymentWrapper` ("Preparing payment..." status). Both forms own their
+  failure, so the `onError` prop is gone and no caller shows the same decline a
+  second time.
 - **Pay-link page** (`/pay/[token]`). Loading and "Checking your payment..."
   status lines, the card-start and fresh-link failures as alerts, and focus on
-  the "new link sent" confirmation.
+  the "new link sent" confirmation and on "Checking your payment..." once the
+  card form is gone.
 - **Payment buttons.** Switch to internet banking and the guest payment link.
 - **Cancel booking.** One frame keeps a status region and an error alert
   mounted across every step. Focus moves to each step's heading, back to
@@ -383,7 +386,9 @@ Surfaces fixed, each with a component test in `src/components/__tests__/`,
   own error first in `aria-describedby` and focuses the first failing field.
   Change password has one form-level error and no field errors.
 - **Other public flows.** The contact form, the booking-request reply page,
-  and the membership-cancellation, nomination and partner-invite cards.
+  and the membership-cancellation, nomination and partner-invite cards. Where the
+  reply or confirmation replaces the button that had focus (booking-request
+  reply, membership-cancellation and nomination cards), it takes the focus.
 
 Stated limits:
 
@@ -394,3 +399,20 @@ Stated limits:
   so it does not see text that appears only after an action. These component
   tests are what hold the announcements in place.
 - Admin screens were out of scope.
+- A status line that is on screen from the moment its screen first renders
+  mounts already filled, so the "mounted before it is filled" rule cannot hold
+  for it. The pay-link page's "Loading..." and `BookingPaymentWrapper`'s
+  "Preparing payment..." carry `role="status"` but are not guaranteed to be read.
+- Not converted, because they are outside the locations #4949 lists: the
+  "Preparing payment..." line in `StripeProvider`; in `AdditionalPaymentCard`, the
+  "Loading payment details..." line, the box that reports a failure to load the
+  payment form and its own "Payment successful!" panel; the "Payment complete"
+  line on the organiser's group settlement; and the pay-link page's final
+  "Payment received" card, which replaces the whole page. Each is plain text, not
+  a status region.
+- Several outcomes are both a live region and the element that takes focus (the
+  cancel flow's loading line, the account-deletion confirmation, the fresh-link
+  confirmation, "Checking your payment...", the payment success and the
+  membership-cancellation and nomination confirmations). Whether a given screen
+  reader reads such a line once or twice is untested, so the manual screen-reader
+  pass should listen for it.

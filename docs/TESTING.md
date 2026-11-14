@@ -1309,13 +1309,13 @@ The other convention that is load-bearing rather than stylistic, for the same
 reason as the frozen clock: written the obvious way, the assertion reports green
 or red on something other than what it claims to check.
 
-Eighteen admin and member surfaces render a **permanently mounted** `role="alert"`
+Admin, member and public surfaces render a **permanently mounted** `role="alert"`
 that a failed action populates and then takes focus, so a keyboard or
 screen-reader user is not left on a control that has just been re-enabled while
-the explanation appears elsewhere on the page. Sixteen use
-`src/components/focused-action-error.tsx`; `policy-exception-requests-panel.tsx`
-and `roster-editor.tsx` call the same failure primitive directly through
-`useActionAttention`. Since #2934 every one of them focuses and scrolls through
+the explanation appears elsewhere on the page. Nearly all use
+`src/components/focused-action-error.tsx` (grep for `<FocusedActionError` for
+the current list); `policy-exception-requests-panel.tsx` and `roster-editor.tsx`
+call the same failure primitive directly through `useActionAttention`. Since #2934 every one of them focuses and scrolls through
 `src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
 
 Assert that contract with the shared helper, never by hand:
