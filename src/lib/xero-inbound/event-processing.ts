@@ -308,17 +308,14 @@ export async function processStoredXeroInboundEvents(options?: {
   return result;
 }
 
-export async function runXeroInboundReconciliationCycle(options?: {
+/**
+ * Stored-event batches only: each row is claimed before it is applied, so this
+ * is safe beside a run holding the inbound cycle claim (#4922).
+ */
+export async function processStoredXeroInboundEventBatches(options?: {
   batchSize?: number;
   maxBatches?: number;
-  seasonYear?: number;
-  contactMinimumIntervalMs?: number;
-  membershipMinimumIntervalMs?: number;
-  includeContactReconciliation?: boolean;
-  includeMembershipReconciliation?: boolean;
-  includeInvoiceReconciliation?: boolean;
-  includeDeletedPaymentRecheck?: boolean;
-}): Promise<RunXeroInboundReconciliationCycleResult> {
+}): Promise<RunXeroInboundReconciliationCycleResult["inbound"]> {
   const batchSize = Math.min(
     Math.max(options?.batchSize ?? DEFAULT_XERO_INBOUND_BATCH_SIZE, 1),
     50
@@ -346,6 +343,26 @@ export async function runXeroInboundReconciliationCycle(options?: {
       break;
     }
   }
+
+  return totals;
+}
+
+/** Callers run this under the `xero-inbound-reconcile` run claim (#4432, #4922). */
+export async function runXeroInboundReconciliationCycle(options?: {
+  batchSize?: number;
+  maxBatches?: number;
+  seasonYear?: number;
+  contactMinimumIntervalMs?: number;
+  membershipMinimumIntervalMs?: number;
+  includeContactReconciliation?: boolean;
+  includeMembershipReconciliation?: boolean;
+  includeInvoiceReconciliation?: boolean;
+  includeDeletedPaymentRecheck?: boolean;
+}): Promise<RunXeroInboundReconciliationCycleResult> {
+  const totals = await processStoredXeroInboundEventBatches({
+    batchSize: options?.batchSize,
+    maxBatches: options?.maxBatches,
+  });
 
   const contactReconciliation =
     options?.includeContactReconciliation === false

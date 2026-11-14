@@ -4,14 +4,7 @@ import type { AgeTier } from "@prisma/client";
 import { useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { bookingOwner } from "@/lib/booking-owner";
 import { mergeChangeRequestGuests } from "@/lib/booking-change-request-input";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
@@ -2075,53 +2068,57 @@ export function EditBookingPanel({
           #2259: with the booking's "No emails" switch on there is no choice to
           make — the mailer withholds the change notification either way — so
           the dialog states that and offers only the send-nothing action. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => !saving && setNotifyDialogOpen(open)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {noEmailsOn
-                ? "Save this change?"
-                : "Email the member about this change?"}
-            </DialogTitle>
-            <DialogDescription>
-              {noEmailsOn
-                ? "The booking will be updated."
-                : "The booking will be updated either way. Choose whether the member receives the standard change-notification email — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          {noEmailsOn && <BookingNoEmailsNotice />}
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={saving}
-              onClick={() => {
-                setNotifyDialogOpen(false);
-                // #2259 H1: with the switch on, send NO choice rather than
-                // notifyMember:false. `false` makes the route skip the send, so
-                // the mailer's gate never runs and no withheld row is recorded —
-                // the banner would then omit the very change just made.
-                void handleSave(noEmailsOn ? undefined : false);
-              }}
-            >
-              {noEmailsOn ? "Save changes" : "Save without emailing"}
-            </Button>
-            {!noEmailsOn && (
-              <Button
-                disabled={saving}
-                onClick={() => {
-                  setNotifyDialogOpen(false);
-                  void handleSave(true);
-                }}
-              >
-                Save and email member
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setNotifyDialogOpen}
+        submitting={saving}
+        title={
+          noEmailsOn ? "Save this change?" : "Email the member about this change?"
+        }
+        description={
+          noEmailsOn
+            ? "The booking will be updated."
+            : "The booking will be updated either way. Choose whether the member receives the standard change-notification email — your choice is recorded in the audit log."
+        }
+        notice={noEmailsOn ? <BookingNoEmailsNotice /> : null}
+        actions={
+          noEmailsOn
+            ? {
+                kind: "single",
+                action: {
+                  label: "Save changes",
+                  variant: "outline",
+                  onSelect: () => {
+                    setNotifyDialogOpen(false);
+                    // #2259 H1: with the switch on, send NO choice rather than
+                    // notifyMember:false. `false` makes the route skip the
+                    // send, so the mailer's gate never runs and no withheld row
+                    // is recorded — the banner would then omit the very change
+                    // just made.
+                    void handleSave(undefined);
+                  },
+                },
+              }
+            : {
+                kind: "choice",
+                withoutEmail: {
+                  label: "Save without emailing",
+                  variant: "outline",
+                  onSelect: () => {
+                    setNotifyDialogOpen(false);
+                    void handleSave(false);
+                  },
+                },
+                withEmail: {
+                  label: "Save and email member",
+                  onSelect: () => {
+                    setNotifyDialogOpen(false);
+                    void handleSave(true);
+                  },
+                },
+              }
+        }
+      />
     </div>
   );
 }

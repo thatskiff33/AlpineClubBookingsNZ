@@ -132,6 +132,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   LodgeSettings: "personal",
   EmailMessageSetting: "personal",
   ClubIdentitySettings: "personal",
+  PrivacyHostingSettings: "personal",
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
   ClubTaxSettings: "non-personal",
@@ -222,4 +223,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberMoneySourcePosting: "personal",
   MemberMoneyRefundReservation: "personal",
   MemberMoneyRefundReservationRelease: "personal",
+  // #4520: a balance transaction names a member's payment intent or refund; a payout is the club's own.
+  StripeBalanceTransactionEvidence: "personal",
+  StripePayout: "non-personal",
 } as const;

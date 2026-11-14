@@ -793,7 +793,7 @@ export async function buildXeroReconciliationReport(
       overCoveredStripeRefundItems.push(
         overCoverageItem(
           payment.id,
-          `Refund credit-note coverage is ${formatCents(coveredCents, format)} (${formatCents(linkedCents, format)} from active notes, ${formatCents(resolved.coveredCents, format)} from notes resolved by hand in Xero) against a refund-note cash target of ${formatCents(eligibleCashCents, format)} (${evidence.source}; refunded mirror ${formatCents(payment.refundedAmountCents, format)}), so Xero over-credits this member and any further refund on this payment gets no credit note.`
+          `Refund credit-note coverage is ${formatCents(coveredCents, format)} (${formatCents(linkedCents, format)} from active notes less Stripe reversals, ${formatCents(resolved.coveredCents, format)} from notes resolved by hand in Xero) against a refund-note cash target of ${formatCents(eligibleCashCents, format)} (${evidence.source}; refunded mirror ${formatCents(payment.refundedAmountCents, format)}), so Xero over-credits this member and any further refund on this payment gets no credit note.`
         )
       );
     }

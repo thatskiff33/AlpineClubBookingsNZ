@@ -1,3 +1,7 @@
+import { z } from "zod";
+import { decodeRawRows } from "@/lib/raw-sql-rows";
+import type { PrismaClient } from "@prisma/client";
+import type { DatabaseRoleSnapshot } from "@/lib/setup-readiness-database-role";
 import { readClubModuleSettingsRecord } from "@/config/modules";
 import { readXeroConnection } from "@/lib/xero-connection";
 import { prisma } from "@/lib/prisma";
@@ -127,6 +131,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
   // Defensive like the lodge read: a failed count omits the signal (the step
   // then reports stored data as not checked) rather than failing the snapshot.
   const dataKeyUsage = await readDataKeyUsage().catch(() => undefined);
+  const databaseRole = await readSetupDatabaseRole().catch(() => undefined);
   const [
     adminCount,
     adminModuleSettings,
@@ -609,6 +614,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
     environmentRole,
     withheldEmail,
     dataKeyUsage,
+    databaseRole,
   };
 }
 
@@ -632,4 +638,28 @@ async function readDataKeyUsage(): Promise<DataKeyUsageSnapshot> {
     recoveryCodeKeyIds: recoveryCodes.map((row) => codeHashKeyId(row.codeHash)),
     ringKeyedDataPresent,
   });
+}
+
+const DATABASE_ROLE_ROW = z.object({ name: z.string(), isSuperuser: z.boolean() });
+
+/**
+ * Trust the server's roles and PostgreSQL membership, never the connection
+ * URL's user. Both current_user and session_user count: a superuser login
+ * narrowed by a startup `SET ROLE` (`options=-c role=...`, or a pooler) can
+ * still `RESET ROLE` back to the superuser (#5046 review).
+ */
+export async function readSetupDatabaseRole(
+  db: Pick<PrismaClient, "$queryRaw"> = prisma,
+): Promise<DatabaseRoleSnapshot | undefined> {
+  const rows = await db.$queryRaw`
+    SELECT current_user::text AS name,
+      (r.rolsuper OR EXISTS (
+        SELECT 1 FROM pg_catalog.pg_roles other
+        WHERE other.rolsuper
+          AND (pg_catalog.pg_has_role(current_user, other.oid, 'MEMBER')
+            OR pg_catalog.pg_has_role(session_user, other.oid, 'MEMBER'))
+      )) AS "isSuperuser"
+    FROM pg_catalog.pg_roles r WHERE r.rolname = current_user
+  `;
+  return decodeRawRows(rows, DATABASE_ROLE_ROW, "setup database role")[0];
 }

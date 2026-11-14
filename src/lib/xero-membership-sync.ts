@@ -24,10 +24,7 @@ import {
   getAuthenticatedXeroClient,
   XeroDailyLimitError,
 } from "./xero-api-client";
-import {
-  getResolvedAccountMapping,
-  getSubscriptionItemCodes,
-} from "./xero-mappings";
+import { getResolvedAccountMapping, getSubscriptionItemCodes } from "./xero-mappings";
 import {
   seasonStartMonthOf,
   seasonYearOfCalendarDate,
@@ -57,6 +54,7 @@ import {
   throttle,
   upsertXeroSyncCursor,
 } from "./xero-sync-cursors";
+import { XERO_CRON_JOB_NAMES } from "./xero-cron-jobs";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1615,7 +1613,7 @@ export async function refreshAllMembershipStatuses(
 
   logger.info(
     {
-      job: "xero-membership-refresh",
+      job: XERO_CRON_JOB_NAMES.memberships,
       seasonYear: year,
       cursorFrom: cursor?.cursorDateTime?.toISOString() ?? null,
       changedInvoices: changedInvoices.length,
@@ -1690,7 +1688,7 @@ export async function refreshAllMembershipStatuses(
             .map((remaining) => remaining.id)
         );
         logger.warn(
-          { job: "xero-membership-refresh", checked, errors, seasonYear: year },
+          { job: XERO_CRON_JOB_NAMES.memberships, checked, errors, seasonYear: year },
           "Aborting membership refresh: Xero daily API limit reached"
         );
         errorDetails.push({

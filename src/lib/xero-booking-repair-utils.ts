@@ -2,6 +2,7 @@
 // repair tool. Extracted verbatim from xero-booking-repair.ts (#1208 item 2).
 // Per #1208, this file's readJson* guards are intentionally kept local (NOT
 // merged into @/lib/xero-json) to preserve behavior.
+import { XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE } from "@/lib/xero-card-refund-reversal-outbox";
 import {
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
@@ -142,6 +143,11 @@ export function isAdmissibleRepairOperation(
   payloadQueueType: string | undefined
 ): boolean {
   if (isRefundRequestNoteOperation(operation)) {
+    return false;
+  }
+  // A failed-card-refund reversal is money back in Stripe, not a bill the
+  // member was sent (`INV-PAY-151`). It must not stand in for the booking invoice.
+  if (getOperationQueueTypeHint(operation) === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE) {
     return false;
   }
   if (!payloadQueueType) {

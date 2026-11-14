@@ -28,6 +28,7 @@ import {
   type DeadCardRefundPanelRow,
 } from "@/components/admin/dead-card-refunds-panel";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
 import { describeRefundMethod } from "@/lib/xero-refund-method";
 
 /**
@@ -50,6 +51,7 @@ function row(overrides: Partial<DeadCardRefundPanelRow> = {}): DeadCardRefundPan
     stripeMayHaveRefunded: false,
     laterStripeRefunds: [],
     tryCardAgainRefusal: null,
+    paidAnotherWayRefusal: null,
     ...overrides,
   };
 }
@@ -325,16 +327,16 @@ describe("the Paid another way dialog", () => {
     expect(screen.getByText(/later reported it failed - a retry that failed again/)).toBeInTheDocument();
     expect(
       screen.getByText(
-        `Xero already holds a card refund credit note for $40.00 of this refund, raised when the card provider first accepted it. Up to that much of what you pay back needs no new note; for anything beyond it, a Xero refund credit note worded "${BANK_NOTE_WORDING}" is queued when you close it. If you pay back less than $40.00, Xero's note credits more than went back: the Xero reconciliation report lists the difference as refund coverage above the refunded total, for you to correct in Xero.`,
+        `Closing this queues two Xero documents: an invoice for $40.00 recording the failed card refund's money back in the Stripe account, and a Xero refund credit note for the full amount you pay back, worded "${BANK_NOTE_WORDING}". If you pay back less than $40.00, Xero's note credits more than went back: the Xero reconciliation report lists the difference as refund coverage above the refunded total, for you to correct in Xero.`,
       ),
     ).toBeInTheDocument();
     fireEvent.click(fullChoice());
     fireEvent.change(noteBox(), { target: { value: "Bank transfer" } });
-    respond(200, { success: true, xeroQueued: "refund-note-beyond-card-note" });
+    respond(200, { success: true, xeroQueued: "stripe-reversal-and-bank-note" });
     fireEvent.click(closeButton());
     await waitFor(() =>
       expect(mocks.toastSuccess).toHaveBeenCalledWith(
-        `Closed. $150.00 recorded as paid back in full. A card refund credit note already in Xero records part of what you paid back; a Xero refund credit note worded "${BANK_NOTE_WORDING}" is queued for the rest.`,
+        `Closed. $150.00 recorded as paid back in full. An invoice recording the failed card refund's money back in the Stripe account, for the amount its card note covered, is queued, and a Xero refund credit note worded "${BANK_NOTE_WORDING}" is queued for the full amount paid back.`,
       ),
     );
   });
@@ -734,7 +736,7 @@ describe("#4368: Try the card again (decision 5)", () => {
   });
 
   it("MUTATION: where the re-arm would refuse, the row says why and offers no button", () => {
-    const refusal = "A refund Stripe failed later is still open on this payment, and it may be the same money as this one.";
+    const refusal = "Stripe may have made this refund after all; check the Stripe dashboard.";
     render(<DeadCardRefundsPanel rows={[row({ tryCardAgainRefusal: refusal })]} bankNoteWording={BANK_NOTE_WORDING} />);
     expect(screen.getByText(refusal)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Try the card again/ })).not.toBeInTheDocument();
@@ -803,5 +805,102 @@ describe("#4368: both new buttons are view-only without edit rights, as Paid ano
     expect(nothingLeftButton()).toBeDisabled();
     fireEvent.click(nothingLeftButton());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("#4851: a dead refund out of the group organiser's card", () => {
+  const paidAnotherWay = () => screen.getByRole("button", { name: "Close the card refund for booking BK-0001 as paid another way" });
+
+  it("a per-joiner row offers both buttons and says the money is the organiser's", () => {
+    render(
+      <DeadCardRefundsPanel
+        rows={[row({ settleKind: "organiser-child", wholeAmountOnly: true, xeroRefundNote: "none" })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    expect(screen.getByText("This money is the group organiser's, for the whole amount.")).toBeInTheDocument();
+    expect(tryAgainButton()).toBeEnabled();
+    expect(paidAnotherWay()).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /nothing left owed/i })).not.toBeInTheDocument();
+    fireEvent.click(paidAnotherWay());
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("If Stripe already has the refund, this records it and pays nobody again.");
+    expect(dialog).toHaveTextContent("This refund is the organiser's and closes for the whole amount.");
+    expect(within(dialog).getByRole("radio", { name: "Paid back part of it" })).toBeDisabled();
+  });
+
+  it("Try the card again says the ask goes to the organiser's card, and a deferred retry says when", async () => {
+    render(
+      <DeadCardRefundsPanel
+        rows={[row({ settleKind: "organiser-child", wholeAmountOnly: true, xeroRefundNote: "none" })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    fireEvent.click(tryAgainButton());
+    expect(screen.getByRole("dialog")).toHaveTextContent("The ask goes to the group organiser's card");
+    respond(200, { success: true, nextRetryAt: "2026-07-02T01:00:00.000Z" });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Try the card again" }));
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalled());
+    expect(String(mocks.toastSuccess.mock.calls[0]?.[0])).toMatch(/waits until/);
+  });
+
+  it("the old whole-group row offers Paid another way only, even when nothing is unsent", () => {
+    render(
+      <DeadCardRefundsPanel
+        rows={[row({ settleKind: "legacy-group", owedCents: 0, wholeAmountOnly: true, xeroRefundNote: "none", tryCardAgainRefusal: LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    expect(screen.getByText(LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL)).toBeInTheDocument();
+    expect(paidAnotherWay()).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /Try the card again/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /nothing left owed/i })).not.toBeInTheDocument();
+  });
+
+  it("finance view-only leaves the organiser's buttons disabled", () => {
+    mocks.canEdit = false;
+    render(
+      <DeadCardRefundsPanel
+        rows={[row({ settleKind: "organiser-child", wholeAmountOnly: true, xeroRefundNote: "none" })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    expect(tryAgainButton()).toBeDisabled();
+    expect(paidAnotherWay()).toBeDisabled();
+  });
+
+  it("a charge-backed row keeps today's buttons and does not use the organiser wording", () => {
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(tryAgainButton()).toBeEnabled();
+    expect(paidAnotherWay()).toBeEnabled();
+    expect(screen.queryByText(/group organiser/)).not.toBeInTheDocument();
+  });
+});
+
+describe("#4492: Paid another way is withheld when it would pay the member twice", () => {
+  it("a row that may still be closed by bank still shows the button", () => {
+    render(<DeadCardRefundsPanel rows={[row()]} bankNoteWording={BANK_NOTE_WORDING} />);
+    expect(screen.getByRole("button", { name: "Close the card refund for booking BK-0001 as paid another way" })).toBeEnabled();
+  });
+
+  it.each([
+    "A refund Stripe failed later is on this payment, and it may be the same money. The card is asked for it again, so this row cannot be closed as paid another way.",
+    "Another refund on this charge failed later and has not gone back to the card yet, so this row cannot be closed as paid another way.",
+    "The superseded charge was already sent back to the card, which is why this refund died. Closing it as paid another way would pay the member again, so it cannot be closed here.",
+  ])("hides the button, shows the reason, and closes an open dialog on refresh: %s", (refusal) => {
+    const view = openDialog();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    view.rerender(
+      <DeadCardRefundsPanel
+        rows={[row({ paidAnotherWayRefusal: refusal, tryCardAgainRefusal: "Paid another way cannot close it either." })]}
+        bankNoteWording={BANK_NOTE_WORDING}
+      />,
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /as paid another way/ })).not.toBeInTheDocument();
+    expect(screen.getByText(refusal)).toBeInTheDocument();
+    expect(screen.getByText("Paid another way cannot close it either.")).toBeInTheDocument();
+    expect(screen.getByText("That card refund changed, so its dialog was closed. The list is up to date.")).toBeInTheDocument();
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 });

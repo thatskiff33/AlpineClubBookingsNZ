@@ -10,7 +10,7 @@ import { resolveBookingDetailPayment } from "../_lib/booking-detail-payment";
  */
 function resolve(
   manualRefundTasks: { amountCents: number | null }[],
-  options: { recoveryOperations?: unknown[]; refundedAmountCents?: number; isBookingOwner?: boolean } = {},
+  options: { recoveryOperations?: unknown[]; refundedAmountCents?: number; isBookingOwner?: boolean; supersededHeldBackCents?: number } = {},
 ) {
   const booking = {
     status: "CANCELLED",
@@ -47,6 +47,7 @@ function resolve(
     access: { isDeleted: false } as never,
     party: { hasProvisionalChildren: false, isProvisionalChild: false, isFlaggedProvisional: false } as never,
     amountOwed: { owedCents: 15000, dueCents: 15000, appliedCreditCents: 0 },
+    supersededHeldBackCents: options.supersededHeldBackCents,
   });
 }
 
@@ -74,6 +75,11 @@ describe("booking page refund-appeal ceiling (#3827)", () => {
 
   it("CONTROL: with none open it is the plain remainder", () => {
     expect(ceiling([])).toBe(12500);
+  });
+
+  // #4872 (`INV-PAY-150`): the approval nets a live superseded capture's hold-back, so the form does too.
+  it("is net of a live superseded capture's hold-back", () => {
+    expect(resolve([], { supersededHeldBackCents: 2000 }).maxRefundableCents).toBe(10500);
   });
 });
 

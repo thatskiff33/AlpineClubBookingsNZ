@@ -13,9 +13,36 @@ It complements the two documents next to it and does not repeat them:
   synced and roll it onto a running database and deployment without losing data
   or breaking the live app color mid-deploy.
 
+## Correct the starter privacy policy (#4914)
+
+Migration `20261214010000_correct_starter_privacy_retention_and_hosting` updates
+only a privacy body that still exactly matches the previous starter copy. It
+corrects the email-log promise, removes fixed hosting and backup claims, and
+adds missing personal-data categories. A custom body is left untouched. If only
+the header was edited, the body is corrected and that header is kept.
+
+**After upgrading, read `/privacy`.** For an edited page, correct section 2 to
+include addresses, photos, dietary or allergy information, and the other profile
+and membership records your club holds. In section 5, check recipients against
+your enabled integrations and name your host, region and backup store. In section
+6, describe your actual hosting, backup access and encryption arrangements.
+Replace section 7's email-log sentence with
+`Email logs: {{email-log-retention}}.` and update the page's “Last updated” date.
+The token follows the saved Privacy retention settings, including when automatic
+deletion is switched off; no retention settings or jobs change in this release.
+
+**Blue/green and rollback:** the previous app leaves unknown tokens as literal
+text. Between migration and cutover an untouched policy may therefore display
+`{{email-log-retention}}` briefly. This display window is accepted for this data
+correction; the old app can still read and edit the row. If rolling back the app,
+edit section 7 by hand to state the current retention setting in plain language
+until the new app is restored. Do not change applied migration files. Preserve
+any custom body and re-export your configuration bundle after reviewing it.
+
 ## Review privacy retention before enabling cleanup (#4457)
 
-The three new automatic jobs ship OFF. After upgrading, review the
+The three automatic jobs from #4457 ship OFF. (The after-stay dietary clear
+from #4916 ships ON; see its entry under Unreleased.) After upgrading, review the
 [personal-data retention schedule](PRIVACY_RETENTION.md) and visit
 **Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
 member candidates and the configured periods before enabling any job. Defaults
@@ -138,6 +165,91 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Privacy-incident guide and hosting disclosure settings (#4918)
+
+This release adds the [privacy-incident guide](guides/privacy-incidents.md), the
+[recipient register](PRIVACY_RECIPIENTS.md), and **Where members' data is held**
+on **Admin → Setup & Configuration → Site Appearance & Content → Club Identity**.
+Fill in **Hosting provider** and **Where your data is held** now, including both
+locations when database and backups differ. The optional `{{data-hosting}}`
+page-body token publishes these values, with fallback wording for blanks.
+
+**This change does not alter your published privacy policy or the starter
+privacy text.** The separate starter-policy correction (#4914) has
+[its own note](#correct-the-starter-privacy-policy-4914). A later release will
+update unedited starter policies to use the token, only after a published
+release contains #4918. Continue upgrading one release at a time.
+
+Rollback is code-only; the additive settings table can stay. If you manually
+insert `{{data-hosting}}` into a page and then roll back to an earlier release
+that does not know the token, visitors see the raw `{{data-hosting}}` braces.
+Replace the token with reviewed plain text before such a rollback.
+
+### Old stays' dietary notes are cleared on the first night after upgrading (#4916)
+
+**What changes.** A new nightly job clears each stay's dietary/allergy note
+(`BookingGuest.dietaryRequirements`) once the stay ended more than a set number
+of days ago, for member and non-member guests and on bookings of any status.
+Migration `20261216050000_booking_dietary_retention` adds the period (default
+**30 days**) and the switch (default **on**) to `PrivacyRetentionSettings`. It
+is additive and safe with the previous app colour still serving.
+
+**What you will notice.** Because the switch ships on, **the first nightly
+data-pruning run after the upgrade (03:30 club time) clears every stay note
+whose stay ended more than 30 days ago.** Cleared notes cannot be brought back
+except from a backup taken before that run. Names, nights, prices, the booking
+and the member's own profile note are not touched.
+
+**If your club wants to keep them**, open **Admin → Privacy retention**
+(`/admin/privacy-retention`) straight after deploying and, before 03:30 club
+time, untick **Enable after-stay dietary clearing**, or change the period
+(1 to 365 days), and save. Support edit and bookings edit permission are both
+needed. The page shows how many notes the next run would clear. Clubs that never
+switched on the dietary field have no notes and nothing changes for them. See
+the [retention schedule](PRIVACY_RETENTION.md#automatic-retention-and-operator-review).
+
+### Cancelled bookings give back their promo uses; re-run the repair after cutover (#4909)
+
+`20261217010000_release_cancelled_booking_promos` is a **data-only repair**. It
+adds and removes no schema and is safe to run in the ordinary deploy window with
+the previous app colour still serving. It wants **one post-cutover action**
+(below).
+
+**What it fixes.** Until this release, a booking the system cancelled by itself
+(an expired Internet Banking hold, a card payment that lost its beds, a late
+Xero payment with no room left, a group cancel's children, a past-date waitlist
+entry, or an officer rejecting a legacy draft) kept its promo redemptions. The
+code's use count and the member's per-member allowance stayed spent, so a
+single-use or capped code could stay blocked. The new code releases them in the
+same transaction that cancels the booking. The migration repairs the history:
+it deletes the redemptions still held by cancelled bookings, then sets each
+code's `currentRedemptions` to its raw allocation row count. Live bookings keep
+their promotions.
+
+**How it runs.** One transaction. It locks the promo-code rows in id order
+before the recount, so a member redeeming a code at that moment waits a moment
+rather than being miscounted. Each lock waits at most the deploy migration lock
+timeout. On `55P03` or `40P01` nothing applies: follow
+[the lock-timeout recovery steps](PRODUCTION_UPGRADE_RUNBOOK.md#21a-step-1320-stopped-on-a-lock-timeout)
+and retry.
+
+**Post-upgrade action, required.** `prisma migrate deploy` runs **before**
+cutover. While the previous colour and its workers still serve, they can cancel
+a promo booking without giving its uses back. Run the same file verbatim once
+cutover is complete and the old colour and its workers have stopped:
+
+```bash
+psql "$DATABASE_URL" \
+  -f prisma/migrations/20261217010000_release_cancelled_booking_promos/migration.sql
+```
+
+**Re-running is safe.** A second run finds no cancelled booking holding a
+redemption and no counter that differs from its rows, so it changes nothing.
+
+**There is no rollback.** The deleted rows described discounts on bookings that
+no longer exist as stays. The [safety ledger](BLUE_GREEN_MIGRATION_SAFETY.tsv)
+row records this.
+
 ### Payment transaction history outlives its payment (#4574)
 
 The database now refuses to delete a payment with transactions, or a transaction
@@ -222,6 +334,19 @@ release keeps posting as before.
 on the least-privilege roles both need no provisioning step: the migration
 narrows its own two tables. If the deploy's grants check ever names one of
 them, re-run `pnpm run db:provision-roles --apply` and deploy again.
+
+### Stripe balance evidence tables (#4520)
+
+**What changes.** Migration `20261211010000_stripe_balance_evidence` adds two
+empty tables: an insert-only record of a Stripe balance transaction, and a
+payout row whose status can change. Nothing in the running app reads or writes
+them yet. Bookings, payments, refunds and Xero are unchanged.
+
+**What you do.** Nothing beyond the normal deploy. Single-role clubs and clubs
+on the least-privilege roles both need no provisioning step: the migration
+narrows the insert-only table itself. The payout table stays ordinary, because
+its status changes. If the deploy's grants check ever names the evidence table,
+re-run `pnpm run db:provision-roles --apply` and deploy again.
 
 ### Nightly backups stream to a disk-backed spool volume (#4487)
 

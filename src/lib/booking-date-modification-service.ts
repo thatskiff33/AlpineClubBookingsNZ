@@ -2,7 +2,6 @@ import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queu
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
-import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
 import {
@@ -89,8 +88,9 @@ import {
   calculateModificationSettlementOptions,
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
-  type LoadedBookingForModify,
 } from "@/lib/booking-modify";
+// Imported directly, not through the barrel: route tests mock the barrel whole.
+import { EDIT_DOOR_BOOKING_INCLUDE } from "@/lib/booking-modify-validation";
 import { creditGiveBackHistory } from "@/lib/booking-credit-give-back-marker";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { markCrossFamilyGuestsOnBooking } from "@/lib/member-guest-add-policy";
@@ -377,28 +377,7 @@ export async function modifyBookingDates({
     // capacity check and the claim consume ONLY this post-lock snapshot.
     const booking = await tx.booking.findUnique({
       where: { id: bookingId },
-      include: {
-        guests: {
-          include: {
-            nights: { select: { stayDate: true, priceCents: true, priceSource: true } },
-          },
-        },
-        payment: { include: { transactions: { orderBy: [...LEDGER_ROWS_OLDEST_FIRST] } } },
-        member: true,
-        // #3369: the owner may be an Organisation; bookingOwner() reads both.
-        organisation: { select: { name: true, email: true } },
-        promoRedemptions: {
-          include: {
-            guestTargets: { select: { bookingGuestId: true } },
-            promoCode: {
-              include: {
-                assignments: { select: { memberId: true } },
-                lodges: { select: { lodgeId: true } },
-              },
-            },
-          },
-        },
-      },
+      include: EDIT_DOOR_BOOKING_INCLUDE,
     });
 
     if (!booking) {
@@ -809,7 +788,7 @@ export async function modifyBookingDates({
     // options and the save, so a capture between two reads cannot split them.
     const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);
     const settlementOptions = await calculateModificationSettlementOptions({
-      booking: booking as unknown as LoadedBookingForModify,
+      booking,
       netChargeCents,
       reduction,
       db: tx, // locked transaction; see `CancellationPolicyDb`
@@ -822,7 +801,7 @@ export async function modifyBookingDates({
       );
     }
     const payments = await applyPaymentAdjustments(tx, {
-      booking: booking as unknown as LoadedBookingForModify,
+      booking,
       priceDiffCents,
       changeFeeCents,
       reduction,
@@ -1558,7 +1537,7 @@ async function dispatchDatePostTransactionSideEffects({
     // issued invoice falls back to the full delta inside classify when null.
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment,
+    refundedThroughStripe: result.hasSucceededPayment, paymentId: result.paymentId,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,

@@ -392,6 +392,8 @@ import "./primary-invoice-edit-race.realdb.test";
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3953-` fixtures.
 import "./additional-capture-receipt.realdb.test";
 import "./additional-capture-receipt-sweep-retry.realdb.test";
+// #4434: a receipt split across invoices, sent and retried leg by leg.
+import "./additional-capture-receipt-legs.realdb.test";
 // #3953 round 7: a change capture whose ledger row carries no change stamp - a
 // review charge (read to its change by its reason) or an older member ask (the
 // booking's lock, taken before the anchor's) - still has one recorder. Skipped
@@ -586,6 +588,12 @@ import "./self-heal-bank-hand-back-sources.realdb.test";
 // a fresh card note under an after-void key. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4250-` fixtures.
 import "./resolved-voided-refund-note-coverage.realdb.test";
+// #4936 reuses it to prove the refund-note gap list's pre-filter drops only
+// payments their links' recorded amounts cover, lets legacy links without one
+// through to the exact reader, and lists exactly what that reader would.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4936-` fixtures.
+import "./refund-gap-prefilter.realdb.test";
 // #4256 reuses it to prove a PARTIAL invoice repair claims its row before it
 // writes or calls Xero: a resolve or a mark non-replayable committed while the
 // retry waits on its claim wins, two retries make one payment write, and a
@@ -791,6 +799,14 @@ import "./superseded-refund-another-door-hold.realdb.test";
 // the hand-off flipping that charge captured on the Payment row. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4866-` fixtures.
 import "./superseded-refund-cancel-hold-back.realdb.test";
+// #4872 reuses it to prove the other refund doors leave a live superseded
+// capture to its own refund: an edit's own-card plan, an approved refund
+// request, a capacity race, a booking-change credit, a plan-less recovery row,
+// and a manual hand-back including a card-shortfall check. Each claim queues
+// behind the hand-off flipping that charge captured on the Payment row.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4872-` fixtures.
+import "./superseded-refund-4872-hold-back.realdb.test";
 // #4685 reuses it to prove an account-credit Xero note stamps the one credit it
 // was raised for, by id, and that a row queued without the id still stamps.
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
@@ -807,6 +823,14 @@ import "./unpaid-edit-change-fee-owed.realdb.test";
 // changed underneath it (no side effect, retried), and two writers forced to meet
 // at the claim. It owns and cleans its own `race-4456` credential rows.
 import "./data-encryption-key-ring.realdb.test";
+// #4851 reuses it to prove Stuck States' settlement of a dead refund out of the
+// group organiser's card: a refund Stripe already holds is recorded and nobody is
+// paid again, a bank close raises the mirror and its no-Xero-note hand-back, a
+// bank close and a re-arm of one row queued behind lock(1) leave one winner, a
+// re-arm's first runner attempt reads Stripe by key before any send, and an old
+// whole-group row flips and mirrors. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-4851-` fixtures.
+import "./card-refund-group-settle.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

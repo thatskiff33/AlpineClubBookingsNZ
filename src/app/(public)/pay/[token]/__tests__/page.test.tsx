@@ -516,6 +516,25 @@ describe("public payment-link confirmation names the booking's lodge", () => {
     expect(screen.queryByText(/Test Lodge is confirmed/i)).toBeNull();
   });
 
+  // INV-CAP-039: the guest is shown which lodge the money is for BEFORE paying,
+  // not only in the sentence after it.
+  it("names the booking's own lodge on the payable card, above the dates", async () => {
+    installAlreadyPaidFetch({ ...payableContext, lodgeName: "Second Lodge" });
+    render(<PayByLinkPage />);
+
+    const lodgeLine = await screen.findByText("Lodge: Second Lodge");
+    expect(lodgeLine.nextElementSibling?.textContent).toMatch(/^Dates:/);
+    expect(screen.queryByText("Lodge: Test Lodge")).toBeNull();
+  });
+
+  it("leaves the lodge line out rather than naming the club default when the context carries none", async () => {
+    installAlreadyPaidFetch(payableContext);
+    render(<PayByLinkPage />);
+
+    expect(await screen.findByText(/Amount due:/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Lodge:/)).toBeNull();
+  });
+
   // #2919 review: this page printed the internet-banking body with only
   // {{paymentReference}} substituted, so an operator's {{CLUB_LODGE_NAME}}
   // reached the member as literal braces on the most-read surface of the four.
