@@ -353,20 +353,6 @@ export function deletedFilesSinceBase(
   }
 }
 
-/** Paths that existed on the base and are gone now, renames excluded by `-M`. */
-function deletedFilesSinceBase(
-  root: string,
-  baseSha: string,
-): { ok: true; deleted: string[] } | { ok: false; error: string } {
-  try {
-    const raw = git(root, ["diff", "-M", "--name-only", "-z", "--diff-filter=D", baseSha]);
-    return { ok: true, deleted: raw.split("\0").filter(Boolean) };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message.split("\n")[0] : String(error);
-    return { ok: false, error: `Could not read the deletions against ${baseSha}: ${detail}` };
-  }
-}
-
 /**
  * Files git does not track yet and is not ignoring.
  *
