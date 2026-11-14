@@ -18,7 +18,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
 }));
 // Exercise the parent's callback contract without fetching the mapping editor's own data.
 vi.mock(
-  "@/app/(admin)/admin/member-applications/_components/approval-mapping-panel",
+  "@/app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel",
   () => ({
     default: ({
       onRequestReview,
@@ -36,7 +36,7 @@ vi.mock(
     ),
   }),
 );
-import MemberApplicationsPage from "@/app/(admin)/admin/member-applications/page";
+import MemberApplicationsPage from "@/app/(admin)/admin/membership/member-applications/page";
 
 const application = {
   id: "application-1",

@@ -26,7 +26,7 @@ vi.mock("sonner", () => ({ toast: { success, error: vi.fn() } }));
 vi.mock("@/components/confirm-its-you", () => ({
   fetchWithRecentAuth: (...args: Parameters<typeof fetch>) => fetch(...args),
 }));
-import MemberMergePage from "@/app/(admin)/admin/members/[id]/merge/page";
+import MemberMergePage from "@/app/(admin)/admin/membership/members/[id]/merge/page";
 const response = (body: unknown, ok = true) => ({ ok, json: async () => body });
 const preview = {
   masterId: "master",
