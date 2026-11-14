@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   plan: vi.fn(), refund: vi.fn(), enqueue: vi.fn(), reserveOrganiser: vi.fn(),
   close: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn(), keepRefused: vi.fn(), markAttempt: vi.fn(),
+  lockPayment: vi.fn(), heldBack: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { updateMany: h.updateMany, findUnique: h.findUnique } } }));
 vi.mock("@/lib/logger", () => ({ default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
@@ -13,6 +14,12 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
   planStripeRefundAllocation: h.plan,
   refundPaymentTransactions: h.refund,
+  lockPaymentForRefundedTotal: h.lockPayment,
+}));
+// #4872 (`INV-PAY-150`): the freeze reads the superseded-capture hold-back under the Payment row.
+vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
+  readSupersededCaptureHeldBack: h.heldBack,
 }));
 vi.mock("@/lib/organiser-child-refund", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/organiser-child-refund")),
@@ -38,6 +45,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const plan = [{ paymentTransactionId: "txn-1", amountCents: 4000 }];
 const tx = {} as Prisma.TransactionClient;
+const heldBackByTransaction = new Map([["txn-held", 1500]]);
 const args = () => ({ door: "dateChange" as const, plan: null, bookingId: "booking-1",
   payment: { id: "pay-1" } as never, bookingModificationId: "mod-1", pendingRefundAmountCents: 4000 });
 const execute = (ownCardRefund: { plan: typeof plan | null } | null = { plan }) => executeBookingModificationRefund({
@@ -48,6 +56,8 @@ const execute = (ownCardRefund: { plan: typeof plan | null } | null = { plan }) 
 beforeEach(() => {
   vi.clearAllMocks();
   h.plan.mockResolvedValue({ slices: plan, plannedAmountCents: 4000, totalRefundableCents: 4000 });
+  h.lockPayment.mockResolvedValue(undefined);
+  h.heldBack.mockResolvedValue({ byTransaction: heldBackByTransaction });
   h.reserveOrganiser.mockResolvedValue(null);
   h.enqueue.mockResolvedValue({ created: true });
   h.close.mockResolvedValue({ count: 1 });
@@ -61,7 +71,11 @@ describe("reserveModificationRefundDebts", () => {
   it("reserves the frozen allocation with the edit's transaction and original key", async () => {
     expect(await reserveModificationRefundDebts(tx, args())).toEqual({ plan });
     expect(h.reserveOrganiser).toHaveBeenCalledWith(tx, args());
-    expect(h.plan).toHaveBeenCalledWith({ paymentId: "pay-1", amountCents: 4000, store: tx });
+    expect(h.plan).toHaveBeenCalledWith({ paymentId: "pay-1", amountCents: 4000, store: tx, heldBackByTransaction });
+    // #4872: the Payment row is held and the hold-back read on the edit's own transaction, before the plan.
+    expect(h.lockPayment).toHaveBeenCalledWith(tx, "pay-1");
+    expect(h.heldBack).toHaveBeenCalledWith(tx, "pay-1");
+    expect(h.lockPayment.mock.invocationCallOrder[0]).toBeLessThan(h.plan.mock.invocationCallOrder[0]!);
     expect(h.enqueue).toHaveBeenCalledWith({ bookingId: "booking-1", paymentId: "pay-1", bookingModificationId: "mod-1",
       amountCents: 4000, allocationPlan: plan, stripeKeyPrefix: "mod_dates_refund_booking-1_mod-1", store: tx });
     expect(h.refund).not.toHaveBeenCalled();

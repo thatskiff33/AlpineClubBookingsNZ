@@ -39,6 +39,12 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { findUnique: h.recoveryFindUnique, updateMany: h.recoveryUpdateMany } } }));
+// #4872: the re-price's reserve freezes its plan under the Payment row, beside the
+// superseded-capture hold-back read (no superseded rows here, so nothing is held back).
+vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
+  readSupersededCaptureHeldBack: async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 }),
+}));
 vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-recovery")),
   runPaymentRecoveryOperationNow: h.runPaymentRecoveryOperationNow,
@@ -170,6 +176,8 @@ function booking(overrides: Record<string, unknown> = {}) {
 
 function tx(loaded: ReturnType<typeof booking>) {
   return {
+    // #4872: the reserve takes the Payment row (`lockPaymentForRefundedTotal`).
+    $executeRaw: vi.fn(async () => 1),
     booking: {
       findUnique: vi.fn(async () => loaded),
       update: vi.fn(async () => loaded),
