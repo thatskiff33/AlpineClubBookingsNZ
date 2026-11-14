@@ -4,9 +4,10 @@
  * A leaf module (#4930): both `booking-request.ts` and `group-booking.ts` read
  * it, and `group-booking` importing `booking-request` for this one function
  * closed an import cycle through booking-cancel and group settlement. Keep it
- * free of `@/lib` imports (INV-SSOT-008).
+ * free of `@/lib` imports (INV-SSOT-008). `booking-request.ts` imports `DAY_MS`
+ * from here rather than keeping its own copy.
  */
-const DAY_MS = 24 * 60 * 60 * 1000;
+export const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Resolve when the booking's non-member hold expires. Member-priority

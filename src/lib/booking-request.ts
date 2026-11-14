@@ -109,13 +109,11 @@ import { nameField } from "@/lib/zod-helpers";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
-import { resolveRequestBookingHoldUntil } from "@/lib/booking-request-hold";
+import { DAY_MS, resolveRequestBookingHoldUntil } from "@/lib/booking-request-hold";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 /** Privacy Act 2020 retention: purge declined and never-verified requests. */
 const BOOKING_REQUEST_RETENTION_DAYS = 90;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Booking-request statuses an admin may decline (#1423). Matches the panel's

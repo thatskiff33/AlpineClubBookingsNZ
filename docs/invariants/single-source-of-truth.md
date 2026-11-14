@@ -621,4 +621,6 @@ all three. #4930.
 - **Mutation probes** in the same file prove each rule fails when its defect
   is added back, in every spelling listed above.
 - **Blind spots.** Files outside `src/`, test files and `src/test` are not
-  walked. A loop through a package, or through `require()`, is not seen.
+  walked. A loop through a package, or through `require()`, is not seen. Test
+  files get one text scan: none may name the facade in a quoted specifier, so
+  a `vi.mock` of it cannot pass vacuously.

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -78,6 +78,28 @@ function componentAppImports(of: ImportGraph): string[] {
     );
 }
 
+/**
+ * Test code is not in the graph, so a test naming the facade in `vi.mock`,
+ * `vi.doMock`, an import or `require` would go unseen. A factory mock of a
+ * module nothing loads applies to nothing and lets the test pass vacuously.
+ * This scans every test file's text for a quoted facade specifier.
+ */
+const FACADE_SPECIFIER_TEXT = /["'](?:@\/lib\/|(?:\.\.?\/)+(?:lib\/)?)xero(?:\.[cm]?[jt]sx?)?["']/;
+const THIS_FILE = "src/lib/__tests__/module-graph-census.test.ts";
+
+function testFiles(dir = "src"): string[] {
+  return readdirSync(path.join(process.cwd(), dir), { withFileTypes: true }).flatMap((entry) => {
+    const repoPath = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) return entry.name === "node_modules" ? [] : testFiles(repoPath);
+    return /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(entry.name) || repoPath.includes("/__tests__/") ? [repoPath] : [];
+  });
+}
+
+/** Lines of `text` that name the facade by a quoted specifier, as `file:line`. */
+function facadeMentions(file: string, text: string): string[] {
+  return text.split("\n").flatMap((line, index) => (FACADE_SPECIFIER_TEXT.test(line) ? [`${file}:${index + 1}`] : []));
+}
+
 /** The census graph with `extra` appended to one file's source; only that file is re-read. */
 function graphWith(file: string, extra: string): ImportGraph {
   const text = readFileSync(path.join(process.cwd(), file), "utf8");
@@ -117,6 +139,13 @@ describe("module graph census (#4930, INV-SSOT-008)", () => {
   it("has no importer of the retired Xero facade, and no facade", () => {
     expect(facadeImports(graph)).toEqual([]);
     expect(graph.files).not.toContain(FACADE);
+  });
+
+  it("has no test that mocks or imports the retired Xero facade", () => {
+    const files = testFiles().filter((file) => file !== THIS_FILE);
+    expect(files.length).toBeGreaterThan(100);
+    const mentions = files.flatMap((file) => facadeMentions(file, readFileSync(path.join(process.cwd(), file), "utf8")));
+    expect(mentions).toEqual([]);
   });
 
   it("has no src/components import from a src/app route folder", () => {
@@ -170,6 +199,26 @@ describe("module graph census (#4930, INV-SSOT-008)", () => {
       const file = "src/lib/booking-cancel.ts";
       const added = facadeImports(graphWith(file, spelling)).filter((site) => !facadeImports(graph).includes(site));
       expect(added).toEqual([expect.stringMatching(/^src\/lib\/booking-cancel\.ts:\d+$/)]);
+    });
+
+    it.each([
+      ["a vi.mock", `vi.mock("${FACADE_SPECIFIER}", () => ({ isXeroConnected: async () => false }));`],
+      ["a single-quoted vi.doMock", `vi.doMock('${FACADE_SPECIFIER}');`],
+      ["a spied import", `import * as xero from "${FACADE_SPECIFIER}";`],
+      ["a relative import", `const xero = await import("../xero");`],
+      ["an explicit extension", `vi.mock("@/lib/xero.ts");`],
+    ])("reports %s of the facade in a test file", (_label, spelling) => {
+      expect(facadeMentions("src/lib/__tests__/probe.test.ts", `import { vi } from "vitest";\n${spelling}`)).toEqual([
+        "src/lib/__tests__/probe.test.ts:2",
+      ]);
+    });
+
+    it.each([
+      ["a focused module", `vi.mock("@/lib/xero-token-store");`],
+      ["a prose mention", "// the `@/lib/xero` facade is gone"],
+      ["a sibling path", `vi.mock("@/lib/xero-inbound/reconcile");`],
+    ])("does not report %s in a test file", (_label, spelling) => {
+      expect(facadeMentions("src/lib/__tests__/probe.test.ts", spelling)).toEqual([]);
     });
 
     it.each([
