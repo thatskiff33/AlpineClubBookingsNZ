@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Clock } from "lucide-react";
+import { AlertTriangle, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import StripeProvider from "@/components/stripe/StripeProvider";
@@ -37,6 +37,7 @@ import {
 import { checkCardSuccess } from "./card-success-check";
 import { takeStripeReturn, type CardConfirmation } from "@/lib/stripe-return";
 import { RedirectFailedNotice } from "@/components/stripe/redirect-failed-notice";
+import { FreshLinkCard } from "./fresh-link-card";
 import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 /*
   #3194 (epic #2797): the sentences a member reads when their saved change is
@@ -73,10 +74,6 @@ export default function PayByLinkPage() {
   const [previousPaymentRefunding, setPreviousPaymentRefunding] = useState(false); // #4300
   const [checkingPayment, setCheckingPayment] = useState(false); // #4300: never the pay buttons after a success
   const [redirectFailed, setRedirectFailed] = useState(false); // #4955: the provider declined or was cancelled
-  const [refreshState, setRefreshState] = useState<"idle" | "sending" | "sent">(
-    "idle"
-  );
-  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [bookingMessages, setBookingMessages] = useState<Record<string, string>>({});
   // #2919 review: the club-level values this page's message tokens resolve to.
   // Without them an operator's {{CLUB_LODGE_NAME}} reached the member as
@@ -135,6 +132,7 @@ export default function PayByLinkPage() {
   async function startCardPayment() {
     setIntentLoading(true);
     setIntentError(null);
+    setRedirectFailed(false); // the returned failure is answered by this attempt
     try {
       const res = await fetch(`/api/pay/${encodeURIComponent(token)}/payment-intent`, {
         method: "POST",
@@ -169,8 +167,14 @@ export default function PayByLinkPage() {
     setCheckingPayment(true);
     const outcome = await checkCardSuccess(token, paidIntentId, confirmation);
     if (outcome.kind === "paid") {
-      if (outcome.context) setContext(outcome.context);
-      setPaymentComplete(true);
+      const settled = outcome.context;
+      if (settled) setContext(settled);
+      // #3194: a paid booking under review reads as its review state, and the
+      // server's narrative (the `!context.payable` branch) confirms the payment
+      // with the review beside it. Composing a card here would drop the amount.
+      const paidUnderReview =
+        settled?.financialReviewPending === true && !settled.payable && !settled.canRequestFreshLink;
+      if (!paidUnderReview) setPaymentComplete(true);
     } else if (outcome.kind === "fresh") {
       // The refreshed context: "Amount due" and the form match the new intent.
       if (outcome.context) setContext(outcome.context);
@@ -180,44 +184,12 @@ export default function PayByLinkPage() {
     setCheckingPayment(false);
   }
 
-  async function requestFreshLink() {
-    setRefreshState("sending");
-    setRefreshError(null);
-    try {
-      const res = await fetch(`/api/pay/${encodeURIComponent(token)}/refresh`, {
-        method: "POST",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || "Unable to send a new link right now.");
-      }
-      if (data.emailed === false) {
-        // The link was re-issued but nothing was delivered — either the address
-        // previously bounced or complained (#1885), or the club has this booking
-        // set to receive no email (#2258). Never claim an email is on the way,
-        // and never say WHICH: the wording stays neutral so it is honest in both
-        // cases and never reveals the per-booking switch to the member.
-        setRefreshState("idle");
-        setRefreshError(
-          `We weren't able to email the link. Please contact ${club.lodgeName} and we'll help you complete payment.`
-        );
-        return;
-      }
-      setRefreshState("sent");
-    } catch (err) {
-      setRefreshState("idle");
-      setRefreshError(
-        err instanceof Error ? err.message : "Unable to send a new link right now."
-      );
-    }
-  }
-
   if (checkingPayment) return <CheckingPaymentCard />;
 
   if (loading) {
     return (
       <Card className="w-full max-w-lg">
-        <CardContent className="py-8 text-center text-muted-foreground">Loading...</CardContent>
+        <CardContent role="status" className="py-8 text-center text-muted-foreground">Loading...</CardContent>
       </Card>
     );
   }
@@ -351,27 +323,7 @@ export default function PayByLinkPage() {
     sentences.
   */
   if (context.canRequestFreshLink) {
-    return (
-      <NarrativeCard narrative={context.narrative} tone="info">
-        {refreshState === "sent" ? (
-          <div className="flex items-start gap-2 rounded-md border border-success-6 bg-success-3 px-3 py-2 text-sm text-success-11">
-            <CheckCircle2 className="h-5 w-5 shrink-0" />
-            <p>We&apos;ve emailed you a fresh payment link. Please check your inbox.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Button onClick={requestFreshLink} disabled={refreshState === "sending"}>
-              {refreshState === "sending" ? "Sending..." : "Email me a new link"}
-            </Button>
-            {refreshError ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {refreshError}
-              </div>
-            ) : null}
-          </div>
-        )}
-      </NarrativeCard>
-    );
+    return <FreshLinkCard token={token} narrative={context.narrative} />;
   }
 
   /*
@@ -422,7 +374,11 @@ export default function PayByLinkPage() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
-          <p>
+          {/* INV-CAP-039: the booking's OWN lodge, so the guest knows what the
+              money is for. Never `club.lodgeName`: with no lodge on the wire
+              the line is left out rather than naming the club default. */}
+          {context.lodgeName ? <p>Lodge: {context.lodgeName}</p> : null}
+          <p className={context.lodgeName ? "mt-1" : undefined}>
             Dates: {formatStayDateOrNull(payable.checkIn, format) ?? payable.checkIn} to{" "}
             {formatStayDateOrNull(payable.checkOut, format) ?? payable.checkOut}
           </p>
@@ -477,12 +433,11 @@ export default function PayByLinkPage() {
               // intent an edit superseded) going back with a fresh one to pay.
               onSuccess={confirmed("succeeded")}
               onProcessing={confirmed("processing")}
-              onError={() => undefined}
             />
           </StripeProvider>
         ) : (
           <div className="space-y-3">
-            {redirectFailed ? <RedirectFailedNotice /> : null}
+            {redirectFailed ? <RedirectFailedNotice nextStep="Choose how to pay below." /> : null}
             {payable.cardPaymentAvailable !== false ? (
               <Button onClick={startCardPayment} disabled={intentLoading}>
                 {intentLoading ? "Preparing..." : "Pay by card"}
@@ -490,11 +445,7 @@ export default function PayByLinkPage() {
             ) : (
               <CardPaymentUnavailableNotice />
             )}
-            {intentError ? (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {intentError}
-              </div>
-            ) : null}
+            <FocusedActionError id="payment-link-intent-error" error={intentError ?? ""} />
 
             {payable.internetBankingReference ? (
               <div className="rounded-md border border-border p-3 text-sm">

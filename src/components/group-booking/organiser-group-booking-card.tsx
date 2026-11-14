@@ -617,7 +617,6 @@ export function OrganiserGroupBookingCard({
                       returnUrl={settlementReturnUrl()}
                       onSuccess={() => setSettleComplete(true)}
                       onProcessing={() => void checkSettlementPayment()}
-                      onError={(msg) => setSettleError(msg)}
                     />
                   </StripeProvider>
                 )}

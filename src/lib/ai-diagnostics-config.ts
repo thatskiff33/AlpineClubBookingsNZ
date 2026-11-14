@@ -39,6 +39,7 @@
  * documented step ADR-007 §3 calls for, and this endpoint is what tells them so.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import {
   getIntegrationCredentialValue,
   providerNeedsReentry,
@@ -58,7 +59,7 @@ import { loadEffectiveModuleFlagsStrict } from "@/lib/module-settings";
  * provider, so the two keys are stored as distinct encrypted rows and can never
  * be confused for one another.
  */
-export const DIAGNOSTICS_PROVIDER = "anthropic-diagnostics";
+export const DIAGNOSTICS_PROVIDER = "anthropic-diagnostics" satisfies IntegrationCredentialNamespace;
 
 export const DIAGNOSTICS_CREDENTIAL_KEYS = {
   apiKey: "api_key",

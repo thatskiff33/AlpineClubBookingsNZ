@@ -289,7 +289,6 @@ export function AdditionalPaymentCard({
                   returnUrl={returnUrl}
                   onSuccess={handlePaymentSuccess}
                   onProcessing={() => setRecheck((n) => n + 1)}
-                  onError={(err) => setError(err)}
                 />
               </StripeProvider>
             )}

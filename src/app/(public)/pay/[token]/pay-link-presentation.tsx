@@ -26,6 +26,7 @@
  */
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatusRegion } from "@/components/status-region";
 import {
   parseInstant,
   type BoundClubTime,
@@ -245,11 +246,20 @@ export function CardPaymentUnavailableNotice() {
   );
 }
 
-/** The whole card while the server is asked what a payment did (#4300, #4955). */
+/**
+ * The whole card while the server is asked what a payment did (#4300, #4955).
+ * It replaces the card form, or the page on a redirect return, so the status
+ * line takes the focus the form's Pay Now button held (#4949). One region serves
+ * both exits; it mounts already filled, a limit docs/STAGING_ACCESSIBILITY.md states.
+ */
 export function CheckingPaymentCard() {
   return (
     <Card className="w-full max-w-lg">
-      <CardContent className="py-8 text-center text-muted-foreground">{CHECKING_PAYMENT_MESSAGE}</CardContent>
+      <CardContent className="py-8 text-center">
+        <StatusRegion id="payment-link-check-status" visible visibleClassName="text-muted-foreground" outcomeKey>
+          {CHECKING_PAYMENT_MESSAGE}
+        </StatusRegion>
+      </CardContent>
     </Card>
   );
 }

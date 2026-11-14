@@ -139,6 +139,36 @@ let invoicePayload: Record<string, unknown>;
     expect(await paymentLink(DELETED)).toMatchObject({ active: true, metadata: { status: null } });
   });
 
+  it("MUTATION (#5017 review, INV-PAY-151): a voided Stripe reversal invoice retires its link and keeps its cents; an authorised one stays", async () => {
+    const { reconcileXeroInvoice } = await import("@/lib/xero-inbound/invoice");
+    const { CARD_REFUND_REVERSAL_INVOICE_ROLE } = await import("@/lib/xero-card-refund-reversal-outbox");
+    const REVERSAL = `${P}-reversal-invoice`;
+    await db.xeroObjectLink.create({
+      data: {
+        localModel: "Payment",
+        localId: LOCAL_PAYMENT,
+        xeroObjectType: "INVOICE",
+        xeroObjectId: REVERSAL,
+        role: CARD_REFUND_REVERSAL_INVOICE_ROLE,
+        active: true,
+        metadata: { closeTaskId: `${P}-close`, amountCents: 5_000, bookingId: `${P}-booking` },
+      },
+    });
+    const reversalLink = () =>
+      db.xeroObjectLink.findFirstOrThrow({ where: { localId: LOCAL_PAYMENT, xeroObjectId: REVERSAL }, select: { active: true, metadata: true } });
+
+    invoicePayload = { invoiceID: REVERSAL, invoiceNumber: "RACE-4531-R", status: "AUTHORISED", total: 50, amountDue: 0, amountPaid: 50 };
+    await reconcileXeroInvoice(REVERSAL, CLUB_FORMAT_TEST, { skipSubscriptionRefresh: true });
+    expect(await reversalLink()).toMatchObject({ active: true, metadata: { amountCents: 5_000 } });
+
+    invoicePayload = { ...invoicePayload, status: "VOIDED", amountPaid: 0 };
+    await reconcileXeroInvoice(REVERSAL, CLUB_FORMAT_TEST, { skipSubscriptionRefresh: true });
+    expect(await reversalLink()).toMatchObject({
+      active: false,
+      metadata: { closeTaskId: `${P}-close`, amountCents: 5_000, status: "VOIDED" },
+    });
+  });
+
   it("the guarded write keeps a concurrent writer's metadata", async () => {
     const { retireDeletedXeroPaymentLink } = await import("@/lib/xero-inbound/deleted-payment-links");
     const stale = await db.xeroObjectLink.findFirstOrThrow({
