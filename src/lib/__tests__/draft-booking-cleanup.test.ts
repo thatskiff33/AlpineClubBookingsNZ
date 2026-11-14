@@ -37,6 +37,7 @@ function storeNaming(named: Partial<Record<string, string[]>> = {}) {
   return {
     bookingLedgerLine: { findMany: rows("BookingLedgerLine.bookingId", "bookingId") },
     memberMoneyLine: { findMany: rows("MemberMoneyLine.bookingId", "bookingId") },
+    memberMoneyExportManifest: { findMany: rows("MemberMoneyExportManifest.bookingId", "bookingId") },
     memberCredit: {
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
         if ("sourceBookingId" in where) {
@@ -85,6 +86,7 @@ describe("bookingsWithFinancialHistory (#4514)", () => {
     const distinctBooking = { select: { bookingId: true }, distinct: ["bookingId"] };
     expect(store.bookingLedgerLine.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
     expect(store.memberMoneyLine.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
+    expect(store.memberMoneyExportManifest.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
     expect(store.refundRequest.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
     expect(store.manualRefundTask.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
     expect(store.paymentRecoveryOperation.findMany).toHaveBeenCalledWith({ where: { bookingId: ids }, ...distinctBooking });
@@ -102,7 +104,7 @@ describe("bookingsWithFinancialHistory (#4514)", () => {
 
   it("can be limited to the append-only money lines, asking nothing else", async () => {
     const store = storeNaming({ "BookingLedgerLine.bookingId": ["a"], "Payment.bookingId": ["b"] });
-    expect(APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS).toEqual(["BookingLedgerLine.bookingId", "MemberMoneyLine.bookingId"]);
+    expect(APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS).toEqual(["BookingLedgerLine.bookingId", "MemberMoneyLine.bookingId", "MemberMoneyExportManifest.bookingId"]);
     expect(await bookingsWithFinancialHistory(store as never, ["a", "b"], APPEND_ONLY_FINANCIAL_HISTORY_RELATIONS))
       .toEqual(new Set(["a"]));
     expect(store.payment.findMany).not.toHaveBeenCalled();

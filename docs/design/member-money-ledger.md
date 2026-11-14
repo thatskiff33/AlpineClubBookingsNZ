@@ -550,6 +550,35 @@ record. A replacement after a genuine void is a new explicit render revision;
 retrying a lost response always uses the original manifest and key. Never derive
 a retry key from the current refund watermark or current set of voids.
 
+M13 (#4525) ships the first role, `PRIMARY_BOOKING_INVOICE`, as an observer.
+`createXeroInvoiceForBooking` still sends its own lines; the pure
+`planPrimaryBookingInvoice` builds the same lines with the same builders and
+compares them in cents with the booking's posted charge legs. Stay lines must
+equal the stay component's live gross, the change-fee line the live fee
+components', and the total what is covered; otherwise the manifest records
+`CONFLICT` (`STAY_CENTS`, `FEE_CENTS` or `COMPONENT_UNUSABLE`) and covers
+nothing. The manifest is written after the invoice link, in its own short
+transaction, under the invoice's existing correlation key
+(`buildXeroBookingInvoiceCorrelationKey`): the first row
+wins, and a failure is logged without changing the send or its operation. A
+replay records it from the operation's stored lines. The frozen mapping keeps
+the Xero tax type and the journal's tax codes side by side, untranslated. No
+delivery record or dispatcher exists yet.
+
+The next M13 cohort adds three roles on the same manifest. `REFUND_NOTE` covers
+the one live R05 refund debt (REFUND_PAYABLE) a note answers, whole, never
+revenue; `REFUND_NOTE_PAYMENT` covers the whole R12 (Stripe clearing) or R14
+(bank) cash slice its payment records. `createXeroCreditNote` and
+`finishRefundCreditNoteSettlement` record them after completing their row, under
+the note's and the payment's existing keys, with the Xero id as the provider
+object; a replay hashes the stored request's lines, never rebuilt ones. A note
+whose cents differ is `CENTS`; one naming no single debt (a watermark note) or a
+missing R05 or R12 is `COMPONENT_UNUSABLE`; a debt an earlier note already
+covers is `ALREADY_COVERED`. A payment left unsettled, part-settled or found
+already settled records nothing. The role `FAILED_LATER_REFUND_REVERSAL` is
+reserved: #4369's `createXeroCardRefundReversalInvoice` sends that reversal
+today, and recording its manifest is a later step.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |

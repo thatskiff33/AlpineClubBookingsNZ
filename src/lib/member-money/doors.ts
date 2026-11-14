@@ -28,3 +28,8 @@ export { postCardRefundCash } from "./internal/refund-cash";
 export { postPaidAnotherWayClose, type PaidAnotherWayJournalClose, type PaidAnotherWayRest } from "./internal/refund-closes";
 export { cardRefundObligationOfRecoveryKey, resolveCardRefundObligation, type CardRefundRecoveryRow } from "./internal/refund-obligation-map";
 export { MemberMoneyReservationRefused } from "./internal/store";
+
+// #4525 (M13): the primary booking invoice's export manifest, planned beside the sender's lines and recorded after its link.
+export { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest } from "./internal/primary-invoice-manifest";
+// #4525 (M13): a refund credit note's and its payment's export manifests, recorded after each send.
+export { recordRefundNoteManifest, recordRefundNotePaymentManifest, type RefundNoteDoor } from "./internal/refund-note-manifest";

@@ -39,6 +39,7 @@ import {
 import { xeroCalendarDateText } from "@/lib/xero-provider-dates";
 import { readResolvedRefundCreditNoteCoverage } from "@/lib/xero-resolved-in-xero-fences";
 import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
+import { recordRefundNotePaymentManifest } from "@/lib/member-money/doors";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -99,6 +100,8 @@ export interface RefundNoteSettlementOutcome {
   refundPaymentSkipReason: string | null;
   /** A note part-settled in Xero: what is still outstanding on it. */
   refundPaymentRemainingCents?: number;
+  /** #4525 (M13): set only when this leg sent the payment and Xero accepted it: what it sent. */
+  sentPayment?: { bankCode: string; paymentDate: string; amountCents: number };
 }
 
 function paymentRecord(body: RefundPaymentBody | XeroPayment, fallbackCents: number): RefundNotePaymentRecord | null {
@@ -179,6 +182,7 @@ export async function settleRefundCreditNote(input: {
       payments: record ? [record] : [],
       refundPaymentErr: null,
       refundPaymentSkipReason: null,
+      sentPayment: { bankCode, paymentDate: input.paymentDate, amountCents: input.amountCents },
     };
   } catch (error) {
     logger.error(
@@ -626,5 +630,31 @@ export async function finishRefundCreditNoteSettlement(input: {
     }),
     input.retryClaim ? { retryClaim: true } : undefined,
   );
+  await recordSentRefundNotePaymentManifest(settled.outcome, {
+    paymentId: input.paymentId,
+    creditNoteId: input.creditNoteId,
+    operationId: input.operation.id,
+    refundMethod: input.refundMethod,
+  });
   return { ...settled.outcome, completionClaimLost: completed === null };
+}
+
+/**
+ * #4525 (M13): record the payment manifest for a payment this leg sent and Xero
+ * accepted whole. Nothing is recorded for a note left unsettled, part-settled,
+ * found already settled, or whose payment call failed. Never throws.
+ */
+export async function recordSentRefundNotePaymentManifest(
+  outcome: RefundNoteSettlementOutcome,
+  input: { paymentId: string; creditNoteId: string; operationId: string; refundMethod: CashRefundMethod },
+): Promise<void> {
+  const sent = outcome.sentPayment;
+  const [payment] = outcome.payments;
+  if (!sent || !payment || outcome.payments.length !== 1 || outcome.refundPaymentErr || outcome.refundPaymentSkipReason
+    || outcome.refundPaymentRemainingCents !== undefined) return;
+  await recordRefundNotePaymentManifest({
+    ...input,
+    legacyKey: refundCreditNotePaymentIdempotencyKey(input.paymentId, input.creditNoteId),
+    sent: { xeroPaymentId: payment.paymentID, amountCents: sent.amountCents, bankCode: sent.bankCode, paymentDate: sent.paymentDate },
+  });
 }

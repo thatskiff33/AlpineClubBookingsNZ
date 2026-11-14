@@ -487,12 +487,13 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
           DROP FUNCTION IF EXISTS member_money_require_complete(), member_money_batch_errors(text),
             member_money_check_seal(), member_money_refuse_mutation(), member_money_system_identifier(),
             member_money_application_state(text), member_money_reservation_errors(text),
-            member_money_require_reservation();
+            member_money_require_reservation(), member_money_require_export_coverage();
           DROP TYPE "MemberMoneyAccount", "MemberMoneySide", "MemberMoneyEventKind", "MemberMoneyOrigin",
             "MemberMoneySourceKind", "MemberMoneyObligationKind", "MemberMoneyDebtorKind",
-            "MemberMoneyRefundReservationReleaseReason";
+            "MemberMoneyRefundReservationReleaseReason", "MemberMoneyExportDocumentRole", "MemberMoneyExportOutcome",
+            "MemberMoneyExportConflictReason";
           DELETE FROM "_prisma_migrations" WHERE migration_name IN (
-            '20261127010000_member_money_journal', '20261210080000_member_money_applications',
+            '20261127010000_member_money_journal', '20261210080000_member_money_applications', '20261211010000_stripe_balance_evidence',
             '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
         expect(deployGrantsCheck(database)).toBe("");
         // Applied as prisma migrate deploy applies them: each file, as the migration role.
@@ -500,6 +501,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261127010000_member_money_journal/migration.sql"), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261210080000_member_money_applications/migration.sql"), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"));
+          await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261211010000_stripe_balance_evidence/migration.sql"), "utf8"));
         });
         expect(deployGrantsCheck(database)).toBe("");
         const insertOnly = [...MEMBER_MONEY_RELATIONS, "StripeBalanceTransactionEvidence"];
