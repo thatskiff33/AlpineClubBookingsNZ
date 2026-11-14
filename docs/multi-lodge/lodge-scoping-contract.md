@@ -52,11 +52,19 @@ sequencing):
 | `ServerNzSettings`                                                 | club-wide singleton (`id = "default"`)                             | NOT converted to a per-lodge row, deliberately: one club holds ONE connection to the central server (one base URL, one API key, one sync cursor), and the registry it exchanges is a list of other CLUBS rather than of this club's buildings. A per-lodge row would imply a lodge could sync independently, which the central server has no concept of; the one per-lodge fact it does hold, which of ITS lodges a club lodge is (`Lodge.centralLodgeId`, triyder/AlpineClubBookingsNZ#62), lives on `Lodge` |
 | Lodge identity fields (`lodgeName`, `doorCode`, `lodgeTravelNote`) | resolve from `Lodge` (default lodge when no `lodgeId` is in scope) | dropped from the `EmailMessageSetting` singleton (migration `20260709130000`)                                                                                                                                                                                                                                                                           |
 
+## Privacy hosting disclosure
+
+`PrivacyHostingSettings` is club-wide (`id = "default"`): one deployment serves
+one club, and the hosting provider and storage locations describe that
+installation, including backups across all lodges. It has no lodge key.
+
 ## Privacy retention
 
 `PrivacyRetentionSettings` is a club-wide singleton (`id = "default"`). Email
 logs, applications and member identity are club-wide; retention previews and
 jobs cover all lodges while preserving booking and financial lodge references.
+The `{{email-log-retention}}` page token reads this same club-wide policy; it
+takes no lodge parameter.
 
 ## Member money journal (#4513)
 
@@ -94,6 +102,13 @@ lodge, that lodge uses its rows instead of — never merged with — the
 club-wide set for that policy type. Service code resolves a lodge's
 policy through one shared helper so the replace-not-merge rule cannot
 drift between the three policy types.
+
+The cancellation reader `loadCancellationPolicy(checkIn, lodgeId)` takes the
+lodge as a required argument (#4946): a caller holding a booking passes the
+booking's lodge, and only a caller with no lodge at all passes `null` for the
+club default. The member booking page, the wizard's policy check
+(`GET /api/booking-policies/check`, which now also returns the schedule rows)
+and the cancel flow all read the same lodge's schedule.
 
 `LodgeInstruction` follows the same rule per document key (delivered
 2026-07-03): null-`lodgeId` rows are the club-wide OPEN/CLOSE/DAY_TO_DAY
@@ -590,6 +605,9 @@ new ADR:
   #4624 it also records an app booking payment nothing settles; it then names
   the intent's `bookingId` as plain text with no relation (the booking may not
   exist here), and is still club-wide Finance evidence with no lodge.
+  `StripeDispute` (#4911) is a cardholder's dispute of a club charge; it names
+  the payment and booking it matched as plain ids with no relation, and stays
+  club-wide Finance evidence with no lodge.
 - Xero and finance: all `Xero*` models (including `XeroConnection`, the one
   operational connection row, #3806), `FinanceSnapshot`,
   `FinanceReportCategory*`, item/account mappings. One club-wide ledger and
@@ -930,6 +948,14 @@ When exactly one active lodge exists, member and admin UI must not show
 lodge selectors, lodge columns, or lodge names in flows where they would
 be redundant (ADR-002). APIs still require and return `lodgeId`; the rule
 is presentation-only.
+
+The exception is the screens where a member checks or pays for one booking.
+The booking wizard (`INV-CAP-034`) and, for an existing booking, the booking
+page, the arrival card and the public payment link (`INV-CAP-039`) always
+name the booking's own lodge, in a one-lodge club too: a screen that looks
+the same whether or not the lodge is right cannot warn anyone. Member
+booking lists still follow this rule, with the lodge named on any row at an
+archived lodge.
 
 Lodge management is core and always available (ADR-005 removed the former
 `multiLodge` Admin Module flag; the lodge routes are ungated). Runtime

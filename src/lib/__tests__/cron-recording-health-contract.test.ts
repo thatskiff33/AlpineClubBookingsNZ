@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { getAdminCronJobDefinitions } from "@/lib/admin-cron-health";
+import { XERO_CRON_JOB_NAMES } from "@/lib/xero-cron-jobs";
 
 // Issue #814 (high-risk invariant test gap #5):
 //
@@ -24,13 +25,6 @@ function readInstrumentationRecordedJobNames(): string[] {
     "src/lib/general-cron-runner.ts",
     // #3663: the 15-minute payments cycle records its three tasks' job names.
     "src/lib/payments-cron-runner.ts",
-    "src/lib/xero-cron-runner.ts",
-    // #2501: the credit-sync checker owns its recorded job-name constant
-    // (XERO_CREDIT_SYNC_JOB_NAME), which the Xero cron runner maps to and
-    // records under; scan it so the contract discovers that job name.
-    "src/lib/xero-credit-sync-checker.ts",
-    // #4270: the credit-note mirror's sweep owns its recorded job-name constant likewise.
-    "src/lib/xero-credit-note-mirror.ts",
     "src/lib/finance-sync-cron-config.ts",
     // #4457: the retention jobs' recorded names, run from the data-pruning cron.
     "src/lib/privacy-retention-shared.ts",
@@ -38,12 +32,12 @@ function readInstrumentationRecordedJobNames(): string[] {
     fs.readFileSync(path.join(process.cwd(), filePath), "utf8")
   );
 
-  const names = new Set<string>();
+  // The Xero cron runner records every task under its name from this map.
+  const names = new Set<string>(Object.values(XERO_CRON_JOB_NAMES));
   const patterns = [
     /recordCronRun\(\s*"([a-z0-9-]+)"/g,
     /jobName:\s*"([a-z0-9-]+)"/g,
     /[A-Z_]+_JOB_NAME\s*=\s*"([a-z0-9-]+)"/g,
-    /^\s*(?:memberships|outbox|retries|inbound|backfill|"link-cleanup"|"bank-refund-voids"|report):\s*"([a-z0-9-]+)"/gm,
   ];
 
   for (const source of sources) {

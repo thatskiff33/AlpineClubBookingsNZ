@@ -173,7 +173,7 @@ import {
   mintSplitGuestPaymentLinkIfAbsent,
 } from "@/lib/payment-link-split-guest";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
+import { BOOKING_ALREADY_PAID_CODE, SWITCHED_TO_INTERNET_BANKING_BODY } from "@/lib/payment-recovery-contract";
 import { UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE } from "@/lib/stripe-charge-currency";
 
 const mockedFindUnique = vi.mocked(prisma.paymentLink.findUnique);
@@ -1184,7 +1184,8 @@ describe("createPaymentIntentForPaymentLink", () => {
       baseLink({ booking: baseBooking({ status: BookingStatus.PAID }) }) as never
     );
 
-    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({ status: 410 });
+    // #4955: coded, so the pay page reads it as the server saying "paid".
+    await expect(createPaymentIntentForPaymentLink(RAW_TOKEN)).rejects.toMatchObject({ status: 410, code: BOOKING_ALREADY_PAID_CODE });
     expect(mockedFindOrCreateCustomer).not.toHaveBeenCalled();
   });
 
