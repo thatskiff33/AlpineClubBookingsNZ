@@ -22,6 +22,7 @@ import "@/lib/config-transfer/categories/lodge-config";
 import { getRegisteredEntities } from "@/lib/config-transfer/registry";
 import type { ImportMode, ReadDb, TxDb } from "@/lib/config-transfer/import-types";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { splitSqlStatements } from "../../../prisma/migration-verification/split-statements";
 
 // #2511 — a config bundle exported BEFORE a cleanup migration still carries the
 // removed value (the exporter selects the DB column verbatim; the applier writes
@@ -73,6 +74,22 @@ describe("cleaned-literal registry stays byte-exact with the migrations (#2511)"
     expect(entry.field).toBe("address");
     const sql = migrationSql(entry.migration);
     expect(sql).toContain(`WHERE "address" = '${entry.literal}'`);
+  });
+
+  it("the #5007 privacy literals are exactly the bodies its migration guards", () => {
+    const entries = CLEANED_LITERALS.filter((l) => l.issue === "#5007");
+    expect(entries.map((e) => [e.entity, e.key, e.field])).toEqual([
+      ["page-content", "privacy", "contentHtml"],
+      ["page-content", "privacy", "contentHtml"],
+    ]);
+    const sql = migrationSql(entries[0]!.migration);
+    expect(entries[1]!.migration).toBe(entries[0]!.migration);
+    // `$previous$` is #4914's body, `$older$` is #4031's; each is the whole
+    // first `$cms$` block its own migration wrote.
+    expect(sql).toContain(`AND "contentHtml" IN ($previous$${entries[0]!.literal}$previous$, $older$${entries[1]!.literal}$older$)`);
+    const writtenBy = (name: string) => migrationSql(name).match(/\$cms\$([\s\S]*?)\$cms\$/)?.[1];
+    expect(entries[0]!.literal).toBe(writtenBy("20261214010000_correct_starter_privacy_retention_and_hosting"));
+    expect(entries[1]!.literal).toBe(writtenBy("20261119010000_correct_starter_privacy_audit_retention"));
   });
 });
 
@@ -409,6 +426,34 @@ describe.each(["overwrite", "merge"] as const)(
       ).toBe(true);
     });
 
+    it.each(CLEANED_LITERALS.filter((l) => l.issue === "#5007"))(
+      "does NOT re-plant a superseded starter privacy body (#5007): $describe",
+      async (privacy) => {
+        const current = "<p>The privacy policy the upgrade wrote.</p>";
+        const privacyRow = { slug: "privacy", path: "/privacy", caption: "Privacy", menuTitle: "", title: "Privacy Policy", headerText: "Privacy", sortOrder: 9 };
+        const store = makeStore([currentHome({ id: "privacy", ...privacyRow, contentHtml: current })], []);
+        const files = filesFor([pageBundleRow({ ...privacyRow, contentHtml: privacy.literal })], []);
+
+        const plan = await runPlan(files, store, mode);
+        await runApply(files, store, mode);
+
+        expect(store.page("privacy")!.contentHtml).toBe(current);
+        expect(plan.warnings.some((w) => w.includes(privacy.migration) && w.includes("#5007"))).toBe(true);
+      },
+    );
+
+    it("imports a club's own edit of the starter privacy body unchanged (#5007)", async () => {
+      const privacy = CLEANED_LITERALS.find((l) => l.issue === "#5007")!;
+      const edited = `${privacy.literal}<p>Our club also keeps paper sign-in sheets.</p>`;
+      const privacyRow = { slug: "privacy", path: "/privacy", caption: "Privacy", menuTitle: "", title: "Privacy Policy", headerText: "Privacy", sortOrder: 9 };
+      const store = makeStore([currentHome({ id: "privacy", ...privacyRow, contentHtml: "<p>old</p>" })], []);
+      const files = filesFor([pageBundleRow({ ...privacyRow, contentHtml: edited })], []);
+
+      await runApply(files, store, mode);
+
+      expect(store.page("privacy")!.contentHtml).toContain("Our club also keeps paper sign-in sheets.");
+    });
+
     it("imports a DIFFERENT footer key normally", async () => {
       const store = makeStore(
         [],
@@ -505,26 +550,48 @@ describe("value-scoped content cleanups stay tied to the registry (#2511)", () =
     // guest-booking hero this migration WROTE is the one #2511 guards (via
     // 20260802150000, which is registered).
     "20260613090000_update_starter_home_page_content",
+    // The scan below only saw these from #5007, when it moved to the
+    // quote-aware splitter: splitting on ";" had cut each dollar-quoted body at
+    // its first HTML entity. Each rewrote one starter version to the next and
+    // pins the version it replaced. None of those bodies is registered: they
+    // are earlier starter wording, not another club's text, and #5007 registers
+    // only the two privacy bodies its own migration rewrites (#4914's and
+    // #4031's). Older privacy bodies still carry the Sydney hosting claim, so
+    // a bundle exported before October 2026 can still restore it; registering
+    // those is outside #5007.
+    "20260702120000_update_starter_faq_accordion",
+    "20260702144000_update_privacy_for_analytics_consent",
+    "20260705130000_add_non_member_hold_enabled",
+    "20260717180000_genericise_starter_lodge_copy",
+    "20261119010000_correct_starter_privacy_audit_retention",
+    "20261218070000_summarise_starter_faq_personal_data",
+    // #4914 pins the #4031 privacy body, which is registered above under the
+    // migration that last rewrites it (20261222030000, #5007).
+    "20261214010000_correct_starter_privacy_retention_and_hosting",
   ]);
 
   /** Does any UPDATE statement's WHERE clause pin a guarded column's byte value? */
   function valuePinsGuardedColumn(sql: string): boolean {
-    // SQL line comments, not JavaScript ones (#3164). The canonical
-    // `stripComments` helper does not know this delimiter, so a census that
-    // used it here would read a commented-out UPDATE as a live one.
-    const withoutSqlComments = sql
-      .split("\n")
-      .filter((line) => !line.trimStart().startsWith("--"))
-      .join("\n");
-    for (const stmt of withoutSqlComments.split(";")) {
+    // Statements come from the quote-aware splitter the migration gates use
+    // (#5007): a bare `split(";")` cut dollar-quoted HTML at every entity such
+    // as `&mdash;`, so a WHERE after a long SET body was never seen.
+    for (const statement of splitSqlStatements(sql)) {
+      // SQL line comments, not JavaScript ones (#3164). The canonical
+      // `stripComments` helper does not know this delimiter, so a census that
+      // used it here would read a commented-out UPDATE as a live one.
+      const stmt = statement
+        .split("\n")
+        .filter((line) => !line.trimStart().startsWith("--"))
+        .join("\n");
       if (!/\bUPDATE\b/i.test(stmt)) continue;
       const whereIdx = stmt.search(/\bWHERE\b/i);
       if (whereIdx < 0) continue;
       const where = stmt.slice(whereIdx);
       for (const col of GUARDED_EXPORTED_COLUMNS) {
-        // `"<col>" = '…'` or `"<col>" = $cms$…$cms$` — the byte-literal pin a
-        // value-scoped cleanup uses (and the exact bytes a bundle re-plants).
-        if (new RegExp(`"${col}"\\s*=\\s*('|\\$cms\\$)`, "i").test(where)) {
+        // `"<col>" = '…'`, `"<col>" = $tag$…$tag$` or `"<col>" IN ('…', $tag$…)`:
+        // the byte-literal pin a value-scoped cleanup uses (and the exact bytes
+        // a bundle re-plants), under any dollar-quote tag.
+        if (new RegExp(`"${col}"\\s*(=|IN\\s*\\()\\s*('|\\$\\w*\\$)`, "i").test(where)) {
           return true;
         }
       }
