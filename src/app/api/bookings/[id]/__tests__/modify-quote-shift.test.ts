@@ -135,6 +135,13 @@ describe("POST /api/bookings/[id]/modify-quote shift preview (issue #1668)", () 
     expect(body.netChargeCents).toBe(0);
     expect(body.newFinalPriceCents).toBe(30000);
     expect(body.newTotalPriceCents).toBe(30000);
+    // #4924 (`INV-MOD-062`): a shift moves no money, and the save is bound to that.
+    expect(body.quotedFigures).toEqual({
+      newFinalPriceCents: 30000,
+      priceDiffCents: 0,
+      changeFeeCents: 0,
+      netChargeCents: 0,
+    });
     expect(body.capacityAvailable).toBe(true);
     expect(body.itemizedChanges).toEqual([
       { label: "Dates shifted by 2 night(s) — price unchanged", amountCents: 0 },
