@@ -77,6 +77,11 @@ import {
   type AdvisoryNight,
 } from "../_lib/capacity-advisory";
 import { readJsonOrNull } from "../_lib/read-json-or-null";
+import {
+  isReviewReasonMissingMessage,
+  REVIEW_REASON_MISSING_MESSAGE,
+  REVIEW_REASON_MISSING_WAITLIST_MESSAGE,
+} from "../_lib/review-reason-missing";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import {
   type AvailablePromoCode,
@@ -329,6 +334,19 @@ export function useBookingWizard() {
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * #4945: one count per failure a member's own press raised — Continue to
+   * Payment / Confirm, Join Waitlist, Save as Draft, the guests step's Continue.
+   * The page's error box (not the 409 card, which keys on `showWaitlistPrompt`)
+   * takes focus and scrolls into view when it moves, so a second press refused
+   * with the IDENTICAL sentence still lands the member on the explanation
+   * instead of a button that looks dead. Only an action bumps it; a re-quote or
+   * a typed note never does.
+   */
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
+  function takeErrorAttention() {
+    setErrorAttentionKey((key) => key + 1);
+  }
   /**
    * #2701: the member tried to book and no lodge could be determined. Drives
    * the retry affordance beside the refusal — without it the member is told to
@@ -1636,6 +1654,7 @@ export function useBookingWizard() {
     setMemberNightConflicts([]);
     if (guests.length === 0) {
       setError("Add at least one guest");
+      takeErrorAttention();
       return;
     }
 
@@ -1643,6 +1662,7 @@ export function useBookingWizard() {
     for (const g of guests) {
       if (!g.firstName.trim() || !g.lastName.trim()) {
         setError("All guests must have first and last names");
+        takeErrorAttention();
         return;
       }
     }
@@ -1658,6 +1678,7 @@ export function useBookingWizard() {
     */
     if (dependantIdentity.unresolvedCollisions.length > 0) {
       setError(DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE);
+      takeErrorAttention();
       return;
     }
 
@@ -1665,6 +1686,7 @@ export function useBookingWizard() {
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
       setError(stayRangeError);
+      takeErrorAttention();
       return;
     }
 
@@ -1871,16 +1893,19 @@ export function useBookingWizard() {
     if (!scopedLodgeId) {
       setError(BOOKING_LODGE_UNRESOLVED_MEMBER_MESSAGE);
       setLodgeUnresolved(true);
+      takeErrorAttention();
       return;
     }
     if (requiresAdminReviewLocal && !memberReviewJustification.trim()) {
-      setError("Please add a reason for booking without an adult guest. This goes to an admin for review.");
+      setError(REVIEW_REASON_MISSING_MESSAGE);
+      takeErrorAttention();
       return;
     }
     const guestPayload = buildGuestPayload();
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
       setError(stayRangeError);
+      takeErrorAttention();
       return;
     }
     setSubmitting(true);
@@ -1931,6 +1956,7 @@ export function useBookingWizard() {
         // The server answered but the receipt is unreadable — a gateway error
         // page, or a 200 with no booking id. Never `/bookings/undefined`.
         setError(CREATE_UNVERIFIED_MESSAGE);
+        takeErrorAttention();
       } else if (res.ok) {
         workPersistence.stopKeepingWork();
         // The group call has its own catch, so its failure is a toast and never
@@ -1977,6 +2003,8 @@ export function useBookingWizard() {
           });
           setStep("pay");
           setSubmitting(false);
+          // A window scroll, recorded in `DIRECT_SCROLL_EXCLUSIONS` (#4945): the
+          // member layout scrolls the document, which `scrollToTop` never does.
           window.scrollTo({ top: 0 });
           return;
         }
@@ -1992,6 +2020,7 @@ export function useBookingWizard() {
         setShowWaitlistPrompt(true);
         setWaitlistFullNights(data.fullNights || []);
         setWaitlistAlternateLodgeIds([]);
+        // No bump: the box is empty; the card takes focus in `page.tsx`.
         setError("");
       } else {
         handleBookingApiError(data, "Failed to create booking");
@@ -1999,9 +2028,11 @@ export function useBookingWizard() {
         // a Booking Officer. It reads the server's own classification and answers
         // null for everything else, so no hard failure can open the door.
         setExceptionOffer(readExceptionOffer(data));
+        takeErrorAttention();
       }
     } catch {
       setError(CREATE_UNVERIFIED_MESSAGE);
+      takeErrorAttention();
     } finally {
       // Held through `router.push` so the button cannot be pressed twice while
       // the booking page loads; every other ending hands it back (#4942).
@@ -2014,16 +2045,19 @@ export function useBookingWizard() {
       setStep("dates");
       setError(BOOKING_LODGE_UNRESOLVED_MEMBER_MESSAGE);
       setLodgeUnresolved(true);
+      takeErrorAttention();
       return;
     }
     if (requiresAdminReviewLocal && !memberReviewJustification.trim()) {
-      setError("Please add a reason for booking without an adult guest before joining the waitlist.");
+      setError(REVIEW_REASON_MISSING_WAITLIST_MESSAGE);
+      takeErrorAttention();
       return;
     }
     const guestPayload = buildGuestPayload();
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
       setError(stayRangeError);
+      takeErrorAttention();
       return;
     }
     setJoiningWaitlist(true);
@@ -2092,15 +2126,18 @@ export function useBookingWizard() {
       const data = await readJsonOrNull(res);
       if (!data || (res.ok && typeof data.id !== "string")) {
         setError(WAITLIST_UNVERIFIED_MESSAGE);
+        takeErrorAttention();
       } else if (res.ok) {
         workPersistence.stopKeepingWork();
         navigating = true;
         router.push(`/bookings/${data.id}`);
       } else {
         handleBookingApiError(data, "Failed to join waitlist");
+        takeErrorAttention();
       }
     } catch {
       setError(WAITLIST_UNVERIFIED_MESSAGE);
+      takeErrorAttention();
     } finally {
       if (!navigating) setJoiningWaitlist(false);
     }
@@ -2111,12 +2148,14 @@ export function useBookingWizard() {
       setStep("dates");
       setError(BOOKING_LODGE_UNRESOLVED_MEMBER_MESSAGE);
       setLodgeUnresolved(true);
+      takeErrorAttention();
       return;
     }
     const guestPayload = buildGuestPayload();
     const stayRangeError = validateGuestStayRanges(guestPayload);
     if (stayRangeError) {
       setError(stayRangeError);
+      takeErrorAttention();
       return;
     }
     setSavingDraft(true);
@@ -2161,6 +2200,7 @@ export function useBookingWizard() {
       const data = await readJsonOrNull(res);
       if (!data || (res.ok && typeof data.id !== "string")) {
         setError(DRAFT_UNVERIFIED_MESSAGE);
+        takeErrorAttention();
       } else if (res.ok) {
         workPersistence.stopKeepingWork();
         if (groupTrip && groupBookingsEnabled) {
@@ -2174,9 +2214,11 @@ export function useBookingWizard() {
         // Same reviewable-refusal door as the confirm path: a draft is refused by
         // the same policy gates, and the member's remedy is the same request.
         setExceptionOffer(readExceptionOffer(data));
+        takeErrorAttention();
       }
     } catch {
       setError(DRAFT_UNVERIFIED_MESSAGE);
+      takeErrorAttention();
     } finally {
       if (!navigating) setSavingDraft(false);
     }
@@ -2334,6 +2376,8 @@ export function useBookingWizard() {
     exceptionOfferState.proposalSignature === exceptionProposalSignature()
       ? exceptionOfferState.offer
       : null;
+  // #4945: derived from the message, so it never outlives the refusal.
+  const reviewReasonMissing = isReviewReasonMissingMessage(error);
   // #2919 review: these three bodies are templates — every token is insertable
   // into them — so they render through the shared client renderer with the lodge
   // the member is actually booking, not the club's default one.
@@ -2483,6 +2527,8 @@ export function useBookingWizard() {
     priceQuote,
     priceLoading,
     error,
+    errorAttentionKey,
+    reviewReasonMissing,
     errorPaymentTargets,
     subscriptionInvoiceUrl,
     subscriptionInvoiceNumber,

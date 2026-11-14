@@ -14,6 +14,7 @@ export type GuestRemovalXeroSettlement = Pick<
   | "xeroRefundAmountCents"
   | "settlementMethod"
   | "hasSucceededPayment"
+  | "paymentId"
   | "appliedCreditGivenBackCents"
   | "xeroAdditionalAmountCents"
   | "zeroDollarAutoPaid"
@@ -30,6 +31,7 @@ export function guestRemovalXeroSettlement(result: RemoveBookingGuestResult): Gu
     xeroRefundAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
     hasSucceededPayment: result.hasSucceededPayment,
+    paymentId: result.paymentId,
     appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     xeroAdditionalAmountCents: result.xeroAdditionalAmountCents,
     zeroDollarAutoPaid: result.zeroDollarAutoPaid,
@@ -72,6 +74,7 @@ export function queueGuestRemovalXeroSettlement(
     settlementAmountCents: settlement.xeroRefundAmountCents,
     settlementMethod: settlement.settlementMethod,
     refundedThroughStripe: settlement.hasSucceededPayment,
+    paymentId: settlement.paymentId,
     appliedCreditGiveBackCents: settlement.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: settlement.organiserChildRefund !== null,

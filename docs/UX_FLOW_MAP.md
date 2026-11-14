@@ -68,7 +68,7 @@ Journey: Read upcoming stays and account notices, then open a booking or choose 
 
 Screen: `/book`.
 
-Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. Work survives profile detours and refreshes in the same tab; expired dates are dropped. Submit, waitlist join, draft save, exception request, sign-out or Start again clears it.
+Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer. Work survives profile detours and refreshes in the same tab; expired dates are dropped. Submit, waitlist join, draft save, exception request, sign-out or Start again clears it.
 
 [Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -244,7 +244,7 @@ Journey: Choose a queue tab, open a request, inspect the proposed stay, and use 
 
 Screen: `/admin/bookings`.
 
-Shows: A filterable booking list; booking detail holds the stay, party, status and next actions.
+Shows: A filterable booking list and calendar with status pills; booking detail holds the stay, party, status and next actions.
 
 Journey: Filter the list, open a booking, and inspect its dates, guests and status before acting.
 
@@ -698,7 +698,7 @@ Journey: Inspect connection and operations status; open a failed item to follow 
 
 Screen: `/admin/appearance`.
 
-Shows: Theme presets and links to club identity controls.
+Shows: Theme presets and links to club identity controls. The Club Identity sub-page (`/admin/appearance/identity`) also holds **Where members' data is held**, the hosting provider and data location the `{{data-hosting}}` token publishes.
 
 Journey: Choose a preset or open the identity editor; preview before saving.
 
