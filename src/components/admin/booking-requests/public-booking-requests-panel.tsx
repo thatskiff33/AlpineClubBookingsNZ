@@ -1493,8 +1493,8 @@ export function PublicBookingRequestsPanel({
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === "QUEUE"}
-          onReset={() => setFilter("QUEUE")}
+          disabled={filter === DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER}
+          onReset={() => setFilter(DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER)}
         />
       </div>
 

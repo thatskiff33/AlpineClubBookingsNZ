@@ -18,6 +18,7 @@ import { PolicyExceptionRequestsPanel } from "@/components/admin/booking-request
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
+  BOOKING_REQUESTS_STATUS_PARAM,
   BOOKING_REQUESTS_TABS,
   type BookingRequestsTab,
 } from "@/lib/admin-booking-requests-path";
@@ -112,29 +113,30 @@ export default function BookingRequestsPage() {
   function handleTabChange(value: string) {
     const nextTab = parseBookingRequestsTab(value);
     const params = new URLSearchParams(searchParams.toString());
+    const status = params.get(BOOKING_REQUESTS_STATUS_PARAM);
 
     params.set("tab", nextTab);
 
     if (nextTab === "approvals") {
       params.delete("requestId");
-      if (params.get("status") === "REQUESTED") {
-        params.delete("status");
+      if (status === "REQUESTED") {
+        params.delete(BOOKING_REQUESTS_STATUS_PARAM);
       }
     } else if (nextTab === "changes") {
       params.delete("bookingId");
-      if (params.get("status") === "PENDING") {
-        params.delete("status");
+      if (status === "PENDING") {
+        params.delete(BOOKING_REQUESTS_STATUS_PARAM);
       }
     } else if (nextTab === "exceptions") {
       // The exception queue keeps its own in-panel status filter and has no
       // per-record deep link, so nothing from a sibling tab carries over.
       params.delete("bookingId");
       params.delete("requestId");
-      params.delete("status");
+      params.delete(BOOKING_REQUESTS_STATUS_PARAM);
     } else {
       params.delete("bookingId");
-      if (params.get("status") === "PENDING" || params.get("status") === "REQUESTED") {
-        params.delete("status");
+      if (status === "PENDING" || status === "REQUESTED") {
+        params.delete(BOOKING_REQUESTS_STATUS_PARAM);
       }
     }
 

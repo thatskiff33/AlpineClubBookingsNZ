@@ -13,6 +13,7 @@
  * applies by hand, while approving a policy exception EXECUTES the reviewed
  * proposal.
  */
+import type { BookingRequestStatus } from "@prisma/client";
 import { adminHref } from "@/lib/admin-hubs";
 
 export const BOOKING_REQUESTS_TABS = [
@@ -57,30 +58,43 @@ export function buildBookingRequestsHref(
  */
 export const BOOKING_REQUESTS_STATUS_PARAM = "status";
 
-/** The public-requests tab's filters; `QUEUE` is the default. */
-const PUBLIC_BOOKING_REQUEST_FILTERS = [
-  "QUEUE",
-  "NEW",
-  "VERIFIED",
-  "PRICED",
-  "QUOTED",
-  "QUOTE_SENT",
-  "QUERY_PENDING",
-  "MODIFICATION_REQUESTED",
-  "ACCEPTED",
-  "APPROVED",
-  "DECLINED",
-  "CANCELLED",
-  "CONVERTED",
-  "ALL",
-] as const;
+/**
+ * Every token the public-requests tab can filter on: each
+ * `BookingRequestStatus` (the API accepts exactly these) plus the two views
+ * `QUEUE` (the default) and `ALL`. Derived from the enum with a type-only
+ * import, so it stays client-safe and cannot name a status that does not exist.
+ */
+export type PublicBookingRequestFilter = BookingRequestStatus | "QUEUE" | "ALL";
 
-export type PublicBookingRequestFilter = (typeof PUBLIC_BOOKING_REQUEST_FILTERS)[number];
+/**
+ * Keyed by the whole vocabulary rather than listed, so adding or removing a
+ * `BookingRequestStatus` is a compile error here (and, through the panel's
+ * `Record<PublicBookingRequestFilter, string>` labels, at the filter row).
+ * Without that, a new status the API accepts would open on `QUEUE` from a link,
+ * with nothing failing (INV-SSOT-001: unrepresentable, not policed).
+ */
+const PUBLIC_BOOKING_REQUEST_FILTER_TOKENS: Record<PublicBookingRequestFilter, true> = {
+  QUEUE: true,
+  NEW: true,
+  VERIFIED: true,
+  PRICED: true,
+  QUOTED: true,
+  QUOTE_SENT: true,
+  QUERY_PENDING: true,
+  MODIFICATION_REQUESTED: true,
+  ACCEPTED: true,
+  APPROVED: true,
+  DECLINED: true,
+  CANCELLED: true,
+  CONVERTED: true,
+  ALL: true,
+};
 
 export const DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER: PublicBookingRequestFilter = "QUEUE";
 
 function isPublicBookingRequestFilter(value: string | null): value is PublicBookingRequestFilter {
-  return (PUBLIC_BOOKING_REQUEST_FILTERS as readonly (string | null)[]).includes(value);
+  // `hasOwn`, not `in`: "toString" and "constructor" are not filters.
+  return value !== null && Object.hasOwn(PUBLIC_BOOKING_REQUEST_FILTER_TOKENS, value);
 }
 
 /** Link to the public-requests tab opened on `status`. */
