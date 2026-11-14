@@ -1725,7 +1725,10 @@ jobs:
       # not a build arg — nothing Stripe is inlined into the image.
       NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
-      MIGRATE_IMAGE_REF: tacbookings-ci-migrate:${{ github.sha }}
+      # The builder-stage image the migrate and seed services run, built below.
+      # A first-party local tag (INV-OPS-017's exception, `tacbookings-*:ci`), and
+      # the name Compose reads for `migrate` and `seed`, so the smoke inherits it.
+      MIGRATE_IMAGE: tacbookings-ci-migrate:ci
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1823,7 +1826,7 @@ jobs:
       # "First Bootstrap" writes it, on an empty database. The migrate and seed
       # services run the builder stage, which the app build above has just
       # produced with these same build args, so this tags it from the cache
-      # rather than building it again; MIGRATE_IMAGE then points Compose at it,
+      # rather than building it again; the job's MIGRATE_IMAGE points Compose at it,
       # exactly as a production adopter points it at the published image.
       - name: Tag the builder-stage image the migrate and seed services run
         if: steps.scope.outputs.needed != 'false'
@@ -1834,7 +1837,7 @@ jobs:
             --build-arg GIT_COMMIT_SHA="${GIT_COMMIT_SHA}" \
             --build-arg KNOWLEDGE_BUNDLE_OBSERVED_AT="${KNOWLEDGE_BUNDLE_OBSERVED_AT}" \
             --build-arg RELEASE_ID="${GIT_COMMIT_SHA}" \
-            --tag "${MIGRATE_IMAGE_REF}" \
+            --tag "${MIGRATE_IMAGE}" \
             .
 
       # The commands are read from the doc, never copied here, so the doc
@@ -1842,8 +1845,6 @@ jobs:
       # by the script; no repository secret is involved.
       - name: First-install smoke (migrate and seed exactly as DEPLOYMENT.md says)
         if: steps.scope.outputs.needed != 'false'
-        env:
-          MIGRATE_IMAGE: ${{ env.MIGRATE_IMAGE_REF }}
         run: node scripts/ci/first-install-smoke.mjs
 
   publish-ghcr-images:
