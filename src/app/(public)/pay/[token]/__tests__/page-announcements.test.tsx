@@ -142,6 +142,7 @@ describe("the pay-link page announces its outcomes (#4949)", () => {
     render(<PayByLinkPage />);
     await screen.findByRole("button", { name: "Pay by card" });
     const status = document.getElementById("payment-link-check-status");
+    if (!status) throw new Error("the post-card check status region is not mounted");
     expect(status).toHaveAttribute("role", "status");
     expect(status).toHaveTextContent("");
 
