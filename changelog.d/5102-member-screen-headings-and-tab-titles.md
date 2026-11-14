@@ -11,6 +11,6 @@
   level-2 headings. A census test stops a card title under the member-facing
   pages, or in the member cards it lists, from leaving its heading level
   unclassified, and holds the other titles (admin, finance and the member
-  components shared across page types) at a falling baseline (`INV-PUB-005`).
+  components shared across page types) at a falling baseline (`INV-PUB-006`).
   Nothing looks different, except that an H1 an admin puts inside a notice now
   renders as a level-2 heading, so a notice keeps one main heading.

@@ -20,7 +20,7 @@ description, so you can find the right file without opening more than one.
 
 | File under `docs/invariants/` | Prefixes | Read it when you are changing… |
 | --- | --- | --- |
-| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content and named lodge tokens |
+| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies, a member page's tab title and headings |
 | [`money.md`](invariants/money.md) | `INV-MONEY` | anything holding cents: fee authorities, whole-lodge pricing, promo caps, subscription charges, or the Xero invoice identity behind them |
 | [`booking-dates-and-capacity.md`](invariants/booking-dates-and-capacity.md) | `INV-DATE`, `INV-CAP`, plus `INV-LIFE-062` | what day it is, who is present, how many beds, which bed, custodian bed holds |
 | [`payment-and-settlement.md`](invariants/payment-and-settlement.md) | `INV-PAY` | taking, clearing, crediting or refunding money |
@@ -68,7 +68,8 @@ operative ones:
 
 ## Public authoritative content
 
-What the public site is allowed to publish, and a member page's outline and title.
+What the public site is allowed to publish, the image copies a gallery serves, and a
+member page's outline and title.
 File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 `INV-PUB`.
 
@@ -78,7 +79,8 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 | `INV-PUB-002` | Public fees use current effective-dated schedules; joining fees resolve from `JoiningFee` only |
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
 | `INV-PUB-004` | `{{data-hosting}}` publishes only the two typed hosting values, escaped, or fallback |
-| `INV-PUB-005` | Member pages: own tab title, one h1; CardTitles declare a level |
+| `INV-PUB-005` | Galleries serve current, smaller copies made at upload; originals kept |
+| `INV-PUB-006` | Member pages: own tab title, one h1; CardTitles declare a level |
 
 ## Money
 

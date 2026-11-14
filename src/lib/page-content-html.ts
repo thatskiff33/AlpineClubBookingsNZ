@@ -197,7 +197,7 @@ export interface SanitizePageContentHtmlOptions {
   restrictImgSrc?: boolean;
   /**
    * The HTML is rendered inside a page that already owns its level-1 heading
-   * (a notice under its title, #4951, `INV-PUB-005`): an `<h1>` an author puts
+   * (a notice under its title, #4951, `INV-PUB-006`): an `<h1>` an author puts
    * in the body comes out as `<h2>`, so the page keeps exactly one. Omit it
    * where the HTML IS the page, as public website content is. Only the tag name
    * changes; the allow-lists are the ones above.

@@ -8,7 +8,7 @@ import {
 } from "./support/card-title-source";
 
 /**
- * #4951 (`INV-PUB-005`) — every `CardTitle` classifies itself, ratcheted to
+ * #4951 (`INV-PUB-006`) — every `CardTitle` classifies itself, ratcheted to
  * get there.
  *
  * The owner decided on #2796 (D1) that every card title says whether it is a
@@ -101,7 +101,7 @@ describe("every CardTitle declares a heading level or \"none\" (#4951)", () => {
       "Give each of these CardTitles a headingLevel from its page's real " +
         "outline: 1 when the card is the page's whole content and nothing else " +
         "renders an h1 in that state, 2 under an existing h1, and \"none\" when " +
-        "it is not a heading at all (INV-PUB-005; docs/ARCHITECTURE.md, \"Card " +
+        "it is not a heading at all (INV-PUB-006; docs/ARCHITECTURE.md, \"Card " +
         "titles and heading semantics\"):\n" +
         memberFacing.join("\n")
     ).toEqual([]);

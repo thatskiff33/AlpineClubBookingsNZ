@@ -762,7 +762,7 @@ Four rules, and they are all deliberate:
    one (`toHaveCount(0)`) passes *vacuously*, which is worse.
 
 **The census enforces D1 while the sweep finishes** (#4951,
-`INV-PUB-005`). `src/components/ui/__tests__/card-title-classification-census.test.ts`
+`INV-PUB-006`). `src/components/ui/__tests__/card-title-classification-census.test.ts`
 fails when any `CardTitle` under `src/app/(public)`, `src/app/(authenticated)`,
 `src/app/(website-dynamic)` or in the shared member cards it lists omits
 `headingLevel`, and holds the count of unclassified titles everywhere else at
