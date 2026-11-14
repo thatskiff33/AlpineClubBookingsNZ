@@ -119,6 +119,30 @@ describe("Member merge action attention", () => {
     expect(success).not.toHaveBeenCalled();
   });
 
+  it("focuses a preview request that fails before any response arrives", async () => {
+    const button = await mount();
+    const alert = screen.getByRole("alert");
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    fireEvent.click(button);
+    await expectRecoveryAlertToHoldFocus(alert);
+    expect(alert).toHaveTextContent("Failed to build the merge preview.");
+    expect(scroll.mock.instances).toContain(alert);
+    expect(button).toBeEnabled();
+  });
+
+  it("focuses an execute request that fails before any response arrives, and says the outcome is unconfirmed", async () => {
+    const button = await buildPreview();
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    fireEvent.click(button);
+    const alert = screen.getByRole("alert");
+    await expectRecoveryAlertToHoldFocus(alert);
+    expect(alert).toHaveTextContent("The merge could not be confirmed.");
+    expect(scroll.mock.instances).toContain(alert);
+    expect(push).not.toHaveBeenCalled();
+    expect(success).not.toHaveBeenCalled();
+    expect(button).toBeEnabled();
+  });
+
   it("retains the existing success toast and navigation without positioning", async () => {
     const button = await buildPreview();
     fetchMock.mockResolvedValueOnce(response({}));

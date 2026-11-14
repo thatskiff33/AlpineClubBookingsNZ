@@ -226,6 +226,13 @@ export default function MemberApplicationsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
+  // A new view retires the last action's error (it described the old view); the
+  // attention key is untouched, so clearing never takes focus.
+  function changeFilter(value: string) {
+    setErrorMessage("");
+    setFilter(value);
+  }
+
   // #1786/E10: the approval panel validates the joining-fee decision + mapping
   // payload and hands it here; this opens the notify-choice dialog. The
   // applicant approved/rejected email always sends (the applicant email is a
@@ -565,14 +572,14 @@ export default function MemberApplicationsPage() {
               key={option.value}
               type="button"
               variant={filter === option.value ? "default" : "outline"}
-              onClick={() => setFilter(option.value)}
+              onClick={() => changeFilter(option.value)}
             >
               {option.label}
             </Button>
           ))}
           <DatasetResetButton
             disabled={filter === "PENDING_ADMIN"}
-            onReset={() => setFilter("PENDING_ADMIN")}
+            onReset={() => changeFilter("PENDING_ADMIN")}
           />
         </div>
       </div>

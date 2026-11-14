@@ -128,6 +128,12 @@ export default function MemberMergePage({
     setError("");
   }, []);
 
+  // Every action failure goes through here so it always asks for attention.
+  const reportFailure = useCallback((message: string) => {
+    setError(message);
+    setErrorAttentionKey((key) => key + 1);
+  }, []);
+
   const runPreview = useCallback(async () => {
     if (!loser) return;
     setLoadingPreview(true);
@@ -140,35 +146,46 @@ export default function MemberMergePage({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "Failed to build the merge preview.");
-        setErrorAttentionKey((key) => key + 1);
+        reportFailure(data.error || "Failed to build the merge preview.");
         setPreview(null);
         return;
       }
       setPreview(data as MergePreview);
+    } catch {
+      // A network failure is a failed action too, not a click that did nothing.
+      reportFailure("Failed to build the merge preview.");
+      setPreview(null);
     } finally {
       setLoadingPreview(false);
     }
-  }, [loser, masterId]);
+  }, [loser, masterId, reportFailure]);
 
   const execute = useCallback(async () => {
     if (!preview) return;
     setExecuting(true);
     setError("");
     try {
-      const res = await fetchWithRecentAuth(`/api/admin/members/${masterId}/merge`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          loserId: preview.loserId,
-          previewToken: preview.previewToken,
-          confirmationText,
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithRecentAuth(`/api/admin/members/${masterId}/merge`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            loserId: preview.loserId,
+            previewToken: preview.previewToken,
+            confirmationText,
+          }),
+        });
+      } catch {
+        // No response, so the outcome is unknown: say so rather than "failed".
+        reportFailure(
+          "The merge could not be confirmed. Check your connection and the members' records, then try again.",
+        );
+        return;
+      }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "The merge could not be completed.");
-        setErrorAttentionKey((key) => key + 1);
+        reportFailure(data.error || "The merge could not be completed.");
         return;
       }
       toast.success("Members merged. The duplicate has been deleted.");
@@ -176,7 +193,7 @@ export default function MemberMergePage({
     } finally {
       setExecuting(false);
     }
-  }, [preview, masterId, confirmationText, router]);
+  }, [preview, masterId, confirmationText, router, reportFailure]);
 
   const swap = useCallback(() => {
     if (!loser) return;

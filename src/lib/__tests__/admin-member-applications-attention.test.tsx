@@ -134,6 +134,23 @@ describe("Member Applications action attention", () => {
     expect(scroll).toHaveBeenCalledTimes(2);
   });
 
+  it("retires an action error when the admin changes the filter, without moving focus", async () => {
+    render(<MemberApplicationsPage />);
+    const check = await screen.findByRole("button", { name: "Check mapping" });
+    const alert = document.getElementById("member-applications-error");
+    check.focus();
+    fireEvent.click(check);
+    await expectRecoveryAlertToHoldFocus(alert);
+    expect(alert).toHaveTextContent("Mapping failed");
+    const filter = screen.getByRole("button", { name: "All" });
+    filter.focus();
+    fireEvent.click(filter);
+    await waitFor(() => expect(alert).toBeEmptyDOMElement());
+    await screen.findByRole("button", { name: "Check mapping" });
+    expect(document.activeElement).toBe(filter);
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
   it("does not move focus for a failed passive list load", async () => {
     fetchMock.mockResolvedValue(response({ error: "List unavailable" }, false));
     render(<MemberApplicationsPage />);

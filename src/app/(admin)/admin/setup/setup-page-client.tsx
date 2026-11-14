@@ -255,10 +255,10 @@ export function SetupPageClient({
       // A reload that finds setup reopened retires this session's finish notice.
       if (!body.progress.completedAt) setFinishMessage("");
       return body;
-    } catch (loadError) {
+    } catch (loadFailure) {
       setLoadError(
-        loadError instanceof Error
-          ? loadError.message
+        loadFailure instanceof Error
+          ? loadFailure.message
           : "Failed to load setup readiness",
       );
     } finally {
@@ -269,6 +269,13 @@ export function SetupPageClient({
   useEffect(() => {
     void loadSetup();
   }, []);
+
+  // The admin's own Refresh retires the last action's error (it described the
+  // old data); the attention key is untouched, so clearing never takes focus.
+  function refreshSetup() {
+    setErrorMessage("");
+    void loadSetup();
+  }
 
   const allChecks = useMemo(
     () => readiness?.categories.flatMap((category) => category.checks) ?? [],
@@ -394,7 +401,7 @@ export function SetupPageClient({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={loadSetup} disabled={loading}>
+          <Button variant="outline" onClick={refreshSetup} disabled={loading}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>

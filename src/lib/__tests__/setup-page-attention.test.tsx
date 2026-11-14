@@ -129,6 +129,25 @@ describe("Setup action attention", () => {
     );
   });
 
+  it("retires an action error when the admin refreshes, without moving focus", async () => {
+    mount();
+    const button = await screen.findByRole("button", { name: "Test email" });
+    const alert = document.getElementById("setup-error");
+    fetchMock.mockResolvedValueOnce(
+      response({ error: "Action failed" }, false),
+    );
+    fireEvent.click(button);
+    await expectRecoveryAlertToHoldFocus(alert);
+    expect(alert).toHaveTextContent("Action failed");
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+    refresh.focus();
+    fireEvent.click(refresh);
+    await waitFor(() => expect(alert).toBeEmptyDOMElement());
+    await waitFor(() => expect(refresh).toBeEnabled());
+    expect(document.activeElement).toBe(refresh);
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
   it("announces and positions an explicit finish, but does not position on a passive refresh", async () => {
     const scrollTo = vi.fn();
     const { container } = render(
