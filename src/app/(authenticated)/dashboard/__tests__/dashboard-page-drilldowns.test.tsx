@@ -217,8 +217,25 @@ describe("DashboardPage summary card drill-downs", () => {
       expect.anything(),
     );
     expect(html).toContain("$130.00");
-    expect(html).toContain("1 booking need payment");
+    expect(html).toContain("1 booking needs payment");
     expect(html).toContain('href="/bookings/owed-1?returnTo=%2Fdashboard"');
+  });
+
+  // The card's copy agrees in number: one booking "needs", several "need".
+  it("pluralises the Payment Owed count for more than one owed booking", async () => {
+    mocks.bookingFindMany.mockReset();
+    mocks.bookingFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: "owed-1", status: "CONFIRMED", finalPriceCents: 18000, payment: null },
+        { id: "owed-2", status: "CONFIRMED", finalPriceCents: 6000, payment: null },
+      ]);
+    const html = await renderDashboardPage();
+
+    expect(html).toContain("2 bookings need payment");
+    expect(html).not.toContain("1 booking needs payment");
   });
 
   it("neither counts nor links a booking its applied credit covers", async () => {
