@@ -1,5 +1,6 @@
 import { PaymentRecoveryOperationType, PaymentSource, PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { REISSUED_ASK_REASON } from "@/lib/payment-recovery-keys";
@@ -272,7 +273,7 @@ function askRow(overrides: Partial<Row> = {}): Row {
  * account credit, the same $50 asked of the card.
  */
 function grownBooking({ creditPaid = false, xeroInvoiceId = null as string | null } = {}) {
-  return {
+  return editDoorBooking({
     id: "booking_3954",
     status: "PAID",
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
@@ -296,7 +297,7 @@ function grownBooking({ creditPaid = false, xeroInvoiceId = null as string | nul
       additionalPaymentIntentId: ASK_INTENT,
       xeroInvoiceId,
     },
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 async function adjust(
