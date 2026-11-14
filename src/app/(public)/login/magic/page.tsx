@@ -166,7 +166,7 @@ function MagicSignIn() {
     return (
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
-          <CardTitle className="text-center text-2xl font-bold">
+          <CardTitle headingLevel={1} className="text-center text-2xl font-bold">
             Sign-in temporarily paused
           </CardTitle>
           <CardDescription className="text-center" role="status">
