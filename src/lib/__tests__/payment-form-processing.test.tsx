@@ -22,7 +22,7 @@ describe("PaymentForm reports a `processing` confirmation (#4955)", () => {
     const onSuccess = vi.fn();
     const onProcessing = vi.fn();
     render(
-      <PaymentForm amountCents={12500} returnUrl="http://localhost/return" onSuccess={onSuccess} onProcessing={onProcessing} onError={vi.fn()} />,
+      <PaymentForm amountCents={12500} returnUrl="http://localhost/return" onSuccess={onSuccess} onProcessing={onProcessing} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Pay Now" }));
 
@@ -33,7 +33,7 @@ describe("PaymentForm reports a `processing` confirmation (#4955)", () => {
 
   it("returns to an idle form for a caller that does not listen for it", async () => {
     const onSuccess = vi.fn();
-    render(<PaymentForm amountCents={12500} returnUrl="http://localhost/return" onSuccess={onSuccess} onError={vi.fn()} />);
+    render(<PaymentForm amountCents={12500} returnUrl="http://localhost/return" onSuccess={onSuccess} />);
     fireEvent.click(screen.getByRole("button", { name: "Pay Now" }));
 
     await waitFor(() => expect((screen.getByRole("button", { name: "Pay Now" }) as HTMLButtonElement).disabled).toBe(false));
