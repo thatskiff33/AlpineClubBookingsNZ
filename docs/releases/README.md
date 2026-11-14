@@ -28,6 +28,10 @@ releases.
 - [v0.10.0 committee heads-up (draft)](v0.10.0-committee-headsup-draft.md) — the
   cancellation-policy-change note for the club committee.
 
-When you cut a new release, add its notes here (newest at the top of *Published
-release notes*) and update the [documentation hub](../README.md) pointer if the
-"most recent" release changes.
+`pnpm run release:cut prepare` writes each new release's page as a stub and
+lists it at the top of *Published release notes* (#4983). Finish the stub in the
+release-prep pull request and delete its unfinished marker:
+`release:cut publish` refuses while the marker is there. The
+[documentation hub](../README.md) links this index rather than a version, so a
+new release needs no edit there. The full order is the
+[release checklist](../MAINTENANCE.md#public-reference-release-checklist).

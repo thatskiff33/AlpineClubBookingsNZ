@@ -903,7 +903,7 @@ describe("compile-changelog", () => {
   });
 
   it("names no time zone in the release tooling (#4571, INV-CONFIG-002)", () => {
-    for (const file of ["scripts/release/compile-changelog.mjs", "scripts/release/cut-release.mjs"]) {
+    for (const file of ["scripts/release/compile-changelog.mjs", "scripts/release/cut-release.mjs", "scripts/release/release-docs.mjs"]) {
       expect(fs.readFileSync(file, "utf8"), file).not.toMatch(/timeZone:\s*["'][A-Za-z]+\/[A-Za-z_]+["']/);
     }
   });
