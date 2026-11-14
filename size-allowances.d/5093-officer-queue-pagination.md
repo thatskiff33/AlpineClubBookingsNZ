@@ -89,19 +89,6 @@ reason: the officer queue pager, its page state and its URL wiring; those
   already over its limit before this change, and lifting it apart is a
   refactor of its own, not part of this fix.
 
-file: src/app/(admin)/admin/finance/payments/page.tsx
-lines: 1486
-reason: its pager summary now comes from the shared formatAdminListRange,
-  which costs the one import line; the file was already over its limit before
-  this change, and splitting the payments screen is a refactor of its own.
-
-file: src/app/(admin)/admin/finance/subscriptions/page.tsx
-lines: 892
-reason: its pager summary now comes from the shared formatAdminListRange,
-  which costs the one import line; the file was already over its limit before
-  this change, and splitting the subscriptions screen is a refactor of its
-  own.
-
 file: src/lib/booking-exception-request-service.ts
 lines: 2493
 reason: the policy exception queue now counts each source and reads each only
