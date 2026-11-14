@@ -126,7 +126,8 @@ second ask for the same money. Not recorded means not raised.
   The preview (`modify-quote`) returns `quotedFigures` — new final price, price
   difference, change fee, net charge before any unpaid-ask offset — and the
   panel sends them back unchanged on Save. `modifyBookingBatch` compares them
-  with its own figures on the post-lock re-read, before its first write; the
+  with its own figures on the post-lock re-read, before anything leaves the
+  transaction (earlier in-transaction promo writes roll back with it); the
   admin date shift compares them with a no-money edit at the stored price. Any
   difference (the club day crossed a change-fee band, a rate or promotion
   moved, the two pricing paths drifted) refuses with 409

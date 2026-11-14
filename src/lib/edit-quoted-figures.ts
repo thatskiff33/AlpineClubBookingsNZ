@@ -5,7 +5,8 @@ import { z } from "zod";
  *
  * The preview (`POST /api/bookings/[id]/modify-quote`) returns `quotedFigures`,
  * the panel sends them back unchanged on Save, and the save compares them with
- * its own figures on the post-lock re-read before its first write. Any
+ * its own figures on the post-lock re-read, before anything leaves the
+ * transaction (an earlier in-transaction write rolls back with it). Any
  * difference — the club day crossed a change-fee band, a rate or promo moved,
  * or the two pricing paths drifted — refuses the save with the fresh figures,
  * so the member re-previews instead of being settled an amount they never saw.

@@ -17,6 +17,10 @@
  *  3. Saving the fresh figures goes through and charges the fee it showed.
  *  4. A save with no figures (the blue-green compatibility window) saves as
  *     it always did.
+ *  5. An unchanged world means equal figures: the figures the REAL
+ *     `modify-quote` route returns, sent back unchanged on the same club day,
+ *     are accepted. Cases 1 to 4 use fixed figures, so only this one would
+ *     catch the preview and the save drifting apart for an ordinary move.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -29,7 +33,12 @@ import { releaseBookingJournalForTeardown } from "./support/booking-financial-hi
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
+import { raceSession } from "@/lib/__tests__/support/race-session-double";
 import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
+
+// The quote route reads the session through `@/lib/auth`: the harness's one
+// shared double, set per call on `raceSession` and put back to signed out.
+vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")).raceAuthDouble());
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -67,6 +76,7 @@ const FRESH: EditQuotedFigures = { ...PREVIEWED, changeFeeCents: FEE_CENTS, netC
 let prisma: PrismaClient;
 let batchService: typeof import("@/lib/booking-batch-modification-service");
 let quotedFigures: typeof import("@/lib/edit-quoted-figures");
+let quoteRoute: typeof import("@/app/api/bookings/[id]/modify-quote/route");
 // The save queues its Xero settlement fire-and-forget; drained before each
 // clean so a previous test's late write never lands in the next one's snapshot.
 const pendingXeroWork: Promise<unknown>[] = [];
@@ -188,6 +198,28 @@ async function save(todayAtClub: string, figures?: EditQuotedFigures) {
   });
 }
 
+/** The officer's preview of the move through the real `modify-quote` route, on the frozen club day. */
+async function previewThroughRoute(): Promise<EditQuotedFigures> {
+  const { NextRequest } = await import("next/server");
+  raceSession.current = { user: { id: OFFICER_ID, role: "ADMIN", accessRoles: ["ADMIN"], canLogin: true } };
+  try {
+    const response = await quoteRoute.POST(
+      new NextRequest(`http://localhost/api/bookings/${BOOKING_ID}/modify-quote`, {
+        method: "POST",
+        body: JSON.stringify(MOVED),
+        headers: { "content-type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: BOOKING_ID }) },
+    );
+    const json = await response.json();
+    expect(response.status, JSON.stringify(json)).toBe(200);
+    expect(json.quotedFigures).toBeDefined();
+    return json.quotedFigures as EditQuotedFigures;
+  } finally {
+    raceSession.current = null;
+  }
+}
+
 /** Every row a save could write, so a refusal can be shown to have written none. */
 async function everythingASaveTouches() {
   const localIds = [BOOKING_ID, PAYMENT_ID, ...(await modificationIds())];
@@ -229,6 +261,7 @@ async function theEdit() {
     ({ prisma } = (await import("@/lib/prisma")) as unknown as { prisma: PrismaClient });
     batchService = await import("@/lib/booking-batch-modification-service");
     quotedFigures = await import("@/lib/edit-quoted-figures");
+    quoteRoute = await import("@/app/api/bookings/[id]/modify-quote/route");
     const editSettlement = await import("@/lib/xero-booking-edit-settlement");
     const queue = editSettlement.queueXeroBookingEditSettlement;
     // Pass-through: the harness imports every suite into one process.
@@ -339,6 +372,17 @@ async function theEdit() {
 
   it("saving the fresh figures goes through and charges the fee they showed", async () => {
     await save(SAVE_DAY, FRESH);
+
+    expect((await theEdit()).changeFeeCents).toBe(FEE_CENTS);
+  });
+
+  it("the real preview's figures, sent back unchanged on the same club day, are accepted", async () => {
+    // The suite clock is frozen on SAVE_DAY, so the route prices the move in
+    // the 50% tier: it must quote exactly what the save then settles.
+    const previewed = await previewThroughRoute();
+    expect(previewed).toEqual(FRESH);
+
+    await save(SAVE_DAY, previewed);
 
     expect((await theEdit()).changeFeeCents).toBe(FEE_CENTS);
   });

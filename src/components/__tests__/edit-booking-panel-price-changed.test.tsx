@@ -202,6 +202,8 @@ describe("EditBookingPanel — the save binds the previewed figures (#4924)", ()
 
     await waitFor(() => expect(quoteCalls().length).toBeGreaterThan(quotesBefore));
     expect(modifyCalls()).toHaveLength(0);
+    // The press is answered, not swallowed: the member is told to check the new price.
+    expect(screen.getByText(/Updating the price for your latest change/)).toBeInTheDocument();
     await waitFor(() => expect(save).not.toBeDisabled(), { timeout: 3000 });
     fireEvent.click(save);
     await waitFor(() => expect(modifyCalls()).toHaveLength(1));

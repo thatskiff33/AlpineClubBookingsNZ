@@ -1313,6 +1313,7 @@ export function EditBookingPanel({
     // carry the PREVIOUS edit's figures and be refused for a price nobody
     // changed. Price this edit now instead; the member saves what it shows.
     if (quote?.quotedFigures && !quoteIsFor(modificationPayloadJson)) {
+      setSaveError("Updating the price for your latest change. Check it, then save again.");
       requote();
       return;
     }

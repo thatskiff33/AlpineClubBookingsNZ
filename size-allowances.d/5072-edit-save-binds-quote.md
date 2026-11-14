@@ -9,12 +9,12 @@ file below is the call at the one point it has to happen, with the comment
 saying why it sits there.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2773
+lines: 2771
 reason: one `assertEditQuotedFigures` call and its comment. It must run on the
-  post-lock re-read, after every figure is final and before the first write,
-  so a refusal rolls the transaction back with nothing written. That point is
-  inside `modifyBookingBatch`'s transaction; moving the call out would separate
-  the guard from the ordering that makes it correct.
+  post-lock re-read, after every figure is final and before anything leaves
+  the transaction, so a refusal rolls the transaction back and keeps nothing.
+  That point is inside `modifyBookingBatch`'s transaction; moving the call out
+  would separate the guard from the ordering that makes it correct.
 
 file: src/lib/booking-date-modification-service.ts
 lines: 2275
@@ -24,7 +24,7 @@ reason: the `quotedFigures` input field and one `assertEditQuotedFigures` call
   inside the locked transaction.
 
 file: src/components/edit-booking-panel.tsx
-lines: 2155
+lines: 2156
 reason: three short branches inside `handleSave` (re-price when Save is
   pressed inside the quote debounce, send the previewed figures, handle the
   409 refusal) plus the hook wiring for `requote`. Each one returns early from

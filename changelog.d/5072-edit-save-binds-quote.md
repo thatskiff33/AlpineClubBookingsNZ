@@ -7,4 +7,6 @@
   Save now checks its figures against the preview the member was looking at.
   If they differ, nothing is saved or charged: the edit stays open, the panel
   says what the amount was and what it is now, and shows the new preview so
-  the member can review it and save again.
+  the member can review it and save again. This covers an ordinary edit of one
+  booking; accepting a linked move of two bookings together is not yet bound
+  to its preview.
