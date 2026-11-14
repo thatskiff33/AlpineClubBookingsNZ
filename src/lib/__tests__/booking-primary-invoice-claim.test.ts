@@ -1,5 +1,6 @@
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { editDoorBooking } from "./support/edit-door-booking";
 
 import { AdditionalAskChangedDuringReductionError } from "@/lib/additional-ask-reduction-error";
 import { noReductionAgainstUnpaidAsk } from "@/lib/additional-ask-reduction";
@@ -38,7 +39,7 @@ const tx = {
 } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 function paidBooking(xeroInvoiceId: string | null): LoadedBookingForModify {
-  return {
+  return editDoorBooking({
     id: "booking_1",
     status: "PAID",
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
@@ -60,7 +61,7 @@ function paidBooking(xeroInvoiceId: string | null): LoadedBookingForModify {
       additionalPaymentStatus: null,
       xeroInvoiceId,
     },
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 const adjust = (

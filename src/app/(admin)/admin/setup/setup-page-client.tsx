@@ -21,7 +21,7 @@ import {
   UserX,
   type LucideIcon,
 } from "lucide-react";
-import { adminAnchorHref, adminHref, adminTabHref } from "@/lib/admin-hubs";
+import { adminAnchorHref, adminHref, adminTabHref, adminLink } from "@/lib/admin-hubs";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -140,8 +140,8 @@ const setupHubCards: SetupHubCard[] = [
     icon: Plug,
   },
   {
-    href: "/admin/membership-setup",
-    title: "Membership & Members",
+    href: adminLink("membership-setup").href,
+    title: adminLink("membership-setup").label,
     description:
       "Configure membership types, member fields, and subscription lockout policy.",
     icon: BadgeCheck,

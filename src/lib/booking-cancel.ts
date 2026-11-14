@@ -425,6 +425,7 @@ async function cancelLinkedProvisionalChildBookings(
       }
       // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
       await postCancellationLedgerLines({ store: tx, journal: journal!, bookingId: fresh.id, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:linked-child" });
+      await cleanupPromoRedemption(tx, fresh.id);
       return fresh;
     });
 
@@ -434,8 +435,6 @@ async function cancelLinkedProvisionalChildBookings(
     if (!child) {
       continue;
     }
-
-    await cleanupPromoRedemption(child.id);
 
     logBookingCancellationAudit({
       booking: child,
@@ -767,6 +766,7 @@ async function performBookingCancellation(
         : 0;
       // #3611: nothing kept, so only the stay is reversed (if confirmed on the ledger).
       await postCancellationLedgerLines({ store: tx, journal, bookingId, lodgeId: fresh.lodgeId, keptCents: 0, site: "booking-cancel:no-payment" });
+      await cleanupPromoRedemption(tx, bookingId);
 
       // #2576 §6. Cancellation is the first change class the owner names, and it
       // is the one that removes attendance outright: cancelling the booking a
@@ -815,10 +815,6 @@ async function performBookingCancellation(
 
     const { fresh, wasOffered, wasAwaitingReview, priorStatus, creditRestoredCents } =
       claim;
-
-    // cleanupPromoRedemption opens its own $transaction, so it runs AFTER the
-    // claim commits — never nested under the advisory lock.
-    await cleanupPromoRedemption(bookingId);
 
     // Audit/email/waitlist below all source from the under-lock `fresh` row.
     // `statusBefore` therefore reads `fresh.status` (the pre-cancel status the
@@ -947,6 +943,7 @@ async function performBookingCancellation(
         return { claimed: false as const };
       }
       await reconcileCancelledBookingBedAllocations(fresh, tx);
+      await cleanupPromoRedemption(tx, bookingId);
       await revokePaymentLinksForBooking(bookingId, tx);
       // No-op today (credit is only applied at PAYMENT_PENDING create) — kept
       // so "every cancel branch restores applied credit" is an auditable
@@ -994,8 +991,6 @@ async function performBookingCancellation(
     }
 
     const { fresh, creditRestoredCents } = claim;
-
-    await cleanupPromoRedemption(bookingId);
 
     logBookingCancellationAudit({
       booking: fresh,
@@ -1227,6 +1222,7 @@ async function performBookingCancellation(
         });
       }
       await reconcileCancelledBookingBedAllocations(fresh, tx);
+      await cleanupPromoRedemption(tx, bookingId);
       // #3643 (owner decision 28 Sep 2026, `INV-PAY-107`): money the app cannot
       // credit is a hand-back task, committed with the cancel it belongs to.
       const partPaymentReviewTaskRaised =
@@ -1364,8 +1360,6 @@ async function performBookingCancellation(
         "Restored previously applied credit on never-captured cancellation"
       );
     }
-
-    await cleanupPromoRedemption(bookingId);
 
     // Clear the outstanding balance on an unpaid issued invoice. The true
     // amount owed is the current finalPrice plus any billed change fee: a
@@ -1803,6 +1797,7 @@ async function performBookingCancellation(
     }
 
     await reconcileCancelledBookingBedAllocations(fresh, tx);
+    await cleanupPromoRedemption(tx, bookingId);
 
     // Credit-path ledger writes, ATOMIC with the claim (fixes hazard #3):
     // consumed refundable value and the credit entry commit together with the
@@ -1919,7 +1914,7 @@ async function performBookingCancellation(
         );
       }
       // #4685: the credit's id rides the account-credit note's row, whose stamp writes it by id.
-      cancellationCreditId = await createCancellationCredit(creditRecipientMemberId, refundAmountCents, bookingId, undefined, tx);
+      cancellationCreditId = await createCancellationCredit(tx, creditRecipientMemberId, refundAmountCents, bookingId);
     }
 
     // Card-path refund debt, ATOMIC with the claim (F2, #1349): persist the
@@ -2136,7 +2131,6 @@ async function performBookingCancellation(
   // (this feature never does), nothing mints member credit, and no Stripe
   // refund is planned — a cash settlement has no card slice to plan against.
   if (branch === "manual") {
-    await cleanupPromoRedemption(bookingId);
     // #3949 (owner decision, 22 Oct 2026): a joiner's place the organiser paid for by Internet Banking - the hand-back is the organiser's.
     const toOrganiser = paidByOrganiserInternetBanking({ ...fresh, payment });
 
@@ -2248,8 +2242,6 @@ async function performBookingCancellation(
       );
     }
 
-    await cleanupPromoRedemption(bookingId);
-
     logBookingCancellationAudit({
       booking: fresh,
       bookingId,
@@ -2311,7 +2303,6 @@ async function performBookingCancellation(
     // #3973: made only once its debt says so; a failed or unclaimed run leaves it on its way.
     const made = await runOrganiserChildRefundDebtNow(organiserChildDebtId, format);
     const organiserRefund = { method: made ? "organiser_card" : "organiser_card_pending", amountCents: refundAmountCents } as const;
-    await cleanupPromoRedemption(bookingId);
     logBookingCancellationAudit({
       booking: fresh,
       bookingId,
@@ -2473,7 +2464,6 @@ async function performBookingCancellation(
       );
     }
 
-    await cleanupPromoRedemption(bookingId);
     // #4097: the card's own amount, and the part owed by hand beside it.
     const ownCardRefund = {
       method: refundMade ? "card" : "card_pending", amountCents: plannedCardRefundCents,
@@ -2543,7 +2533,6 @@ async function performBookingCancellation(
   // ── Zero-refund branch (0% policy) ────────────────────────────────
   // The status flip and additionalPaymentStatus:"FAILED" already committed in
   // tx1, so there is no money movement left here — only the narrative work.
-  await cleanupPromoRedemption(bookingId);
 
   // #3653 (F4): the group's cancellation already owes this child's refund to
   // the organiser's card; this cancel adds none of its own, and says whose it is.
@@ -2855,18 +2844,16 @@ async function cancelOutstandingPaymentIntents({
 }
 
 /**
- * Release every promo redemption the booking carries (#3826: one per code),
- * through the one booking-level release in `promo.ts`, which reads the rows
- * inside its own transaction. The probe outside it only spares a booking with
- * no code — almost every booking — an empty transaction.
+ * Give back every promo use the booking carries (#3826: one per code) inside the
+ * winning cancel claim, so the release commits or rolls back with CANCELLED
+ * (#4909, `INV-MONEY-005`). Callers place it after the claim's advisory keys.
+ * The probe spares a booking with no code (almost every booking) the release.
  */
-async function cleanupPromoRedemption(bookingId: string) {
-  const anyRedemption = await prisma.promoRedemption.findFirst({
+async function cleanupPromoRedemption(tx: Prisma.TransactionClient, bookingId: string) {
+  const anyRedemption = await tx.promoRedemption.findFirst({
     where: { bookingId },
     select: { id: true },
   });
   if (!anyRedemption) return;
-  await prisma.$transaction(async (tx) => {
-    await releaseBookingPromoRedemptions(tx, bookingId);
-  });
+  await releaseBookingPromoRedemptions(tx, bookingId);
 }

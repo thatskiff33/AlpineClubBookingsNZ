@@ -595,7 +595,7 @@ const groupChild = (overrides: Partial<Omit<BookingLedgerCensusRow, "lines">>) =
  */
 const offLedgerChild = (overrides: Partial<Omit<BookingLedgerCensusRow, "lines">> = {}) =>
   groupChild({
-    groupSettlement: { id: "gs-3583", source: "STRIPE", status: "SUCCEEDED", amountCents: 19_000, stripePaymentIntentId: "pi-group", refundPlan: null, refundRecoveryInFlight: false },
+    groupSettlement: { id: "gs-3583", source: "STRIPE", status: "SUCCEEDED", amountCents: 19_000, stripePaymentIntentId: "pi-group", refundPlan: null, refundRecoveryInFlight: false, refundPaidByBank: false },
     groupChild: {
       pricing: { id: B, lodgeId: LODGE, totalPriceCents: 20_000, promoAdjustmentCents: -1_000, guests: GUESTS },
       siblings: [{ id: B, lodgeId: LODGE, payment: { amountCents: 19_000, status: "SUCCEEDED", source: "STRIPE" } }],
