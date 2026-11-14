@@ -4,6 +4,8 @@ import type { ChangeEvent } from "react";
 import { FieldHint, describedByFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { memberFieldLabel } from "@/lib/format-validation-errors";
+import { JOIN_APPLY_INPUT_IDS } from "./join-apply-input-ids";
 
 /*
   #2264 — the phone row is three boxes sharing ONE example. Greyed "64", "27"
@@ -16,22 +18,25 @@ import { Label } from "@/components/ui/label";
 
   #4947 — the row's error works the same way: one message under the row, which
   all three boxes point at and all three mark invalid. It names the box it is
-  about, since a bare "at most 5 character(s)" fits two of them.
+  about, since a bare "Too big: expected string to have <=5 characters" fits two
+  of them. The names are the ones the summary uses (`memberFieldLabel`).
 */
 const PHONE_HINT_ID = "join-apply-phone-hint";
 const PHONE_ERROR_ID = "join-apply-phone-error";
 
 type PhoneField = "phoneCountryCode" | "phoneAreaCode" | "phoneNumber";
 
-const PHONE_BOXES: ReadonlyArray<{
-  field: PhoneField;
-  label: string;
-  className: string;
-}> = [
-  { field: "phoneCountryCode", label: "Phone country code", className: "w-20" },
-  { field: "phoneAreaCode", label: "Phone area code", className: "w-20" },
-  { field: "phoneNumber", label: "Phone number", className: "flex-1" },
-];
+const PHONE_BOXES = (
+  [
+    { field: "phoneCountryCode", className: "w-20" },
+    { field: "phoneAreaCode", className: "w-20" },
+    { field: "phoneNumber", className: "flex-1" },
+  ] as const satisfies ReadonlyArray<{ field: PhoneField; className: string }>
+).map(({ field, className }) => ({
+  field,
+  className,
+  label: memberFieldLabel(field),
+}));
 
 export function JoinApplyPhoneRow({
   values,
@@ -52,7 +57,7 @@ export function JoinApplyPhoneRow({
         {PHONE_BOXES.map(({ field, label, className }) => (
           <Input
             key={field}
-            id={field}
+            id={JOIN_APPLY_INPUT_IDS[field]}
             className={className}
             value={values[field]}
             onChange={onFieldChange(field)}

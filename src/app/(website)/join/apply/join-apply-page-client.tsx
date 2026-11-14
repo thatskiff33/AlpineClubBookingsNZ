@@ -23,10 +23,10 @@ import { readValidationDetails } from "@/lib/format-validation-errors";
 import {
   JoinApplyErrorSummary,
   clientSummaryEntries,
-  familyMemberInputId,
   serverSummaryEntries,
   type JoinApplySummaryEntry,
 } from "./join-apply-error-summary";
+import { JOIN_APPLY_INPUT_IDS, familyMemberInputId } from "./join-apply-input-ids";
 import { JoinApplyPhoneRow } from "./join-apply-phone-row";
 
 type FamilyMemberForm = {
@@ -184,7 +184,7 @@ export function JoinApplyPageClient({
     if (!form.applicantEmail.trim()) {
       nextErrors.applicantEmail = "Email is required";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.applicantEmail)) {
-      nextErrors.applicantEmail = "Enter a valid email address";
+      nextErrors.applicantEmail = "Enter a valid applicant email address";
     }
     if (!form.applicantDateOfBirth) {
       nextErrors.applicantDateOfBirth = "Date of birth is required";
@@ -207,12 +207,12 @@ export function JoinApplyPageClient({
     if (!form.nominator1Email.trim()) {
       nextErrors.nominator1Email = "First nominator email is required";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.nominator1Email)) {
-      nextErrors.nominator1Email = "Enter a valid email address";
+      nextErrors.nominator1Email = "Enter a valid first nominator email address";
     }
     if (!form.nominator2Email.trim()) {
       nextErrors.nominator2Email = "Second nominator email is required";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.nominator2Email)) {
-      nextErrors.nominator2Email = "Enter a valid email address";
+      nextErrors.nominator2Email = "Enter a valid second nominator email address";
     }
     if (
       form.nominator1Email.trim() &&
@@ -233,7 +233,9 @@ export function JoinApplyPageClient({
     setFailure((prev) => ({ ...prev, message: "", entries: [] }));
     setWarnings([]);
 
-    const clientEntries = clientSummaryEntries(validateForm());
+    // The household as submitted: the summary's keys count members by position.
+    const familyMemberIds = form.familyMembers.map((member) => member.id);
+    const clientEntries = clientSummaryEntries(validateForm(), familyMemberIds);
     if (clientEntries.length > 0) {
       fail("", clientEntries);
       return;
@@ -281,10 +283,12 @@ export function JoinApplyPageClient({
       const data = await response.json();
 
       if (!response.ok) {
-        const details = readValidationDetails(data)?.fieldErrors ?? [];
-        if (details.length > 0) {
-          setFieldErrors(Object.fromEntries(details.map(([field, messages]) => [field, messages[0]])));
-          fail("", serverSummaryEntries(details));
+        const details = readValidationDetails(data);
+        if (details && (details.fieldErrors.length > 0 || details.formErrors.length > 0)) {
+          setFieldErrors(
+            Object.fromEntries(details.fieldErrors.map(([field, messages]) => [field, messages[0]])),
+          );
+          fail("", serverSummaryEntries(details, familyMemberIds));
         } else {
           fail(data.error || "Could not submit your application right now.");
         }
@@ -380,9 +384,9 @@ export function JoinApplyPageClient({
               <CardContent className="space-y-6">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="applicantFirstName">First name</Label>
+                    <Label htmlFor={JOIN_APPLY_INPUT_IDS.applicantFirstName}>First name</Label>
                     <Input
-                      id="applicantFirstName"
+                      id={JOIN_APPLY_INPUT_IDS.applicantFirstName}
                       value={form.applicantFirstName}
                       onChange={updateField("applicantFirstName")}
                       autoComplete="given-name"
@@ -404,9 +408,9 @@ export function JoinApplyPageClient({
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="applicantLastName">Last name</Label>
+                    <Label htmlFor={JOIN_APPLY_INPUT_IDS.applicantLastName}>Last name</Label>
                     <Input
-                      id="applicantLastName"
+                      id={JOIN_APPLY_INPUT_IDS.applicantLastName}
                       value={form.applicantLastName}
                       onChange={updateField("applicantLastName")}
                       autoComplete="family-name"
@@ -429,9 +433,9 @@ export function JoinApplyPageClient({
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="applicantEmail">Email</Label>
+                  <Label htmlFor={JOIN_APPLY_INPUT_IDS.applicantEmail}>Email</Label>
                   <Input
-                    id="applicantEmail"
+                    id={JOIN_APPLY_INPUT_IDS.applicantEmail}
                     type="email"
                     value={form.applicantEmail}
                     onChange={updateField("applicantEmail")}
@@ -455,9 +459,9 @@ export function JoinApplyPageClient({
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="applicantDateOfBirth">Date of birth</Label>
+                    <Label htmlFor={JOIN_APPLY_INPUT_IDS.applicantDateOfBirth}>Date of birth</Label>
                     <Input
-                      id="applicantDateOfBirth"
+                      id={JOIN_APPLY_INPUT_IDS.applicantDateOfBirth}
                       type="date"
                       value={form.applicantDateOfBirth}
                       onChange={updateField("applicantDateOfBirth")}
@@ -542,11 +546,11 @@ export function JoinApplyPageClient({
 
                           <div className="grid gap-4 sm:grid-cols-2">
                             <div className="space-y-2">
-                              <Label htmlFor={familyMemberInputId(index, "firstName")}>
+                              <Label htmlFor={familyMemberInputId(familyMember.id, "firstName")}>
                                 First name
                               </Label>
                               <Input
-                                id={familyMemberInputId(index, "firstName")}
+                                id={familyMemberInputId(familyMember.id, "firstName")}
                                 value={familyMember.firstName}
                                 onChange={(event) =>
                                   updateFamilyMember(
@@ -564,7 +568,7 @@ export function JoinApplyPageClient({
                                   fieldErrors[
                                     `familyMembers.${index}.firstName`
                                   ]
-                                    ? `${familyMemberInputId(index, "firstName")}-error`
+                                    ? `${familyMemberInputId(familyMember.id, "firstName")}-error`
                                     : undefined
                                 }
                               />
@@ -572,7 +576,7 @@ export function JoinApplyPageClient({
                                 `familyMembers.${index}.firstName`
                               ] && (
                                 <p
-                                  id={`${familyMemberInputId(index, "firstName")}-error`}
+                                  id={`${familyMemberInputId(familyMember.id, "firstName")}-error`}
                                   className="text-xs text-destructive"
                                 >
                                   {
@@ -585,11 +589,11 @@ export function JoinApplyPageClient({
                             </div>
 
                             <div className="space-y-2">
-                              <Label htmlFor={familyMemberInputId(index, "lastName")}>
+                              <Label htmlFor={familyMemberInputId(familyMember.id, "lastName")}>
                                 Last name
                               </Label>
                               <Input
-                                id={familyMemberInputId(index, "lastName")}
+                                id={familyMemberInputId(familyMember.id, "lastName")}
                                 value={familyMember.lastName}
                                 onChange={(event) =>
                                   updateFamilyMember(
@@ -607,7 +611,7 @@ export function JoinApplyPageClient({
                                   fieldErrors[
                                     `familyMembers.${index}.lastName`
                                   ]
-                                    ? `${familyMemberInputId(index, "lastName")}-error`
+                                    ? `${familyMemberInputId(familyMember.id, "lastName")}-error`
                                     : undefined
                                 }
                               />
@@ -615,7 +619,7 @@ export function JoinApplyPageClient({
                                 `familyMembers.${index}.lastName`
                               ] && (
                                 <p
-                                  id={`${familyMemberInputId(index, "lastName")}-error`}
+                                  id={`${familyMemberInputId(familyMember.id, "lastName")}-error`}
                                   className="text-xs text-destructive"
                                 >
                                   {
@@ -629,11 +633,11 @@ export function JoinApplyPageClient({
                           </div>
 
                           <div className="space-y-2">
-                            <Label htmlFor={familyMemberInputId(index, "dateOfBirth")}>
+                            <Label htmlFor={familyMemberInputId(familyMember.id, "dateOfBirth")}>
                               Date of birth
                             </Label>
                             <Input
-                              id={familyMemberInputId(index, "dateOfBirth")}
+                              id={familyMemberInputId(familyMember.id, "dateOfBirth")}
                               type="date"
                               value={familyMember.dateOfBirth}
                               onChange={(event) =>
@@ -652,7 +656,7 @@ export function JoinApplyPageClient({
                                 fieldErrors[
                                   `familyMembers.${index}.dateOfBirth`
                                 ]
-                                  ? `${familyMemberInputId(index, "dateOfBirth")}-error`
+                                  ? `${familyMemberInputId(familyMember.id, "dateOfBirth")}-error`
                                   : undefined
                               }
                             />
@@ -660,7 +664,7 @@ export function JoinApplyPageClient({
                               `familyMembers.${index}.dateOfBirth`
                             ] && (
                               <p
-                                id={`${familyMemberInputId(index, "dateOfBirth")}-error`}
+                                id={`${familyMemberInputId(familyMember.id, "dateOfBirth")}-error`}
                                 className="text-xs text-destructive"
                               >
                                 {
@@ -690,11 +694,11 @@ export function JoinApplyPageClient({
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="nominator1Email">
+                    <Label htmlFor={JOIN_APPLY_INPUT_IDS.nominator1Email}>
                       First nominator email
                     </Label>
                     <Input
-                      id="nominator1Email"
+                      id={JOIN_APPLY_INPUT_IDS.nominator1Email}
                       type="email"
                       value={form.nominator1Email}
                       onChange={updateField("nominator1Email")}
@@ -716,11 +720,11 @@ export function JoinApplyPageClient({
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="nominator2Email">
+                    <Label htmlFor={JOIN_APPLY_INPUT_IDS.nominator2Email}>
                       Second nominator email
                     </Label>
                     <Input
-                      id="nominator2Email"
+                      id={JOIN_APPLY_INPUT_IDS.nominator2Email}
                       type="email"
                       value={form.nominator2Email}
                       onChange={updateField("nominator2Email")}

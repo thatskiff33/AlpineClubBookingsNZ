@@ -2,7 +2,11 @@
 
 import { FocusedActionError } from "@/components/focused-action-error";
 import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
-import { labelFieldMessages } from "@/lib/format-validation-errors";
+import {
+  labelFieldMessages,
+  type readValidationDetails,
+} from "@/lib/format-validation-errors";
+import { joinApplyInputId } from "./join-apply-input-ids";
 
 /*
   #4947 — the membership application's one form-level message. A failed submit
@@ -13,10 +17,10 @@ import { labelFieldMessages } from "@/lib/format-validation-errors";
 
   The server's keys need not match the page's slots: `flatten()` files every
   household problem under a bare `familyMembers`, and the phone row had no
-  slot at all. So EVERY server message is listed here, with a link only when
-  its key names an input that is always on the page. Nothing a server says is
-  dropped. The address inputs sit in an accordion that unmounts a closed
-  section, so an address message is listed without a link.
+  slot at all. So EVERY server message is listed here (a field's, and a
+  form-level one that names no field), with a link only when its key names an
+  input that is always on the page. The address inputs sit in an accordion that
+  unmounts a closed section, so an address message is listed without a link.
 
   The entries are a snapshot taken at the submit and never change while the
   person types: the region is atomic, and any change would be re-announced.
@@ -24,70 +28,72 @@ import { labelFieldMessages } from "@/lib/format-validation-errors";
 
 const JOIN_APPLY_ERROR_ID = "join-apply-error";
 
-export type JoinApplySummaryEntry = { fieldId?: string; text: string };
+/**
+ * One line of the summary; `fieldId` is the input it links to, if any, and
+ * `formLevel` marks a message that is about no field, so it is not counted as
+ * one.
+ */
+export type JoinApplySummaryEntry = {
+  fieldId: string | null;
+  text: string;
+  formLevel?: true;
+};
 
-/** Fields whose input id is the field's own name. */
-const SELF_ID_FIELDS = new Set([
-  "applicantFirstName",
-  "applicantLastName",
-  "applicantEmail",
-  "applicantDateOfBirth",
-  "phoneCountryCode",
-  "phoneAreaCode",
-  "phoneNumber",
-  "nominator1Email",
-  "nominator2Email",
-]);
-
-const FAMILY_FIELD_ID_PREFIXES = {
-  firstName: "family-first-name",
-  lastName: "family-last-name",
-  dateOfBirth: "family-dob",
-} as const;
-
-type FamilyField = keyof typeof FAMILY_FIELD_ID_PREFIXES;
-
-/** The id of a household member's input; the page and the links share it. */
-export function familyMemberInputId(index: number, field: FamilyField) {
-  return `${FAMILY_FIELD_ID_PREFIXES[field]}-${index}`;
-}
-
-function isFamilyField(field: string): field is FamilyField {
-  return Object.hasOwn(FAMILY_FIELD_ID_PREFIXES, field);
-}
-
-/** The id of the input a field key names, or `undefined` when none does. */
-function joinApplyInputId(key: string): string | undefined {
-  if (SELF_ID_FIELDS.has(key)) return key;
-  const [, row, field] = /^familyMembers\.(\d+)\.(\w+)$/.exec(key) ?? [];
-  return row && field && isFamilyField(field)
-    ? familyMemberInputId(Number(row), field)
-    : undefined;
-}
-
-/** The browser's own checks, in the order the map holds them (form order). */
+/**
+ * The browser's own checks, in the order the map holds them (form order).
+ * `familyMemberIds` is the household at the submit, which the keys count
+ * through by position.
+ */
 export function clientSummaryEntries(
   errors: Readonly<Record<string, string | undefined>>,
+  familyMemberIds: readonly string[],
 ): JoinApplySummaryEntry[] {
   return Object.entries(errors).flatMap(([key, text]) =>
-    text ? [{ fieldId: joinApplyInputId(key), text }] : [],
+    text ? [{ fieldId: joinApplyInputId(key, familyMemberIds), text }] : [],
   );
 }
 
-/** Every server field message, each under its label, linked where it can be. */
+/**
+ * Everything a server refusal reports: its form-level messages first (they
+ * name no field), then each field's messages under its label, linked where
+ * the field has an input.
+ */
 export function serverSummaryEntries(
-  details: ReadonlyArray<readonly [string, readonly string[]]>,
+  details: NonNullable<ReturnType<typeof readValidationDetails>>,
+  familyMemberIds: readonly string[],
 ): JoinApplySummaryEntry[] {
-  return details.map(([key, messages]) => ({
-    fieldId: joinApplyInputId(key),
-    text: labelFieldMessages(key, messages),
-  }));
+  return [
+    ...details.formErrors.map((text) => ({
+      fieldId: null,
+      text,
+      formLevel: true as const,
+    })),
+    ...details.fieldErrors.map(([key, messages]) => ({
+      fieldId: joinApplyInputId(key, familyMemberIds),
+      text: labelFieldMessages(key, messages),
+    })),
+  ];
 }
 
-function fieldCountSentence(count: number) {
-  return count === 1
+/** The heading: how many fields need attention, or a plain sentence when only form-level messages follow. */
+function headingFor(entries: readonly JoinApplySummaryEntry[]) {
+  const fields = entries.filter((entry) => !entry.formLevel).length;
+  if (fields === 0) return "Your application could not be submitted.";
+  return fields === 1
     ? "1 field needs attention."
-    : `${count} fields need attention.`;
+    : `${fields} fields need attention.`;
+}
+
+/**
+ * The input a link names, looked up inside the link's own form first: a CMS
+ * page can embed this form twice, and `getElementById` would answer with the
+ * first form's input.
+ */
+function inputNamedBy(link: HTMLElement, id: string): HTMLElement | null {
+  const inOwnForm = Array.from(
+    link.closest("form")?.querySelectorAll<HTMLElement>("[id]") ?? [],
+  ).find((element) => element.id === id);
+  return inOwnForm ?? document.getElementById(id);
 }
 
 export function JoinApplyErrorSummary({
@@ -106,7 +112,7 @@ export function JoinApplyErrorSummary({
     <FocusedActionError
       id={JOIN_APPLY_ERROR_ID}
       className="w-full"
-      error={hasEntries ? fieldCountSentence(entries.length) : message}
+      error={hasEntries ? headingFor(entries) : message}
       attentionKey={attentionKey}
       action={
         hasEntries ? (
@@ -118,10 +124,13 @@ export function JoinApplyErrorSummary({
                     href={`#${entry.fieldId}`}
                     className="underline underline-offset-2"
                     onClick={(event) => {
-                      const control = document.getElementById(entry.fieldId ?? "");
-                      if (!control) return;
+                      const input = inputNamedBy(
+                        event.currentTarget,
+                        entry.fieldId ?? "",
+                      );
+                      if (!input) return;
                       event.preventDefault();
-                      focusAndKeepInView(control);
+                      focusAndKeepInView(input);
                     }}
                   >
                     {entry.text}
