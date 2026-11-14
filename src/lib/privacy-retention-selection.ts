@@ -1,7 +1,7 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { clubTime } from "@/lib/club-time/server";
-import { dateOnlyInstantOf } from "@/lib/club-time";
+import { addCalendarDays, dateOnlyInstantOf } from "@/lib/club-time";
 import { addUtcYears } from "@/lib/retention-calendar";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { hasMemberContactChangeMergeBlocker } from "@/lib/xero-contact-create-recovery";
@@ -14,8 +14,10 @@ export const RETENTION_BATCH_SIZE = 100;
 
 /** The same exclusive cutoffs feed both preview and mutation predicates. */
 export async function privacyRetentionSelection(settings: PrivacyRetentionSettingsValues, now: Date) {
-  const day = dateOnlyInstantOf((await clubTime()).calendarDateOf(now));
+  const calendarDay = (await clubTime()).calendarDateOf(now);
+  const day = dateOnlyInstantOf(calendarDay);
   return {
+    bookingDietaryCutoff: dateOnlyInstantOf(addCalendarDays(calendarDay, -settings.bookingDietaryRetentionDays)),
     emailLogs: { createdAt: { lt: addUtcYears(now, -settings.emailLogRetentionYears) } } satisfies Prisma.EmailLogWhereInput,
     rejectedApplications: {
       status: "REJECTED", reviewedAt: { lt: addUtcYears(now, -settings.rejectedApplicationRetentionYears) },

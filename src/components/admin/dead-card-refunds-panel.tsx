@@ -1,6 +1,7 @@
 "use client";
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 
+import { adminHref } from "@/lib/admin-hubs";
 import { useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -64,6 +65,17 @@ export interface DeadCardRefundPanelRow {
   laterStripeRefunds: LaterStripeRefundPanelRow[];
   /** #4368: why "Try the card again" is not offered, or null when it is. */
   tryCardAgainRefusal: string | null;
+  /**
+   * #4851: absent means the charge-backed row, so a fixture that predates the
+   * field keeps today's buttons. A group row never offers Nothing left owed.
+   */
+  settleKind?: "charge" | "organiser-child" | "legacy-group";
+  /** #4492: why "Paid another way" is not offered, or null when it is. */
+  paidAnotherWayRefusal: string | null;
+}
+
+function isGroupCardRefund(row: { settleKind?: string }): boolean {
+  return row.settleKind === "organiser-child" || row.settleKind === "legacy-group";
 }
 
 /** The warning a refund whose last failure may have reached Stripe carries, on its row and in its dialog. */
@@ -140,7 +152,10 @@ export function DeadCardRefundsPanel({
   // #4368: the "Try the card again" and "Nothing left owed" dialogs, each open for one row's id.
   const [tryAgainId, setTryAgainId] = useState<string | null>(null);
   const [nothingLeftId, setNothingLeftId] = useState<string | null>(null);
-  const tryAgainRow = tryAgainId === null ? null : (rows.find((row) => row.operationId === tryAgainId && row.owedCents > 0 && row.tryCardAgainRefusal === null) ?? null);
+  const tryAgainRow = tryAgainId === null ? null : (rows.find((row) => {
+    if (row.operationId !== tryAgainId || row.tryCardAgainRefusal !== null) return false;
+    return row.settleKind === "organiser-child" || row.owedCents > 0;
+  }) ?? null);
   const nothingLeftRow = nothingLeftId === null ? null : (rows.find((row) => row.operationId === nothingLeftId && row.owedCents === 0) ?? null);
   if ((tryAgainId !== null && tryAgainRow === null) || (nothingLeftId !== null && nothingLeftRow === null)) {
     setTryAgainId(null);
@@ -148,12 +163,17 @@ export function DeadCardRefundsPanel({
     setListNotice("That card refund changed, so its dialog was closed. The list is up to date.");
   }
 
-  const target = targetId === null ? null : (rows.find((row) => row.operationId === targetId) ?? null);
+  const listedTarget = targetId === null ? null : (rows.find((row) => row.operationId === targetId) ?? null);
+  const target = listedTarget && !listedTarget.paidAnotherWayRefusal ? listedTarget : null;
   // The list moved under the open dialog (a 409's refresh, another treasurer):
   // adjusted while rendering, from the rows, as React's derived-state pattern does.
   if (targetId !== null && target === null && !busy) {
     setTargetId(null);
-    setListNotice("That card refund is no longer waiting to be closed, so its dialog was closed. The list is up to date.");
+    setListNotice(
+      listedTarget
+        ? "That card refund changed, so its dialog was closed. The list is up to date."
+        : "That card refund is no longer waiting to be closed, so its dialog was closed. The list is up to date.",
+    );
   }
   if (target !== null && seenOwedCents !== null && target.owedCents !== seenOwedCents) {
     setSeenOwedCents(target.owedCents);
@@ -250,14 +270,23 @@ export function DeadCardRefundsPanel({
         if (res.status === 409) router.refresh();
         return;
       }
-      const recorded =
-        paidBack === "full"
-          ? `Closed. ${formatCents(amountCents, format)} recorded as paid back in full.`
-          : `Closed. ${formatCents(amountCents, format)} recorded as paid back; the other ${formatCents(
-              target.owedCents - amountCents,
-              format,
-            )} ${rest === "still-owed" ? "is still owed to the member and stays on this list." : "is kept by the club and no longer owed."}`;
-      toast.success(`${recorded} ${xeroQueuedMessage(data.xeroQueued, bankNoteWording)}`);
+      if (isGroupCardRefund(target)) {
+        const sentence = data.outcome === "recorded-stripe"
+          ? "Stripe already had this refund. It is recorded, and nobody is paid again."
+          : data.outcome === "bank"
+            ? "The bank payment is recorded. Officers are emailed to credit the group's invoice in Xero by hand."
+            : "Closed. Nothing more is sent, and nobody is paid again.";
+        toast.success(sentence);
+      } else {
+        const recorded =
+          paidBack === "full"
+            ? `Closed. ${formatCents(amountCents, format)} recorded as paid back in full.`
+            : `Closed. ${formatCents(amountCents, format)} recorded as paid back; the other ${formatCents(
+                target.owedCents - amountCents,
+                format,
+              )} ${rest === "still-owed" ? "is still owed to the member and stays on this list." : "is kept by the club and no longer owed."}`;
+        toast.success(`${recorded} ${xeroQueuedMessage(data.xeroQueued, bankNoteWording)}`);
+      }
       setListNotice(`The card refund for booking ${target.bookingReference} was closed as paid another way.`);
       close();
       router.refresh();
@@ -301,7 +330,7 @@ export function DeadCardRefundsPanel({
             >
               <div>
                 <div className="text-sm font-medium">
-                  <Link href={`/admin/bookings/${row.bookingId}`} className="underline">
+                  <Link href={`${adminHref("bookings")}/${row.bookingId}`} className="underline">
                     Booking {row.bookingReference}
                   </Link>
                   {" - "}
@@ -310,11 +339,14 @@ export function DeadCardRefundsPanel({
                 <div className="text-xs text-muted-foreground">
                   Refund started {clubTime.instantDate(new Date(row.raisedAt))}
                 </div>
+                {isGroupCardRefund(row) ? (
+                  <div className="text-xs text-muted-foreground">This money is the group organiser&apos;s, for the whole amount.</div>
+                ) : null}
                 {row.stripeMayHaveRefunded ? (
                   <div className="text-xs font-medium text-warning-11">{STRIPE_MAY_HAVE_REFUNDED_WARNING}</div>
                 ) : null}
               </div>
-              {row.owedCents === 0 ? (
+              {!isGroupCardRefund(row) && row.owedCents === 0 ? (
                 <ViewOnlyActionButton
                   canEdit={canEdit}
                   describeReason={false}
@@ -341,16 +373,20 @@ export function DeadCardRefundsPanel({
                   ) : (
                     <p className="max-w-sm text-xs text-muted-foreground">{row.tryCardAgainRefusal}</p>
                   )}
-                  <ViewOnlyActionButton
-                    canEdit={canEdit}
-                    describeReason={false}
-                    variant="outline"
-                    size="sm"
-                    aria-label={`Close the card refund for booking ${row.bookingReference} as paid another way`}
-                    onClick={() => open(row)}
-                  >
-                    Paid another way
-                  </ViewOnlyActionButton>
+                  {row.paidAnotherWayRefusal ? (
+                    <p className="max-w-sm text-xs text-muted-foreground">{row.paidAnotherWayRefusal}</p>
+                  ) : (
+                    <ViewOnlyActionButton
+                      canEdit={canEdit}
+                      describeReason={false}
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Close the card refund for booking ${row.bookingReference} as paid another way`}
+                      onClick={() => open(row)}
+                    >
+                      Paid another way
+                    </ViewOnlyActionButton>
+                  )}
                 </div>
               )}
             </li>
@@ -382,8 +418,9 @@ export function DeadCardRefundsPanel({
             <DialogHeader>
               <DialogTitle>Close this card refund as paid another way?</DialogTitle>
               <DialogDescription>
-                Stripe will not be asked again. The amount is recorded as refunded on the payment, and the refund
-                leaves Refunds owed. Only do this once the member has the money.
+                {target && isGroupCardRefund(target)
+                  ? "If Stripe already has the refund, this records it and pays nobody again. Otherwise the bank payment is recorded and officers are emailed to credit the group's invoice in Xero by hand."
+                  : "Stripe will not be asked again. The amount is recorded as refunded on the payment, and the refund leaves Refunds owed. Only do this once the member has the money."}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-2 text-sm">
@@ -393,11 +430,13 @@ export function DeadCardRefundsPanel({
               <p className="text-muted-foreground">
                 Settle it here, not with a new refund in the Stripe dashboard.
               </p>
-              <p className="text-muted-foreground">
-                {target
-                  ? xeroRefundNotePromise(target.xeroRefundNote, bankNoteWording, formatCents(target.cardNoteCoversCents, format))
-                  : null}
-              </p>
+              {target && isGroupCardRefund(target) ? null : (
+                <p className="text-muted-foreground">
+                  {target
+                    ? xeroRefundNotePromise(target.xeroRefundNote, bankNoteWording, formatCents(target.cardNoteCoversCents, format))
+                    : null}
+                </p>
+              )}
               <p className="font-medium text-foreground">
                 {target ? `${formatCents(target.owedCents, format)} is still owed.` : null}
               </p>
@@ -433,7 +472,9 @@ export function DeadCardRefundsPanel({
                 </label>
                 {target?.wholeAmountOnly ? (
                   <p id={wholeAmountHintId} className="text-xs text-muted-foreground">
-                    This refund replaces a superseded payment, so it closes for the whole amount.
+                    {isGroupCardRefund(target)
+                      ? "This refund is the organiser's and closes for the whole amount."
+                      : "This refund replaces a superseded payment, so it closes for the whole amount."}
                   </p>
                 ) : null}
               </fieldset>

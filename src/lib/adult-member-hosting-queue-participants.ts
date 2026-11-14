@@ -2,6 +2,12 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { isPostgresLockNotAvailable } from "@/lib/prisma-errors";
+import {
+  MemberMergeBookingOwnershipDriftError,
+  MemberMergeBookingRowBusyError,
+  setTransactionLockTimeout,
+  waitForOneBookingRow,
+} from "@/lib/member-merge-booking-lock";
 import { ApiError } from "@/lib/api-error";
 import type { HostingCoverageReevaluationInput } from "@/lib/adult-member-hosting-coverage-queue";
 
@@ -368,30 +374,6 @@ export function assertHostingCoverageQueueParticipantsLocked(
  */
 export const MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS = 10_000;
 
-/**
- * Bound one statement's lock wait, for the current transaction only.
- *
- * `set_config(..., is_local => true)` rather than `SET LOCAL` because the value
- * is then an ordinary bound parameter instead of interpolated SQL — `SET` takes
- * no placeholders. It runs through `$executeRaw` for the same reason every other
- * raw statement in this module does: nothing reads the returned row, only that
- * the statement succeeded.
- *
- * Only ever called inside a savepoint that is then rolled back, which restores
- * the value in force before it exactly — a database- or role-level bound
- * included (#2623 F4). So there is no undo to get wrong: not `0`, which means
- * "wait forever", and not `RESET`, which is session-scoped and survives the
- * commit on a pooled connection (both measured on real PostgreSQL in #2623).
- */
-async function setTransactionLockTimeout(
-  db: Pick<PrismaClient, "$executeRaw">,
-  milliseconds: number,
-): Promise<void> {
-  await db.$executeRaw(
-    Prisma.sql`SELECT set_config('lock_timeout', ${String(milliseconds)}, true)`,
-  );
-}
-
 type MemberMergeParticipantDb = Pick<PrismaClient, "$executeRaw" | "member">;
 
 /**
@@ -490,8 +472,16 @@ async function rollBackAttempt(db: MemberMergeParticipantDb): Promise<void> {
  * `moveAndPlan` must have no effect that outlives this transaction. A failed
  * attempt discards its return value and runs it again; a throw (a drift 409,
  * a constraint failure) rolls the savepoint back and propagates, so the merge
- * does not retry a refusal. The participant ids come from the attempt itself,
- * because the hosting plan that names the ancillary owners is part of it.
+ * does not retry a refusal. One throw is a retry, not a refusal (#4860):
+ * {@link MemberMergeBookingRowBusyError}, from the captured-booking try-lock
+ * inside the `Booking.member` move. The savepoint rolls back first — that
+ * releases every booking the try-lock took and every row this attempt wrote —
+ * then merge waits for that one booking alone (`waitForOneBookingRow`) under
+ * what is left of the same budget, and tries the whole attempt again. A row
+ * that is gone, or a wait that runs out, is
+ * {@link MemberMergeBookingOwnershipDriftError}, which propagates. The
+ * participant ids come from the attempt itself, because the hosting plan that
+ * names the ancillary owners is part of it.
  *
  * EACH ATTEMPT, inside a savepoint: `moveAndPlan`, then one `FOR UPDATE SKIP
  * LOCKED` over the sorted ids. If it locks every id, the savepoint is released
@@ -503,12 +493,15 @@ async function rollBackAttempt(db: MemberMergeParticipantDb): Promise<void> {
  * is the identity proof.
  *
  * STILL A WAIT, AND STILL BOUNDED (#2623 T6). The whole loop, moves included,
- * shares `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`. Every single-row wait is
- * bounded by what is left after the attempt. The loop cannot spin: an attempt
+ * shares `MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS`. Every single-row wait,
+ * Member or booking, is bounded by what is left after the attempt. There is
+ * not a second 10 seconds for bookings. The loop cannot spin: an attempt
  * either takes every row, or waits until the row frees or the budget is gone.
- * Running out lands on `HostingCoverageParticipantRetryError`. While it waits
- * merge holds none of these rows and none of the attempt's writes. The lock
- * bound only exists inside the wait's savepoint, so later locks keep their
+ * A Member wait that runs out lands on `HostingCoverageParticipantRetryError`.
+ * A booking wait that runs out lands on `MemberMergeBookingOwnershipDriftError`,
+ * and so does a budget found spent at the next pass after a booking wait.
+ * While it waits merge holds none of these rows and none of the attempt's
+ * writes. The lock bound only exists inside the wait's savepoint, so later locks keep their
  * ordinary failure semantics. Advisory keys taken before this call stay held,
  * as they did before.
  */
@@ -518,14 +511,31 @@ export async function withMemberMergeParticipantRows<T>(
 ): Promise<{ lockedMemberIds: readonly string[]; result: T }> {
   const deadline = performance.now() + MEMBER_MERGE_PARTICIPANT_LOCK_TIMEOUT_MS;
   const remainingBudget = () => Math.ceil(deadline - performance.now());
+  // A budget spent straight after a booking wait is the booking refusal.
+  let lastWaitWasBooking = false;
   for (;;) {
-    if (remainingBudget() <= 0) throw new HostingCoverageParticipantRetryError();
+    if (remainingBudget() <= 0) {
+      throw lastWaitWasBooking
+        ? new MemberMergeBookingOwnershipDriftError()
+        : new HostingCoverageParticipantRetryError();
+    }
     await db.$executeRaw(ATTEMPT_SAVEPOINT.open);
     let planned: { participantIds: readonly string[]; result: T };
     try {
       planned = await moveAndPlan();
     } catch (error) {
       await rollBackAttempt(db);
+      if (error instanceof MemberMergeBookingRowBusyError) {
+        // Read after the attempt, so the wait ends inside the 10s total.
+        const remaining = remainingBudget();
+        if (remaining <= 0) throw new MemberMergeBookingOwnershipDriftError();
+        const waited = await waitForOneBookingRow(db, error.bookingId, remaining);
+        if (waited !== "free") throw new MemberMergeBookingOwnershipDriftError();
+        // The loop-top budget check then refuses as booking drift, even when
+        // the wait's own cleanup spent what was left.
+        lastWaitWasBooking = true;
+        continue;
+      }
       throw error;
     }
     const ids = sortedUnique(planned.participantIds);
@@ -562,6 +572,7 @@ export async function withMemberMergeParticipantRows<T>(
     if (remaining <= 0) throw new HostingCoverageParticipantRetryError();
     const waited = await waitForOneParticipantRow(db, busy, remaining);
     if (waited !== "free") throw new HostingCoverageParticipantRetryError();
+    lastWaitWasBooking = false;
   }
 }
 

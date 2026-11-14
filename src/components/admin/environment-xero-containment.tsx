@@ -3,6 +3,7 @@
 import { useClubTime } from "@/components/club-time-provider";
 import type { BoundClubTime } from "@/lib/club-time";
 import { formatPayloadInstantDateTimeOrRaw } from "@/lib/payload-instant";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * What a copy has done to the club's Xero contacts, on `/admin/environment`
@@ -262,7 +263,7 @@ export function EnvironmentXeroContainment(props: Props) {
                     {" — "}
                     <a
                       className="underline"
-                      href={`/admin/members/${contact.memberId}`}
+                      href={`${adminHref("member-detail", { id: contact.memberId })}`}
                     >
                       member page
                     </a>
