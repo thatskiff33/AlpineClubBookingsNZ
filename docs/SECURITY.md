@@ -144,8 +144,26 @@ throttling can delay the periodic refresh until the tab becomes visible.
 
 Audience: Operator, Developer.
 
-The per-address limiter (10 attempts per 15 minutes per internet address)
-cannot see one account guessed from many addresses — a botnet, a phone
+The per-address limiter (`rateLimiters.login`: 30 attempts per 15 minutes per
+internet address) counts Auth.js POSTs except the exact `signout` and `session`
+actions. Credentials and magic-link callbacks, Google sign-in starts and unknown
+future POST actions count; GETs do not. This larger shared-network budget is a
+backstop against account spraying alongside the per-account password throttle.
+Sign-out and session updates neither consume this budget nor get refused by it
+(`INV-AUTH-011`).
+
+A refusal is HTTP 429 with `Retry-After`, `X-RateLimit-*`, and a JSON `url` for
+next-auth pointing at `/login?error=ADDRESS_THROTTLED&code=ADDRESS_THROTTLED`.
+Password, Google redirects and magic-link pages show the same network wait,
+without identifying an account. Since next-auth's `signIn` result does not expose
+`Retry-After`, the message says to wait a few minutes. A refused magic link is
+not consumed: **Try again** retries its token from memory, while the visible URL
+stays scrubbed. Reopening the original email link also works while it is valid.
+Other routes' 429 bodies are unchanged. The counter id remains `login`; during a
+blue/green cutover the old slot retains its stricter budget. Store failures keep
+the existing reduced per-process fallback.
+
+The per-address limiter cannot see one account guessed from many addresses — a botnet, a phone
 network, a cloud provider. A second count, kept per account, closes that gap.
 The rules are `INV-AUTH-001` to `INV-AUTH-004` in
 [`invariants/authentication.md`](invariants/authentication.md); this section
@@ -200,7 +218,7 @@ work. This change does not require setting `UV_THREADPOOL_SIZE`: profile the
 actual workload before tuning it, and record any change as a new load-test
 resource profile. A census rejects bcrypt imports outside this module, including
 operator scripts and seeds; `bcryptjs` remains a development-only compatibility
-oracle in tests (`INV-AUTH-011`).
+oracle in tests (`INV-AUTH-013`).
 
 **What is stored.** `LoginThrottle` holds an HMAC-SHA256 of the lower-cased
 email under `AUTH_SECRET` (domain label `login-throttle:v1:`), a count and the
@@ -608,6 +626,45 @@ free guessing oracle.
 - **During a blue/green cutover the old slot has no stamp and no check.** The
   migration only adds the challenge table. Draining code never reads it.
 
+## Officer two-factor (#4618)
+
+Audience: Operator, Developer.
+
+**The threat.** An officer who can move money or change security settings
+signs in with a password, or a password and an emailed code. A phished
+password plus a compromised mailbox is the whole account.
+
+**The rule (`INV-AUTH-012`).** Full Admins, and officers whose role can edit
+Finance or Support & System, must hold an authenticator app or a passkey. A
+role editor's **Two-factor** choice can add a role (**Required**) or drop it
+(**Not required**); Full Admin stays required whatever a role says. Nothing
+changes until #4620 sets `OFFICER_SIGN_IN_ENFORCED`. Until then the card, the
+report, the reset button and both routes are absent or answer 404.
+
+**Grace.** The first refresh that finds an officer required without an app or
+passkey stamps `twoFactorGraceStartedAt` once, with the database clock. Grace
+is a club setting, 0 to 60 days (14 by default), counted in club days. After
+it, the officer reaches only the enrolment pages, the profile security card
+and sign-out. A required officer cannot delete their last passkey; the check
+runs under their member row lock.
+
+**Lost factor.** Another Full Admin opens the member and resets it after
+confirming it is them (step-up, `INV-AUTH-010`). They cannot reset
+themselves. One transaction clears the authenticator, recovery and emailed
+codes and every passkey, ends the member's sessions and stamps
+`factorsResetAt`; the audit row names the admin. The member is emailed after
+commit. Resetting a required officer never starts a new grace period (the
+reset writes a missing grace stamp with its own time); a member reset before
+the rule reached them still gets their first grace period. An enrolment from a
+session older than the reset is refused with 409. A club whose only Full
+Admin lost their factor runs, on the server,
+`pnpm run auth:reset-factors -- --member <email>`; its audit row names the
+`officer-factor-reset` system actor.
+
+**Stated limits.** The report lists who is required and not yet enrolled; it
+is a Full Admin view only. An emailed code still signs a member in where the
+club-wide module allows it; it just does not meet this rule.
+
 ## Data-encryption key ring (#4456)
 
 Audience: Operator, Developer.
@@ -786,8 +843,15 @@ this section records how it is enforced.
 - **The AI diagnostics role cannot read it.** Its Member and BookingGuest
   grants are column allowlists (`provision-role.ts`) that include neither
   column.
+- **A stay's value is cleared after the stay** (`INV-PRIV-023`): a nightly job
+  nulls `BookingGuest.dietaryRequirements` a club-set number of days (default
+  30, ships on) after the stay's `stayEnd`, for every guest and booking status,
+  through `clearExpiredStayDietaryValues` in the write half. It audits a count
+  only and takes no advisory lock. The profile value is current and is not
+  cleared by it; turning the field off does not clear anything.
 - **Backups contain it**, like every other column; see
-  [`guides/backups.md`](guides/backups.md).
+  [`guides/backups.md`](guides/backups.md). Backups taken before the after-stay
+  clear still hold a cleared value until they age out.
 
 ## Token-bearing URL paths
 

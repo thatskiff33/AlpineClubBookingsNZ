@@ -720,6 +720,34 @@ Pinned by `organiser-extra-note-record.test.ts`,
 `organiser-late-note-after-reset.realdb.test.ts` and
 `organiser-run-claim-check.realdb.test.ts`.
 
+## An abandoned inbound reconcile's operation row (#4921 prerequisite)
+
+### INV-INT-038
+
+A later attempt at an inbound Xero webhook reconcile never runs under an
+abandoned attempt's claim, and recovers the row that attempt left RUNNING.
+
+- **Nothing else reaps it.** The outbox and the waiting-invoice reaper read
+  OUTBOUND rows only; the stale reset is an officer's.
+- **Never shared.** `startInboundReconcileOperation`
+  (`xero-inbound/reconcile-operation.ts`) starts with
+  `shareActiveOperation: false`, so the active-correlation-key clash (#1354)
+  is never answered with another attempt's row.
+- **Taken over in place.** An INBOUND `WEBHOOK_RECONCILE` row RUNNING past
+  `STALE_RUNNING_XERO_OPERATION_MINUTES` is re-claimed under a fresh
+  `startedAt` in one `updateMany` guarded on the claim read: of racing
+  takeovers, or a takeover and Mark failed, exactly one wins. A loser reads
+  again: a row Mark failed ended lets it insert its own.
+- **The abandoned claim's late outcome is refused** (`INV-INT-029`) while the
+  new claim runs and after it fails or succeeds; only a late success may
+  still land on a row no claim holds, as for any row.
+- **A live row is left alone.** Any other active row for the key fails the
+  attempt as in flight; the event is retried after its backoff.
+- **Outbound starts are unchanged.** Only this caller opts out of sharing.
+
+Pinned by `xero-inbound-reconcile-operation.test.ts`, `xero-sync.test.ts`
+and, against real PostgreSQL, `xero-inbound-abandoned-operation.realdb.test.ts`.
+
 ## Stored outbox payloads (#3971)
 
 ### INV-INT-026

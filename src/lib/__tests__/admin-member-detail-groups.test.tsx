@@ -10,7 +10,7 @@ import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support
 import type { ReactNode } from "react";
 import { Suspense } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import MemberDetailPage from "@/app/(admin)/admin/members/[id]/page";
+import MemberDetailPage from "@/app/(admin)/admin/membership/members/[id]/page";
 import { memberSectionStorageKeys } from "@/lib/admin-member-detail-helpers";
 
 const fetchMock = vi.fn();

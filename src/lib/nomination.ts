@@ -96,6 +96,10 @@ import {
 } from "@/lib/member-parent-partner-exclusivity";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
+// Deliberately NOT `dateOnlyStringSchema`: this is the READ schema
+// `parseApplicationFamilyMembers` runs over already-stored JSON, and a refusal
+// here would blank the nominating member's page. Write paths refuse a non-day
+// where it arrives (#3082; `member-application-date-of-birth.ts`).
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
 
 const applicationAddressSchema = z.object({

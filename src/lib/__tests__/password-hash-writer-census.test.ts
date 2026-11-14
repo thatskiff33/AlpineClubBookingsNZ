@@ -306,7 +306,7 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
     }
   });
 
-  it("keeps every runtime bcrypt import inside the password-hashing module (INV-AUTH-011)", () => {
+  it("keeps every runtime bcrypt import inside the password-hashing module (INV-AUTH-013)", () => {
     const forbidden = passwordHashScanFiles().filter((file) => file !== "src/lib/password-hashing.ts").filter((file) =>
       /(?:\bfrom\s*|\bimport\s*\(?|\brequire\s*\()\s*["'](?:bcryptjs|bcrypt|@node-rs\/bcrypt)["']/.test(fs.readFileSync(file, "utf8")),
     );

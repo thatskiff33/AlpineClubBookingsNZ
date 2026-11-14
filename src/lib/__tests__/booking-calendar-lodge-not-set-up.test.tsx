@@ -220,12 +220,12 @@ describe("the not-set-up notice links an officer to the capacity settings (#3407
     };
     walk(join(process.cwd(), "src"));
     expect(passers.sort()).toEqual([
-      "src/app/(admin)/admin/book/page.tsx",
+      "src/app/(admin)/admin/booking-desk/book/page.tsx",
       "src/components/booking-calendar.tsx",
     ]);
     // And /admin/book passes the access-gated link, not a bare href.
     const adminBook = stripComments(
-      readFileSync(join(process.cwd(), "src/app/(admin)/admin/book/page.tsx"), "utf8"),
+      readFileSync(join(process.cwd(), "src/app/(admin)/admin/booking-desk/book/page.tsx"), "utf8"),
     );
     expect(adminBook).toMatch(/\buseLodgeCapacitySettingsHref\(lodgeId\)/);
     expect(adminBook).not.toMatch(/\blodgeCapacitySettingsHref\(/);
