@@ -118,7 +118,16 @@ full booking state machine is in
 ### 3. Review, confirm, and the hold policies
 
 Step 3, **Review & Confirm**, shows your nights, your party, and the quote in
-dollars before you commit. What happens to any **non-member guests** depends on
+dollars before you commit. Just above the Confirm / **Continue to Payment**
+button, a **Cancellation and refunds** box shows the club's current
+cancellation schedule for your lodge and check-in: how much of what you pay
+comes back if you later cancel, depending on how close to check-in you cancel.
+The exact amount is shown when you start a cancellation, and the schedule is the
+club's current one, so if the club changes it later, a later cancellation uses
+the new terms. If the schedule cannot be loaded, the box says to ask the club
+instead; you can still book.
+
+What happens to any **non-member guests** depends on
 which of two booking policies your club runs. Operators call these policies
 *First Paid, First In* and *Members First*, but you will **not** see those names
 anywhere in the wizard — you only see their effect:

@@ -74,6 +74,25 @@ export function recentAuthSignInCounts(
 }
 
 /**
+ * Whether a password sign-in still owes a stronger factor, so it must not
+ * start the clock. The club-wide module owes an authenticator app (#4994). A
+ * required officer owes an app or a passkey (#4618, INV-AUTH-012), whether or
+ * not the module is on. An emailed code is never owed: the password is that
+ * sign-in's proof.
+ */
+export function passwordSignInOwesStrongerFactor(input: {
+  moduleRequired: boolean;
+  officerRequired: boolean;
+  twoFactorEnabled?: boolean | null;
+  twoFactorMethod?: string | null;
+  hasPasskey?: boolean | null;
+}): boolean {
+  const hasApp = input.twoFactorEnabled === true && input.twoFactorMethod !== "EMAIL";
+  if (input.officerRequired) return hasApp || input.hasPasskey === true;
+  return input.moduleRequired && hasApp;
+}
+
+/**
  * The verify-route method prefixed into a two-factor challenge, as a sign-in
  * proof. Anything else, including a token minted with no prefix, is not one.
  */

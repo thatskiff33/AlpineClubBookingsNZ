@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { BookingStatus } from "@prisma/client";
 import {
   bookingStatusClasses,
   paymentStatusClasses,
   bookingStatusClass,
+  bookingStatusSwatchClass,
   bookingStatusLabel,
   bookingStatusLabels,
   humanizeStatus,
@@ -15,8 +17,7 @@ import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
 
 describe("bookingStatusClasses", () => {
   it("defines all booking statuses", () => {
-    const statuses = ["DRAFT", "PENDING", "PAYMENT_PENDING", "CONFIRMED", "AWAITING_REVIEW", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"];
-    for (const s of statuses) {
+    for (const s of Object.values(BookingStatus)) {
       expect(bookingStatusClasses[s], `missing class for ${s}`).toBeTruthy();
     }
   });
@@ -33,6 +34,33 @@ describe("bookingStatusClasses", () => {
 
   it("CANCELLED and BUMPED have different colours", () => {
     expect(bookingStatusClasses["CANCELLED"]).not.toBe(bookingStatusClasses["BUMPED"]);
+  });
+});
+
+// ALP-572: the admin calendar used to keep its own status colours, which
+// disagreed with these chips (COMPLETED and WAITLISTED shared a bar colour).
+// Both now derive from one tone per status, so the swatch and chip of every
+// status share a scale and no two statuses share a swatch.
+describe("bookingStatusSwatchClass", () => {
+  const scaleOf = (classes: string) => classes.match(/\bbg-([a-z0-9]+)-\d+\b/)?.[1] ?? classes;
+
+  it.each(Object.values(BookingStatus))("%s swatch is the same scale as its chip", (status) => {
+    const swatch = bookingStatusSwatchClass(status);
+    if (bookingStatusClass(status) === CHIP_TONE_CLASSES.neutral) {
+      expect(swatch).toBe("bg-muted");
+    } else {
+      expect(swatch).toMatch(/^bg-[a-z0-9]+-9$/);
+      expect(scaleOf(swatch)).toBe(scaleOf(bookingStatusClass(status)));
+    }
+  });
+
+  it("gives every booking status a distinct swatch", () => {
+    const swatches = Object.values(BookingStatus).map(bookingStatusSwatchClass);
+    expect(new Set(swatches).size).toBe(swatches.length);
+  });
+
+  it("falls back to the neutral swatch for an unknown status", () => {
+    expect(bookingStatusSwatchClass("UNKNOWN_STATUS")).toBe("bg-muted");
   });
 });
 

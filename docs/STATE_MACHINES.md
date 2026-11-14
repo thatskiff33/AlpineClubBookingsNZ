@@ -2468,6 +2468,28 @@ inbound fence records its conflict the same way, under the
 
 `INV-ADDPAY-045`, `INV-ADDPAY-046`, `INV-ADDPAY-048`, `INV-ADDPAY-050`, `INV-ADDPAY-051`, `INV-ADDPAY-052`.
 
+### Stripe dispute record (#4911)
+
+One `StripeDispute` row per Stripe dispute (chargeback), kept by the four
+`charge.dispute.*` webhook events (`INV-PAY-154`). The row's status follows
+Stripe's dispute status; the first event to arrive inserts it, whichever it is:
+
+```text
+(none) -> OPEN          charge.dispute.created / funds_withdrawn, or any event on an open dispute
+OPEN   -> WON           charge.dispute.closed, Stripe status won
+OPEN   -> LOST          charge.dispute.closed, Stripe status lost
+OPEN   -> CLOSED_OTHER  charge.dispute.closed with no funds taken (warning_closed, prevented)
+(none) -> WON / LOST / CLOSED_OTHER   a closed event arriving first
+```
+
+WON, LOST and CLOSED_OTHER are terminal: a later or older event never reopens
+the row, and a replay changes nothing. `funds_withdrawn` and `funds_reinstated`
+add to the row's withdrawn and reinstated cents. OPEN and LOST hold the
+payment's captures: no card refund or account credit, and a paid cancel goes to
+the treasurer as a hand-back task. WON and CLOSED_OTHER hold nothing. The opened
+alert is sent once ever on the first record, the closed alert once ever on the
+first terminal status. To verify: `stripe-dispute.test.ts`.
+
 ### Manual refund task lifecycle (#2262)
 
 ```text
@@ -4164,6 +4186,10 @@ worker finds the operation must wait (busy) -> RUNNING -> PENDING: returns
   createdAt -> FAILED for a person (an operator's retry raises it unwaited)
   it waits only when its edit expected an own note; a note the repair pass
   queues reads that from the edit's history row (#4049)
+  group invoice raised and bound but its email owed (#4919): code
+  GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED, the owed marker kept in
+  responsePayload, rechecked every minute; the re-drive only asks Xero to
+  email it, under lock(1), and an operator's retry of a FAILED row does too
 supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
   an officer's or the repair tool's own actions on it are not drawn here)
   -> that intent captured and the money kept -> the others naming it billed
@@ -4604,6 +4630,9 @@ PROCESSING -> attempt throws
   card refund whose slice's reservation the journal refused (#4516, M4c)
                               -> FAILED terminal at once, the same way; Stripe was not
                                  asked for that slice; settled by "Paid another way"
+  card refund on a capture an OPEN or LOST Stripe dispute holds (#4911, INV-PAY-154)
+                              -> FAILED terminal at once, the same way; Stripe was not
+                                 asked; the cause names the dispute for the treasurer
 ```
 
 Every terminal row sits at the attempt ceiling, so the claim, the health check
@@ -5149,6 +5178,35 @@ refused and a failed proof counts), `session-reauth.realdb.test.ts` (two
 concurrent consumes, one success), `confirm-its-you-dialog.test.tsx` (the
 replay is once, body unchanged), and `webauthn.realdb.test.ts` (one of two
 challenge claims, and one of two counter updates).
+
+## Officer two-factor (#4618)
+
+Who must hold an authenticator app or a passkey (`INV-AUTH-012`). The
+requirement is recomputed on every session refresh. Nothing here runs until
+#4620 sets `OFFICER_SIGN_IN_ENFORCED`.
+
+```text
+not required -> required: becomes Full Admin, gains a role that requires it, or the club turns the policy on
+required, no app or passkey, no grace stamp -> in grace (twoFactorGraceStartedAt = NOW(), set once)
+in grace -> gated: club midnight after (first club date + grace days); 0 days gates at once
+gated -> only /login/enroll, /login/verify, /profile, sign-out and the enrolment APIs answer
+in grace or gated -> enrolled: authenticator app or passkey saved (an emailed code does not count)
+enrolled -> enrolled: removing the last app or passkey is refused with 400
+enrolled -> reset: another Full Admin after step-up, or `auth:reset-factors`
+  factors cleared, sessions ended, factorsResetAt = NOW(), member emailed;
+  a required officer's missing grace stamp is set to the same NOW()
+reset -> gated: the next sign-in of a required officer; no new grace period
+reset -> in grace: a member reset before the rule reached them, on first exposure
+reset -> enrolled: enrolment from a session issued after the reset; an older session gets 409
+required -> not required: the role or policy goes, or the member can no longer sign in
+```
+
+To verify: `officer-two-factor-required.test.ts` (who is required, grace on the
+club calendar at 0, 14 and 60 days, no grace after a reset, first grace for a
+member reset before promotion),
+`officer-two-factor-gate-callers.test.ts` (the allowlist and every gate
+caller), `officer-factor-reset-route.test.ts` (each refusal of the reset
+route), and `webauthn.test.ts` (the last passkey is kept, under the member lock).
 
 ## Password Sign-In Throttle (#4609)
 

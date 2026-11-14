@@ -98,6 +98,8 @@ export async function cancelPreviewCardShortfall(
     organiserCard: boolean;
     /** #3949: the joiner's booking the group organiser paid by Internet Banking (`paidByOrganiserInternetBanking`). */
     organiserByBank: boolean;
+    /** #4911: an OPEN or LOST dispute holds the payment's captures; the cancel hands its refund to the treasurer. */
+    disputed: boolean;
     /** The preview's card-tier refund. */
     refundAmountCents: number;
   },
@@ -110,6 +112,7 @@ export async function cancelPreviewCardShortfall(
     organiserCard,
     organiserByBank: params.organiserByBank,
     manuallyMarkedPaid: Boolean(payment.manuallyMarkedPaidAt),
+    disputed: params.disputed,
     requested: "card",
   });
   const branch = paidCancellationBranch({ manualDisposition, refundMethod, refundAmountCents });

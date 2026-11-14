@@ -50,6 +50,13 @@ vi.mock("@/lib/two-factor-api", () => ({
     method: member.twoFactorMethod,
     email: member.email,
   })),
+  enrolmentSessionIssuedAt: (session: {
+    user?: { sessionIssuedAt?: number | null } | null;
+  }) => {
+    const value = session.user?.sessionIssuedAt;
+    return typeof value === "number" && Number.isFinite(value) ? new Date(value) : null;
+  },
+  factorResetEnrolmentResponse: () => null,
 }));
 
 vi.mock("@/lib/rate-limit", () => ({
@@ -152,6 +159,7 @@ describe("two-factor auth routes", () => {
       memberId: "member-1",
       actor: { kind: "member", memberId: "member-1" },
       request: expect.any(Object),
+      sessionIssuedAt: null,
     });
   });
 
@@ -175,6 +183,7 @@ describe("two-factor auth routes", () => {
       // #3454: the member is the actor of their own enrolment.
       actor: { kind: "member", memberId: "member-1" },
       request: expect.any(Object),
+      sessionIssuedAt: null,
     });
     expect(mocks.markTwoFactorSessionVerified).toHaveBeenCalledWith("EMAIL");
   });

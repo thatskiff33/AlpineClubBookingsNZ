@@ -1204,10 +1204,12 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
     // The offer must be answerable, not merely raisable: a surface that shows the
     // three arms and cannot accept the answer refuses the member twice with the
     // same sentence.
+    // The modify door's request schema lives in `booking-modify-request.ts`,
+    // the preview's schema extended with the save's answers (#4924).
     expect(sourceFilesNaming("hostingCoverageLinkedMoveSchema")).toEqual([
       "src/app/api/bookings/[id]/modify-dates/route.ts",
-      "src/app/api/bookings/[id]/modify/route.ts",
       "src/lib/adult-member-hosting-linked-move.ts",
+      "src/lib/booking-modify-request.ts",
     ]);
     // And the answer must reach a writer that honours it — the shared arms, never
     // a second copy of the policy per route (`INV-SSOT-001`).

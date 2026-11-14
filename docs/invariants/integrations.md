@@ -35,6 +35,8 @@ only the ID heading lines were added.
 
 - External provider calls should not be placed inside long database
   transactions unless there is a documented reason.
+- A provider call held inside a lock has an explicit client deadline, zero
+  in-lock retries, and a transaction timeout that fits both (#4919).
 
 ## INV-INT-004
 
