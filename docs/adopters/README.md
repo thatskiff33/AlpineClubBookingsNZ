@@ -26,6 +26,10 @@ Then work through these in order:
 2. [`../IMPLEMENTATION_GUIDE.md`](../IMPLEMENTATION_GUIDE.md) — the practical
    path from clone to a configured club: club identity, environment, database,
    providers in test mode, and validation before you share it with anyone.
+   Install the **latest release**, listed on the repository's GitHub
+   [Releases page](https://github.com/thatskiff33/AlpineClubBookingsNZ/releases),
+   not `main`: `main` is the development branch, and the production deploy
+   refuses a commit that is not a release.
 3. [`../../CONFIGURATION.md`](../../CONFIGURATION.md) — the reference for every
    environment variable and the `config/club.json` schema.
 4. [`../../DEPLOYMENT.md`](../../DEPLOYMENT.md) — read before any shared or
