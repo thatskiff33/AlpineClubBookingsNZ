@@ -13,6 +13,7 @@ import { normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 const CLUB_ZONE = "Pacific/Auckland";
 
 const mocks = vi.hoisted(() => ({
+  releaseBookingPromoRedemptions: vi.fn(async () => 0),
   transaction: vi.fn(),
   // #3864: nothing to give back unless a case says so.
   giveBackAppliedCredit: vi.fn<(...args: unknown[]) => Promise<{ appliedCreditCents: number; givenBackCents: number; payment: null }>>(
@@ -67,6 +68,12 @@ const mocks = vi.hoisted(() => ({
   // #2265 (#2319): the audit row a cleared credit election writes, which the
   // member's own booking history renders.
   createAuditLog: vi.fn(),
+}));
+
+// Promo arithmetic is exercised against PostgreSQL in cancelled-booking-promo-release.realdb.test.ts.
+vi.mock("@/lib/promo", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/promo")),
+  releaseBookingPromoRedemptions: mocks.releaseBookingPromoRedemptions,
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -1144,6 +1151,18 @@ describe("markBookingPaymentSucceeded", () => {
       // #3611: the cancel posts its ledger reversals in its own claim, keeping nothing.
       expect(cancellationLedger.postCancellationLedgerLines).toHaveBeenCalledWith(
         expect.objectContaining({ bookingId: "booking-1", keptCents: 0, site: "settle:capacity-void" }),
+      );
+    });
+
+    it("releases the voided booking's promo uses in the void's own transaction, before the hosting seam (#4909)", async () => {
+      primeCapacityRaceLoss();
+      await markBookingPaymentSucceeded({
+        format: CLUB_FORMAT_TEST, bookingId: "booking-1", paymentIntentId: "pi_race", amountCents: 10000, paymentMethodId: "pm_123",
+      });
+      // One call covers every code the booking carries (two-code: realdb suite).
+      expect(mocks.releaseBookingPromoRedemptions.mock.calls).toEqual([[tx, "booking-1"]]);
+      expect(mocks.releaseBookingPromoRedemptions.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.reconcileHostingForSystemCancellation.mock.invocationCallOrder[0],
       );
     });
 
