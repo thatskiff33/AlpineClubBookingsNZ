@@ -23,6 +23,7 @@ import {
   legacyReadsRetired,
 } from "@/lib/data-encryption-keys";
 import { assertLegacyWriteAllowed } from "@/lib/data-encryption-legacy-write-guard";
+import { assertEnrolmentNotSuperseded } from "@/lib/officer-factor-reset";
 import { prisma } from "@/lib/prisma";
 import {
   LEGACY_ENCRYPTION_VERSION,
@@ -484,6 +485,8 @@ export async function replaceRecoveryCodes(params: {
   /** Who replaced them: the member themself on the regenerate route (#3454). Never a job. */
   actor: TwoFactorPersonActor;
   request?: TwoFactorRequestContext;
+  /** Issue time of the session writing the codes. A reset newer than it refuses. */
+  sessionIssuedAt?: Date | null;
 }) {
   const { memberId } = params;
   assertTwoFactorActorMayAct(
@@ -497,6 +500,7 @@ export async function replaceRecoveryCodes(params: {
   // or neither does (#3454): replacing them invalidates every unused code, the
   // same class of credential change as an enrolment.
   await prisma.$transaction(async (tx) => {
+    await assertEnrolmentNotSuperseded(tx, memberId, params.sessionIssuedAt ?? null);
     await assertTwoFactorWriteAllowed(tx);
     await tx.twoFactorRecoveryCode.deleteMany({ where: { memberId } });
     await tx.twoFactorRecoveryCode.createMany({
@@ -526,6 +530,8 @@ export async function enrollTwoFactor(params: {
   /** Who enrolled — the member themself on the enrolment routes (#3454). Never a job. */
   actor: TwoFactorPersonActor;
   request?: TwoFactorRequestContext;
+  /** Issue time of the session enrolling. A reset newer than it refuses. */
+  sessionIssuedAt?: Date | null;
 }) {
   // A member actor must be the member being enrolled (#3454 review).
   assertTwoFactorActorMayAct(TWO_FACTOR_AUDIT_ACTIONS.enrolled, params.actor, params.memberId);
@@ -540,6 +546,7 @@ export async function enrollTwoFactor(params: {
   // or neither does (#3454). It was an array transaction, which cannot write a
   // row through `createAuditLog`.
   await prisma.$transaction(async (tx) => {
+    await assertEnrolmentNotSuperseded(tx, params.memberId, params.sessionIssuedAt ?? null);
     await assertTwoFactorWriteAllowed(tx);
     await tx.member.update({
       where: { id: params.memberId },

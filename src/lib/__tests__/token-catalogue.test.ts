@@ -76,6 +76,7 @@ describe("token catalogue contents", () => {
 
   it("pins the text token set", () => {
     expect(textTokenNames()).toEqual([
+      "data-hosting",
       "club-name",
       "currency",
       "lodge-capacity",
@@ -83,6 +84,7 @@ describe("token catalogue contents", () => {
       "lodge-address",
       "hut-leader",
       "hut-leader-lower",
+      "email-log-retention",
       "facebook-url",
     ]);
   });

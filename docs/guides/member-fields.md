@@ -85,6 +85,11 @@ it behaves differently from the other three:
   it was off**: those stay empty until a booking officer fills them in. To delete
   a profile value, clear it on the member's record while the field is on; a
   booking's copy is cleared on the booking page.
+- **A booking's copy is cleared automatically after the stay** — by default 30
+  days after it ends, for members and non-members alike. That is a separate
+  setting under **Admin → Privacy retention**: turning this field off neither
+  starts nor stops it. See the
+  [retention schedule](../PRIVACY_RETENTION.md#automatic-retention-and-operator-review).
 
 ## Troubleshooting
 

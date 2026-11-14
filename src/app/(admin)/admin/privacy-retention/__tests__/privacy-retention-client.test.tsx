@@ -6,10 +6,10 @@ import { ClubTimeProvider } from "@/components/club-time-provider";
 import { DEFAULT_PRIVACY_RETENTION_SETTINGS } from "@/lib/privacy-retention-shared";
 import { SENTRY_REPLAY_POLICY_CHANGED } from "@/lib/privacy-retention-replay";
 
-const mocks = vi.hoisted(() => ({ canEdit: true as boolean | undefined, canEditMembership: true, push: vi.fn() }));
+const mocks = vi.hoisted(() => ({ canEdit: true as boolean | undefined, canEditMembership: true, canEditBookings: true, push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({
-  useAdminAreaEditAccess: (area: string) => area === "membership" ? mocks.canEditMembership : mocks.canEdit,
+  useAdminAreaEditAccess: (area: string) => area === "membership" ? mocks.canEditMembership : area === "bookings" ? mocks.canEditBookings : mocks.canEdit,
   ADMIN_VIEW_ONLY_ACTION_REASON: "Your admin role can view this area but cannot make changes.",
 }));
 import { PrivacyRetentionClient } from "../privacy-retention-client";
@@ -23,6 +23,7 @@ const PAYLOAD = {
     blockedMembers: { count: 1, rows: [{ id: "blocked-1", date: "2018-06-01T00:00:00Z", reasons: ["Has account credit"] }] },
     undatedMembers: { count: 1, rows: [{ id: "undated-1", date: null }] },
   },
+  clearedBookingDietary: 12,
   pageSize: 25,
   canViewMembership: true,
 };
@@ -174,4 +175,33 @@ it("drops the member cursor that belongs to the page being left", async () => {
   await screen.findByText(/Former-member candidates across all pages/);
   fireEvent.click(screen.getByRole("button", { name: "Previous" }));
   expect(mocks.push).toHaveBeenLastCalledWith("?page=3&memberCursor=member-024&memberCursor=member-049");
+});
+
+
+it("stages the independent dietary controls and shows a value-free dry-run count", async () => {
+  renderClient(); await loaded();
+  expect(screen.getByText("Stay dietary notes to clear (12)")).toBeInTheDocument();
+  const period = screen.getByLabelText("Stay dietary notes after departure (days)");
+  const toggle = screen.getByLabelText("Enable after-stay dietary clearing");
+  expect(period).toHaveValue(30);
+  expect(period).toBeDisabled();
+  expect(toggle).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(period, { target: { value: "366" } });
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  fireEvent.change(period, { target: { value: "10" } });
+  fireEvent.click(toggle);
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(period).toHaveValue(30);
+  expect(toggle).toBeChecked();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+it("requires bookings edit for dietary settings", async () => {
+  mocks.canEditBookings = false;
+  renderClient(); await loaded();
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByLabelText("Stay dietary notes after departure (days)")).toBeDisabled();
+  expect(screen.getByLabelText("Enable after-stay dietary clearing")).toBeDisabled();
+  mocks.canEditBookings = true;
 });

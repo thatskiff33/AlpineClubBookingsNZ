@@ -7,6 +7,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 // Preview divergence from the single-member flow (#2107, documented): archived
 // members are excluded and reported by id rather than previewed.
@@ -20,9 +21,7 @@ const previewSchema = z
       .max(100),
     seasonYear: z.number().int().min(2020).max(2040),
     membershipTypeId: z.string().min(1),
-    applyFrom: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
+    applyFrom: dateOnlyStringSchema
       .nullable()
       .optional(),
   })

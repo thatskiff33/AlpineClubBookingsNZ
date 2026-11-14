@@ -4,12 +4,12 @@ import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AllocationChip } from "@/app/(admin)/admin/bed-allocation/_components/allocation-chip";
+import { AllocationChip } from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/allocation-chip";
 import type {
   BedOption,
   BedOptionGroup,
   DashboardAllocation,
-} from "@/app/(admin)/admin/bed-allocation/_components/types";
+} from "@/app/(admin)/admin/booking-desk/bed-allocation/_components/types";
 import { useBedAllocationMoveDialog } from "@/components/admin/bed-allocation-move-dialog";
 import type { BedAllocationMovePreview } from "@/lib/bed-allocation-move";
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BookingStatus } from "@prisma/client";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
@@ -50,6 +51,23 @@ describe("Admin bookings calendar route — lodge scoping (#9)", () => {
     mocks.getLodgeCapacity.mockResolvedValue(32);
     mocks.getDefaultLodgeId.mockResolvedValue("lodge-1");
     mocks.countActiveLodges.mockResolvedValue(1);
+  });
+
+  it.each(Object.values(BookingStatus))("filters to %s", async (status) => {
+    expect((await getCalendar(req(`calendarMonth=2026-07&status=${status}`))).status).toBe(200);
+    expect(mocks.prisma.booking.findMany.mock.calls[0][0].where.status).toBe(status);
+  });
+
+  it.each([
+    ["NOT_A_STATUS", { in: [] }],
+    ["PAID,NOT_A_STATUS", "PAID"],
+    [" PAID , AWAITING_REVIEW ,NOT_A_STATUS", { in: ["PAID", "AWAITING_REVIEW"] }],
+    [" , ", { in: [] }],
+    ["all", { not: "DRAFT" }],
+    ["", { not: "DRAFT" }],
+  ])("handles status=%s without broadening the filter", async (status, expected) => {
+    await getCalendar(req(`calendarMonth=2026-07&status=${encodeURIComponent(status)}`));
+    expect(mocks.prisma.booking.findMany.mock.calls[0][0].where.status).toEqual(expected);
   });
 
   it("scopes bookings and beds to the selected lodge", async () => {

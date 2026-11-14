@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  editFinancialReviewGuestsRemovedSinceRaised,
-  parseEditFinancialReviewContext,
-} from "@/lib/edit-financial-review-context";
+import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
+import { editFinancialReviewGuestsRemovedSinceRaised } from "@/lib/edit-review-guest-removed-since-raised";
 import { reviewGuestRemovedSinceRaisedWarning } from "@/lib/manual-refund-task-copy";
 import { toOpenManualRefundTaskPayload } from "@/lib/manual-refund-task-queue-payload";
 

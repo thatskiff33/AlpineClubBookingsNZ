@@ -117,6 +117,7 @@ import {
   isDietaryFieldEnabled,
   type DietaryAccessGrant,
 } from "@/lib/member-dietary";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -154,9 +155,7 @@ export const createMemberSchema = z.object({
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(15).optional().nullable(),
-  dateOfBirth: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+  dateOfBirth: dateOnlyStringSchema
     .optional()
     .nullable(),
   role: z
@@ -174,15 +173,11 @@ export const createMemberSchema = z.object({
   inheritParentEmail: z.boolean().optional(),
   inheritEmailFromId: z.string().optional().nullable(),
   familyGroupIds: z.array(z.string()).optional(),
-  joinedDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+  joinedDate: dateOnlyStringSchema
     .optional()
     .nullable()
     .or(z.literal("")),
-  lifeMemberDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+  lifeMemberDate: dateOnlyStringSchema
     .optional()
     .nullable()
     .or(z.literal("")),

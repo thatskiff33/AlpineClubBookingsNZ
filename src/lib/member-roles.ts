@@ -263,3 +263,21 @@ export function canAdminRequestMembershipCancellation(member: {
     !member.archivedAt
   );
 }
+
+/**
+ * The `kioskAccount` claim the `jwt` callback stamps from the member row on
+ * every refresh: login on, and the record IS the kiosk by the app's own
+ * classification (`isLodgeKioskAccount`). Not "holds `LODGE`".
+ */
+export function isKioskSessionMember(
+  member: AccountClassificationInput & { canLogin: boolean | null | undefined },
+): boolean {
+  return (
+    member.canLogin === true &&
+    isLodgeKioskAccount(
+      member.role,
+      member.accessRoles,
+      member.financeAccessLevel,
+    )
+  );
+}
