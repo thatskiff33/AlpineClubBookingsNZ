@@ -9,10 +9,11 @@ applies by comparing `prisma/migrations` between the two tags
 for that jump are the release headings in `docs/UPGRADING.md`. The newest
 release's block opens with an ordered before / during / after checklist; the
 older headings have none, so read each one you cross in full. Sections below
-that name a particular release say so, and apply only when your jump crosses it. It is written for the operator of
-a private deployment fork, and it is deliberately generic: substitute your own
-values for placeholders such as `<owner>` (GitHub owner) and
-`https://your-domain.example` (your public domain).
+that name a particular release say so, and apply only when your jump crosses
+it. It is written for the operator of a private deployment fork, and it is
+deliberately generic: substitute your own values for placeholders such as
+`<owner>` (GitHub owner) and `https://your-domain.example` (your public
+domain).
 
 It is a High-risk procedure against live club data. **The owner drives or
 approves each step.** Do not run any step against production without the owner
