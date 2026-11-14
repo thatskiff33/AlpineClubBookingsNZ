@@ -4,15 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useClubTime } from "@/components/club-time-provider";
 import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import {
   buildInitialRequestNotificationParents,
   buildInitialRequestSelections,
@@ -473,49 +465,42 @@ export function FamilyGroupRequestReviewSection({
           (CHILD_REQUEST / GROUP_CREATE). Both choices complete the decision; the
           choice itself is recorded in the audit log. On a GROUP_CREATE approval
           the token-bearing partner invitation is always sent regardless. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && requestSubmittingId === null) setNotifyDialogOpen(false);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {notifyChoice?.action === "reject"
-                ? "Email the member about this rejection?"
-                : "Email the member about this approval?"}
-            </DialogTitle>
-            <DialogDescription>
-              {notifyChoice?.request.type === "GROUP_CREATE" &&
-              notifyChoice?.action === "approve"
-                ? "The family group is created either way. Choose whether the requester receives the standard approval email. Any pending partner invitation is always sent so the invited partner can join — your choice is recorded in the audit log."
-                : notifyChoice?.action === "reject"
-                  ? "The request is rejected either way. Choose whether the member receives the standard rejection email — your choice is recorded in the audit log."
-                  : "The request is approved either way. Choose whether the member receives the standard approval email — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={requestSubmittingId !== null}
-              onClick={() => confirmNotify(false)}
-            >
-              {notifyChoice?.action === "reject"
+        onOpenChange={setNotifyDialogOpen}
+        submitting={requestSubmittingId !== null}
+        title={
+          notifyChoice?.action === "reject"
+            ? "Email the member about this rejection?"
+            : "Email the member about this approval?"
+        }
+        description={
+          notifyChoice?.request.type === "GROUP_CREATE" &&
+          notifyChoice?.action === "approve"
+            ? "The family group is created either way. Choose whether the requester receives the standard approval email. Any pending partner invitation is always sent so the invited partner can join — your choice is recorded in the audit log."
+            : notifyChoice?.action === "reject"
+              ? "The request is rejected either way. Choose whether the member receives the standard rejection email — your choice is recorded in the audit log."
+              : "The request is approved either way. Choose whether the member receives the standard approval email — your choice is recorded in the audit log."
+        }
+        actions={{
+          kind: "choice",
+          withoutEmail: {
+            label:
+              notifyChoice?.action === "reject"
                 ? "Reject without emailing"
-                : "Approve without emailing"}
-            </Button>
-            <Button
-              disabled={requestSubmittingId !== null}
-              onClick={() => confirmNotify(true)}
-            >
-              {notifyChoice?.action === "reject"
+                : "Approve without emailing",
+            variant: "outline",
+            onSelect: () => confirmNotify(false),
+          },
+          withEmail: {
+            label:
+              notifyChoice?.action === "reject"
                 ? "Reject and email member"
-                : "Approve and email member"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                : "Approve and email member",
+            onSelect: () => confirmNotify(true),
+          },
+        }}
+      />
     </>
   );
 }
