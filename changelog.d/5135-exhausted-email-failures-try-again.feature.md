@@ -6,7 +6,8 @@
   switch and the booking link. Nothing is sent from the button itself.
 
   Rows that keep no copy (booking confirmations, door-code reminders, payment
-  and sign-in links) now say why they cannot be resent and link to the booking
-  or member so an officer can send a fresh message. A new **Total exhausted**
+  and sign-in links), and emails about a booking that has since been deleted,
+  now say why they cannot be resent and link to the booking or member so an
+  officer can send a fresh message. A new **Total exhausted**
   figure counts every exhausted failure, and a note appears when the list shows
   only the newest 200.

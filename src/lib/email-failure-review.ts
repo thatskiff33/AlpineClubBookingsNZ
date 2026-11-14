@@ -43,9 +43,10 @@ const REQUEUEABLE_EMAIL_FAILURE_WHERE = {
  * - `sensitive`: it carried a sign-in link, door code or payment link, so no
  *   copy was kept (`SENSITIVE_EMAIL_LOG_TEMPLATES`, INV-CONFIG-004).
  * - `retired`: Try again cannot take it for another reason - a redacted
- *   recipient, a message whose retry belongs to something else, or a booking
+ *   recipient, a message whose retry belongs to something else, a booking
  *   email with no booking, which the cron retires (body kept) because it cannot
- *   check it against the booking's "No emails" switch.
+ *   check it against the booking's "No emails" switch, or an email about a
+ *   booking that has since been deleted.
  */
 export type ExhaustedEmailFailureRecovery =
   | "retry"
@@ -55,9 +56,9 @@ export type ExhaustedEmailFailureRecovery =
 
 function recoveryFor(
   templateName: string,
-  hasReplayableBody: boolean,
+  canRequeue: boolean,
 ): ExhaustedEmailFailureRecovery {
-  if (hasReplayableBody) return "retry";
+  if (canRequeue) return "retry";
   if (isTokenRecoveryTemplate(templateName)) return "token_reissue";
   if (SENSITIVE_EMAIL_LOG_TEMPLATES.has(templateName)) return "sensitive";
   return "retired";
@@ -199,6 +200,13 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
   }
 
   const decorated: ExhaustedEmailFailure[] = failures.map((failure) => {
+    const bookingExists =
+      failure.bookingId !== null && existingBookingIds.has(failure.bookingId);
+    // Try again needs a retained body AND, for an email that names a booking,
+    // that booking still existing (see `requeueExhaustedEmailFailure`).
+    const canRequeue =
+      replayableIds.has(failure.id) &&
+      (failure.bookingId === null || bookingExists);
     const latest = latestActionByEmailLogId.get(failure.id);
     const review =
       latest?.action === EMAIL_FAILURE_REVIEW_ACTION &&
@@ -216,10 +224,9 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
       errorMessage: failure.errorMessage,
       createdAt: failure.createdAt.toISOString(),
       bookingId: failure.bookingId,
-      bookingExists:
-        failure.bookingId !== null && existingBookingIds.has(failure.bookingId),
+      bookingExists,
       bookingRecipientMemberId: failure.bookingRecipientMemberId,
-      recovery: recoveryFor(failure.templateName, replayableIds.has(failure.id)),
+      recovery: recoveryFor(failure.templateName, canRequeue),
       reviewedAt: review?.createdAt.toISOString() ?? null,
       reviewedById: review?.actorMemberId ?? review?.memberId ?? null,
       reviewNote: readReviewNote(review?.metadata),
@@ -323,7 +330,9 @@ export async function markExhaustedEmailFailureReviewed(
  * The row is dated back past the cron's backoff so its next run admits it.
  * `deliveryBlockReason` is left as it is: a requeue is not terminal, and the
  * cron's next terminal write clears it (INV-CONFIG-004). No advisory lock: the
- * transition touches this one `EmailLog` row only (INV-LOCK-001).
+ * transition writes this one `EmailLog` row only (INV-LOCK-001). A row that
+ * names a booking is also refused when that booking has been deleted; that
+ * check is a read before the claim, not a second write.
  */
 export async function requeueExhaustedEmailFailure(
   emailLogId: string,
@@ -332,11 +341,36 @@ export async function requeueExhaustedEmailFailure(
   return prisma.$transaction(async (tx) => {
     const emailLog = await tx.emailLog.findUnique({
       where: { id: emailLogId },
-      select: { id: true, to: true, templateName: true, attempts: true },
+      select: {
+        id: true,
+        to: true,
+        templateName: true,
+        attempts: true,
+        bookingId: true,
+      },
     });
 
     if (!emailLog) {
       throw new EmailFailureReviewError("Email failure not found.", 404);
+    }
+
+    // `EmailLog.bookingId` has no foreign key, so a hard-deleted booking leaves
+    // it dangling and the claim below cannot see that. The cron reads a missing
+    // booking as "nothing suppressed" (`readBookingNoEmails`) and would send, days
+    // later, a message about a booking that no longer exists. Refuse it here, in
+    // the same transaction and before the claim, so no audit row is written.
+    if (emailLog.bookingId) {
+      const booking = await tx.booking.findUnique({
+        where: { id: emailLog.bookingId },
+        select: { id: true },
+      });
+
+      if (!booking) {
+        throw new EmailFailureReviewError(
+          "This email is about a booking that no longer exists, so it cannot be tried again. Archive it once you have checked whether the member still needs anything.",
+          409,
+        );
+      }
     }
 
     const claim = await tx.emailLog.updateMany({

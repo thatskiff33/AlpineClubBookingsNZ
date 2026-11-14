@@ -4019,10 +4019,12 @@ cron with **Try again** (#4963): one status-guarded `updateMany` (id, `FAILED`,
 `attempts >= 3`, `RETAINS_REPLAYABLE_EMAIL_BODY`, and not a booking-scoped
 template with no `bookingId`, which the cron retires on sight with its body kept,
 #2258) sets `attempts = 2` and dates `lastAttemptAt` past the backoff, then
-writes an `email.failure.requeued` audit row. A press that matches nothing
-(another press won, the cron sent it, or no requeueable body is left) is refused
-with 409 and writes no audit row. The route never
-sends: the cron's next run selects the row and re-runs its suppression, No-emails
+writes an `email.failure.requeued` audit row. A row naming a booking that has
+since been deleted is refused before that write (`EmailLog.bookingId` has no
+foreign key, and the cron would read the missing booking as nothing suppressed
+and send). A press that matches nothing (another press won, the cron sent it, or
+no requeueable body is left) is refused with 409 and writes no audit row. The
+route never sends: the cron's next run selects the row and re-runs its suppression, No-emails
 and authority checks before its guarded claim. `deliveryBlockReason` is left for
 that run's terminal write to clear. Archive and Try again are both audit rows,
 and the newer of the two decides whether the row shows as archived; an archive

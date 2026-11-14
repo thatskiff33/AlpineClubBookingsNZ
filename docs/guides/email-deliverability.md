@@ -76,8 +76,10 @@ What you can do next depends on whether the system kept a copy of the message:
    cleared when it was retired. A booking email saved before the club's
    per-booking **No emails** switch existed is treated the same way: it records
    no booking, so the retry job could never check it and would only retire it
-   again. Use **Open booking** or **Open member** to send
-   the member a fresh message, or, where the row says so, reissue it from
+   again. An email about a booking that has since been deleted is treated the
+   same way: it is not sent, because the booking it describes no longer exists.
+   Use **Open booking** or **Open member** to send the member a fresh message
+   (a deleted booking has no link), or, where the row says so, reissue it from
    **Token Email Recovery**. Then choose **Archive**.
 
 **Archive and Try again together.** Both are recorded in the audit log, and

@@ -24,7 +24,7 @@ type Row = {
 };
 
 const { store, mockCreateAuditLog } = vi.hoisted(() => ({
-  store: { rows: [] as Row[] },
+  store: { rows: [] as Row[], bookingIds: new Set<string>() },
   mockCreateAuditLog: vi.fn(),
 }));
 
@@ -42,9 +42,17 @@ vi.mock("@/lib/prisma", () => {
       },
     ),
   };
+  // `EmailLog.bookingId` has no foreign key, so the requeue reads whether the
+  // booking it names still exists.
+  const booking = {
+    findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+      store.bookingIds.has(where.id) ? { id: where.id } : null,
+    ),
+  };
   const prisma = {
     emailLog,
-    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({ emailLog })),
+    booking,
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({ emailLog, booking })),
   };
   return { prisma };
 });
@@ -88,6 +96,7 @@ describe("requeueExhaustedEmailFailure (#4963)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     store.rows = [];
+    store.bookingIds = new Set(["booking-1"]);
   });
 
   it("puts the row back one attempt below the ceiling, dated past the cron's backoff, and audits it", async () => {
@@ -166,6 +175,20 @@ describe("requeueExhaustedEmailFailure (#4963)", () => {
 
     expect(error.status).toBe(409);
     expect(row("target")).toEqual(before);
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("refuses with 409 and writes nothing when the booking the email is about has been deleted", async () => {
+    // `bookingId` has no foreign key, so it dangles after a hard delete; the cron
+    // would read the missing booking as "nothing suppressed" and send anyway.
+    const before = exhausted("orphan", { bookingId: "booking-gone" });
+    store.rows = [{ ...before }];
+
+    const error = await refusal("orphan");
+
+    expect(error.status).toBe(409);
+    expect(error.message).toMatch(/booking that no longer exists/);
+    expect(row("orphan")).toEqual(before);
     expect(mockCreateAuditLog).not.toHaveBeenCalled();
   });
 

@@ -251,6 +251,9 @@ describe("EmailDeliverabilitySection exhausted failures", () => {
     const deleted = rowFor("deleted@example.com");
     expect(within(deleted).getByText("Booking no longer exists")).toBeVisible();
     expect(within(deleted).queryByRole("link", { name: "Open booking" })).toBeNull();
+    // Try again is refused for such a row, and the row says why.
+    expect(within(deleted).queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(within(deleted).getByText(/the booking it was about has been deleted/)).toBeVisible();
 
     // No link is ever built from the recipient address.
     expect(within(rowFor("account@example.com")).queryByRole("link")).toBeNull();

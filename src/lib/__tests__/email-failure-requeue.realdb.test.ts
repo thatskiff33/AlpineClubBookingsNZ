@@ -322,6 +322,27 @@ let recordSesEmailFeedback: (typeof import("@/lib/email-suppression"))["recordSe
     expect(await read(account.id)).toEqual(expect.objectContaining({ attempts: 2 }));
   });
 
+  it("is not offered for a booking email whose booking was deleted, which the cron would send anyway", async () => {
+    // `EmailLog.bookingId` has no foreign key: a hard-deleted booking leaves it
+    // dangling, and the cron reads a missing booking as "nothing suppressed".
+    const row = await exhaustedBookingEmail({
+      bookingId: `${P}-deleted-booking`,
+      bookingRecipientMemberId: null,
+    });
+
+    await pinToQueueHead(row.id);
+    const queued = (await review.getExhaustedEmailFailureReviewQueue()).failures.find(
+      (failure) => failure.id === row.id,
+    );
+    expect(queued).toEqual(expect.objectContaining({ bookingExists: false, recovery: "retired" }));
+
+    await expect(press(row.id)).rejects.toMatchObject({ status: 409 });
+    expect(await read(row.id)).toEqual(expect.objectContaining({ status: "FAILED", attempts: 3 }));
+    expect(await requeueAudits(row.id)).toHaveLength(0);
+    await retryFailedEmails();
+    expect(sendMail).not.toHaveBeenCalledWith(expect.objectContaining({ to: row.to }));
+  });
+
   it("is withheld, never sent, when its booking's No emails switch is on", async () => {
     await booking(true);
     const row = await exhaustedBookingEmail();

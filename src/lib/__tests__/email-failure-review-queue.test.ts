@@ -252,7 +252,12 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
       // A booking email with no booking keeps its body, but the cron retires it
       // on sight (#2258), so Try again would only loop it back here.
       exhausted("no-booking", 10),
+      // A booking email whose booking was hard-deleted (`EmailLog.bookingId` has
+      // no foreign key) keeps its body, but the booking is gone, so Try again
+      // would send a member a message about nothing.
+      exhausted("booking-deleted", 5, { bookingId: "booking-gone" }),
     );
+    store.bookingIds.add("booking-1");
 
     const queue = await getExhaustedEmailFailureReviewQueue();
 
@@ -266,6 +271,7 @@ describe("getExhaustedEmailFailureReviewQueue (#4963)", () => {
       sensitive: "sensitive",
       retired: "retired",
       "no-booking": "retired",
+      "booking-deleted": "retired",
     });
   });
 
