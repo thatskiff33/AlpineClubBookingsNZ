@@ -1,3 +1,4 @@
+import { assertEditQuotedFigures } from "@/lib/edit-quoted-figures";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
@@ -1601,9 +1602,12 @@ export async function modifyBookingBatch({
       Boolean(finishedStayCorrection) && changeFeeCents > 0 && !hasCapturedPayment(booking.payment);
     const feeOnPrimaryInvoice = feeAddedToAmountOwed && !hasIssuedPrimaryXeroInvoice(booking);
 
+    // The edit's net before any unpaid-ask offset: one name for the reduction
+    // read, the settlement options and the `INV-MOD-062` comparison below.
+    const netChargeCents = priceDiffCents + changeFeeCents;
     // #3954: the unpaid ask, read ONCE for this edit and handed to both the
     // options and the save, so a capture between two reads cannot split them.
-    const reduction = await readReductionAgainstUnpaidAsk(tx, booking, priceDiffCents + changeFeeCents);
+    const reduction = await readReductionAgainstUnpaidAsk(tx, booking, netChargeCents);
     // #3750: a correction already paid the tier in its fee, so what remains of a
     // reduction comes back in full — the tier applies once, to the removed portion.
     // #3954: what remains once the unpaid ask has taken its share.
@@ -1616,11 +1620,17 @@ export async function modifyBookingBatch({
           })
         : await calculateModificationSettlementOptions({
       booking,
-      netChargeCents: priceDiffCents + changeFeeCents,
+      netChargeCents,
       reduction,
       db: tx,
       todayAtClub: moneyTierDay,
     });
+    // #4924 (`INV-MOD-062`): the save settles only the figures the member was
+    // shown. Compared on the post-lock re-read, after every figure is final and
+    // before anything leaves the transaction: the promo writes above roll back
+    // with the refusal, and nothing durable or external has run yet.
+    // `netChargeCents` is the pre-offset figure the preview reports.
+    assertEditQuotedFigures(input.quotedFigures, { newFinalPriceCents, priceDiffCents, changeFeeCents, netChargeCents });
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
       throw new BookingModificationSettlementMethodRequiredError();
     }
