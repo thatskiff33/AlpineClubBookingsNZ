@@ -1,3 +1,4 @@
+import { adminHref } from "@/lib/admin-hubs";
 import {
   adminBookingBumpedTemplate,
   adminBookingChangeRequestTemplate,
@@ -378,7 +379,7 @@ export async function sendAdminBookingRequestHoldExpiredEmail(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/bookings`;
+  const reviewUrl = `${baseUrl}${adminHref("bookings")}`;
 
   await sendToAdmins({
     subject: `Request booking unpaid at hold expiry: ${data.requesterName}`,
@@ -424,7 +425,7 @@ export async function sendAdminBookingRequestHoldCancelledEmail(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/bookings`;
+  const reviewUrl = `${baseUrl}${adminHref("bookings")}`;
 
   await sendToAdmins({
     subject: `Request booking auto-cancelled — unpaid past check-in: ${data.requesterName}`,
@@ -472,7 +473,7 @@ export async function sendAdminSplitSettlementUnpaidAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/bookings`;
+  const reviewUrl = `${baseUrl}${adminHref("bookings")}`;
 
   await sendToAdmins({
     subject: `Split booking guest portion unpaid — no card on file: ${data.memberName}`,
@@ -526,7 +527,7 @@ export async function sendAdminSplitSettlementCancelledAlert(data: {
   format: ClubFormat,
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-  const reviewUrl = `${baseUrl}/admin/bookings`;
+  const reviewUrl = `${baseUrl}${adminHref("bookings")}`;
 
   await sendToAdmins({
     subject: `Split booking guest portion auto-cancelled — unpaid past check-in: ${data.memberName}`,

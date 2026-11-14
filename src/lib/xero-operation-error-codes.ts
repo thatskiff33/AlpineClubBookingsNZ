@@ -40,3 +40,12 @@ export const XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE = "REFUND_NOTE_AWAITING_RESO
  * and must be retried. Spacing matches a refund note waiting to be resolved.
  */
 export const ADMIN_GRANT_NOTE_AWAITING_RETRY_CODE = "ADMIN_GRANT_NOTE_AWAITING_RETRY";
+
+/**
+ * #4919 (`INV-INT-003`): a group-settlement invoice CREATE whose invoice is
+ * raised and bound but whose email was not sent inside lock(1) — the deadline
+ * passed, Xero rate-limited it or answered with a transient error. The row
+ * waits in PENDING and the outbox scan spaces it out
+ * (`scanSpacesGroupInvoiceEmailsDeferred`) before asking again.
+ */
+export const GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED_CODE = "GROUP_SETTLEMENT_INVOICE_EMAIL_DEFERRED";

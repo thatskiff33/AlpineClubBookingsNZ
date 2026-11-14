@@ -55,6 +55,11 @@ export interface AssignmentSummary {
   nights: number;
   fills: number;
   conflicts: ConflictInfo[];
+  /**
+   * The page could not load the existing assignments (#4961), so `conflicts`
+   * is empty because nothing was compared, not because nothing clashes.
+   */
+  overlapCheckUnavailable?: boolean;
 }
 
 type MemberTab = "staying" | "any";
@@ -451,6 +456,12 @@ export function AssignmentForm({
                   </p>
                 ))}
               </div>
+            )}
+            {summary.overlapCheckUnavailable && (
+              <p className="text-sm text-warning">
+                The overlap check is unavailable until the assignments load. The
+                server still checks for overlaps when you assign.
+              </p>
             )}
             {error && !hasConflict && (
               <div className="rounded-md border border-danger/20 bg-danger-muted px-3 py-2 text-sm text-danger">

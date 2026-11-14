@@ -48,7 +48,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 // Imported after the mocks are registered.
-import FamilyGroupsPage from "@/app/(admin)/admin/family-groups/page";
+import FamilyGroupsPage from "@/app/(admin)/admin/membership/family-groups/page";
 
 const KEA = {
   id: "g1",

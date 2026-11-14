@@ -418,14 +418,23 @@ export async function applyBookingPromotions<A extends PromotionApplicationInput
   };
 }
 
-/** A stored redemption the re-price reads, as the booking includes load it. */
+/**
+ * A stored redemption the re-price reads, as the booking includes load it.
+ * `lodges` is required here although the rules accept it absent: a re-price
+ * handed a code loaded without its lodge rows would read "every lodge" and skip
+ * the restriction silently, so a load that drops them must not compile (#4925).
+ */
 export type RepricedRedemption = PromoRedemptionWithTargets & {
   id: string;
   promoCodeId: string;
   bookingId: string;
   memberId: string | null;
   promoCode: PromoRedemptionWithTargets["promoCode"] &
-    PromoApplicationSubject & { code: string; currentRedemptions: number };
+    PromoApplicationSubject & {
+      code: string;
+      currentRedemptions: number;
+      lodges: { lodgeId: string }[];
+    };
 };
 
 export interface BookingPromotionsReprice {

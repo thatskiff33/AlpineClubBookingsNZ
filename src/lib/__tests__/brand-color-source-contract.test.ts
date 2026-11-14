@@ -215,7 +215,7 @@ const THEMED_NEUTRAL_ALLOWLIST = new Set<string>(
     // `border-gray-400` rules and grey ink are correct for paper output and
     // must not follow the club theme.
     "src/app/(admin)/admin/roster/[date]/print/page.tsx",
-    "src/app/(admin)/admin/induction/[id]/print/page.tsx",
+    "src/app/(admin)/admin/membership/induction/[id]/print/page.tsx",
     // Reports: the six `print:border-slate-300` PRINT-ONLY variants (the
     // file's screen classes are fully tokenised). Print output is paper, not
     // theme.
