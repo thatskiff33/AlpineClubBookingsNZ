@@ -43,6 +43,8 @@ const classifyInputArb = fc.record({
   settlementAmountCents: fc.option(fc.integer({ min: 0, max: 200_000 }), {
     nil: null,
   }),
+  // #3993: whether the reduction went back through Stripe picks the document.
+  refundedThroughStripe: fc.option(fc.boolean(), { nil: undefined }),
 });
 
 describe("classifyXeroBookingEditSettlement properties", () => {
@@ -103,9 +105,19 @@ describe("classifyXeroBookingEditSettlement properties", () => {
               expect(decision.financialAction.refundAmountCents).toBe(refund);
               expect(decision.financialAction.refundAmountCents).toBeGreaterThan(0);
             }
-          } else {
+          } else if (input.refundedThroughStripe === false) {
+            // Not a Stripe refund (a bank hand-back or an invoice correction):
+            // the modification note against the invoice.
             expect(decision.financialAction.type).toBe("modification-credit-note");
             if (decision.financialAction.type === "modification-credit-note") {
+              expect(decision.financialAction.refundAmountCents).toBe(refund);
+              expect(decision.financialAction.refundAmountCents).toBeGreaterThan(0);
+            }
+          } else {
+            // #3993: a card refund is the payment's refund note, which the
+            // card-paid invoice never has to take.
+            expect(decision.financialAction.type).toBe("refund-credit-note");
+            if (decision.financialAction.type === "refund-credit-note") {
               expect(decision.financialAction.refundAmountCents).toBe(refund);
               expect(decision.financialAction.refundAmountCents).toBeGreaterThan(0);
             }
