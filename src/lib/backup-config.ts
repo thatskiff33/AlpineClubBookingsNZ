@@ -21,13 +21,14 @@
  * repointing the destination exfiltrates the entire pg_dump.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { prisma } from "@/lib/prisma";
 import {
   getIntegrationCredentialValue,
   providerNeedsReentry,
 } from "@/lib/integration-credentials";
 
-export const BACKUP_PROVIDER = "backup";
+export const BACKUP_PROVIDER = "backup" satisfies IntegrationCredentialNamespace;
 
 export const DEFAULT_BACKUP_REGION = "ap-southeast-2";
 import {

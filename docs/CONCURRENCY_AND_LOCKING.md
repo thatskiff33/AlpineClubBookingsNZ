@@ -2289,7 +2289,7 @@ mispricing a booking.
   (`login-throttle.test.ts`), not on PostgreSQL.
 
 - **Second-factor member row** — `src/lib/officer-factor-reset.ts`
-  (`lockMemberFactorRow`, #4618, `INV-AUTH-011`): one
+  (`lockMemberFactorRow`, #4618, `INV-AUTH-012`): one
   `SELECT 1 FROM "Member" WHERE "id" = … FOR UPDATE`, taken first and followed
   by a re-read. The officer factor reset (`clearMemberSecondFactors`, from the
   Full Admin route and `pnpm run auth:reset-factors`) takes it, clears every

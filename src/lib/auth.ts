@@ -705,7 +705,7 @@ export const authConfig = {
           });
           // A later refresh has no `user`, so it cannot stamp again. A required
           // officer with an app or a passkey gets no password stamp even when
-          // the club-wide module is off (INV-AUTH-011).
+          // the club-wide module is off (INV-AUTH-012).
           const owesAuthenticatorApp = passwordSignInOwesStrongerFactor({
             moduleRequired: twoFactorRequired,
             officerRequired: officerClaims.officerTwoFactorRequired,

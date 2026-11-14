@@ -39,9 +39,11 @@ import { expect, type APIRequestContext } from "@playwright/test";
 // Known blind spots, none of them reachable from the specs that call this today,
 // all of them now VISIBLE rather than silent (the post-condition below re-lists
 // and fails if anything it can see survives):
-//  - AWAITING_REVIEW: cancellable, but absent from the list route's
-//    VALID_STATUSES, so it cannot be listed here at all. Whole-lodge requests are
-//    the only source and that spec does its own cleanup.
+//  - AWAITING_REVIEW: cancellable, and the list route accepts it since #4923, but
+//    it is not in CLEARABLE_STATUSES, so a leftover in that status is neither
+//    listed nor cleared here. Adding it is an e2e behaviour change that needs the
+//    e2e stack to prove. Whole-lodge requests are the only source and that spec
+//    does its own cleanup.
 //  - COMPLETED: holds a member night and is listable, but nothing can cancel it.
 //    Only the completion sweep produces it, and CRON_ENABLED is off in the E2E
 //    stack.

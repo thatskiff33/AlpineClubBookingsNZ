@@ -9321,3 +9321,16 @@ model MemberMoneyRefundReservationRelease {
   application MemberMoneyApplication? @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   @@index([applicationId])
 }
+
+/// Privacy disclosure is its own domain singleton: branding saves must not
+/// replace its updater attribution. Club-wide; no hosting facts are inferred.
+model PrivacyHostingSettings {
+  id                String   @id @default("default")
+  hostingProvider   String?  @db.VarChar(120)
+  dataLocation      String?  @db.VarChar(120)
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}

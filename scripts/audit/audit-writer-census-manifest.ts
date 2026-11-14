@@ -758,10 +758,14 @@ export const AUDIT_CENSUS_TOTALS = {
   // a pre-#3653 whole-group refund (`card-refund-group-paid-another-way.ts`), and
   // `booking-payment.card-refund.try-card-again` for a joiner's (`card-refund-group-try-again.ts`);
   // all `createAuditLog`, all `payment`. RE-MEASURED with `pnpm run audit:census`.
-  // 541 -> 542 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
+  // 541 -> 542 (#4918): `PRIVACY_HOSTING_SETTINGS_UPDATED`, the hosting disclosure
+  // save in `/api/admin/privacy-hosting`, `tx.auditLog.create` inside the upsert's
+  // transaction, `admin` like the sibling club-identity and page-content writers.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 542 -> 543 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
   // two-factor policy save, `tx.auditLog.create` in the route's transaction like the
   // password-policy writer beside it, `security`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 542,
+  writeSites: 543,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1026,9 +1030,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // 77 -> 75 (#52): the two removed other-lodges writers above.
     // 75 -> 76 (#58): the Other lodges hide of a row the central server does
     // not list, in the same form as the registry's update.
-    // 76 -> 77 (#4618): the officer two-factor policy save, in its route's
+    // 76 -> 77 (#4918): the privacy hosting disclosure save, same form as the
+    // club-identity writer.
+    // 77 -> 78 (#4618): the officer two-factor policy save, in its route's
     // transaction, the same form as the password-policy writer.
-    "auditLog.create": { total: 77, uncategorised: 0 },
+    "auditLog.create": { total: 78, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1365,11 +1371,14 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 112, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    admin: 113, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 110 -> 111 (#4457): `privacy.retention.settings_updated`. A deliberate +1 to the
     // support:view-only population: it records only retention settings, never a member.
     // 111 -> 112 (triyder/AlpineClubBookingsNZ#97): the setup page's link dialog row,
     // `LODGE_CENTRAL_LINK_UPDATED`, the Central lodge card's twin. RE-MEASURED.
+    // 112 -> 113 (#4918): `PRIVACY_HOSTING_SETTINGS_UPDATED`. A deliberate +1 to the
+    // support:view-only population: it records only the club's two public hosting
+    // disclosure values (before and after), never a member's data. RE-MEASURED.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

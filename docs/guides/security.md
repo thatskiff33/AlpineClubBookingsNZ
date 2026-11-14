@@ -31,6 +31,9 @@ button on the other person's account, after the Full Admin has confirmed it is
 them. It emails that person and ends their sessions. A club with one Full
 Admin uses `pnpm run auth:reset-factors -- --member <email>` instead.
 
+Suspected exposure or account compromise? Follow the [privacy-incident
+procedure](privacy-incidents.md) for containment, evidence and notification.
+
 ## When you'd use it
 
 - You want to raise password strength requirements for the whole club.

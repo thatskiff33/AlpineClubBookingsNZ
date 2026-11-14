@@ -5143,7 +5143,7 @@ challenge claims, and one of two counter updates).
 
 ## Officer two-factor (#4618)
 
-Who must hold an authenticator app or a passkey (`INV-AUTH-011`). The
+Who must hold an authenticator app or a passkey (`INV-AUTH-012`). The
 requirement is recomputed on every session refresh. Nothing here runs until
 #4620 sets `OFFICER_SIGN_IN_ENFORCED`.
 

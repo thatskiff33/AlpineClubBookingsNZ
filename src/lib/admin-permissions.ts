@@ -270,6 +270,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/club-contact",
       // DB-first club identity + lodge-details editing (E3 #1929): site chrome.
       "/api/admin/club-identity",
+      "/api/admin/privacy-hosting",
       "/api/admin/site-banners",
       "/api/admin/site-content",
       "/api/admin/image-manager",
