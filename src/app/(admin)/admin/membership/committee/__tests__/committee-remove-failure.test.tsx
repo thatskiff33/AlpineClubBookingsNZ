@@ -73,7 +73,7 @@ const assignment = {
   },
 };
 
-let deleteResponse: () => Response;
+let deleteResponse: () => Response | Promise<Response>;
 let assignmentFetches = 0;
 
 beforeEach(() => {
@@ -130,6 +130,35 @@ describe("committee page: a refused remove is visible (#4976)", () => {
     await clickRemove();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Failed to remove assignment");
+  });
+
+  it("shows the fallback, not the browser's wording, when the request never arrives", async () => {
+    deleteResponse = () => {
+      throw new TypeError("Failed to fetch");
+    };
+    render(<CommitteePage />);
+    await clickRemove();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Failed to remove assignment");
+    expect(alert).not.toHaveTextContent(/fetch/i);
+  });
+
+  it("drops the earlier refusal while the officer tries again", async () => {
+    // A retry that hits the same refusal must reach the officer as a new
+    // message, not as the old text left standing where it was.
+    deleteResponse = () => Response.json({ error: "Assignment not found" }, { status: 404 });
+    render(<CommitteePage />);
+    await clickRemove();
+    await screen.findByRole("alert");
+
+    let answer: (response: Response) => void = () => {};
+    deleteResponse = () => new Promise<Response>((resolve) => (answer = resolve));
+    await clickRemove();
+
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    answer(Response.json({ error: "Assignment not found" }, { status: 404 }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Assignment not found");
   });
 
   it("keeps the forbidden-save wording for a 403", async () => {

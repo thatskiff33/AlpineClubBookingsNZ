@@ -1177,9 +1177,12 @@ value's result to equal the derivation's alone; extend their shared scenarios
 modified handlers, #4976; older handlers have not all been swept). A delete,
 remove or toggle is a mutation like a save: on any non-2xx reply, or a request
 that never arrives, the handler shows the server's sentence or a fallback in a
-`role="alert"` region the officer can see at that moment — not inside a closed
-form — and reads the body only through `src/lib/api-error-message.ts`, so an
-HTML error page never surfaces as a JSON parse error (`INV-SSOT`).
+`role="alert"` region, and reads the body only through
+`src/lib/api-error-message.ts`, so an HTML error page never surfaces as a JSON
+parse error (`INV-SSOT`). Put the region where the officer is looking, never
+inside a closed form, and prefer `FocusedActionError` so it takes focus and
+scrolls into view. A plain banner above a long list can be off screen. The
+Seasons page still uses one, which is a known gap and not a model to copy.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).

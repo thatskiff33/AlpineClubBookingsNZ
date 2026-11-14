@@ -626,22 +626,27 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     if (!lodgeScopeReady) return;
     const requestedScope = scopedLodgeId;
     if (!confirm("Are you sure you want to delete this season?")) return;
+    const fallback = "Failed to delete";
     setError("");
     try {
       const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" });
       if (!res.ok) {
-        throw new Error(await apiErrorMessageFromResponse(res, "Failed to delete"));
+        raiseError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
       if (activeScopeRef.current !== requestedScope) return;
       fetchSeasons();
-    } catch (err) {
-      raiseError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      // The request never arrived. The browser's own wording ("Failed to fetch",
+      // "Load failed") says nothing useful to an officer, so show the screen's sentence.
+      raiseError(fallback);
     }
   }
 
   async function handleToggleActive(season: Season) {
     if (!lodgeScopeReady) return;
     const requestedScope = scopedLodgeId;
+    const fallback = "Failed to update";
     setError("");
     try {
       const res = await fetch(`/api/admin/seasons/${season.id}`, {
@@ -650,12 +655,14 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
         body: JSON.stringify({ active: !season.active }),
       });
       if (!res.ok) {
-        throw new Error(await apiErrorMessageFromResponse(res, "Failed to update"));
+        raiseError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
       if (activeScopeRef.current !== requestedScope) return;
       fetchSeasons();
-    } catch (err) {
-      raiseError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      // The request never arrived: see handleDelete.
+      raiseError(fallback);
     }
   }
 

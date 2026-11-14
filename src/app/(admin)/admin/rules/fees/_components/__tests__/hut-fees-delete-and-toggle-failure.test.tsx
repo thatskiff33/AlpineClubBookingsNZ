@@ -6,7 +6,8 @@
 // failure with a bare `setError`, so pressing Delete again on the same refusal
 // left the unchanged message where it was, possibly off-screen. Both now read
 // the body through the shared error-message helper and report through
-// `raiseError`, the section's re-announcing path that Save already used.
+// `raiseError`, the section's re-announcing path that Save already used. A
+// request that never arrives shows the section's own sentence, not the browser's.
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
@@ -142,6 +143,23 @@ describe("Hut Fees: a refused delete or toggle is readable (#4976)", () => {
     await waitFor(() => expect(errorBox()).toHaveTextContent("Failed to update"));
     expect(errorBox()).not.toHaveTextContent(/JSON/);
   });
+
+  it.each([
+    ["delete", "Delete Winter 2026", "Failed to delete"],
+    ["toggle", "Deactivate Winter 2026", "Failed to update"],
+  ])(
+    "shows the fallback, not the browser's wording, when the %s request never arrives",
+    async (_action, button, fallback) => {
+      mutationResponse = () => {
+        throw new TypeError("Failed to fetch");
+      };
+      renderSection();
+      fireEvent.click(await screen.findByRole("button", { name: button }));
+
+      await waitFor(() => expect(errorBox()).toHaveTextContent(fallback));
+      expect(errorBox()).not.toHaveTextContent(/fetch/i);
+    },
+  );
 
   it("takes the officer back to the same refusal when Delete is pressed again", async () => {
     mutationResponse = () => Response.json({ error: "Season not found" }, { status: 404 });

@@ -227,22 +227,27 @@ export default function SeasonsPage() {
     if (!lodgeScopeReady) return
     const requestedScope = scopedLodgeId
     if (!confirm("Are you sure you want to delete this season?")) return
+    const fallback = "Failed to delete"
     setError("")
     try {
       const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" })
       if (!res.ok) {
-        throw new Error(await apiErrorMessageFromResponse(res, "Failed to delete"))
+        setError(await apiErrorMessageFromResponse(res, fallback))
+        return
       }
       if (activeScopeRef.current !== requestedScope) return
       fetchSeasons()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+    } catch {
+      // The request never arrived. The browser's own wording ("Failed to fetch",
+      // "Load failed") says nothing useful to an officer, so show the screen's sentence.
+      setError(fallback)
     }
   }
 
   async function handleToggleActive(season: Season) {
     if (!lodgeScopeReady) return
     const requestedScope = scopedLodgeId
+    const fallback = "Failed to update"
     setError("")
     try {
       const res = await fetch(`/api/admin/seasons/${season.id}`, {
@@ -251,12 +256,14 @@ export default function SeasonsPage() {
         body: JSON.stringify({ active: !season.active }),
       })
       if (!res.ok) {
-        throw new Error(await apiErrorMessageFromResponse(res, "Failed to update"))
+        setError(await apiErrorMessageFromResponse(res, fallback))
+        return
       }
       if (activeScopeRef.current !== requestedScope) return
       fetchSeasons()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+    } catch {
+      // The request never arrived: see handleDelete.
+      setError(fallback)
     }
   }
 

@@ -3,7 +3,8 @@
 // #4976: a refused season delete or active toggle used to parse the reply as
 // JSON unguarded, so an HTML error page from the proxy in front of the app
 // reached the officer as "Unexpected token < in JSON". The refusal is now read
-// through the shared error-message helper.
+// through the shared error-message helper, and a request that never arrives
+// shows the screen's own sentence rather than the browser's.
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
@@ -131,6 +132,24 @@ describe("Seasons page: a refused delete or toggle is readable (#4976)", () => {
     expect(alert).toHaveTextContent("Failed to update");
     expect(alert).not.toHaveTextContent(/JSON/);
   });
+
+  it.each([
+    ["delete", "Delete Winter 2026", "Failed to delete"],
+    ["toggle", "Deactivate Winter 2026", "Failed to update"],
+  ])(
+    "shows the fallback, not the browser's wording, when the %s request never arrives",
+    async (_action, button, fallback) => {
+      mutationResponse = () => {
+        throw new TypeError("Failed to fetch");
+      };
+      renderPage();
+      await click(button);
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(fallback);
+      expect(alert).not.toHaveTextContent(/fetch/i);
+    },
+  );
 
   it("drops the earlier refusal when the officer tries again", async () => {
     // A retry that hits the same refusal must reach the officer as a new

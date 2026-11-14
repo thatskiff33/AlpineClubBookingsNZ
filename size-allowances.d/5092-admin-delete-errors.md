@@ -1,7 +1,7 @@
-# File-size allowances for #4976 (admin delete errors)
+# File-size allowances for #5092 (admin delete errors, issue #4976)
 
-Two route pages gain the failure branch their delete or remove handler never
-had. Each branch reads the refusal through the shared
+Four admin pages gain the failure branch their delete, remove or toggle
+handler never had. Each branch reads the refusal through the shared
 `src/lib/api-error-message.ts` helper and shows it in the page's own alert, so
 it has to sit in the handler it completes.
 
@@ -34,3 +34,27 @@ reason: the list-level error state, its alert above the groups table and the
   main). The handler, its state and the alert are one unit with the list they
   describe; lifting the component apart is a refactor of its own, not part of
   this fix.
+
+file: src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx
+lines: 1278
+reason: the season delete and toggle handlers each gain a named fallback
+  sentence, an early return on a refusal, and a catch that shows that sentence
+  when the request never arrives (1271 lines on main). The catch has to sit in
+  the handler it completes.
+
+function: src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx#HutFeesSection
+lines: 1132
+reason: the season delete and toggle handlers sit inside `HutFeesSection`, which
+  was already over its function limit before this change (1126 lines on
+  main). They share its lodge-scope guard and its `raiseError` path, so they
+  stay beside it; lifting the component apart is a refactor of its own, not
+  part of this fix.
+
+function: src/app/(admin)/admin/rules/seasons/page.tsx#SeasonsPage
+lines: 414
+reason: the season delete and toggle handlers each gain a named fallback
+  sentence, an early return on a refusal, and a catch that shows that sentence
+  when the request never arrives. They sit inside `SeasonsPage`, which was
+  already over its function limit before this change (407 lines on main), and
+  share its lodge-scope guard and error state; lifting the component apart is
+  a refactor of its own, not part of this fix.
