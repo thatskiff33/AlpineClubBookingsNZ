@@ -364,7 +364,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
-| `INV-PAY-150` | Refund doors leave a live superseded capture to its own refund |
+| `INV-PAY-150` | Cancels, reviews, hand closes leave superseded captures to their refund |
 | `INV-PAY-151` | Paid another way reverses a covered failed card refund |
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-153` | Stuck States settles dead group organiser card refunds |

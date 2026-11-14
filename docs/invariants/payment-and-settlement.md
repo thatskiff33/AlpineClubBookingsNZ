@@ -4106,36 +4106,39 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
 
 ## INV-PAY-150
 
-**Related: `INV-PAY-145`** (plan-less superseded sizing), **`INV-PAY-117`**
-(open hand-backs), **`INV-PAY-131`** (the cancel preview).
+**Related: `INV-PAY-145`** (plan-less sizing), **`INV-PAY-117`**
+(open hand-backs), **`INV-PAY-131`** (cancel preview).
 
 - **Refund doors leave a live superseded capture to its own refund**
-  (#4866, #4872). A superseded refund with no stored plan sizes itself on its
-  charge's ledger (#4699), so another door's slice there made it close short, unalerted.
-- **What the machinery owns, per charge** (`supersededCaptureHeldBack`), by
+  (#4866, #4872, #4879). A plan-less superseded refund sizes itself on its charge's
+  ledger (#4699), so another door's slice there left it short, unalerted.
+- **Owned per charge** (`supersededCaptureHeldBack`), by
   `readSupersededCaptureOwnership`: what a `REFUND_SUPERSEDED_PAYMENT` not yet
   `SUCCEEDED` would send (`reArmWouldSendCents`), held or dead included; while a
   `CANCEL_PAYMENT_INTENT` is in flight, all its captured charge; and what open
-  rows owe back again after Stripe failed one later. Never more than the charge holds.
-- **Read under the Payment row**, with the plan or allocation, and off any paid
-  figure, with the open hand-backs. No card plan, credit, mirror fold or hand-back
+  rows owe again after Stripe later failed one. Capped at the charge.
+- **Read under the Payment row** with the plan or allocation, and off any paid
+  figure with the open hand-backs. No card plan, credit, mirror fold or hand-back
   takes it. An empty reading changes no slice, amount or Stripe key. A stored plan
   is never rewritten. A missing plan the hold-back or a bank charge would shrink,
   against recorded refunds alone, keeps the debt.
-- **Doors:** cancellation and its preview (#4866); an edit's own-card plan;
-  a refund request, its cap and the screens' advisory ceilings; a capacity race's card plan (the amount
-  owed back stays the capture; a short plan still raises its task); a booking-change
-  credit; a plan-less recovery row's first plan; a manual hand-back, including a
-  card-shortfall check after its preferred charges (#4872). An edit review's card
-  plan, a "Paid another way" close and a group cancellation are #4879.
+- **Doors:** cancellation and its preview; an edit's own-card plan and an edit
+  review's; a refund request, its cap and advisory ceilings; a
+  capacity race's card plan (owed back stays the capture; a short plan raises its
+  task); a booking-change credit; a plan-less recovery row's first plan; a manual
+  hand-back and its card-shortfall check; "Paid another way" on another dead card
+  refund (closing the superseded refund itself uses its charge).
+- **Group cancellation cannot reach one:** it writes bank receipts on an
+  organiser-settled child's mirror; the webhook refunds its late capture.
 - **The race.** The hand-off flips the charge captured under the Payment row,
-  then writes the refund row before its cancel row closes, so a claim queued
-  behind it sees one of them live. No new lock (`INV-LOCK-001` to `INV-LOCK-003`).
+  then writes the refund row before closing its cancel row, so a queued claim
+  sees one live. No new lock (`INV-LOCK-001` to `INV-LOCK-003`).
 - Proven by `superseded-capture-hold-back.test.ts`,
   `cancel-card-refund-shortfall-preview.test.ts`,
   `clipped-mirror-open-hand-back.test.ts`,
-  `superseded-refund-cancel-hold-back.realdb.test.ts` and
-  `superseded-refund-4872-hold-back.realdb.test.ts`.
+  `superseded-refund-cancel-hold-back.realdb.test.ts`,
+  `superseded-refund-4872-hold-back.realdb.test.ts` and
+  `superseded-refund-other-doors-hold-back.realdb.test.ts`.
 
 ## INV-PAY-151
 

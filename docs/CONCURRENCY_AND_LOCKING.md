@@ -7063,6 +7063,11 @@ Stripe call:
   after provider preflight (`processBookingModificationRefundOperation`). A
   manual hand-back reads the hold-back after its claim and after any credit
   give-back, so a member-ledger lock still comes before the Payment row.
+  Since #4879 an edit review's card arm (`chooseEditReviewSettlementRoute`)
+  takes the Payment row (`lockPaymentForRefundedTotal`) after its `lock(1)` and
+  booking row and reads the hold-back before it plans; a "Paid another way"
+  close reads it under the Payment row it already holds, after its claim. No
+  new key and no new lock.
   After success or throw the edit queues the whole read plan if any slice is unmade:
   made slices marked, refusals moved, unanswered slices on their original key.
   The lockless `charge.refunded` recorder may update the ledger before recovery;
