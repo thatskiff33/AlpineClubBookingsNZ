@@ -1048,3 +1048,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-008` | Password or authenticator app, five minutes, client cannot stamp |
 | `INV-AUTH-009` | A passkey enrols; its challenge lasts two minutes |
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
+| `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
