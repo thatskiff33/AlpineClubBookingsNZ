@@ -913,6 +913,15 @@ Use these ownership boundaries when adding new code:
 | Operations | `scripts/`, `deploy/`, Compose files | Deployment helpers should be reusable by forks through environment overrides. |
 | Function length | every production file | A top-level function, const-assigned function or class member over 300 lines may not appear or grow (`pnpm run quality:budget`, #4927; object-literal methods are not measured); split a long function into typed top-level functions that read only what they are given. See docs/MAINTENANCE.md → "Function-length ratchet". |
 
+### Paid-booking import engine
+
+`src/lib/booking-import/` separates pure CSV parsing, read-only planning and
+one-booking-per-transaction confirmation. It composes the existing booking
+rules and manual settlement body rather than calling the ordinary booking
+create service. Child A of #5005 is intentionally unreachable from routes and
+screens. Its [engine contract](design/booking-import.md) describes the preview,
+reconciliation totals, batch identity and later children.
+
 ### Bed-allocation preference resolution
 
 `src/lib/bed-allocation-settings.ts` is the closed-vocabulary boundary and the

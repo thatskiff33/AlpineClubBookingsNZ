@@ -49,6 +49,8 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   BookingGuest: "personal",
   BookingGuestNight: "personal",
   BookingGuestNightAdjustment: "personal",
+  BookingImportBatch: "personal",
+  BookingImportRow: "personal",
   GroupBooking: "personal",
   GroupBookingJoin: "personal",
   GroupBookingSettlement: "personal",

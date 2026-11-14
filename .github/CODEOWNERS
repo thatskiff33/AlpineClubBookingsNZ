@@ -58,6 +58,7 @@
 /src/lib/policies/pricing.ts                   @thatskiff33
 /src/lib/saved-card-charge-*.ts                @thatskiff33
 /src/lib/booking-create.ts                     @thatskiff33
+/src/lib/booking-import/                       @thatskiff33
 /src/lib/booking-delete.ts                     @thatskiff33
 /src/lib/booking-guest-removal-service.ts      @thatskiff33
 /src/lib/cron-confirm-pending.ts               @thatskiff33

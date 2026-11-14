@@ -525,7 +525,7 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   "src/lib/member-guest-consent-service.ts:1355",
   "src/lib/payment-recovery.ts:2768",
   "src/lib/payment-recovery.ts:2820",
-  "src/lib/xero-admin-health.ts:423",
+  "src/lib/xero-admin-health.ts:427",
 ];
 
 /** Measured, not counted by hand. Re-measure by running this test. */

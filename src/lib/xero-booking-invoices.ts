@@ -7,6 +7,7 @@
  * non-zero amount.
  */
 
+import { bookingHasExternalSettlement } from "@/lib/booking-external-settlement";
 import {
   Invoice,
   Invoices,
@@ -373,6 +374,13 @@ async function enrichClaimedOperationMoneyReconciliation(
   });
 }
 
+/** Why an invoice operation on a booking settled outside the app created nothing (#2262, #5005). */
+function externalSettlementSkipReason(payment: { manuallyMarkedPaidAt: Date | null }): string {
+  return payment.manuallyMarkedPaidAt === null
+    ? "Booking was imported as settled outside the app — no Xero invoice is expected, so none was created and nothing was emailed (#5005)."
+    : "Booking was manually marked paid (cash / off-Xero) after this invoice operation was queued — no Xero invoice is expected, so none was created and nothing was emailed (#2262).";
+}
+
 export async function createXeroInvoiceForBooking(
   bookingId: string,
   options?: CreateXeroBookingInvoiceOptions
@@ -454,9 +462,8 @@ export async function createXeroInvoiceForBooking(
   // is sent, the ids are logged at warn, and the sync operation is closed with
   // a NON-SUCCEEDED terminal status carrying a populated reason, so it is
   // visible to an operator and never silently replayed.
-  if (booking.payment.manuallyMarkedPaidAt) {
-    const skipReason =
-      "Booking was manually marked paid (cash / off-Xero) after this invoice operation was queued — no Xero invoice is expected, so none was created and nothing was emailed (#2262).";
+  if (bookingHasExternalSettlement(booking)) {
+    const skipReason = externalSettlementSkipReason(booking.payment);
     logger.warn(
       {
         bookingId,

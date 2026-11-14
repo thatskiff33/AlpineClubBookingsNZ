@@ -157,6 +157,16 @@ hold fields via the shared `RELEASE_ADMIN_CAPACITY_HOLD_UPDATE` fragment, so
 no orphaned hold records survive a cancellation. Both hold and unhold write
 audit rows (`booking.admin_capacity_hold.*`).
 
+## Imported paid future bookings (#5005)
+
+Imported bookings hold beds through the ordinary PAID population above. The
+[import engine](design/booking-import.md) checks proposals in file order through
+`checkCapacityForGuestRanges`, including earlier accepted guests in the proposal
+so custodian occupancy is counted by the same engine. Refused bookings retain
+their sold beds in the preview's refused column but hold none in the app.
+`INV-CAP-040` requires a second check under the lodge capacity lock and permits
+no overbook override. Night rows use the existing EVEN_SPLIT builder.
+
 ## How occupancy is counted: one calculation, five terms (#2681, #3413)
 
 *Which* bookings consume capacity (above) is one question. *How many beds are

@@ -413,6 +413,12 @@ modules identify today's doors; their future writes converge on section 3's API.
 | R25 | Ask raised/replaced/carried/withdrawn; intent setup/cancel; reminder; invoice delivery/retry; source-only name/date correction | No new money legs. Instruments name obligations and collectible slices; withdrawing an instrument leaves debt. A real price change is R02. Preserve #3340's collection scope: no automatic catch-up billing of historical under-collection, no card ask for a bank invoice already collecting it. |
 | R26 | Historical import, back-post and correction | Link existing booking lines, credit lots, subscription snapshots, provider receipts and refund facts once. Reconstruct exact event pairs where evidence allows; otherwise an approved, explicitly labelled opening event uses Opening control. Unknown cents/attribution remain a blocking finding, never zero or an invented receipt. Corrections reverse/re-post with provenance; historical export coverage is adopted, not resent. |
 
+Paid future bookings carried over by #5005 post R01 and R08 through the manual
+cash settlement, with an import row identifying their adopted history
+(`INV-PAY-155`). They are never rendered to Xero by R26 back-posting or M13's
+future document renderer: the club already received the money elsewhere.
+No Opening-control posting is invented here; M9 owns historical adoption.
+
 The application store enforces conservation in the same locked transaction:
 net applications cannot exceed a source receipt, credit lot, refund obligation
 or source capture's refundable cash, and every application refers to the

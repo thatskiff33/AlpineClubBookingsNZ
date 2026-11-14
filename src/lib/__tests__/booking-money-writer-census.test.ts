@@ -57,6 +57,11 @@ const REVIEWED_WRITERS = [
   "src/lib/booking-guest-acceptance-reprice.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|2",
   "src/lib/booking-guest-removal-service.ts|booking|update|discountCents,finalPriceCents,promoAdjustmentCents,totalPriceCents|1",
   "src/lib/booking-guest-removal-service.ts|bookingGuest|delete,update|priceCents|2",
+  // #5005: an imported booking is created at the imported amount, its guests and
+  // nights even-split from it (`INV-PAY-155`); one create, then the settle.
+  "src/lib/booking-import/write.ts|booking|create|finalPriceCents,totalPriceCents|1",
+  "src/lib/booking-import/write.ts|bookingGuest|create||1",
+  "src/lib/booking-import/write.ts|bookingGuestNight|opaquePayload||1",
   "src/lib/booking-modify-plan.ts|bookingGuest|create,delete,update|priceCents|5",
   "src/lib/booking-modify-plan.ts|bookingGuestNight|deleteMany,opaquePayload||2",
   "src/lib/booking-no-emails-service.ts|booking|opaquePayload||1",

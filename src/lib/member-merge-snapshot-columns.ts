@@ -232,6 +232,11 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "AiAssistantUsageEvent.memberId",
   "AnalyticsSettings.updatedByMemberId",
   "BedAllocationSettings.updatedByMemberId",
+  // #5005: the officer who confirmed or reversed a paid-booking import. Bare
+  // FK-less columns, as the audit log keeps its actor, so the batch survives
+  // the officer leaving; kept as immutable history on merge.
+  "BookingImportBatch.confirmedByMemberId",
+  "BookingImportBatch.reversedByMemberId",
   "BookingMessageOverride.updatedByMemberId",
   "BookingRequest.reviewedByMemberId",
   "BookingRequestQuote.createdByMemberId",

@@ -218,7 +218,7 @@ describe("getMissingXeroInvoiceBookings reads the #3001 evidence rule (#3467)", 
     expect(result.count).toBe(1);
   });
 
-  it("keeps the B5 candidate filter: PAID, with a payment, not manually settled", async () => {
+  it("keeps the B5 candidate filter: PAID, with a payment, not manually settled, not an imported free stay", async () => {
     mocks.bookingFindMany.mockResolvedValue([]);
 
     await getMissingXeroInvoiceBookings();
@@ -226,7 +226,10 @@ describe("getMissingXeroInvoiceBookings reads the #3001 evidence rule (#3467)", 
     expect(mocks.bookingFindMany.mock.calls[0][0].where).toEqual({
       status: "PAID",
       payment: { isNot: null },
-      NOT: { payment: { manuallyMarkedPaidAt: { not: null } } },
+      NOT: [
+        { payment: { manuallyMarkedPaidAt: { not: null } } },
+        { importRow: { is: { amountCents: 0 } } },
+      ],
     });
     expect(mocks.linkFindMany).not.toHaveBeenCalled();
   });

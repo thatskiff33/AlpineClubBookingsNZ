@@ -2053,6 +2053,7 @@ model Booking {
   linkedBookings              Booking[]                       @relation("BookingGroup")
   guests                      BookingGuest[]
   payment                     Payment?
+  importRow                   BookingImportRow?
   choreAssignments            ChoreAssignment[]
   // #3826 (epic #3813, C1): one redemption PER PROMO CODE, not per booking.
   // Read it only through `bookingPromoRedemptions()` (booking-promo-redemptions.ts).
@@ -2129,6 +2130,84 @@ enum BookingEventType {
   CANCELLED
   REFUNDED
   CREDITED
+}
+
+// #5005 (child A): a club moving in imports the fully paid future bookings it
+// already sold, one lodge per batch (`INV-PAY-155`, `INV-CAP-040`). The batch
+// is found again by `batchKey`, a hash of the lodge and the file's normalised
+// rows, so the same content resumes the same batch rather than creating its
+// bookings twice. The uploaded file itself is never stored: a row keeps the
+// old system's Booking Ref, its first line number, its totals and its outcome,
+// and no name or email (`INV-PRIV-011`). Actor ids are plain columns, as the
+// audit log keeps them, so no `Member` relation needs a merge rule.
+model BookingImportBatch {
+  id                  String                   @id @default(cuid())
+  lodgeId             String
+  batchKey            String                   @unique
+  status              BookingImportBatchStatus @default(OPEN)
+  // The digest of the preview the confirming officer saw.
+  digest              String
+  // File totals: every booking in the file, imported or refused.
+  bookingCount        Int
+  guestCount          Int
+  guestNightCount     Int
+  amountCents         Int
+  confirmedByMemberId String
+  confirmedAt         DateTime                 @default(now())
+  completedAt         DateTime?
+  // Reversal (#5005 child B) fills these.
+  reversedByMemberId  String?
+  reversedAt          DateTime?
+
+  lodge Lodge              @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  rows  BookingImportRow[]
+
+  @@index([lodgeId, confirmedAt])
+}
+
+enum BookingImportBatchStatus {
+  OPEN
+  COMPLETED
+  REVERSED
+}
+
+// One booking of an import batch (all the file rows sharing one Booking Ref).
+// A Booking Ref imports once per lodge across every batch: the raw-SQL partial
+// unique index `BookingImportRow_imported_lodgeId_bookingRef_unique` covers
+// IMPORTED rows only, so a refused or reversed row frees the ref for a
+// corrected file. Listed in `prisma/partial-unique-indexes.tsv`.
+model BookingImportRow {
+  id              String                 @id @default(cuid())
+  batchId         String
+  // Copied from the batch so the partial unique index can name it.
+  lodgeId         String
+  bookingRef      String
+  firstLineNumber Int
+  status          BookingImportRowStatus @default(PENDING)
+  // Plain-language reason, never a name or email (`INV-PRIV-011`), and the
+  // planner's code for it (`BookingImportRefusalCode` in
+  // src/lib/booking-import/plan.ts), which the refused totals group by.
+  refusalReason   String?
+  refusalCode     String?
+  amountCents     Int
+  guestCount      Int
+  guestNightCount Int
+  bookingId       String?                @unique
+  createdAt       DateTime               @default(now())
+  decidedAt       DateTime?
+
+  batch   BookingImportBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  booking Booking?           @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, bookingRef])
+  @@index([lodgeId, bookingRef])
+}
+
+enum BookingImportRowStatus {
+  PENDING
+  IMPORTED
+  REFUSED
+  REVERSED
 }
 
 model BookingEvent {
@@ -5502,6 +5581,7 @@ model Lodge {
   rooms                    LodgeRoom[]
   lockers                  Locker[]
   seasons                  Season[]
+  bookingImportBatches     BookingImportBatch[]
   bookings                 Booking[]
   bookingLedgerLines       BookingLedgerLine[]
   choreTemplates           ChoreTemplate[]

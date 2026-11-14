@@ -260,6 +260,9 @@ export const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
       email: true,
     },
   },
+  // #5005: an imported free stay is settled outside the app with no manual
+  // provenance; `bookingHasExternalSettlement` reads this.
+  importRow: { select: { amountCents: true } },
   payment: {
     select: {
       id: true,
