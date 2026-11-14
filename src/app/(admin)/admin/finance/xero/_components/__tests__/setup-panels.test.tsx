@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import * as React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // #2108: render/mode smoke test plus an interaction test that drives the panel
@@ -269,5 +269,69 @@ describe("SetupPanels — Repair Canonical Links (#4161)", () => {
 
     await waitFor(() => expect(onMessage).toHaveBeenCalledWith("Backfilled 0 missing canonical Xero links."));
     expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+describe("SetupPanels — contact-group auto-load runs once per opening (ALP-591)", () => {
+  function panel(open: boolean, onRefreshDiagnostics = vi.fn()) {
+    return (
+      <SetupPanels
+        connected
+        open={open}
+        onToggle={vi.fn()}
+        clubName="Test Club"
+        bookingsName="Bookings"
+        syncing={null}
+        setSyncing={vi.fn()}
+        setSyncResult={vi.fn()}
+        onMessage={vi.fn()}
+        onRefreshOperations={vi.fn()}
+        onRefreshDiagnostics={onRefreshDiagnostics}
+      />
+    );
+  }
+
+  // Let any effect re-run that a settled load would trigger get its chance.
+  async function settle() {
+    for (let i = 0; i < 5; i += 1) await act(async () => {});
+  }
+
+  it("a failed load is requested once and stays shown until the admin retries", async () => {
+    mockLoadGroups.mockRejectedValue(new Error("Xero is unreachable"));
+    render(panel(true));
+
+    await screen.findByText("Xero is unreachable");
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load Contact Groups" }));
+    await waitFor(() => expect(mockLoadGroups).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Xero is unreachable")).toBeTruthy();
+  });
+
+  it("an empty result is requested once, and diagnostics refresh once", async () => {
+    const onRefreshDiagnostics = vi.fn();
+    mockLoadGroups.mockResolvedValue({ groups: [] });
+    render(panel(true, onRefreshDiagnostics));
+
+    await waitFor(() => expect(onRefreshDiagnostics).toHaveBeenCalled());
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(1);
+    expect(onRefreshDiagnostics).toHaveBeenCalledTimes(1);
+  });
+
+  it("closing and reopening the section loads again", async () => {
+    mockLoadGroups.mockResolvedValue({ groups: [] });
+    const { rerender } = render(panel(true));
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(1);
+
+    rerender(panel(false));
+    await settle();
+    rerender(panel(true));
+    await settle();
+    expect(mockLoadGroups).toHaveBeenCalledTimes(2);
   });
 });

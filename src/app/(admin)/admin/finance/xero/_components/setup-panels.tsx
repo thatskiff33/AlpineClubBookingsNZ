@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -111,8 +111,19 @@ export function SetupPanels({
     [onRefreshDiagnostics]
   )
 
+  // Auto-load the groups once per opening of the section. A failed or empty
+  // load stays on screen until the admin presses a load/refresh button; without
+  // this latch the effect re-fired every time `loadingGroups` settled while the
+  // list was still empty, requesting the groups in a loop (ALP-591).
+  const autoLoadAttemptedRef = useRef(false)
   useEffect(() => {
-    if (connected && open && contactGroups.length === 0 && !loadingGroups && !refreshingGroups) void loadContactGroups()
+    if (!connected || !open) {
+      autoLoadAttemptedRef.current = false
+      return
+    }
+    if (autoLoadAttemptedRef.current || contactGroups.length > 0 || loadingGroups || refreshingGroups) return
+    autoLoadAttemptedRef.current = true
+    void loadContactGroups()
   }, [connected, contactGroups.length, loadContactGroups, loadingGroups, open, refreshingGroups])
 
   // #2108: load active membership types (for the type selects) once the section
