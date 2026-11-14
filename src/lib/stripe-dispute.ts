@@ -380,14 +380,15 @@ async function bookingOwnerName(bookingId: string | null): Promise<string> {
     where: { id: bookingId },
     select: {
       memberId: true,
-      organisationId: true,
       member: { select: { firstName: true, lastName: true } },
       organisation: { select: { name: true } },
     },
   });
   if (!booking) return NONE;
   // `INV-SSOT-005`: the accessor answers who owns it, member or organisation.
-  // A member named but unreadable comes back empty; the alert still goes.
+  // Only the owner projection is selected, never the organisation link
+  // (#3367): this decides nothing about a school. A member named but
+  // unreadable comes back empty; the alert still goes.
   const owner = bookingOwner(booking).member as { firstName: string; lastName: string } | null;
   if (!owner) return NONE;
   return `${owner.firstName} ${owner.lastName}`.trim() || NONE;

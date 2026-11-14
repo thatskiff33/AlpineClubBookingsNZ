@@ -401,6 +401,18 @@ function SummaryCard({
   );
 }
 
+/** #4911 (`INV-PAY-154`): each cardholder dispute, by Stripe's dispute id. */
+function DisputeChips({ disputes }: { disputes: PaymentRow["disputes"] }) {
+  const format = useClubFormat();
+  return (disputes ?? []).map((dispute) => (
+    <span key={dispute.stripeDisputeId} title={`Stripe dispute ${dispute.stripeDisputeId} for ${formatCents(dispute.amountCents, format)}`}>
+      <MiniChip tone={disputeHoldsCapture(dispute.status) ? "warning" : "neutral"} icon={AlertTriangle}>
+        Disputed by cardholder - {STRIPE_DISPUTE_STATUS_LABEL[dispute.status]}
+      </MiniChip>
+    </span>
+  ));
+}
+
 export default function PaymentsPage() {
   const format = useClubFormat();
   const router = useRouter();
@@ -1285,14 +1297,7 @@ export default function PaymentsPage() {
                       {p.source === "STRIPE" && (
                         <MiniChip tone="info" icon={CreditCard}>Stripe</MiniChip>
                       )}
-                      {/* #4911 (`INV-PAY-154`): a cardholder dispute, by Stripe's dispute id. */}
-                      {(p.disputes ?? []).map((dispute) => (
-                        <span key={dispute.stripeDisputeId} title={`Stripe dispute ${dispute.stripeDisputeId} for ${formatCents(dispute.amountCents, format)}`}>
-                          <MiniChip tone={disputeHoldsCapture(dispute.status) ? "warning" : "neutral"} icon={AlertTriangle}>
-                            Disputed by cardholder - {STRIPE_DISPUTE_STATUS_LABEL[dispute.status]}
-                          </MiniChip>
-                        </span>
-                      ))}
+                      <DisputeChips disputes={p.disputes} />
                       {/* #2378 D11 — the payment's own id, beside the status the
                           operator is asking about ("why is this still pending?").
                           Renders nothing unless the widget says Diagnostics is
