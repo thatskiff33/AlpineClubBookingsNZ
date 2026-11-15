@@ -69,9 +69,9 @@ describe("PublicBookingRequestsPanel opening filter", () => {
     );
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/admin/booking-requests?status=ACCEPTED"),
+      expect(fetchMock).toHaveBeenCalledWith("/api/admin/booking-requests?status=ACCEPTED&page=1"),
     );
-    expect(fetchMock).not.toHaveBeenCalledWith("/api/admin/booking-requests?status=QUEUE");
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/admin/booking-requests?status=QUEUE&page=1");
     expect(isActive("Accepted")).toBe(true);
     expect(isActive("Queue")).toBe(false);
     // The panel's own URL sync keeps the filter in the address bar.
@@ -85,7 +85,7 @@ describe("PublicBookingRequestsPanel opening filter", () => {
     const fetchMock = renderPanelOpenedWith("?tab=public");
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/admin/booking-requests?status=QUEUE"),
+      expect(fetchMock).toHaveBeenCalledWith("/api/admin/booking-requests?status=QUEUE&page=1"),
     );
     expect(isActive("Queue")).toBe(true);
     expect(isActive("Accepted")).toBe(false);
@@ -101,7 +101,7 @@ describe("PublicBookingRequestsPanel opening filter", () => {
     const fetchMock = renderPanelOpenedWith("?tab=public&filter=ACCEPTED");
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/admin/booking-requests?status=QUEUE"),
+      expect(fetchMock).toHaveBeenCalledWith("/api/admin/booking-requests?status=QUEUE&page=1"),
     );
     expect(isActive("Queue")).toBe(true);
   });

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { getXeroConnectionStatus } from "@/lib/xero";
+import { getXeroConnectionStatus } from "@/lib/xero-token-store";
 import { getXeroFeatureFlags } from "@/lib/xero-feature-flags";
 import { probeXeroConnectionHealth } from "@/lib/xero-connection-probe";
 import logger from "@/lib/logger";
