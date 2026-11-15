@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { Pagination } from "@/components/admin/admin-pagination";
@@ -189,8 +191,22 @@ export default function MemberApplicationsPage() {
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [searchingReplacementKey, setSearchingReplacementKey] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [error, setErrorMessage] = useState("");
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
+  const [loadError, setLoadError] = useState("");
+  const successRef = useRef<HTMLDivElement>(null);
+  // Only action failures request attention; background loads use loadError.
+  function setError(value: string) {
+    setErrorMessage(value);
+    if (value) setErrorAttentionKey((key) => key + 1);
+  }
   const [message, setMessage] = useState("");
+  useActionAttention({
+    error,
+    errorTarget: null, // FocusedActionError owns failure focus after dialog cleanup.
+    success: message,
+    successTarget: successRef,
+  });
   // #1786: which action is waiting on the admin's notify-or-not choice, and
   // whether the dialog is open. The choice is kept set while the dialog fades
   // out so its copy never flickers to the other action's wording.
@@ -216,7 +232,7 @@ export default function MemberApplicationsPage() {
     // the list now shown, nor its error or loading end (INV-OPS-019).
     const isCurrent = beginLoad();
     setLoading(true);
-    setError("");
+    setLoadError("");
 
     try {
       const params = new URLSearchParams();
@@ -229,7 +245,7 @@ export default function MemberApplicationsPage() {
       if (!isCurrent()) return;
 
       if (!response.ok) {
-        setError(data.error || "Could not load member applications.");
+        setLoadError(data.error || "Could not load member applications.");
         return;
       }
 
@@ -247,7 +263,7 @@ export default function MemberApplicationsPage() {
         return next;
       });
     } catch {
-      if (isCurrent()) setError("Could not load member applications.");
+      if (isCurrent()) setLoadError("Could not load member applications.");
     } finally {
       if (isCurrent()) setLoading(false);
     }
@@ -257,6 +273,13 @@ export default function MemberApplicationsPage() {
     loadApplications(filter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, page]);
+
+  // A new view retires the last action's error (it described the old view); the
+  // attention key is untouched, so clearing never takes focus.
+  function changeFilter(value: string) {
+    setErrorMessage("");
+    setFilter(value);
+  }
 
   // #1786/E10: the approval panel validates the joining-fee decision + mapping
   // payload and hands it here; this opens the notify-choice dialog. The
@@ -597,29 +620,39 @@ export default function MemberApplicationsPage() {
               key={option.value}
               type="button"
               variant={filter === option.value ? "default" : "outline"}
-              onClick={() => setFilter(option.value)}
+              onClick={() => changeFilter(option.value)}
             >
               {option.label}
             </Button>
           ))}
           <DatasetResetButton
             disabled={filter === DEFAULT_FILTER && page === 1}
-            onReset={() => { setFilter(DEFAULT_FILTER); setPage(1); }}
+            onReset={() => { changeFilter(DEFAULT_FILTER); setPage(1); }}
           />
         </div>
       </div>
 
-      {message && (
-        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
-          {message}
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      <div
+        id="member-applications-success"
+        ref={successRef}
+        role="status"
+        aria-atomic="true"
+        className={message ? "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11" : "sr-only"}
+      >
+        {message}
+      </div>
+      <FocusedActionError
+        id="member-applications-error"
+        error={error}
+        attentionKey={errorAttentionKey}
+      />
+      <div
+        role="alert"
+        aria-atomic="true"
+        className={loadError ? "rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11" : "sr-only"}
+      >
+        {loadError}
+      </div>
 
       {loading ? (
         <Card>
