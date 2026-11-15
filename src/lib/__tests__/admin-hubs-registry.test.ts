@@ -2291,6 +2291,8 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/admin-leaf-back-links.test.tsx": "#4968: the induction back link reads the registry label",
     "src/lib/__tests__/admin-setup-hubs.test.tsx":
       "#4968: no setup card links to the page it is shown on",
+    "src/lib/__tests__/setup-page-view-only.test.tsx":
+      "#4968: the Setup heading assertion reads the registry label",
     "src/app/(admin)/admin/setup/hub-cards.ts":
       "#4968: the setup cards, titled with registry labels and linked with adminHref; C9: the Membership & Members card is adminHref; #4972: the Xero Mappings card opens Xero Setup at its mapping step",
     "src/app/(admin)/admin/alpine-server/setup/page.tsx": "#4968: its heading is the registry label",
