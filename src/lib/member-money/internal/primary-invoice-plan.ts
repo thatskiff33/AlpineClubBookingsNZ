@@ -175,11 +175,8 @@ function coverPrimaryInvoiceLines(input: {
     ({ outcome: "CONFLICT", lines, reason, problem, ...rendering([]) });
 
   const stayIdentity = bookingChargeIdentity(bookingId);
-  const identities = componentsPostedBy({ lines: postedLegs }).sort((a, b) => {
-    const left = componentKey(a.account, a.chargeIdentity);
-    const right = componentKey(b.account, b.chargeIdentity);
-    return left < right ? -1 : left > right ? 1 : 0;
-  });
+  const identities = componentsPostedBy({ lines: postedLegs }).sort((a, b) =>
+    compareOrdinal(componentKey(a.account, a.chargeIdentity), componentKey(b.account, b.chargeIdentity)));
   const components: PrimaryInvoiceCoverage[] = [];
   for (const identity of identities) {
     const account = identity.account as PrimaryInvoiceCoverage["account"];
