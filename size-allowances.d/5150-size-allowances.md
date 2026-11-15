@@ -1,7 +1,7 @@
 # Size allowances for #5150
 
 function: src/app/(admin)/admin/finance/refund-requests/page.tsx#RefundRequestsPage
-lines: 800
+lines: 819
 reason: adds the moving-in member import columns and opening-credit batches;
   those lines sit inside the function `RefundRequestsPage`, which was already
   over its limit before this change, and lifting it apart is a refactor of its
