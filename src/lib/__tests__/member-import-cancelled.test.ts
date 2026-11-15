@@ -7,6 +7,7 @@
 // import stays create-only.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { hashPassword, UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -45,7 +46,6 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 vi.mock("@/lib/email", () => ({ sendMemberSetupInviteEmail: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
 
 import { prisma } from "@/lib/prisma";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
@@ -61,6 +61,11 @@ const fullAdminGuard = {
   ok: true,
   session: { user: { id: "actor1", role: "ADMIN", accessRoles: ["ADMIN"] } },
 };
+
+vi.mock("@/lib/password-hashing", async (importOriginal) => ({
+  ...(await importOriginal()) as typeof import("@/lib/password-hashing"),
+  hashPassword: vi.fn(() => { throw new Error("Import must not hash per row"); }),
+}));
 
 type CreatedMemberData = Record<string, unknown>;
 const createdMemberData: CreatedMemberData[] = [];
@@ -125,6 +130,20 @@ describe("issue #1946 — importing cancelled members", () => {
     vi.mocked(prisma.member.findMany).mockResolvedValue([]);
     persistClubZone(SUITE_CLUB_ZONE);
     mockCreateTransaction();
+  });
+
+  it("imports a full 500-row roster using the shared placeholder without hashing", async () => {
+    const rows = Array.from({ length: 500 }, (_, i) => ({
+      firstName: "Imported",
+      lastName: `Member ${i}`,
+      email: `import-${i}@example.com`,
+    }));
+    const res = await importRequest({ rows, sendInvites: false });
+    expect(res.status).toBe(200);
+    expect((await res.json()).created).toBe(500);
+    expect(createdMemberData).toHaveLength(500);
+    expect(createdMemberData.every((member) => member.passwordHash === UNUSABLE_PLACEHOLDER_PASSWORD_HASH)).toBe(true);
+    expect(hashPassword).not.toHaveBeenCalled();
   });
 
   it("creates a member in the cancelled end-state when a cancelled date is given", async () => {

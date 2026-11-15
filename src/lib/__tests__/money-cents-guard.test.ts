@@ -74,7 +74,6 @@ const HELPER_PROVIDER_FILE = path.join(REPO_ROOT, "src/lib/money-provider-amount
   "invisible to any rule keyed off parseFloat or Math.round" invisible to this
   rule too.
 */
-const XERO_FACADE_FILE = path.join(REPO_ROOT, "src/lib/xero.ts");
 const XERO_LIB_ROOT_TSX_FILE = path.join(
   REPO_ROOT,
   "src/lib/xero-money-guard-fixture.tsx",
@@ -236,7 +235,6 @@ async function moneyErrorLinesIn(
 const MONEY_MODULE_CASES: ReadonlyArray<readonly [string, string]> = [
   ["an ordinary src file (the control)", ORDINARY_SRC_FILE],
   ["a Xero module", XERO_MODULE_FILE],
-  ["the Xero facade", XERO_FACADE_FILE],
   ["a finance module", FINANCE_MODULE_FILE],
   ["the pricing module", path.join(REPO_ROOT, "src/lib/pricing.ts")],
   ["the admin payments service", ADMIN_PAYMENTS_FILE],
@@ -299,7 +297,6 @@ describe("money cents-conversion guard: positive fixtures", () => {
 
   it.each([
     ["a Xero module", XERO_MODULE_FILE],
-    ["the Xero facade, which `xero-*` does not match", XERO_FACADE_FILE],
     ["a `.tsx` at the lib root", XERO_LIB_ROOT_TSX_FILE],
     ["a finance module", FINANCE_MODULE_FILE],
     ["a membership-cancellation directory", MEMBERSHIP_CANCELLATION_DIR_FILE],
@@ -745,7 +742,6 @@ describe("money cents-conversion guard: the paths it must reach", () => {
     "src/app/(admin)/admin/rules/promo-codes/promo-redemptions-panel.tsx": "standard",
     "src/lib/club-time-zone-env.ts": "standard",
     "src/lib/xero-x.ts": "moneyModule",
-    "src/lib/xero.ts": "moneyModule",
     "src/lib/xero-inbound/x.ts": "moneyModule",
     "src/lib/finance-x.ts": "moneyModule",
     "src/lib/membership-cancellation-x.ts": "moneyModule",

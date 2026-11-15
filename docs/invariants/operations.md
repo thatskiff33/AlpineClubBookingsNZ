@@ -190,6 +190,12 @@ rules first written here. #2765 extended it with the measured-audience half.
   means classifying the writer and naming the counterpart it excludes — never
   editing a count, which is what coupled approval to file layout before #2722.
 
+- **Caller-held lock exports check their required tiers before reading mutable
+  state.** `assertGlobalLockHeld` and `assertLodgeCapacityLockHeld` inspect
+  the current backend. Only immutable key discovery may precede a lodge check.
+  Member merge retains its lodge-only exception. The lock-held export census
+  enforces these entry checks (#4929).
+
 ## INV-LOCK-004
 
 - **A read taken while a lock is held goes through the caller's transaction
@@ -316,8 +322,8 @@ rules first written here. #2765 extended it with the measured-audience half.
 - **A `"use client"` module never reaches server-only code (#2686).**
   Everything a client module pulls in at runtime is compiled into the browser
   bundle, so reaching `@/lib/prisma`, `@/lib/auth`, `@/lib/audit`,
-  `@/lib/session`, `@/lib/email`, `@/lib/xero`, `@/lib/stripe`, `@/lib/env`,
-  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration`,
+  `@/lib/session`, `@/lib/email`, `@/lib/xero-api-client`, `@/lib/stripe`,
+  `@/lib/env`, `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration`,
   `@/lib/environment-role`, `next/headers`, `server-only` or a Node built-in
   from a `"use client"` file ships database access, credential handling,
   filesystem code or an environment answer the browser cannot have to every
@@ -789,6 +795,28 @@ installation.
 
 ## INV-OPS-019
 
+- **The production deploy refuses a commit that is not a published release.**
+  `scripts/run-production-blue-green-deploy.sh`, in deploy and image-build mode,
+  passes only when an annotated `vX.Y.Z` tag on `origin` points at the resolved
+  commit: asked with `git ls-remote`, matched on the peeled line, so a
+  lightweight tag, a tag only the host holds and a tag on another commit all
+  fail. An unreachable `origin` refuses too, because a local tag is what it
+  distrusts. It runs before any image, workspace or migration.
+- The only way past is `ALLOW_UNTAGGED_DEPLOY_COMMIT` with a non-empty
+  `UNTAGGED_DEPLOY_COMMIT_REASON`, printed in the deploy log; the flag alone is
+  refused. Staging deploys of `main` and forks that do not tag use it.
+- "Release tag" has one spelling per language, the same pattern as
+  `RELEASE_TAG` in `scripts/release/cut-release.mjs`; a test runs both over the
+  same names.
+- Adopter install steps (`docs/IMPLEMENTATION_GUIDE.md` §1, `DEPLOYMENT.md`
+  "First Bootstrap") check out the latest release tag straight after cloning.
+- Why: #4465 made "every production deploy is a tagged release" a written rule
+  with no enforcement, and no release was cut for four months (#4978).
+- Enforced by `deploy-release-tag-guard-script-contract.test.ts`, which runs
+  the guard against a scratch origin.
+
+## INV-OPS-020
+
 A Docker-only install can create its first admin with Docker alone, and the
 commands that do it are the ones CI runs. `DEPLOYMENT.md` "First Bootstrap"
 gives the seed as one plain line, `docker compose run --rm seed`, after the
@@ -814,5 +842,6 @@ comment as the value.
   `DEPLOYMENT.md` and runs them on an empty database in the
   `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
   nothing written; a second run must change no seeded value (bar the built-in
-  displays' `updatedAt`, refreshed from code by design). Also enforced by
+  displays' `updatedAt`, refreshed from code by design), and it never reads
+  the dietary columns (`INV-PRIV-022`). Also enforced by
   `first-install-seed-contract.test.ts`.

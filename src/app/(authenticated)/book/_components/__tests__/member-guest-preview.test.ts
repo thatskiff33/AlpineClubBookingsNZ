@@ -14,7 +14,7 @@ import {
   pendingMemberGuestFirstNames,
   describeMemberGuestWizardHelper,
   predictMemberGuestConsent,
-} from "@/app/(authenticated)/book/_components/member-guest-preview";
+} from "@/components/book/member-guest-preview";
 
 const FAMILY = ["m-self", "m-partner", "m-child"];
 

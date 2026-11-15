@@ -485,7 +485,7 @@ services:
     environment:
       DOMAIN: ${DOMAIN:-localhost}
       # MiroTalk video-meeting reverse proxy (see the meet block in Caddyfile).
-      # MEET_HOST = the exact public hostname (e.g. meet.lwtc.org.nz).
+      # MEET_HOST = the exact public hostname (e.g. meet.example.org).
       # MIROTALK_UPSTREAM = where Caddy reaches MiroTalk (host.docker.internal:3010
       # for a host `docker run`, or a compose service name).
       MEET_HOST: ${MEET_HOST:-meet.localhost}
@@ -500,6 +500,17 @@ services:
       # is a placeholder Caddy rejects, and the deploy refuses local mode at
       # step 3 without it. Unused in acme mode.
       CADDY_TRUSTED_PROXIES: ${CADDY_TRUSTED_PROXIES:-set-CADDY_TRUSTED_PROXIES-for-local-mode}
+      # www.<DOMAIN> redirects to <DOMAIN>: on (the default) or off, for a club
+      # with no www DNS record. Selects deploy/caddy/www-redirect-<mode>.caddy.
+      CADDY_WWW_REDIRECT: ${CADDY_WWW_REDIRECT:-on}
+      # A legacy finance dashboard's /finance-legacy route and its bookings. and
+      # dashboard. hosts: off (the default) or on. Selects
+      # deploy/caddy/legacy-routes-<mode>.caddy and legacy-hosts-<mode>.caddy.
+      CADDY_LEGACY_ROUTES: ${CADDY_LEGACY_ROUTES:-off}
+      # The legacy dashboard's host:port as Caddy reaches it. No usable default:
+      # unset, it is a placeholder Caddy rejects, and the deploy refuses
+      # CADDY_LEGACY_ROUTES=on at step 3 without it. Unused when off.
+      CADDY_FINANCE_LEGACY_UPSTREAM: ${CADDY_FINANCE_LEGACY_UPSTREAM:-set-CADDY_FINANCE_LEGACY_UPSTREAM-for-legacy-routes:none}
     # Lets the Caddy container reach a MiroTalk started with its own `docker run`
     # via host.docker.internal (Linux needs this mapping).
     extra_hosts:
@@ -618,7 +629,7 @@ services:
       DATABASE_URL: postgresql://${MIGRATION_DB_USER:-tac}:${MIGRATION_DB_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD is required}}@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10&options=-c%20lock_timeout%3D${MIGRATION_LOCK_TIMEOUT_MS:-5000}
     command: ./node_modules/.bin/prisma migrate deploy
 
-  # FIRST INSTALL ONLY (#4977, INV-OPS-019). `docker compose run --rm seed`
+  # FIRST INSTALL ONLY (#4977, INV-OPS-020). `docker compose run --rm seed`
   # runs prisma/seed.ts once, after `run --rm migrate` and before the app
   # starts: it creates the first admin, the lodge kiosk account and the starter
   # data on an empty database. Nothing runs it on an upgrade, and the profile

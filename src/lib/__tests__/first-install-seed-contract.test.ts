@@ -21,7 +21,7 @@ import { DOCKER_SEED_COMMAND, SEED_COMPOSE_SERVICE } from "@/lib/seed-commands";
 
 /**
  * A Docker-only install can create its first admin, and every doc tells it how
- * (#4977, INV-OPS-019).
+ * (#4977, INV-OPS-020).
  *
  * The seed cannot run in the app container: the runner image holds no source.
  * "First Bootstrap" had lost its seed step and three docs gave an `exec app`
@@ -71,7 +71,7 @@ function line(body: string, key: string): string | undefined {
   return body.split("\n").find((l) => l.trim().startsWith(`${key}:`))?.trim();
 }
 
-describe("the first-install seed service (#4977, INV-OPS-019)", () => {
+describe("the first-install seed service (#4977, INV-OPS-020)", () => {
   const seed = service(SEED_COMPOSE_SERVICE);
   const migrate = service("migrate");
 
@@ -135,7 +135,7 @@ describe("the first-install seed service (#4977, INV-OPS-019)", () => {
   });
 });
 
-describe("the docs that tell an operator how to seed (#4977, INV-OPS-019)", () => {
+describe("the docs that tell an operator how to seed (#4977, INV-OPS-020)", () => {
   it("gives DEPLOYMENT.md First Bootstrap the seed command, once the roles are on and before the app starts", () => {
     // firstInstallSteps itself throws if a step is missing or out of order, so
     // reading the doc is the order check: migrate, provision, switch the roles

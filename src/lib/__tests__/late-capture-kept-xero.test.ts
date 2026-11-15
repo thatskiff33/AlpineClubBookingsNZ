@@ -53,10 +53,12 @@ vi.mock("@/lib/xero-operation-outbox", async () => {
   return {
     kickQueuedXeroOutboxOperationsIfConnected: (...a: unknown[]) =>
       mocks.kickQueuedXeroOutboxOperationsIfConnected(...a),
-    lockSupplementaryInvoiceAnchor: (...a: unknown[]) => mocks.lockSupplementaryInvoiceAnchor(...a),
     OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES,
   };
 });
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  lockSupplementaryInvoiceAnchor: (...a: unknown[]) => mocks.lockSupplementaryInvoiceAnchor(...a),
+}));
 // The REAL retired codes: a copy here would let the constant drift unseen.
 vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-supplementary-invoice-late-capture");
