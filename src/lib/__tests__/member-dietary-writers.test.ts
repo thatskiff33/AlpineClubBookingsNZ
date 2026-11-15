@@ -93,10 +93,7 @@ vi.mock("@/lib/audit", () => ({
   getAuditEmailDomain: vi.fn(() => null),
   logAudit: vi.fn(),
 }));
-vi.mock("bcryptjs", () => ({
-  hash: vi.fn().mockResolvedValue("hashed"),
-  default: { hash: vi.fn().mockResolvedValue("hashed") },
-}));
+
 
 import { getAdminPermissionMatrix } from "@/lib/admin-permissions";
 import { POST as importMembers } from "@/app/api/admin/members/import/route";

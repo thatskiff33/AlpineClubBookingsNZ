@@ -1,0 +1,1 @@
+- **The card payment screen shows the actual charge and explains saved credit (#4943).** The total and success message now use the server's card amount after credit. Members see how much saved credit was applied, why less was used when circumstances changed, and when credit covered the booking in full.

@@ -5,8 +5,8 @@ import type { ComponentProps } from "react";
 import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { GuestsStep } from "@/app/(authenticated)/book/_components/guests-step";
-import { DependantIdentityResolution } from "@/app/(authenticated)/book/_components/dependant-identity-resolution";
-import type { FamilyMember } from "@/app/(authenticated)/book/_components/types";
+import { DependantIdentityResolution } from "@/components/book/dependant-identity-resolution";
+import type { FamilyMember } from "@/components/book/booking-wizard-types";
 import type { OwnDependantCollision } from "@/lib/booking-dependant-identity";
 import type { GuestData } from "@/components/guest-form";
 

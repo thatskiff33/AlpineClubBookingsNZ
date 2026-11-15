@@ -1,7 +1,7 @@
 import { hasFinanceManagerAccess } from "@/lib/admin-permissions";
 import type { FinanceAccessMember } from "@/lib/finance-auth";
 import { getFinanceSyncDiagnosticsStatus } from "@/lib/finance-sync-diagnostics";
-import { getXeroConnectionStatus } from "@/lib/xero";
+import { getXeroConnectionStatus } from "@/lib/xero-token-store";
 
 interface FinanceReportAvailabilityInput {
   member: FinanceAccessMember;

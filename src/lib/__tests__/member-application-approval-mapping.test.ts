@@ -1,3 +1,4 @@
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // E10 (#1936): approveMemberApplication mapping paths — promotion vs keep-auth,
@@ -39,7 +40,8 @@ vi.mock("@/lib/age-tier", () => ({
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01T00:00:00.000Z")),
 }));
 vi.mock("@/lib/email", () => emailMock);
-vi.mock("@/lib/xero", () => xeroMock);
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: xeroMock.isXeroConnected }));
+vi.mock("@/lib/xero-contacts", () => ({ findOrCreateXeroContact: xeroMock.findOrCreateXeroContact }));
 vi.mock("@/lib/xero-operation-outbox", () => xeroOutboxMock);
 vi.mock("@/lib/membership-subscription-billing", () => billingMock);
 vi.mock("@/lib/audit", () => auditMock);
@@ -48,7 +50,7 @@ vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: vi.fn().mockResolvedValue({ induction: false }),
 }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("fresh-hash") }));
+
 
 import { approveMemberApplication } from "@/lib/nomination";
 import { buildApprovalMappingPreview } from "@/lib/member-application-mapping";
@@ -288,7 +290,7 @@ describe("applicant MAP — promotion path (canLogin:false -> true)", () => {
     const data = update.mock.calls[0][0].data;
     expect(data).toMatchObject({
       canLogin: true,
-      passwordHash: "fresh-hash",
+      passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH,
       emailVerified: true,
       inheritEmailFromId: null,
       inheritParentEmail: false,

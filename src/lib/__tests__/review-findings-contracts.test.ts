@@ -1265,6 +1265,17 @@ describe("review finding source/schema contracts", () => {
         "MUTATION: while merge holds the captured bookings, a child row's foreign key to one commits without waiting, and a sibling writer's row lock is still refused (#5004)",
       ],
     },
+    {
+      issue: "#4929",
+      suite: "bed-allocation caller-held lock",
+      stepName: "Test bed-allocation caller-held lock checks against dedicated PostgreSQL",
+      file: "src/lib/__tests__/bed-allocation-lock-held.realdb.test.ts",
+      cases: [
+        "recognises signed bigint lodge keys, the right backend and transaction lifetime",
+        "does not accept a shared lodge lock as writer exclusion",
+        "refuses reconciliation without global or lodge, and accepts both",
+      ],
+    },
   ])("runs the $suite race suite against the same dedicated PostgreSQL ($issue)", ({ issue, stepName, file, cases }) => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const migrateStep = workflow.indexOf(
