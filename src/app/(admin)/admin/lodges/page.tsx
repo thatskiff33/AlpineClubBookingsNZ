@@ -2,18 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { Plus } from "lucide-react";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { FocusedActionError } from "@/components/focused-action-error";
@@ -23,14 +12,10 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import {
-  LodgeBankAndGstFields,
-  LodgePostalAddressField,
-} from "@/components/admin/lodge-invoice-details-fields";
-import {
   NEW_LODGE_CAPACITY_REQUIRED_MESSAGE,
   parseConfiguredLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
-import { AddLodgeCapacityField } from "./_components/add-lodge-capacity-field";
+import { LodgeFormCard } from "./_components/lodge-form-card";
 import { LodgePropertiesCard } from "./_components/lodge-properties-card";
 import { OtherLodgesPanel } from "./_components/other-lodges-panel";
 import {
@@ -38,7 +23,6 @@ import {
   formFromLodge,
   formPayload,
   lodgeFormBankAccountError,
-  type LodgeDetailField,
   type LodgeFormState,
   type LodgeRecord,
 } from "./_components/lodge-form";
@@ -137,7 +121,7 @@ export default function AdminLodgesPage() {
     }
     const bankAccountError = lodgeFormBankAccountError(form);
     if (bankAccountError) {
-      setError(bankAccountError);
+      failAction(bankAccountError);
       return;
     }
     // Required on create only (#3407): an existing lodge's capacity is edited
@@ -255,14 +239,6 @@ export default function AdminLodgesPage() {
   }
 
   const showForm = creating || editingId !== null;
-  // The invoice details (fork #115), shown on the edit form only (fork #123).
-  const invoiceFieldProps = {
-    idPrefix: "lodge",
-    values: form,
-    disabled: !canEdit,
-    onChange: (field: LodgeDetailField, value: string) =>
-      setForm((prev) => ({ ...prev, [field]: value })),
-  };
 
   /*
     #2160: the view-only explanation lives here, once, at the top of the section —
@@ -312,92 +288,18 @@ export default function AdminLodgesPage() {
       />
 
       {showForm ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>{creating ? "Add lodge" : "Edit lodge"}</CardTitle>
-            <CardDescription>
-              The address feeds the public {"{{lodge-address}}"} content token.
-              The door code and travel note appear in booking and pre-arrival
-              emails for this lodge.
-              {creating
-                ? null
-                : " The postal address, bank details and GST number are printed only on the invoice a booker can download from their booking."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="lodge-name">Name</Label>
-              <Input
-                id="lodge-name"
-                value={form.name}
-                maxLength={120}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, name: event.target.value }))
-                }
-              />
-            </div>
-            {creating ? (
-              <AddLodgeCapacityField
-                value={form.capacity}
-                onChange={(capacity) => setForm((prev) => ({ ...prev, capacity }))}
-                invalid={capacityInvalid && actionError !== ""}
-                errorId={actionErrorId}
-              />
-            ) : null}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className={creating ? "space-y-2 sm:col-span-2" : "space-y-2"}>
-                <Label htmlFor="lodge-address">Address</Label>
-                <Textarea
-                  id="lodge-address"
-                  value={form.address}
-                  maxLength={300}
-                  rows={2}
-                  placeholder="Optional — feeds the public {{lodge-address}} token"
-                  onChange={(event) =>
-                    setForm((prev) => ({ ...prev, address: event.target.value }))
-                  }
-                />
-              </div>
-              {creating ? null : <LodgePostalAddressField {...invoiceFieldProps} />}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="lodge-door-code">Door code</Label>
-              <Input
-                id="lodge-door-code"
-                value={form.doorCode}
-                maxLength={80}
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, doorCode: event.target.value }))
-                }
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="lodge-travel-note">Travel note</Label>
-              <Textarea
-                id="lodge-travel-note"
-                value={form.travelNote}
-                maxLength={2000}
-                rows={3}
-                onChange={(event) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    travelNote: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            {creating ? null : <LodgeBankAndGstFields {...invoiceFieldProps} />}
-            <div className="flex gap-2">
-              <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={() => void submitForm()} disabled={saving}>
-                {saving ? "Saving..." : "Save"}
-              </ViewOnlyActionButton>
-              <Button variant="outline" onClick={cancelEdit} disabled={saving}>
-                <X className="mr-2 h-4 w-4" />
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <LodgeFormCard
+          creating={creating}
+          form={form}
+          setForm={setForm}
+          canEdit={canEdit}
+          saving={saving}
+          capacityInvalid={capacityInvalid && actionError !== ""}
+          errorId={actionErrorId}
+          onSubmit={() => void submitForm()}
+          onCancel={cancelEdit}
+          ancestorRendersViewOnlyBanner
+        />
       ) : null}
 
       <LodgePropertiesCard
