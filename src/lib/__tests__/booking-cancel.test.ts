@@ -122,6 +122,14 @@ const mocks = vi.hoisted(() => {
 
 // #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
 const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
+// #4911: no capture here is disputed; the hold's own read is proved in
+// `stripe-dispute-hold.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  disputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+  paymentCaptureIntentIds: async () => [],
+}));
+
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
 const appliedCredit = vi.hoisted(() => ({
@@ -226,7 +234,7 @@ vi.mock("@/lib/waitlist", () => ({
   processWaitlistForDates: mocks.processWaitlistForDates,
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 
@@ -404,9 +412,11 @@ describe("cancelBooking credit refunds", () => {
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
             // the double answers with an ACTIVE one and the fence above stays on the
@@ -4231,12 +4241,12 @@ describe("cancelBooking credit refunds", () => {
       // redemption the booking carries inside its own transaction (its
       // two-code behaviour is pinned in multi-promo-redemptions.test.ts).
       expect(mocks.releaseBookingPromoRedemptions).toHaveBeenCalledWith(
-        expect.anything(),
+        mocks.lastTx,
         "bk_nc"
       );
     });
 
-    it("opens no promo transaction for a booking that carries no code (#3826)", async () => {
+    it("releases nothing for a booking that carries no code (#3826)", async () => {
       const booking = neverCapturedBooking();
       mocks.bookingFindUnique.mockResolvedValueOnce(booking);
       mocks.txBookingFindUnique.mockResolvedValueOnce(booking);
@@ -4695,11 +4705,13 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
             // the double answers with an ACTIVE one and the fence above stays on the
@@ -4862,11 +4874,13 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
             // the double answers with an ACTIVE one and the fence above stays on the
@@ -5156,6 +5170,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: {
@@ -5165,6 +5180,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
             },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
             member: { findMany: fenceMemberFindMany() },
             // #2623 T5: the seam reads the lodge's hosting mode before the fence, so
             // the double answers with an ACTIVE one and the fence above stays on the

@@ -6,10 +6,12 @@ import { DEMO_PASSWORD, personas } from "./helpers/personas";
 // #4617: enrol a passkey on the profile, sign out, sign in with the password
 // and that passkey, then use the same passkey in the confirm dialog.
 // The virtual authenticator is attached before registration. A private client
-// IP keeps this journey out of Bob's shared login-rate bucket.
+// IP keeps this journey out of the shared login-rate bucket. Pip, not Bob
+// (#5160): two-factor-login.spec.ts asserts Bob has never enrolled, and both
+// specs can share a shard's database in either order.
 test.describe.configure({ timeout: 180_000 });
 
-const enrollee = personas.enrollee;
+const enrollee = personas.passkeyEnrollee;
 const clientIp = "10.50.61.17";
 
 test("password then passkey, then the confirm dialog", async ({ page }) => {

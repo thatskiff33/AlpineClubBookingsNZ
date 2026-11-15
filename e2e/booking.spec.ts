@@ -62,6 +62,18 @@ test("member books a bed through /book and the booking owes payment", async ({
   const occupiedBefore = await fetchOccupiedBeds(page, window.nights);
 
   await bookSelfToReviewStep(page, personas.booker, window);
+
+  // Issue #4946: the refund terms show before the member commits money, above
+  // the primary button.
+  const schedule = page.getByRole("region", { name: "Cancellation and refunds" });
+  await expect(schedule).toBeVisible();
+  const primary = page.getByRole("button", {
+    name: /Continue to Payment|Confirm Booking/,
+  });
+  const scheduleBox = await schedule.boundingBox();
+  const primaryBox = await primary.boundingBox();
+  expect(scheduleBox && primaryBox && scheduleBox.y < primaryBox.y).toBe(true);
+
   await confirmBookingToPaymentStep(
     page,
     bookingCreateIsolation("booking-payment-pending", testInfo.retry),

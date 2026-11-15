@@ -261,6 +261,14 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     contexts: ["page-content-body"],
   },
   {
+    token: "data-hosting",
+    kind: "text",
+    description: "Hosting disclosure set in Club Identity > Where members' data is held; blank fields ask the Privacy Officer.",
+    example: "{{data-hosting}}",
+    allowsLegacySingleBrace: false,
+    contexts: ["page-content-body"],
+  },
+  {
     token: "club-name",
     kind: "text",
     description:

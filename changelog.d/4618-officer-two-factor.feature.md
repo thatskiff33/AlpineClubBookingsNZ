@@ -1,0 +1,2 @@
+- Officers who can move money or change system settings, and every Full Admin, can be required to use an authenticator app or a passkey, with a grace period and a way back from a lost device. The requirement stays off until a later change turns it on, so a club that updates now is asked of the same people as today.
+- Saving the officer two-factor policy writes one new security audit row, which anyone with Support view can read, like the password-policy save. The policy is not carried by configuration export or import.

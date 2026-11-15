@@ -7,6 +7,10 @@ import {
 } from "@/components/admin/club-identity-panel";
 import { LodgeDetailsPanel } from "@/components/admin/lodge-details-panel";
 import {
+  PRIVACY_HOSTING_TITLE,
+  PrivacyHostingPanel,
+} from "@/components/admin/privacy-hosting-panel";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -24,7 +28,8 @@ export default function ClubIdentityAdminPage() {
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Set the club name, short name, and hut-leader label used across the
-          site and emails, plus your lodge&apos;s public details.
+          site and emails, plus your lodge&apos;s public details and where members&apos; data is
+          held.
         </p>
       </div>
 
@@ -63,6 +68,19 @@ export default function ClubIdentityAdminPage() {
         </CardHeader>
         <CardContent>
           <ClubContactPanel />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{PRIVACY_HOSTING_TITLE}</CardTitle>
+          <CardDescription>
+            The company that hosts your club&apos;s system and where members&apos;
+            information is held, for your privacy policy.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <PrivacyHostingPanel />
         </CardContent>
       </Card>
     </div>

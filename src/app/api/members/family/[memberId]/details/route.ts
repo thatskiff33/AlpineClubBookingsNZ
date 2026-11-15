@@ -10,11 +10,9 @@ import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { logAudit } from "@/lib/audit";
-import {
-  isXeroConnected,
-  syncManagedXeroContactGroupForMember,
-  updateXeroContact,
-} from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
+import { syncManagedXeroContactGroupForMember } from "@/lib/xero-contact-groups";
+import { updateXeroContact } from "@/lib/xero-contacts";
 import {
   buildXeroContactUpdatePayload,
   hasMemberXeroContactChanges,
@@ -36,13 +34,12 @@ import {
   resolveEnforcedAgeTier,
 } from "@/lib/age-tier-enforcement";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
+import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
 
 const delegatedDetailsSchema = z.object({
   firstName: nameField({ required: "First name required" }),
   lastName: nameField({ required: "Last name required" }),
-  dateOfBirth: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD format"),
+  dateOfBirth: dateOfBirthStringSchema,
   inheritContactFromSelf: z.literal(true),
 });
 

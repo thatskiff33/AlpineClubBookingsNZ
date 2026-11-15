@@ -53,7 +53,7 @@ import {
   supplementaryInvoicesMovedOffIntentWhere,
 } from "@/lib/supplementary-invoice-parked-from";
 import { asRecord, readString } from "@/lib/xero-json";
-import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-operation-outbox";
+import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-supplementary-invoice-enqueue";
 import { SUPPLEMENTARY_INVOICE_CREATE_WHERE } from "@/lib/xero-supplementary-invoice-statuses";
 
 /** Return this captured intent's moved, still-waiting invoices to it. Answers how many moved back. */

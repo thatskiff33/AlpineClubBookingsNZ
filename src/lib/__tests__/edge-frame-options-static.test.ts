@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -27,9 +27,10 @@ import { describe, expect, it } from "vitest";
  *  2. Every other path receives a GUARANTEED `DENY`. It must be a plain set, not
  *     Caddy's set-if-absent `?X-Frame-Options` form: `?` would turn a guaranteed
  *     edge control into an advisory one on every route, so any response emitting
- *     a permissive value would win — including `/finance-legacy*` (a
- *     reverse-proxied third-party upstream) and `/images/*`, neither of which the
- *     app's own middleware covers.
+ *     a permissive value would win — including `/images/*` and, where an
+ *     installation opts in (`CADDY_LEGACY_ROUTES=on`, #4981), `/finance-legacy*`
+ *     (a reverse-proxied third-party upstream), neither of which the app's own
+ *     middleware covers.
  *  3. The guarantee needs BOTH an eager unscoped `DENY` and the deferred scoped
  *     pair. The deferred (`>`) rewrite lives in a `ResponseWriter` wrapper that
  *     is unwound when a handler returns an error, so Caddy's error chain — 502,
@@ -90,11 +91,12 @@ function readEdgeConfig(relativePath: string) {
  * The FIRST top-level site block — the app's own site (`{$DOMAIN}` in
  * `Caddyfile`, `{$STAGING_CADDY_SITE…}` in `Caddyfile.staging`).
  *
- * Scoping matters for the eager-floor assertion below: `Caddyfile` has a second
- * site (`dashboard.{$DOMAIN}`, a redirect-only host) carrying its own
- * `X-Frame-Options "DENY"`, and a whole-file scan would let that unrelated
- * directive stand in for the app site's floor — verified by deleting the app
- * site's line and watching the unscoped assertion still pass.
+ * Scoping matters for the eager-floor assertion below: a second site carrying
+ * its own `X-Frame-Options "DENY"` (as the redirect-only `dashboard.{$DOMAIN}`
+ * host once did here, before #4981 moved it to an opt-in snippet) would let
+ * that unrelated directive stand in for the app site's floor in a whole-file
+ * scan — verified by deleting the app site's line and watching the unscoped
+ * assertion still pass.
  */
 /** Index of the `}` closing the block opened at `start`. */
 function endOfBlock(source: string, start: number) {
@@ -228,7 +230,7 @@ describe.each(EDGE_CONFIGS)("%s edge X-Frame-Options (#2246)", (configName) => {
     // Deleting this line looks like harmless de-duplication — the two `>`
     // directives appear to cover every path — but it silently drops
     // X-Frame-Options from every response Caddy's error chain writes (502 from a
-    // down upstream including /finance-legacy*, 413 from the request_body cap,
+    // down upstream including an opted-in /finance-legacy*, 413 from the request_body cap,
     // any 5xx), because the deferred rewrite is unwound on a handler error.
     // Those responses carry no CSP `frame-ancestors` fallback either.
     expect(
@@ -281,5 +283,89 @@ describe("edge and app X-Frame-Options agree (#2246)", () => {
     expect(csp).toMatch(
       /normalisePathname\(pathname\)\s*===\s*"\/display"/,
     );
+  });
+});
+
+/**
+ * The original club's legacy finance dashboard route and hostnames are opt-in,
+ * off by default (#4981, `INV-CONFIG-001`): every installation runs the shipped
+ * `Caddyfile` unchanged, so a club-specific upstream or hostname baked in here
+ * is one no other club can remove. `CADDY_LEGACY_ROUTES` selects
+ * `deploy/caddy/legacy-{routes,hosts}-<mode>.caddy` and `CADDY_WWW_REDIRECT`
+ * selects `www-redirect-<mode>.caddy`, as `CADDY_TLS_MODE` selects its pair.
+ * The step-3 refusals live in `deploy-email-transport-env-contract.test.ts`.
+ */
+describe("Caddyfile legacy finance routes are opt-in (#4981)", () => {
+  const SNIPPET_DIR = "deploy/caddy";
+  const snippetNames = readdirSync(path.resolve(process.cwd(), SNIPPET_DIR)).filter((name) =>
+    name.endsWith(".caddy"),
+  );
+  const edgeFiles = ["Caddyfile", ...snippetNames.map((name) => `${SNIPPET_DIR}/${name}`)];
+  const caddyfile = readEdgeConfig("Caddyfile");
+  const appSite = primarySiteBlock(caddyfile);
+  const ROUTES_IMPORT = "import /etc/caddy/deploy/legacy-routes-{$CADDY_LEGACY_ROUTES:off}.caddy";
+  const TOP_LEVEL_IMPORTS = [
+    "import /etc/caddy/deploy/www-redirect-{$CADDY_WWW_REDIRECT:on}.caddy",
+    "import /etc/caddy/deploy/legacy-hosts-{$CADDY_LEGACY_ROUTES:off}.caddy",
+  ];
+
+  it("names no literal IPv4 address in any edge configuration", () => {
+    // A club's private network address (the legacy dashboard's upstream) was
+    // once hard-coded here; an upstream is a placeholder or a service name.
+    expect(edgeFiles.length).toBeGreaterThan(1);
+    for (const file of edgeFiles) {
+      expect(readEdgeConfig(file), file).not.toMatch(/\b\d{1,3}(?:\.\d{1,3}){3}\b/);
+    }
+  });
+
+  it("serves no legacy route or hostname from the Caddyfile itself", () => {
+    expect(caddyfile).not.toContain("/finance-legacy");
+    expect(caddyfile).not.toMatch(/^\s*(?:bookings|dashboard|www)\.\{\$DOMAIN\}/m);
+  });
+
+  it("imports the legacy route inside the app site, ahead of the active upstream", () => {
+    // Inside `{$DOMAIN}`, its responses — 502s included — get the site's eager
+    // DENY and deferred @not_display rewrite. A site of its own would not.
+    // `primarySiteBlock` blanks placeholders, so compare in that form.
+    const blank = (line: string) => line.replace(/\{[^{}\s]*\}/g, "PLACEHOLDER");
+    const lines = caddyfile.split("\n").map((line) => line.trim());
+    const routes = appSite.indexOf(blank(ROUTES_IMPORT));
+    expect(lines).toContain(ROUTES_IMPORT);
+    expect(routes, "the legacy-routes import must sit in the app site").toBeGreaterThan(-1);
+    expect(appSite.lastIndexOf("import /etc/caddy/deploy/tacbookings-active.caddy")).toBeGreaterThan(routes);
+    for (const line of TOP_LEVEL_IMPORTS) {
+      expect(caddyfile.split("\n"), line).toContain(line);
+      expect(appSite).not.toContain(blank(line));
+    }
+  });
+
+  it("proxies the legacy route to a setting with no default, after the app's finance check", () => {
+    const on = readEdgeConfig(`${SNIPPET_DIR}/legacy-routes-on.caddy`)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    expect(on).toEqual([
+      "handle /finance-legacy* {",
+      "forward_auth app:3000 {",
+      "uri /api/finance/legacy-dashboard/auth",
+      "}",
+      "reverse_proxy {$CADDY_FINANCE_LEGACY_UPSTREAM}",
+      "}",
+    ]);
+    // No header directive of its own: the app site's are the ones that apply.
+    expect(frameOptionsDirectives(on.join("\n"))).toEqual([]);
+  });
+
+  it("puts the legacy hostnames only in their opt-in snippet", () => {
+    const hosts = readEdgeConfig(`${SNIPPET_DIR}/legacy-hosts-on.caddy`);
+    expect(hosts).toMatch(/^bookings\.\{\$DOMAIN\} \{$/m);
+    expect(hosts).toMatch(/^dashboard\.\{\$DOMAIN\} \{$/m);
+    expect(readEdgeConfig(`${SNIPPET_DIR}/www-redirect-on.caddy`)).toMatch(/^www\.\{\$DOMAIN\} \{$/m);
+  });
+
+  it("adds nothing in an off snippet", () => {
+    for (const file of ["legacy-routes-off", "legacy-hosts-off", "www-redirect-off"]) {
+      expect(readEdgeConfig(`${SNIPPET_DIR}/${file}.caddy`).trim(), file).toBe("");
+    }
   });
 });

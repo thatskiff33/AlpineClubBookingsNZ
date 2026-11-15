@@ -149,6 +149,10 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/card-refund-paid-another-way.ts",
   "src/app/api/bookings/[id]/confirm-draft/route.ts",
   "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
+  // #4343: the edit-review clean-up resolves the clock in its script, before any transaction, and hands the context to the re-base's R21 and the review completion.
+  "src/lib/edit-review-cleanup.ts",
+  "src/lib/edit-review-cleanup-headline.ts",
+  "scripts/edit-review-cleanup.ts",
 ];
 /** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
 const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;

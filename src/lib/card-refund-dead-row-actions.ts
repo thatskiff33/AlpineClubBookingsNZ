@@ -15,6 +15,8 @@ import {
   unadoptedOwnStripeRefunds,
   type LaterStripeRefund,
   type ListedStripeRefund,
+  DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING,
+  DEAD_CARD_REFUND_CLOSED,
 } from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow, type DeadCardRefundRowRefusals } from "@/lib/card-refund-dead-row-lock";
 import logger from "@/lib/logger";
@@ -75,12 +77,12 @@ export { DeadCardRefundActionError };
 const REFUSALS: DeadCardRefundRowRefusals = {
   notOwedKind: "This card refund cannot be settled here. Ask a developer to reconcile it.",
   organiserChild: "This card refund cannot be settled here. Ask a developer to reconcile it.",
-  closed: "This card refund has already been closed.",
+  closed: DEAD_CARD_REFUND_CLOSED,
   notGivenUp: "This card refund is being tried again, so it is not waiting for you. Refresh the list.",
   otherBooking: "This card refund's payment belongs to another booking, so it cannot be settled here. Ask a developer to reconcile it.",
 };
 
-const CHANGED_WHILE_SETTLING = "This card refund changed while you were settling it. The list has been refreshed: check it and try again.";
+const CHANGED_WHILE_SETTLING = DEAD_CARD_REFUND_CHANGED_WHILE_SETTLING;
 
 export interface NothingLeftOwedInput {
   operationId: string;

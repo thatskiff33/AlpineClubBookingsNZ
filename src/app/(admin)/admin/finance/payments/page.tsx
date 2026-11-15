@@ -1,6 +1,7 @@
 "use client";
 
-import type { PaymentStatus } from "@prisma/client";
+import type { PaymentStatus, StripeDisputeStatus } from "@prisma/client";
+import { STRIPE_DISPUTE_STATUS_LABEL, disputeHoldsCapture } from "@/lib/stripe-dispute-note";
 import { RefundsAndCreditsOwedList } from "@/components/admin/refunds-and-credits-owed";
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
@@ -10,7 +11,12 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { formatPaidRefundedBreakdown, getPaymentNetOfRefundsCents } from "@/lib/booking-payment-state";
 import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
 import { requireInstant, formatStayDateOrNull } from "@/lib/club-time";
-import { readAdminQueryErrorMessage } from "@/lib/admin-query-error";
+import {
+  ADMIN_LOAD_FAILED_ERROR,
+  ADMIN_LOAD_NETWORK_ERROR,
+  readAdminQueryErrorMessage,
+} from "@/lib/admin-query-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import {
   getPaymentsDatasetDefaults,
   PAYMENT_DATASET_QUERY_KEYS,
@@ -68,6 +74,7 @@ import {
 import Link from "next/link";
 import { cn, formatCents } from "@/lib/utils";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminLoadError } from "@/components/admin/admin-load-error";
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import {
@@ -226,6 +233,8 @@ interface PaymentRow {
     latestOperationAt: string | null;
   };
   settlementKind: string;
+  /** #4911: the cardholder disputes on this payment, newest first. */
+  disputes?: Array<{ stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number }>;
   booking: {
     id: string;
     status: string;
@@ -398,6 +407,18 @@ function SummaryCard({
   );
 }
 
+/** #4911 (`INV-PAY-154`): each cardholder dispute, by Stripe's dispute id. */
+function DisputeChips({ disputes }: { disputes: PaymentRow["disputes"] }) {
+  const format = useClubFormat();
+  return (disputes ?? []).map((dispute) => (
+    <span key={dispute.stripeDisputeId} title={`Stripe dispute ${dispute.stripeDisputeId} for ${formatCents(dispute.amountCents, format)}`}>
+      <MiniChip tone={disputeHoldsCapture(dispute.status) ? "warning" : "neutral"} icon={AlertTriangle}>
+        Disputed by cardholder - {STRIPE_DISPUTE_STATUS_LABEL[dispute.status]}
+      </MiniChip>
+    </span>
+  ));
+}
+
 export default function PaymentsPage() {
   const format = useClubFormat();
   const router = useRouter();
@@ -470,6 +491,13 @@ export default function PaymentsPage() {
   // whether the list on screen is a list.
   const [loadErrorCode, setLoadErrorCode] =
     useState<DiagnosticsPageErrorCode | null>(null);
+  // What the PERSON is told when the last load failed (#4961). The code above
+  // goes to Diagnostics and the field message above sits in a panel that is
+  // usually closed, so neither told anyone why the table was empty. `refused`
+  // marks a filter the API refused, which the admin can fix below.
+  const [loadError, setLoadError] = useState<
+    { message: string; refused: boolean } | null
+  >(null);
 
   // WHAT THIS PAGE ACTUALLY FILTERED BY, published for AI Diagnostics (#2816,
   // owner decision 13 Aug 2026).
@@ -618,6 +646,7 @@ export default function PaymentsPage() {
         const json = await res.json();
         setData(json.data); setTotal(json.total); setSummary(readPaymentsSummary(json.summary));
         setFilterError(null);
+        setLoadError(null);
       } else {
         // #2816 records WHY there is no list, so the page can say so rather than
         // publishing filters it never got to apply. #2685 adds the other half:
@@ -626,16 +655,37 @@ export default function PaymentsPage() {
         // chip that was never applied is the defect; an empty table under an
         // explicit reason is the honest state. Both are kept — the page-level
         // code and the field-level message answer different questions.
+        // #4961: the field message is for a refused FILTER only. An outage is
+        // not something the amount boxes caused, so it is told above the table
+        // in the route's own sentence instead.
         failure = diagnosticsPageErrorCodeForStatus(res.status);
         setData([]);
         setTotal(0);
         setSummary(EMPTY_PAYMENTS_SUMMARY);
-        setFilterError(
-          await readAdminQueryErrorMessage(res, PAYMENTS_FILTER_FALLBACK_ERROR),
-        );
+        if (failure === "validation-failed") {
+          const refusal = await readAdminQueryErrorMessage(
+            res,
+            PAYMENTS_FILTER_FALLBACK_ERROR,
+          );
+          setFilterError(refusal);
+          setLoadError({ message: refusal, refused: true });
+        } else {
+          setFilterError(null);
+          setLoadError({
+            message: await apiErrorMessageFromResponse(res, ADMIN_LOAD_FAILED_ERROR),
+            refused: false,
+          });
+        }
       }
     } catch {
+      // #4961: a dropped connection used to leave the previous search's rows
+      // and totals on screen under the new filters.
       failure = DIAGNOSTICS_PAGE_NETWORK_ERROR_CODE;
+      setData([]);
+      setTotal(0);
+      setSummary(EMPTY_PAYMENTS_SUMMARY);
+      setFilterError(null);
+      setLoadError({ message: ADMIN_LOAD_NETWORK_ERROR, refused: false });
     } finally {
       setLoadErrorCode(failure);
       setLoading(false);
@@ -1082,48 +1132,69 @@ export default function PaymentsPage() {
         </Alert>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {/* #3372: NET, so the title says so - it used to read "Total Revenue"
-            over a gross sum that also counted pending and failed payments. It
-            takes Reports' name for the same derivation and its one booking
-            scope (owner decision A): a cancelled booking counts only money paid
-            and kept, kept credit included (nil if never paid), deleted: none.
-            The hints state the asymmetry: the refund tile counts every match. */}
-        <SummaryCard
-          title="Net Collected"
-          icon={DollarSign}
-          hint="Payments received, less refunds and credits and less refunds still owed back by hand. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out."
+      {/* #4961: a failed load is said above the totals and the table, on the
+          default view, because the field message lives in a panel that is
+          usually closed. While it shows, no total is drawn: $0.00 here would
+          read as a real answer. */}
+      {loadError ? (
+        <AdminLoadError
+          title="Payments could not be loaded"
+          message={loadError.message}
+          onRetry={fetchData}
+          data-testid="payments-load-error"
         >
-          {formatCents(summary.netCollectedCents, format)}
-        </SummaryCard>
-        <SummaryCard
-          title="Refunded / Credited"
-          icon={CreditCard}
-          valueClassName="text-danger"
-          hint="All payments matching the filters, deleted bookings included."
-        >
-          {formatCents(summary.refundedCents, format)}
-        </SummaryCard>
-        <SummaryCard title="Payments" icon={BarChart2}>
-          {summary.count}
-        </SummaryCard>
-        <SummaryCard title="Success Rate" icon={TrendingUp}>
-          {successRate}%
-        </SummaryCard>
-      </div>
-      {/* #3372 (owner, 7 Oct 2026): beside Net Collected, still owed back as at today. */}
-      <RefundsAndCreditsOwedList owed={summary} formatCents={(cents) => formatCents(cents, format)} />
+          {loadError.refused ? (
+            <p>Check the filters above, including those under More filters.</p>
+          ) : null}
+        </AdminLoadError>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {/* #3372: NET, so the title says so - it used to read "Total Revenue"
+                over a gross sum that also counted pending and failed payments. It
+                takes Reports' name for the same derivation and its one booking
+                scope (owner decision A): a cancelled booking counts only money paid
+                and kept, kept credit included (nil if never paid), deleted: none.
+                The hints state the asymmetry: the refund tile counts every match. */}
+            <SummaryCard
+              title="Net Collected"
+              icon={DollarSign}
+              hint="Payments received, less refunds and credits and less refunds still owed back by hand. Cancelled bookings count only what was kept of what was paid; deleted bookings are left out."
+            >
+              {formatCents(summary.netCollectedCents, format)}
+            </SummaryCard>
+            <SummaryCard
+              title="Refunded / Credited"
+              icon={CreditCard}
+              valueClassName="text-danger"
+              hint="All payments matching the filters, deleted bookings included."
+            >
+              {formatCents(summary.refundedCents, format)}
+            </SummaryCard>
+            <SummaryCard title="Payments" icon={BarChart2}>
+              {summary.count}
+            </SummaryCard>
+            <SummaryCard title="Success Rate" icon={TrendingUp}>
+              {successRate}%
+            </SummaryCard>
+          </div>
+          {/* #3372 (owner, 7 Oct 2026): beside Net Collected, still owed back as at today. */}
+          <RefundsAndCreditsOwedList owed={summary} formatCents={(cents) => formatCents(cents, format)} />
 
-      {netCollectedLedgerGapWarning && (
-        <Alert variant="warning">{netCollectedLedgerGapWarning}</Alert>
+          {netCollectedLedgerGapWarning && (
+            <Alert variant="warning">{netCollectedLedgerGapWarning}</Alert>
+          )}
+        </>
       )}
 
       <AdminDataTable
         aria-label="Payments"
         toolbar={
-          <p>
-            Showing {data.length} of {total} payment{total === 1 ? "" : "s"}
-          </p>
+          loadError ? null : (
+            <p>
+              Showing {data.length} of {total} payment{total === 1 ? "" : "s"}
+            </p>
+          )
         }
       >
         <TableHeader>
@@ -1152,6 +1223,12 @@ export default function PaymentsPage() {
                 <div className="flex justify-center">
                   <Spinner label="Loading payments…" />
                 </div>
+              </TableCell>
+            </TableRow>
+          ) : loadError ? (
+            <TableRow>
+              <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                No payments are shown because they could not be loaded.
               </TableCell>
             </TableRow>
           ) : data.length === 0 ? (
@@ -1282,6 +1359,7 @@ export default function PaymentsPage() {
                       {p.source === "STRIPE" && (
                         <MiniChip tone="info" icon={CreditCard}>Stripe</MiniChip>
                       )}
+                      <DisputeChips disputes={p.disputes} />
                       {/* #2378 D11 — the payment's own id, beside the status the
                           operator is asking about ("why is this still pending?").
                           Renders nothing unless the widget says Diagnostics is
