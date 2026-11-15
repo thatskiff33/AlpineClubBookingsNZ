@@ -166,6 +166,12 @@ describe("#4097: the officers' alert names a card refund shortfall", () => {
     expect(CARD_REFUND_SHORTFALL_ALERT_BODY).not.toMatch(/pay it(?: by bank transfer)?,? (?:then|and) mark/);
   });
 
+  it("#4516 (owner decision, 15 Nov 2026, comment 6893252570): the disputed cancel's alert says a part-lost dispute reduces the task, never sends it to the treasurer", () => {
+    const note = manualRefundTaskAlertNote("disputed-card-cancellation");
+    expect(note).toContain("if the dispute was lost for less, reduce the task by the lost amount and pay the rest.");
+    expect(note).not.toContain("take it to the treasurer");
+  });
+
   it("renders the shortfall arm, never the cash one", () => {
     const html = adminManualRefundTaskTemplate(
       {
