@@ -92,7 +92,7 @@ vi.mock("@/lib/audit", () => ({
   createAuditLog: vi.fn(),
   logAudit: vi.fn(),
 }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
+
 
 import { prisma } from "@/lib/prisma";
 import { PUT as updateMember } from "@/app/api/admin/members/[id]/route";
