@@ -5,6 +5,8 @@
  */
 
 import { assertSafeTarget } from "./target-guard.js";
+import { contentionCheckIn } from "./stay-window.js";
+import { volumeUserPool } from "./volume-users.js";
 
 function intEnv(env, name, fallback) {
   const raw = env[name];
@@ -68,13 +70,24 @@ export function loadConfig(env) {
       })
       .filter(Boolean),
 
+    // #4940: the volume seeder's members (`pnpm run load:seed-volume`), named
+    // `load-00001@<domain>` onwards. LOAD_VOLUME_USERS=n adds the first n to
+    // the write scenarios; the smoke runner sets LOAD_USERS for reads too.
+    volumeUsers: volumeUserPool(
+      nonNegativeIntEnv(env, "LOAD_VOLUME_USERS", 0),
+      env.LOAD_VOLUME_DOMAIN
+    ),
+
     // Primary login evidence is one simultaneous cold login per VU. Values
     // above one opt into a separate repeated-login stress profile.
     loginIterationsPerVu: intEnv(env, "LOGIN_ITERATIONS_PER_VU", 1),
 
     // Booking-contention knobs.
-    lodgeId: env.LODGE_ID || "", // empty → app resolves the default lodge
-    contentionCheckIn: env.CONTENTION_CHECKIN || "2026-08-18",
+    // Empty → the scenario books the member's first bookable lodge
+    // (`bookableLodgeIds`); booking create never picks one itself.
+    lodgeId: env.LODGE_ID || "",
+    // Relative to the run's day, so the default never drifts into the past.
+    contentionCheckIn: env.CONTENTION_CHECKIN || contentionCheckIn(Date.now()),
     contentionCheckOut: env.CONTENTION_CHECKOUT || "",
     contentionAttempts: intEnv(env, "CONTENTION_ATTEMPTS", 1),
     contentionP95Ms: intEnv(env, "CONTENTION_P95_MS", 5000),
@@ -92,6 +105,32 @@ export function loadConfig(env) {
       env,
       "CONTENTION_EXPECTED_BASELINE",
       0
+    ),
+
+    // #4940 write scenarios. Stays start STAY_OFFSET_DAYS after the run's
+    // UTC day, inside the relativized seeded seasons.
+    stayOffsetDays: intEnv(env, "STAY_OFFSET_DAYS", 120),
+    mixedNightSpread: intEnv(env, "MIXED_NIGHT_SPREAD", 3),
+    // One create per iteration plus one first-iteration hold: five leaves
+    // room for the cron-on rerun under the 20-per-hour per-IP create limiter.
+    mixedIterations: intEnv(env, "MIXED_ITERATIONS", 5),
+    paymentIterations: intEnv(env, "PAYMENT_ITERATIONS", 3),
+    // Payment stays sit this many days after the mixed-writes window, so the
+    // two scenarios never share a night.
+    paymentOffsetDays: intEnv(env, "PAYMENT_OFFSET_DAYS", 30),
+
+    // Admin reads log in as the seeded E2E admin persona.
+    adminEmail: env.LOAD_ADMIN_EMAIL || "e2e-admin@demo.alpineclub.test",
+    adminPassword: env.LOAD_ADMIN_PASSWORD || env.LOAD_USER_PASSWORD || "",
+
+    // The local Stripe stub's control port (load/stripe-stub/server.mjs),
+    // under the same guard as BASE_URL: a local address, never :5432.
+    stripeStubUrl: assertSafeTarget(
+      {
+        STRIPE_STUB_URL: env.STRIPE_STUB_URL || "http://127.0.0.1:12111",
+        LOAD_TEST_CONFIRM_TARGET: env.LOAD_TEST_CONFIRM_TARGET,
+      },
+      "STRIPE_STUB_URL"
     ),
   };
 }

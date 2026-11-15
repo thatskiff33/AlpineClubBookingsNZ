@@ -14,6 +14,3 @@
   counted on the page, with what to check before switching it back on.
   The Modules guide now lists every feature that needs Xero and the manual
   alternative for each.
-
-  Report downloads on the reports page and the Finance dashboard are now named
-  after the club's short name instead of `tac-report`.

@@ -8,6 +8,7 @@ import type { BookingMoneyReconciliationSummary } from "@/lib/booking-money-reco
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { clubDownloadFilename } from "@/lib/club-download-filename";
 import { useLodgeOptions } from "@/components/lodge-select";
 import {
   CalendarRange,
@@ -37,7 +38,6 @@ import {
   formatStayDateOrNull,
 } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
-import { clubReportFilename } from "@/lib/club-report-filename";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
 import {
@@ -436,7 +436,7 @@ export default function ReportsPage() {
     const anchor = document.createElement("a");
     const dateStr = clubTime.today();
     anchor.href = url;
-    anchor.download = clubReportFilename(club.shortName, dateStr, "csv");
+    anchor.download = clubDownloadFilename(club.shortName, `report-${dateStr}`, "csv");
     anchor.click();
     URL.revokeObjectURL(url);
   }

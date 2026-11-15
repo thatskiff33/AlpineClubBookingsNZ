@@ -19,8 +19,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.routerReplace }),
 }));
 
+// The PDF export names its file after the club (#4932); these tests never
+// reach it, so the identity only has to be present.
 vi.mock("@/components/club-identity-provider", () => ({
-  useClubIdentity: () => ({ name: "Test Club", shortName: "Test AC" }),
+  useClubIdentity: () => ({ shortName: "Test Club" }),
 }));
 
 vi.mock("next/dynamic", () => ({
