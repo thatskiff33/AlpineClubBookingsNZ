@@ -1,7 +1,9 @@
 "use client";
 
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeCheck,
   Bell,
@@ -31,6 +33,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
@@ -39,67 +46,15 @@ import {
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
-
-type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
-type ProgressStatus = "open" | "completed" | "skipped";
-type Provider = "stripe" | "smtp" | "sentry" | "xero";
-
-interface SetupStepCheck {
-  id: string;
-  title: string;
-  description: string;
-  status: SetupStatus;
-  required: boolean;
-  message: string;
-  details: string[];
-  href?: string;
-  progress: ProgressStatus;
-  action?: {
-    type: "provider-test";
-    provider: Provider;
-    label: string;
-  };
-}
-
-interface SetupCategory {
-  id: string;
-  title: string;
-  description: string;
-  status: SetupStatus;
-  checks: SetupStepCheck[];
-}
-
-interface SetupReadiness {
-  status: SetupStatus;
-  summary: {
-    total: number;
-    complete: number;
-    warning: number;
-    blocked: number;
-    skipped: number;
-  };
-  categories: SetupCategory[];
-  generatedAt: string;
-}
-
-interface SetupProgressState {
-  completedStepIds: string[];
-  skippedStepIds: string[];
-  completedAt: string | null;
-  completedByMemberId: string | null;
-}
-
-interface SetupResponse {
-  readiness: SetupReadiness;
-  progress: SetupProgressState;
-}
-
-interface ProviderTestResult {
-  ok: boolean;
-  provider: Provider;
-  checkedAt: string;
-  message: string;
-}
+import type {
+  ProgressStatus,
+  Provider,
+  ProviderTestResult,
+  SetupProgressState,
+  SetupReadiness,
+  SetupResponse,
+  SetupStatus,
+} from "./setup-types";
 
 interface SetupHubCard {
   href: string;
@@ -161,6 +116,10 @@ const setupHubCards: SetupHubCard[] = [
     icon: Bell,
   },
 ];
+
+const SETUP_COMPLETE_MESSAGE = "Setup has been marked complete.";
+const SETUP_COMPLETE_BANNER_CLASS =
+  "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11";
 
 function statusVariant(status: SetupStatus): BadgeProps["variant"] {
   if (status === "complete") return "success";
@@ -260,10 +219,26 @@ export function SetupPageClient({
   permissionMatrix: AdminPermissionMatrix;
   features: FeatureFlags;
 }) {
+  const canEdit = useAdminAreaEditAccess("support");
   const [readiness, setReadiness] = useState<SetupReadiness | null>(null);
   const [progress, setProgress] = useState<SetupProgressState | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setErrorMessage] = useState("");
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
+  const [loadError, setLoadError] = useState("");
+  const [finishMessage, setFinishMessage] = useState("");
+  const successRef = useRef<HTMLDivElement>(null);
+  // Only action failures request attention; background loads use loadError.
+  function setError(value: string) {
+    setErrorMessage(value);
+    if (value) setErrorAttentionKey((key) => key + 1);
+  }
+  useActionAttention({
+    error,
+    errorTarget: null, // FocusedActionError owns failure focus.
+    success: finishMessage,
+    successTarget: successRef,
+  });
   const [savingStep, setSavingStep] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [runningProvider, setRunningProvider] = useState<Provider | null>(null);
@@ -271,7 +246,7 @@ export function SetupPageClient({
 
   async function loadSetup() {
     setLoading(true);
-    setError("");
+    setLoadError("");
 
     try {
       const response = await fetch("/api/admin/setup", {
@@ -283,10 +258,13 @@ export function SetupPageClient({
       }
       setReadiness(body.readiness);
       setProgress(body.progress);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
+      // A reload that finds setup reopened retires this session's finish notice.
+      if (!body.progress.completedAt) setFinishMessage("");
+      return body;
+    } catch (loadFailure) {
+      setLoadError(
+        loadFailure instanceof Error
+          ? loadFailure.message
           : "Failed to load setup readiness",
       );
     } finally {
@@ -297,6 +275,13 @@ export function SetupPageClient({
   useEffect(() => {
     void loadSetup();
   }, []);
+
+  // The admin's own Refresh retires the last action's error (it described the
+  // old data); the attention key is untouched, so clearing never takes focus.
+  function refreshSetup() {
+    setErrorMessage("");
+    void loadSetup();
+  }
 
   const allChecks = useMemo(
     () => readiness?.categories.flatMap((category) => category.checks) ?? [],
@@ -322,6 +307,7 @@ export function SetupPageClient({
   ) {
     setSavingStep(stepId);
     setError("");
+    setFinishMessage("");
     try {
       const response = await fetch("/api/admin/setup/progress", {
         method: "PATCH",
@@ -348,6 +334,7 @@ export function SetupPageClient({
   async function finishSetup() {
     setFinishing(true);
     setError("");
+    setFinishMessage("");
     try {
       const response = await fetch("/api/admin/setup/progress", {
         method: "PATCH",
@@ -359,7 +346,10 @@ export function SetupPageClient({
       if (!response.ok) {
         throw new Error(apiErrorMessageFromBody(body, "Failed to finish setup"));
       }
-      await loadSetup();
+      const updated = await loadSetup();
+      if (updated?.progress.completedAt) {
+        setFinishMessage(SETUP_COMPLETE_MESSAGE);
+      }
     } catch (finishError) {
       setError(
         finishError instanceof Error ? finishError.message : "Failed to finish setup",
@@ -388,31 +378,22 @@ export function SetupPageClient({
         [provider]: body,
       }));
       await loadSetup();
+      if (!body.ok) setError(body.message);
     } catch (providerError) {
+      const message = providerError instanceof Error ? providerError.message : "Provider test failed";
+      setError(message);
       setProviderResults((current) => ({
         ...current,
         [provider]: {
           ok: false,
           provider,
           checkedAt: new Date().toISOString(),
-          message:
-            providerError instanceof Error
-              ? providerError.message
-              : "Provider test failed",
+          message,
         },
       }));
     } finally {
       setRunningProvider(null);
     }
-  }
-
-  if (loading && !readiness) {
-    return (
-      <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading setup readiness
-      </div>
-    );
   }
 
   return (
@@ -424,13 +405,18 @@ export function SetupPageClient({
             Finish first-install readiness for club configuration, booking rules,
             provider connections, and finance mappings.
           </p>
+          {/* The empty wrapper an editor gets costs no layout; the spacing
+              lives on the inner box. */}
+          <AdminViewOnlySectionBanner canEdit={canEdit} className="mt-3 max-w-3xl" />
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={loadSetup} disabled={loading}>
+          <Button variant="outline" onClick={refreshSetup} disabled={loading}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
             onClick={finishSetup}
             disabled={
               finishing || setupCompleted || requiredBlockers.length > 0 || !readiness
@@ -442,19 +428,35 @@ export function SetupPageClient({
               <CheckCircle2 className="h-4 w-4" />
             )}
             {setupCompleted ? "Setup Complete" : "Mark Setup Complete"}
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </div>
 
-      {error ? (
-        <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
-          {error}
-        </div>
+      <FocusedActionError id="setup-error" error={error} attentionKey={errorAttentionKey} />
+      <div
+        role="alert"
+        aria-atomic="true"
+        className={loadError ? "rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11" : "sr-only"}
+      >
+        {loadError}
+      </div>
+      {/* Saved completion is a plain banner; only an explicit finish is announced. */}
+      {setupCompleted && !finishMessage ? (
+        <div className={SETUP_COMPLETE_BANNER_CLASS}>{SETUP_COMPLETE_MESSAGE}</div>
       ) : null}
-
-      {setupCompleted ? (
-        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
-          Setup has been marked complete.
+      <div
+        id="setup-success"
+        ref={successRef}
+        role="status"
+        aria-atomic="true"
+        className={finishMessage ? SETUP_COMPLETE_BANNER_CLASS : "sr-only"}
+      >
+        {finishMessage}
+      </div>
+      {loading && !readiness ? (
+        <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading setup readiness
         </div>
       ) : null}
 
@@ -595,7 +597,9 @@ export function SetupPageClient({
                               </Button>
                             ) : null}
                             {check.action ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -608,10 +612,12 @@ export function SetupPageClient({
                                   <PlayCircle className="h-4 w-4" />
                                 )}
                                 {check.action.label}
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                             {check.progress !== "completed" ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -624,10 +630,12 @@ export function SetupPageClient({
                                   <CheckCircle2 className="h-4 w-4" />
                                 )}
                                 Acknowledge
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                             {check.progress !== "skipped" ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -636,10 +644,12 @@ export function SetupPageClient({
                               >
                                 <SkipForward className="h-4 w-4" />
                                 Skip
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                             {check.progress !== "open" ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="ghost"
                                 size="sm"
@@ -648,7 +658,7 @@ export function SetupPageClient({
                               >
                                 <RotateCcw className="h-4 w-4" />
                                 Reopen
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                           </div>
                         </CardContent>
