@@ -43,11 +43,7 @@ import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
-import {
-  apiErrorMessageFromBody,
-  jsonObjectOrNull,
-  readApiErrorBody,
-} from "@/lib/api-error-message";
+import { ApiRefusalError, apiErrorMessageFromBody, readApiObjectOrNull, refusalMessageOr } from "@/lib/api-error-message";
 import { useClubFormat } from "@/components/club-format-provider";
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 import { adminHref } from "@/lib/admin-hubs";
@@ -374,7 +370,7 @@ export default function AdminWaitlistPage() {
 
       if (!res.ok) {
         failure = diagnosticsPageErrorCodeForStatus(res.status);
-        throw new Error(apiErrorMessageFromBody(data, "Failed to load waitlist"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(data, "Failed to load waitlist"));
       }
 
       const nextEntries = Array.isArray(data.entries)
@@ -398,7 +394,7 @@ export default function AdminWaitlistPage() {
         total: 0,
       });
       failure = failure ?? DIAGNOSTICS_PAGE_NETWORK_ERROR_CODE;
-      setError(err instanceof Error ? err.message : "Failed to load waitlist");
+      setError(refusalMessageOr(err, "Failed to load waitlist"));
       setErrorAttention((value) => value + 1);
     } finally {
       setLoadErrorCode(failure);
@@ -509,7 +505,7 @@ export default function AdminWaitlistPage() {
       });
       const data = res.ok
         ? ((await res.json()) as Record<string, unknown>)
-        : jsonObjectOrNull(await readApiErrorBody(res));
+        : await readApiObjectOrNull(res);
       // A refusal with no readable body (an HTML page from the proxy) says
       // nothing about whether this capacity write landed, so it takes the
       // unverified-outcome copy below, like a request that got no answer

@@ -12,9 +12,8 @@ import {
 import {
   ApiRefusalError,
   apiErrorMessageFromBody,
-  jsonObjectOrNull,
-  readApiErrorBody,
   refusalMessageOr,
+  readApiObjectOrEmpty,
 } from "@/lib/api-error-message";
 
 // The full admin CRUD shape from /api/admin/subscription-categories — a
@@ -62,7 +61,7 @@ export function MemberSubscriptionCategoryField({
         const response = await fetch("/api/admin/subscription-categories", {
           credentials: "same-origin",
         });
-        const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
+        const body = (await readApiObjectOrEmpty(response)) as
           | SubscriptionCategoriesResponse
           | { error?: string };
         if (!response.ok || !("subscriptionCategories" in body)) {

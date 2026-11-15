@@ -41,9 +41,8 @@ import type {
 import {
   ApiRefusalError,
   apiErrorMessageFromBody,
-  jsonObjectOrNull,
-  readApiErrorBody,
   refusalMessageOr,
+  readApiObjectOrEmpty,
 } from "@/lib/api-error-message";
 import { MemberSubscriptionCategoryField } from "./member-subscription-category-field";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -257,7 +256,7 @@ export function MemberSeasonalMembershipCard({
       const response = await fetch("/api/admin/membership-types", {
         credentials: "same-origin",
       });
-      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
+      const body = (await readApiObjectOrEmpty(response)) as
         | MembershipTypesResponse
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
@@ -335,7 +334,7 @@ export function MemberSeasonalMembershipCard({
           }),
         },
       );
-      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
+      const body = (await readApiObjectOrEmpty(response)) as
         | { preview: SeasonalMembershipPreview }
         | { error?: string };
       if (!response.ok || !("preview" in body)) {
@@ -383,7 +382,7 @@ export function MemberSeasonalMembershipCard({
           }),
         },
       );
-      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as { error?: string };
+      const body = (await readApiObjectOrEmpty(response)) as { error?: string };
       if (!response.ok) {
         throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to save membership change"),

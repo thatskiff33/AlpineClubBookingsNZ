@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
+import { htmlErrorPage, itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 import AdminLodgePage from "@/app/(admin)/admin/lodge/page";
 
 /*
@@ -100,5 +100,20 @@ describe("kiosk account: create refused", () => {
 
     expect(await screen.findByText("Kiosk account created")).toBeInTheDocument();
     await waitFor(() => expect(loads(fetchMock)).toBeGreaterThanOrEqual(2));
+  });
+});
+
+describe("kiosk accounts: the load fails", () => {
+  it.each([
+    ["a dropped connection", () => Promise.reject(new TypeError("Failed to fetch"))],
+    ["an HTML 502", () => htmlErrorPage(502)],
+    ["an HTML page with a 200 status", () => new Response("<html>Bad Gateway</html>", { status: 200 })],
+  ])("shows the screen's sentence for %s", async (_label, answer) => {
+    vi.stubGlobal("fetch", vi.fn(async () => answer()));
+    render(<AdminLodgePage />);
+
+    expect(await screen.findByText("Failed to load lodge account")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
+    expect(screen.queryByText(/JSON|Unexpected token/)).not.toBeInTheDocument();
   });
 });

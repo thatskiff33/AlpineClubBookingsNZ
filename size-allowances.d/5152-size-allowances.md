@@ -43,7 +43,7 @@ reason: sweeps admin failed-response reads onto the shared refusal reader;
   own, not part of this fix.
 
 function: src/app/(admin)/admin/rules/promo-codes/promo-codes-page-client.tsx#PromoCodesPageClient
-lines: 1617
+lines: 1613
 reason: sweeps admin failed-response reads onto the shared refusal reader;
   those lines sit inside the function `PromoCodesPageClient`, which was
   already over its limit before this change, and lifting it apart is a

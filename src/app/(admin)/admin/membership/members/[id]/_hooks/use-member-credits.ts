@@ -5,10 +5,9 @@ import { toast } from "sonner";
 import {
   ApiRefusalError,
   apiErrorMessageFromBody,
-  jsonObjectOrNull,
-  readApiErrorBody,
   apiRefusalFromResponse,
   refusalMessageOr,
+  readApiObjectOrEmpty,
 } from "@/lib/api-error-message";
 import type { AdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
 import { parseSignedDecimalDollarsToCents } from "@/lib/money-input";
@@ -101,7 +100,7 @@ export function useMemberCredits(id: string) {
           ...(cents > 0 ? { grantAccount } : {}),
         }),
       });
-      const data = jsonObjectOrNull(await readApiErrorBody(res)) ?? {};
+      const data = await readApiObjectOrEmpty(res);
       if (!res.ok) {
         throw new ApiRefusalError(apiErrorMessageFromBody(data, "Failed to save adjustment"));
       }

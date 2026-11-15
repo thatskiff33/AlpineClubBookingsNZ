@@ -71,8 +71,7 @@ import type { HutLeaderOnNight } from "@/lib/hut-leader-handover";
 import {
   apiErrorMessageFromBody,
   apiErrorMessageFromResponse,
-  jsonObjectOrNull,
-  readApiErrorBody,
+  readApiObjectOrEmpty,
 } from "@/lib/api-error-message";
 
 interface HutLeaderAssignment {
@@ -566,7 +565,7 @@ export default function HutLeadersPage() {
         }
         // A refusal is not always JSON: an HTML error page reads as no body,
         // and falls through to this screen's own sentence (ALP-589).
-        const data = (jsonObjectOrNull(await readApiErrorBody(res)) ?? {}) as {
+        const data = (await readApiObjectOrEmpty(res)) as {
           code?: unknown;
           nightDetails?: NonNullable<typeof overCapacity>["nights"];
           nonHoldingBookings?: unknown;

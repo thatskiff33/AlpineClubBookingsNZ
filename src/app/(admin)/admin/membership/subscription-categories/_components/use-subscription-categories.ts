@@ -6,9 +6,9 @@ import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action
 import {
   ApiRefusalError,
   apiErrorMessageFromBody,
-  jsonObjectOrNull,
   readApiErrorBody,
   refusalMessageOr,
+  readApiObjectOrEmpty,
 } from "@/lib/api-error-message";
 import {
   createEmptyDraft,
@@ -49,7 +49,7 @@ export function useSubscriptionCategories() {
       const response = await fetch("/api/admin/subscription-categories", {
         credentials: "same-origin",
       });
-      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
+      const body = (await readApiObjectOrEmpty(response)) as
         | SubscriptionCategoriesResponse
         | { error?: string };
       if (!response.ok || !("subscriptionCategories" in body)) {
@@ -94,7 +94,7 @@ export function useSubscriptionCategories() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draftPayload(newDraft)),
       });
-      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
+      const body = (await readApiObjectOrEmpty(response)) as
         | { subscriptionCategory: SubscriptionCategory }
         | { error?: string };
       if (!response.ok || !("subscriptionCategory" in body)) {
@@ -135,7 +135,7 @@ export function useSubscriptionCategories() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draftPayload(draft)),
       });
-      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
+      const body = (await readApiObjectOrEmpty(response)) as
         | { subscriptionCategory: SubscriptionCategory }
         | { error?: string };
       if (!response.ok || !("subscriptionCategory" in body)) {

@@ -25,7 +25,17 @@ import { ImageManagerClient } from "../image-manager-client";
 
 type Answer = () => Response | Promise<Response>;
 
-function installFetch({ upload, deleteFolder }: { upload?: Answer; deleteFolder?: Answer }) {
+type Answers = {
+  upload?: Answer;
+  deleteFolder?: Answer;
+  createFolder?: Answer;
+  renameFolder?: Answer;
+  deleteImage?: Answer;
+};
+
+const IMAGE = { filename: "hut.png", url: "/images/hut.png", byteSize: 2048, modifiedAt: "2026-06-01T00:00:00.000Z" };
+
+function installFetch({ upload, deleteFolder, createFolder, renameFolder, deleteImage }: Answers) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/admin/image-manager/upload") {
@@ -34,10 +44,19 @@ function installFetch({ upload, deleteFolder }: { upload?: Answer; deleteFolder?
     if (url === "/api/admin/image-manager/directories" && init?.method === "DELETE") {
       return (deleteFolder ?? (() => Response.json({ ok: true })))();
     }
+    if (url === "/api/admin/image-manager/directories" && init?.method === "POST") {
+      return (createFolder ?? (() => Response.json({ ok: true }, { status: 201 })))();
+    }
+    if (url === "/api/admin/image-manager/directories" && init?.method === "PATCH") {
+      return (renameFolder ?? (() => Response.json({ ok: true })))();
+    }
     if (url.startsWith("/api/admin/image-manager/directories")) {
       return Response.json({ directories: ["", "photos"] });
     }
-    return Response.json({ images: [] });
+    if (url === "/api/admin/image-manager/images" && init?.method === "DELETE") {
+      return (deleteImage ?? (() => Response.json({ ok: true })))();
+    }
+    return Response.json({ images: [IMAGE] });
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -54,6 +73,30 @@ async function deleteTheFolder() {
   render(<ImageManagerClient />);
   fireEvent.click(await screen.findByRole("button", { name: "Delete folder photos" }));
   const dialog = await screen.findByRole("dialog", { name: "Delete Folder" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+}
+
+async function createAFolder() {
+  render(<ImageManagerClient />);
+  await screen.findByRole("button", { name: "photos" });
+  fireEvent.click(screen.getByRole("button", { name: "New" }));
+  const dialog = await screen.findByRole("dialog", { name: "New Folder" });
+  fireEvent.change(within(dialog).getByPlaceholderText("Folder name"), { target: { value: "huts" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+}
+
+async function renameTheFolder() {
+  render(<ImageManagerClient />);
+  fireEvent.click(await screen.findByRole("button", { name: "Rename folder photos" }));
+  const dialog = await screen.findByRole("dialog", { name: "Rename Folder" });
+  fireEvent.change(within(dialog).getByPlaceholderText("New folder name"), { target: { value: "snow" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
+}
+
+async function deleteTheImage() {
+  render(<ImageManagerClient />);
+  fireEvent.click(await screen.findByTitle("Delete hut.png"));
+  const dialog = await screen.findByRole("dialog", { name: "Delete Image" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
 }
 
@@ -109,6 +152,71 @@ describe("image manager refusals", () => {
 
       expect(await screen.findByText("Directory deleted")).toBeInTheDocument();
       await waitFor(() => expect(directoryLoads(fetchMock)).toHaveLength(2));
+    });
+  });
+
+  describe("creating a folder", () => {
+    itShowsEveryRefusal({
+      fallback: "Failed to create directory",
+      submit: async (answer) => {
+        installFetch({ createFolder: answer });
+        await createAFolder();
+      },
+    });
+
+    it("raises the forbidden-save notice for a 403", async () => {
+      installFetch({ createFolder: () => Response.json({ error: "Forbidden" }, { status: 403 }) });
+      await createAFolder();
+
+      expect(await screen.findByText(ADMIN_FORBIDDEN_SAVE_REASON, { exact: false })).toBeInTheDocument();
+    });
+
+    it("reloads the folders on success", async () => {
+      const fetchMock = installFetch({});
+      await createAFolder();
+
+      expect(await screen.findByText("Directory created")).toBeInTheDocument();
+      await waitFor(() => expect(directoryLoads(fetchMock)).toHaveLength(2));
+    });
+  });
+
+  describe("renaming a folder", () => {
+    itShowsEveryRefusal({
+      fallback: "Failed to rename directory",
+      submit: async (answer) => {
+        installFetch({ renameFolder: answer });
+        await renameTheFolder();
+      },
+    });
+
+    it("reloads the folders on success", async () => {
+      const fetchMock = installFetch({});
+      await renameTheFolder();
+
+      expect(await screen.findByText("Directory renamed")).toBeInTheDocument();
+      await waitFor(() => expect(directoryLoads(fetchMock)).toHaveLength(2));
+    });
+  });
+
+  describe("deleting an image", () => {
+    itShowsEveryRefusal({
+      fallback: "Failed to delete image",
+      submit: async (answer) => {
+        installFetch({ deleteImage: answer });
+        await deleteTheImage();
+      },
+    });
+
+    it("reloads the gallery on success", async () => {
+      const fetchMock = installFetch({});
+      await deleteTheImage();
+
+      expect(await screen.findByText("Image deleted")).toBeInTheDocument();
+      const galleryReads = () =>
+        fetchMock.mock.calls.filter(
+          ([input, init]) => String(input).startsWith("/api/admin/image-manager/images") && !init?.method,
+        );
+      await waitFor(() => expect(galleryReads()).toHaveLength(2));
     });
   });
 });

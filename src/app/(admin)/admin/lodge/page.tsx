@@ -18,7 +18,7 @@ import {
 } from "@/components/admin/view-only-action";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import { ApiRefusalError, apiErrorMessageFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 
 // Multi-lodge kiosks: one shared login per lodge device. Each account can
 // bind to a lodge (a MemberLodgeAccess STAFF grant, managed through this
@@ -340,12 +340,12 @@ export default function AdminLodgePage() {
   const load = useCallback(async () => {
     try {
       const res = await fetchWithRecentAuth("/api/admin/lodge");
-      if (!res.ok) throw new Error("Failed to load lodge account");
+      if (!res.ok) throw new ApiRefusalError("Failed to load lodge account");
       const data = await res.json();
       setAccounts(data.accounts ?? (data.lodge ? [data.lodge] : []));
       setDefaultLodgeName(data.defaultLodgeName ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
+      setError(refusalMessageOr(err, "Failed to load lodge account"));
     } finally {
       setLoading(false);
     }

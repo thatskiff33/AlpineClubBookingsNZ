@@ -467,6 +467,27 @@ describe("Admin waitlist page", () => {
     expect(screen.queryByText(/JSON/)).not.toBeInTheDocument();
   });
 
+  // ALP-589: the list load shows the route's sentence for a refusal it worded,
+  // and the screen's own sentence for a dropped connection or an HTML page,
+  // never the browser's "Failed to fetch".
+  it.each([
+    ["a worded refusal", () => Response.json({ error: "Waitlist is switched off." }, { status: 403 }), "Waitlist is switched off."],
+    ["a dropped connection", () => Promise.reject(new TypeError("Failed to fetch")), "Failed to load waitlist"],
+    ["an HTML 502", () => htmlErrorPage(502), "Failed to load waitlist"],
+  ])("shows the right sentence when the list load meets %s", async (_label, answer, shown) => {
+    mocks.currentSearch = "";
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === "/api/admin/waitlist") return Promise.resolve().then(answer);
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+
+    render(<AdminWaitlistPage />);
+
+    expect(await screen.findAllByText(shown)).not.toHaveLength(0);
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
+    expect(screen.queryByText(/JSON|Unexpected token/)).not.toBeInTheDocument();
+  });
+
   it("retains the overbook retry context when the final confirmation fails", async () => {
     mocks.currentSearch = "";
     let forceConfirmCalls = 0;

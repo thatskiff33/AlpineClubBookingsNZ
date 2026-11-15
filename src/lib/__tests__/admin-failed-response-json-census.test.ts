@@ -33,7 +33,14 @@ import { describe, expect, it } from "vitest";
   edited by other lanes that had not merged when this census landed (their own
   fixes may remove reads); converging one is always green here, and adding a
   read to any file — listed or not — is red. Lower or delete an entry when you
-  converge its reads.
+  converge its reads. Each entry names the open lane that owns its file, so the
+  reason stays true for that file and a reader knows whom to ask.
+
+  What it does NOT see: only `await x.json()` with a plain identifier receiver
+  is counted. A `.then((r) => r.json())` chain, or a receiver that is not an
+  identifier (`(await fetch(…)).json()`), is invisible here, and so is an
+  `err.message` shown from a catch. The census guards the unguarded parse, not
+  every way a screen can put the browser's words in front of an officer.
 
   This test reads the source tree from disk, so `pnpm run test:related` cannot
   reach it. Run it by name.
@@ -45,21 +52,30 @@ const SCANNED_DIR = join(process.cwd(), "src", "app", "(admin)");
  * Files whose unguarded failure reads were left to the lane already editing
  * them, with the most reads each may still hold. Every entry is a ceiling: a
  * lower count passes, a higher one fails.
+ *
+ * Each reason names the open pull requests that really edit the file when this
+ * census landed. ALP-649 (#5187) is the stacked successor of this change: it
+ * carries the sweep to every file below and so is the lane that empties the
+ * list; the other lanes are named where they also edit the file.
  */
-const SIBLING_LANE =
-  "Edited by a sibling lane (ALP-577, ALP-578 or ALP-581) not yet merged; ALP-649 converts it after it lands.";
+const ALP_578 = "ALP-578 (#5146)";
+const ALP_581 = "ALP-581 (#5130)";
+const ALP_649 = "ALP-649 (#5187)";
+const ALP_521 = "ALP-521 (#5107)";
+const editedBy = (...lanes: string[]) =>
+  `Not yet converted; open pull requests editing this file: ${lanes.join(", ")}.`;
 
 const KNOWN_UNGUARDED: Record<string, { reads: number; reason: string }> = {
-  "src/app/(admin)/admin/booking-desk/book/page.tsx": { reads: 1, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/chores/page.tsx": { reads: 3, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/membership/family-groups/page.tsx": { reads: 1, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/lockers/page.tsx": { reads: 3, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card.tsx": { reads: 2, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": { reads: 1, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": { reads: 1, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/rules/seasons/page.tsx": { reads: 1, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx": { reads: 7, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/work-parties/page.tsx": { reads: 5, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/booking-desk/book/page.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_649, ALP_521) },
+  "src/app/(admin)/admin/chores/page.tsx": { reads: 3, reason: editedBy(ALP_649, ALP_521) },
+  "src/app/(admin)/admin/membership/family-groups/page.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_581, ALP_649) },
+  "src/app/(admin)/admin/lockers/page.tsx": { reads: 3, reason: editedBy(ALP_649) },
+  "src/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card.tsx": { reads: 2, reason: editedBy(ALP_578, ALP_649) },
+  "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_649, ALP_521) },
+  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_581, ALP_649) },
+  "src/app/(admin)/admin/rules/seasons/page.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_581, ALP_649) },
+  "src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx": { reads: 7, reason: editedBy(ALP_578, ALP_649) },
+  "src/app/(admin)/admin/work-parties/page.tsx": { reads: 5, reason: editedBy(ALP_581, ALP_649) },
 };
 
 type Hit = { line: number; kind: "failure-branch" | "parse-before-check" };

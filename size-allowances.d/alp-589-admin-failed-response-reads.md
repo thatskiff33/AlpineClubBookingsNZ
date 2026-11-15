@@ -6,7 +6,7 @@ any of these screens to absorb that would move one handler's error read away
 from the handler, which is the drift the shared reader exists to stop.
 
 file: src/app/(admin)/admin/booking-desk/waitlist/page.tsx
-lines: 1035
+lines: 1031
 reason: the force-confirm handler reads a refusal through the shared reader
   and keeps its unverified-outcome copy for an unreadable one, beside the
   capacity write it guards; the page's split is its own refactor.
@@ -24,7 +24,7 @@ reason: the Xero sync and manual-payment handlers parse only a success and
   lines would move the handlers away from their state.
 
 file: src/app/(admin)/admin/hut-leaders/page.tsx
-lines: 1513
+lines: 1512
 reason: the leader writes read a refusal, including its capacity and
   amendment details, through the shared reader inside each handler; splitting
   the page is a separate refactor.
