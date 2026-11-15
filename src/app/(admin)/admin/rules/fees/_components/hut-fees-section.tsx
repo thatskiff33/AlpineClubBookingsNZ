@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, describedByFieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -628,23 +629,28 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     if (!lodgeScopeReady) return;
     const requestedScope = scopedLodgeId;
     if (!(await confirm(seasonDeleteConfirmation(season.name)))) return;
-
+    const fallback = "Failed to delete";
+    setError("");
     try {
       const res = await fetch(`/api/admin/seasons/${season.id}`, { method: "DELETE" });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to delete");
+        raiseError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
       if (activeScopeRef.current !== requestedScope) return;
       fetchSeasons();
-    } catch (err) {
-      raiseError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      // The request never arrived. The browser's own wording ("Failed to fetch",
+      // "Load failed") says nothing useful to an officer, so show the screen's sentence.
+      raiseError(fallback);
     }
   }
 
   async function handleToggleActive(season: Season) {
     if (!lodgeScopeReady) return;
     const requestedScope = scopedLodgeId;
+    const fallback = "Failed to update";
+    setError("");
     try {
       const res = await fetch(`/api/admin/seasons/${season.id}`, {
         method: "PUT",
@@ -652,13 +658,14 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
         body: JSON.stringify({ active: !season.active }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to update");
+        raiseError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
       if (activeScopeRef.current !== requestedScope) return;
       fetchSeasons();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      // The request never arrived: see handleDelete.
+      raiseError(fallback);
     }
   }
 

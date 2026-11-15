@@ -37,8 +37,8 @@ vi.mock("sonner", () => ({
 import { MyExceptionRequests } from "@/app/(authenticated)/bookings/_components/my-exception-requests";
 import { AccountCreditSection } from "@/app/(authenticated)/profile/account-credit-section";
 import LodgeInstructionsPage from "@/app/(authenticated)/lodge-instructions/page";
-import { ProfileForm } from "@/app/(authenticated)/profile/profile-form";
-import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
+import { ProfileForm } from "@/components/profile/profile-form";
+import { BookingRequestForm } from "@/components/website/booking-request-form";
 import { MemberGroupJoinPanel } from "@/app/(website-dynamic)/join/[code]/member-group-join-panel";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import type { MemberExceptionRequestItem } from "@/lib/member-exception-requests";

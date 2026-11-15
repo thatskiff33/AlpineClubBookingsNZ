@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useConfirm } from "@/components/confirm-dialog";
-import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
@@ -30,7 +29,9 @@ import {
 } from "@/lib/admin-family-group-ui-helpers";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatPayloadInstantDate } from "../../_lib/payload-instant";
-import { useActionAttention, useRevealAttention } from "@/hooks/use-scroll-to-feedback";
+import { useRevealAttention } from "@/hooks/use-scroll-to-feedback";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 import { adminHref } from "@/lib/admin-hubs";
 type PartnerInvite = {
@@ -91,21 +92,12 @@ function FamilyGroupsTab() {
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  // A failed delete is reported above the groups list, not inside the editor
-  // form, which may be closed when Delete is clicked on a row (#4973). The row
-  // that was clicked can be screens below the alert, so a failure takes focus
-  // and scrolls the alert into view through the one attention home.
-  const [deleteError, setDeleteError] = useState("");
+  // A refused delete, shown above the list: `error` sits inside the form, which
+  // may be closed when Delete is clicked on a row (#4973, #4976).
+  const [listError, setListError] = useState("");
   // Counts failures so a second identical failure (the same 404 twice) still
   // takes focus, even when the clear and the repeat land in one render.
-  const [deleteFailures, setDeleteFailures] = useState(0);
-  const deleteAlertRef = useRef<HTMLDivElement>(null);
-  useActionAttention({
-    error: deleteError,
-    errorTarget: deleteAlertRef,
-    errorBlock: "center",
-    attentionKey: deleteFailures,
-  });
+  const [listFailures, setListFailures] = useState(0);
   // #2256: the create/edit form renders in the anchor below the filter card and
   // the two queue cards (pending changes, outstanding partner invites), while
   // its triggers sit elsewhere — New Group in the page header, Edit on a row in
@@ -261,6 +253,7 @@ function FamilyGroupsTab() {
     setMemberSearch("");
     setSearchResults([]);
     setError("");
+    setListError("");
     setShowForm(true);
     setFormOpenNonce((nonce) => nonce + 1);
   }
@@ -275,6 +268,7 @@ function FamilyGroupsTab() {
     setMemberSearch("");
     setSearchResults([]);
     setError("");
+    setListError("");
     setShowForm(true);
     setFormOpenNonce((nonce) => nonce + 1);
   }, []);
@@ -381,8 +375,8 @@ function FamilyGroupsTab() {
   }
 
   function reportDeleteFailure(message: string) {
-    setDeleteError(message);
-    setDeleteFailures((count) => count + 1);
+    setListError(message);
+    setListFailures((count) => count + 1);
   }
 
   async function handleDelete(group: FamilyGroupSummary) {
@@ -394,17 +388,17 @@ function FamilyGroupsTab() {
       confirmLabel: "Delete group",
       destructive: true,
     }))) return;
-    setDeleteError("");
+    const fallback = "Failed to delete family group";
+    setListError("");
     try {
       const res = await fetch(`/api/admin/family-groups/${group.id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        reportDeleteFailure(data.error || "Failed to delete family group");
+      if (res.ok) {
+        fetchData();
         return;
       }
-      fetchData();
+      reportDeleteFailure(await apiErrorMessageFromResponse(res, fallback));
     } catch {
-      reportDeleteFailure("Failed to delete family group");
+      reportDeleteFailure(fallback);
     }
   }
 
@@ -457,9 +451,6 @@ function FamilyGroupsTab() {
     <div>
       {confirmDialog}
       {viewOnlyBanner}
-      {deleteError && (
-        <Alert ref={deleteAlertRef} variant="error" className="mb-6">{deleteError}</Alert>
-      )}
       <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Groups</h2>
@@ -790,6 +781,12 @@ function FamilyGroupsTab() {
       </div>
 
       {/* Groups table */}
+      <FocusedActionError
+        id="family-groups-list-error"
+        error={listError}
+        attentionKey={listFailures}
+        className="scroll-mt-20"
+      />
       <Card>
         <CardContent className="p-0">
           {loading ? (

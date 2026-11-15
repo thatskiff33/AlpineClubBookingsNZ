@@ -32,14 +32,20 @@ vi.mock("@/lib/xero-member-grouping-resync", () => ({
 vi.mock("@/lib/xero-contact-link-mismatches", () => ({
   getXeroContactLinkMismatchSnapshot: mocks.getXeroContactLinkMismatchSnapshot,
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroups: mocks.getXeroContactGroups,
   getXeroContactGroupCacheLastRefreshedAt:
     mocks.getXeroContactGroupCacheLastRefreshedAt,
+}));
+vi.mock("@/lib/xero-bulk-contact-sync", () => ({
   syncContactsFromXero: mocks.syncContactsFromXero,
+}));
+vi.mock("@/lib/xero-member-import", () => ({
   importMembersFromXeroGroups: mocks.importMembersFromXeroGroups,
-  XeroDailyLimitError: class XeroDailyLimitError extends Error {},
   XeroMemberImportValidationError: class XeroMemberImportValidationError extends Error {},
+}));
+vi.mock("@/lib/xero-api-client", () => ({
+  XeroDailyLimitError: class XeroDailyLimitError extends Error {},
 }));
 vi.mock("@/lib/xero-api-errors", () => ({
   getXeroApiErrorInfo: vi.fn((error: unknown, fallback: string) => ({

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildInvoiceLineItems } from "../xero";
+import { buildInvoiceLineItems } from "@/lib/xero-booking-invoices";
 
 // docs/multi-lodge/test-plan.md — "Xero invoice output identical across
 // lodges". The production-readiness review found zero lodge awareness in any

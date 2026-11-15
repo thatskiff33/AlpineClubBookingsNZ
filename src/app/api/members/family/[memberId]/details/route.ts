@@ -10,11 +10,9 @@ import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { logAudit } from "@/lib/audit";
-import {
-  isXeroConnected,
-  syncManagedXeroContactGroupForMember,
-  updateXeroContact,
-} from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
+import { syncManagedXeroContactGroupForMember } from "@/lib/xero-contact-groups";
+import { updateXeroContact } from "@/lib/xero-contacts";
 import {
   buildXeroContactUpdatePayload,
   hasMemberXeroContactChanges,
