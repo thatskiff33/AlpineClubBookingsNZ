@@ -88,8 +88,10 @@ vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
-  lockSupplementaryInvoiceAnchor: mocks.lockAnchor,
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kick,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  lockSupplementaryInvoiceAnchor: mocks.lockAnchor,
 }));
 vi.mock("@/lib/additional-capture-receipt-link", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/additional-capture-receipt-link")),

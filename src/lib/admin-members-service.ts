@@ -2,9 +2,7 @@ import { z } from "zod";
 import { AGE_TIER_VALUES, ageTierEnum } from "@/lib/age-tier-schema";
 import { genderEnum, titleEnum } from "@/lib/member-enums-schema";
 import type { AgeTier, Prisma } from "@prisma/client";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
-import { randomBytes } from "crypto";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { prisma } from "@/lib/prisma";
 import { exactContains, exactPrefix } from "@/lib/prisma-exact-prefix";
 import {
@@ -15,7 +13,7 @@ import {
 import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
-} from "@/lib/xero";
+} from "@/lib/xero-contact-groups";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import {
   clubToday,
@@ -117,6 +115,7 @@ import {
   isDietaryFieldEnabled,
   type DietaryAccessGrant,
 } from "@/lib/member-dietary";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -154,9 +153,7 @@ export const createMemberSchema = z.object({
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(15).optional().nullable(),
-  dateOfBirth: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+  dateOfBirth: dateOnlyStringSchema
     .optional()
     .nullable(),
   role: z
@@ -174,15 +171,11 @@ export const createMemberSchema = z.object({
   inheritParentEmail: z.boolean().optional(),
   inheritEmailFromId: z.string().optional().nullable(),
   familyGroupIds: z.array(z.string()).optional(),
-  joinedDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+  joinedDate: dateOnlyStringSchema
     .optional()
     .nullable()
     .or(z.literal("")),
-  lifeMemberDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+  lifeMemberDate: dateOnlyStringSchema
     .optional()
     .nullable()
     .or(z.literal("")),
@@ -1562,8 +1555,8 @@ export async function createAdminMember(
     }
   }
 
-  // Random unguessable password
-  const placeholderHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  // No usable password until the member completes the screened setup flow.
+  const placeholderHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
 
   const postalAddress = data.postalSameAsPhysical
     ? copyStreetAddressToPostal({

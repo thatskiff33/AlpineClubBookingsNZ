@@ -37,8 +37,9 @@ environment side.
 2. Tick or untick the modules you want to change. A module that needs extra
    setup shows **Needs setup** with its dependencies listed (e.g. Xero
    credentials, an API key).
-3. Click **Save**. Changes take effect across the site immediately. **Refresh**
-   reloads the saved state.
+3. Click **Save**. When the save finishes, the admin sidebar, top menu and Search
+   update to show the saved modules. **Refresh** reloads both the saved settings
+   and these menus.
 
 ## Settings reference
 
@@ -88,7 +89,7 @@ module is on but a dependency — credentials, an API key, inventory — is miss
 | --- | --- | --- |
 | The toggles are read-only | Your role has support **view**, not **edit** | Ask a full admin for support edit access |
 | A module shows "Needs setup" | It's on but a dependency isn't configured | Add the named credential/API key/inventory; see [`CONFIGURATION.md`](../../CONFIGURATION.md) |
-| A page still 404s after enabling | You didn't **Save**, or you're looking at a cached tab | Save, then reload the target page |
+| A page still 404s after enabling | The change was not saved, or the target page is open in another tab | Check that Save succeeded; use **Refresh** to reload settings and menus here, and reload the target tab if it was already open |
 | Enabling Internet Banking payments does nothing | It depends on Xero integration | Enable Xero integration first |
 
 ## Related links

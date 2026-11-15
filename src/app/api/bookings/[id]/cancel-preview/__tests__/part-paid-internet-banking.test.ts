@@ -23,6 +23,14 @@ const mocks = vi.hoisted(() => ({
   manualRefundTaskAggregate: vi.fn(),
 }));
 
+// #4911: no capture here is disputed; the hold's own read is proved in
+// `stripe-dispute-hold.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  disputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+  paymentCaptureIntentIds: async () => [],
+}));
+
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,

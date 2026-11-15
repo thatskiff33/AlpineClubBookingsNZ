@@ -21,6 +21,7 @@ vi.mock("@/lib/subject-access-export-sections", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     member: {
       count: vi.fn(),
       findUnique: vi.fn(),

@@ -75,6 +75,7 @@ describe("account and security email senders (#2258 account-lockout guarantee)",
       "password-reset",
       "magic-link-login",
       "email-change-notification",
+      "officer-factor-reset",
     ]) {
       const call = calls.find((body) =>
         new RegExp(`templateName:\\s*"${templateName}"`).test(body),

@@ -20,7 +20,7 @@ export type SubjectAccessSubject = { memberId: string } | { email: string } | { 
 
 /**
  * THE one builder behind the member's own download and the Full Admin subject
- * access report (`INV-PRIV-023`). Every section reads only the subject's own
+ * access report (`INV-PRIV-025`). Every section reads only the subject's own
  * rows, and `exclusions` names every personal model left out and why, from
  * `SUBJECT_ACCESS_EXPORT_COVERAGE`. `null` when the subject holds no record.
  */

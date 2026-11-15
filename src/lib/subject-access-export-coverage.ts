@@ -2,7 +2,7 @@ import type { PRIVACY_RETENTION_CLASSIFICATION } from "@/lib/privacy-retention-c
 
 /**
  * Where each personal model goes in a subject access export (#4915,
- * `INV-PRIV-023`).
+ * `INV-PRIV-025`).
  *
  * The keys are exactly the models `PRIVACY_RETENTION_CLASSIFICATION` marks
  * `personal`: the `satisfies` below makes a new personal model a type error
@@ -108,6 +108,9 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   PaymentTransaction: SHARED,
   PaymentRefund: SHARED,
   UnrecognisedStripePayment: OPERATIONAL,
+  // A card dispute is the payer's claim against a capture, keyed by Stripe ids and
+  // a booking id: the payer need not be the subject (#4911).
+  StripeDispute: OPERATIONAL,
   RateLimitCounter: OPERATIONAL,
   LoginThrottle: OPERATIONAL,
   AlertCooldown: OPERATIONAL,
@@ -148,6 +151,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   LodgeSettings: CLUB_CONFIG,
   EmailMessageSetting: CLUB_CONFIG,
   ClubIdentitySettings: CLUB_CONFIG,
+  PrivacyHostingSettings: CLUB_CONFIG,
   ClubTimeSettings: CLUB_CONFIG,
   ClubFormatSettings: CLUB_CONFIG,
   LoginSecuritySetting: CLUB_CONFIG,

@@ -1188,6 +1188,7 @@ joiners', whose Net Collected already treats that money as refunded.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | "No payments found" | Filters are too narrow, or the date range excludes the payment | Click **Reset** and widen the **Updated** range |
+| **Payments could not be loaded** above the table, with no totals | The list could not be read: an outage, a dropped connection, or a filter the server refused | Press **Try again**. If it says to check the filters, check them, including those under **More filters**. If it keeps failing, tell your club administrator. The totals are hidden on purpose: none of them is real while this shows |
 | **Generate Invoice** is disabled | Your finance role is view-only, or the payment is not an eligible succeeded card payment | Ask a finance-edit admin; Internet Banking payments generate invoices differently |
 | Xero shows **Failed activity** or **Pending activity** | A Xero sync attempt failed or is still running | Open **View activity**, then retry from the finance/Xero tools |
 | A refund isn't reflected | The settlement is still processing, or you filtered it out | Check the **Settlement** filter and the row's settlement breakdown |

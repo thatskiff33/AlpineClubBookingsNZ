@@ -40,6 +40,7 @@ export const STEP_UP_OPERATIONS = [
   // handler that builds a subject access report asks for the same fresh proof as
   // the member CSV export. The member's own download is not an admin route.
   { file: "src/lib/subject-access-export.ts", exportName: "buildSubjectAccessExport" },
+  { file: "src/lib/officer-factor-reset.ts", exportName: "clearMemberSecondFactors" },
 ] as const;
 
 /**
@@ -73,7 +74,7 @@ export const MEMBER_EXPORT_ROUTE = {
   csvExport: "escapeCsvCell",
 } as const;
 
-/** #4618. Absent until that child merges; the census requires POST once the file exists. */
+/** #4618. The census requires this POST to stay listed while the file exists. */
 export const FACTOR_RESET_ROUTE = {
   file: "src/app/api/admin/security/two-factor-reset/[memberId]/route.ts",
   method: "POST",
@@ -109,6 +110,7 @@ export const STEP_UP_ROUTES = [
   { method: "POST", file: "src/app/api/admin/config-transfer/apply/route.ts" },
   { method: "PUT", file: "src/app/api/admin/security/password-policy/route.ts" },
   { method: "PUT", file: "src/app/api/admin/security/magic-link/route.ts" },
+  { method: "PUT", file: "src/app/api/admin/security/officer-two-factor/route.ts" },
   { method: "PUT", file: "src/app/api/admin/modules/route.ts" },
   { method: "PUT", file: "src/app/api/admin/refund-requests/[id]/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/card-refunds/[id]/try-card-again/route.ts" },
@@ -128,6 +130,7 @@ export const STEP_UP_ROUTES = [
   { method: "POST", file: "src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts" },
   { method: "GET", file: "src/app/api/admin/members/export/route.ts" },
   { method: "GET", file: "src/app/api/admin/members/subject-access/route.ts" },
+  { method: "POST", file: "src/app/api/admin/security/two-factor-reset/[memberId]/route.ts" },
 ] as const satisfies readonly StepUpRoute[];
 
 export function stepUpRouteKey(file: string, method: string): string {

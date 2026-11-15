@@ -3,7 +3,7 @@
  * GET /api/member/data-export
  *
  * Returns the signed-in member's subject access file, built by the one shared
- * builder the Full Admin report also uses (#4915, `INV-PRIV-023`). Rate
+ * builder the Full Admin report also uses (#4915, `INV-PRIV-025`). Rate
  * limited to 5 exports per day.
  */
 import { NextResponse } from "next/server";

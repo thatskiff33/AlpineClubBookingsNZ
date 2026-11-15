@@ -1,6 +1,6 @@
 /**
  * THE SUBJECT ACCESS EXPORT COVERS EVERY PERSONAL MODEL, OR SAYS WHY NOT
- * (#4915, `INV-PRIV-023`).
+ * (#4915, `INV-PRIV-025`).
  *
  * The export used to be a hand-picked list of reads, and every personal model
  * added after it widened the gap silently while the button promised "all

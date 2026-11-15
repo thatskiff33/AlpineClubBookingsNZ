@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 /**
- * The Full Admin subject access report (#4915, `INV-PRIV-023`): who may
+ * The Full Admin subject access report (#4915, `INV-PRIV-025`): who may
  * produce it, whom a lookup names, and the audit row every file leaves.
  *
  * The builder is mocked here — the realdb test proves what it reads — so these

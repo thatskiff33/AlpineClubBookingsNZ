@@ -1,6 +1,6 @@
 /**
  * Real-PostgreSQL proof of the shared subject access builder (#4915,
- * `INV-PRIV-023`): the relation names and filters are Prisma's, not a mock's.
+ * `INV-PRIV-025`): the relation names and filters are Prisma's, not a mock's.
  *
  * Seeds a member with credits, a family group, an application, an email log
  * row and a stay as a guest on someone else's booking beside a co-guest, then
