@@ -204,7 +204,7 @@ History, measurements and rejected alternatives: #3126 (and #3123, #3131,
   code DOES, and classify its matches rather than converging every hit.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
   `stripComments`. Use it; do not write a second.**
-  176 test files, seven test helpers and one CI script import it.
+  177 test files, seven test helpers and one CI script import it.
   `ssot-comment-stripper-guard.test.ts` requires that sentence and the module's
   docblock to state the count it measures by IMPORT SPECIFIER, not path text.
   **Measure it; never increment it.**
