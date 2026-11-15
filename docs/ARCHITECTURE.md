@@ -1239,12 +1239,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **108 components render a banner, and
- 341 of the 396 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **109 components render a banner, and
+ 346 of the 401 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 341 split by WHICH rule
-covers them: **301** pass the literal
+test currently pins, which is the only authority.) Those 346 split by WHICH rule
+covers them: **306** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **40**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
@@ -2535,7 +2535,7 @@ admin-initiated member deletions; open manual refund tasks are a Payments
 entry; the Stuck States headline (`getStuckStateAffectedCount` in
 `src/lib/stuck-state-affected-count.ts`, the dashboard scan cached per
 process for 60 seconds, failures not cached) shows only with
-`support:view`. `INV-SSOT-009` and `admin-work-queue-census.test.ts` keep both
+`support:view`. `INV-SSOT-010` and `admin-work-queue-census.test.ts` keep both
 surfaces from counting or linking a queue around the registry.
 Unpaid finished stays (#1709/#1731) —
 `PAYMENT_PENDING` bookings whose check-out is on or before NZ today — badge an

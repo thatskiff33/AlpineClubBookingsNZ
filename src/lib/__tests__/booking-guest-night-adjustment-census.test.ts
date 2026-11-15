@@ -236,6 +236,10 @@ const NIGHT_WRITERS_WITHOUT_PROMOTION = new Map<string, string>([
   ],
   ["src/lib/booking-create-guests.ts", "nested create helper; its callers in booking-create.ts record"],
   ["e2e/setup/seed-second-lodge.ts", "test seed"],
+  [
+    "prisma/demo-seed-writers.ts",
+    "shared demo and load seed night writer (#4940); the demo's one promoted fixture records in demo-seed.ts",
+  ],
 ]);
 
 /** Every file allowed to import the writer module, and why. */
