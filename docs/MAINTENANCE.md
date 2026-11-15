@@ -3254,7 +3254,11 @@ Every production deploy ships a tagged release (#4465), cut with
 [`scripts/release/cut-release.mjs`](../scripts/release/cut-release.mjs). `main`
 only moves through pull requests, so the release is cut in two phases with the
 release-prep pull request between them — the order v0.13.2 was cut in. Both
-phases print their whole plan and change nothing without `--execute`.
+phases print their whole plan and change nothing without `--execute`. The
+deploy script enforces the rule (#4978, `INV-OPS-019`): it refuses a commit no
+annotated `vX.Y.Z` tag on `origin` points at, unless
+`ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written `UNTAGGED_DEPLOY_COMMIT_REASON`
+are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
 
 1. From a clean checkout of `origin/main`, prepare the release-prep commit:
 
