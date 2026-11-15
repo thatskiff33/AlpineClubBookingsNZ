@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { formatCents } from "@/lib/utils";
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -189,7 +190,7 @@ function getOfferEmailSummary(delivery: OfferEmailDelivery) {
     case "queued":
       return "Offer email queued";
     case "retrying":
-      return `Offer email retrying (${delivery.attempts ?? "?"}/3)`;
+      return `Offer email retrying (${delivery.attempts ?? "?"}/${EMAIL_RETRY_MAX_ATTEMPTS})`;
     case "exhausted":
       return "Offer email retry exhausted";
     case "undeliverable":
