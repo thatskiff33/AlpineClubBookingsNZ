@@ -765,16 +765,15 @@ export const AUDIT_CENSUS_TOTALS = {
   // 542 -> 543 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
   // two-factor policy save, `tx.auditLog.create` in the route's transaction like the
   // password-policy writer beside it, `security`. RE-MEASURED with `pnpm run audit:census`.
-  // 543 -> 547 (fork #121, upstream PR #5143): the four food-order writers, all `lodge` — the order
-  // placed, the Received close and the price change (each an awaited
-  // `createAuditLog` inside its own transaction, `src/lib/food-orders.ts`) and the
-  // Food Orders settings save (also `createAuditLog`, in its Serializable transaction).
-  // 547 -> 548 (fork #121 owner change, 13 Nov 2026): receipt is item by item,
-  // so `markFoodOrderItemsReceived` writes `food_order.items_received` for every
-  // receipt and the existing `food_order.received` when the last item closes the
-  // order — two `createAuditLog` sites where the single close had one. `lodge`.
-  // RE-MEASURED with `pnpm run audit:census` on the merge of thatskiff33/main.
-  writeSites: 548,
+  // 543 -> 545 (#4915): `member.data_exported`, the member's own download, and
+  // `member.subject_access_exported`, a Full Admin's report on one person; both
+  // `createAuditLog`, both `privacy`. RE-MEASURED with `pnpm run audit:census`.
+  // 545 -> 550 (fork #121, upstream PR #5143): the five food-order writers, all
+  // `lodge` — order placed, items received, order Received (the last item closes
+  // it), price changed (each an awaited `createAuditLog` inside its own
+  // transaction, `src/lib/food-orders.ts`) and the Food Orders settings save (in
+  // its Serializable transaction). RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 550,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1001,8 +1000,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
     // 174 -> 176 (#4368): the two dead card refund settlements.
     // 176 -> 177 (#4916): the after-stay dietary clear's count row. 177 -> 179 (#4851): the group organiser's close and re-arm.
-    // 179 -> 183 (fork #121, upstream PR #5143): food order placed, received, price changed, and the Food Orders settings save (awaited in its Serializable transaction). 183 -> 184: items received, beside the order close.
-    createAuditLog: { total: 184, uncategorised: 0 },
+    // 179 -> 181 (#4915): the two subject access writers.
+    // 181 -> 186 (fork #121, upstream PR #5143): the five food-order writers.
+    createAuditLog: { total: 186, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1552,7 +1552,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 21 -> 22 (#4457): `privacy.retention.member_anonymised`, readable only with membership:view.
     // 22 -> 23 (#4916): `privacy.retention.booking_dietary_cleared`, a count with no value or guest id,
     // filed with the other retention rows so it needs membership:view too.
-    privacy: 23,
+    // 23 -> 25 (#4915): the member's download and the Full Admin subject access report.
+    privacy: 25,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,
@@ -2794,7 +2795,7 @@ export const MEMBER_RECORD_ADMIN_SURFACES_2755: readonly string[] = [
  *    less about their own cancellation than they knew when they asked for it.
  *  - The **remaining member-admin surface writers** are each about a specific
  *    narrower domain that already answers to its own gate: a dependant link is
- *    `family`, an export is `privacy`, and a credential email is `security` by
+ *    `family`, an export or a subject access report is `privacy`, and a credential email is `security` by
  *    #2581 decision 3 (the domain is the CREDENTIAL, not the mailing).
  *
  * None of that is settled beyond challenge — it is recorded so a challenge has to
@@ -2809,6 +2810,9 @@ export const OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755: Readonly<
   "src/app/api/admin/members/[id]/dependents/link/route.ts::POST.linkedMember#0":
     "family",
   "src/app/api/admin/members/export/route.ts::GET#0": "privacy",
+  // A copy of the subject's own record released by a Full Admin (#4915): the
+  // subject sees that it left, which is the check on a mistaken identity check.
+  "src/app/api/admin/members/subject-access/route.ts::GET#0": "privacy",
   "src/app/api/admin/members/send-password-reset/route.ts::POST#0": "security",
   "src/app/api/admin/members/send-setup-invite/route.ts::POST.batchResults#0":
     "security",
