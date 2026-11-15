@@ -62,8 +62,11 @@ export function OpeningCreditBatchesCard({
     try {
       const response = await fetch("/api/admin/opening-credits")
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const body = (await response.json()) as { batches: Batch[] }
-      setBatches(body.batches)
+      const body = (await response.json()) as { batches?: unknown }
+      // A body without the list is a failed read too, never a render crash
+      // that takes the rest of the refund page down with it.
+      if (!Array.isArray(body.batches)) throw new Error("Malformed opening-credit list")
+      setBatches(body.batches as Batch[])
       setLoadFailed(false)
     } catch {
       setLoadFailed(true)
