@@ -4008,9 +4008,10 @@ PROVIDED the row still holds a rendered body. It does not for the
 `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose logged recipient is
 redacted, because a live sign-in link, a door code or a payment link must not sit
 at rest; and the retry cron selects only rows that still hold one. Such a row is
-therefore written AT `attempts = 3`, which drops it out of the retry query and
-into the operator's email-failure review queue, and its `errorMessage` says so
-rather than promising it will self-heal. The queue cannot resend it: it says why
+therefore written AT the retry ceiling (`attempts = 3`, the one constant
+`EMAIL_RETRY_MAX_ATTEMPTS` in `src/lib/email/retry-selection.ts`), which drops it
+out of the retry query and into the operator's email-failure review queue, and
+its `errorMessage` says so rather than promising it will self-heal. The queue cannot resend it: it says why
 on the row and links its booking or member, and the officer sends a fresh
 message from there (or from Token Email Recovery for its three templates).
 
@@ -4018,7 +4019,7 @@ An exhausted `FAILED` row that still holds a body can be handed back to the
 cron with **Try again** (#4963): one status-guarded `updateMany` (id, `FAILED`,
 `attempts >= 3`, `RETAINS_REPLAYABLE_EMAIL_BODY`, and not a booking-scoped
 template with no `bookingId`, which the cron retires on sight with its body kept,
-#2258) sets `attempts = 2` and dates `lastAttemptAt` past the backoff, then
+#2258) sets `attempts` to one below the ceiling (2) and dates `lastAttemptAt` past the backoff, then
 writes an `email.failure.requeued` audit row. A row naming a booking that has
 since been deleted is refused before that write (`EmailLog.bookingId` has no
 foreign key, and the cron would read the missing booking as nothing suppressed

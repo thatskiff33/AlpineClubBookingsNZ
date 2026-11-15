@@ -9,6 +9,7 @@ import {
 } from "@/lib/email/internal";
 import {
   EMAIL_RETRY_BACKOFF_MS,
+  EMAIL_RETRY_MAX_ATTEMPTS,
   RETAINS_REPLAYABLE_EMAIL_BODY,
 } from "@/lib/email/retry-selection";
 import {
@@ -28,7 +29,6 @@ import {
 import { adminEmailDeliveryFailedTemplate } from "@/lib/email-templates/admin-ops";
 import { renderEmailHtml } from "@/lib/email-theme";
 
-const MAX_ATTEMPTS = 3;
 const RETRY_FAILURE_ALERT_TEMPLATE = "admin-email-failure";
 
 /**
@@ -70,7 +70,7 @@ async function retireUnverifiableBookingEmail(params: {
         bookingRetryHtmlBody: params.expectedBookingRetryHtmlBody,
       },
       data: {
-        attempts: MAX_ATTEMPTS,
+        attempts: EMAIL_RETRY_MAX_ATTEMPTS,
         lastAttemptAt: new Date(),
         htmlBody: null,
         bookingRetryHtmlBody: null,
@@ -103,7 +103,8 @@ async function retireUnverifiableBookingEmail(params: {
 
 /**
  * N-11: Retry failed emails with backoff.
- * Queries EmailLog for FAILED records with attempts < 3 and re-sends.
+ * Queries EmailLog for FAILED records with attempts below
+ * EMAIL_RETRY_MAX_ATTEMPTS and re-sends.
  * Token-bearing templates are intentionally excluded because their HTML bodies
  * are not retained in EmailLog.
  * SES/SNS bounce and complaint feedback marks undeliverable messages as
@@ -223,7 +224,7 @@ export async function retryFailedEmails(): Promise<{
       // not in this filter, and the guarded claim below re-asserts `FAILED`
       // before any send. Do not widen this to a status list.
       status: "FAILED",
-      attempts: { lt: MAX_ATTEMPTS },
+      attempts: { lt: EMAIL_RETRY_MAX_ATTEMPTS },
       ...RETAINS_REPLAYABLE_EMAIL_BODY,
       lastAttemptAt: { not: { gte: backoffThreshold } },
     },
@@ -345,19 +346,19 @@ export async function retryFailedEmails(): Promise<{
     if (!emailLog.bookingId) {
       if (ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES.has(emailLog.templateName)) {
         // Retire the row TERMINALLY rather than leaving it as found. Leaving it
-        // at attempts < 3 would have been the worst of both worlds: the row is
-        // below the >=3 threshold the operator review queue reads, so it would
+        // below EMAIL_RETRY_MAX_ATTEMPTS would have been the worst of both worlds:
+        // the row is below the operator review queue's threshold, so it would
         // surface NOWHERE; and it stays inside this cron's selection window
-        // (status FAILED, attempts < MAX, retained body) forever, so once fifty
-        // such rows exist the batch of 50 is refilled with the same stuck rows
-        // every run and retry dies for every newer email behind them.
-        // Pushing attempts to MAX_ATTEMPTS drops it out of the query and lands
-        // it in the review queue, which is what the operator needs.
+        // (status FAILED, attempts below the ceiling, retained body) forever, so
+        // once fifty such rows exist the batch of 50 is refilled with the same
+        // stuck rows every run and retry dies for every newer email behind them.
+        // Pushing attempts to EMAIL_RETRY_MAX_ATTEMPTS drops it out of the query
+        // and lands it in the review queue, which is what the operator needs.
         await prisma.emailLog
           .update({
             where: { id: emailLog.id },
             data: {
-              attempts: MAX_ATTEMPTS,
+              attempts: EMAIL_RETRY_MAX_ATTEMPTS,
               lastAttemptAt: new Date(),
               // #3035: retired for a #2258 attribution reason, not an
               // environment one.
@@ -622,7 +623,7 @@ export async function retryFailedEmails(): Promise<{
 
       // Alert admin when email exhausts retries
       if (
-        newAttempts >= MAX_ATTEMPTS &&
+        newAttempts >= EMAIL_RETRY_MAX_ATTEMPTS &&
         emailLog.templateName !== RETRY_FAILURE_ALERT_TEMPLATE
       ) {
         try {

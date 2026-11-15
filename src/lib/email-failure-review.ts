@@ -4,6 +4,7 @@ import { ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES } from "@/lib/booking-email-suppre
 import { SENSITIVE_EMAIL_LOG_TEMPLATES } from "@/lib/email/internal";
 import {
   EMAIL_RETRY_BACKOFF_MS,
+  EMAIL_RETRY_MAX_ATTEMPTS,
   RETAINS_REPLAYABLE_EMAIL_BODY,
 } from "@/lib/email/retry-selection";
 import { prisma } from "@/lib/prisma";
@@ -11,13 +12,12 @@ import { isTokenRecoveryTemplate } from "@/lib/token-email-recovery";
 
 const EMAIL_FAILURE_REVIEW_ACTION = "email.failure.reviewed";
 const EMAIL_FAILURE_REQUEUE_ACTION = "email.failure.requeued";
-const EMAIL_FAILURE_MAX_ATTEMPTS = 3;
 const MAX_EXHAUSTED_FAILURE_SCAN = 200;
 
 /** Every row this queue is about: failed, with no retry attempt left. */
 const EXHAUSTED_EMAIL_FAILURE_WHERE = {
   status: "FAILED",
-  attempts: { gte: EMAIL_FAILURE_MAX_ATTEMPTS },
+  attempts: { gte: EMAIL_RETRY_MAX_ATTEMPTS },
 } satisfies Prisma.EmailLogWhereInput;
 
 /**
@@ -245,7 +245,7 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
       // Older exhausted rows exist beyond the window, so the active/archived
       // split above does not cover them.
       scanCapped: totalExhaustedCount > decorated.length,
-      maxAttempts: EMAIL_FAILURE_MAX_ATTEMPTS,
+      maxAttempts: EMAIL_RETRY_MAX_ATTEMPTS,
     },
     failures: active.slice(0, boundedLimit),
     recentlyReviewed: reviewed.slice(0, 10),
@@ -280,7 +280,7 @@ export async function markExhaustedEmailFailureReviewed(
 
   if (
     emailLog.status !== "FAILED" ||
-    emailLog.attempts < EMAIL_FAILURE_MAX_ATTEMPTS
+    emailLog.attempts < EMAIL_RETRY_MAX_ATTEMPTS
   ) {
     throw new EmailFailureReviewError(
       "Only exhausted failed email records can be archived from this recovery queue.",
@@ -380,7 +380,7 @@ export async function requeueExhaustedEmailFailure(
         ...REQUEUEABLE_EMAIL_FAILURE_WHERE,
       },
       data: {
-        attempts: EMAIL_FAILURE_MAX_ATTEMPTS - 1,
+        attempts: EMAIL_RETRY_MAX_ATTEMPTS - 1,
         lastAttemptAt: new Date(Date.now() - EMAIL_RETRY_BACKOFF_MS - 60_000),
       },
     });
