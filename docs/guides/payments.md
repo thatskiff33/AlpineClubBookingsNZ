@@ -211,10 +211,12 @@ member is told the club will arrange their refund.
    mark paid back as usual. Each further dispute lost on the same payment can
    reduce it again; once the lost disputes cover all of it, dismiss it. The app
    refuses **Mark paid back** at the full amount while a lost dispute has not
-   yet reduced the refund (it would pay the lost part twice), and refuses it
-   altogether once the lost disputes cover all of it. If you paid the member by
-   bank while the dispute was open, they have had that money twice and the app
-   cannot record your payment: take it to the treasurer. In rare cases Stripe turns a
+   yet reduced the refund (it would pay the lost part twice), including while
+   another dispute on the same payment is still open (wait for that one first),
+   and refuses it altogether once the lost disputes cover all of it. If you paid
+   the member by bank while the dispute was open and it was then lost, they have
+   had that money twice and the app cannot record your payment: take it to the
+   treasurer. In rare cases Stripe turns a
    lost dispute into a "late win" and returns the money to the club; the app
    sends no new alert for that (#5197), so if you see one, reopen the
    dismissed task (the recently dismissed list offers it for 30 days; after

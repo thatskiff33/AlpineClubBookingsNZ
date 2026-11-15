@@ -425,6 +425,19 @@ async function cleanup() {
       expect(memberMoneyConservationProblems(await state(d.id))).toEqual([]);
     });
 
+    it("review: lost on one charge beside a dispute still open on another, Mark paid at the full amount and Reduce are both refused, writing nothing", async () => {
+      const d = await disputedCancel("LOST", 1_000);
+      await addDispute(d, "open", "OPEN", 500);
+      const was = d.task.amountCents!;
+      const { DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE, disputedHandBackReductionRefusal } = await import("@/lib/manual-refund-task-copy");
+      await expect(markPaid(d.task.id)).rejects.toMatchObject({ status: 409, message: DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE });
+      await expect(reduce(d.task.id, was, 1_000)).rejects.toMatchObject({ status: 409, message: disputedHandBackReductionRefusal("OPEN") });
+      expect(await eventOf(memberMoneyEventKeys.handBackPaid(d.task.id))).toBeNull();
+      expect(await owed(d.task.id)).toBe(was);
+      expect(await reductions(d.task.id)).toBe(0);
+      expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: d.task.id } })).toMatchObject({ status: "OPEN" });
+    });
+
     it("refuses the reduction while the dispute is open or after it was won, writing nothing", async () => {
       const d = await disputedCancel("OPEN", 1_000);
       const { disputedHandBackReductionRefusal } = await import("@/lib/manual-refund-task-copy");

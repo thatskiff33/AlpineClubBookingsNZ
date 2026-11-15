@@ -303,7 +303,7 @@ vi.mock("@/lib/member-credit", () => {
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
 import { closeKeptCaptureReturn, postHandBackPayment, postRefundObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
 import { EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
-import { DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, DISPUTED_HAND_BACK_REDUCED_REFUSAL, editRefundHandBackDismissAfterCancelMessage, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
+import { DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, DISPUTED_HAND_BACK_REDUCED_REFUSAL, DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE, editRefundHandBackDismissAfterCancelMessage, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
 import { GROUP_ORGANISER_HAND_BACK_DISMISS_MESSAGE } from "@/lib/group-organiser-hand-back-rules";
 import { completionMessage } from "@/lib/manual-refund-task-copy";
@@ -925,6 +925,8 @@ describe("resolveManualRefundTask", () => {
     it.each([
       ["lost for part (reduce it first)", [dispute("LOST", "dp_1", 3000)], DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING],
       ["lost for all of it (dismiss it instead)", [dispute("LOST", "dp_1", 9000)], DISPUTED_HAND_BACK_LOST_NOT_PAYABLE],
+      // #4516 review (delta check): lost on one charge while another dispute on the same payment is still open.
+      ["lost on one charge while another is still open (wait for it)", [dispute("LOST", "dp_1", 3000), dispute("OPEN", "dp_2", 2000)], DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE],
     ])("#4516 review: Mark paid is refused while a card dispute is %s, so the lost part is never paid twice", async (_label, disputes, message) => {
       mocks.stripeDisputeFindMany.mockResolvedValue(disputes);
       await expect(resolveManualRefundTask({ taskId: "task-1", resolution: "completed", note: null, actingMemberId: "admin-1", confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null }, CLUB_FORMAT_TEST))

@@ -448,6 +448,14 @@ export const DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL =
 export const DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING =
   "This refund can't be marked paid at its full amount: a card dispute was lost for part of it, and the cardholder already has that part back. Reduce it by the lost amount first.";
 
+/**
+ * Mark paid on that hand-back while a dispute on its payment was lost (cents not yet applied) and another is still
+ * open (#4516 review): paying in full would pay the lost part twice, and the reduction waits for the open dispute
+ * (owner decision, 15 Nov 2026, comment 6893252570).
+ */
+export const DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE =
+  "This refund can't be marked paid at its full amount: one card dispute on this payment was lost, so the cardholder already has that part back, and another is still open. Wait until the open dispute is decided, then reduce the refund by what was lost, or dismiss it if the disputes cover all of it.";
+
 /** Mark paid on that hand-back once its lost disputes cover it: the cardholder already has all of it back. */
 export const DISPUTED_HAND_BACK_LOST_NOT_PAYABLE =
   "This refund can't be marked paid: the card dispute was lost for all of it, so the cardholder already has the money back. Dismiss it instead.";

@@ -2777,8 +2777,9 @@ server's, so a second click, a replay or a dispute recorded since writes
 nothing. Every reader of the task's amount (Refunds owed, the netting, Mark
 paid, its Xero note) reads the reduced figure. Once the lost disputes cover
 the rest, OPEN -> DISMISSED withdraws the debt's open rest. OPEN -> COMPLETED
-is refused while lost cents are unapplied (reduce first) or cover it all
-(dismiss instead), read under `lock(1)` and the booking row, so the lost part
+is refused while lost cents are unapplied (reduce first, or, beside a dispute
+still open on the same payment, wait for it) or cover it all (dismiss
+instead), read under `lock(1)` and the booking row, so the lost part
 is never paid twice. A legacy row with no `raisedAmountCents` records its
 original with the first reduction. A Stripe late win after a reduction leaves
 it reduced: a stated limit, with #5197. Reopened, it has no live R05, and Mark paid then

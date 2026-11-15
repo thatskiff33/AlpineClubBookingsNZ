@@ -16,7 +16,7 @@ import { memberMoneyEventKeys } from "@/lib/member-money";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import {
   DISPUTED_HAND_BACK_FULLY_LOST_REDUCTION_REFUSAL, DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_NOTHING_TO_REDUCE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL,
-  DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, DISPUTED_HAND_BACK_REDUCED_REFUSAL,
+  DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, DISPUTED_HAND_BACK_REDUCED_REFUSAL, DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE,
   disputedHandBackDismissRefusal, disputedHandBackReductionRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL, NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL,
 } from "@/lib/manual-refund-task-copy";
 import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
@@ -113,8 +113,14 @@ export type JournalHandBackDismissal = {
   reduction: { cents: number; lostDisputeIds: string[] } | null;
   /** Why the reduction is refused, in the officer's words, or null when `reduction` is offered. */
   reductionRefusal: string | null;
+  /**
+   * Lost cents on the task's own payment not yet applied, whatever else is open: the cardholder already has them back,
+   * so Mark paid at the full amount refuses while any remain (#4516 review), even while another dispute on the same
+   * payment is still open and the reduction waits for it.
+   */
+  unappliedLostCents: number;
 };
-const notThisRules: JournalHandBackDismissal = { refusal: null, withdraws: false, disputeLost: false, reduction: null, reductionRefusal: NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL };
+const notThisRules: JournalHandBackDismissal = { refusal: null, withdraws: false, disputeLost: false, reduction: null, reductionRefusal: NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL, unappliedLostCents: 0 };
 
 /**
  * THE dismissal rule for a journal hand-back (`INV-SSOT`): the server's door and the queue payload both ask it.
@@ -122,7 +128,8 @@ const notThisRules: JournalHandBackDismissal = { refusal: null, withdraws: false
  * - A disputed card payment's hand-back (owner decisions, 15 Nov 2026) counts the disputes on its own payment only.
  *   Lost cents not yet applied cover what is still owed: dismissible. They cover part: Dismiss is refused and the
  *   officer may reduce it by exactly those cents instead, the rest still owed. Applied = raised less still owed, the
- *   only change a cancellation's own hand-back's amount ever takes. An open dispute, or none lost, refuses both.
+ *   only change a cancellation's own hand-back's amount ever takes. An open dispute, or none lost, refuses both; Mark
+ *   paid at the full amount refuses while any lost cents are unapplied, even beside an open dispute.
  * - Every other journal hand-back is refused until the four-way dismissal ships (owner decision, 14 Nov 2026, Q6).
  * An allowed dismissal withdraws the task's refund debt exactly. Any other task is not this rule's.
  */
@@ -133,14 +140,16 @@ export function journalHandBackDismissal(task: HandBackFacts & { amountCents: nu
   const refused = (refusal: string, reductionRefusal: string = NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL) => ({ ...notThisRules, refusal, reductionRefusal });
   if (!isDisputedCancellationHandBack(task, bookingDisputes) || task.amountCents === null) return refused(JOURNAL_HAND_BACK_DISMISS_REFUSAL);
   const disputes = disputesOnTaskPayment(task, bookingDisputes);
-  const open = disputes.find((dispute) => disputeHoldsCapture(dispute.status) && !disputeIsLost(dispute.status));
-  if (open) return refused(disputedHandBackDismissRefusal(open.status), disputedHandBackReductionRefusal(open.status));
   const lost = disputes.filter((dispute) => disputeIsLost(dispute.status));
   const applied = Math.max(0, (task.raisedAmountCents ?? task.amountCents) - task.amountCents);
   const unapplied = lost.reduce((sum, dispute) => sum + dispute.amountCents, 0) - applied;
-  if (unapplied >= task.amountCents) return { ...notThisRules, withdraws: true, disputeLost: true, reductionRefusal: DISPUTED_HAND_BACK_FULLY_LOST_REDUCTION_REFUSAL };
+  // Counted before the open check (#4516 review): a dispute lost on one charge beside one still open on another.
+  const unappliedLostCents = Math.max(0, unapplied);
+  const open = disputes.find((dispute) => disputeHoldsCapture(dispute.status) && !disputeIsLost(dispute.status));
+  if (open) return { ...refused(disputedHandBackDismissRefusal(open.status), disputedHandBackReductionRefusal(open.status)), unappliedLostCents };
+  if (unapplied >= task.amountCents) return { ...notThisRules, withdraws: true, disputeLost: true, reductionRefusal: DISPUTED_HAND_BACK_FULLY_LOST_REDUCTION_REFUSAL, unappliedLostCents };
   if (unapplied > 0) {
-    return { ...refused(DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL), reductionRefusal: null,
+    return { ...refused(DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL), reductionRefusal: null, unappliedLostCents,
       reduction: { cents: unapplied, lostDisputeIds: lost.map((dispute) => dispute.stripeDisputeId) } };
   }
   return lost.length > 0 ? refused(DISPUTED_HAND_BACK_REDUCED_REFUSAL, DISPUTED_HAND_BACK_NOTHING_TO_REDUCE)
@@ -166,7 +175,8 @@ export async function decideJournalHandBackDismissal(tx: Prisma.TransactionClien
     // which a completion takes after its member-credit lock (`lockCancellationHandBackBeforeClaim`, INV-LOCK-002).
     if (!isCancellationOwnHandBack(task)) return notThisRules;
     const rule = journalHandBackDismissal(task, await readDisputes());
-    const refusal = rule.reduction ? DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING : rule.disputeLost ? DISPUTED_HAND_BACK_LOST_NOT_PAYABLE : null;
+    const refusal = rule.reduction ? DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING : rule.disputeLost ? DISPUTED_HAND_BACK_LOST_NOT_PAYABLE
+      : rule.unappliedLostCents > 0 ? DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE : null;
     return { ...notThisRules, refusal };
   }
   if (!isNonCancellationHandBackTask(task) && task.paymentId !== null) await lockPaymentForRefundedTotal(tx, task.paymentId);
