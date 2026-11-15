@@ -303,7 +303,7 @@ vi.mock("@/lib/member-credit", () => {
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
 import { closeKeptCaptureReturn, postHandBackPayment, postRefundObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
 import { EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
-import { editRefundHandBackDismissAfterCancelMessage, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
+import { DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, DISPUTED_HAND_BACK_REDUCED_REFUSAL, editRefundHandBackDismissAfterCancelMessage, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
 import { GROUP_ORGANISER_HAND_BACK_DISMISS_MESSAGE } from "@/lib/group-organiser-hand-back-rules";
 import { completionMessage } from "@/lib/manual-refund-task-copy";
@@ -895,6 +895,31 @@ describe("resolveManualRefundTask", () => {
       await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
 
       expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
+    });
+
+    it("#4516 (owner decision, 15 Nov 2026, comment 6893252570): lost for part, Dismiss is refused and says to reduce it instead", async () => {
+      mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST", "dp_1", 3000)]);
+
+      await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL });
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("#4516: once a lost dispute has reduced it, Dismiss is refused and says the rest is still owed", async () => {
+      await withFacts({ amountCents: 6000, raisedAmountCents: 9000 });
+      mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST", "dp_1", 3000)]);
+
+      await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: DISPUTED_HAND_BACK_REDUCED_REFUSAL });
+    });
+
+    it("#4516: reduced, then the rest lost too: it dismisses, withdrawing the debt's open rest (a reduced debt is no longer whole)", async () => {
+      await withFacts({ amountCents: 6000, raisedAmountCents: 9000 });
+      mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST", "dp_1", 3000), dispute("LOST", "dp_2", 6000)]);
+
+      await dismissTask();
+
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledExactlyOnceWith(tx, expect.anything(), expect.objectContaining({
+        scope: "hand-back", id: "task-1", part: expect.objectContaining({ amountCents: "open", debtorRead: "booking-row" }),
+      }));
     });
 
     it("#4516: a lost dispute covering the refund dismisses even beside a won one on another charge", async () => {

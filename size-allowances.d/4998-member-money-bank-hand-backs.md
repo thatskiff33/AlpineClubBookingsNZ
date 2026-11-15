@@ -35,8 +35,8 @@ lines: 2113
 reason: an organisation's late cash posts its hand-back debt beside the task, under the delivery's lock(1).
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 2385
-reason: a bank or cash hand-back's row shows why it cannot be dismissed (#4516, owner decision 14 Nov 2026) where the Dismiss button renders, beside the group organiser's rule it follows; a part to check's dismiss dialog says to dismiss only once the card refund is confirmed, and a disputed card payment's once its dispute is lost (owner decisions, 15 Nov 2026).
+lines: 2388
+reason: a bank or cash hand-back's row shows why it cannot be dismissed (#4516, owner decision 14 Nov 2026) where the Dismiss button renders, beside the group organiser's rule it follows; a part to check's dismiss dialog says to dismiss only once the card refund is confirmed, and a disputed card payment's once its dispute is lost, and offers a part-lost one's reduction beside its refusal (owner decisions, 15 Nov 2026).
 
 function: src/app/api/admin/refund-requests/[id]/route.ts#PUT
 lines: 703

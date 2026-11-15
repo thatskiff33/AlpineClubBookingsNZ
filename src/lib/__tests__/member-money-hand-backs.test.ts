@@ -224,3 +224,59 @@ describe("a late capture the treasurer keeps", () => {
     expect(await reverseKeptCapture(t.db.tx, context, { bookingId: t.id, paymentIntentId: late.stripePaymentIntentId, actorMemberId: OFFICER })).toBe(false);
   });
 });
+
+describe("part of a hand-back's debt withdrawn (#4516, owner decision 15 Nov 2026, comment 6893252570)", () => {
+  const withdraw = (t: Awaited<ReturnType<typeof owedBack>>, part: { eventKey: ReturnType<typeof keys.handBackRestWithdrawn>; amountCents: number | "open" }) =>
+    withdrawRefundObligation(t.db.tx, context, { bookingId: t.id, scope: "hand-back", id: TASK, reason: "test", senderKeyPrefix: `hand-back-reduce:${TASK}`,
+      part: { ...part, debtorRead: "booking-row" } });
+  const open = (t: Awaited<ReturnType<typeof owedBack>>) => 8_000 - t.family(t.root).paid;
+
+  it("withdraws exactly the cents asked, the mirror of the R05 for them, paying it; a replay posts nothing", async () => {
+    const t = await owedBack();
+    const first = keys.handBackReduced(TASK, ["dp_b", "dp_a"]);
+    expect(first).toBe(keys.handBackReduced(TASK, ["dp_a", "dp_b"])); // sorted: one spelling per set of lost disputes
+    expect(await withdraw(t, { eventKey: first, amountCents: 3_000 })).toBe(true);
+    expect(t.linesOf(first)).toEqual(["CREDIT MEMBER_RECEIVABLE 3000", "DEBIT REFUND_PAYABLE 3000"]);
+    expect(t.applied(first)).toBe(3_000);
+    expect(open(t)).toBe(5_000);
+    expect(await withdraw(t, { eventKey: first, amountCents: 3_000 })).toBe(false);
+    expect(open(t)).toBe(5_000);
+    expect(t.caps()).toEqual([]);
+  });
+
+  it("a second part under its own key, then the open rest: nothing is left open and nothing is withdrawn twice", async () => {
+    const t = await owedBack();
+    await withdraw(t, { eventKey: keys.handBackReduced(TASK, ["dp_a"]), amountCents: 3_000 });
+    await withdraw(t, { eventKey: keys.handBackReduced(TASK, ["dp_a", "dp_b"]), amountCents: 2_000 });
+    expect(open(t)).toBe(3_000);
+    expect(await withdraw(t, { eventKey: keys.handBackRestWithdrawn(TASK), amountCents: "open" })).toBe(true);
+    expect(t.linesOf(keys.handBackRestWithdrawn(TASK))).toEqual(["CREDIT MEMBER_RECEIVABLE 3000", "DEBIT REFUND_PAYABLE 3000"]);
+    expect(open(t)).toBe(0);
+    expect(await withdraw(t, { eventKey: keys.handBackRestWithdrawn(TASK), amountCents: "open" })).toBe(false);
+    expect(t.caps()).toEqual([]);
+  });
+
+  it("never withdraws more than is open: a part larger than the rest is capped", async () => {
+    const t = await owedBack();
+    await withdraw(t, { eventKey: keys.handBackReduced(TASK, ["dp_a"]), amountCents: 6_000 });
+    expect(await withdraw(t, { eventKey: keys.handBackReduced(TASK, ["dp_a", "dp_b"]), amountCents: 5_000 })).toBe(true);
+    expect(t.linesOf(keys.handBackReduced(TASK, ["dp_a", "dp_b"]))).toEqual(["CREDIT MEMBER_RECEIVABLE 2000", "DEBIT REFUND_PAYABLE 2000"]);
+    expect(open(t)).toBe(0);
+  });
+
+  it("CONTROL: the open rest of a debt nothing has paid is still the exact reversal", async () => {
+    const t = await owedBack();
+    expect(await withdraw(t, { eventKey: keys.handBackRestWithdrawn(TASK), amountCents: "open" })).toBe(true);
+    expect(t.event(keys.handBackRestWithdrawn(TASK))).toBeNull();
+    expect(t.journalOf(t.root)!.reversedById ?? t.db.rows("memberMoneyJournal", { reversesJournalId: t.journalOf(t.root)!.id }).length).toBeTruthy();
+  });
+
+  it("R14 after a part withdrawal pays only what is still open", async () => {
+    const t = await owedBack();
+    await withdraw(t, { eventKey: keys.handBackReduced(TASK, ["dp_a"]), amountCents: 3_000 });
+    expect(await t.pay(5_000, [t.row.id])).toBeGreaterThan(0);
+    expect(t.applied(keys.handBackPaid(TASK))).toBe(5_000);
+    expect(open(t)).toBe(0);
+    expect(t.caps()).toEqual([]);
+  });
+});

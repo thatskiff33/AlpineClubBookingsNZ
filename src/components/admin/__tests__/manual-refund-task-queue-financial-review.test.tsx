@@ -19,7 +19,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
-import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
+import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 
 /**
  * #3033 (epic #2797) — the finance queue told every admin the wrong thing about
@@ -335,6 +335,19 @@ describe("a real bank or cash hand-back offers no Dismiss for now (#4516, owner 
 
     expect(screen.queryByRole("button", { name: /^dismiss$/i })).not.toBeInTheDocument();
     expect(screen.getByTestId("manual-refund-task-dismiss-unavailable").textContent).toBe(disputedHandBackDismissRefusal("OPEN"));
+  });
+
+  it("#4516 (owner decision, 15 Nov 2026, comment 6893252570): lost for part, it offers the reduction and the confirmation states was, reduced by and still owed", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, amountCents: 10_000, journalHandBackDismissRefusal: DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, disputeReduction: { reducedByCents: 3_000, stillOwedCents: 7_000 } }], viewerCanViewBookings: true });
+
+    expect(screen.queryByRole("button", { name: /^dismiss$/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reduce by lost dispute/i }));
+    expect((await screen.findByTestId("manual-refund-task-reduction-summary")).textContent).toMatch(/^Was \$100\.00\. Reduced by \$30\.00, the lost card dispute.*Still owed \$70\.00\.$/);
+  });
+
+  it("CONTROL: with no reduction offered there is no reduce button", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, journalHandBackDismissRefusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, disputeReduction: null }], viewerCanViewBookings: true });
+    expect(screen.queryByRole("button", { name: /reduce by lost dispute/i })).not.toBeInTheDocument();
   });
 
   it("#4516: once its dispute is lost it keeps Dismiss, and the dialog says the cardholder already has the money", async () => {

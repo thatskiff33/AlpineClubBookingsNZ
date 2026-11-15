@@ -73,6 +73,19 @@ export const memberMoneyEventKeys = {
   refundAnswer: (id: string) => key(`refund-answer:${part(id, "refund")}`),
   paidAnotherWay: (id: string) => key(`paid-another-way:${part(id, "record")}`),
   handBackPaid: (id: string) => key(`hand-back-paid:${part(id, "task")}`),
+  /**
+   * #4516 (owner decision, 15 Nov 2026, comment 6893252570): a hand-back reduced by card disputes lost for part of it,
+   * named by the task and the lost disputes counted, sorted. A further reduction needs a further lost dispute, so
+   * each reduction names a different set, and a replay of one finds its batch.
+   */
+  handBackReduced: (taskId: string, lostDisputeIds: readonly string[]) => {
+    if (lostDisputeIds.length === 0) throw new Error("A hand-back reduction names at least one lost dispute.");
+    const ids = [...lostDisputeIds].map((id) => part(id, "dispute")).sort();
+    if (ids.some((id) => id.includes(","))) throw new Error("A dispute id in a hand-back reduction key must contain no ','.");
+    return key(`hand-back-reduced:${part(taskId, "task")}|${ids.join(",")}`);
+  },
+  /** The rest of a hand-back's debt, withdrawn when a reduced hand-back is dismissed (its debt is no longer whole). */
+  handBackRestWithdrawn: (taskId: string) => key(`hand-back-rest-withdrawn:${part(taskId, "task")}`),
   /** #4516 review M1: one close-out per close record, so two kept rests of one debt each post their own. */
   refundCloseOut: (recordId: string) => key(`refund-close-out:${part(recordId, "close record")}`),
   keptCapture: (id: string) => key(`kept-capture:${part(id, "capture")}`),

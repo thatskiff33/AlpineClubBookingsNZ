@@ -38,6 +38,7 @@ import {
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, reviewGuestRemovedSinceRaisedWarning, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { ManualRefundTaskDisputeReduction } from "@/components/admin/manual-refund-task-dispute-reduction";
 // #3213: whether a row may be closed as money that moved is decided ONCE, in a
 // client-safe home, and the completion door throws on the same answer
 // (`manual-refund-task-resolution.ts`, `INV-SSOT`). Deciding it again here is
@@ -116,6 +117,8 @@ interface ManualRefundTask {
   journalHandBackDismissRefusal?: string | null;
   /** #4516: a disputed card payment's hand-back whose dispute is lost, so it may be dismissed. Optional, as above. */
   disputedHandBackLost?: boolean;
+  /** #4516: its disputes lost for part of what is still owed: the reduction the server offers. Optional, as above. */
+  disputeReduction?: { reducedByCents: number; stillOwedCents: number } | null;
   /** #4097: what a card cancellation's card refund could not carry - by bank transfer, or checked first. Optional, as above. */
   cardShortfallHandBack?: boolean;
   cardShortfallCheck?: boolean;
@@ -1994,9 +1997,9 @@ export function ManualRefundTaskQueue() {
                       ) : null}
                       {/* #4042: a group organiser's hand-back is paid, never dismissed. #4516: nor, for now, a real bank or cash hand-back; its row says why. */}
                       {task.groupOrganiserHandBack === true ? null : task.journalHandBackDismissRefusal ? (
-                        <p className="text-xs text-muted-foreground" data-testid="manual-refund-task-dismiss-unavailable">
+                        <><p className="text-xs text-muted-foreground" data-testid="manual-refund-task-dismiss-unavailable">
                           {task.journalHandBackDismissRefusal}
-                        </p>
+                        </p><ManualRefundTaskDisputeReduction task={task} canEdit={canEdit} onReduced={load} /></>
                       ) : (
                       <ViewOnlyActionButton
                         canEdit={canEdit}

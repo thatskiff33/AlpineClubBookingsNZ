@@ -283,8 +283,21 @@ async function cleanup() {
     const task = tasks[0]!;
     expect(task.reason).toContain(`dp_${id}`);
     expect(task.amountCents).toBeGreaterThan(0);
-    return { id, task, disputeId: `dp_${id}`, r05: memberMoneyEventKeys.refundObligation("hand-back", task.id) };
+    return { id, task, disputeId: `dp_${id}`, r05: memberMoneyEventKeys.refundObligation("hand-back", task.id), intent, captureId: capture.id };
   }
+  /** One more dispute on the same payment's capture, as #5061 records each dispute Stripe sends. */
+  async function addDispute(d: { id: string; intent: string; captureId: string }, suffix: string, status: "OPEN" | "LOST" | "WON", amountCents: number) {
+    const opened = new Date("2026-06-21T00:00:00.000Z");
+    await db.stripeDispute.create({ data: { stripeDisputeId: `dp_${d.id}_${suffix}`, stripeChargeId: `ch_${d.id}`, stripePaymentIntentId: d.intent, paymentTransactionId: d.captureId,
+      paymentId: `${d.id}-payment`, bookingId: d.id, amountCents, currency: "nzd", reason: "product_unacceptable", status, stripeStatus: status.toLowerCase(),
+      stripeCreatedAt: opened, lastEventCreatedAt: opened, stripeEventId: `evt_${d.id}_${suffix}` } });
+  }
+  const reduce = async (taskId: string, expectedAmountCents: number, expectedReducedByCents: number) =>
+    (await import("@/lib/manual-refund-task-dispute-reduction")).reduceDisputedHandBack({ taskId, actingMemberId: names.officerId, expectedAmountCents, expectedReducedByCents });
+  const reductions = (taskId: string) => db.memberMoneyEvent.count({ where: { eventKey: { startsWith: `hand-back-reduced:${taskId}|` } } });
+  const owed = async (taskId: string) => (await db.manualRefundTask.findUniqueOrThrow({ where: { id: taskId } })).amountCents!;
+  const r05Open = async (bookingId: string, r05: string) => (await db.memberMoneyObligation.findUniqueOrThrow({ where: { obligationKey: r05 }, select: { faceCents: true } })).faceCents
+    - (await family(bookingId, r05)).paid;
   /** What the officers' queue (the real GET route) says about one task: the same rule the server asks. */
   async function queuePreview(taskId: string) {
     raceSession.current = { user: { id: ADMIN, role: "ADMIN" } };
@@ -364,6 +377,102 @@ async function cleanup() {
     await expect(resolve(taskId, "dismissed")).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
     expect((await eventOf(memberMoneyEventKeys.refundObligation("hand-back", taskId)))?.journal?.reversedBy).toBeNull();
     expect(await queuePreview(taskId)).toMatchObject({ journalHandBackDismissRefusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, disputedHandBackLost: false });
+  });
+
+  describe("a dispute lost for part of the hand-back (owner decision, 15 Nov 2026, comment 6893252570)", () => {
+    it("reduces it by exactly the lost cents, the rest still owed and open in the journal; a second loss reduces again; the rest lost, it dismisses", async () => {
+      const d = await disputedCancel("LOST", 1_000);
+      const was = d.task.amountCents!;
+      expect(await queuePreview(d.task.id)).toMatchObject({ disputeReduction: { reducedByCents: 1_000, stillOwedCents: was - 1_000 }, disputedHandBackLost: false });
+
+      // MUTATION: dropping the reduction (or the coverage that offers it) fails here.
+      expect(await reduce(d.task.id, was, 1_000)).toEqual({ taskId: d.task.id, wasCents: was, reducedByCents: 1_000, stillOwedCents: was - 1_000 });
+      expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: d.task.id } })).toMatchObject({ status: "OPEN", amountCents: was - 1_000, raisedAmountCents: was });
+      expect(await reductions(d.task.id)).toBe(1);
+      expect(await r05Open(d.id, d.r05)).toBe(was - 1_000);
+      expect(await balance(d.id, "REFUND_PAYABLE")).toBe(-(was - 1_000));
+      expect(memberMoneyConservationProblems(await state(d.id))).toEqual([]);
+
+      await addDispute(d, "second", "LOST", 500);
+      expect(await queuePreview(d.task.id)).toMatchObject({ disputeReduction: { reducedByCents: 500, stillOwedCents: was - 1_500 } });
+      await reduce(d.task.id, was - 1_000, 500);
+      expect(await owed(d.task.id)).toBe(was - 1_500);
+      expect(await reductions(d.task.id)).toBe(2);
+      expect(await r05Open(d.id, d.r05)).toBe(was - 1_500);
+
+      await addDispute(d, "rest", "LOST", was - 1_500);
+      expect(await queuePreview(d.task.id)).toMatchObject({ journalHandBackDismissRefusal: null, disputedHandBackLost: true, disputeReduction: null });
+      await resolve(d.task.id, "dismissed");
+      expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: d.task.id } })).toMatchObject({ status: "DISMISSED", amountCents: was - 1_500 });
+      expect(await eventOf(memberMoneyEventKeys.handBackRestWithdrawn(d.task.id))).not.toBeNull();
+      expect(await r05Open(d.id, d.r05)).toBe(0);
+      expect(await balance(d.id, "REFUND_PAYABLE")).toBe(0);
+      expect(memberMoneyConservationProblems(await state(d.id))).toEqual([]);
+    });
+
+    it("refuses the reduction while the dispute is open or after it was won, writing nothing", async () => {
+      const d = await disputedCancel("OPEN", 1_000);
+      const { disputedHandBackReductionRefusal } = await import("@/lib/manual-refund-task-copy");
+      await expect(reduce(d.task.id, d.task.amountCents!, 1_000)).rejects.toMatchObject({ status: 409, message: disputedHandBackReductionRefusal("OPEN") });
+      await db.stripeDispute.update({ where: { stripeDisputeId: d.disputeId }, data: { status: "WON", stripeStatus: "won" } });
+      await expect(reduce(d.task.id, d.task.amountCents!, 1_000)).rejects.toMatchObject({ status: 409, message: disputedHandBackReductionRefusal("WON") });
+      expect(await owed(d.task.id)).toBe(d.task.amountCents);
+      expect(await reductions(d.task.id)).toBe(0);
+    });
+
+    it("a double submit reduces once: one request wins, the other is refused, one journal withdrawal", async () => {
+      const d = await disputedCancel("LOST", 1_000);
+      const was = d.task.amountCents!;
+      const results = await Promise.allSettled([reduce(d.task.id, was, 1_000), reduce(d.task.id, was, 1_000)]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((r) => r.status === "rejected").map((r) => (r as PromiseRejectedResult).reason)).toEqual([expect.objectContaining({ status: 409 })]);
+      expect(await owed(d.task.id)).toBe(was - 1_000);
+      expect(await reductions(d.task.id)).toBe(1);
+      expect(await r05Open(d.id, d.r05)).toBe(was - 1_000);
+    });
+
+    it("racing a dismissal, the reduction wins and the dismissal is refused (lost for part): one change, no rest withdrawn", async () => {
+      const d = await disputedCancel("LOST", 1_000);
+      const was = d.task.amountCents!;
+      const [reduced, dismissed] = await Promise.allSettled([reduce(d.task.id, was, 1_000), resolve(d.task.id, "dismissed")]);
+      expect(reduced.status).toBe("fulfilled");
+      expect(dismissed).toMatchObject({ status: "rejected", reason: expect.objectContaining({ status: 409 }) });
+      expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: d.task.id } })).toMatchObject({ status: "OPEN", amountCents: was - 1_000 });
+      expect(await reductions(d.task.id)).toBe(1);
+      expect(await eventOf(memberMoneyEventKeys.handBackRestWithdrawn(d.task.id))).toBeNull();
+    });
+
+    it("racing Mark paid for the amount the officer saw, exactly one wins and nothing is withdrawn or paid twice", async () => {
+      const d = await disputedCancel("LOST", 1_000);
+      const was = d.task.amountCents!;
+      const markPaidAsSeen = () => resolution.resolveManualRefundTask({ taskId: d.task.id, resolution: "completed", note: null, actingMemberId: names.officerId,
+        confirmedAmountCents: was, direction: "REFUND_TO_MEMBER", handedBackInCash: false, recordedNightPrices: null }, CLUB_FORMAT_TEST);
+      const results = await Promise.allSettled([reduce(d.task.id, was, 1_000), markPaidAsSeen()]);
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      const task = await db.manualRefundTask.findUniqueOrThrow({ where: { id: d.task.id } });
+      if (task.status === "COMPLETED") {
+        expect(await reductions(d.task.id)).toBe(0);
+        expect(await r14Applied(d.task.id)).toBe(was);
+      } else {
+        expect(task).toMatchObject({ status: "OPEN", amountCents: was - 1_000 });
+        expect(await reductions(d.task.id)).toBe(1);
+        expect(await eventOf(memberMoneyEventKeys.handBackPaid(d.task.id))).toBeNull();
+      }
+      expect(memberMoneyConservationProblems(await state(d.id))).toEqual([]);
+    });
+
+    it("a dispute recorded lost between the queue's view and the click: refused as stale, then the fresh view's reduction applies", async () => {
+      const d = await disputedCancel("LOST", 1_000);
+      const was = d.task.amountCents!;
+      expect(await queuePreview(d.task.id)).toMatchObject({ disputeReduction: { reducedByCents: 1_000 } });
+      await addDispute(d, "late", "LOST", 500);
+      const { DISPUTED_HAND_BACK_REDUCTION_STALE_MESSAGE } = await import("@/lib/manual-refund-task-dispute-reduction");
+      await expect(reduce(d.task.id, was, 1_000)).rejects.toMatchObject({ status: 409, message: DISPUTED_HAND_BACK_REDUCTION_STALE_MESSAGE });
+      expect(await reductions(d.task.id)).toBe(0);
+      expect(await queuePreview(d.task.id)).toMatchObject({ disputeReduction: { reducedByCents: 1_500, stillOwedCents: was - 1_500 } });
+      await reduce(d.task.id, was, 1_500);
+      expect(await owed(d.task.id)).toBe(was - 1_500);
+    });
   });
 
   it("(owner decision, 15 Nov 2026) a dispute won between the queue's preview and the dismissal: refused, saying the club still owes it, and its debt stays open", async () => {

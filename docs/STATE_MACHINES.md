@@ -2762,7 +2762,22 @@ takes `lock(1)`, the booking row and the Payment row before its claim (a
 disputed hand-back re-reads its disputes only then), and after a won claim
 withdraws its R05 exactly, so raising and
 dismissing it leaves the journal as it was. The queue asks the same rule
-(`journalHandBackDismissal`) with the same dispute read. Reopened, it has no live R05, and Mark paid then
+(`journalHandBackDismissal`) with the same dispute read.
+
+**OPEN -> OPEN, reduced by a dispute lost for part of it** (owner decision,
+15 Nov 2026, #4516). A disputed card payment's hand-back whose lost disputes,
+on its own payment, cover a positive amount less than what is still owed can
+be reduced by exactly the lost cents not yet applied (applied = raised less
+still owed). Same locks and re-read as the dismissal, then a status- and
+amount-guarded claim that writes the smaller `amountCents` (`raisedAmountCents`
+keeps the original); the journal then withdraws exactly that part of the R05,
+paying it, and an audit row records was, reduced by, still owed and the lost
+disputes counted. The confirmed amount and reduction must still be the
+server's, so a second click, a replay or a dispute recorded since writes
+nothing. Every reader of the task's amount (Refunds owed, the netting, Mark
+paid, its Xero note) reads the reduced figure. Once the lost disputes cover
+the rest, OPEN -> DISMISSED withdraws the debt's open rest. A Stripe late win
+after a reduction leaves it reduced: a stated limit, with #5197. Reopened, it has no live R05, and Mark paid then
 posts its R14 unapplied, as for a task raised before M4d.
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED

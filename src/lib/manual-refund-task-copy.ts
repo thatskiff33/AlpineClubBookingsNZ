@@ -438,11 +438,39 @@ export function disputedHandBackDismissRefusal(status: StripeDisputeStatus): str
 }
 
 /**
- * That hand-back when its lost disputes cover less than its refund: the cardholder has only part of it back, so it is
- * neither dismissed nor marked paid in full (that would pay the lost part twice).
+ * That hand-back when its lost disputes cover only part of what is still owed (owner decision, 15 Nov 2026, comment
+ * 6893252570): not dismissed, and not marked paid in full (that would pay the lost part twice), but reduced.
  */
 export const DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL =
-  "This refund can't be dismissed: the lost card dispute covered only part of it, so the club may still owe the rest. Take it to the treasurer, and do not mark it paid in full: the cardholder already has the disputed part back.";
+  "This refund can't be dismissed: the lost card dispute covered only part of it. Reduce it by the lost amount instead; the rest stays owed.";
+
+/** That hand-back once every lost dispute has reduced it and the rest is still owed. */
+export const DISPUTED_HAND_BACK_REDUCED_REFUSAL =
+  "This refund can't be dismissed: the lost card dispute has already reduced it, and the club still owes the rest. Mark it paid once the money has gone back.";
+
+/** The reduce action refused on a task that is not a disputed card payment's hand-back. */
+export const NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL =
+  "Only a refund handed to the treasurer because its card payment is disputed can be reduced by a lost dispute.";
+
+/** The reduce action refused by the dispute's state: still open, or won or closed with no funds taken. */
+export function disputedHandBackReductionRefusal(status: StripeDisputeStatus): string {
+  return status === "OPEN"
+    ? "This refund can't be reduced while the card payment's dispute is open: the club may still owe it."
+    : `This refund can't be reduced: the card payment's dispute was ${STRIPE_DISPUTE_STATUS_LABEL[status]}, so the club still owes it.`;
+}
+
+/** The reduce action refused because every lost dispute has already reduced it. */
+export const DISPUTED_HAND_BACK_NOTHING_TO_REDUCE =
+  "There is nothing more to reduce: every lost card dispute has already reduced this refund, and the rest is still owed.";
+
+/** The reduce action refused because the lost disputes now cover everything still owed. */
+export const DISPUTED_HAND_BACK_FULLY_LOST_REDUCTION_REFUSAL =
+  "The lost card dispute now covers all of this refund: dismiss it instead.";
+
+/** The reduce action's confirmation and its toast: what the refund was, what it is reduced by and what is still owed. */
+export function disputedHandBackReductionSummary(cents: { wasCents: number; reducedByCents: number; stillOwedCents: number }, format: ClubFormat): string {
+  return `Was ${formatCents(cents.wasCents, format)}. Reduced by ${formatCents(cents.reducedByCents, format)}, the lost card dispute: the cardholder already has that back through their bank. Still owed ${formatCents(cents.stillOwedCents, format)}.`;
+}
 
 /** The dismiss dialog's sentence for that hand-back once its lost dispute covers it (#4516, owner decision 15 Nov 2026). */
 export const DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION =

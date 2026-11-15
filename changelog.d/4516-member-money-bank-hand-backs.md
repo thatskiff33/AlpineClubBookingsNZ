@@ -6,6 +6,8 @@
   be dismissed once the officer has confirmed the card refund reached the
   member, and the refund a cancellation handed to the treasurer because the
   cardholder disputed the card payment can be dismissed once the dispute is
-  lost for at least that refund. Officers are emailed a dispute-specific alert for that refund. A late card payment the treasurer keeps is recorded as
+  lost for at least that refund; lost for less, officers can reduce it by the
+  lost amount and the rest stays owed. Officers are emailed a dispute-specific
+  alert for that refund. A late card payment the treasurer keeps is recorded as
   already billed where an invoice covers it, and as extra booking revenue only
   for the rest.

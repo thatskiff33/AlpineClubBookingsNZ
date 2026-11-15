@@ -635,7 +635,7 @@ Screen: `/admin/payments`.
 
 Shows: Payment records, statuses and links to related bookings.
 
-Journey: Filter payments, open a record, and inspect its booking and provider status.
+Journey: Filter payments, open a record, and inspect its booking and provider status. On **Money to settle**, a refund handed to the treasurer because its card payment is disputed offers **Reduce by lost dispute** when the dispute was lost for part of it: the confirmation states what the refund was, what it is reduced by and what is still owed, and the task stays open for the rest (#4516).
 
 [Guide](guides/payments.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

@@ -1030,6 +1030,14 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
       "DISMISSED -> OPEN re-arms assertNoPendingEditFinancialReview RETROACTIVELY, against money-affecting edits already in flight - unlike the closure it mirrors, which only relaxes that fence. Unlocked, an edit that read the fence while the task was dismissed can settle a credit under its own modification while the reopen commits, leaving an OPEN task whose context still points at the earlier anchor and whose completion credits the member twice. It makes no provider call, so the bounded exception that keeps resolveManualRefundTask lock-free does not apply. #4124: an approved appeal's task is measured by the appeal's ceiling, which nets the payment's open card refund debts, so for that task it takes the Payment row (lockPaymentForRefundedTotal) after this key and before the ceiling's reads, as the approval does. #4343: an EDIT_FINANCIAL_REVIEW is refused before the claim, so that kind cannot re-arm the fence; every other dismissed kind still can.",
     invariant: "INV-LOCK-001",
   },
+  // ── Reducing a disputed card payment's hand-back by a dispute lost for part of it ──
+  {
+    site: "reduceDisputedHandBack#1",
+    tier: "GLOBAL",
+    reason:
+      "#4516 (owner decision, 15 Nov 2026, comment 6893252570): reducing a disputed card payment's hand-back lowers the task's amountCents, which every edit, acceptance, paid cancel and refund appeal reads beside refundedAmountCents to size a refund net of what is still promised back (refundableCashNetOfOpenHandBacks), and it must exclude that hand-back's completion and dismissal, which take this key first. The same order as that dismissal: this key, then the booking row (lockBookingRowForOwnerRead), the task re-read, then the Payment row and the booking's disputes re-read (decideJournalHandBackDismissal), then the claim guarded on status OPEN and the amount read, then the journal's part withdrawal (under the Payment row) and the audit row. A lost claim writes nothing. No provider call; no new key.",
+    invariant: "INV-LOCK-002",
+  },
   {
     site: "editReviewHeadlineRebase#1",
     tier: "GLOBAL",

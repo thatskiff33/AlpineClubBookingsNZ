@@ -5,11 +5,12 @@ import { memberMoneyApplicationTotals } from "./application-state";
 import { bookingOwnerDebtor, eventPosted } from "./booking-journal-read";
 import { lockedBookingDebtor } from "./booking-posting";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
-import { memberMoneyEventKeys, type MemberMoneyEventKey, type RefundObligationScope } from "./keys";
+import { memberMoneyApplicationKeys, memberMoneyEventKeys, type MemberMoneyEventKey, type RefundObligationScope } from "./keys";
 import { MemberMoneyPlanError, type MemberMoneyDebtor, type MemberMoneyEvidence, type MemberMoneyLegPlan, type MemberMoneyPostingContext } from "./plan";
 import { postMemberMoneyEvent, releaseMemberMoneyRefundReservation, reverseMemberMoneyJournal } from "./post";
 import { isStripeKeyOfSenderPrefix } from "../../payment-recovery-keys";
-import { refundFamily, refundObligationChain, stripeKeyOfReservation } from "./refund-family";
+import { refundFamily, refundFamilyOpenCents, refundFamilyTip, refundObligationChain, stripeKeyOfReservation } from "./refund-family";
+import { lineDebtor } from "./booking-receipts";
 
 /**
  * R05 AT THE CARD-REFUND DOORS (#4516, Ledger M4c). After the door's price or retention decision has posted
@@ -107,6 +108,13 @@ export async function withdrawRefundObligation(tx: Db, context: BookingJournalCo
   bookingId: string; scope: RefundObligationScope; id: string; actorMemberId?: string | null; reason: string;
   /** The door's own Stripe key prefix: the only reservations it may release. */
   senderKeyPrefix: string;
+  /**
+   * #4516 (owner decision, 15 Nov 2026, comment 6893252570): withdraw only part of the debt (`amountCents`: a hand-back
+   * reduced by card disputes lost for part of it), or what is open of it (`"open"`: a reduced hand-back dismissed).
+   * Posted under `eventKey` as the mirror of the R05 for those cents, paying its live tip; a debt nothing has paid
+   * is still withdrawn whole by the exact reversal. Without `part`, a debt anything has paid is refused, as before.
+   */
+  part?: { eventKey: MemberMoneyEventKey; amountCents: number | "open"; debtorRead: "booking-row" | "plain" };
 }): Promise<boolean> {
   if (isBookingJournalInactive(context)) return false;
   if (!(await eventPosted(tx, memberMoneyEventKeys.bookingCharge(input.bookingId)))) return false;
@@ -115,7 +123,8 @@ export async function withdrawRefundObligation(tx: Db, context: BookingJournalCo
   if (!live) return false;
   const state = await readMemberMoneyApplicationState(tx, input.bookingId);
   const family = refundFamily(state, live);
-  if ((memberMoneyApplicationTotals(state).families.get(live)?.paid ?? 0) > 0) {
+  const paid = memberMoneyApplicationTotals(state).families.get(live)?.paid ?? 0;
+  if (paid > 0 && !input.part) {
     throw new MemberMoneyPlanError([`refund obligation ${live} is already paid in part, so its door cannot withdraw it`]);
   }
   const ids = new Set(family.members.map((o) => o.id));
@@ -124,12 +133,44 @@ export async function withdrawRefundObligation(tx: Db, context: BookingJournalCo
   if (others.length > 0) {
     throw new MemberMoneyPlanError([`refund obligation ${live} is reserved by another sender (${others.map((r) => r.attemptKey).join(", ")}), so its door cannot withdraw it`]);
   }
+  const part = input.part;
+  if (part && (paid > 0 || part.amountCents !== "open")) {
+    if (held.length > 0) throw new MemberMoneyPlanError([`refund obligation ${live} holds reservations, so only its whole withdrawal can release them`]);
+    return withdrawRefundObligationPart(tx, context, { bookingId: input.bookingId, live, state, part, actorMemberId: input.actorMemberId ?? null, reason: input.reason });
+  }
   for (const reservation of held) {
     // SUPERSEDED_KEY: the plan that keyed it was withdrawn with the door's approval; nothing was sent under it.
     await releaseMemberMoneyRefundReservation(tx, context, { bookingId: input.bookingId, reservationId: reservation.id, reason: "SUPERSEDED_KEY",
       source: { kind: "BOOKING", id: input.bookingId, version: `withdraw:${reservation.attemptKey}` } });
   }
   await reverseRefundObligation(tx, context, { bookingId: input.bookingId, live, actorMemberId: input.actorMemberId ?? null, reason: input.reason });
+  return true;
+}
+
+/**
+ * Part of a debt withdrawn: Dr RP, Cr AR for the cents (the mirror of its R05 for them), paying the family's live tip,
+ * so what is open drops by exactly that and the receivable holds it again, as a whole withdrawal leaves the rest. The
+ * tip is the owner's (D4 posts a merged owner's successor first). Capped at what is open; a replay posts nothing.
+ */
+async function withdrawRefundObligationPart(tx: Db, context: MemberMoneyPostingContext, input: {
+  bookingId: string; live: MemberMoneyEventKey; state: Awaited<ReturnType<typeof readMemberMoneyApplicationState>>;
+  part: NonNullable<Parameters<typeof withdrawRefundObligation>[2]["part"]>; actorMemberId: string | null; reason: string;
+}): Promise<boolean> {
+  const { part } = input;
+  const open = Math.max(0, refundFamilyOpenCents(input.state, input.live));
+  const cents = part.amountCents === "open" ? open : Math.min(part.amountCents, open);
+  if (cents <= 0 || await eventPosted(tx, part.eventKey)) return false;
+  const { lodgeId } = await tx.booking.findUniqueOrThrow({ where: { id: input.bookingId }, select: { lodgeId: true } });
+  const booking = { bookingId: input.bookingId, lodgeId };
+  const tip = await refundFamilyTip(tx, context, booking, input.live, await refundDebtor(tx, input.bookingId, part.debtorRead));
+  if (!tip) throw new MemberMoneyPlanError([`refund obligation ${input.live} has no live tip, so part of it cannot be withdrawn`]);
+  const debtor = lineDebtor(tip);
+  const evidence = { withdrawnFrom: input.live, cents };
+  const leg = { type: "amount" as const, amountCents: cents, booking, evidence };
+  await postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey: part.eventKey, origin: "OFFICER", actorMemberId: input.actorMemberId,
+    source: { kind: "BOOKING", id: input.bookingId, version: part.eventKey }, reason: input.reason,
+    legs: [{ ...leg, account: "REFUND_PAYABLE", side: "DEBIT", debtor, obligationKey: tip.key }, { ...leg, account: "MEMBER_RECEIVABLE", side: "CREDIT", debtor }],
+    applications: [{ key: memberMoneyApplicationKeys.application(part.eventKey, input.bookingId, tip.key), source: { leg: 0 }, obligationKey: tip.key, amountCents: cents }] });
   return true;
 }
 

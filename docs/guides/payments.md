@@ -203,13 +203,21 @@ member is told the club will arrange their refund.
    the card payment, once Stripe records the dispute as lost for at least the
    refund due: the cardholder already has the money back through their bank,
    so dismiss it with a note. While the dispute is open, if the club won it, or
-   if it was lost for less than the refund, the app refuses and says why: the
-   club may still owe that refund (for a part-lost dispute, take it to the
-   treasurer rather than marking it paid in full). In rare cases Stripe turns a
+   if it was lost for less than the refund, the app refuses Dismiss and says
+   why: the club may still owe that refund. For a dispute lost for part of the
+   refund, use **Reduce by lost dispute** instead (owner decision, 15 Nov 2026):
+   the confirmation shows what the refund was, what it is reduced by and what
+   is still owed, and the task stays open for the rest, which you then pay and
+   mark paid back as usual. Each further dispute lost on the same payment can
+   reduce it again; once the lost disputes cover all of it, dismiss it. Do not
+   mark a part-lost refund paid at its full amount: that pays the lost part
+   twice. In rare cases Stripe turns a
    lost dispute into a "late win" and returns the money to the club; the app
-   sends no new alert for that, so if you see one, reopen the dismissed task
-   (the recently dismissed list offers it for 30 days; after that, take it to
-   the treasurer) and pay the member.
+   sends no new alert for that (#5197), so if you see one, reopen the
+   dismissed task (the recently dismissed list offers it for 30 days; after
+   that, take it to the treasurer) and pay the member. A late win after a
+   reduction is the same limit: the reduction stays, so take the restored
+   amount to the treasurer.
    A task dismissed before this change can still be reopened.
 
 **The same task for a booking change (#3827).** When a member or an officer

@@ -4240,7 +4240,7 @@ alert nobody received answers 500).
   refund asks before reserving, the paid cancel inside its claim.
 - **A paid cancel** of a disputed booking records the cancel, issues neither,
   raises a `CANCELLED_BOOKING_HAND_BACK` task on the credit tier naming the
-  dispute (dismissible only once LOST, #4516), and tells the member the refund
+  dispute (dismissible or reducible once LOST, #4516), and tells the member the refund
   is with the treasurer. A joiner's refund to the organiser's card is refused
   at `processRefund`.
 - **A refused refund stops.** A recovery row refused for a dispute goes to

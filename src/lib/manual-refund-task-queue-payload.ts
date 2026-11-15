@@ -209,6 +209,11 @@ export type OpenManualRefundTaskPayload = {
   /** That disputed card payment's hand-back, now dismissible because its dispute is lost: its dialog says so. */
   disputedHandBackLost: boolean;
   /**
+   * #4516 (owner decision, 15 Nov 2026, comment 6893252570): its disputes lost for part of what is still owed: the
+   * reduction the officer may make (the server's own rule), or null.
+   */
+  disputeReduction: { reducedByCents: number; stillOwedCents: number } | null;
+  /**
    * #4097 (`INV-PAY-129`): a card cancellation whose card refund carried less
    * than the refund due. `cardShortfallHandBack`: the part the payment's
    * non-card charges hold, refunded by bank transfer. `cardShortfallCheck`: the
@@ -352,6 +357,8 @@ export function toOpenManualRefundTaskPayload(
     groupOrganiserHandBack: groupHandBack,
     journalHandBackDismissRefusal: dismissal.refusal,
     disputedHandBackLost: dismissal.disputeLost,
+    disputeReduction: dismissal.reduction && task.amountCents !== null
+      ? { reducedByCents: dismissal.reduction.cents, stillOwedCents: task.amountCents - dismissal.reduction.cents } : null,
     cardShortfallHandBack: cancelCardShortfallPart(task) === "bank",
     cardShortfallCheck: cancelCardShortfallPart(task) === "check",
     bankRefundVoidFollowUp: followUp
