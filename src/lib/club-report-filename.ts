@@ -1,4 +1,4 @@
-import { slugifyText } from "@/lib/slug";
+import { slugify } from "@/lib/slug";
 
 /**
  * #4986 (`INV-CONFIG-001`): the Reports CSV and PDF downloads are named from
@@ -9,5 +9,5 @@ export function clubReportFilename(
   clubDay: string,
   extension: "csv" | "pdf",
 ): string {
-  return `${slugifyText(shortName) || "club"}-report-${clubDay}.${extension}`;
+  return `${slugify(shortName) || "club"}-report-${clubDay}.${extension}`;
 }

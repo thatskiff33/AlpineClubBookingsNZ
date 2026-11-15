@@ -1,5 +1,5 @@
 import type { Lodge, Prisma, PrismaClient } from "@prisma/client";
-import { slugifyText } from "./slug";
+import { slugify } from "./slug";
 
 // Callers pass their own Prisma client/transaction so this module stays free
 // of the app prisma singleton and safe to import from prisma/seed.ts.
@@ -141,7 +141,7 @@ export function normalizeLodgeText(value: string | null | undefined) {
 }
 
 export function slugifyLodgeName(name: string): string {
-  return slugifyText(name) || "lodge";
+  return slugify(name) || "lodge";
 }
 
 export async function buildUniqueLodgeSlug(
