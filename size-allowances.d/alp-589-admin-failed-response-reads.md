@@ -6,7 +6,7 @@ any of these screens to absorb that would move one handler's error read away
 from the handler, which is the drift the shared reader exists to stop.
 
 file: src/app/(admin)/admin/booking-desk/waitlist/page.tsx
-lines: 1034
+lines: 1035
 reason: the force-confirm handler reads a refusal through the shared reader
   and keeps its unverified-outcome copy for an unreadable one, beside the
   capacity write it guards; the page's split is its own refactor.
