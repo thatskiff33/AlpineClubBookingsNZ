@@ -32,6 +32,7 @@ const TEST_CLUB_DAY: AdminBookingsClubDay = {
   today: dateOnlyInstantOf(requireCalendarDate("2026-07-01")),
 };
 import { addDaysDateOnly } from "@/lib/date-only";
+import { DATE_ONLY_INVALID_MESSAGE } from "@/lib/date-only-schema";
 import { prisma } from "@/lib/prisma";
 import { installAdminBookingsDbMock } from "./admin-bookings-db-mock";
 
@@ -216,5 +217,19 @@ describe("listAdminBookings pagination (#1738)", () => {
     expect(adminBookingsQuerySchema.parse({ page: "2.5" }).page).toBe(1);
     expect(adminBookingsQuerySchema.parse({}).page).toBe(1);
     expect(adminBookingsQuerySchema.parse({ page: "3" }).page).toBe(3);
+  });
+
+  // ALP-574: `from` is a `dateOnlyStringSchema`, so a non-existent calendar
+  // day is refused at the schema — before `listAdminBookings` ever runs a
+  // query — rather than reaching the service as an unparseable filter.
+  it("refuses a non-existent calendar day in `from` before any booking query runs", () => {
+    const parsed = adminBookingsQuerySchema.safeParse({ from: "2026-02-30" });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.flatten().fieldErrors.from).toEqual([
+        DATE_ONLY_INVALID_MESSAGE,
+      ]);
+    }
+    expect(prisma.booking.findMany).not.toHaveBeenCalled();
   });
 });

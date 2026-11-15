@@ -1250,7 +1250,7 @@ test/demo mode or disabled:
 | `POSTGRES_MEM_LIMIT` | Memory limit of the compose `postgres` container (default `768m`). Raise it in step with `POSTGRES_MAX_CONNECTIONS`: each backend costs its `work_mem` and connection overhead, so a ceiling of `80` wants the limit taken towards `1g`. Applied when the container is next created. |
 | `AUTH_SECRET`           | Auth.js session secret — use a strong value (>= 32 chars). Until `DATA_ENCRYPTION_KEYS` is set it is also the key 2FA secrets and in-app provider credentials are encrypted under (#2079), which makes rotating it a planned maintenance event (see `DEPLOYMENT.md`). |
 | `NEXTAUTH_SECRET`       | Legacy Auth.js secret fallback; keep aligned with `AUTH_SECRET`. |
-| `DATA_ENCRYPTION_KEYS`  | Optional, recommended (#4456). The data-encryption key ring: comma-separated `<id>:<base64 key>` entries, each exactly 32 random bytes (`openssl rand -base64 32`), the **first** used for new data. Once set, stored provider credentials and authenticator secrets no longer depend on `AUTH_SECRET`. Read [Data-encryption keys](#data-encryption-keys-4456) before setting it. |
+| `DATA_ENCRYPTION_KEYS`  | Set during [First Bootstrap](DEPLOYMENT.md#first-bootstrap) for new installs; optional on existing deployments (#4456). The data-encryption key ring: comma-separated `<id>:<base64 key>` entries, each exactly 32 random bytes (`openssl rand -base64 32`), the **first** used for new data. Once set, stored provider credentials and authenticator secrets no longer depend on `AUTH_SECRET`. Read [Data-encryption keys](#data-encryption-keys-4456) before setting it. |
 | `DATA_ENCRYPTION_LEGACY_KEY` | Optional (#4456). `retired` stops reading stored data under `AUTH_SECRET` once `pnpm run data-keys:reencrypt` reports nothing left on it. Unset keeps reading it. Any other value, or `retired` with no `DATA_ENCRYPTION_KEYS`, fails readiness. See [Data-encryption keys](#data-encryption-keys-4456). |
 | `NEXTAUTH_URL`          | Exact app origin, for example `http://localhost:3000`. Passkeys use its hostname as the relying-party id and its origin as the origin they expect (`INV-AUTH-009`). |
 | `SERVERNZ_DEFAULT_BASE_URL` | The Alpine Central Server this deployment pairs with, for example `https://central.example.org`; empty by default. Offered only: the setup page pre-fills its address field from it while no address is saved, and an administrator's Save stores it; the sync and the Request a Connection link read the saved address alone. Must be `https` on a public host, or it is ignored as if unset (triyder/AlpineClubBookingsNZ#81). |
@@ -2330,7 +2330,10 @@ once.
 ### Data-encryption keys (#4456)
 
 `DATA_ENCRYPTION_KEYS` separates the key that protects stored data from the
-session secret. Without it, `AUTH_SECRET` both signs sessions and encrypts every
+session secret. A new installation sets it before the app starts, following
+[First Bootstrap](DEPLOYMENT.md#first-bootstrap); with nothing stored yet, no
+re-encrypt is needed. Existing deployments follow the rollout instructions
+below, waiting until every container understands the key ring. Without it, `AUTH_SECRET` both signs sessions and encrypts every
 stored provider credential and authenticator secret, so a leak of that one value
 exposes both and rotating it destroys the stored data.
 
@@ -2839,7 +2842,7 @@ Each one left empty keeps today's behaviour.
 
 | Variable | Read by | Description |
 | --- | --- | --- |
-| `APP_DB_USER` / `APP_DB_PASSWORD` | `docker-compose.yml` | The role and password both web slots and the cron leader connect as. Empty: `tac` / `DB_PASSWORD`. |
+| `APP_DB_USER` / `APP_DB_PASSWORD` | `docker-compose.yml` | New installs set these during [First Bootstrap](DEPLOYMENT.md#first-bootstrap), together with the migration user and retention URL after provisioning. Existing deployments follow the switch-over runbook. The role and password both web slots and the cron leader connect as. Empty: `tac` / `DB_PASSWORD`. |
 | `MIGRATION_DB_USER` / `MIGRATION_DB_PASSWORD` | `docker-compose.yml` | The role and password the `migrate` service runs `prisma migrate deploy` as. Empty: `tac` / `DB_PASSWORD`. Only the credentials change; the pool size and the migration lock timeout stay. |
 | `AUDIT_RETENTION_DB_USER` / `AUDIT_RETENTION_DB_PASSWORD` | `db:provision-roles` | The audit-retention role's name (default `tac_audit_retention`) and password. The app reads the role only through `AUDIT_RETENTION_DATABASE_URL`. |
 | `DB_ROLES_PROVISION_DATABASE_URL` | `db:provision-roles` | The operator (superuser) connection the script provisions with. Defaults to `DATABASE_URL`. |

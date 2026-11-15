@@ -128,6 +128,20 @@ export const PROFILE_FAMILY_GROUP_RETURN_TO_BOOK = buildProfilePathWithReturnTo(
   "family-group",
 );
 
+/**
+ * The wizard's one error box (#4945). The page renders it; the review step's
+ * reason-for-review field points `aria-describedby` at it, because the
+ * missing-reason refusal is written there rather than beside the field.
+ */
+export const BOOKING_WIZARD_ERROR_ID = "booking-wizard-error";
+
+/**
+ * The wrapper around the review step's "Request Booking Officer approval" card
+ * (#2562). A reviewable refusal shows its reason in the error box above the
+ * steps and its remedy here, screens lower, so the box links to this id.
+ */
+export const BOOKING_EXCEPTION_REQUEST_ID = "booking-exception-request";
+
 /** The club's three subscription-lockout regimes (#2543), mirroring Prisma. */
 export type SubscriptionLockoutMode =
   | "NO_BLOCK"

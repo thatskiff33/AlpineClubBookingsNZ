@@ -31,12 +31,13 @@
  * the server.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { getOperationalXeroWebhookKey } from "@/lib/xero-config";
 
 /** Provider namespace for the Xero ITR marker row. */
-export const XERO_WEBHOOK_PROVIDER = "xero";
+export const XERO_WEBHOOK_PROVIDER = "xero" satisfies IntegrationCredentialNamespace;
 
 /**
  * The verify poll window must comfortably exceed C1's credential cache TTL

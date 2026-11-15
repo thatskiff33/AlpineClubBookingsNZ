@@ -911,6 +911,7 @@ Use these ownership boundaries when adding new code:
 | Business logic | `src/lib/` | Keep money in integer cents, dates as New Zealand date-only lodge nights, and external calls outside long database transactions where practical. |
 | Database | `prisma/schema.prisma`, `prisma/migrations/` | Schema changes must include deployable migrations and respect the blue/green migration policy. |
 | Operations | `scripts/`, `deploy/`, Compose files | Deployment helpers should be reusable by forks through environment overrides. |
+| Function length | every production file | A top-level function, const-assigned function or class member over 300 lines may not appear or grow (`pnpm run quality:budget`, #4927; object-literal methods are not measured); split a long function into typed top-level functions that read only what they are given. See docs/MAINTENANCE.md → "Function-length ratchet". |
 
 ### Bed-allocation preference resolution
 
@@ -1074,6 +1075,9 @@ modules split out in issue #1138 — `booking-modify-validation.ts`
 (the in-transaction guest/pricing/promo pipeline), and
 `booking-modify-settlement.ts` (settlement handoff and lifecycle
 transitions) — so importers keep using `@/lib/booking-modify` unchanged.
+`booking-modify-quote-priced.ts` (#4924) holds the booking-request-origin
+fences (the quote-priced edit block and the member whole-lodge test) behind
+the same barrel.
 
 `src/lib/booking-payment-cleanup.ts` queues superseded Stripe PaymentIntents
 when booking edits replace or zero out pending payment work.
@@ -1169,6 +1173,17 @@ derivation silently hides bookings from the officer filtering for them, so
 value's result to equal the derivation's alone; extend their shared scenarios
 (`support/admin-bookings-derived-scenarios.ts`) with any new value or condition.
 
+**A mutating admin request shows its failure** (developer rule for new or
+modified handlers, #4976; older handlers have not all been swept). A delete,
+remove or toggle is a mutation like a save: on any non-2xx reply, or a request
+that never arrives, the handler shows the server's sentence or a fallback in a
+`role="alert"` region, and reads the body only through
+`src/lib/api-error-message.ts`, so an HTML error page never surfaces as a JSON
+parse error (`INV-SSOT`). Put the region where the officer is looking, never
+inside a closed form, and prefer `FocusedActionError` so it takes focus and
+scrolls into view. A plain banner above a long list can be off screen. The
+Seasons page still uses one, which is a known gap and not a model to copy.
+
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
 A section
@@ -1205,15 +1220,15 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **105 components render a banner, and
- 335 of the 390 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **107 components render a banner, and
+ 338 of the 393 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 335 split by WHICH rule
-covers them: **295** pass the literal
-`describeReason={false}` and are covered by a banner in the same file, and **40**
+test currently pins, which is the only authority.) Those 338 split by WHICH rule
+covers them: **296** pass the literal
+`describeReason={false}` and are covered by a banner in the same file, and **42**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
-verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
+verified vouching parent — 37 by a parent's own JSX render site (#2168), 5 by the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
 through the wizard shell* below. The
 remaining **55 controls across 30 files deliberately keep the per-button
@@ -1895,6 +1910,18 @@ shape, `member-lifecycle-actions` owns archive/delete request handling, and
 `membership-cancellation-*` owns the cancellation request, confirmation,
 approval, Xero, settings, and status-label flow.
 
+Officer two-factor (#4618) sits on the same layer. `/admin/security` adds
+`officer-two-factor-card`, a staged-edit section with its own
+`useSectionEditState` and its own `PUT /api/admin/security/officer-two-factor`,
+so it shares no whole-object PUT with a sibling. Non-Full-Admins see it
+view-only, with the section banner. The member detail page adds a Full Admin
+reset button that posts to `/api/admin/security/two-factor-reset/[memberId]`.
+Both writes go through `fetchWithRecentAuth` and are in `STEP_UP_ROUTES`. The
+rule lives in `second-factor-enrolment.ts`; the session claims in
+`officer-two-factor-claims.ts`; the gate in `two-factor-gate.ts`; the reset in
+`officer-factor-reset.ts`. All of it is inert while `OFFICER_SIGN_IN_ENFORCED`
+is false.
+
 Browser-facing API routes treat an unexpected exception as operator-only
 diagnostic data: the complete error is sent to the structured logger, while the
 JSON response uses a fixed route-specific message. Validation and domain
@@ -2559,7 +2586,11 @@ or the eleven status strings without pulling the corpus in (#2689). A
 page can inject extra sections/questions and a chip-ordering hint through
 `HelpWidgetProvider` + `useHelpWidgetExtras`/`useHelpWidgetHint`; the booking
 detail page uses this (`booking-help-extras.tsx`) to re-surface the booking status
-glossary and cancellation refund schedule (#1371). This widget replaced the
+glossary and cancellation refund schedule (#1371). The widget is not the only
+place the schedule appears: the page also renders it beside the Cancel action,
+and the booking wizard's Review step shows it before the member commits
+(`CancellationScheduleBlock`, #4946), all from `describeCancellationSchedule`
+over the booking's or selected lodge's policy. This widget replaced the
 retired per-shell `ContextualHelpButton` and the booking `BookingHelpDialog`
 (epic #2094 C2).
 

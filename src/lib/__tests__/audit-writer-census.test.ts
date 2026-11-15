@@ -1495,9 +1495,14 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 406 -> 408 unpinned (#4368): a dead card refund's "Nothing left owed" and "Try the card again", `payment`.
     // RE-MEASURED with `pnpm run audit:census`.
     // 408 -> 409 unpinned (#4916): the after-stay dietary clear's count row, `privacy`.
-    // 409 -> 412 unpinned (#4988): the opening-credit batch's post and reverse (`payment`) and the
+    // 409 -> 411 unpinned (#4851): a group organiser's dead card refund paid another way (one site) or tried again, `payment`.
+    // 411 -> 412 unpinned (#4918): the privacy hosting disclosure save, unpinned `admin`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 412 -> 413 unpinned (#4618): the officer two-factor policy save, `security`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 413 -> 416 unpinned (#4988): the opening-credit batch's post and reverse (`payment`) and the
     // member import's Family Key group (`family`). RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 412 });
+    ).toEqual({ pinned: 130, unpinned: 416 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

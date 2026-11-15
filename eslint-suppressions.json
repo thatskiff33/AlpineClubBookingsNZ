@@ -88,7 +88,7 @@
       "count": 1
     }
   },
-  "src/app/(admin)/admin/messages/communications/page.tsx": {
+  "src/app/(admin)/admin/messages/communications/_components/send-history-card.tsx": {
     "design-system/no-raw-table": {
       "count": 1
     }
@@ -602,7 +602,7 @@
   },
   "src/app/(lodge)/lodge/kiosk/page.tsx": {
     "design-system/no-raw-button": {
-      "count": 11
+      "count": 9
     },
     "design-system/no-raw-input": {
       "count": 1

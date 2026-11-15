@@ -41,9 +41,11 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
 1. On a pending appeal, click **Review**. Set the **Refund Amount ($)** (pre-filled
    to the smaller of the requested and maximum refundable amount; the max is shown)
    and optional **Admin Notes** (visible to the member).
-2. Click **Approve & Refund** — a dialog asks whether to email the member; the
-   refund is processed either way and your choice is recorded in the audit log. Or
-   click **Reject** (also with an email choice).
+2. Click **Approve & Refund** — a dialog repeats the refund amount and asks
+   whether to email the member; the refund is processed either way and your
+   choice is recorded in the audit log. Or click **Reject** (also with an email
+   choice). Check the amount: if it is wrong, click **Go back**, which closes the
+   dialog without refunding and keeps what you typed.
 
    If the appeal's booking has **No emails** switched on
    ([Bookings](bookings.md#turn-off-all-emails-for-one-booking)), the outcome
@@ -157,7 +159,7 @@ in one batch ([Moving in from your old system](moving-in.md#6-credit-post-the-op
    opening credit or had any credit deducted since the batch posted.
 
 When a member later spends an opening credit, Xero codes it as the member's own
-money (the hut-fee refunds account), never as goodwill (`INV-PAY-153`).
+money (the hut-fee refunds account), never as goodwill (`INV-PAY-155`).
 
 ## Settings reference
 
