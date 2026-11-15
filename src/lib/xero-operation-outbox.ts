@@ -9,7 +9,8 @@ import {
   syncXeroMembershipCancellationContact,
 } from "@/lib/membership-cancellation-xero";
 import { prisma } from "@/lib/prisma";
-import { postJoiningFeeCharge, resolveSubscriptionMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
+import { joiningFeeJournalPoster } from "@/lib/subscription-journal-postings";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import {
   cardRefundNoteRowsWhere,
@@ -261,29 +262,11 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
      * client while that transaction holds its advisory locks.
      */
     asOf?: Date;
-    /**
-     * #4519 (Ledger M7): the journal context, REQUIRED alongside `store` and
-     * resolved before the caller's transaction (INV-LOCK-004). Without `store`
-     * the enqueue resolves it itself.
-     */
+    /** #4519: the journal context, REQUIRED alongside `store` and resolved before its transaction (INV-LOCK-004). */
     journalContext?: BookingJournalContext;
   }
 ) {
-  if (options?.store && !options.journalContext) {
-    throw new Error("enqueueXeroEntranceFeeInvoiceOperation needs a journal context resolved before the caller's transaction when it is given one (#4519).");
-  }
-  const journalContext = options?.journalContext ?? await resolveSubscriptionMoneyPostingContext();
-  // The joining fee's journal charge (R19) posts in the caller's transaction,
-  // or else in a short one of its own after the outbox insert: that insert stays
-  // on the global client, whose lost-race recovery a transaction would abort
-  // (#1354, #4338). The key makes a repeat post nothing, and posting beside an
-  // already-queued row too heals a crash between the two.
-  const postJoiningFee = (fee: { feeAmountCents: number; exempt: boolean }) => {
-    const post = (tx: Prisma.TransactionClient) => postJoiningFeeCharge(tx, journalContext, {
-      memberId, ...fee, actorMemberId: options?.createdByMemberId ?? null,
-    });
-    return options?.store ? post(options.store) : prisma.$transaction(post);
-  };
+  const postJoiningFee = await joiningFeeJournalPoster(memberId, options); // R19 (#4519)
   // Optional transaction client (#1886, F22) so membership approval can write
   // this outbox row inside the same transaction that creates the member and
   // approves the application — the joining fee then commits atomically with
@@ -315,19 +298,13 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     };
   }
 
-  const entranceFee = await getEntranceFeeContext(
-    memberId,
-    db,
-    options?.seasonYear,
-    options?.asOf,
-  );
+  const entranceFee = await getEntranceFeeContext(memberId, db, options?.seasonYear, options?.asOf);
 
   // Organisations/schools are exempt from joining fees (owner decision,
   // 2026-07-07) — checked before the amount override so an explicitly
   // entered amount can never bill an organisation.
   if (entranceFee.exempt) {
-    // R19 as a permanent ZERO, so a later amount never bills an exempt member.
-    await postJoiningFee({ feeAmountCents: 0, exempt: true });
+    await postJoiningFee({ feeAmountCents: 0, exempt: true }); // a permanent ZERO: no later amount bills it
     return {
       queueOperationId: null,
       message: ENTRANCE_FEE_EXEMPT_MESSAGE,
@@ -359,13 +336,9 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
       operationType: "CREATE",
       localModel: "Member",
       localId: memberId,
-      status: {
-        in: ["PENDING", "RUNNING"],
-      },
+      status: { in: ["PENDING", "RUNNING"] },
     },
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: { createdAt: "desc" },
   });
 
   if (existingQueuedOperation) {
@@ -395,8 +368,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
   });
-  // R19 for the frozen outbox amount; a member already charged posts nothing.
-  await postJoiningFee({ feeAmountCents, exempt: false });
+  await postJoiningFee({ feeAmountCents, exempt: false }); // the frozen outbox amount
 
   return {
     queueOperationId: queuedOperation.id,

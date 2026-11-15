@@ -29,7 +29,7 @@ import {
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearsLabel } from "@/lib/season-label";
 import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
-import { postSubscriptionCharge, resolveSubscriptionMoneyPostingContext } from "@/lib/member-money/doors";
+import { SUBSCRIPTION_CHARGE_JOURNAL_SELECT, postConfirmedSubscriptionCharge, prepareSubscriptionBillingJournal } from "@/lib/subscription-journal-postings";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
@@ -1599,20 +1599,10 @@ export async function confirmSubscriptionBillingPreview(input: {
     throw new SubscriptionBillingError("Billing preview changed; refresh and confirm the current preview.");
   }
   const chargeIds: string[] = [];
-  // #4519 (Ledger M7): the journal context, before the transaction (INV-LOCK-004).
-  const journalContext = await resolveSubscriptionMoneyPostingContext();
-  // A re-bill after a void may reverse the voided charge's R18, a revenue
-  // reversal the store refuses without lock(1). Only then is it taken, read here
-  // before the transaction so a whole-club run never holds it; a void landing
-  // after this read makes the store refuse and the confirm roll back, and the
-  // officer's retry sees it and locks (INV-LOCK-001).
-  const coveredMemberIds = [...new Set(input.preview.entries.flatMap((entry) => entry.coveredMembers.map((member) => member.id)))];
-  const rebillsAVoid = coveredMemberIds.length > 0 && await prisma.memberSubscription.findFirst({
-    where: { seasonYear: input.preview.seasonYear, voidGeneration: { gt: 0 }, memberId: { in: coveredMemberIds } },
-    select: { id: true },
-  });
+  const expectedMemberIds = [...new Set(input.preview.entries.flatMap((entry) => entry.coveredMembers.map((member) => member.id)))];
+  const { journalContext, rebillsAVoid } = await prepareSubscriptionBillingJournal(input.preview.seasonYear, expectedMemberIds); // #4519
   await prisma.$transaction(async (tx) => {
-    if (rebillsAVoid) await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    if (rebillsAVoid) await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`; // a re-bill after a void (INV-LOCK-002)
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`membership-subscription-billing:${input.preview.seasonYear}`}))`;
     const preview = await buildSubscriptionBillingPreview({
       seasonYear: input.preview.seasonYear,
@@ -1626,8 +1616,6 @@ export async function confirmSubscriptionBillingPreview(input: {
       store: tx,
     });
     if (preview.confirmationToken !== input.expectedConfirmationToken) {
-      const expectedMemberIds = [...new Set(input.preview.entries.flatMap((entry) =>
-        entry.coveredMembers.map((member) => member.id)))];
       const coveredMemberIds = new Set(preview.alreadyCoveredMemberIds);
       if (expectedMemberIds.length > 0 && expectedMemberIds.every((memberId) => coveredMemberIds.has(memberId))) {
         const existing = await tx.membershipSubscriptionChargeCoverage.findMany({
@@ -1709,9 +1697,7 @@ export async function confirmSubscriptionBillingPreview(input: {
       const idempotencyKey = voidGenerations.some((generation) => generation > 0)
         ? digest([entry.key, sortedMemberIds, entry.chargedAmountCents, { voidGenerations }])
         : digest([entry.key, sortedMemberIds, entry.chargedAmountCents]);
-      // #4519: only the create path posts R18. A row found by its key is a
-      // replay or a pre-M7 charge (M9's history). Safe under the season lock.
-      const existingCharge = await tx.membershipSubscriptionCharge.findUnique({ where: { idempotencyKey }, select: { id: true } });
+      const existingCharge = await tx.membershipSubscriptionCharge.findUnique({ where: { idempotencyKey }, select: { id: true } }); // #4519: R18 on create
       const charge = await tx.membershipSubscriptionCharge.upsert({
         where: { idempotencyKey },
         update: {},
@@ -1785,10 +1771,7 @@ export async function confirmSubscriptionBillingPreview(input: {
                 },
               }),
         },
-        select: {
-          id: true, billingBasis: true, chargedAmountCents: true, recipientMemberId: true,
-          components: { select: { id: true, label: true, chargedAmountCents: true } },
-        },
+        select: SUBSCRIPTION_CHARGE_JOURNAL_SELECT,
       });
       chargeIds.push(charge.id);
       if (entry.billingBasis !== "NO_INVOICE") {
@@ -1802,13 +1785,7 @@ export async function confirmSubscriptionBillingPreview(input: {
           store: tx,
         });
       }
-      if (!existingCharge) {
-        await postSubscriptionCharge(tx, journalContext, {
-          facts: { chargeId: charge.id, ...charge },
-          replacesChargeIds: await chargesReplacedByRebill(tx, charge.id, subscriptions),
-          actorMemberId: input.confirmedByMemberId ?? null,
-        });
-      }
+      if (!existingCharge) await postConfirmedSubscriptionCharge(tx, journalContext, { charge, subscriptions, actorMemberId: input.confirmedByMemberId ?? null });
     }
     // #2041: give each BASED_ON_AGE_TIER tier-exempt member a NOT_REQUIRED
     // season row (decision Q4) so their booking status stays consistent with
@@ -1819,12 +1796,7 @@ export async function confirmSubscriptionBillingPreview(input: {
     // invariant), so re-runs are no-ops. No charge and no Xero op are created.
     for (const exemptMemberId of preview.exemptMemberIds) {
       await tx.memberSubscription.upsert({
-        where: {
-          memberId_seasonYear: {
-            memberId: exemptMemberId,
-            seasonYear: preview.seasonYear,
-          },
-        },
+        where: { memberId_seasonYear: { memberId: exemptMemberId, seasonYear: preview.seasonYear } },
         update: {},
         create: {
           memberId: exemptMemberId,
@@ -1865,30 +1837,6 @@ export async function confirmSubscriptionBillingPreview(input: {
     chargeIds: [...new Set(chargeIds)],
     exceptionCount: countWithheldExceptions(input.preview.exceptions, input.source),
   };
-}
-
-/**
- * #4519 (owner, 10 Nov 2026): the charges a post-void re-bill replaces. Each
- * covered subscription that was voided before contributes the charge its latest
- * released coverage names; the door decides whether that charge's journal debt
- * is reversed or, already collected, makes the new charge a ZERO.
- */
-async function chargesReplacedByRebill(
-  tx: Prisma.TransactionClient,
-  chargeId: string,
-  subscriptions: readonly { id: string; voidGeneration: number | null }[],
-): Promise<string[]> {
-  const replaced: string[] = [];
-  for (const subscription of subscriptions) {
-    if ((subscription.voidGeneration ?? 0) === 0) continue;
-    const released = await tx.membershipSubscriptionChargeCoverage.findFirst({
-      where: { subscriptionId: subscription.id, releasedAt: { not: null }, chargeId: { not: chargeId } },
-      orderBy: [{ releasedAt: "desc" }, { createdAt: "desc" }],
-      select: { chargeId: true },
-    });
-    if (released) replaced.push(released.chargeId);
-  }
-  return replaced;
 }
 
 /**

@@ -111,11 +111,9 @@ const DOORS: Record<string, string> = {
   // #4628 (M3c): through `postPendingBookingJournal`, from the lines the confirmation would post.
   "src/lib/booking-ledger-pending-charge.ts": "R01 at a bank-transfer binding; R02/R04 for a charge still pending",
   // #4519 (M7): subscriptions and joining fees.
-  "src/lib/membership-subscription-billing.ts": "R18 on a confirm's charge create; a post-void re-bill's replacement",
-  "src/lib/xero-operation-outbox.ts": "R19 beside the entrance-fee outbox insert",
+  "src/lib/subscription-journal-postings.ts": "R18 on a confirm's charge create and a post-void re-bill's replacement; R19 beside the entrance-fee outbox insert; R20 after the cancellation credit note exists, under lock(1)",
   "src/lib/manual-subscription-payment.ts": "R08 for a single-member mark-paid; reversed on mark-unpaid",
   "src/lib/membership-subscription-charge-close.ts": "R08 for a close as already paid",
-  "src/lib/membership-cancellation-xero.ts": "R20 after the cancellation credit note exists, under lock(1)",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -159,8 +157,9 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/edit-review-cleanup.ts",
   "src/lib/edit-review-cleanup-headline.ts",
   "scripts/edit-review-cleanup.ts",
-  // #4519 (M7): approval resolves the joining fee's context before its transaction and hands it to the R19 enqueue.
+  // #4519 (M7): approval resolves the joining fee's context before its transaction and hands it to the R19 enqueue, which takes it.
   "src/lib/nomination.ts",
+  "src/lib/xero-operation-outbox.ts",
 ];
 /** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
 const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bresolveSubscriptionMoneyPostingContext\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;

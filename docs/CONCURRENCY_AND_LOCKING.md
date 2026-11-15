@@ -6656,6 +6656,7 @@ behaviour are unchanged; the Stripe request each sender makes is byte-identical
 
 M7 posts subscription charges (R18), joining fees (R19), subscription receipts
 (R08) and the cancellation credit's reversal (R20). It adds no advisory key.
+The R18–R20 glue lives in `subscription-journal-postings.ts`; the writers call it.
 A first charge is a new component identity, so it takes no global key. A
 confirm that re-bills a voided subscription reverses the old charge's revenue,
 so it takes `lock(1)` before the season key (`confirmSubscriptionBillingPreview#1`,

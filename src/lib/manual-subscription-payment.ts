@@ -476,18 +476,36 @@ export async function applyManualSubscriptionPayment(
 
   await settleHostingCoverageAfterCommit({ limit: 50 });
 
-  // #2260: dispatched only on the paid path, and only when the admin chose it.
-  // A send failure must never undo or 500 the committed money state — but it
-  // must never be swallowed either, or the admin is told a receipt went out
-  // when nothing did. Every branch that ends without a queued send says so,
-  // both in the log and in the returned `receipt`.
+  const receipt = await dispatchManualPaymentReceipt(notifyMember, recipient, format, input.subscriptionId);
+  return { ...result, receipt };
+}
+
+type ManualPaymentReceiptRecipient = {
+  email: string;
+  firstName: string;
+  seasonYear: number;
+  recordedAt: Date;
+  amountCents: number | null;
+};
+
+// #2260: dispatched only on the paid path, and only when the admin chose it.
+// A send failure must never undo or 500 the committed money state — but it
+// must never be swallowed either, or the admin is told a receipt went out
+// when nothing did. Every branch that ends without a queued send says so,
+// both in the log and in the returned `receipt`.
+async function dispatchManualPaymentReceipt(
+  notifyMember: boolean,
+  recipient: ManualPaymentReceiptRecipient | null,
+  format: Awaited<ReturnType<typeof clubFormatValues>>,
+  subscriptionId: string,
+): Promise<ManualPaymentReceiptOutcome> {
   let receipt: ManualPaymentReceiptOutcome = "not_requested";
   if (notifyMember) {
     if (!recipient) {
       // Member.email is non-nullable, so this is the "should not happen" arm —
       // it must still be audible rather than a wordless skip.
       logger.warn(
-        { subscriptionId: input.subscriptionId },
+        { subscriptionId },
         "Manual subscription payment: a receipt was requested but the member has no address to send it to",
       );
       receipt = "not_delivered";
@@ -507,7 +525,7 @@ export async function applyManualSubscriptionPayment(
         if (receipt === "not_delivered") {
           logger.warn(
             {
-              subscriptionId: input.subscriptionId,
+              subscriptionId,
               outcome: outcome.status,
             },
             "Manual subscription payment recorded, but the member receipt was not sent",
@@ -515,13 +533,12 @@ export async function applyManualSubscriptionPayment(
         }
       } catch (error) {
         logger.error(
-          { err: error, subscriptionId: input.subscriptionId },
+          { err: error, subscriptionId },
           "Manual subscription payment recorded, but the member receipt failed to send",
         );
         receipt = "not_delivered";
       }
     }
   }
-
-  return { ...result, receipt };
+  return receipt;
 }

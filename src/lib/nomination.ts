@@ -1332,18 +1332,12 @@ export async function approveMemberApplication(
   const passwordSetupExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   // Resolved before the transaction so the entrance-fee outbox enqueue can run
-  // inside it (#1886, F22). A mapped applicant defaults to SKIP (never
-  // double-charged) unless the admin explicitly supplied a decision; the SKIP is
-  // resolved here so the in-tx enqueue is simply never made.
-  const entranceFeeDecision: EntranceFeeInvoiceApprovalDecision =
-    entranceFeeInvoiceDecision ??
-    (applicantMapped
-      ? { action: "SKIP", reason: "Mapped to existing member" }
-      : { action: "CREATE" });
-  // #4519 (Ledger M7): the joining fee's journal context, for the same reason.
-  const entranceFeeJournalContext = entranceFeeDecision.action === "CREATE"
-    ? await resolveSubscriptionMoneyPostingContext()
-    : undefined;
+  // inside it (#1886, F22), as is its journal context (#4519). A mapped applicant
+  // defaults to SKIP (never double-charged) unless the admin explicitly supplied
+  // a decision; the SKIP is resolved here so the in-tx enqueue is simply never made.
+  const entranceFeeDecision: EntranceFeeInvoiceApprovalDecision = entranceFeeInvoiceDecision ??
+    (applicantMapped ? { action: "SKIP", reason: "Mapped to existing member" } : { action: "CREATE" });
+  const entranceFeeJournalContext = entranceFeeDecision.action === "CREATE" ? await resolveSubscriptionMoneyPostingContext() : undefined;
 
   const approved = await prisma.$transaction(async (tx) => {
     await lockMembershipApplication(tx, applicationId);
