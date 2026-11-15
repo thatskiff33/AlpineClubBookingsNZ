@@ -169,7 +169,11 @@ fit into.
    - [Google Analytics stops until an admin re-enters the measurement id (#2573)](#google-analytics-stops-until-an-admin-re-enters-the-measurement-id-2573)
    - [The obsolete family-group "role" column is removed (#2520)](#the-obsolete-family-group-role-column-is-removed-2520)
    - [Re-export configuration bundles for format version 3 (#2363)](#re-export-configuration-bundles-for-format-version-3-2363)
-4. Optional, and only if you choose it:
+4. Only if this server builds its own image (`docker compose build`, or the deploy
+   script's `--build-and-push-images`), raise the build's memory ceiling before
+   you build: [Building on your own server: raise `NODE_BUILD_OPTIONS` to 8192 (#5164)](#building-on-your-own-server-raise-node_build_options-to-8192-5164).
+   A server that deploys a published image builds nothing and skips this.
+5. Optional, and only if you choose it:
    [Optional: stop connecting the app as the database superuser (#4453)](#optional-stop-connecting-the-app-as-the-database-superuser-4453).
 
 #### During the window
@@ -239,6 +243,22 @@ fit into.
    - [Post-upgrade action: check the email templates screen](#post-upgrade-action-check-the-email-templates-screen)
    - [One-off rewrite of stored bed-allocation activity categories (#2751)](#one-off-rewrite-of-stored-bed-allocation-activity-categories-2751)
    - [One-off categorisation of older activity entries with no category (#2581)](#one-off-categorisation-of-older-activity-entries-with-no-category-2581)
+
+### Building on your own server: raise `NODE_BUILD_OPTIONS` to 8192 (#5164)
+
+**Only for servers that build the image themselves** (`docker compose build`, or
+the deploy script's `--build-and-push-images`). A server that deploys a
+published image (`APP_IMAGE`) builds nothing and can skip this.
+
+`next build` type-checks the app, and that check now needs about 4.6 GB of Node
+heap. With `NODE_BUILD_OPTIONS` empty, Node's default ceiling applies (about a
+quarter of the machine's memory, up to about 4 GB), and the earlier example of
+`--max-old-space-size=4096` is also too low. Either can stop the build with
+"JavaScript heap out of memory" or "Failed to type check". Set
+`NODE_BUILD_OPTIONS=--max-old-space-size=8192` in `.env` before building, as CI
+now does; it affects the build only, never the running app. With less than
+about 8 GB of memory free for the build, deploy a published image instead
+([`CONFIGURATION.md`](../CONFIGURATION.md)). Nothing changes until you build.
 
 ### Review privacy retention before enabling cleanup (#4457)
 

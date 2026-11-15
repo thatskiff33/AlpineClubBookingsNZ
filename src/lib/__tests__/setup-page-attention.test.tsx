@@ -11,6 +11,12 @@ import {
   removeScrollIntoViewSpy,
 } from "./helpers/focus";
 
+// An editor: the write buttons are gated on support edit access (#4971).
+vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
+  useAdminAreaEditAccess: () => true,
+}));
+
 const setup = {
   readiness: {
     status: "warning",
@@ -51,6 +57,12 @@ const setup = {
 const response = (body: unknown, ok = true) => ({ ok, json: async () => body });
 const fetchMock = vi.fn();
 let scroll: ReturnType<typeof installScrollIntoViewSpy>;
+// The finish announcement; the view-only banner is the page's other status region.
+function finishStatus() {
+  const region = document.getElementById("setup-success");
+  expect(region).toHaveAttribute("role", "status");
+  return region!;
+}
 function mount() {
   return render(
     <SetupPageClient
@@ -165,7 +177,7 @@ describe("Setup action attention", () => {
     const finish = await screen.findByRole("button", {
       name: "Mark Setup Complete",
     });
-    const status = screen.getByRole("status");
+    const status = finishStatus();
     expect(status).toBeEmptyDOMElement();
     fetchMock
       .mockResolvedValueOnce(response({}))
@@ -202,7 +214,7 @@ describe("Setup action attention", () => {
     });
     fetchMock.mockResolvedValueOnce(response({})).mockResolvedValueOnce(completed);
     fireEvent.click(finish);
-    const status = screen.getByRole("status");
+    const status = finishStatus();
     await waitFor(() =>
       expect(status).toHaveTextContent("Setup has been marked complete."),
     );
@@ -227,7 +239,7 @@ describe("Setup action attention", () => {
     );
     mount();
     await screen.findByText("Setup has been marked complete.");
-    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    expect(finishStatus()).toBeEmptyDOMElement();
     expect(scroll).not.toHaveBeenCalled();
   });
 
