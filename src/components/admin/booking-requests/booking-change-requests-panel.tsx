@@ -49,11 +49,10 @@ import {
 import { DecidedChangeRequestSummary } from "@/components/admin/booking-requests/booking-change-request-decided";
 import { RequestedGuestNights } from "@/components/admin/booking-requests/requested-guest-nights";
 import {
-  EMPTY_DECISION_DRAFT,
   statusBadgeClass,
   type BookingChangeRequestData,
-  type DecisionDraft,
 } from "@/components/admin/booking-requests/booking-change-request-panel-model";
+import { useBookingChangeRequestDecisionDrafts } from "@/components/admin/booking-requests/use-booking-change-request-decision-drafts";
 import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
@@ -135,18 +134,10 @@ export function BookingChangeRequestsPanel({
   const [pinnedRequest, setPinnedRequest] = useState<BookingChangeRequestData | null>(null);
   const shownRequests = pinnedRequest ? [pinnedRequest, ...requests] : requests;
   const [loading, setLoading] = useState(true);
-  /**
-   * Every open decision draft, keyed by the request it belongs to.
-   *
-   * One entry per row the officer has typed into, so a row's fields, the guard on
-   * its buttons and the body it submits all read the SAME object and no row can
-   * read another's (#2562 review — see `DecisionDraft`). A row nobody has typed
-   * into has no entry, which is exactly the empty draft its buttons stay disabled
-   * on.
-   */
-  const [decisionDrafts, setDecisionDrafts] = useState<
-    Record<string, DecisionDraft>
-  >({});
+  // Every open decision draft, keyed by the request it belongs to (the state
+  // and its three helpers live in the hook, #2562 review).
+  const { decisionDraftFor, updateDecisionDraft, clearDecisionDraft } =
+    useBookingChangeRequestDecisionDrafts();
   /**
    * The ref is the synchronous claim; the state is only its rendered mirror.
    * React can batch two clicks before a disabled prop commits, so state alone lets
@@ -156,26 +147,6 @@ export function BookingChangeRequestsPanel({
   const [decisionInFlight, setDecisionInFlight] = useState<Set<string>>(
     () => new Set(),
   );
-  /** This row's draft as typed, or the empty one. Never another row's. */
-  function decisionDraftFor(id: string): DecisionDraft {
-    return decisionDrafts[id] ?? EMPTY_DECISION_DRAFT;
-  }
-  /** Patch one field of one row's draft, leaving every other row untouched. */
-  function updateDecisionDraft(id: string, patch: Partial<DecisionDraft>) {
-    setDecisionDrafts((current) => ({
-      ...current,
-      [id]: { ...(current[id] ?? EMPTY_DECISION_DRAFT), ...patch },
-    }));
-  }
-  /** Drop one row's draft — used on a SUCCESSFUL decision, and only then. */
-  function clearDecisionDraft(id: string) {
-    setDecisionDrafts((current) => {
-      if (!(id in current)) return current;
-      const next = { ...current };
-      delete next[id];
-      return next;
-    });
-  }
   const [error, setError] = useState("");
   // #3750 (P2 on #3955): each finished-stay card's dry-run figures, and any
   // over-capacity night its officer has to confirm, keyed by request id.

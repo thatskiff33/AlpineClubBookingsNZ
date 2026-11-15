@@ -7,7 +7,7 @@ The `function:` entries cover the same calls inside components already over
 the function-length limit.
 
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
-lines: 965
+lines: 987
 reason: the only growth is the import of `notifyAdminQueueChanged` and the
   call at each decision that changes this queue, so the Needs Attention badge
   refetches after the officer acts (#4962). The call has to sit at the
@@ -34,7 +34,7 @@ reason: the only growth is the import of `notifyAdminQueueChanged` and the
   piece of work.
 
 file: src/app/(admin)/admin/membership/member-applications/page.tsx
-lines: 839
+lines: 891
 reason: the only growth is the import of `notifyAdminQueueChanged` and the
   call at each decision that changes this queue, so the Needs Attention badge
   refetches after the officer acts (#4962). The call has to sit at the
@@ -43,7 +43,7 @@ reason: the only growth is the import of `notifyAdminQueueChanged` and the
   piece of work.
 
 file: src/app/(admin)/admin/membership/membership-cancellations/page.tsx
-lines: 1218
+lines: 1290
 reason: the only growth is the import of `notifyAdminQueueChanged` and the
   call at each decision that changes this queue, so the Needs Attention badge
   refetches after the officer acts (#4962). The call has to sit at the
@@ -52,7 +52,7 @@ reason: the only growth is the import of `notifyAdminQueueChanged` and the
   piece of work.
 
 file: src/components/admin/booking-requests/policy-exception-requests-panel.tsx
-lines: 1018
+lines: 1029
 reason: the only growth is the import of `notifyAdminQueueChanged` and the
   call at each decision that changes this queue, so the Needs Attention badge
   refetches after the officer acts (#4962). The call has to sit at the
@@ -61,7 +61,7 @@ reason: the only growth is the import of `notifyAdminQueueChanged` and the
   piece of work.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2709
+lines: 2751
 reason: the only growth is the import of `notifyAdminQueueChanged` and the
   call at each decision that changes this queue, so the Needs Attention badge
   refetches after the officer acts (#4962). The call has to sit at the
@@ -79,7 +79,7 @@ reason: the only growth is the import of `notifyAdminQueueChanged` and the
   piece of work.
 
 function: src/app/(admin)/admin/finance/refund-requests/page.tsx#RefundRequestsPage
-lines: 798
+lines: 817
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
@@ -111,7 +111,7 @@ reason: the only growth is the `notifyAdminQueueChanged` call at each
   this component is its own piece of work.
 
 function: src/app/(admin)/admin/membership/member-applications/page.tsx#MemberApplicationsPage
-lines: 686
+lines: 722
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
@@ -119,7 +119,7 @@ reason: the only growth is the `notifyAdminQueueChanged` call at each
   this component is its own piece of work.
 
 function: src/app/(admin)/admin/membership/membership-cancellations/page.tsx#MembershipCancellationRequests
-lines: 871
+lines: 930
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
@@ -135,15 +135,7 @@ reason: the only growth is the `notifyAdminQueueChanged` call at each
   this component is its own piece of work.
 
 function: src/components/admin/booking-requests/booking-approvals-panel.tsx#BookingApprovalsPanel
-lines: 533
-reason: the only growth is the `notifyAdminQueueChanged` call at each
-  decision inside this component that changes its queue, so the Needs
-  Attention badge refetches after the officer acts (#4962). The call has to
-  sit in the handler that made the request, after it succeeds. Splitting
-  this component is its own piece of work.
-
-function: src/components/admin/booking-requests/booking-change-requests-panel.tsx#BookingChangeRequestsPanel
-lines: 578
+lines: 557
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
@@ -151,7 +143,7 @@ reason: the only growth is the `notifyAdminQueueChanged` call at each
   this component is its own piece of work.
 
 function: src/components/admin/booking-requests/policy-exception-requests-panel.tsx#PolicyExceptionRequestsPanel
-lines: 827
+lines: 836
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
@@ -159,7 +151,7 @@ reason: the only growth is the `notifyAdminQueueChanged` call at each
   this component is its own piece of work.
 
 function: src/components/admin/booking-requests/public-booking-requests-panel.tsx#PublicBookingRequestsPanel
-lines: 2288
+lines: 2324
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
