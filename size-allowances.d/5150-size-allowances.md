@@ -22,7 +22,7 @@ reason: adds the moving-in member import columns and opening-credit batches;
   not part of this fix.
 
 function: src/app/api/admin/members/import/route.ts#POST
-lines: 642
+lines: 635
 reason: adds the moving-in member import columns and opening-credit batches;
   those lines sit inside the function `POST`, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part

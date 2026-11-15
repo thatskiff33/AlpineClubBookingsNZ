@@ -17,7 +17,7 @@ reason: two field definitions, Membership Type and Family Key, with their
   so the opening-credit CSV reuses it rather than copying it.
 
 file: src/app/api/admin/members/import/route.ts
-lines: 892
+lines: 883
 reason: three calls into `member-import-type-family.ts` (resolve the row's
   type and family key, create the family groups inside the import
   transaction, assign the season's types after commit) and the two counts in
