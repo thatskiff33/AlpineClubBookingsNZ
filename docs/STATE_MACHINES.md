@@ -735,7 +735,7 @@ positive delta -> additional payment or supplementary Xero invoice
   asked nothing, and an ask a cancel landing mid-mint could not see is retired
   FAILED by the minter - the door's, the recovery runner's or a currency
   re-issue's - #4316, INV-ADDPAY-044)
-uncollected additional payment -> reminder at +3 days, reminder 2 days before
+uncollected additional payment -> reminder at +`additionalPaymentReminderDays` (default 3), reminder 2 days before
   check-in, admin re-send on demand; stops at check-out (never auto-cancelled);
   a credit-release request is instead reminded weekly, four times after the request, past check-out,
   and so is a request an edit merged into once the stay has ended (INV-ADDPAY-048)
@@ -1026,8 +1026,8 @@ policy-exception requests".
 
 **An abandoned hold expires (#2553).** A request nobody ever decides used to hold
 its beds forever. Every request that actually reserves beds is therefore stamped
-at creation with an immutable `holdExpiresAt`: seven days
-(`POLICY_EXCEPTION_HOLD_TTL_DAYS`), never past the start of the first night it is
+at creation with an immutable `holdExpiresAt`: the club's
+`policyExceptionHoldDays` (default seven, read only then), never past the start of the first night it is
 holding, and never less than 24 hours
 (`POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS`) so a late request still gets a real
 review window. The deadline is stamped once and never rewritten, so a member's
@@ -4008,9 +4008,11 @@ PROVIDED the row still holds a rendered body. It does not for the twenty-six
 `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose logged recipient is
 redacted, because a live sign-in link, a door code or a payment link must not sit
 at rest; and the retry cron selects only rows that still hold one. Such a row is
-therefore written AT `attempts = 3`, which drops it out of the retry query and
-into the operator's email-failure review queue for a manual re-send, and its
-`errorMessage` says exactly that rather than promising it will self-heal.
+therefore written AT the retry ceiling (`attempts = 3`, the one constant
+`EMAIL_RETRY_MAX_ATTEMPTS` in `src/lib/email/retry-selection.ts`), which drops it
+out of the retry query and into the operator's email-failure review queue for a
+manual re-send, and its `errorMessage` says exactly that rather than promising
+it will self-heal.
 A copy that has explicitly declared a capture mailbox transmits into it normally
 and its rows are ordinary `SENT`.
 

@@ -86,3 +86,33 @@ export function normalizeImportedDietaryRequirements(
   if (typeof value !== "string") return null;
   return normalizeDietaryRequirements(unescapeCsvFormulaGuard(value.trim()));
 }
+
+/**
+ * What a PERSISTED record (an audit row, a log) may say about a dietary value:
+ * that one is recorded, never what it is (`INV-PRIV-022`).
+ */
+export const DIETARY_VALUE_REDACTION = "[REDACTED]";
+
+export function redactDietaryValueForRecord(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  return DIETARY_VALUE_REDACTION;
+}
+
+/**
+ * A merge diff row as a PERSISTED record (or an OFF screen) may hold it: the
+ * dietary row keeps its field and source, and its three values become
+ * "recorded / not recorded". Every other row is returned untouched, because
+ * `INV-PRIV-011` lets an audit row keep names and addresses.
+ */
+export function redactDietaryMergeRow<
+  R extends { field: string; master: unknown; loser: unknown; result: unknown },
+>(row: R): R {
+  if (row.field !== "dietaryRequirements") return row;
+  return {
+    ...row,
+    master: redactDietaryValueForRecord(row.master),
+    loser: redactDietaryValueForRecord(row.loser),
+    result: redactDietaryValueForRecord(row.result),
+  };
+}

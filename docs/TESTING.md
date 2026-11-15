@@ -692,11 +692,14 @@ That is not a loss: before #2693 they were loaded with `allowJs: true,
 checkJs: false`, which produced no diagnostics either. Their names are pinned in
 `src/lib/__tests__/typecheck-project-coverage.test.ts`, so a new JavaScript
 test fails that contract until it is either written in TypeScript (the default)
-or named there deliberately. Four JavaScript modules that TypeScript tests
-import — `eslint.config.mjs`, `scripts/ci/server-only-boundary-selftest.mjs`,
-`scripts/sync-user-guide-wiki.mjs` and `load/lib/contention-invariant.js` —
-carry a sibling `.d.mts` / `.d.ts` declaring their exports; the same contract
-pins each pair.
+or named there deliberately. The JavaScript modules that TypeScript tests
+import — `eslint.config.mjs`, `scripts/ci/check-allow-builds.mjs`,
+`scripts/ci/server-only-boundary-selftest.mjs`,
+`scripts/sync-user-guide-wiki.mjs`, the k6 harness's pure helpers under
+`load/lib/` (`contention-invariant.js`, `stay-window.js`, `target-guard.js` and
+`volume-users.js`) and the Stripe stub `load/stripe-stub/server.mjs` — carry a
+sibling `.d.mts` / `.d.ts` declaring their exports; the same contract pins each
+pair.
 
 Put a supported new Vitest test under `src/` or `scripts/` and the existing
 patterns cover it; put one somewhere else and you must add the pattern.

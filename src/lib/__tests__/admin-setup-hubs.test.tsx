@@ -209,7 +209,7 @@ describe("admin setup hub pages", () => {
   it("hides feature-gated cards when their modules are disabled", async () => {
     vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({
       ...allOn,
-      skifieldConditions: false,
+      skifieldWhakapapa: false,
     });
 
     const html = await renderPage(AppearanceHubPage);

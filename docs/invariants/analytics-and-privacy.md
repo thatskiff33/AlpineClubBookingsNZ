@@ -14,6 +14,8 @@ admin permissions a reader needs and whether the subject member sees the row.
 Read it too before anything reads, writes, exports or logs a member's
 dietary/allergy information (`INV-PRIV-022`, `INV-PRIV-023`), and before
 adding an outside party that receives personal data (`INV-PRIV-024`).
+Read `INV-PRIV-025` before changing what the subject access export contains or
+who may produce one.
 
 Index: [`docs/DOMAIN_INVARIANTS.md`](../DOMAIN_INVARIANTS.md) — every `INV-*` ID
 with a one-line description of what it covers. ID scheme and allocation rules:
@@ -859,8 +861,8 @@ Decisions: 20 Sep 2026 on
   importer list, and its fragment builders, which return the plain value, may
   appear only as a spread operand.
 - **Profile audiences:** the subject (profile, onboarding) while ON; their own
-  data export, ON or OFF; a DB-verified `membership` admin while ON; a Full
-  Admin merge.
+  export (`INV-PRIV-025`), ON or OFF; a DB-verified `membership` admin while ON;
+  a Full Admin merge.
 - **Booking audiences:** a DB-verified `bookings:view` admin (`bookings:edit` to
   change one row) and the kiosk's `admin` and `hut-leader` tiers, for that
   lodge's present guests that day, both while ON; the subject's export, for
@@ -938,3 +940,68 @@ same change.
 - Other docs link the register rather than repeating it (`INV-SSOT`).
 - Proof: `privacy-recipient-census.test.ts` and
   `integration-credential-namespaces.test.ts`.
+
+## INV-PRIV-025
+
+One builder, `buildSubjectAccessExport` in `src/lib/subject-access-export.ts`,
+answers every subject access request: the member's own download
+(`/api/member/data-export`) and the Full Admin report
+(`/api/admin/members/subject-access`) both call it, so the two files never
+differ. Decided on
+[#4915](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4915).
+
+- **Every personal model is placed.** `SUBJECT_ACCESS_EXPORT_COVERAGE` maps each
+  model `PRIVACY_RETENTION_CLASSIFICATION` marks personal to a section, an
+  additional list, or an exclusion with its reason, which the file lists.
+  Security secrets are always excluded.
+- **Only the subject's own rows.** A guest row is the subject's own, never the
+  co-guests' or the booker's fields, except `INV-PRIV-018`'s D-12: guests on
+  bookings the subject made keep their names, age tiers and prices. Dietary
+  values follow `INV-PRIV-022`.
+- **An address is a key only when the subject owns it.** Records filed by email
+  are withheld, and the file says so, when another member record shares it.
+- **A member's whole-lodge request shows what "My requests" shows:** the status from
+  `toMyWholeLodgeRequestStatus` (#2263), never an officer-side state like
+  `PRICED`, and no price field
+  ([owner decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4915#issuecomment-6888297799)).
+  Assumed, to confirm with the club's privacy adviser: those fields are not
+  personal information the member must be given.
+- **Nothing is cut silently.** Every activity entry the subject may see is
+  read, and `auditLogTotal` states the count.
+- **The report is Full Admin only**, re-checked against the database, behind
+  a fresh sign-in proof (`INV-AUTH-010`), with its own per-officer rate limit
+  and a `privacy` audit row naming the officer and the subject.
+- **A lookup never guesses.** An email held by several member records is
+  refused (409); a non-member guest is picked by exact guest row.
+- **The file name** is the club's `getClubIdentity` slug.
+- Proof: `subject-access-export-census.test.ts`,
+  `subject-access-booking-request.test.ts`,
+  `subject-access-export.realdb.test.ts` and the two route tests.
+
+## INV-PRIV-026
+
+Every bulk email declares one category, and the category alone decides who may
+receive it. Decision: Option A, 11 Nov 2026, recorded in the
+[#4987](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4987) body.
+
+- **`clubNotice` is opt-out.** Club business — AGM notices, lodge closures,
+  subscriptions due — reaches every member in the chosen group except one whose
+  saved preferences set `clubNotices` false. A member with no saved preferences
+  receives it.
+- **`newsletter` is opt-in.** Optional club news reaches only a member whose
+  saved preferences set `marketingEmails` true. A member with no saved
+  preferences never receives one. `marketingEmails` is never defaulted on,
+  backfilled or reinterpreted as a club-notice consent.
+- **Who declares what.** The Communications sender picks the category for each
+  message; a send request without one is treated as `newsletter`, so an old
+  client stays opt-in. A Notice's "Also email this notice to the audience" is
+  always `clubNotice`.
+- **One rule, one count.** `partitionBulkAudience` in
+  `src/lib/email/bulk-audience.ts` is the only place the rule is written. The
+  send route, its pre-send count and the notice email all partition through it,
+  so the count an admin sees is the count sent.
+- **Opted out is not never opted in.** The partition, the confirmation and the
+  audit row count the two apart; neither is called the other.
+- EmailSuppression still applies inside `sendEmail` to every category.
+- Proof: `bulk-audience.test.ts`, `communications-send-category.test.ts`,
+  `communications-compose-page.test.tsx` and `notices-email.test.ts`.

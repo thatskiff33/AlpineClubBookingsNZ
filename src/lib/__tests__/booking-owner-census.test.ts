@@ -476,7 +476,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-payment/route.ts:90",
   "src/app/api/bookings/[id]/exception-requests/route.ts:137",
   "src/app/api/bookings/[id]/guests/route.ts:347",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:366",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:367",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:273",
   "src/app/api/bookings/[id]/refund-request/route.ts:50",
@@ -486,7 +486,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:127",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1081",
+  "src/lib/booking-batch-modification-service.ts:1079",
   "src/lib/booking-cancel.ts:2548",
   "src/lib/booking-cancel.ts:570",
   "src/lib/booking-date-modification-service.ts:394",
@@ -499,7 +499,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:624",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
-  "src/lib/group-booking.ts:276",
+  "src/lib/group-booking.ts:275",
   "src/lib/kiosk-access.ts:230",
   "src/lib/manual-refund-task-queue-payload.ts:366",
   "src/lib/requested-room-write.ts:62",
@@ -798,7 +798,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `booking.findUniqueOrThrow`/`findMany` selects, and Booking declares
   // `organisation`.
   "src/lib/booking-owner-name.ts:12",
-  "src/lib/cron-additional-payment-reminders.ts:439",
+  "src/lib/cron-additional-payment-reminders.ts:444",
   "src/lib/cron-confirm-pending.ts:192",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep

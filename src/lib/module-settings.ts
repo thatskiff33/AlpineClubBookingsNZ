@@ -127,7 +127,7 @@ function readinessMessage(params: {
     return {
       status: "credentials_missing",
       message:
-        "Alpine Central Server is enabled, but no API key has been saved. Complete the setup under Admin → Integrations → Alpine Central Server.",
+        "Alpine Central Server is enabled, but no API key has been saved. Complete the setup under Admin → Integrations → Alpine Central Server Setup.",
     };
   }
 
