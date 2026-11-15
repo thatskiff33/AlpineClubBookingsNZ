@@ -9,7 +9,7 @@
  * reads a refusal through `apiErrorMessageFromResponse`.
  */
 
-import { cleanup, fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
+import { cleanup, fireEvent, render, screen, within } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 
@@ -37,27 +37,35 @@ import CommunicationsPage from "../page";
 
 type Answer = () => Response | Promise<Response>;
 
+const SEND_URL = "/api/admin/communications/send";
+
 function installFetch(send?: Answer) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url === "/api/admin/communications/send" && init?.method === "POST") {
+    if (url === SEND_URL && init?.method === "POST") {
       return (send ?? (() => Response.json({ eligibleRecipients: 12, filteredByPreference: 2 })))();
     }
-    if (url === "/api/admin/communications/send") return Response.json({ limit: 500 });
-    if (url === "/api/admin/communications/history") return Response.json({ history: [] });
+    // The count the confirmation names (#4964): a GET that spends no quota.
+    if (url.startsWith(`${SEND_URL}?recipientFilter=`)) return Response.json({ eligibleRecipients: 12 });
+    if (url === SEND_URL) return Response.json({ limit: 500 });
+    if (url.startsWith("/api/admin/communications/history")) return Response.json({ history: [] });
     throw new Error(`unexpected fetch ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
 
-function sendAMessage() {
+// Submitting the form only opens the confirmation (#4964); the POST that emails
+// people waits for the officer to confirm the audience and count.
+async function sendAMessage() {
   render(<CommunicationsPage />);
   fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "Working bee" } });
   fireEvent.change(screen.getByLabelText("Message Body"), { target: { value: "Saturday 9am." } });
   // The fields are `required`; jsdom holds back a button click on an
   // unvalidated form, so submit the form itself.
   fireEvent.submit(screen.getByLabelText("Subject").closest("form")!);
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Send to 12 people" }));
 }
 
 describe("sending a bulk message", () => {
@@ -72,20 +80,20 @@ describe("sending a bulk message", () => {
     fallback: "Failed to send. Please try again.",
     submit: async (answer) => {
       installFetch(answer);
-      sendAMessage();
+      await sendAMessage();
     },
   });
 
   it("shows the fallback for a JSON refusal with no sentence", async () => {
     installFetch(() => Response.json({}, { status: 500 }));
-    sendAMessage();
+    await sendAMessage();
 
     expect(await screen.findByText("Failed to send. Please try again.")).toBeInTheDocument();
   });
 
   it("reports the send and reloads the history", async () => {
     const fetchMock = installFetch();
-    sendAMessage();
+    await sendAMessage();
 
     expect(await screen.findByText("Sent to 12 recipients (2 opted out).")).toBeInTheDocument();
     await vi.waitFor(() =>

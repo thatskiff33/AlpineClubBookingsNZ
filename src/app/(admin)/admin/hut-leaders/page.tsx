@@ -8,7 +8,6 @@ import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { AdminLoadError } from "@/components/admin/admin-load-error";
 import { ADMIN_LOAD_FAILED_ERROR, ADMIN_LOAD_NETWORK_ERROR } from "@/lib/admin-query-error";
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import {
   TableBody,
   TableCell,
