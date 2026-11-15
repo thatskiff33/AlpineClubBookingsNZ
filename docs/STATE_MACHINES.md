@@ -2739,9 +2739,10 @@ refund is confirmed, or the treasurer for money still owed). See
 
 **#4516 (owner decisions, 14 and 15 Nov 2026): for now a real bank or cash
 hand-back is never dismissed.** A task the member-money journal records as a
-hand-back debt (`isJournalHandBackTask`: a cash cancellation's, a card
-shortfall's bank part, an edit's, an approved appeal's, an organisation's late
-cash) refuses OPEN -> DISMISSED with a 409 (`refusesJournalHandBackDismissal`),
+hand-back debt, other than a card shortfall's part to check
+(`refusesJournalHandBackDismissal`: a cash cancellation's, a card shortfall's
+bank part, an edit's, an approved appeal's, an organisation's late cash),
+refuses OPEN -> DISMISSED with a 409,
 under `lock(1)` and the booking row, before any claim: the task stays OPEN, its
 refund debt (R05) stays open, and nothing is written. It closes only by
 COMPLETED. Wherever this section says such a task is dismissed, that is a row

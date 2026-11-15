@@ -2768,7 +2768,7 @@ _Legacy: settles tasks raised before #4317._
     Payment row. None moves `refundedAmountCents`. Edits and cancels exclude
     the cancellation's own task.
   - **Dismissal is refused for now** (#4516, owner 14 Nov 2026), as for
-    every journal hand-back (`isJournalHandBackTask`): mark paid or leave open.
+    every real bank or cash hand-back (`refusesJournalHandBackDismissal`).
   - **A cash-settled payment is still refused**: a dismissed cancellation
     hand-back reads refundable again, so an appeal could re-promise it.
   - **The member is told the club WILL refund by bank transfer**

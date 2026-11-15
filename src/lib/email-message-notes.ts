@@ -20,6 +20,7 @@
  */
 import { CARD_REFUND_SHORTFALL_ALERT_BODY, CARD_REFUND_SHORTFALL_ALERT_LEAD } from "@/lib/cancel-card-refund-shortfall-copy";
 import { JOINER_CANCEL_ORGANISER_ALERT_BODY, JOINER_CANCEL_ORGANISER_ALERT_LEAD } from "@/lib/joiner-cancel-organiser-alert-copy";
+import { JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 
 /**
  * #2268 — compose an OPTIONAL line of an admin-editable plain-text email body.
@@ -309,6 +310,13 @@ export const GROUP_HAND_BACK_ALERT_LEAD =
 export const GROUP_HAND_BACK_ALERT_BODY =
   "Each joiner's refund has been recorded in the app's ledger as made, but no money has moved. The hand-back task on the payments board holds the total owed: it grows as each joiner's place is cancelled, and its reason lists each joiner's share. Pay the organiser the total the task shows, then mark it paid back - that records only that the money went, because the refunds are already in the ledger. It cannot be dismissed: if the club decides not to repay the organiser, take it to the treasurer.";
 
+/**
+ * The cash situation's next step, shared by the HTML and the note. #4516 (owner decision, 14 Nov 2026): the task
+ * is a bank or cash hand-back whose dismissal is refused for now, in the refusal's own words (`INV-SSOT`).
+ */
+export const CASH_HAND_BACK_ALERT_NEXT_STEP =
+  `Pay the member back, then mark the task complete on the payments board so the ledger records the refund. ${JOURNAL_HAND_BACK_DISMISS_REFUSAL}`;
+
 /** A non-cash situation's lead and paragraph: the HTML's warning box and paragraph, and the note's (#4042, #4097, #3949). */
 export const manualRefundTaskAlertLeadAndBody = (situation: ManualRefundTaskAlertSituation): readonly [string, string] | null =>
   situation === "group-organiser-internet-banking" ? [GROUP_HAND_BACK_ALERT_LEAD, GROUP_HAND_BACK_ALERT_BODY] : situation === "card-refund-shortfall" ? [CARD_REFUND_SHORTFALL_ALERT_LEAD, CARD_REFUND_SHORTFALL_ALERT_BODY] : situation === "joiner-cancel-organiser" ? [JOINER_CANCEL_ORGANISER_ALERT_LEAD, JOINER_CANCEL_ORGANISER_ALERT_BODY] : null;
@@ -318,7 +326,7 @@ export function manualRefundTaskAlertNote(situation: ManualRefundTaskAlertSituat
   return manualRefundTaskAlertLeadAndBody(situation)?.join("\n\n") ?? [
     "A booking settled in cash (or by an off-Xero bank transfer) has been cancelled. The refund has to be paid back by hand - nothing was refunded automatically.",
     "The member's cancellation refund has been worked out under the club's normal policy, but there is no card charge to reverse and no Xero invoice to credit, so the system has raised a hand-back task instead of pretending money moved. The member has been told the club will arrange the refund.",
-    "Pay the member back, then mark the task complete on the payments board so the ledger records the refund. For now the task cannot be dismissed: if the member declines it, or it was settled another way, leave it open (dismissing with a reason comes in a later update).",
+    CASH_HAND_BACK_ALERT_NEXT_STEP,
   ].join("\n\n");
 }
 
