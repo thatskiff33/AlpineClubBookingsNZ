@@ -10,9 +10,19 @@ import { ADMIN_FAMILY_GROUP_MAX_MEMBERS } from "@/lib/admin-family-group-create"
 export const MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH = 200;
 export const MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH = 100;
 
+/**
+ * How the member CSV import compares free text (identity names, membership
+ * type names and family keys): case, inner spacing and ends ignored. The one
+ * definition, so the preview and the server can never compare these
+ * differently (INV-SSOT).
+ */
+export function normalizeMemberImportText(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 /** How a membership type name compares: case, spacing and ends ignored. */
 export function normalizeMemberImportMembershipTypeName(value: string) {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
+  return normalizeMemberImportText(value);
 }
 
 export type MemberImportMembershipTypeMatch<T extends { name: string }> =
@@ -48,7 +58,7 @@ export function matchMemberImportMembershipType<T extends { name: string }>(
 
 /** How a family key compares: case, spacing and ends ignored. */
 export function normalizeMemberImportFamilyKey(value: string) {
-  return value.trim().replace(/\s+/g, " ").toLowerCase();
+  return normalizeMemberImportText(value);
 }
 
 /**

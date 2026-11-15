@@ -49,6 +49,14 @@ function membersFor(where: { id?: { in: string[] }; email?: { in: string[] } }) 
   return MEMBERS.filter((member) => where.email?.in.includes(member.email));
 }
 
+// A P2002 shaped as @prisma/adapter-pg raises it (see prisma-errors.ts).
+function uniqueViolationOn(field: string) {
+  return Object.assign(new Error("Unique constraint failed"), {
+    code: "P2002",
+    meta: { driverAdapterError: { cause: { constraint: { fields: [field] } } } },
+  });
+}
+
 const FILE = "Email,Amount\nbea@example.com,40\nal@example.com,$12.50\n";
 
 async function preview(text = FILE) {
@@ -119,6 +127,14 @@ describe("buildOpeningCreditPreview (#4988)", () => {
     expect(result.batchKey).toBeNull();
     expect(result.errorCount).toBe(2);
     expect(result.rows[0]?.errors).toEqual(["names the same member as line 3"]);
+  });
+
+  it("refuses a row whose Member ID belongs to someone other than its Email", async () => {
+    const result = await preview("Member ID,Email,Amount\nm-b,AL@example.com,150\nm-a,Al@Example.com,5\n");
+    expect(result.batchKey).toBeNull();
+    expect(result.errorCount).toBe(1);
+    expect(result.rows[0]?.errors[0]).toMatch(/Member ID "m-b" belongs to bea@example.com, not "al@example.com"/);
+    expect(result.rows[1]?.errors).toEqual([]);
   });
 
   it("narrows a shared email by name and refuses when it stays ambiguous", async () => {
@@ -230,8 +246,14 @@ describe("postOpeningCreditBatch (#4988)", () => {
   });
 
   it("turns a lost race on the batch key into the already-posted refusal", async () => {
-    db.$transaction.mockRejectedValueOnce(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
+    db.$transaction.mockRejectedValueOnce(uniqueViolationOn('"batchKey"'));
     await expect(confirm()).rejects.toBeInstanceOf(OpeningCreditBatchAlreadyPostedError);
+  });
+
+  it("does not report another unique violation as an already-posted file", async () => {
+    const other = uniqueViolationOn('"memberId"');
+    db.$transaction.mockRejectedValueOnce(other);
+    await expect(confirm()).rejects.toBe(other);
   });
 
   it("refuses, under the locks, a member credited by another batch since the preview", async () => {

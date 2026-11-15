@@ -35,7 +35,7 @@ import { prisma } from "@/lib/prisma";
 import { compareOrdinal } from "@/lib/ordinal-order";
 import { normalizePersonNamePart } from "@/lib/person-name-normalization";
 import { stableDigest } from "@/lib/stable-digest";
-import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+import { describeUniqueConstraintTarget, isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { formatCents } from "@/lib/utils";
 import { loadFreeCreditLots } from "@/lib/xero-applied-credit-lots";
 import { MAX_INTEGER_CENTS } from "@/lib/money-input";
@@ -138,7 +138,13 @@ export async function buildOpeningCreditPreview(
     let member: MatchCandidate | null = null;
     if (row.memberId) {
       member = byId.get(row.memberId) ?? null;
-      if (!member) errors.push(`no current member has the Member ID "${row.memberId}"`);
+      if (!member) {
+        errors.push(`no current member has the Member ID "${row.memberId}"`);
+      } else if (row.email && member.email.toLowerCase() !== row.email) {
+        // A Member ID copied from the wrong line would otherwise credit the
+        // wrong member silently; the row's own email is the cross-check.
+        errors.push(`Member ID "${row.memberId}" belongs to ${member.email || "a member with no email"}, not "${row.email}"`);
+      }
     } else if (row.email) {
       const candidates = (byEmail.get(row.email) ?? []).filter(
         (candidate) => sameName(row.firstName, candidate.firstName) && sameName(row.lastName, candidate.lastName),
@@ -240,6 +246,11 @@ export async function buildOpeningCreditPreview(
  * file of hundreds of rows needs longer than Prisma's five-second default.
  */
 const OPENING_CREDIT_TRANSACTION_OPTIONS = { maxWait: 30_000, timeout: 120_000 } as const;
+
+/** True when a unique violation collided on OpeningCreditBatch.batchKey. */
+function isBatchKeyCollision(error: unknown) {
+  return describeUniqueConstraintTarget(error)?.includes("batchkey") ?? false;
+}
 
 export class OpeningCreditBatchAlreadyPostedError extends ApiError {
   constructor() {
@@ -344,7 +355,11 @@ export async function postOpeningCreditBatch(input: {
     );
     return { batchId: batch.id, postedAt: batch.postedAt, totalCents: preview.totalCents, rowCount: credits.length };
   } catch (error) {
-    if (isPrismaUniqueConstraintError(error)) throw new OpeningCreditBatchAlreadyPostedError();
+    // Only the batch key's unique index means "already posted"; any other
+    // unique violation is a real failure and must not be hidden as a duplicate.
+    if (isPrismaUniqueConstraintError(error) && isBatchKeyCollision(error)) {
+      throw new OpeningCreditBatchAlreadyPostedError();
+    }
     throw error;
   }
 }

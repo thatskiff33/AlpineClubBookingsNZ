@@ -15,6 +15,7 @@ import {
 import {
   appendOversizedFamilyKeyErrors,
   memberImportTypeFamilyErrors,
+  normalizeMemberImportText,
 } from "@/lib/member-csv-import-type-family";
 
 export const MEMBER_IMPORT_MAX_ROWS = 500;
@@ -385,8 +386,7 @@ export const MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT =
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES = new Set<string>(MEMBER_IMPORT_ROLE_VALUES);
 const MEMBER_IMPORT_ROLE_LABEL = MEMBER_IMPORT_ROLE_VALUES.join(", ");
-const normalizeImportIdentityName = (value: string) =>
-  value.trim().replace(/\s+/g, " ").toLowerCase();
+const normalizeImportIdentityName = normalizeMemberImportText;
 const getImportIdentityKey = (row: MemberImportPreviewRow) =>
   [
     row.values.email.toLowerCase().trim(),

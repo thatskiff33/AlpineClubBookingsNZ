@@ -95,6 +95,11 @@ export function OpeningCreditBatchesCard({
       setReversing(null)
       setReason("")
       await load()
+    } catch {
+      // A dropped connection leaves the outcome unknown; the server's claim
+      // makes a retry safe, so refresh the list and say so.
+      setDialogError("The batch could not be reversed; check the list before trying again")
+      await load()
     } finally {
       setBusy(false)
     }
