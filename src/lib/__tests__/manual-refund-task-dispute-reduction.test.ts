@@ -50,7 +50,7 @@ import {
 import { memberMoneyEventKeys } from "@/lib/member-money";
 
 const TASK = {
-  id: "task-1", bookingId: "booking-1", paymentId: "payment-1", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null, partPaymentReviewPaymentId: null,
+  id: "task-1", bookingId: "booking-1", paymentId: "payment-1", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null as string | null, partPaymentReviewPaymentId: null,
   reason: "Booking booking-1 cancelled while its card payment is disputed", status: "OPEN", amountCents: 10_000, raisedAmountCents: 10_000, booking: { memberId: "member-1" },
 };
 const dispute = (status: string, amountCents: number, id = "dp_1", paymentId: string | null = "payment-1") => ({ bookingId: "booking-1", stripeDisputeId: id, status, amountCents, paymentId });
