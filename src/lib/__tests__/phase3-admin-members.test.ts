@@ -2085,6 +2085,7 @@ describe("Phase 3: Admin Member Management", () => {
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           $executeRaw: vi.fn().mockResolvedValue(1),
           member: {
             create: vi.fn().mockResolvedValue({
@@ -2363,6 +2364,7 @@ describe("Phase 3: Admin Member Management", () => {
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           $executeRaw: vi.fn().mockResolvedValue(1),
           member: {
             updateMany,
