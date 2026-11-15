@@ -38,7 +38,7 @@ vi.mock("@/lib/prisma", () => {
   };
   return { prisma: client };
 });
-vi.mock("@/lib/xero-operation-outbox", () => ({ lockSupplementaryInvoiceAnchor: mocks.lockAnchor }));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({ lockSupplementaryInvoiceAnchor: mocks.lockAnchor }));
 vi.mock("@/lib/additional-capture-receipt-link", () => ({ anchorCaptureHasReceipt: mocks.anchorCaptureHasReceipt }));
 
 import { returnMovedInvoicesToCapturedIntent } from "@/lib/superseded-ask-invoice-return";

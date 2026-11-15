@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { adminHref } from "@/lib/admin-hubs";
-import { handleXeroCallback } from "@/lib/xero";
+import { handleXeroCallback } from "@/lib/xero-oauth";
 import logger from "@/lib/logger";
 import { getAuditRequestContext } from "@/lib/audit";
 import {

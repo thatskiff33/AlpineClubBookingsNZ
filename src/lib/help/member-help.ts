@@ -29,7 +29,7 @@ function entry(path: string, content: HelpPageContent): HelpPageEntry {
 }
 
 // The four booking-wizard step ids, mirrored from
-// src/app/(authenticated)/book/_components/types.ts (BookingWizardStep). Used as
+// src/components/book/booking-wizard-types.ts (BookingWizardStep). Used as
 // `group` tags on the /book questions so the AI route can scope an answer to the
 // step the member is on.
 const BOOK_STEP_DATES = "dates";
