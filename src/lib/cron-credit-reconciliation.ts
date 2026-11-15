@@ -1,7 +1,7 @@
 import { BOOKING_ISSUED_CREDIT_TYPES } from "@/lib/member-credit-booking-rows";
 import { prisma } from "./prisma";
 import { readMemberCreditBalances, sumOutstandingCreditCents } from "@/lib/member-credit-balances";
-import { isXeroConnected } from "./xero";
+import { isXeroConnected } from "./xero-token-store";
 import logger from "@/lib/logger";
 import { adminHref } from "@/lib/admin-hubs";
 import { reportCronError } from "@/lib/observability-bridge";
