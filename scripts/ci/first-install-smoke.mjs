@@ -263,9 +263,21 @@ export const REFRESHED_BY_DESIGN = {
  * changes no seeded value" true to its words: a re-run that rewrote a name,
  * reset a setting or bumped a timestamp in place leaves every count unchanged
  * but moves a hash. The Member rows hold the seeded password hashes, so those
- * are covered. The row is read as jsonb, less the columns the seed refreshes by
- * design (`REFRESHED_BY_DESIGN`).
+ * are covered. Each row is read as a ROW of its named columns, less the columns
+ * the seed refreshes by design (`REFRESHED_BY_DESIGN`) and the dietary columns
+ * (`NEVER_READ_COLUMN_PREFIX`), never as a whole row.
  */
+/**
+ * Columns whose name starts with this are never read, not even into a hash:
+ * dietary/allergy values may be selected only by `src/lib/member-dietary.ts`
+ * for a grant holder (INV-PRIV-022), and a whole-row read (`to_jsonb(t)`) would
+ * select them. Today that is the profile and stay dietary columns; the seed
+ * writes neither, so the "changes nothing" check loses nothing by it. The
+ * `MemberFieldsSettings` and retention switches start with other words and are
+ * still held.
+ */
+export const NEVER_READ_COLUMN_PREFIX = "dietary";
+
 export const FINGERPRINT_SQL = `
   WITH refreshed(table_name, columns) AS (
     VALUES ${Object.entries(REFRESHED_BY_DESIGN)
@@ -278,12 +290,19 @@ export const FINGERPRINT_SQL = `
   FROM (
     SELECT i.table_name, query_to_xml(
       format(
-        'SELECT count(*) AS c, md5(coalesce(string_agg((to_jsonb(t) - %L::text[])::text, %L ORDER BY (to_jsonb(t) - %L::text[])::text), %L)) AS h FROM public.%I t',
-        coalesce(r.columns, '{}'::text[]), '|', coalesce(r.columns, '{}'::text[]), '', i.table_name
+        'SELECT count(*) AS c, md5(coalesce(string_agg(ROW(%1$s)::text, %2$L ORDER BY ROW(%1$s)::text), %3$L)) AS h FROM public.%4$I t',
+        held.columns, '|', '', i.table_name
       ), false, true, ''
     ) AS q
     FROM information_schema.tables i
     LEFT JOIN refreshed r ON r.table_name = i.table_name
+    CROSS JOIN LATERAL (
+      SELECT coalesce(string_agg(format('t.%I', c.column_name), ', ' ORDER BY c.ordinal_position), '') AS columns
+      FROM information_schema.columns c
+      WHERE c.table_schema = 'public' AND c.table_name = i.table_name
+        AND NOT c.column_name = ANY (coalesce(r.columns, '{}'::text[]))
+        AND left(c.column_name, ${NEVER_READ_COLUMN_PREFIX.length}) <> '${NEVER_READ_COLUMN_PREFIX}'
+    ) AS held
     WHERE i.table_schema = 'public' AND i.table_type = 'BASE TABLE'
   ) AS per_table
   ORDER BY per_table.table_name

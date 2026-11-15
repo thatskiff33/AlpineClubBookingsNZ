@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   changedTables,
   FINGERPRINT_SQL,
+  NEVER_READ_COLUMN_PREFIX,
   REFRESHED_BY_DESIGN,
   fillPlaceholders,
   firstBootstrapBlocks,
@@ -181,12 +182,29 @@ describe("the docs that tell an operator how to seed (#4977, INV-OPS-019)", () =
     // Mutation probe on the readings themselves: a re-run that rewrote a row in
     // place leaves every count as it was, so only a changed hash can name it.
     expect(FINGERPRINT_SQL).toMatch(/md5\(/);
-    expect(FINGERPRINT_SQL).toMatch(/string_agg\(\(to_jsonb\(t\)/);
+    expect(FINGERPRINT_SQL).toMatch(/string_agg\(ROW\(%1\$s\)::text/);
     const before = "Lodge=1:aaa\nMember=2:bbb\nSetting=3:ccc";
     expect(changedTables(before, before)).toEqual([]);
     expect(changedTables(before, "Lodge=1:aaa\nMember=2:bbb\nSetting=3:ddd")).toEqual(["Setting"]);
     expect(changedTables(before, "Lodge=1:aaa\nMember=3:eee\nSetting=3:ccc")).toEqual(["Member"]);
     expect(changedTables(before, "Lodge=1:aaa\nMember=2:bbb")).toEqual(["Setting"]);
+  });
+
+  it("never reads a dietary column, not even into a hash (INV-PRIV-022)", () => {
+    // The fingerprint names its columns rather than reading whole rows, and
+    // leaves out every column whose name starts with the prefix. Every free-text
+    // dietary column in the schema must start with it, or the smoke would read
+    // that column's values.
+    expect(NEVER_READ_COLUMN_PREFIX).toBe("dietary");
+    expect(FINGERPRINT_SQL).toContain("left(c.column_name, 7) <> 'dietary'");
+    expect(FINGERPRINT_SQL).not.toMatch(/\b(?:row_to_json|to_jsonb?|jsonb?_agg)\s*\(\s*t\s*\)/);
+    const dietaryTextColumns = [
+      ...readRepoFile("prisma/schema.prisma").matchAll(/^\s+(\w*ietary\w*)\s+String\b/gim),
+    ].map((match) => match[1]);
+    expect(dietaryTextColumns.length).toBeGreaterThanOrEqual(2);
+    for (const column of dietaryTextColumns) {
+      expect(column.startsWith(NEVER_READ_COLUMN_PREFIX), column).toBe(true);
+    }
   });
 
   it("lets a second seed run move only what the seed rewrites by design", () => {
