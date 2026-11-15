@@ -5,6 +5,9 @@ refusal and to give a dropped connection its own fallback (#4976). Splitting
 any of these screens to absorb that would move one handler's error read away
 from the handler, which is the drift the shared reader exists to stop.
 
+Figures re-measured on the ALP-649 branch, which carries this lane together
+with ALP-578, ALP-581 and the main it now merges.
+
 file: src/app/(admin)/admin/booking-desk/waitlist/page.tsx
 lines: 1034
 reason: the force-confirm handler reads a refusal through the shared reader
@@ -18,13 +21,13 @@ reason: the report load reads a refusal through the shared reader and
   would part the read from the request sequence it checks.
 
 file: src/app/(admin)/admin/finance/subscriptions/page.tsx
-lines: 853
+lines: 894
 reason: the Xero sync and manual-payment handlers parse only a success and
   read a refusal through the shared reader; splitting the page for four
   lines would move the handlers away from their state.
 
 file: src/app/(admin)/admin/hut-leaders/page.tsx
-lines: 1453
+lines: 1513
 reason: the leader writes read a refusal, including its capacity and
   amendment details, through the shared reader inside each handler; splitting
   the page is a separate refactor.
@@ -35,7 +38,7 @@ reason: the preview and search reads check ok before parsing, one line more;
   splitting the panel for one line would scatter its two fetches.
 
 file: src/app/(admin)/admin/membership/member-applications/page.tsx
-lines: 819
+lines: 838
 reason: the five officer actions check ok before parsing, one line more;
   splitting the page for one line would scatter its handlers.
 

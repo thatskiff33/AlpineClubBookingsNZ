@@ -7,22 +7,22 @@ load-error state, and — where a save unmounts the focused control — a
 comments; splitting a page to absorb a dozen lines of focus wiring would put
 the alert in a different file from the action that fills it.
 
+Figures re-measured on the ALP-649 branch, which carries this lane, ALP-581,
+ALP-589 and ALP-649 together; the old `admin/family-groups` page no longer
+exists on main, so its entry is gone.
+
 file: src/app/(admin)/admin/booking-desk/book/page.tsx
-lines: 1669
+lines: 1654
 reason: the action alert and its Xero-reconnect link replace the old error box in place.
 
-file: src/app/(admin)/admin/family-groups/page.tsx
-lines: 890
-reason: two focused action alerts (revoke, save) replace two plain error boxes.
-
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
-lines: 998
+lines: 992
 reason: the queue's load error and its review failures are now two states, each with its Dismiss control.
 
 file: src/app/(admin)/admin/system/backups/backups-client.tsx
-lines: 859
+lines: 810
 reason: focused alerts for Run now and the credentials save, beside the controls they explain.
 
 file: src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx
-lines: 920
+lines: 906
 reason: the passive load error and the focused action alert are now separate states.
