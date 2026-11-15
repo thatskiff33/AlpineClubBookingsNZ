@@ -5,6 +5,7 @@ import { adminHref } from "@/lib/admin-hubs";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   ArrowRight,
@@ -12,7 +13,6 @@ import {
   Loader2,
   RefreshCw,
   Save,
-  ServerCog,
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ import {
   readApiErrorBody,
   refusalMessageOr,
 } from "@/lib/api-error-message";
+import { ModulesInfoNote } from "./_components/modules-info-note";
 
 type ModuleReadinessStatus =
   | "ready"
@@ -137,6 +138,7 @@ function cloneSettings(settings: ModuleSettingsValues): ModuleSettingsValues {
 }
 
 export default function AdminModulesPage() {
+  const router = useRouter();
   // Module activation is a support-area setting; a support:view admin sees it
   // read-only (#1940). The PUT route enforces support:edit.
   const canEdit = useAdminAreaEditAccess("support");
@@ -149,7 +151,9 @@ export default function AdminModulesPage() {
   const pageRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
 
-  async function loadModules() {
+  // Resolves true only when the reload succeeded, so a caller can act on a
+  // good reload without a failed one ever doing so.
+  async function loadModules(): Promise<boolean> {
     setLoading(true);
     setError("");
     setSavedMessage("");
@@ -164,10 +168,12 @@ export default function AdminModulesPage() {
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
+      return true;
     } catch (loadError) {
       setError(
         refusalMessageOr(loadError, "Failed to load modules"),
       );
+      return false;
     } finally {
       setLoading(false);
     }
@@ -176,6 +182,13 @@ export default function AdminModulesPage() {
   useEffect(() => {
     void loadModules();
   }, []);
+
+  // The Refresh button also refreshes the server layout, which holds the admin
+  // menus, but only after a successful reload. It stays out of loadModules so
+  // the mount effect above does not depend on the router.
+  async function refreshModules() {
+    if (await loadModules()) router.refresh();
+  }
 
   // Failure wins, success positions at the top, and neither runs for a
   // passive re-render — the shared action-attention rule (#2934).
@@ -237,6 +250,7 @@ export default function AdminModulesPage() {
       setPayload(body);
       setDraft(cloneSettings(body.settings));
       setSavedMessage("Module settings saved.");
+      router.refresh();
     } catch (saveError) {
       setError(
         refusalMessageOr(saveError, "Failed to save modules"),
@@ -290,7 +304,7 @@ export default function AdminModulesPage() {
           <Button
             type="button"
             variant="outline"
-            onClick={() => void loadModules()}
+            onClick={() => void refreshModules()}
             disabled={loading || saving}
           >
             <RefreshCw className="mr-2 h-4 w-4" />
@@ -328,22 +342,7 @@ export default function AdminModulesPage() {
         </div>
       )}
 
-      <div className="rounded-md border border-border bg-card px-4 py-3">
-        <div className="flex items-start gap-3">
-          <ServerCog className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-          <div className="space-y-1 text-sm text-muted-foreground">
-            <p>
-              Module activation is stored in the database and does not store
-              secrets, tokens, tenant ids, or provider credentials.
-            </p>
-            <p>
-              A module is available across the site whenever it is enabled here.
-              Some modules still need their own setup (for example Xero
-              credentials) before they can do useful work.
-            </p>
-          </div>
-        </div>
-      </div>
+      <ModulesInfoNote />
 
       <div className="grid gap-4 xl:grid-cols-2">
         {modules.map((module) => {
