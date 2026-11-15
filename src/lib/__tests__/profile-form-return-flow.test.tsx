@@ -8,7 +8,7 @@ import {
   ProfileDetailsPageActions,
   ProfileDetailsProvider,
 } from "@/app/(authenticated)/profile/profile-details-card";
-import { ProfileForm } from "@/app/(authenticated)/profile/profile-form";
+import { ProfileForm } from "@/components/profile/profile-form";
 
 const fetchMock = vi.fn();
 const { replaceMock } = vi.hoisted(() => ({

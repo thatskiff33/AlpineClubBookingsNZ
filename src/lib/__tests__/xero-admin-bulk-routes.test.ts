@@ -116,7 +116,7 @@ vi.mock("@/lib/xero-links", () => ({
   buildXeroInvoiceUrl: mocks.buildXeroInvoiceUrl,
 }));
 
-vi.mock("@/lib/xero", () => {
+vi.mock("@/lib/xero-contacts", () => {
   class TestXeroContactValidationError extends Error {
     missingFields: string[];
 
@@ -128,11 +128,13 @@ vi.mock("@/lib/xero", () => {
   }
 
   return {
-    checkMembershipStatus: mocks.checkMembershipStatus,
     findOrCreateXeroContact: mocks.findOrCreateXeroContact,
     XeroContactValidationError: TestXeroContactValidationError,
   };
 });
+vi.mock("@/lib/xero-membership-sync", () => ({
+  checkMembershipStatus: mocks.checkMembershipStatus,
+}));
 
 import { GET as getHealth } from "@/app/api/admin/xero/health/route";
 import { POST as runLinkMaintenance } from "@/app/api/admin/xero/link-maintenance/route";
