@@ -237,7 +237,7 @@ function deferred() {
         failureMessage: "race-3403: the mint failed",
         result: {
           pendingRefundAmountCents: 0,
-          organiserChildRefund: null,
+          organiserChildRefund: null, refundHeldForDispute: false,
           paymentId: PAYMENT_ID,
           additionalAsk: sizeAdditionalAsk({ priceDiffCents: ownCents, changeFeeCents: 0, payment: mirror }),
           retiredAdditionalAsks: [],

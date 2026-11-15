@@ -181,7 +181,7 @@ let observerClient: PrismaClient;
         failureMessage: "race-4316: the mint failed",
         result: {
           pendingRefundAmountCents: 0,
-          organiserChildRefund: null,
+          organiserChildRefund: null, refundHeldForDispute: false,
           paymentId: PAYMENT_ID,
           additionalAsk: sizeAdditionalAsk({
             priceDiffCents: ASK_CENTS,

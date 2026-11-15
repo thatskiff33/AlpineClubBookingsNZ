@@ -426,6 +426,7 @@ describe("#5061 follow-up: options that found a dispute hold keep it in the save
     const options = await calculateModificationSettlementOptions({ reduction: noReductionAgainstUnpaidAsk(-15_000),
       booking, netChargeCents: -15_000, db: NO_HAND_BACKS as never, todayAtClub: TODAY,
     });
+    if (!options) throw new Error("expected settlement options for a paid reduction");
     const settlementOptions = { ...options, refundHeldForDispute: true, requiresSettlementMethod: false };
     const result = await applyPaymentAdjustments(tx, { reduction: noReductionAgainstUnpaidAsk(-15_000),
       booking, priceDiffCents: -15_000, changeFeeCents: 0, settlementOptions,
