@@ -38,6 +38,7 @@ import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code";
 import { useMembershipTypeOptions } from "@/hooks/use-membership-type-options";
 import { Accordion } from "@/components/ui/accordion";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
+import { SubjectAccessReport } from "./_components/subject-access-report";
 import { MemberDetailHeader } from "./_components/member-detail-header";
 import { MemberGroupCard } from "./_components/member-group-card";
 import { MemberSummaryStrip } from "./_components/member-summary-strip";
@@ -1181,6 +1182,9 @@ export default function MemberDetailPage({
                   Merge a duplicate into this member
                 </Button>
               </div>
+            )}
+            {actorIsFullAdmin && (
+              <SubjectAccessReport className={embeddedCardClassName} memberId={member.id} />
             )}
           </div>
         </MemberGroupCard>
