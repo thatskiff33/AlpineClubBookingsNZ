@@ -976,6 +976,7 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-005` | Advisory-lock transactions use fresh READ COMMITTED snapshots |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
+| `INV-OPS-020` | A row-capped admin list shows its total and reaches every row |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |
 | `INV-OPS-012` | Audit reclassification ships its backfill or files one; measured audience stated |
 | `INV-OPS-005` | Doomed columns need `@ignore`: static defaults and implicit `RETURNING` name them |
@@ -992,7 +993,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
-| `INV-OPS-020` | Every main push run completes; releases tag only published commits |
+| `INV-OPS-021` | Every main push run completes; releases tag only published commits |
 
 ## Product Configuration
 

@@ -7,7 +7,7 @@ construction and row locking, the client/server bundle boundary, production
 deployment including the worked windowed column drop, changing what values
 already stored in a column mean, what may be used as test input, which money
 seams a test may mock (`INV-OPS-015`), and which CI runs must finish and what a
-release may tag (`INV-OPS-020`) — and
+release may tag (`INV-OPS-021`) — and
 **`INV-LOCK`** (#2722), the two-tier advisory-lock protocol: which tier a writer
 takes, the order it takes them in, and the registration every global site
 carries. `INV-LOCK` sits here because advisory locking is the sibling of the row
@@ -24,8 +24,9 @@ lock, adding an import to a `"use client"` module, dropping a column, changing
 the meaning of a stored value (an audit `category`, a status string) so that the
 rows already written no longer match the code, deploying to production,
 choosing credentials or data for CI and local validation, mocking a money
-seam in a test that asserts money, or changing a workflow's `concurrency` block
-or what `release:cut` checks before tagging.
+seam in a test that asserts money, changing a workflow's `concurrency` block
+or what `release:cut` checks before tagging (`INV-OPS-021`), or capping the rows
+an admin list route returns (`INV-OPS-020`).
 
 A Prisma `startsWith` is SQL `LIKE` too, and Prisma does not escape it: a
 prefix carrying an id or typed text goes through `exactPrefix`
@@ -463,6 +464,34 @@ rules first written here. #2765 extended it with the measured-audience half.
   the CLI census's 38 roots reach `server-only`, and every published way of
   running each of them carries the condition.
 
+## INV-OPS-020
+
+- **A row-capped admin list shows its total and reaches every row (#4960).**
+  When an admin route answers one page of a list, every screen that reads it
+  for that list shows the total ("Showing 1–25 of 40", even on a single page)
+  and a pager that reaches the last row, in the same change that adds the cap.
+  A cap with no pager is silent data loss: #297 hid the longest-waiting requests.
+- One shape, one pager. A capped route parses `adminListPageQueryFields` and
+  answers through `adminListPage`, both in `src/lib/admin-list-page.ts`; a
+  screen pages through `useAdminQueuePage` and renders the shared `Pagination` with
+  `formatAdminListRange` as its summary. A filter change returns to page 1, a
+  page left empty by a decision steps back one, and the page is kept in the URL
+  wherever the screen keeps its filter there. A slower read for a page or
+  filter the officer has left never replaces the list now shown, and the pager
+  stays mounted through a read so keyboard focus survives a page change.
+- A work queue's pending filter reads oldest first (`adminQueueCreatedOrder`).
+  A deep link (`bookingId=`, `requestId=`) whose record is off the current page
+  shows it pinned above the list (`fetchOffPageQueueRecord`). The
+  policy-exception queue merges two tables, so it counts each and reads each
+  only to the end of the page asked for: its total is exact.
+- Enforced by `src/lib/__tests__/admin-queue-pagination-census.test.ts`, which
+  names this ID: every client file fetching a route in `CAPPED_QUEUE_ROUTES`
+  must page through the hook, guard its reads with `beginLoad`, and render
+  `Pagination` outside its loading branch, or be exempt in `NOT_A_QUEUE_LIST`;
+  each route must call `adminListPage`. It reads source text, so a new capped
+  route is covered once added to that map; other admin lists keep their own
+  page fields until next changed.
+
 ## INV-OPS-002
 
 - Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md`.
@@ -817,7 +846,7 @@ installation.
 - Enforced by `deploy-release-tag-guard-script-contract.test.ts`, which runs
   the guard against a scratch origin.
 
-## INV-OPS-020
+## INV-OPS-021
 
 Every push run of `ci.yml`, `e2e.yml` and `money-coverage.yml` runs to
 completion. A newer push never cancels it or replaces it while pending. Each

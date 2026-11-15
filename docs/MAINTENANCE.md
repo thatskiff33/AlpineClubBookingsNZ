@@ -3343,7 +3343,7 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
    - its `ci.yml` push run on `main` has not published its images: GitHub
      reports no run whose `Publish GHCR images` job succeeded, because the run
      is still going, failed, was cancelled by hand, or never started
-     (`INV-OPS-020`). The refusal names the commit and the run. Wait for the
+     (`INV-OPS-021`). The refusal names the commit and the run. Wait for the
      run, or re-run it with `gh run rerun <run-id>` and publish once that job
      succeeds. The check runs in the dry run too, on the commit that would be
      tagged (on a resume, the tagged commit), and refuses when GitHub's

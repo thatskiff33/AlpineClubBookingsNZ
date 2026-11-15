@@ -801,7 +801,7 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 Do not store that token in the repository or `.env`.
 
 Every push to `main` gets a CI run of its own that runs to completion; a later
-merge never cancels or replaces it (`INV-OPS-020`). So a `main` commit has
+merge never cancels or replaces it (`INV-OPS-021`). So a `main` commit has
 images exactly when its run's `Publish GHCR images` job succeeded — not merely
 because it is on `main`. A run whose `Publish GHCR images` job did not succeed
 (skipped after a failed gate, failed, or cancelled by hand) published nothing;
