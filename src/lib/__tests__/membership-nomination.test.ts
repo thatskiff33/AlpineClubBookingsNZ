@@ -72,6 +72,12 @@ vi.mock("@/lib/prisma", () => ({
   prisma: prismaMock,
 }));
 
+// #4519: approval resolves the joining fee's journal context before its transaction.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveSubscriptionMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+}));
+
 vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01T00:00:00.000Z")),
@@ -837,6 +843,8 @@ describe("membership nomination workflow", () => {
       seasonYear: 2026,
       asOf: new Date("2026-07-01T00:00:00.000Z"),
       store: tx,
+      // #4519: R19's journal context, resolved before the transaction opened.
+      journalContext: { journal: "context" },
     });
     expect(sendMembershipApplicationApprovedEmail).toHaveBeenCalledWith(
       expect.objectContaining({

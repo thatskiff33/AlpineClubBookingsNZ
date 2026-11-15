@@ -132,7 +132,8 @@ describe("M4a application store", () => {
     if (problem === "C1") s.sources[0].amountCents = 59;
     const { db, tx } = database(s);
     if (problem === "C2") db.memberMoneyLine.findMany.mockImplementation(async (input) => input.where.id ? [{ bookingId: "booking" }] : []);
-    if (problem === "booking") db.memberMoneyLine.findMany.mockResolvedValue([]);
+    // #4519: no booking at all is now the member-level path; two bookings still refuse.
+    if (problem === "booking") db.memberMoneyLine.findMany.mockResolvedValue([{ bookingId: "booking" }, { bookingId: "other-booking" }]);
     const message = { source: /does not belong/, obligation: /does not belong/, debtor: /mismatch/, currency: /mismatch/,
       reversed: /reversed source/, C1: /C1_source_cap/, C2: /C2: collect/, booking: /exactly one booking/ }[problem];
     await expect(postMemberMoneyEvent(tx, context, application(problem === "C2" ? "charge" : refundKey))).rejects.toThrow(message);

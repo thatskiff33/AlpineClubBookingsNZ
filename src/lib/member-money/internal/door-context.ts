@@ -20,6 +20,8 @@ let inactiveLogged = false;
  */
 export const BOOKING_LEDGER_POLICY_VERSION = "booking-ledger-bridge-1";
 export const MEMBER_MONEY_CODING_VERSION = "member-money-accounts-1";
+/** #4519 (M7): the rules mapping subscription charges, joining fees and their receipts to legs. */
+const SUBSCRIPTION_LEDGER_POLICY_VERSION = "subscription-ledger-1";
 
 /**
  * A booking door's posting context, resolved BEFORE its transaction opens
@@ -33,12 +35,28 @@ export const MEMBER_MONEY_CODING_VERSION = "member-money-accounts-1";
  * that rolls back and retries resolves again and posts nothing twice, because
  * an event key already posted is a no-op (`postBookingLedgerJournal`).
  */
-export async function resolveBookingMoneyPostingContext(options: {
+export async function resolveBookingMoneyPostingContext(options: DoorContextOptions = {}): Promise<BookingJournalContext> {
+  return resolveDoorContext(BOOKING_LEDGER_POLICY_VERSION, options);
+}
+
+/**
+ * #4519 (Ledger M7): a subscription or joining-fee door's context, resolved as a
+ * booking door's is, before its transaction, under the same inactive-currency
+ * rule; only the policy version differs (`subscription-charges.ts` maps those
+ * facts to legs).
+ */
+export async function resolveSubscriptionMoneyPostingContext(options: DoorContextOptions = {}): Promise<BookingJournalContext> {
+  return resolveDoorContext(SUBSCRIPTION_LEDGER_POLICY_VERSION, options);
+}
+
+interface DoorContextOptions {
   /** The club's timezone, where the door has already read it before its transaction: one read, one club day. */
   zone?: ClubTimeZone;
   /** The client the tax setting is read through: the server's, unless a caller runs on its own. */
   db?: Pick<Prisma.TransactionClient, "clubTaxSettings">;
-} = {}): Promise<BookingJournalContext> {
+}
+
+async function resolveDoorContext(policyVersion: string, options: DoorContextOptions): Promise<BookingJournalContext> {
   const effectiveAt = requireInstant(new Date());
   const [zone, format, taxSettings] = await Promise.all([
     options.zone ?? readClubTimeZoneOutsideRequest(),
@@ -61,7 +79,7 @@ export async function resolveBookingMoneyPostingContext(options: {
     effectiveAt,
     zone,
     format,
-    policyVersion: BOOKING_LEDGER_POLICY_VERSION,
+    policyVersion,
     codingVersion: MEMBER_MONEY_CODING_VERSION,
     taxSettings,
   });

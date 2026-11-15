@@ -5,6 +5,7 @@ import { capProblem } from "./cap-problems";
 import { applicationRoleOf, sameApplicationDebtor, memberMoneyConservationProblems, memberMoneyApplicationTotals, refundFamilyKey, type ApplicationState } from "./application-state";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
 import { readBookingLiveChargeCents } from "./booking-journal-read";
+import { prepareMemberLevelApplications } from "./member-applications";
 import { dateOnlyInstantOf } from "../../club-time";
 import { assertGlobalLockHeld } from "../../global-lock-held";
 import { stableStringify } from "../../stable-digest";
@@ -370,6 +371,8 @@ async function prepareApplications(db: Db, batch: BuiltBatch, lineIds: string[],
   const externalIds = batch.applications.flatMap((a) => "lineId" in a.source ? [a.source.lineId] : []);
   const external = externalIds.length ? await db.memberMoneyLine.findMany({ where: { id: { in: externalIds } }, select: { bookingId: true } }) : [];
   const bookingIds = [...new Set([...batch.lines.map((l) => l.bookingId), ...external.map((l) => l.bookingId)].filter((id): id is string => id !== null))];
+  // #4519 (M7): no booking at all is a member-level obligation, such as a subscription charge's.
+  if (bookingIds.length === 0) return prepareMemberLevelApplications(db, batch, lineIds, applicationIds);
   if (bookingIds.length !== 1) throw new MemberMoneyPlanError(["M4 applications require exactly one booking"]);
   const bookingId = bookingIds[0]!;
   await lockMemberMoneyPayment(db, bookingId);

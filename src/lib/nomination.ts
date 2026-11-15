@@ -37,6 +37,7 @@ import {
   resolveInheritedEmailSourceId,
 } from "@/lib/member-parent-links";
 import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
+import { resolveSubscriptionMoneyPostingContext } from "@/lib/member-money/doors";
 import { prisma } from "@/lib/prisma";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -1331,14 +1332,12 @@ export async function approveMemberApplication(
   const passwordSetupExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   // Resolved before the transaction so the entrance-fee outbox enqueue can run
-  // inside it (#1886, F22). A mapped applicant defaults to SKIP (never
-  // double-charged) unless the admin explicitly supplied a decision; the SKIP is
-  // resolved here so the in-tx enqueue is simply never made.
-  const entranceFeeDecision: EntranceFeeInvoiceApprovalDecision =
-    entranceFeeInvoiceDecision ??
-    (applicantMapped
-      ? { action: "SKIP", reason: "Mapped to existing member" }
-      : { action: "CREATE" });
+  // inside it (#1886, F22), as is its journal context (#4519). A mapped applicant
+  // defaults to SKIP (never double-charged) unless the admin explicitly supplied
+  // a decision; the SKIP is resolved here so the in-tx enqueue is simply never made.
+  const entranceFeeDecision: EntranceFeeInvoiceApprovalDecision = entranceFeeInvoiceDecision ??
+    (applicantMapped ? { action: "SKIP", reason: "Mapped to existing member" } : { action: "CREATE" });
+  const entranceFeeJournalContext = entranceFeeDecision.action === "CREATE" ? await resolveSubscriptionMoneyPostingContext() : undefined;
 
   const approved = await prisma.$transaction(async (tx) => {
     await lockMembershipApplication(tx, applicationId);
@@ -2085,7 +2084,7 @@ export async function approveMemberApplication(
 
         entranceFeeQueue = await enqueueXeroEntranceFeeInvoiceOperation(
           applicantMember.id,
-          { ...entranceFeeInvoiceOptions, store: tx }
+          { ...entranceFeeInvoiceOptions, store: tx, journalContext: entranceFeeJournalContext }
         );
       } catch (err) {
         // Non-database failures stay non-fatal, matching the pre-#1886

@@ -6652,6 +6652,29 @@ claims, exact `madeRefundId` and key-generation markers, preflight and outbox
 behaviour are unchanged; the Stripe request each sender makes is byte-identical
 (`card-refund-obligation-census.test.ts`, `member-money-refunds.realdb.test.ts`).
 
+## Subscription and joining-fee journal postings (#4519, Ledger M7)
+
+M7 posts subscription charges (R18), joining fees (R19), subscription receipts
+(R08) and the cancellation credit's reversal (R20). It adds no advisory key.
+The R18–R20 glue lives in `subscription-journal-postings.ts`; the writers call it.
+A first charge is a new component identity, so it takes no global key. A
+confirm that re-bills a voided subscription reverses the old charge's revenue,
+so it takes `lock(1)` before the season key (`confirmSubscriptionBillingPreview#1`,
+`INV-LOCK-002`). The cancellation credit's reversal takes `lock(1)` alone in its
+own short transaction after the Xero credit note exists
+(`postCancellationCreditToJournal#1`, `INV-LOCK-001`). The receipt, mark-unpaid
+and credit doors then lock the `MembershipSubscriptionCharge` row `FOR UPDATE`
+before reading its obligation. That is the precondition of the member-level
+application path. A manual mark-paid or mark-unpaid calls its door before the
+subscription's status fence, so it takes the charge row before the subscription
+row, the order close-as-already-paid, the Xero invoice claim and the void
+release already use.
+The R19 joining fee posts in its own short transaction after the outbox insert,
+which stays on the global client so `startXeroSyncOperation`'s lost-race
+recovery still runs. `member-money-subscriptions.realdb.test.ts` runs the
+doors on real PostgreSQL, including a re-bill reversal refused without
+`lock(1)`; the confirm and cancellation unit suites pin the lock order.
+
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 
 `convergeCreditNoteSpentOutsideApp` releases a booking's applied credit and writes

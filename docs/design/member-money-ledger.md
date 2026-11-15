@@ -920,6 +920,17 @@ member-money:refund-reservations` lists them, answers those a recovery row marks
 made by an exact refund, and releases any other only on the owner's explicit
 OPERATOR command ([maintenance](../MAINTENANCE.md#reconcile-and-census-card-refund-reservations-m4c)).
 
+### M7 subscriptions and joining fees (#4519)
+
+Owner decision, 10 Nov 2026: replace the old debt. A Xero void posts nothing,
+and with no re-bill the old charge's R18 debt stays. When the confirm creates a
+re-bill, each covered subscription's latest released coverage names the charge
+it replaces. If every replaced R18 is uncollected, each is reversed once and the
+new charge posts in full, so the member owes it once. If any replaced charge has
+a live receipt, nothing is reversed and the new charge is an explicit ZERO
+naming them. A replaced charge never posted (pre-M7) is neither reversed nor
+invented. The reversal takes `lock(1)`; a first charge does not.
+
 ## 11. Proposed children, in shipping order
 
 The owner approves this design before these issues are filed or built. Labels
@@ -937,7 +948,7 @@ than opening a competing implementation lane.
 | M4 — Post captures, refund obligations and exact cash answers | R05–R08/R12–R14/R24, provider-status reversals, durable attempts and application caps; preserve #4361 holds/answers/keys and markers; D4's member-merge transfer for the refunds owed (M4) it posts. Keep old decision projections. | M1, M3; reconcile current #4361 children; D4 (decided) | Critical: payout/double-pay |
 | M5 — Post member credit through one liability | R09–R11/R22 planning, funding lots, approvals, restore provenance and compatibility `MemberCredit` linkage; D4's member-merge transfer for the balances it posts; conservation report, no new provider authority. | M1, M3; M4 for refund-to-credit obligations; D4 (decided) | High: credit/money |
 | M6 — Post organiser receipts and child obligations | R15 with combined invoice/source coverage, one cash receipt and frozen child applications/refunds; prove group sums and avoid child double counting. | M3–M5 | High: group settlement |
-| M7 — Post subscriptions and joining/member fees | R18–R20 from immutable snapshots, family recipient/coverage, manual-paid/cancellation behaviour; local charge evidence works without Xero delivery. | M1; M4 for settlement adapters; D3 before tax activation | High: membership/money |
+| M7 — Post subscriptions and joining/member fees | R18–R20 from immutable snapshots, family recipient/coverage, manual-paid/cancellation behaviour; local charge evidence works without Xero delivery. These doors post M7's events going forward; history stays with M9 and Xero rendering with M13. | M1; M4 for settlement adapters; D3 before tax activation | High: membership/money |
 | M8 — Record provider fees and clearing transfers | R16/R17, source-identity fee/payout evidence and reversal, settings/account coding; clearing report without bank-reconciliation UI. | M1, M4; #4908: the provider transports and owner-captured `recorded-sandbox` fixtures before provider activation (#4460's fakes alone do not meet it) | High: provider/accounting |
 | M9 — Prove and back-post the complete journal | R26 dry-run/apply tool, exact adopted provider coverage, missing-source report and structural/legacy parity census, owner-run command card and tested rollback reconstruction. No read switch. | M2–M8; D3; discharge original #3584 history blockers | High: historical money |
 | M10 — Route every Xero member-money change through one door | Versioned inbox/object heads, ownership registry, echo/stale/void handling, outside-spend/reversal and tasks; cohort activation plus old-worker drain and journal-derived compatibility. Remove replaced recount mutations. | M4–M9, D2/D3, per-pair proofs run through the #4908 transports (the #4460 fakes behind the app's real clients) | Critical: inbound authority/concurrency |

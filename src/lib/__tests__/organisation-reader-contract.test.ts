@@ -454,6 +454,9 @@ const DECLARED_FILES: Record<string, string> = {
     "writes the debtor columns the plan built and checks a leg names its earlier obligation's debtor; it decides nothing about a school",
   "src/lib/member-money/internal/application-state.ts":
     "matches a source's currency and member or organisation debtor to its obligation's before applying money",
+  // #4519 (Ledger M7): the member-level application path reads the same debtor columns.
+  "src/lib/member-money/internal/member-applications.ts":
+    "reads a member-level obligation's and source line's debtor columns so a collect matches them; it decides nothing about a school",
   // #4516 (Ledger M4b): receipts name the booking's owner as debtor, as the doors do.
   "src/lib/member-money/internal/booking-journal-read.ts":
     "bookingOwnerDebtor maps the booking's owner, member or organisation, through bookingOwnerProviderMetadata onto the receivable's debtor; one helper for the doors and the receipts",

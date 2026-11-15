@@ -16,7 +16,7 @@ export { lockBookingRowForOwnerRead } from "../booking-row-lock";
 export { postBookingLedgerJournal, postMemberMergeTransfer, postPendingBookingJournal } from "./internal/booking-posting";
 // #4628 (M3c): a bank-transfer booking's charge before settlement, planned by the legacy side.
 export type { StandingChargeLine } from "./internal/booking-pending-charges";
-export { resolveBookingDoorClock, resolveBookingMoneyPostingContext } from "./internal/door-context";
+export { resolveBookingDoorClock, resolveBookingMoneyPostingContext, resolveSubscriptionMoneyPostingContext } from "./internal/door-context";
 
 export { postBookingReceipts, type BookingReceiptDecision } from "./internal/booking-receipts";
 
@@ -28,3 +28,15 @@ export { postCardRefundCash } from "./internal/refund-cash";
 export { postPaidAnotherWayClose, type PaidAnotherWayJournalClose, type PaidAnotherWayRest } from "./internal/refund-closes";
 export { cardRefundObligationOfRecoveryKey, resolveCardRefundObligation, type CardRefundRecoveryRow } from "./internal/refund-obligation-map";
 export { MemberMoneyReservationRefused } from "./internal/store";
+
+// #4519 (M7): subscription charges (R18, with the re-bill replacement), joining fees (R19), their cash (R08) and
+// the cancellation credit's reversal (R20). Only these subscription and entrance-fee writers call them.
+export {
+  postJoiningFeeCharge,
+  postSubscriptionCharge,
+  postSubscriptionCloseReceipt,
+  postSubscriptionManualReceipt,
+  reverseSubscriptionChargeForCredit,
+  reverseSubscriptionManualReceipt,
+  type SubscriptionCreditOutcome,
+} from "./internal/subscription-posting";

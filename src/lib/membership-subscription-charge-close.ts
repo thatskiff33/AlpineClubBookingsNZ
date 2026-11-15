@@ -1,4 +1,5 @@
 import { createAuditLog } from "@/lib/audit";
+import { postSubscriptionCloseReceipt, resolveSubscriptionMoneyPostingContext } from "@/lib/member-money/doors";
 import { prisma } from "@/lib/prisma";
 import {
   CLOSE_ALREADY_PAID_REASON_MAX,
@@ -108,6 +109,8 @@ export async function closeAlreadyPaidSubscriptionCharge(input: {
   if (!reason) {
     throw new CloseAlreadyPaidChargeError("Give a reason for closing this charge.", 400);
   }
+  // #4519 (Ledger M7): the journal context, before the transaction (INV-LOCK-004).
+  const journalContext = await resolveSubscriptionMoneyPostingContext();
   return prisma.$transaction(async (tx) => {
     const charge = await tx.membershipSubscriptionCharge.findUnique({
       where: { id: input.chargeId },
@@ -223,6 +226,10 @@ export async function closeAlreadyPaidSubscriptionCharge(input: {
         409,
       );
     }
+
+    // R08: the money paid outside the charge, collected against its journal
+    // obligation, only while that is open and nothing is collected yet.
+    await postSubscriptionCloseReceipt(tx, journalContext, { chargeId: charge.id, closedAt: releasedAt, actorMemberId: input.actorMemberId });
 
     await createAuditLog({
       action: "membership-subscription-billing.close-already-paid",

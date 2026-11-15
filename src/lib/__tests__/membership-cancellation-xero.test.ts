@@ -45,6 +45,11 @@ const mocks = vi.hoisted(() => ({
   // #2400 (review F3): the invoice a coverage claim says the subscription is
   // billed on, for a member who carries no `xeroInvoiceId` of their own.
   findSubscriptionInvoiceIdFromCoverage: vi.fn(),
+  // #4519: the charge the invoice bills, and R20's door. Default: no charge row,
+  // so the journal step reports nothing to reverse.
+  chargeFindUnique: vi.fn(),
+  executeRaw: vi.fn(),
+  reverseSubscriptionChargeForCredit: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -79,7 +84,18 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.xeroSyncOperationUpdate,
       findFirst: mocks.xeroSyncOperationFindFirst,
     },
+    membershipSubscriptionCharge: {
+      findUnique: mocks.chargeFindUnique,
+    },
+    $transaction: (run: (tx: unknown) => unknown) => run({ $executeRaw: mocks.executeRaw }),
   },
+}));
+
+// #4519: R20 has its own suites; here the door only records the call.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveSubscriptionMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+  reverseSubscriptionChargeForCredit: mocks.reverseSubscriptionChargeForCredit,
 }));
 
 vi.mock("@/lib/xero-api-client", () => ({
@@ -514,6 +530,30 @@ describe("membership cancellation Xero operations", () => {
         undefined,
         expect.any(String),
       );
+    });
+
+    it("reverses the charge's journal debt under lock(1) once the note exists, re-reading coverage there (#4519)", async () => {
+      unpaidFamilySubscription();
+      mocks.findOtherLiveMembersCovered.mockResolvedValue([]);
+      mocks.chargeFindUnique.mockResolvedValueOnce({ id: "charge_1" });
+      const outcome = { outcome: "posted", creditedCents: 30000, chargedCents: 30000 };
+      mocks.reverseSubscriptionChargeForCredit.mockResolvedValueOnce(outcome);
+
+      await expect(createXeroMembershipCancellationCreditNote({
+        subscriptionId: "sub_1", requestId: "request_1", participantId: "participant_1", syncOperation: xeroClaim("op_1"),
+      })).resolves.toBe("cn_1");
+
+      expect(mocks.chargeFindUnique).toHaveBeenCalledWith({ where: { xeroInvoiceId: "inv_family" }, select: { id: true } });
+      expect((mocks.executeRaw.mock.calls[0][0] as TemplateStringsArray).join("?")).toBe("SELECT pg_advisory_xact_lock(1)");
+      expect(mocks.findOtherLiveMembersCovered).toHaveBeenLastCalledWith(expect.objectContaining({
+        invoiceId: "inv_family", leavingMemberId: "member_1", db: expect.anything(),
+      }));
+      expect(mocks.reverseSubscriptionChargeForCredit).toHaveBeenCalledWith(expect.anything(), { journal: "context" }, expect.objectContaining({
+        chargeId: "charge_1", creditNoteId: "cn_1", creditedCents: 30000, leaverIsLastLiveMember: true,
+      }));
+      // Before the allocation, so an allocated retry still finds the amount due.
+      expect(mocks.reverseSubscriptionChargeForCredit.mock.invocationCallOrder[0])
+        .toBeLessThan(mocks.createCreditNoteAllocation.mock.invocationCallOrder[0]);
     });
 
     it("raises nothing at all while the invoice still covers a member who is staying", async () => {

@@ -29,6 +29,7 @@ import {
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearsLabel } from "@/lib/season-label";
 import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
+import { SUBSCRIPTION_CHARGE_JOURNAL_SELECT, postConfirmedSubscriptionCharge, prepareSubscriptionBillingJournal } from "@/lib/subscription-journal-postings";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
@@ -1598,7 +1599,10 @@ export async function confirmSubscriptionBillingPreview(input: {
     throw new SubscriptionBillingError("Billing preview changed; refresh and confirm the current preview.");
   }
   const chargeIds: string[] = [];
+  const expectedMemberIds = [...new Set(input.preview.entries.flatMap((entry) => entry.coveredMembers.map((member) => member.id)))];
+  const { journalContext, rebillsAVoid } = await prepareSubscriptionBillingJournal(input.preview.seasonYear, expectedMemberIds); // #4519
   await prisma.$transaction(async (tx) => {
+    if (rebillsAVoid) await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`; // a re-bill after a void (INV-LOCK-002)
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`membership-subscription-billing:${input.preview.seasonYear}`}))`;
     const preview = await buildSubscriptionBillingPreview({
       seasonYear: input.preview.seasonYear,
@@ -1612,8 +1616,6 @@ export async function confirmSubscriptionBillingPreview(input: {
       store: tx,
     });
     if (preview.confirmationToken !== input.expectedConfirmationToken) {
-      const expectedMemberIds = [...new Set(input.preview.entries.flatMap((entry) =>
-        entry.coveredMembers.map((member) => member.id)))];
       const coveredMemberIds = new Set(preview.alreadyCoveredMemberIds);
       if (expectedMemberIds.length > 0 && expectedMemberIds.every((memberId) => coveredMemberIds.has(memberId))) {
         const existing = await tx.membershipSubscriptionChargeCoverage.findMany({
@@ -1695,6 +1697,7 @@ export async function confirmSubscriptionBillingPreview(input: {
       const idempotencyKey = voidGenerations.some((generation) => generation > 0)
         ? digest([entry.key, sortedMemberIds, entry.chargedAmountCents, { voidGenerations }])
         : digest([entry.key, sortedMemberIds, entry.chargedAmountCents]);
+      const existingCharge = await tx.membershipSubscriptionCharge.findUnique({ where: { idempotencyKey }, select: { id: true } }); // #4519: R18 on create
       const charge = await tx.membershipSubscriptionCharge.upsert({
         where: { idempotencyKey },
         update: {},
@@ -1768,7 +1771,7 @@ export async function confirmSubscriptionBillingPreview(input: {
                 },
               }),
         },
-        select: { id: true },
+        select: SUBSCRIPTION_CHARGE_JOURNAL_SELECT,
       });
       chargeIds.push(charge.id);
       if (entry.billingBasis !== "NO_INVOICE") {
@@ -1782,6 +1785,7 @@ export async function confirmSubscriptionBillingPreview(input: {
           store: tx,
         });
       }
+      if (!existingCharge) await postConfirmedSubscriptionCharge(tx, journalContext, { charge, subscriptions, actorMemberId: input.confirmedByMemberId ?? null });
     }
     // #2041: give each BASED_ON_AGE_TIER tier-exempt member a NOT_REQUIRED
     // season row (decision Q4) so their booking status stays consistent with
@@ -1792,12 +1796,7 @@ export async function confirmSubscriptionBillingPreview(input: {
     // invariant), so re-runs are no-ops. No charge and no Xero op are created.
     for (const exemptMemberId of preview.exemptMemberIds) {
       await tx.memberSubscription.upsert({
-        where: {
-          memberId_seasonYear: {
-            memberId: exemptMemberId,
-            seasonYear: preview.seasonYear,
-          },
-        },
+        where: { memberId_seasonYear: { memberId: exemptMemberId, seasonYear: preview.seasonYear } },
         update: {},
         create: {
           memberId: exemptMemberId,

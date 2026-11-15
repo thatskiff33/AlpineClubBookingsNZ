@@ -274,7 +274,8 @@ always, then, when the change can move CI's migration jobs, drift and the
 data-migration suites with the same no-skip check (its header has the rule).
 `typecheck` runs `scripts/ci/sekreton-typecheck.sh` (production project only,
 skipped under 6 GiB); PR CI keeps the rest.
-`fast-censuses` runs `pnpm run ci:fast-censuses` against a fetched `origin/main`.
+`fast-censuses` runs `pnpm run ci:fast-censuses`. With no `origin`, it and
+`migrations` use the sandbox's main snapshot, maybe older; CI decides.
 The `realdb-all` job on GitHub remains advisory, so cite its actual result
 separately before making the PR ready.
 

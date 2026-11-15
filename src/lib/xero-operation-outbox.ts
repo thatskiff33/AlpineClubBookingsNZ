@@ -9,6 +9,8 @@ import {
   syncXeroMembershipCancellationContact,
 } from "@/lib/membership-cancellation-xero";
 import { prisma } from "@/lib/prisma";
+import type { BookingJournalContext } from "@/lib/member-money/doors";
+import { joiningFeeJournalPoster } from "@/lib/subscription-journal-postings";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
 import {
   cardRefundNoteRowsWhere,
@@ -260,8 +262,11 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
      * client while that transaction holds its advisory locks.
      */
     asOf?: Date;
+    /** #4519: the journal context, REQUIRED alongside `store` and resolved before its transaction (INV-LOCK-004). */
+    journalContext?: BookingJournalContext;
   }
 ) {
+  const postJoiningFee = await joiningFeeJournalPoster(memberId, options); // R19 (#4519)
   // Optional transaction client (#1886, F22) so membership approval can write
   // this outbox row inside the same transaction that creates the member and
   // approves the application — the joining fee then commits atomically with
@@ -293,17 +298,13 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     };
   }
 
-  const entranceFee = await getEntranceFeeContext(
-    memberId,
-    db,
-    options?.seasonYear,
-    options?.asOf,
-  );
+  const entranceFee = await getEntranceFeeContext(memberId, db, options?.seasonYear, options?.asOf);
 
   // Organisations/schools are exempt from joining fees (owner decision,
   // 2026-07-07) — checked before the amount override so an explicitly
   // entered amount can never bill an organisation.
   if (entranceFee.exempt) {
+    await postJoiningFee({ feeAmountCents: 0, exempt: true }); // a permanent ZERO: no later amount bills it
     return {
       queueOperationId: null,
       message: ENTRANCE_FEE_EXEMPT_MESSAGE,
@@ -335,16 +336,13 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
       operationType: "CREATE",
       localModel: "Member",
       localId: memberId,
-      status: {
-        in: ["PENDING", "RUNNING"],
-      },
+      status: { in: ["PENDING", "RUNNING"] },
     },
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: { createdAt: "desc" },
   });
 
   if (existingQueuedOperation) {
+    await postJoiningFee({ feeAmountCents, exempt: false });
     return {
       queueOperationId: existingQueuedOperation.id,
       message: "Xero joining fee invoice is already queued for background processing.",
@@ -370,6 +368,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     createdByMemberId: options?.createdByMemberId ?? null,
     store: db,
   });
+  await postJoiningFee({ feeAmountCents, exempt: false }); // the frozen outbox amount
 
   return {
     queueOperationId: queuedOperation.id,
