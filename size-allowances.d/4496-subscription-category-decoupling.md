@@ -95,4 +95,3 @@ reason: subscription billing category decoupled from membership type; those
   lines sit inside the function `createXeroMembershipSubscriptionInvoice`,
   which was already over its limit before this change, and lifting it apart is
   a refactor of its own, not part of this fix.
-
