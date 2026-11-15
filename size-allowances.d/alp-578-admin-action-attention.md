@@ -12,15 +12,15 @@ lines: 1655
 reason: the action alert and its Xero-reconnect link replace the old error box in place.
 
 file: src/app/(admin)/admin/membership/family-groups/page.tsx
-lines: 891
+lines: 905
 reason: two focused action alerts (revoke, save) replace two plain error boxes.
 
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
-lines: 992
+lines: 1014
 reason: the queue's load error and its review failures are now two states, each with its Dismiss control.
 
 file: src/app/(admin)/admin/system/backups/backups-client.tsx
-lines: 859
+lines: 810
 reason: focused alerts for Run now and the credentials save, beside the controls they explain.
 
 file: src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx

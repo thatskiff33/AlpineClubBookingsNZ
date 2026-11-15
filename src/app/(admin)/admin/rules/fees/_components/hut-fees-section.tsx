@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useClubFormat } from "@/components/club-format-provider";
-import { type ClubDateFormat, formatStayDateOrNull, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
+import { calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
 import { formatCents } from "@/lib/pricing";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import {
@@ -53,7 +53,7 @@ import {
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
-import { readSeasonSchedule } from "../../../_lib/season-schedule";
+import { formatSeasonEdge, readSeasonSchedule } from "../../../_lib/season-schedule";
 import { MissingHutRatesNotice } from "./missing-hut-rates-notice";
 
 // The Hut Fees section of the consolidated /admin/fees console (#1933, E7):
@@ -105,15 +105,6 @@ const FALLBACK_TIERS: AgeTierSetting[] = [
   { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
   { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
 ];
-
-// CT-4 (#2870): a season edge is a CALENDAR DATE and calendar dates take no
-// timezone — the API serialises the `@db.Date` column as UTC midnight, and the
-// kernel's calendar-date formatter pins "UTC" over that encoding, so the
-// projection is the identity for every club. It used to be read through
-// APP_TIME_ZONE, which for a club behind UTC named the previous day.
-function formatSeasonEdge(value: string, format: ClubDateFormat): string {
-  return formatStayDateOrNull(value, format) ?? value;
-}
 
 /*
   #2264 — ONE hint per membership type's rate table, not one per rate cell: the

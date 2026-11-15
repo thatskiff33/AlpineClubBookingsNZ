@@ -22,12 +22,13 @@ import {
   useLodgeOptions,
 } from "@/components/lodge-select"
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
-import { readSeasonSchedule } from "../../_lib/season-schedule";
+import { formatSeasonEdge, readSeasonSchedule } from "../../_lib/season-schedule";
+import type { Season } from "./_lib/season-window";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
 import { useClubTime } from "@/components/club-time-provider"
 import { useClubFormat } from "@/components/club-format-provider"
-import { type ClubDateFormat, formatStayDateOrNull, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
+import { calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
 import {
   SeasonCoverageGapNotice,
   SeasonCoverageGapSummary,
@@ -38,24 +39,6 @@ import {
 // — editing a window here PUTs without `membershipTypeRates`, so the season's
 // rates are left untouched. Creating a season (which requires at least one rate)
 // also lives in Fees → Hut Fees, so this page edits existing windows only.
-
-interface Season {
-  id: string
-  name: string
-  type: "WINTER" | "SUMMER"
-  startDate: string
-  endDate: string
-  active: boolean
-}
-
-// CT-4 (#2870): a season edge is a CALENDAR DATE and calendar dates take no
-// timezone — the API serialises the `@db.Date` column as UTC midnight, and the
-// kernel's calendar-date formatter pins "UTC" over that encoding, so the
-// projection is the identity for every club. It used to be read through
-// APP_TIME_ZONE, which for a club behind UTC named the previous day.
-function formatSeasonEdge(value: string, format: ClubDateFormat): string {
-  return formatStayDateOrNull(value, format) ?? value
-}
 
 export default function SeasonsPage() {
   const format = useClubFormat()
