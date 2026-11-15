@@ -8,12 +8,12 @@ built. Moving the resolution elsewhere would separate a document from the
 treatment it carries, which is the drift the one renderer exists to stop.
 
 file: src/lib/admin-permissions.ts
-lines: 953
+lines: 954
 reason: registers `/api/admin/club-tax` under the finance area beside the
   other finance API prefixes; the route-area map is one list by design.
 
 file: src/lib/membership-cancellation-xero.ts
-lines: 1414
+lines: 1411
 reason: the cancellation credit note resolves its invoice's tax treatment where
   the note is built, so the note repeats the invoice's treatment.
 
