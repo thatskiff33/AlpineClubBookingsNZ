@@ -68,12 +68,12 @@ export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * The pending-changes heading. `CHANGELOG.md` and `docs/UPGRADING.md` both
- * collect the next release's material under it; `release-docs.mjs` reads the
- * upgrade guide's with this same pattern.
+ * collect the next release's material under it; `upgrade-docs.mjs` takes the
+ * upgrade guide's from here (#4983, `INV-SSOT`).
  */
-export const UNRELEASED_HEADING = /^## Unreleased[ \t]*$/;
-/** A section boundary: every `## ` line, in `CHANGELOG.md` and the upgrade guide alike. */
-export const ANY_HEADING = /^## /;
+export const UNRELEASED_TITLE = "## Unreleased";
+const UNRELEASED_HEADING = new RegExp(`^${UNRELEASED_TITLE}[ \\t]*$`);
+const ANY_HEADING = /^## /;
 /** A top-level changelog entry bullet. Continuation paragraphs are indented. */
 const ENTRY_BULLET = /^- /;
 
@@ -297,8 +297,7 @@ export function retiredAllowancePaths(repoRoot) {
   return paths.sort((a, b) => compareFragmentNames(path.basename(a), path.basename(b)));
 }
 
-/** `lines` without leading and trailing blank lines. */
-export function stripBlankEdges(lines) {
+function stripBlankEdges(lines) {
   let start = 0;
   let end = lines.length;
   while (start < end && lines[start].trim() === "") start += 1;

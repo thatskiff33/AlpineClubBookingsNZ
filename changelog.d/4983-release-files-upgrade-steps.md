@@ -1,9 +1,11 @@
 - **Each release now has its own section in the upgrade guide and its own
   release-notes page (#4983).** When the maintainer prepares a release, the
-  release tool now moves the upgrade guide's waiting steps from "Unreleased"
-  to a heading naming the upgrade, such as "v0.13.2 → v0.14.0". It also writes
-  a notes page for the release and lists it in the release index. A release
-  with no manual steps still gets a heading that says so.
+  release tool moves the upgrade guide's waiting steps from "Unreleased" to a
+  heading naming the upgrade, such as "v0.13.2 → v0.14.0" (#4979). A release
+  with no manual steps now still gets a heading that says so, and steps that
+  merge after preparation are moved into the release's heading by the tool
+  rather than by hand. The tool also writes a notes page for the release and
+  lists it in the release index.
 
   A club upgrading from one release to the next can now find the steps for
   the release it is installing, instead of a pile under "Unreleased" that

@@ -948,7 +948,7 @@ export async function POST(
        * `applyPaymentAdjustments`; this door settles for itself, so it reads the
        * rule rather than restating it. Restating it is what went wrong: the copy
        * took its status list from the eligibility gate above instead, omitting
-       * COMPLETED. Worked example in `docs/invariants/single-source-of-truth.md`.
+       * COMPLETED. History on #3200.
        *
        * #3244 finished the job #3200 left: the SUCCEEDED-only test that used to
        * sit here is now `hasCapturedPayment`, the same predicate the other three
@@ -1294,7 +1294,7 @@ export async function POST(
       bookingId,
       // Guest adds never decrease the price, so the shared settlement
       // context's refund side is always zero here.
-      result: { ...result, pendingRefundAmountCents: 0, organiserChildRefund: null },
+      result: { ...result, pendingRefundAmountCents: 0, organiserChildRefund: null, ownCardRefund: null },
       door: "guestAdd",
       failureMessage:
         "Failed to create additional PaymentIntent for guest addition",

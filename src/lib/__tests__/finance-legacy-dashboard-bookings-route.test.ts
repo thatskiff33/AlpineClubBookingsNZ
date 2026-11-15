@@ -190,6 +190,21 @@ describe("finance legacy dashboard bookings route", () => {
     });
   });
 
+  it.each(["historyStartDate", "asOfDate"])(
+    "refuses a %s that is not a real calendar day before the export runs",
+    async (field) => {
+      const response = await getFinanceLegacyDashboardBookingsRoute(
+        new NextRequest(
+          `https://example.org/api/finance/legacy-dashboard/bookings?${field}=2026-02-30`,
+          { headers: { authorization: "Bearer test-export-token" } }
+        )
+      );
+
+      expect(response.status).toBe(400);
+      expect(mockGetLegacyDashboardBookingExport).not.toHaveBeenCalled();
+    }
+  );
+
   it("logs backend failures without returning raw error details", async () => {
     mockGetLegacyDashboardBookingExport.mockRejectedValue(
       new Error("database password leaked in driver detail")

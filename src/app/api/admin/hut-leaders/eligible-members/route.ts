@@ -34,15 +34,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "A valid lodgeId is required." }, { status: 400 });
   }
 
-  if (!startDate || !endDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+  if (!startDate || !endDate || !isDateOnlyString(startDate) || !isDateOnlyString(endDate)) {
     return NextResponse.json({ error: "startDate and endDate are required (YYYY-MM-DD)" }, { status: 400 });
   }
 
   if (startDate > endDate) {
     return NextResponse.json({ error: "startDate must be before or equal to endDate" }, { status: 400 });
-  }
-  if (!isDateOnlyString(startDate) || !isDateOnlyString(endDate)) {
-    return NextResponse.json({ error: "Invalid startDate or endDate" }, { status: 400 });
   }
 
   const rangeStart = parseDateOnly(startDate);
