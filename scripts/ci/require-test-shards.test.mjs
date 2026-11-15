@@ -506,3 +506,28 @@ describe("e2e.yml's required jobs, their shards and the run action", () => {
     expect(stack.slice(stack.indexOf("prepare() {"))).toContain("e2e/setup/seed-stripe-credentials.ts");
   });
 });
+
+// #5192: `ubuntu-latest` is a moving label. While GitHub rolled it from 24.04
+// to 26.04, the same commit got either image by chance, and on 26.04 the
+// runner's PostgreSQL 17 `pg_dump` broke the required roles proof against the
+// PostgreSQL 16 service. Every job in every workflow names one pinned image;
+// moving to a newer one changes this constant and every workflow together.
+describe("every workflow job runs on the one pinned runner image (#5192)", () => {
+  const RUNNER_IMAGE = "ubuntu-24.04";
+
+  it("names the pinned image on every job, never a moving label", () => {
+    const workflowsDir = path.join(root, ".github", "workflows");
+    const jobs = [];
+    for (const file of readdirSync(workflowsDir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
+      const parsed = parseWorkflowYaml(readFileSync(path.join(workflowsDir, file), "utf8"));
+      for (const [id, job] of Object.entries(parsed.jobs ?? {})) {
+        // A job that calls a reusable workflow has no runner of its own.
+        if (job.uses) continue;
+        jobs.push(`${file} → ${id}`);
+        expect(job["runs-on"], `${file} → ${id}`).toBe(RUNNER_IMAGE);
+      }
+    }
+    // Vacuity guard: the census read real workflows.
+    expect(jobs.length).toBeGreaterThanOrEqual(30);
+  });
+});
