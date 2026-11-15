@@ -20,21 +20,22 @@ import {
   requireBedAllocationRead,
   requireBedAllocationWrite,
 } from "@/lib/admin-bed-allocation-routes";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const anchorFields = {
   allocationId: z.string().min(1),
   bookingId: z.string().min(1),
   bookingGuestId: z.string().min(1),
   lodgeId: z.string().min(1),
-  stayDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  stayDate: dateOnlyStringSchema,
 };
 
 const windowScopeSchema = z
   .object({
     type: z.literal("WINDOW"),
     lodgeId: z.string().min(1),
-    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    from: dateOnlyStringSchema,
+    to: dateOnlyStringSchema,
   })
   .strict();
 

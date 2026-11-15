@@ -5,12 +5,65 @@ import PhotoSwipeLightbox, {
   loadPhotoSwipeModule,
 } from "@/lib/photoswipe-lightbox";
 
-type PhotoGalleryImage = {
-  src: string;
-  alt: string;
-  width: number | null;
-  height: number | null;
-};
+import type {
+  PhotoGalleryImage,
+  PhotoGalleryImageCopy,
+} from "@/lib/page-content-embeds";
+
+// The rendered width of one card, per the container classes below: three
+// columns from `lg`, two from `sm`, one below; a slideshow card is 80% of the
+// row from `lg`. The browser picks the narrowest copy covering this (#4935).
+const GALLERY_IMAGE_SIZES =
+  "(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw";
+const SLIDESHOW_IMAGE_SIZES = "(min-width: 1024px) 80vw, 100vw";
+
+/**
+ * A URL as one `srcset` candidate. Uploaded file names may hold spaces and
+ * commas, which a `srcset` parser reads as separators, and `#`, which would
+ * cut the URL at a fragment, so all are escaped; the serving route decodes
+ * them back.
+ */
+function srcsetUrl(src: string): string {
+  return encodeURI(src).replace(/[,#]/g, encodeURIComponent);
+}
+
+/**
+ * A URL as a plain `src` or link `href`. Spaces and commas are fine there, but
+ * a `#` (which uploaded names may hold) still cuts the URL at a fragment, so a
+ * photo named `hut#2.jpg` would open a 404 in the lightbox (#5087 review).
+ */
+function attributeUrl(src: string): string {
+  return src.replace(/#/g, "%23");
+}
+
+/**
+ * How one photo renders (#4935, INV-PUB-005). With copies: the thumbnail is a
+ * `srcset` of them with the middle one as the fallback `src`, and the
+ * full-size view opens the widest. Without: the original everywhere, exactly
+ * as before copies existed.
+ */
+function imageSources(image: PhotoGalleryImage) {
+  const copies: PhotoGalleryImageCopy[] = image.copies ?? [];
+  const widest = copies.at(-1);
+  if (!widest) {
+    const src = attributeUrl(image.src);
+    return {
+      thumbnailSrc: src,
+      srcSet: undefined,
+      carouselSrc: src,
+      full: { src, width: image.width, height: image.height },
+    };
+  }
+  const middle = copies[Math.floor(copies.length / 2)] ?? widest;
+  return {
+    thumbnailSrc: attributeUrl(middle.src),
+    srcSet: copies
+      .map((copy) => `${srcsetUrl(copy.src)} ${copy.width}w`)
+      .join(", "),
+    carouselSrc: attributeUrl((copies[0] ?? widest).src),
+    full: { ...widest, src: attributeUrl(widest.src) },
+  };
+}
 
 type PhotoGalleryTokenProps = {
   galleryId: string;
@@ -92,7 +145,7 @@ export function PhotoGalleryToken({
               });
 
               const thumbnail = document.createElement("img");
-              thumbnail.src = image.src;
+              thumbnail.src = imageSources(image).carouselSrc;
               thumbnail.alt = image.alt || `Slide ${index + 1}`;
               thumbnail.loading = "lazy";
               thumbnail.className = "pswp__thumbnail-carousel-image";
@@ -189,18 +242,27 @@ export function PhotoGalleryToken({
           (variant === "slideshow"
             ? `Slide ${index + 1}`
             : `Gallery image ${index + 1}`);
+        const sources = imageSources(image);
         return (
         <a
           key={`${image.src}-${image.alt}-${index}`}
-          href={image.src}
-          data-pswp-width={image.width ?? undefined}
-          data-pswp-height={image.height ?? undefined}
+          href={sources.full.src}
+          data-pswp-width={sources.full.width ?? undefined}
+          data-pswp-height={sources.full.height ?? undefined}
           className={cardClassName}
         >
           <div className={imageWrapperClassName}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={image.src}
+              src={sources.thumbnailSrc}
+              srcSet={sources.srcSet}
+              sizes={
+                sources.srcSet
+                  ? variant === "slideshow"
+                    ? SLIDESHOW_IMAGE_SIZES
+                    : GALLERY_IMAGE_SIZES
+                  : undefined
+              }
               alt={altText}
               width={image.width ?? undefined}
               height={image.height ?? undefined}

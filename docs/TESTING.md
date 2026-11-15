@@ -129,7 +129,8 @@ unrelated responses from each mock. Import
 per test. These helpers have no credentials, network calls, database or Vitest
 dependency. Unit and realdb tests can use them directly; Playwright's Node-side
 fixtures can use them behind a test transport adapter. They do not install HTTP
-routes or replace either provider SDK automatically.
+routes or replace either provider SDK automatically; the transports below are
+the only way to point app code at them.
 
 ```ts
 const xero = new XeroFake();
@@ -156,22 +157,113 @@ successful refunds, later failure, and dashboard refunds. Pending refunds reserv
 capture capacity; failed refunds release it. `snapshot().events` retains immutable
 Stripe event payloads for delivery/replay tests, including the subscribed
 `charge.refunded` (with a charge/refund-list projection) and `refund.failed` events.
-Tests still need transport/SDK adapters to drive production webhook handlers.
 Taxes, fees, FX, API pagination,
 authentication, rate limits and transport failures are outside these models.
 
+### Driving production code through the fakes
+
+The test transports put the fakes behind the app's own provider clients (#4908),
+so production writers, inbound sync and webhook handlers run unmocked:
+
+```ts
+import { setXeroClientForTests, resetXeroClientForTests } from "@/lib/xero-test-client-override";
+// Stripe: setStripeClientForTests from "@/lib/stripe-test-client-override"
+const fake = new XeroFake("race-1234-");
+setXeroClientForTests(xeroTransport(fake));
+await createXeroInvoiceForBooking(bookingId); // the production push
+expect(fake.snapshot().invoices).toHaveLength(1);
+// afterAll: resetXeroClientForTests()
+```
+
+[`xeroTransport`](../src/test/providers/xero-transport.ts) serves the
+`accountingApi` calls for invoices, payments, credit notes, allocations and
+contacts. Replies are native Xero JSON (invoices through `invoiceWire`) passed
+through xero-node's own deserializer. Every call still goes through
+`callXeroApi` and `withXeroRetry`, so `failNext({ statusCode: 429, ... })`
+reaches the app as the real `XeroDailyLimitError`. Both injected failures and
+fake refusals leave as xero-node does, a JSON string; a refusal is a 400
+`ValidationException` carrying the fake's message, which the app's own error
+readers parse.
+[`stripeTransport`](../src/test/providers/stripe-transport.ts) serves payment
+intents, captures and refunds through `setStripeClientForTests`, and its
+`events()` returns the fake's events as Stripe delivers them, ready for
+`processStripeWebhookEvent`. Fake refusals come back as the SDK's
+`StripeInvalidRequestError`, and a reused idempotency key with other
+parameters as `StripeIdempotencyError`. A call either transport does not model
+throws rather than guessing, and neither ever touches the network. Xero lists page as Xero
+does (`page` and `pageSize`). Not modelled: Xero payment dates and the
+organisation record; Stripe payment-method
+collection (an intent is authorised on create) and any `expand` but an
+intent's `latest_charge`. While a Xero session is installed, `isXeroConnected()`
+reports connected, so the journeys that check it first take their Xero path.
+
+`setXeroClientForTests` and `setStripeClientForTests` throw unless `NODE_ENV`
+is `test`, and every read re-checks it, so production cannot set
+the override. Both seams are built from one rule,
+[`createTestOnlyOverride`](../src/lib/test-only-override.ts). No environment variable reaches it.
+[`production-import-census.test.ts`](../src/test/providers/production-import-census.test.ts)
+fails if any non-test file under `src/` imports test code: `src/test/`, a
+`__tests__` directory or a `*.test.*` / `*.spec.*` file. The existing
+`vi.mock` suites stay as they are; new money journeys should prefer the
+transports.
+
+Two realdb suites prove the path end to end:
+[`xero-invoice-round-trip.realdb.test.ts`](../src/test/providers/xero-invoice-round-trip.realdb.test.ts)
+pushes a booking invoice, pays it in parts in the fake and reconciles each
+state, and
+[`stripe-webhook-round-trip.realdb.test.ts`](../src/test/providers/stripe-webhook-round-trip.realdb.test.ts)
+delivers a dashboard refund, its redelivery and a later `refund.failed`. A
+ledger stage writes its own per-pair proofs on these transports.
+
+### Contract fixtures and sandbox captures
+
 The fixture contract suite pins selected behavior to
 [`provider-contracts.json`](../src/test/providers/fixtures/provider-contracts.json).
-**These fixtures are synthetic examples, not sandbox recordings.** Their public
-API references and repository error-example source are recorded in the JSON;
-sandbox conformance remains unverified. Do not regenerate expectations from the
-fake. Future sandbox captures need sanitized, independently reviewed fixtures.
+**These fixtures are synthetic examples, not sandbox recordings** (their
+`provenance.kind` is `synthetic`). Their public API references and repository
+error-example source are recorded in the JSON; sandbox conformance remains
+unverified. Do not regenerate expectations from the fake.
 
-Run the four new suites with:
+A reviewed recording goes beside it as
+`provider-contracts.recorded-sandbox.json`, with the same keys. When that file
+exists the suite runs against it instead, and its title names the kind and
+capture date it ran. A recording's `provenance` sets `kind` to
+`recorded-sandbox`, `capturedOn` to the capture date, `apiVersions` to the Xero
+and Stripe API versions used, and `reviewedIn` to the issue or PR holding the
+review. The suite refuses a recording missing any of these, and any fixture
+holding an email address, a credential, a Xero GUID or a Stripe object id.
+
+**Capturing sandbox fixtures (owner step).** Only the owner captures, against a
+Xero demo company and Stripe test mode, never the club's live organisation or
+account:
+
+1. In Xero, create a contact and an $80.00 invoice, record a $50.00 payment,
+   create a $30.00 credit note and allocate it, then try allocating another
+   $10.00 credit note to the paid invoice. Remove the allocation, void the note
+   and delete the payment. Save the invoice, credit note and payment replies and
+   the refusal for each key in the `xero` block.
+2. In Stripe test mode, authorise $80.00 with manual capture, capture $50.00,
+   refund $20.00, let it succeed, then fail it with Stripe's test card for a
+   failed refund. Make a $50.00 refund in the dashboard, try a further $0.01
+   refund, and save the replies and the `charge.refunded` event for each key in
+   the `stripe` block.
+3. Sanitise: keep only the fields the synthetic file pins, replace every
+   provider id with the alias the fake mints (`invoice-1`, `intent-1`, and so
+   on), and remove every name, email, tenant id, account id and token.
+4. Fill in `provenance`, run the contract suite, and open a PR. The PR is
+   reviewed by someone other than the person who captured the fixture, who
+   checks the sanitising line by line before merge. Where the recording and the
+   fakes disagree, the fake is fixed; the recording stands.
+
+Run the provider suites with:
 
 ```sh
-pnpm exec vitest run src/test/providers/provider-fakes.test.ts src/test/providers/provider-contracts.test.ts src/test/providers/ledger-scenarios.test.ts src/test/providers/round-trip.test.ts --maxWorkers=1
+pnpm run test:named src/test/providers/provider-fakes.test.ts src/test/providers/provider-contracts.test.ts src/test/providers/ledger-scenarios.test.ts src/test/providers/round-trip.test.ts src/test/providers/provider-transports.test.ts src/test/providers/production-import-census.test.ts
 ```
+
+The two realdb suites need the race harness's disposable PostgreSQL
+(`RUN_CONCURRENCY_RACE_TESTS=1` and `CONCURRENCY_RACE_DATABASE_URL`) and run in
+the `realdb-all` CI job.
 
 The fast-check properties use fixed seeds (4460 and 4461) and the shared frozen
 clock. They compare independently imported state with outbound journal totals
@@ -587,9 +679,11 @@ their purpose. Every other file is a root of exactly one project:
   and `.cts` test/spec file and `__tests__/` directory under `src/` and
   `scripts/`, plus `vitest.config.mts` and the two setup files. It supplies
   `vitest/globals` and Node's types.
-- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts` and
-  `playwright.config.ts`, with Node's types and nothing from Vitest. Specs
-  reach application code through imports (`@/lib/...`), never by listing it.
+- **`tsconfig.e2e.json`** — the Playwright suite: `e2e/**/*.ts`,
+  `playwright.config.ts` and the contract specs and their React fixtures under
+  `scripts/e2e-contracts/` (`.ts` and `.tsx`), with Node's types and nothing
+  from Vitest. Specs reach application code through imports (`@/lib/...`),
+  never by listing it.
 
 Vitest also collects JavaScript test files. The `scripts/**/*.test.mjs`
 suites — each the test of a tool that runs under a bare `node`, so both stay
@@ -1309,13 +1403,13 @@ The other convention that is load-bearing rather than stylistic, for the same
 reason as the frozen clock: written the obvious way, the assertion reports green
 or red on something other than what it claims to check.
 
-Eighteen admin and member surfaces render a **permanently mounted** `role="alert"`
+Admin, member and public surfaces render a **permanently mounted** `role="alert"`
 that a failed action populates and then takes focus, so a keyboard or
 screen-reader user is not left on a control that has just been re-enabled while
-the explanation appears elsewhere on the page. Sixteen use
-`src/components/focused-action-error.tsx`; `policy-exception-requests-panel.tsx`
-and `roster-editor.tsx` call the same failure primitive directly through
-`useActionAttention`. Since #2934 every one of them focuses and scrolls through
+the explanation appears elsewhere on the page. Nearly all use
+`src/components/focused-action-error.tsx` (grep for `<FocusedActionError` for
+the current list); `policy-exception-requests-panel.tsx` and `roster-editor.tsx`
+call the same failure primitive directly through `useActionAttention`. Since #2934 every one of them focuses and scrolls through
 `src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
 
 Assert that contract with the shared helper, never by hand:

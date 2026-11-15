@@ -82,7 +82,7 @@ vi.mock("@/lib/stripe", () => ({
   processRefund: mocks.processRefund,
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 

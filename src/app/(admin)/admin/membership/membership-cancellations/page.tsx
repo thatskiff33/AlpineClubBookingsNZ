@@ -20,14 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -1183,46 +1176,39 @@ function MembershipCancellationRequests() {
           pattern. Every approve and reject sends a member outcome email, so the
           dialog is shown for both actions; either choice completes the review
           and the choice itself is recorded in the audit log. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && submittingId === null) setNotifyDialogOpen(false);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {notifyChoice?.action === "reject"
-                ? "Email the member about this rejection?"
-                : "Email the member about this approval?"}
-            </DialogTitle>
-            <DialogDescription>
-              {notifyChoice?.action === "reject"
-                ? "The cancellation request is rejected either way. Choose whether the member receives the standard rejection email — your choice is recorded in the audit log."
-                : "The membership cancellation is approved and processed either way. Choose whether the member receives the standard approval email — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={submittingId !== null}
-              onClick={() => confirmNotify(false)}
-            >
-              {notifyChoice?.action === "reject"
+        onOpenChange={setNotifyDialogOpen}
+        submitting={submittingId !== null}
+        title={
+          notifyChoice?.action === "reject"
+            ? "Email the member about this rejection?"
+            : "Email the member about this approval?"
+        }
+        description={
+          notifyChoice?.action === "reject"
+            ? "The cancellation request is rejected either way. Choose whether the member receives the standard rejection email — your choice is recorded in the audit log."
+            : "The membership cancellation is approved and processed either way. Choose whether the member receives the standard approval email — your choice is recorded in the audit log."
+        }
+        actions={{
+          kind: "choice",
+          withoutEmail: {
+            label:
+              notifyChoice?.action === "reject"
                 ? "Reject without emailing"
-                : "Approve without emailing"}
-            </Button>
-            <Button
-              disabled={submittingId !== null}
-              onClick={() => confirmNotify(true)}
-            >
-              {notifyChoice?.action === "reject"
+                : "Approve without emailing",
+            variant: "outline",
+            onSelect: () => confirmNotify(false),
+          },
+          withEmail: {
+            label:
+              notifyChoice?.action === "reject"
                 ? "Reject and email member"
-                : "Approve and email member"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                : "Approve and email member",
+            onSelect: () => confirmNotify(true),
+          },
+        }}
+      />
       </div>
     </div>
   );

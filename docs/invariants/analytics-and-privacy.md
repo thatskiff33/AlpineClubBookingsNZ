@@ -786,8 +786,9 @@ and the writer is a person or a NAMED background actor, never an absence.
 Decided on [#2723](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/2723);
 since [#3454](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3454)
 the store holds the Xero OAuth token set. The two-factor secret and recovery
-codes (`two-factor-audit.ts`) take bullets 1, 3, 5 and 6 (no expectation; members
-act only on their own), and 2 for a job's write: `TWO_FACTOR_SYSTEM_ACTORS`.
+codes (`two-factor-audit.ts`) take bullets 1, 3, 5 and 6 (no expectation; own
+factors, bar a stepped-up Full Admin clearing another's), and 2 for a job's
+write: `TWO_FACTOR_SYSTEM_ACTORS` (`officer-factor-reset` only clears).
 
 1. **`actor` is a required argument on every mutator**, so a write with no
    attribution does not compile.

@@ -130,6 +130,7 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "account-deletion-rejected": "accountDeletionRejectedTemplate",
   "admin-password-reset": "adminPasswordResetTemplate",
   "email-change-notification": "emailChangeNotificationTemplate",
+  "officer-factor-reset": "officerFactorResetTemplate",
   "email-change-verification": "emailChangeVerificationTemplate",
   "email-verification": "emailVerificationTemplate",
   "magic-link-login": "magicLinkLoginTemplate",
@@ -176,6 +177,8 @@ export const REGISTRY_KEY_RENDERERS: Record<string, string> = {
   "admin-unrecognised-stripe-payment": "adminUnrecognisedStripePaymentTemplate",
   // admin-alerts-unrecognised-stripe-payment (#4624), template in ./admin-unrecognised-stripe-payment
   "admin-unmatched-app-stripe-payment": "adminUnmatchedAppStripePaymentTemplate",
+  // admin-alerts-stripe-dispute (#4911), template in ./admin-stripe-dispute
+  "admin-stripe-dispute": "adminStripeDisputeTemplate",
   "admin-payment-failure": "adminPaymentFailureTemplate",
   "admin-refund-request": "adminRefundRequestTemplate",
   "admin-xero-reconciliation-report": "adminXeroReconciliationReportTemplate",

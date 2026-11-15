@@ -14,7 +14,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { capacityRaceShortfallIntentId } from "@/lib/capacity-race-shortfall-task-key";
 import { cancelCardShortfallOccurrenceKey, cancelCardShortfallPart } from "@/lib/manual-refund-task-settlement-rules";
 import { isPaymentRecoveryOperationExhausted, isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { bookingCancelCardRefundRecoveryWhere, CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX, isBookingCancelCardRefundRecoveryKey } from "@/lib/payment-recovery-keys";
 import { CARD_REFUND_STILL_OWED_RECOVERY_PREFIX } from "@/lib/card-refund-still-owed-keys";
 import { cardRefundStillOwedOrigin } from "@/lib/card-refund-still-owed-origin";

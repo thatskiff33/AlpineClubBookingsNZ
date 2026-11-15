@@ -70,8 +70,7 @@ import {
 // The evidence gates and the settle window live with the comparator, so the early warning (#4220) asks the same ones.
 export { CREDIT_NOTE_MIRROR_SETTLE_MS };
 
-/** `CronJobRun.jobName` of the backstop sweep, and the `XeroSyncCursor` rows the mirror keeps. */
-export const CREDIT_NOTE_MIRROR_JOB_NAME = "xero-credit-note-outside-spend-mirror";
+/** The `XeroSyncCursor` rows the mirror keeps; its sweep's job name is in `xero-cron-jobs.ts`. */
 export const CREDIT_NOTE_MIRROR_CURSOR_RESOURCE = "CREDIT_NOTE_OUTSIDE_SPEND_MIRROR";
 const KILL_SWITCH_SCOPE = "WRITES";
 const RECHECK_SCOPE_PREFIX = "RECHECK:";

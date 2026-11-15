@@ -67,6 +67,16 @@ privacy notice to name Sentry Replay as described in [security notes](SECURITY.m
    immediately previous tag. Skipping releases means you also skip their
    post-upgrade actions. If you must catch up several releases, apply each
    release's notes in order.
+
+   The deploy script enforces this (#4978): it refuses a commit that no
+   annotated `vX.Y.Z` tag on `origin` points at, unless
+   `ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written
+   `UNTAGGED_DEPLOY_COMMIT_REASON` are set. Deploy with
+   `DEPLOY_REF=<tag>` after `git fetch origin tag <tag>`. **A fork** checks
+   tags on its own `origin`, so a fork that does not tag either tags its own
+   releases (`pnpm run release:cut` works in a fork) or sets the override on
+   every deploy. See
+   [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
 2. **Always back up the database before migrating.** A backup you have never
    restored is a hope, not a backup — see the Quarterly Backup Restore Drill in
    `docs/MAINTENANCE.md`. Take a fresh `pg_dump` immediately before every
@@ -207,6 +217,48 @@ time, untick **Enable after-stay dietary clearing**, or change the period
 needed. The page shows how many notes the next run would clear. Clubs that never
 switched on the dietary field have no notes and nothing changes for them. See
 the [retention schedule](PRIVACY_RETENTION.md#automatic-retention-and-operator-review).
+
+### One-off update of the starter FAQ's personal-data answer (#4914 follow-up)
+
+`20261218070000_summarise_starter_faq_personal_data` is a **data-only
+correction**. It adds and removes no schema, touches no hot table, and is safe
+to run in the ordinary deploy window with the previous app colour still serving.
+
+**What it fixes.** The starter FAQ's answer to *"What personal data does the
+club hold about me?"* named only name, email, phone, date of birth, bookings,
+payments and chores. The system also holds addresses, profile photos, dietary
+or allergy information, gender, occupation, title, family relationships and
+membership history. The new answer lists these in plain words, says it is a
+summary, and points to section 2 of the Privacy Policy for the full list. The
+migration replaces the FAQ page's body wherever it still holds exactly the
+previous starter text. The FAQ header has no date, so it is not changed.
+
+**What you will notice.** If your FAQ was never edited, the answer now gives
+the longer summary and links to `/privacy` and `/profile`. If an admin has
+edited the FAQ body, nothing changes: **read that answer and correct it
+yourself** so it does not tell members less than the club holds, at **Admin →
+Setup & Configuration → Site Appearance & Content → Page Content → FAQ**
+(`/admin/page-content`).
+
+**Post-upgrade action: load `/faq` and read the "Privacy & Account" answer.**
+The migration runs once. Two things can write the old text back afterwards:
+
+- an admin who had **FAQ** open in the Page Content editor *before* the
+  upgrade and presses Save *afterwards*;
+- importing a configuration bundle exported before this release (Merge or
+  Overwrite, including a disaster-recovery rebuild), which carries the page's
+  old body (#2511).
+
+Re-export your configuration bundle after upgrading, and re-check `/faq` after
+any bundle import.
+
+**The new answer sends members to section 2 of your Privacy Policy.** The
+migration guards the FAQ row only; it never reads or changes the privacy page.
+If your club edited its privacy page, or left it on the older, narrower section
+2, a member who follows the link may find a section that does not list the
+categories the answer names. Open `/privacy` and check that section 2 lists them
+(see [Correct the starter privacy policy (#4914)](#correct-the-starter-privacy-policy-4914)
+above), or reword the FAQ answer so it does not promise a full list.
 
 ### Cancelled bookings give back their promo uses; re-run the repair after cutover (#4909)
 

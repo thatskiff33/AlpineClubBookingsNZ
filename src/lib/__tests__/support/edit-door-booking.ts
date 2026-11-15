@@ -36,6 +36,8 @@ function editDoorMember(overrides: Partial<LoadedMember> = {}): LoadedMember {
     twoFactorEnrolledAt: null,
     twoFactorFailedAttempts: 0,
     twoFactorLockedUntil: null,
+    twoFactorGraceStartedAt: null,
+    factorsResetAt: null,
     emailVerified: false,
     title: null,
     firstName: "fixture",

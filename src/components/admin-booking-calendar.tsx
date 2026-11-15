@@ -20,8 +20,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { bookingStatusLabel } from "@/lib/status-colors";
-import { CHIP_TONE_CLASSES, type ChipTone } from "@/lib/chip-tones";
+import {
+  bookingStatusClass,
+  bookingStatusLabel,
+  bookingStatusSwatchClass,
+} from "@/lib/status-colors";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { getAdminCalendarBookingDayRange } from "@/lib/admin-booking-calendar-ranges";
 import { useClubTime } from "@/components/club-time-provider";
@@ -44,51 +47,21 @@ interface CalendarBooking {
   guestCount: number;
 }
 
-// Solid calendar swatches: one step-9 categorical/semantic fill per status, used
-// only where no text sits on it (legend swatches, the bars' status stripe, the
-// day dialog's dots; #4466 took the bars' names off it). #2190 P4 evicts the last two raw utilities: DRAFT's raw light-grey
-// utility becomes the theme-following `bg-muted` (a faint, de-emphasised draft
-// surface in both modes), and WAITLIST_OFFERED's raw Tailwind teal fill becomes
-// the categorical `bg-cat6-9` (#2218 — the same teal 6th scale its chip uses,
-// mode-consistent, distinct from WAITLISTED's cat1-9). The file no longer needs a
-// neutral- or teal-allowlist entry.
-export const STATUS_COLORS: Record<BookingStatus, string> = {
-  DRAFT: "bg-muted",
-  PENDING: "bg-warning-9",
-  PAYMENT_PENDING: "bg-warning-9",
-  CONFIRMED: "bg-success-9",
-  PAID: "bg-info-9",
-  COMPLETED: "bg-cat1-9",
-  CANCELLED: "bg-danger-9",
-  BUMPED: "bg-warning-9",
-  WAITLISTED: "bg-cat1-9",
-  WAITLIST_OFFERED: "bg-cat6-9",
-  AWAITING_REVIEW: "bg-cat2-9",
-};
-
-// The status filter pills and the bars carry TEXT, so they cannot sit on the step-9 fills
-// above: white on the warning-9 amber measured 2.16:1, on the success-9 green
-// 3.49:1, on DRAFT's `bg-muted` 1.19:1 (#4466; step-9 is for text-free fills,
-// see brand-color-source-contract.test.ts). A pressed pill instead takes the
-// SAME scale's chip pair (step-3 tint, step-11 text), which the theme guarantee
-// sweep holds at AA for every scale in both modes (G2b), so each pill and bar
-// still reads as its status's colour family.
-export const STATUS_CHIP_TONES: Record<BookingStatus, ChipTone> = {
-  DRAFT: "neutral",
-  PENDING: "warning",
-  PAYMENT_PENDING: "warning",
-  CONFIRMED: "success",
-  PAID: "info",
-  COMPLETED: "cat1",
-  CANCELLED: "danger",
-  BUMPED: "warning",
-  WAITLISTED: "cat1",
-  WAITLIST_OFFERED: "cat6",
-  AWAITING_REVIEW: "cat2",
-};
-
+// Colours come from the shared booking-status tones (INV-SSOT-001), so a status
+// has the same colour here as on My Bookings, the dashboards and the booking
+// editor. The admin bookings list beside this calendar renders `StatusChip`,
+// which keeps its own semantic tones and an icon (see `status-colors.ts`).
+// Anything carrying TEXT — the status filter pills and the bars — takes the
+// step-3/step-11 chip pair via `bookingStatusClass`; the step-9 fill from
+// `bookingStatusSwatchClass` is for text-free marks only (legend swatches, the
+// bars' status stripe, the day dialog's dots), because white on warning-9
+// measured 2.16:1 (#4466).
+//
+// The statuses the calendar offers as filter pills and legend entries: every
+// booking status in lifecycle order (#4923), from the one exported list, so
+// Awaiting Review has its pill, bars and legend entry. Each takes its colour
+// from the shared table in `status-colors.ts` like any other status.
 const ALL_STATUSES = BOOKING_STATUSES_IN_LIFECYCLE_ORDER;
-
 
 // CELL_HEIGHT is the MINIMUM week-row height. Rows grow past it when a busy week
 // stacks more lanes than fit (issue #2088); quiet months keep the original 80px.
@@ -458,7 +431,7 @@ export function AdminBookingCalendar() {
               onClick={() => toggleStatus(status)}
               className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors border ${
                 isOn
-                  ? `${CHIP_TONE_CLASSES[STATUS_CHIP_TONES[status] ?? "neutral"]} border-transparent`
+                  ? `${bookingStatusClass(status)} border-transparent`
                   : "bg-card text-muted-foreground border-border"
               }`}
             >
@@ -563,7 +536,7 @@ export function AdminBookingCalendar() {
                 className={`absolute rounded pointer-events-auto cursor-pointer focus-visible:ring-2 focus-visible:ring-ring hover:brightness-110 transition-all flex items-center overflow-hidden ${
                   isPastSeg
                     ? "bg-muted text-muted-foreground"
-                    : CHIP_TONE_CLASSES[STATUS_CHIP_TONES[booking.status] ?? "neutral"]
+                    : bookingStatusClass(booking.status)
                 }`}
                 style={{
                   left: `calc(${leftPct}% + 2px)`,
@@ -577,7 +550,7 @@ export function AdminBookingCalendar() {
               >
                 <span
                   aria-hidden="true"
-                  className={`absolute inset-y-0 left-0 w-1 ${STATUS_COLORS[booking.status] || "bg-muted"}`}
+                  className={`absolute inset-y-0 left-0 w-1 ${bookingStatusSwatchClass(booking.status)}`}
                 />
                 {firstVisibleRowByBooking.get(booking.id) === seg.row && (
                   <span className="text-[11px] font-medium leading-none truncate pl-2.5 pr-1.5">
@@ -658,7 +631,7 @@ export function AdminBookingCalendar() {
                 <span className="flex min-w-0 items-center gap-2">
                   <span
                     className={`inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${
-                      STATUS_COLORS[b.status] || "bg-muted"
+                      bookingStatusSwatchClass(b.status)
                     }`}
                   />
                   <span className="truncate font-medium">{b.memberName}</span>
@@ -679,7 +652,7 @@ export function AdminBookingCalendar() {
           // whole item used to be at 30% opacity, which took the label to 1.53:1
           // (#4466); the label stays at full muted ink so it can still be read.
           <div key={status} className="flex items-center gap-1.5">
-            <div aria-hidden className={`w-3.5 h-2.5 rounded-sm ${STATUS_COLORS[status]} ${enabledStatuses.has(status) ? "" : "opacity-30"}`} />
+            <div aria-hidden className={`w-3.5 h-2.5 rounded-sm ${bookingStatusSwatchClass(status)} ${enabledStatuses.has(status) ? "" : "opacity-30"}`} />
             <span className={`text-muted-foreground ${enabledStatuses.has(status) ? "" : "line-through"}`}>
               {bookingStatusLabel(status)}
             </span>

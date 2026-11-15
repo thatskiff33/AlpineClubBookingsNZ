@@ -110,9 +110,13 @@ vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   syncManagedXeroContactGroupForMember: vi.fn(),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: vi.fn(),
 }));
 vi.mock("@/lib/adult-member-hosting-review", () => ({
@@ -130,7 +134,11 @@ vi.mock("@/lib/xero-contact-create-recovery", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { syncManagedXeroContactGroupForMember } from "@/lib/xero-contact-groups";
+import { updateXeroContact } from "@/lib/xero-contacts";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import { PUT as updateMember, GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
+import { DATE_ONLY_INVALID_MESSAGE } from "@/lib/date-only-schema";
 import {
   buildAccountEditForm,
   buildAccountPayload,
@@ -179,6 +187,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
       }
 
       return operation({
+        $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
         $executeRaw: vi.fn().mockResolvedValue(1),
         member: {
           update: prisma.member.update,
@@ -258,6 +267,26 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     const res = await updateMember(makePutRequest("m1", { dateOfBirth: "15/01/1990" }), { params: Promise.resolve({ id: "m1" }) });
     expect(res.status).toBe(422);
   });
+
+  // ALP-574: each of these date-only update fields goes through
+  // `dateOnlyStringSchema`, so a non-existent day is refused at the schema —
+  // before the route even looks up the existing member row.
+  it.each(["dateOfBirth", "joinedDate", "leavingDate", "lifeMemberDate"] as const)(
+    "rejects a non-existent day for %s",
+    async (field) => {
+      mockedAuth.mockResolvedValue(adminSession);
+
+      const res = await updateMember(
+        makePutRequest("m1", { [field]: "2026-02-30" }),
+        { params: Promise.resolve({ id: "m1" }) },
+      );
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.details[field]).toEqual([DATE_ONLY_INVALID_MESSAGE]);
+      expect(prisma.member.findUnique).not.toHaveBeenCalled();
+      expect(prisma.member.update).not.toHaveBeenCalled();
+    },
+  );
 
   it("returns 422 for firstName exceeding max length", async () => {
     mockedAuth.mockResolvedValue(adminSession);
@@ -984,7 +1013,6 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   });
 
   it("calls updateXeroContact when member contact fields change and Xero is connected", async () => {
-    const { isXeroConnected, updateXeroContact } = await import("@/lib/xero");
     vi.mocked(isXeroConnected).mockResolvedValue(true);
 
     mockedAuth.mockResolvedValue(adminSession);
@@ -1006,11 +1034,6 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   });
 
   it("does not call updateXeroContact when only the member name changes", async () => {
-    const {
-      isXeroConnected,
-      syncManagedXeroContactGroupForMember,
-      updateXeroContact,
-    } = await import("@/lib/xero");
 
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1" } as any);
@@ -1028,11 +1051,6 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   });
 
   it("does not call updateXeroContact when only local-only fields change", async () => {
-    const {
-      isXeroConnected,
-      syncManagedXeroContactGroupForMember,
-      updateXeroContact,
-    } = await import("@/lib/xero");
 
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1" } as any);
@@ -1052,11 +1070,6 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   });
 
   it("does not call updateXeroContact when Xero is not connected", async () => {
-    const {
-      isXeroConnected,
-      syncManagedXeroContactGroupForMember,
-      updateXeroContact,
-    } = await import("@/lib/xero");
     vi.mocked(isXeroConnected).mockResolvedValue(false);
 
     mockedAuth.mockResolvedValue(adminSession);
@@ -1070,7 +1083,6 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   });
 
   it("syncs managed Xero contact groups when the member age tier changes", async () => {
-    const { isXeroConnected, syncManagedXeroContactGroupForMember } = await import("@/lib/xero");
     vi.mocked(isXeroConnected).mockResolvedValue(true);
 
     mockedAuth.mockResolvedValue(adminSession);
@@ -1103,7 +1115,6 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   });
 
   it("syncs managed Xero contact groups when a role change alters the role-default membership type", async () => {
-    const { isXeroConnected, syncManagedXeroContactGroupForMember } = await import("@/lib/xero");
     vi.mocked(isXeroConnected).mockResolvedValue(true);
 
     mockedAuth.mockResolvedValue(adminSession);
@@ -1131,7 +1142,6 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   });
 
   it("does not sync contact groups when a role change leaves an explicitly-assigned member's effective type unchanged", async () => {
-    const { syncManagedXeroContactGroupForMember } = await import("@/lib/xero");
 
     mockedAuth.mockResolvedValue(adminSession);
     // #2149: membership type resolved assignment-first is the sole grouping

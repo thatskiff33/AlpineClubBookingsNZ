@@ -122,6 +122,14 @@ const mocks = vi.hoisted(() => {
 
 // #3611: the cancellation's ledger lines are proved in booking-ledger-cancellation.test.ts and against PostgreSQL; here only the call is observed.
 const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.fn<(input: unknown) => Promise<void>>(async () => {}) }));
+// #4911: no capture here is disputed; the hold's own read is proved in
+// `stripe-dispute-hold.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  disputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+  paymentCaptureIntentIds: async () => [],
+}));
+
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
 
 const appliedCredit = vi.hoisted(() => ({
@@ -228,7 +236,7 @@ vi.mock("@/lib/waitlist", () => ({
   processWaitlistForDates: mocks.processWaitlistForDates,
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 
@@ -406,6 +414,7 @@ describe("cancelBooking credit refunds", () => {
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             bookingModification: { findFirst: mocks.txBookingModificationFindFirst, findMany: vi.fn(async () => []) },
             $executeRaw: mocks.txExecuteRaw,
@@ -4707,6 +4716,7 @@ describe("cancelBooking detaches the held booking-request pointer (issue #1254)"
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
@@ -4875,6 +4885,7 @@ describe("cancelBooking no-payment claim-first (issue #1311)", () => {
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
@@ -5170,6 +5181,7 @@ describe("cancelBooking requireRequestHold guard (issue #1406)", () => {
             mocks.txBookingFindUnique(args),
           );
           const mockTx = {
+            $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
             bookingEvent: { create: mocks.txBookingEventCreate },
             // #3835: the reviews settled before the cancel, frozen on its event.
             manualRefundTask: {

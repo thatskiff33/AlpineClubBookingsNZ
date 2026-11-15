@@ -31,6 +31,7 @@ import { loadPersistedClubFormatSettings } from "@/lib/club-format-settings";
 import { chargeCurrencyRefusal } from "@/lib/stripe-charge-currency";
 import { prisma } from "@/lib/prisma";
 import { cancelPaymentIntentIfCancellableWithResult, getPaymentIntent, processRefund } from "@/lib/stripe";
+import { assertCaptureNotDisputed } from "@/lib/stripe-dispute-hold";
 import { isPaymentIntentCancelConfirmed } from "@/lib/card-intent-retirement";
 import {
   findPaymentTransactionByIntentId,
@@ -55,9 +56,8 @@ import { closePrePersistedRefundRow, type DoorCloseArgs } from "@/lib/pre-persis
 import { alertPaymentRecoveryOfficers } from "@/lib/payment-recovery-alert";
 import {
   findWaitingSupplementaryInvoiceOperationForPaymentIntent,
-  // Type-only, so it adds nothing to this module's runtime import graph.
-  type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import type { XeroSupplementaryInvoiceEnqueueOutcome } from "@/lib/xero-supplementary-invoice-statuses";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
 import { followSupersededAskInvoicesSafely } from "@/lib/superseded-ask-invoice-carry";
 import { queueFoldedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
@@ -2052,6 +2052,8 @@ async function processRefundSupersededPaymentOperation(
           planAttemptKeys: plan.map((slice) => refundSliceStripeIdempotencyKey(operation.idempotencyKey, slice)),
         });
       }
+      // #4911 (`INV-PAY-154`): a disputed capture is refused before anything is reserved, as `refundPaymentTransactions` does.
+      await assertCaptureNotDisputed(operation.paymentIntentId);
       // #4516 (M4c): this row's one request is reserved under its own key, as a slice is (plan section 5).
       const journal = await resolveBookingMoneyPostingContext();
       if (obligation) {

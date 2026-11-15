@@ -15,6 +15,12 @@ import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { normalizeDateOnlyForTimeZone } from "@/lib/date-only";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
+import { BookingStatus } from "@prisma/client";
+import {
+  bookingStatusClass,
+  bookingStatusLabel,
+  bookingStatusSwatchClass,
+} from "@/lib/status-colors";
 
 // The component reads router/search params from next/navigation; provide
 // minimal stand-ins so it renders outside the App Router.
@@ -305,6 +311,102 @@ function assertBarsWithinBands(container: HTMLElement) {
     expect(top + height).toBeLessThanOrEqual(rowTop + rowHeight + 0.01);
   });
 }
+
+// ALP-572: the calendar has no colour map of its own. Every pill, bar, stripe,
+// legend swatch and day-dialog dot takes its class from the shared helpers in
+// `status-colors.ts`, so these assertions would fail if one call site fell back
+// to a literal class or a local map came back.
+//
+// The calendar offers every booking status since #4923, Awaiting Review
+// included, so this runs over the whole enum.
+const OFFERED_STATUSES = Object.values(BookingStatus);
+
+function hasEveryClass(el: Element | null | undefined, classes: string) {
+  expect(el, `element carrying "${classes}" not found`).toBeTruthy();
+  for (const c of classes.split(" ")) {
+    expect(el!.classList.contains(c), `"${c}" missing from "${el!.className}"`).toBe(true);
+  }
+}
+
+describe("AdminBookingCalendar status colours come from the shared tones (ALP-572)", () => {
+  beforeEach(() => {
+    pinClock();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    window.localStorage.clear();
+  });
+
+  it("paints every offered status's pill, bar stripe and legend swatch from the shared helpers", async () => {
+    // One one-night booking per status on its own night, so every bar renders.
+    stubCalendar({
+      bookings: OFFERED_STATUSES.map((status, i) => ({
+        id: `booking-${status}`,
+        memberName: `Member ${status}`,
+        checkIn: isoDay(2 + i * 2),
+        checkOut: isoDay(3 + i * 2),
+        status,
+        guestCount: 1,
+      })),
+      availability: {},
+    });
+    const { container } = render(<AdminBookingCalendar />);
+    await waitFor(() => {
+      expect(container.querySelectorAll("[data-booking-id]").length).toBeGreaterThan(0);
+    });
+    // CANCELLED starts hidden; switch it on so its bar renders too.
+    fireEvent.click(screen.getByRole("button", { name: bookingStatusLabel("CANCELLED") }));
+
+    // The calendar offers exactly these pills, no more and no fewer.
+    expect(container.querySelectorAll("button[aria-pressed]").length).toBe(OFFERED_STATUSES.length);
+
+    for (const status of OFFERED_STATUSES) {
+      const label = bookingStatusLabel(status);
+
+      // Filter pill (pressed): the chip pair, which carries the label text.
+      const pill = screen.getByRole("button", { name: label });
+      expect(pill.getAttribute("aria-pressed")).toBe("true");
+      hasEveryClass(pill, bookingStatusClass(status));
+
+      // Legend entry: the swatch is the label's previous sibling. It is the SPAN
+      // with this label; the pill is the BUTTON.
+      const legendLabel = screen.getAllByText(label).find((el) => el.tagName === "SPAN");
+      hasEveryClass(legendLabel?.previousElementSibling, bookingStatusSwatchClass(status));
+
+      // Bar: chip pair on the bar (it carries the name), step-9 swatch on the stripe.
+      const bar = container.querySelector(`[data-booking-id="booking-${status}"]`);
+      hasEveryClass(bar, bookingStatusClass(status));
+      hasEveryClass(bar?.firstElementChild, bookingStatusSwatchClass(status));
+    }
+  });
+
+  it("paints the day dialog's dots from the shared swatch helper", async () => {
+    // Ten concurrent BUMPED bookings: five collapse into "+5 more". BUMPED had a
+    // different colour on the calendar before ALP-572 (warning amber, now cat4).
+    stubCalendar({
+      bookings: Array.from({ length: 10 }, (_, i) => ({
+        id: `busy-${i}`,
+        memberName: `Member ${i}`,
+        checkIn: isoDay(CONCURRENT_START),
+        checkOut: isoDay(CONCURRENT_CHECKOUT),
+        status: "BUMPED",
+        guestCount: 2,
+      })),
+      availability: {},
+    });
+    const { container } = render(<AdminBookingCalendar />);
+    await waitFor(() => {
+      expect(container.querySelector("[data-more-day]")).not.toBeNull();
+    });
+    fireEvent.click(container.querySelector("[data-more-day]") as HTMLElement);
+
+    const dialog = await screen.findByRole("dialog");
+    const dot = within(dialog).getByText("Member 9").previousElementSibling;
+    hasEveryClass(dot, bookingStatusSwatchClass("BUMPED"));
+  });
+});
 
 describe("AdminBookingCalendar overflow layout (#2088)", () => {
   beforeEach(() => {

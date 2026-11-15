@@ -1,6 +1,6 @@
 import { bookingOwner } from "@/lib/booking-owner";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
-import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
+import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import {
   clubCalendarDateOf,
   dateOnlyInstantOf,

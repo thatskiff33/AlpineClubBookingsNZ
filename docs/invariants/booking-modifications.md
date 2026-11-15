@@ -120,6 +120,33 @@ second ask for the same money. Not recorded means not raised.
 - Enforced by `modification-refund-replay-reason.test.ts`, which finds every
   caller, and by the per-prefix replay rows in `payment-recovery.test.ts`.
 
+## INV-MOD-062
+
+- **An edit settles only the figures its preview showed the member** (#4924).
+  The preview (`modify-quote`) returns `quotedFigures` — new final price, price
+  difference, change fee, net charge before any unpaid-ask offset — and the
+  panel sends them back unchanged on Save. `modifyBookingBatch` compares them
+  with its own figures on the post-lock re-read, before anything leaves the
+  transaction (earlier in-transaction promo writes roll back with it); the
+  admin date shift compares them with a no-money edit at the stored price. Any
+  difference (the club day crossed a change-fee band, a rate or promotion
+  moved, the two pricing paths drifted) refuses with 409
+  `EDIT_PRICE_CHANGED` carrying the fresh figures and writes nothing: no
+  booking, payment, credit, Xero or email row, no Stripe call. The panel keeps
+  the edit open, names the old and new amounts and re-runs the preview.
+- The save's request schema is the preview's, extended with save-only answers
+  (`batchModifySchema` in `booking-modify-request.ts`), and one predicate,
+  `isDateOnlyOverrideViolation`, refuses a date-only override at both doors.
+- A save without figures saves as before. That is a temporary blue-green
+  window for panels and scripts older than #4924, not a contract. Unbound
+  today: `PUT /api/bookings/[id]/modify-dates`, the second booking of a linked
+  move (#3232) and the move-both arm, whose requests carry dates only.
+- Enforced by `booking-modify-quoted-figures.test.ts` (schema census,
+  predicate, per-figure comparison), `modify-quoted-figures.test.ts` (route),
+  `edit-booking-panel-price-changed.test.tsx` and
+  `edit-quoted-figures.realdb.test.ts`, which crosses a fee band between
+  preview and save on PostgreSQL and proves the refusal wrote nothing.
+
 ## INV-MOD-004
 
 Per-guest stay ranges must sit inside the parent booking's checkIn/checkOut

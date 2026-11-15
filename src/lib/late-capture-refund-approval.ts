@@ -10,7 +10,7 @@ import logger from "@/lib/logger";
 import { closeKeptCaptureReturn, postKeptCapture, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { lockKeptCaptureAnchor } from "@/lib/kept-late-capture-change-receipt";
 import { keptCaptureBilledCents } from "@/lib/late-capture-kept-xero";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { enqueueLateCaptureApprovalRefundRecovery } from "@/lib/payment-recovery";
 import {
   buildLateCaptureApprovalRefundRecoveryIdempotencyKey,

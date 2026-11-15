@@ -315,11 +315,9 @@ vi.mock("@/lib/stripe", () => ({
     return { created: 1781053200, latest_charge: { created: 1781053200 } };
   },
 }));
-vi.mock("@/lib/xero-supplementary-invoice-late-capture", async (importOriginal) => ({
-  // The REAL retired codes the keep's evidence reads (#4324).
-  RETIRED_CODES_ANSWERING_CAPTURE: (
-    (await importOriginal()) as typeof import("@/lib/xero-supplementary-invoice-late-capture")
-  ).RETIRED_CODES_ANSWERING_CAPTURE,
+// The keep's evidence reads the REAL retired codes (#4324), from
+// `xero-supplementary-invoice-capture-rules`, which is not mocked.
+vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
   // The approval task decides (`decideLateCapture`'s task arm), as every late capture here has one.
   lateCaptureRefundState: async ({ paymentIntentId }: { paymentIntentId: string }) => {
     const task = h.table("manualRefundTask").find((r) => r.lateCaptureApprovalIntentId === paymentIntentId);
@@ -404,7 +402,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
 import type { ClubTimeZone } from "@/lib/club-time";
-import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
+import { TEST_XERO_CLAIMED_AT, xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
 const ZONE = "Pacific/Auckland" as ClubTimeZone;
 const CAPTURED_AT = new Date("2026-06-10T01:00:00.000Z"); // 10 Jun at the club
@@ -620,7 +618,10 @@ async function runOutbox() {
   for (const row of h.table("xeroSyncOperation").filter(
     (r) => r.queueType === "ADDITIONAL_CAPTURE_RECEIPT" && r.status === "PENDING",
   )) {
+    // As the real outbox's claim: RUNNING with this claim's `startedAt`, which
+    // the receipt's guarded plan store (#4434, `INV-INT-029`) matches on.
     row.status = "RUNNING";
+    row.startedAt = TEST_XERO_CLAIMED_AT;
     await recordAdditionalCaptureReceipt({ syncOperation: xeroClaim(row.id) }, receiptProviders).catch(() => undefined);
   }
   for (const note of h.table("xeroSyncOperation").filter(

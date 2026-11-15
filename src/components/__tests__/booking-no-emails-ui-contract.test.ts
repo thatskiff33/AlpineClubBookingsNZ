@@ -182,6 +182,40 @@ function guardTexts(ast: ts.SourceFile, node: ts.Node): string[] {
   return out;
 }
 
+/**
+ * Whether `node` only renders while the "No emails" switch is OFF: it sits in
+ * the `whenFalse` of `noEmails ? … : …` or the `whenTrue` of `!noEmails ? … : …`,
+ * or on the right of `!noEmails && …`. Unlike `guardTexts`, this reads which
+ * branch of a `? :` the node is in, so `!noEmails ? <silenced> : <offer>`
+ * cannot pass for a guard. `NotifyChoiceDialog` callers (#4966) take the
+ * ternary shape — `noEmails ? { kind: "single" } : { kind: "choice" }` — so the
+ * "…and email member" label is gated by the branch it sits in.
+ */
+function onlyWhileSwitchOff(ast: ts.SourceFile, node: ts.Node): boolean {
+  const namesSwitch = (text: string) => /noEmails/i.test(text) && !/\|\||&&/.test(text);
+  let cur: ts.Node = node;
+  while (cur.parent) {
+    const parent = cur.parent;
+    if (ts.isConditionalExpression(parent) && parent.condition !== cur) {
+      const condition = parent.condition.getText(ast).trim();
+      if (namesSwitch(condition)) {
+        const negated = condition.startsWith("!");
+        if (cur === (negated ? parent.whenTrue : parent.whenFalse)) return true;
+      }
+    }
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+      parent.right === cur
+    ) {
+      const left = parent.left.getText(ast).trim();
+      if (left.startsWith("!") && namesSwitch(left)) return true;
+    }
+    cur = parent;
+  }
+  return false;
+}
+
 function jsxTagsNamed(ast: ts.SourceFile, name: string): JsxTag[] {
   const out: JsxTag[] = [];
   eachNode(ast, (node) => {
@@ -566,10 +600,7 @@ describe("No emails honesty rule (#2259)", () => {
       }
 
       for (const node of affirmatives) {
-        const guarded = guardTexts(ast, node).some(
-          (guard) => guard.trimStart().startsWith("!") && /noEmails/i.test(guard),
-        );
-        if (!guarded) {
+        if (!onlyWhileSwitchOff(ast, node)) {
           offenders.push(
             `${rel}:${lineOf(ast, node)} offers "…and email member" with no negated noEmails guard`,
           );
@@ -718,19 +749,42 @@ describe("No emails honesty rule (#2259)", () => {
         const text = silencedBranch.getText(ast).trim();
         // Only conditionals that pick a notify value are in scope; the copy
         // ternaries (labels, titles) are strings and are ignored.
-        if (!/^(true|false|undefined)$/.test(text)) return;
-        conditionals += 1;
-        if (text !== "undefined") {
-          offenders.push(
-            `${rel}:${lineOf(ast, node)} sends notifyMember=${text} on the ` +
-              `silenced path — the route then skips the send and nothing is recorded`,
-          );
+        if (/^(true|false|undefined)$/.test(text)) {
+          conditionals += 1;
+          if (text !== "undefined") {
+            offenders.push(
+              `${rel}:${lineOf(ast, node)} sends notifyMember=${text} on the ` +
+                `silenced path — the route then skips the send and nothing is recorded`,
+            );
+          }
+          return;
         }
+        // #4966: a `NotifyChoiceDialog` caller picks the value inside the
+        // silenced branch's `{ kind: "single" }` action instead, as a literal
+        // argument to its dispatch (`performCancel(undefined)`).
+        if (!/\bkind:\s*"single"/.test(text)) return;
+        eachNode(silencedBranch, (inner) => {
+          if (!ts.isCallExpression(inner)) return;
+          // `setNotifyDialogOpen(false)` closes the dialog; it picks nothing.
+          if (/^set[A-Z]/.test(inner.expression.getText(ast))) return;
+          for (const arg of inner.arguments) {
+            const value = arg.getText(ast).trim();
+            if (!/^(true|false|undefined)$/.test(value)) continue;
+            conditionals += 1;
+            if (value !== "undefined") {
+              offenders.push(
+                `${rel}:${lineOf(ast, arg)} sends notifyMember=${value} from ` +
+                  `the silenced single action — the route then skips the send ` +
+                  `and nothing is recorded`,
+              );
+            }
+          }
+        });
       });
 
-      // Two of the six dispatch through a named `confirmSilenced()` helper
-      // instead of an inline ternary, so a zero count is only a defect when
-      // neither shape is present.
+      // Some prompts dispatch through a named `confirmSilenced()` helper
+      // instead of a literal, so a zero count is only a defect when neither
+      // shape is present.
       if (conditionals === 0 && !ast.getFullText().includes("confirmSilenced")) {
         offenders.push(
           `${rel} has neither a silenced-path ternary nor a confirmSilenced() ` +

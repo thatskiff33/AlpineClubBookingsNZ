@@ -29,6 +29,10 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
     "defaultSubject": "Email change requested — {{CLUB_BOOKINGS_NAME}}",
     "defaultBody": "Email Change Requested\n\nSomeone requested to change the email address on your {{CLUB_NAME}} account to {{newEmail}}.\n\nIf this wasn't you, please contact the club immediately.\n\nIf you made this request, you can safely ignore this email. The change will only take effect after verification."
   },
+  "officer-factor-reset": {
+    "defaultSubject": "Your authenticator was reset — {{CLUB_BOOKINGS_NAME}}",
+    "defaultBody": "Your authenticator was reset\n\nHi {{firstName}},\n\nAn administrator reset the authenticator app and passkeys on your {{CLUB_NAME}} account.\n\nYour open sessions have ended. The next time you sign in, you will be asked to set up an authenticator app or a passkey. This does not start a new grace period.\n\nIf you did not expect this, contact the club."
+  },
   "magic-link-login": {
     "defaultSubject": "Your {{CLUB_NAME}} sign-in link",
     "defaultBody": "Sign In to {{CLUB_NAME}}\n\nYou asked to sign in to your {{CLUB_NAME}} booking account with an email link.\n\nClick the button below to sign in. This link can be used once and expires shortly.\n\nSign In: {{BASE_URL}}/login/magic?token={{token}}\n\nIf you didn't request this, you can safely ignore this email — your account stays secure and you can still sign in with your password."
@@ -314,6 +318,11 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   "admin-unmatched-app-stripe-payment": {
     "defaultSubject": "Booking card payment the app could not match - check it: {{amount}}",
     "defaultBody": "Booking Card Payment the App Could Not Match\n\nA card payment the app started for a booking went through in Stripe, but the app has no matching payment on that booking, so it did not mark the booking paid and has sent nothing to Xero.\n\n{{unmatchedAppPaymentNote}}\n\nAmount: {{amount}}\nReceived: {{receivedAt}}\nBooking: {{bookingId}}\nFound in the app: {{ledgerMatch}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"
+  },
+  // #4911 (`INV-PAY-154`): a cardholder's dispute (chargeback), when it opens and when it closes.
+  "admin-stripe-dispute": {
+    "defaultSubject": "{{disputeSubjectLabel}}: {{amount}}",
+    "defaultBody": "Card Payment Dispute\n\n{{disputeSubjectLabel}}.\n\n{{disputeNextStep}}\n\n{{disputeHoldNote}}\n\nStatus: {{outcome}}\nAmount: {{amount}}\nReason: {{reason}}\nOpened: {{openedAt}}\nBooking: {{bookingId}}\nBooked by: {{bookingOwner}}\nDispute: {{disputeId}}\nStripe payment: {{paymentIntentId}}\nCharge: {{chargeId}}\n\nOpen in Stripe: {{stripeDashboardUrl}}"
   },
   "admin-late-capture-held": {
     "defaultSubject": "Late payment held for approval: {{memberName}}",
