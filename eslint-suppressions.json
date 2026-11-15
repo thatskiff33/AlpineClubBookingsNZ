@@ -494,11 +494,13 @@
     }
   },
   "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx": {
-    "accessibility/minimum-text-size": {
-      "count": 2
-    },
     "design-system/no-raw-button": {
       "count": 1
+    }
+  },
+  "src/app/(admin)/admin/finance/xero/_components/raw-payloads.tsx": {
+    "accessibility/minimum-text-size": {
+      "count": 2
     }
   },
   "src/app/(admin)/admin/finance/xero/_components/setup-panels.tsx": {
