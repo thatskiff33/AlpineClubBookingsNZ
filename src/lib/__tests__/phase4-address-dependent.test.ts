@@ -97,12 +97,18 @@ vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   syncManagedXeroContactGroupForMember: vi.fn(),
+  getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
-  getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
+}));
+vi.mock("@/lib/xero-entrance-fee-invoices", () => ({
   createXeroEntranceFeeInvoice: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -133,10 +139,7 @@ vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
   rateLimiters: { register: {} },
 }));
-vi.mock("bcryptjs", () => ({
-  default: { hash: vi.fn().mockResolvedValue("hashedpw") },
-  hash: vi.fn().mockResolvedValue("hashedpw"),
-}));
+
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: vi.fn().mockResolvedValue(null),
   requireAdmin: vi.fn().mockResolvedValue({

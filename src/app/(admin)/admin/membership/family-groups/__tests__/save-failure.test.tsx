@@ -119,7 +119,10 @@ describe("Family groups: a refused save says why", () => {
     );
     await createGroup();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to save");
+    // The page also keeps main's list-failure region (an empty role="alert")
+    // permanently mounted, so assert the message itself sits in an alert.
+    const message = await screen.findByText("Failed to save");
+    expect(message.closest('[role="alert"]')).toHaveTextContent("Failed to save");
   });
 
   it("shows the fallback when the request never gets an answer", async () => {

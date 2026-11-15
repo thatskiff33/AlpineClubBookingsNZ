@@ -159,7 +159,7 @@ vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: mocks.notifyXero
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() } }));
 
 import { POST as resolveOperation } from "@/app/api/admin/xero/operations/[id]/resolve/route";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { refundNoteResolveShape, resolveCreditNotePrompt, type RefundNoteResolveRow } from "@/lib/xero-resolve-refund-note";
 import {
   RESOLVE_NOTE_AMOUNT_UNREADABLE_MESSAGE,
