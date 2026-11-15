@@ -3316,10 +3316,13 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      notes". The documentation hub links the index, not a version, so it needs
      no edit.
 
-   The dry run lists each of these. Then, before merging the release-prep pull
-   request, read the new upgrade section and drop any step that no longer
-   applies, and write the notes page, deleting the marker, the stub note and
-   the placeholder.
+   The dry run lists each of these. The roll files only what sits under
+   `## Unreleased`: an upgrade step written anywhere else, such as in a `## `
+   section above `## Principles`, is left where it is, so move any such step
+   under `## Unreleased` in a pull request before you prepare. Then, before
+   merging the release-prep pull request, read the new upgrade section and
+   drop any step that no longer applies, and write the notes page, deleting
+   the marker, the stub note and the placeholder.
 2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
