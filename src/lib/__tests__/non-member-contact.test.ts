@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Real bcrypt is fine (one-off create); keep everything else mocked.
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {

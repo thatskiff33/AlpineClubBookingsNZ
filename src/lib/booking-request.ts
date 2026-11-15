@@ -14,10 +14,8 @@
  *   - only SHA-256 token hashes are stored (issueActionToken)
  *   - external calls (email) run after the transaction commits
  */
-import { randomBytes } from "crypto";
 import { DEFAULT_BOOKING_REQUEST_SETTINGS } from "@/config/club-settings-defaults";
-import { hash } from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import {
   AgeTier,
   BookingEventType,
@@ -109,12 +107,11 @@ import { nameField } from "@/lib/zod-helpers";
 import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import { DAY_MS, resolveRequestBookingHoldUntil } from "@/lib/booking-request-hold";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 /** Privacy Act 2020 retention: purge declined and never-verified requests. */
 const BOOKING_REQUEST_RETENTION_DAYS = 90;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Booking-request statuses an admin may decline (#1423). Matches the panel's
@@ -1646,22 +1643,6 @@ export function splitPriceAcrossGuests(totalCents: number, guestCount: number): 
 }
 
 /**
- * Resolve when the booking's non-member hold expires. Member-priority
- * bumping applies until the requester pays. Late approvals still get at
- * least 48 hours to pay, but never beyond check-in.
- */
-export function resolveRequestBookingHoldUntil(
-  checkIn: Date,
-  holdDays: number,
-  now: Date = new Date()
-): Date {
-  const standardHold = new Date(checkIn.getTime() - holdDays * DAY_MS);
-  const minimumHold = new Date(now.getTime() + 2 * DAY_MS);
-  const hold = standardHold > minimumHold ? standardHold : minimumHold;
-  return hold > checkIn ? checkIn : hold;
-}
-
-/**
  * Swap a held booking's guest rows to the accepted/approved guest list while
  * PRESERVING each row's identity (issue #1254). The held booking was created by
  * holdBookingRequestSlots with exactly this guest list in this order, so we
@@ -2130,9 +2111,9 @@ export async function approveBookingRequest(input: {
   const linkedMembers = linkedGuestMemberMap(request.linkedGuestMembers);
   const priceCents = request.priceCents;
 
-  // Non-login members never authenticate; store a random bcrypt hash so the
+  // Non-login members never authenticate; store the precomputed unusable bcrypt hash so the
   // row satisfies the schema without any usable credential.
-  const placeholderPasswordHash = await hash(randomBytes(32).toString("hex"), PASSWORD_BCRYPT_COST);
+  const placeholderPasswordHash = UNUSABLE_PLACEHOLDER_PASSWORD_HASH;
   const holdDays = await getNonMemberHoldDays(request.checkIn, approvalLodgeId);
   const reviewedAt = new Date();
   const nonMemberHoldUntil = resolveRequestBookingHoldUntil(
