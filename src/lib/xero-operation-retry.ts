@@ -228,7 +228,8 @@ function groupSettlementInvoiceRequeuePayload(
  * already raised and records only a missing payment. A voided invoice is
  * completed and not raised again. FAILED or PARTIAL; null for any other row.
  * This must run before the generic invoice repair, which would send it as a
- * booking invoice.
+ * booking invoice. The invoice it sent is kept: a replay's export manifest
+ * (#4525, M13) reads those lines, never rebuilt ones, and a send overwrites them.
  */
 function cardRefundReversalInvoiceRequeuePayload(
   operation: RetryableOperation,
@@ -242,6 +243,7 @@ function cardRefundReversalInvoiceRequeuePayload(
     return null;
   }
   const queued = readQueuedOutboxPayload(operation.requestPayload);
+  const sent = asArray(asRecord(operation.requestPayload)?.invoices);
   return queued?.queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE
     ? {
         queueType: queued.queueType,
@@ -250,6 +252,7 @@ function cardRefundReversalInvoiceRequeuePayload(
         closeTaskId: queued.closeTaskId,
         amountCents: queued.amountCents,
         closedOn: queued.closedOn,
+        ...(sent.length > 0 ? { invoices: sent } : {}),
       }
     : null;
 }

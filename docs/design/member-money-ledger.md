@@ -581,7 +581,7 @@ already settled records nothing.
 `createXeroCardRefundReversalInvoice` already sends at a paid-another-way close
 (`INV-PAY-151`), after completing its row, under its key
 (`cardRefundReversalInvoiceKey`) with the Xero invoice as the provider object;
-a replay hashes the stored request's lines. The close's record names the card
+a replay hashes the stored request's lines, which a retry keeps. The close's record names the card
 refund row it closed (a still-owed rest, the row it was first owed on), that row
 the one refund Stripe failed later, and that refund's R12 its R13: the
 `reversal:<journalId>` batch's Stripe-clearing debit, covered whole. An invoice
