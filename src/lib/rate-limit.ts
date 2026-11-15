@@ -464,10 +464,6 @@ export const rateLimiters = {
   dataExport: { id: "data-export", limit: 5, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   /** Full Admin subject access report (#4915): 20 per officer per day */
   subjectAccessReport: { id: "subject-access-report", limit: 20, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
-  /** Booking invoice PDF download (#5066): 10 per member per hour — every download is a live Xero read, so the club's Xero minute and daily limits are the budget being protected */
-  bookingInvoiceDownload: { id: "booking-invoice-download", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
-  /** The same download per booking (#5066): 20 per hour across every viewer, so several officers on one booking cannot multiply the Xero reads */
-  bookingInvoiceDownloadPerBooking: { id: "booking-invoice-download-booking", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Account deletion request: 3 per day */
   deletionRequest: { id: "deletion-request", limit: 3, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
   /** Membership cancellation request: 3 per day */

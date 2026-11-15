@@ -30,25 +30,6 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveBookingInvoiceOffer } from "./booking-invoice-download";
 
 /**
- * The edit panel's payload plus the booking's invoice offer (#5066), which rides
- * on it so the page hands the editor one object. The offer is the same answer
- * `GET /api/bookings/[id]/invoice` serves; the module flags are the render's
- * memoised read (`loadEffectiveModuleFlags` is `cache()`d), so this costs no
- * second settings query.
- */
-export async function buildBookingDetailEditorData(
-  input: Parameters<typeof buildBookingDetailEditorPayload>[0],
-): Promise<BookingEditorData> {
-  const [editorData, invoiceOffer] = await Promise.all([
-    buildBookingDetailEditorPayload(input),
-    loadEffectiveModuleFlags().then((modules) =>
-      resolveBookingInvoiceOffer({ booking: input.booking, viewer: input.viewer, modules }),
-    ),
-  ]);
-  return invoiceOffer.kind === "NONE" ? editorData : { ...editorData, invoiceOffer };
-}
-
-/**
  * WHAT THE EDIT PANEL IS HANDED (#2958): the `BookingEditorData` payload — the
  * booking, its guests with their consent badges, the credit election card's
  * figures, the member-guest finder's answer, the admin-only other-lodge
@@ -59,7 +40,7 @@ export async function buildBookingDetailEditorData(
  *
  * Moved verbatim from `page.tsx`, comments included.
  */
-async function buildBookingDetailEditorPayload({
+export async function buildBookingDetailEditorData({
   session,
   booking,
   club,
@@ -366,7 +347,22 @@ async function buildBookingDetailEditorPayload({
     // #2266: promo lodge restrictions validate against THIS booking's lodge.
     lodgeId: booking.lodgeId,
   };
-  return editorData;
+  return withBookingInvoiceOffer(editorData, { booking, viewer });
+}
+
+/**
+ * #5066: the booking's invoice offer rides the edit panel's payload, so the page
+ * hands the editor one object. It is the same answer
+ * `GET /api/bookings/[id]/invoice` serves, added as a conditional spread (absent
+ * when nothing is offered, on `noEmails`' reasoning above). The module flags are
+ * the render's memoised read (`loadEffectiveModuleFlags` is `cache()`d).
+ */
+async function withBookingInvoiceOffer(
+  editorData: BookingEditorData,
+  input: Pick<Parameters<typeof resolveBookingInvoiceOffer>[0], "booking" | "viewer">,
+): Promise<BookingEditorData> {
+  const invoiceOffer = await resolveBookingInvoiceOffer({ ...input, modules: await loadEffectiveModuleFlags() });
+  return invoiceOffer.kind === "NONE" ? editorData : { ...editorData, invoiceOffer };
 }
 
 type DetailPromoCode = {

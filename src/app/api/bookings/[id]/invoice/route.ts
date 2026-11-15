@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { prepareBookingInvoiceDownload } from "@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download";
 import { auth } from "@/lib/auth";
-import { checkRateLimit, getClientIp, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
+import { BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT, BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT } from "@/lib/booking-invoice-rate-limits";
+import { checkRateLimit, getClientIp, rateLimitedResponse } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
 /**
@@ -30,9 +31,9 @@ export async function GET(
   // Every download is a live Xero read: a per-member and a per-booking budget
   // keep one member, or several officers on one booking, from spending the
   // club's Xero minute and daily limits.
-  const memberLimit = await checkRateLimit(rateLimiters.bookingInvoiceDownload, session.user.id);
+  const memberLimit = await checkRateLimit(BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT, session.user.id);
   if (!memberLimit.success) return rateLimitedResponse(memberLimit);
-  const bookingLimit = await checkRateLimit(rateLimiters.bookingInvoiceDownloadPerBooking, id);
+  const bookingLimit = await checkRateLimit(BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT, id);
   if (!bookingLimit.success) return rateLimitedResponse(bookingLimit);
 
   const download = await prepareBookingInvoiceDownload(id, session, {
