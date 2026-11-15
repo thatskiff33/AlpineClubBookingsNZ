@@ -233,6 +233,7 @@ describe("featureFlagsSchema", () => {
         memberNotices: true,
         eventsCalendar: true,
         skifieldConditions: true,
+        skifieldWhakapapa: true,
         twoFactor: false,
         magicLink: false,
         googleLogin: false,
@@ -268,6 +269,7 @@ describe("featureFlagsSchema", () => {
       hutLeaders: true,
       communications: true,
       skifieldConditions: true,
+      skifieldWhakapapa: true,
       twoFactor: false,
       analytics: false,
       mystery: true,
@@ -293,6 +295,7 @@ describe("featureFlagsSchema", () => {
       hutLeaders: true,
       communications: true,
       skifieldConditions: true,
+      skifieldWhakapapa: true,
       twoFactor: false,
       analytics: "false",
     });
