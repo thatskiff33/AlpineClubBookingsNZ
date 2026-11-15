@@ -737,8 +737,8 @@ export async function POST(request: NextRequest) {
           // arithmetic.
           chargedAmountCents: existingIntent.amount,
           ...splitPaymentMeta,
-          // #2265 — null unless this request consumed a stored election. #2266
-          // renders it so a clamped election is never applied in silence.
+          // #2265 — null unless this request consumed a stored election. The
+          // pay wrapper (#4943) discloses the applied amount and any shortfall.
           creditElection,
         });
       }

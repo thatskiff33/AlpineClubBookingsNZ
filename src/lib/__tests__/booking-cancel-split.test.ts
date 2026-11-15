@@ -75,7 +75,7 @@ vi.mock("@/lib/waitlist", () => ({ processWaitlistForDates: mocks.processWaitlis
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: mocks.recordBookingEvent,
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: vi.fn().mockResolvedValue(false) }));
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: vi.fn().mockResolvedValue(false) }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroAccountCreditNoteOperation: vi.fn(),
   enqueueXeroModificationCreditNoteOperation: vi.fn(),
