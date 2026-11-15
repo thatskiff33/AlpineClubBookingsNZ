@@ -7069,23 +7069,31 @@ Stripe call:
   own `processingStartedAt` - the reaper's fence. A lost fence moves nothing; the
   next attempt reads the same refusal back and moves it then.
 - **A pre-persisted door's re-plan** (`keepRefusedPrePersistedRefundOwed`:
-  the cancellation, and since #4103 the edit financial review, the
-  late-capture approval, the duplicate capture and the capacity race) writes
+  the cancellation, since #4103 the edit financial review, the
+  late-capture approval, the duplicate capture and the capacity race, and
+  since #4992 a booking edit's own-card refund) writes
   only while its row is `PENDING` with `attempts` 0, so it never races a worker
   that has claimed the row; that worker reads the refusal and moves it itself.
   It reads the row's plan and writes compare-and-set on it, skipping a slice
   already moved, so two deliveries of one refusal move it, and alert, once.
-- **The edit refund door** (`executeBookingModificationRefund`, #3984,
-  `INV-PAY-146`) freezes its plan before Stripe. Since #4872 that freeze takes
-  the Payment row (`lockPaymentForRefundedTotal`), reads the superseded-capture
-  hold-back, and commits before Stripe is asked. No provider call runs inside
-  it. A plan-less card-refund recovery derives its missing plan the same way
-  after provider preflight (`processBookingModificationRefundOperation`). A
-  manual hand-back reads the hold-back after its claim and after any credit
+- **The edit refund door** (`executeBookingModificationRefund`, #3984, #4992,
+  `INV-PAY-146`) freezes its plan and writes its row inside the edit
+  transaction (`reserveModificationRefundDebts`), under the locks each door
+  already holds - global `pg_advisory_xact_lock(1)` and the lodge capacity key
+  - so no new key or order. Since #4872 the freeze takes the Payment row
+  (`lockPaymentForRefundedTotal`) and reads the superseded-capture hold-back
+  there. R05 usually took that row already; where it posted nothing (no
+  booking journal or charge yet) this is the edit's first take of it, the
+  documented booking row -> Payment edge under `lock(1)`, which every edit
+  door holds. No provider call runs inside it. A
+  plan-less card-refund recovery derives its missing plan the same way after
+  provider preflight (`processBookingModificationRefundOperation`). A manual
+  hand-back reads the hold-back after its claim and after any credit
   give-back, so a member-ledger lock still comes before the Payment row.
-  After success or throw the edit queues the whole read plan if any slice is unmade:
-  made slices marked, refusals moved, unanswered slices on their original key.
-  The lockless `charge.refunded` recorder may update the ledger before recovery;
+  After commit the edit sends that plan, closes the row on that plan once
+  every slice is made, and otherwise leaves it owed: refusals moved, made
+  slices marked, unanswered slices on their original key. The
+  lockless `charge.refunded` recorder may update the ledger before recovery;
   the worker still sends the original slices and keys. Recording keeps the
   canonical Payment row lock; no advisory key, lock order, guarded transition
   or outbox participant changes (`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`).
@@ -7096,8 +7104,9 @@ Stripe call:
   plan it read (#4103).
 - **A pre-persisted door's happy-path close** (`closePrePersistedRefundRow`,
   `pre-persisted-refund-close.ts`, #4144) is a compare-and-set on the plan the
-  door sent. The cancellation, the edit financial review, the duplicate
-  capture and the capacity race close a row that is open and still on that
+  door sent. The cancellation, a booking edit's own-card refund (#4992), the
+  edit financial review, the duplicate capture and the capacity race close a
+  row that is open and still on that
   plan (`sentPlanRowWhere`). A row the runner holds on the same plan is
   closed: its replay of the same keys is answered with the door's refunds, and
   only the close that moved the row writes a record - the duplicate capture's
