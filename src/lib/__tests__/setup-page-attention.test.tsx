@@ -71,6 +71,14 @@ function mount() {
     />,
   );
 }
+// Mark Setup Complete is in the header from the first render, disabled until the
+// first load lands, so finding it is not proof it can be clicked. A click on a
+// disabled button never reaches its handler (#5198); wait until it can.
+async function findEnabledButton(name: string) {
+  const button = await screen.findByRole("button", { name });
+  await waitFor(() => expect(button).toBeEnabled());
+  return button;
+}
 beforeEach(() => {
   scroll = installScrollIntoViewSpy();
   fetchMock.mockReset().mockResolvedValue(response(setup));
@@ -111,7 +119,7 @@ describe("Setup action attention", () => {
       );
     }
     mount();
-    const button = await screen.findByRole("button", { name });
+    const button = await findEnabledButton(name);
     const alert = document.getElementById("setup-error");
     expect(alert).toBeEmptyDOMElement();
     expect(alert).toHaveAttribute("role", "alert");
@@ -174,9 +182,7 @@ describe("Setup action attention", () => {
       </div>,
     );
     Object.assign(container.firstElementChild!, { scrollTo });
-    const finish = await screen.findByRole("button", {
-      name: "Mark Setup Complete",
-    });
+    const finish = await findEnabledButton("Mark Setup Complete");
     const status = finishStatus();
     expect(status).toBeEmptyDOMElement();
     fetchMock
@@ -205,9 +211,7 @@ describe("Setup action attention", () => {
 
   it("drops the finish notice when a refresh finds setup reopened", async () => {
     mount();
-    const finish = await screen.findByRole("button", {
-      name: "Mark Setup Complete",
-    });
+    const finish = await findEnabledButton("Mark Setup Complete");
     const completed = response({
       ...setup,
       progress: { ...setup.progress, completedAt: "2026-07-01T00:00:00.000Z" },
