@@ -1020,8 +1020,9 @@ full order, its refusals and its recovery messages are in
    the branch and merge it as the release-prep pull request.
 2. `pnpm run release:cut publish --execute` tags the merged commit, pushes the
    tag and publishes the GitHub release. It refuses while the upgrade guide
-   lacks the version's section or still has steps under `## Unreleased`, or
-   while the notes page is missing or unfinished.
+   lacks the version's section, still has steps under `## Unreleased` or has
+   a step in a section an earlier release already shipped, and while the notes
+   page is missing or unfinished.
 3. Deploy that tag from the host's source checkout:
 
    ```bash
