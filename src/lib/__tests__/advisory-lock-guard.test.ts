@@ -1545,9 +1545,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // #4519 (Ledger M7): the subscription receipt, mark-unpaid and credit doors
   // lock the MembershipSubscriptionCharge row before reading its obligation, so
   // member-level applications to it serialise (prepareMemberLevelApplications'
-  // precondition). Taken last: after lock(1) where the credit holds it, and
-  // after the season or manual-payment fence of its caller; no counterpart
-  // takes a lock after it. See docs/CONCURRENCY_AND_LOCKING.md -> the M7 note.
+  // precondition). After lock(1) where the credit holds it; a manual
+  // mark-paid or mark-unpaid takes it before its subscription fence, the
+  // charge-then-subscription order of close-as-paid and the Xero invoice
+  // claim. See docs/CONCURRENCY_AND_LOCKING.md -> the M7 note.
   "src/lib/member-money/internal/subscription-posting.ts": 1,
   // #4823: member merge re-points `Payment.manuallyMarkedPaidByMemberId` with one
   // sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT` over every row

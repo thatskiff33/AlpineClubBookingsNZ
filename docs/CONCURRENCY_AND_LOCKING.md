@@ -6665,7 +6665,10 @@ own short transaction after the Xero credit note exists
 (`postCancellationCreditToJournal#1`, `INV-LOCK-001`). The receipt, mark-unpaid
 and credit doors then lock the `MembershipSubscriptionCharge` row `FOR UPDATE`
 before reading its obligation. That is the precondition of the member-level
-application path. The row lock is always the last lock its transaction takes.
+application path. A manual mark-paid or mark-unpaid calls its door before the
+subscription's status fence, so it takes the charge row before the subscription
+row, the order close-as-already-paid, the Xero invoice claim and the void
+release already use.
 The R19 joining fee posts in its own short transaction after the outbox insert,
 which stays on the global client so `startXeroSyncOperation`'s lost-race
 recovery still runs. `member-money-subscriptions.realdb.test.ts` runs the

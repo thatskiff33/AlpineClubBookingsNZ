@@ -68,9 +68,12 @@ import {
 
 function wireTransaction(
   subscriptionRow: Record<string, unknown> | null,
-  options?: { fencedCount?: number },
+  options?: { fencedCount?: number; coveringChargeIds?: string[] },
 ) {
   const tx = {
+    membershipSubscriptionChargeCoverage: {
+      findMany: vi.fn().mockResolvedValue((options?.coveringChargeIds ?? []).map((chargeId) => ({ chargeId }))),
+    },
     memberSubscription: {
       findUnique: vi.fn().mockResolvedValue(subscriptionRow),
       updateMany: vi.fn().mockResolvedValue({ count: options?.fencedCount ?? 1 }),
@@ -342,6 +345,8 @@ describe("manual mark-paid member notification (#2260)", () => {
     // #4519: R08 for the frozen charge amount, inside the mark-paid's transaction.
     expect(journalMock.postSubscriptionManualReceipt).toHaveBeenCalledWith(tx, { journal: "context" },
       expect.objectContaining({ chargeId: "charge-1", amountCents: 12345, actorMemberId: "admin-1" }));
+    expect(journalMock.postSubscriptionManualReceipt.mock.invocationCallOrder[0])
+      .toBeLessThan(tx.memberSubscription.updateMany.mock.invocationCallOrder[0]!);
     const sent = vi.mocked(sendMembershipPaymentRecordedEmail).mock.calls[0][0];
     expect(sent).toMatchObject({
       email: "ada@example.org",
@@ -399,12 +404,20 @@ describe("manual mark-paid member notification (#2260)", () => {
     },
   );
 
-  it("reverses the journal receipt of the mark-paid it undoes, on the active coverage's charge (#4519)", async () => {
+  it("reverses the journal receipt of the mark-paid it undoes, on every charge that ever covered it (#4519)", async () => {
     const markedAt = new Date("2026-05-01T00:00:00.000Z");
-    const tx = wireTransaction(paidRow({ status: "PAID", manuallyMarkedPaidAt: markedAt }));
+    // A close-as-already-paid released "charge-0"'s coverage after the mark-paid; its receipt is still reversed.
+    const tx = wireTransaction(paidRow({ status: "PAID", manuallyMarkedPaidAt: markedAt, chargeCoverage: [] }),
+      { coveringChargeIds: ["charge-0", "charge-1"] });
     await applyManualSubscriptionPayment({ subscriptionId: "sub-1", direction: "unpaid", actingMemberId: "admin-1" });
-    expect(journalMock.reverseSubscriptionManualReceipt).toHaveBeenCalledWith(tx, { journal: "context" },
-      { chargeId: "charge-1", paidAt: markedAt, actorMemberId: "admin-1" });
+    expect(tx.membershipSubscriptionChargeCoverage.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { subscriptionId: "sub-1" } }));
+    for (const chargeId of ["charge-0", "charge-1"]) {
+      expect(journalMock.reverseSubscriptionManualReceipt).toHaveBeenCalledWith(tx, { journal: "context" },
+        { chargeId, paidAt: markedAt, actorMemberId: "admin-1" });
+    }
+    // The door locks the charge row, so it runs before the subscription fence (charge, then subscription).
+    expect(journalMock.reverseSubscriptionManualReceipt.mock.invocationCallOrder[0])
+      .toBeLessThan(tx.memberSubscription.updateMany.mock.invocationCallOrder[0]!);
     expect(journalMock.postSubscriptionManualReceipt).not.toHaveBeenCalled();
   });
 

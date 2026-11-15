@@ -279,6 +279,16 @@ export async function applyManualSubscriptionPayment(
         );
       }
       const now = new Date();
+      // R08: the cash, collected against the charge's journal obligation, only
+      // when the receipt would print a figure for this member alone. Before the
+      // fence: the door locks the charge row first, as close-as-paid does (#4519).
+      const coveringCharge = subscription.chargeCoverage?.[0]?.charge;
+      const cashCents = receiptAmountCents(coveringCharge);
+      if (coveringCharge && cashCents !== null) {
+        await postSubscriptionManualReceipt(tx, journalContext, {
+          chargeId: coveringCharge.id, amountCents: cashCents, paidAt: now, actorMemberId: input.actingMemberId,
+        });
+      }
       // Status-fenced write: re-assert every guard inside the WHERE so a
       // concurrent second click, manual mark-paid, or Xero sync between the
       // read above and this write cannot double-apply or clobber (F4).
@@ -302,15 +312,6 @@ export async function applyManualSubscriptionPayment(
           "This subscription changed while you were marking it paid — refresh and try again.",
           409,
         );
-      }
-      // R08: the cash, collected against the charge's journal obligation, only
-      // when the receipt would print a figure for this member alone.
-      const coveringCharge = subscription.chargeCoverage?.[0]?.charge;
-      const cashCents = receiptAmountCents(coveringCharge);
-      if (coveringCharge && cashCents !== null) {
-        await postSubscriptionManualReceipt(tx, journalContext, {
-          chargeId: coveringCharge.id, amountCents: cashCents, paidAt: now, actorMemberId: input.actingMemberId,
-        });
       }
       const updated = await tx.memberSubscription.findUniqueOrThrow({
         where: { id: subscription.id },
@@ -388,6 +389,17 @@ export async function applyManualSubscriptionPayment(
         409,
       );
     }
+    // R08 reversed: the receipt posted for the mark-paid being undone, if any,
+    // on any charge that ever covered it: a close-as-paid since then released
+    // the coverage but not the cash (#4519). Before the fence, charge rows first.
+    const coveringCharges = await tx.membershipSubscriptionChargeCoverage.findMany({
+      where: { subscriptionId: subscription.id }, distinct: ["chargeId"], orderBy: { chargeId: "asc" }, select: { chargeId: true },
+    });
+    for (const { chargeId } of coveringCharges) {
+      await reverseSubscriptionManualReceipt(tx, journalContext, {
+        chargeId, paidAt: subscription.manuallyMarkedPaidAt, actorMemberId: input.actingMemberId,
+      });
+    }
     const restoredStatus: SubscriptionStatus = subscription.xeroInvoiceId
       ? "UNPAID"
       : "NOT_INVOICED";
@@ -412,13 +424,6 @@ export async function applyManualSubscriptionPayment(
         "This subscription changed while you were reversing the manual payment — refresh and try again.",
         409,
       );
-    }
-    // R08 reversed: the receipt posted for the mark-paid being undone, if any.
-    const coveringChargeId = subscription.chargeCoverage?.[0]?.charge.id;
-    if (coveringChargeId) {
-      await reverseSubscriptionManualReceipt(tx, journalContext, {
-        chargeId: coveringChargeId, paidAt: subscription.manuallyMarkedPaidAt, actorMemberId: input.actingMemberId,
-      });
     }
     const updated = await tx.memberSubscription.findUniqueOrThrow({
       where: { id: subscription.id },
