@@ -73,9 +73,7 @@ vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
   rateLimiters: { register: {} },
 }));
-vi.mock("bcryptjs", () => ({
-  default: { hash: vi.fn().mockResolvedValue("hashedpw") },
-}));
+
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
