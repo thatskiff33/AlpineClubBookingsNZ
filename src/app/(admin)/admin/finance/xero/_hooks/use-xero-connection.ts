@@ -2,6 +2,7 @@
 import { fetchWithRecentAuth } from "@/components/confirm-its-you"
 
 import { useCallback, useEffect, useState } from "react"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { revealEditor } from "@/hooks/use-scroll-to-feedback"
 import { toSafeXeroOAuthCallbackMessage } from "@/lib/xero-oauth-callback-messages"
 import { SECTION_DEFAULTS, SECTION_STORAGE_KEY, xeroSectionId, type SectionKey, type XeroStatus } from "../_components/types"
@@ -9,7 +10,11 @@ import { SECTION_DEFAULTS, SECTION_STORAGE_KEY, xeroSectionId, type SectionKey, 
 export function useXeroConnection() {
   const [status, setStatus] = useState<XeroStatus | null>(null)
   const [loading, setLoading] = useState(true)
+  // `error` is what the page found on arrival — a failed status read or the
+  // OAuth callback's `?error=` — and stays passive. A failed Disconnect is the
+  // result of a press, so it is kept apart and takes focus (#4975).
   const [error, setError] = useState("")
+  const { error: disconnectError, attentionKey: disconnectAttention, fail: failDisconnect, clear: clearDisconnectError } = useActionFailure()
   const [connectSuccess, setConnectSuccess] = useState(false)
   const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>(SECTION_DEFAULTS)
   const [sectionsHydrated, setSectionsHydrated] = useState(false)
@@ -52,14 +57,15 @@ export function useXeroConnection() {
 
   const handleDisconnect = useCallback(async () => {
     if (!confirm("Are you sure you want to disconnect Xero? This will remove all stored tokens.")) return
+    clearDisconnectError()
     try {
       const res = await fetchWithRecentAuth("/api/admin/xero/disconnect", { method: "POST" })
       if (!res.ok) throw new Error("Failed to disconnect")
       setStatus({ connected: false, needsReentry: false, tenantId: null, tokenExpiresAt: null })
     } catch {
-      setError("Failed to disconnect Xero")
+      failDisconnect("Failed to disconnect Xero")
     }
-  }, [])
+  }, [clearDisconnectError, failDisconnect])
 
   useEffect(() => {
     void fetchStatus()
@@ -109,6 +115,8 @@ export function useXeroConnection() {
     loading,
     error,
     setError,
+    disconnectError,
+    disconnectAttention,
     connectSuccess,
     setConnectSuccess,
     sectionOpen,
