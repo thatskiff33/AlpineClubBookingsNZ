@@ -15,6 +15,12 @@ const previewSchema = z
   .object({
     seasonYear: z.number().int().min(2020).max(2040),
     membershipTypeId: z.string().min(1),
+    // Subscription-category decoupling: the independent billing axis. An
+    // explicit null means "Individual" — unchanged per-type billing.
+    // Omitted means "no opinion" — the lib preserves the member's current
+    // category rather than clearing it (see getSeasonalMembershipChangePreview's
+    // own doc comment); never coerce an omitted value to null here.
+    subscriptionCategoryId: z.string().min(1).nullable().optional(),
     applyFrom: dateOnlyStringSchema
       .nullable()
       .optional(),
@@ -63,6 +69,10 @@ export async function POST(
     memberId: parsedParams.data.id,
     seasonYear: parsedBody.data.seasonYear,
     membershipTypeId: parsedBody.data.membershipTypeId,
+    // NOT `?? null`: an omitted field must stay `undefined` so the preview
+    // carries the member's current category forward, rather than being
+    // coerced into the explicit-clear value a real `null` means.
+    subscriptionCategoryId: parsedBody.data.subscriptionCategoryId,
     applyFrom: parsedBody.data.applyFrom ?? null,
     now: dateOnlyInstantOf(clubToday(clubZone)),
     clubCurrentSeasonYear: clubSeasonYear(clubZone),

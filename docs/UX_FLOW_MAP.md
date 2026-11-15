@@ -241,7 +241,7 @@ Journey: Review booking rules and cancellation policies before staging a change.
 
 Screen: `/admin/booking-requests`.
 
-Shows: Tabbed request queues and request details with their current status and actions.
+Shows: Tabbed request queues and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-020). A deep link to one booking or request pins it above the page when it is elsewhere.
 
 Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
 
@@ -397,7 +397,7 @@ Journey: Choose a lodge, inspect lockers and assignments, and manage the selecte
 
 Screen: `/admin/member-applications`.
 
-Shows: Applications, nomination progress and officer decisions.
+Shows: Applications, nomination progress and officer decisions. The list pages 25 rows with a "Showing 1–25 of 40" total line; Pending admin lists the oldest first (INV-OPS-020).
 
 Journey: Review an application and its nominations, then approve or reject. Action failures take focus and scroll into view; successes are announced and brought into view.
 
@@ -429,7 +429,7 @@ Screen: `/admin/membership-cancellations`.
 
 Merged in (#4796): a Requests tab and a Settings tab (`?tab=settings`); `/admin/membership-cancellation` and `/admin/setup/cancellation` redirect to the Settings tab.
 
-Shows: The membership cancellation review queue; on the Settings tab, the cancellation copy and Xero handling.
+Shows: The membership cancellation and archive review queues, each paged 25 rows with its own total line (INV-OPS-020); on the Settings tab, the cancellation copy and Xero handling.
 
 Journey: Open a cancellation request and review its consequences before deciding it; or open Settings, from here or from Notifications & Email, to change the cancellation wording.
 
@@ -454,6 +454,16 @@ Shows: Membership types and their eligibility and billing configuration.
 Journey: Inspect a type, its eligibility and subscription settings before saving changes.
 
 [Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Subscription Categories — subscription-categories
+
+Screen: `/admin/subscription-categories`.
+
+Shows: Subscription categories and their fee, the second billing axis alongside membership type.
+
+Journey: Create or edit a category and its flat fee, then assign members from their profile.
+
+[Guide](guides/subscription-categories.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Subscription Lockout — subscription-lockout
 
@@ -643,7 +653,7 @@ Journey: Filter payments, open a record, and inspect its booking and provider st
 
 Screen: `/admin/refund-requests`.
 
-Shows: Refund requests with booking context and decision controls. A credit approval shows the account the requester chose.
+Shows: Refund requests with booking context and decision controls, paged 25 rows with a total line (INV-OPS-020). A credit approval shows the account the requester chose.
 
 Journey: Open a request, inspect the booking and amounts, then use the permitted decision action.
 

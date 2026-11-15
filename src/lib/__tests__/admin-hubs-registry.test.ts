@@ -644,6 +644,7 @@ describe("the hub prefix census", () => {
       "/admin/membership/membership-types",
       "/admin/membership/member-fields",
       "/admin/membership/subscription-lockout",
+      "/admin/membership/subscription-categories",
     ]);
     expect(adminHubOwnedPaths("members")).not.toContain("/admin/membership");
     expect(TODAYS_SOURCES.routeMapPrefixes).not.toContain("/admin/membership");
@@ -809,6 +810,7 @@ describe("the entries' shape", () => {
       "site-content",
       "site-style",
       "stuck-states",
+      "subscription-categories",
       "subscription-lockout",
       "subscriptions",
       "testing-route-error",
@@ -1756,6 +1758,7 @@ describe("buildAdminUrlRules", () => {
       ["/admin/site-content", "/admin/website/site-content"],
       ["/admin/site-style", "/admin/website/site-style"],
       ["/admin/stuck-states", "/admin/system/stuck-states"],
+      ["/admin/subscription-categories", "/admin/membership/subscription-categories"],
       ["/admin/subscription-lockout", "/admin/membership/subscription-lockout"],
       ["/admin/subscriptions", "/admin/finance/subscriptions"],
       ["/admin/testing/route-error", "/admin/system/testing/route-error"],
@@ -2153,6 +2156,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/rules/fee-configuration/page.tsx": "C6: it redirects to the fee console's adminHref",
     "src/lib/__tests__/fee-configuration-redirect.test.ts":
       "C6: pins the Fee Configuration stub's redirect to the fee console's adminHref",
+    "src/app/(admin)/admin/rules/fees/_components/finance-fees-sections.tsx":
+      "#4496: the Subscription Categories links are adminHref",
     "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": "C6: the Seasons link is adminHref",
     "src/app/(admin)/admin/rules/seasons/page.tsx": "C6: the Fees link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx":
@@ -2208,6 +2213,8 @@ describe("the registry is inert", () => {
       "C8: saving and cancelling return to Member Notices at its adminHref",
     "src/components/admin/club-posts/club-posts-admin.tsx":
       "C8: the Message Board's tab links and search form address it at its adminHref",
+    "src/app/(admin)/admin/membership/subscription-categories/page.tsx":
+      "#4496: added after C8, registered in MEMBERS_HUB; its Fees link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/contact-sync-panel.tsx":
       "C9: the affected-member link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/erased-member-contacts-panel.tsx":
@@ -2222,6 +2229,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/membership/induction/page.tsx": "C9: the settings link is adminHref",
     "src/app/(admin)/admin/membership/induction/settings/page.tsx":
       "C9: the back link is adminHref, and its words stay Induction Register",
+    "src/app/(admin)/admin/membership/member-applications/page.tsx":
+      "C9: router.replace of its own address (filter and page) uses adminHref",
     "src/app/(admin)/admin/membership/member-fields/page.tsx": "C9: its back link is adminLink",
     "src/app/(admin)/admin/membership/members/[id]/_components/member-dependents-card.tsx":
       "C9: the dependent link is adminHref",
