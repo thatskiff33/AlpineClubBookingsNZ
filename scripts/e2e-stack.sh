@@ -70,6 +70,13 @@ HOST_DATABASE_URL="postgresql://tac:${DB_PASSWORD}@localhost:${STAGING_POSTGRES_
 # and it restores the row afterwards; every other spec drives the app over HTTP.
 export E2E_DATABASE_URL="$HOST_DATABASE_URL"
 
+# Heap ceiling for `next build` when `prepare` builds the app image (#5164).
+# Compose maps NODE_BUILD_OPTIONS onto the Dockerfile's build-only NODE_OPTIONS
+# arg. Value and reason: the `Build` step of `Production build` in
+# .github/workflows/ci.yml; `require-test-shards.test.mjs` keeps this default
+# equal to it. A non-empty value in the env file or the shell wins.
+export NODE_BUILD_OPTIONS="${NODE_BUILD_OPTIONS:---max-old-space-size=8192}"
+
 compose() {
   docker compose --env-file "$ENV_FILE" -p "$COMPOSE_PROJECT" \
     -f docker-compose.yml -f docker-compose.staging.yml "$@"

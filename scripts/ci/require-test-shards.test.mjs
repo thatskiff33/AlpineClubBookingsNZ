@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { BaseSequencer } from "vitest/node";
 
@@ -148,6 +148,44 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
     const step = workflow.jobs.typecheck.steps.find((item) => item.run === "pnpm run typecheck");
     const heapMb = Number(/--max-old-space-size=(\d+)/.exec(step.env?.NODE_OPTIONS ?? "")?.[1]);
     expect(heapMb).toBeGreaterThanOrEqual(12288);
+  });
+
+  // #5164: `next build` type-checks the app project in a worker that inherits
+  // NODE_OPTIONS, and a cold run peaked at about 4.6 GB (#5053), over Node's
+  // ~4 GB default on the hosted runner. Every `next build` CI runs gets the
+  // one ceiling ci.yml's `Build` step states the reason for. A census of every
+  // workflow, not a named list, so a new build site cannot quietly miss it.
+  it("gives every `next build` in CI the same 8 GB heap ceiling", () => {
+    const HEAP = "--max-old-space-size=8192";
+    const workflowsDir = path.join(root, ".github", "workflows");
+    const sites = [];
+    for (const file of readdirSync(workflowsDir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
+      const parsed = parseWorkflowYaml(readFileSync(path.join(workflowsDir, file), "utf8"));
+      for (const [id, job] of Object.entries(parsed.jobs ?? {})) {
+        for (const step of job.steps ?? []) {
+          const where = `${file} → ${id} → ${step.name ?? step.uses ?? step.run}`;
+          const run = step.run ?? "";
+          if (/\bpnpm run build(?:\s|$)|\bnext build\b|server-only-boundary-selftest\.mjs/.test(run)) {
+            sites.push(where);
+            expect(step.env?.NODE_OPTIONS, where).toBe(HEAP);
+          } else if (/\bdocker build\b/.test(run)) {
+            sites.push(where);
+            expect(run, where).toContain('--build-arg NODE_OPTIONS="${NODE_BUILD_OPTIONS}"');
+            expect(job.env?.NODE_BUILD_OPTIONS, where).toBe(HEAP);
+          } else if (step.uses?.startsWith("docker/build-push-action@")) {
+            sites.push(where);
+            expect(step.with?.["build-args"]?.split("\n"), where).toContain("NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}");
+            expect(job.env?.NODE_BUILD_OPTIONS, where).toBe(HEAP);
+          }
+        }
+      }
+    }
+    // Build + self-test, the Trivy image, two GHCR images, the E2E image and
+    // its cache export, the rollover proof's image: the census is not empty.
+    expect(sites.length, sites.join("\n")).toBeGreaterThanOrEqual(8);
+    // The local E2E stack builds the same image through compose.
+    const stack = readFileSync(path.join(root, "scripts", "e2e-stack.sh"), "utf8");
+    expect(stack).toContain(`export NODE_BUILD_OPTIONS="\${NODE_BUILD_OPTIONS:-${HEAP}}"`);
   });
 
   it("keeps the build's output proofs after the build, in the build job, unconditional", () => {

@@ -55,6 +55,12 @@ jobs:
     name: E2E app image
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      # Heap ceiling for the builder stage's `next build`, passed as the
+      # Dockerfile's build-only NODE_OPTIONS arg to both builds below (#5164).
+      # Value and reason: the `Build` step of `Production build` in ci.yml. Job-level, not workflow-level: no workflow env
+      # reaches `e2e-db`.
+      NODE_BUILD_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -125,6 +131,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_SENTRY_DSN=
             RELEASE_ID=${{ github.sha }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: |
             type=gha,scope=alpineclubbookingsnz-app
             type=gha,scope=alpineclubbookingsnz-e2e
@@ -152,6 +159,8 @@ jobs:
 
       # The shards are already running on the uploaded image. This rebuild is
       # all cache hits on the same builder; it only exports the layer cache.
+      # Its build args must match the build above exactly, NODE_OPTIONS
+      # included, or the `next build` layer misses and runs again.
       - name: Export the layer cache
         if: steps.scope.outputs.needed != 'false'
         continue-on-error: true
@@ -164,6 +173,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_SENTRY_DSN=
             RELEASE_ID=${{ github.sha }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-e2e
 
       - name: Export the Next.js build cache
