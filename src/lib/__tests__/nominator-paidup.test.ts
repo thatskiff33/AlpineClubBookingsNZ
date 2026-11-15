@@ -55,7 +55,8 @@ vi.mock("@/lib/age-tier", () => ({
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01T00:00:00.000Z")),
 }));
 vi.mock("@/lib/email", () => emailMock);
-vi.mock("@/lib/xero", () => xeroMock);
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: xeroMock.isXeroConnected }));
+vi.mock("@/lib/xero-contacts", () => ({ findOrCreateXeroContact: xeroMock.findOrCreateXeroContact }));
 vi.mock("@/lib/xero-operation-outbox", () => xeroOutboxMock);
 vi.mock("@/lib/membership-subscription-billing", () => subscriptionBillingMock);
 vi.mock("@/lib/membership-type-policy", () => policyMock);
@@ -64,7 +65,7 @@ vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error:
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/induction", () => ({ createMemberInduction: vi.fn() }));
 vi.mock("server-only", () => ({}));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed-secret") }));
+
 
 import { prisma } from "@/lib/prisma";
 import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";

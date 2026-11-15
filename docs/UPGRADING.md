@@ -68,6 +68,16 @@ privacy notice to name Sentry Replay as described in [security notes](SECURITY.m
    post-upgrade actions. If you must catch up several releases, apply each
    release's notes in order.
 
+   The deploy script enforces this (#4978): it refuses a commit that no
+   annotated `vX.Y.Z` tag on `origin` points at, unless
+   `ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written
+   `UNTAGGED_DEPLOY_COMMIT_REASON` are set. Deploy with
+   `DEPLOY_REF=<tag>` after `git fetch origin tag <tag>`. **A fork** checks
+   tags on its own `origin`, so a fork that does not tag either tags its own
+   releases (`pnpm run release:cut` works in a fork) or sets the override on
+   every deploy. See
+   [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
+
    Each release's steps sit under its own `## v<previous> → v<release>`
    heading below. **`## Unreleased` holds steps for changes no release
    contains yet**: a change that needs an upgrade step adds it there, and the
@@ -171,6 +181,22 @@ as a red flag and check the release notes before deploying.
 ---
 
 ## Unreleased
+
+### Building on your own server: raise `NODE_BUILD_OPTIONS` to 8192 (#5164)
+
+**Only for servers that build the image themselves** (`docker compose build`, or
+the deploy script's `--build-and-push-images`). A server that deploys a
+published image (`APP_IMAGE`) builds nothing and can skip this.
+
+`next build` type-checks the app, and that check now needs about 4.6 GB of Node
+heap. With `NODE_BUILD_OPTIONS` empty, Node's default ceiling applies (about a
+quarter of the machine's memory, up to about 4 GB), and the earlier example of
+`--max-old-space-size=4096` is also too low. Either can stop the build with
+"JavaScript heap out of memory" or "Failed to type check". Set
+`NODE_BUILD_OPTIONS=--max-old-space-size=8192` in `.env` before building, as CI
+now does; it affects the build only, never the running app. With less than
+about 8 GB of memory free for the build, deploy a published image instead
+([`CONFIGURATION.md`](../CONFIGURATION.md)). Nothing changes until you build.
 
 ### Privacy-incident guide and hosting disclosure settings (#4918)
 

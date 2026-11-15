@@ -36,7 +36,7 @@ vi.mock("@/lib/stored-night-price-strand-reconcile", () => ({
 
 import { POST } from "@/app/api/admin/bookings/[id]/stored-night-prices/route";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { STRAND_RECONCILE_NOT_OFFERED_MESSAGE } from "@/lib/stored-night-price-repair";
 import { expectRevalidatesPageFile } from "@/lib/__tests__/support/revalidated-page";
 
