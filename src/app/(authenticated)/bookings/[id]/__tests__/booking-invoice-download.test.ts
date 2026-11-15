@@ -85,9 +85,9 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
     expect(await offer(booking({ status: "BUMPED" }))).toEqual({ kind: "NONE" });
   });
 
-  it("keeps a deleted booking admin-only", async () => {
+  it("offers nothing on a deleted booking, which is always a cancelled one, even to a full admin", async () => {
     const deleted = booking({ status: "CANCELLED", deletedAt: new Date("2026-06-30T00:00:00.000Z") });
-    expect(await offer(deleted, "officer-1", "ADMIN_BOOKINGS")).toEqual({ kind: "NONE" });
+    expect(await offer(deleted, "admin-1", "ADMIN")).toEqual({ kind: "NONE" });
   });
 
   it("offers nothing when no Xero invoice is on record", async () => {

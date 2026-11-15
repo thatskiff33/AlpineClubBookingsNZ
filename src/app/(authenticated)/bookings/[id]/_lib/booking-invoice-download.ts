@@ -57,7 +57,7 @@ const offerDependencies = {
 export async function resolveBookingInvoiceOffer(
   input: {
     booking: BookingDetailRecord;
-    viewer: Pick<BookingDetailViewer, "isAdmin" | "canSeeOwnerCredit">;
+    viewer: Pick<BookingDetailViewer, "canSeeOwnerCredit">;
     modules: Pick<FeatureFlags, "xeroIntegration">;
   },
   dependencies = offerDependencies,

@@ -27,7 +27,6 @@ export type BookingInvoiceOffer =
   | { kind: "ASK_CLUB" };
 
 type InvoiceOfferBooking = {
-  deletedAt: Date | null;
   status: string;
   organiserSettled: boolean;
   parentBookingId: string | null;
@@ -44,22 +43,22 @@ type InvoiceOfferBooking = {
  *
  * - Audience: the booking page's own `canSeeOwnerCredit` (#3991) — the owner,
  *   anyone who can manage the booking, and admin-type viewers; never a linked
- *   guest. A deleted booking stays admin-only, as on the page.
+ *   guest.
  * - The Xero module must be on (`modules.xeroIntegration`).
  * - An ended booking (CANCELLED, or BUMPED — the system's cancellation of a
  *   pending one) is not offered: its asks are retired (`INV-ADDPAY-044`) and
- *   its invoice is not a debt the member still owes.
+ *   its invoice is not a debt the member still owes. This also covers a deleted
+ *   booking: `softDeleteCancelledBooking` deletes only CANCELLED bookings.
  * - A place the group organiser paid by internet banking never has an invoice
  *   of its own (`INV-PAY-148`); any invoice id it carries is the organiser's
  *   combined invoice, which names the whole group.
  */
 export function primaryXeroInvoiceOnOffer(input: {
-  viewer: { isAdmin: boolean; canSeeOwnerCredit: boolean };
+  viewer: { canSeeOwnerCredit: boolean };
   booking: InvoiceOfferBooking;
   xeroModuleOn: boolean;
 }): { invoiceId: string; invoiceNumber: string | null } | null {
   const { viewer, booking } = input;
-  if (booking.deletedAt && !viewer.isAdmin) return null;
   if (!viewer.canSeeOwnerCredit) return null;
   if (!input.xeroModuleOn) return null;
   if (isAdditionalAskRetiredBookingStatus(booking.status)) return null;
