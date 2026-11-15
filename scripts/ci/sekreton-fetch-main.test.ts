@@ -43,6 +43,15 @@ describe("Sekreton main fetch", () => {
     expect(git(checkout, "rev-parse", "origin/main")).toBe(git(upstream, "rev-parse", "main"));
   }, 15_000);
 
+  it("keeps refreshing origin/main when fetch.prune is set", () => {
+    git(checkout, "config", "remote.origin.url", upstream);
+    git(checkout, "config", "fetch.prune", "true");
+    expect(fetchMain().status).toBe(0);
+    git(upstream, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-m", "Advance main");
+    expect(fetchMain().status).toBe(0);
+    expect(git(checkout, "rev-parse", "origin/main")).toBe(git(upstream, "rev-parse", "main"));
+  }, 15_000);
+
   it("prefers origin when gh is also configured", () => {
     git(checkout, "remote", "add", "origin", upstream);
     git(checkout, "remote", "add", "gh", path.join(fixture, "missing"));

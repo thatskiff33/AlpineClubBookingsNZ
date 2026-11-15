@@ -18,4 +18,6 @@ else
   exit 1
 fi
 
-git fetch --no-tags "$base_remote" main:refs/remotes/origin/main
+# --no-prune: with fetch.prune set and no default refspec, git would prune the
+# very ref this fetch writes and then fail to update it.
+git fetch --no-tags --no-prune "$base_remote" main:refs/remotes/origin/main
