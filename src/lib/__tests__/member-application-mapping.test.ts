@@ -16,8 +16,10 @@ const { prismaMock } = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/email", () => ({}));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn(),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   findOrCreateXeroContact: vi.fn(),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({

@@ -864,7 +864,7 @@ describe("consent columns have exactly one writer", () => {
     // It touches no database and no row — the booking does not exist yet —
     // and every shape it builds is one of the eight legal sub-states, which
     // its own test asserts through `classifyMemberGuestConsent`.
-    "src/app/(authenticated)/book/_components/member-guest-preview.tsx":
+    "src/components/book/member-guest-preview.tsx":
       "the wizard's pre-persistence consent prediction",
     // --- MG4's pipeline half (#2309, MG4-D-b). The booking-request approval
     // is the one guest write that REUSES a row rather than creating it, so it
