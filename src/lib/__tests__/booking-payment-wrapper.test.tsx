@@ -121,7 +121,7 @@ describe("BookingPaymentWrapper", () => {
   };
   function renderCreditPayment(onPaymentComplete = vi.fn()) {
     return render(<BookingPaymentWrapper bookingId="booking-credit" amountCents={30000}
-      paymentMode="payment" returnUrl="http://localhost/bookings/booking-credit"
+      paymentMode="payment"
       onPaymentComplete={onPaymentComplete} />);
   }
 
@@ -198,7 +198,7 @@ describe("BookingPaymentWrapper", () => {
 
   it("retains the zero-dollar short-circuit without creating a card intent", () => {
     render(<BookingPaymentWrapper bookingId="booking-zero" amountCents={0}
-      paymentMode="payment" returnUrl="http://localhost/return" onPaymentComplete={vi.fn()} />);
+      paymentMode="payment" onPaymentComplete={vi.fn()} />);
     expect(screen.getByText("No payment is required for this booking.")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
