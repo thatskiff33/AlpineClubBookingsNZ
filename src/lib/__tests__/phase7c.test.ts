@@ -328,6 +328,16 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
     expect(data.error).toBe("Unauthorised");
     expect(mockPrisma.choreAssignment.findMany).not.toHaveBeenCalled();
   });
+
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    const { GET } = await import("@/app/api/lodge/roster/[date]/route");
+    const req = new Request("http://localhost/api/lodge/roster/2026-02-30") as any;
+
+    const res = await GET(req, makeParams("2026-02-30"));
+
+    expect(res.status).toBe(400);
+    expect(mockPrisma.choreAssignment.findMany).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -349,6 +359,25 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
     mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
     mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
+  });
+
+  it("refuses a day that does not exist (2026-02-30) before any lookup or write", async () => {
+    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
+    // contract end to end: a 400 and no query or write, whichever guard answers.
+    const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+    const req = new Request("http://localhost/api/lodge/guests/2026-02-30/arrive", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bookingGuestId: "g1" }),
+    }) as any;
+
+    const res = await PUT(req, makeParams("2026-02-30"));
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Invalid date format");
+    expect(mockPrisma.bookingGuest.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.bookingGuest.update).not.toHaveBeenCalled();
   });
 
   it("sets arrivedAt when guest has not arrived", async () => {
@@ -520,6 +549,26 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
       fn(mockPrisma)
     );
     mockPrisma.choreAssignment.findMany.mockResolvedValue([]);
+  });
+
+  it("refuses a day that does not exist (2026-02-30) before any lookup or write", async () => {
+    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
+    // contract end to end: a 400 and no query or write, whichever guard answers.
+    const { PUT } = await import("@/app/api/lodge/guests/[date]/depart/route");
+    const req = new Request("http://localhost/api/lodge/guests/2026-02-30/depart", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bookingGuestId: "g1" }),
+    }) as any;
+
+    const res = await PUT(req, makeParams("2026-02-30"));
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Invalid date format");
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.bookingGuest.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.bookingGuest.update).not.toHaveBeenCalled();
   });
 
   it("sets departedAt when guest has not departed", async () => {
@@ -773,6 +822,16 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
     expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
   });
 
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const req = new Request("http://localhost/api/lodge/guests/2026-02-30") as any;
+
+    const res = await GET(req, makeParams("2026-02-30"));
+
+    expect(res.status).toBe(400);
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
+
   it("denies with 403 (not 500) when the kiosk account is bound to multiple lodges", async () => {
     // M5: a STAFF account granted at 2+ lodges is ambiguous; resolveKioskLodgeId
     // throws AmbiguousKioskLodgeError, and the route maps it to a clean 403 deny
@@ -814,6 +873,29 @@ describe("F6: GET /api/lodge/roster/[date]/chores", () => {
     mockPrisma.booking.count.mockResolvedValue(0);
     mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
     mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
+  });
+
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    // An admin, so the 400 can only come from the date: the tier check runs first.
+    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
+    // contract end to end: a 400 and no query, whichever guard answers.
+    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+      accessRoles: [{ role: "ADMIN" }],
+    });
+
+    const { GET } = await import("@/app/api/lodge/roster/[date]/chores/route");
+    const req = new Request("http://localhost/api/lodge/roster/2026-02-30/chores") as any;
+
+    const res = await GET(req, makeParams("2026-02-30"));
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Invalid date format");
+    expect(mockPrisma.choreTemplate.findMany).not.toHaveBeenCalled();
   });
 
   it("returns active templates for admins and hut leaders", async () => {
@@ -875,6 +957,25 @@ describe("F6: POST /api/lodge/roster/[date]/generate", () => {
     mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     // Generate requires hut-leader or admin tier (LODGE can't generate)
     mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+  });
+
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
+    // contract end to end: a 400 and no query or write, whichever guard answers.
+    const { POST } = await import("@/app/api/lodge/roster/[date]/generate/route");
+    const req = new Request("http://localhost/api/lodge/roster/2026-02-30/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ choreTemplateIds: ["ct1"] }),
+    }) as any;
+
+    const res = await POST(req, makeParams("2026-02-30"));
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Invalid date format");
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.choreTemplate.findMany).not.toHaveBeenCalled();
   });
 
   it("generates allocations without saving to DB", async () => {
@@ -1002,6 +1103,30 @@ describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
     mockPrisma.$transaction.mockImplementation(async (fn: any) => fn(mockPrisma));
     // Confirm requires hut-leader or admin tier (LODGE can't confirm)
     mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
+  });
+
+  it("refuses a day that does not exist (2026-02-30) before any write", async () => {
+    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
+    // contract end to end: a 400 and no query or write, whichever guard answers.
+    const { POST } = await import("@/app/api/lodge/roster/[date]/confirm/route");
+    const req = new Request("http://localhost/api/lodge/roster/2026-02-30/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        allocations: [
+          { choreTemplateId: "ct1", bookingGuestId: "g1", bookingId: "b1" },
+        ],
+      }),
+    }) as any;
+
+    const res = await POST(req, makeParams("2026-02-30"));
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Invalid date format");
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.choreAssignment.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.choreAssignment.createMany).not.toHaveBeenCalled();
   });
 
   it("saves allocations as CONFIRMED when no existing roster", async () => {
@@ -1180,6 +1305,24 @@ describe("F6: GET /api/lodge/roster/[date]/frequency-info", () => {
     mockPrisma.memberLodgeAccess.findMany.mockResolvedValue([]);
     mockPrisma.lodge.findFirst.mockResolvedValue({ id: "default-lodge" });
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE", accessRoles: [{ role: "LODGE" }] } });
+  });
+
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    // `checkLodgeAuth` refuses a non-day first too, so this pins the endpoint's
+    // contract end to end: a 400 and no query or write, whichever guard answers.
+    const { GET } = await import(
+      "@/app/api/lodge/roster/[date]/frequency-info/route"
+    );
+    const req = new Request(
+      "http://localhost/api/lodge/roster/2026-02-30/frequency-info"
+    ) as any;
+
+    const res = await GET(req, makeParams("2026-02-30"));
+    const data = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Invalid date format");
+    expect(mockPrisma.choreAssignment.groupBy).not.toHaveBeenCalled();
   });
 
   it("returns last rostered dates per chore template", async () => {

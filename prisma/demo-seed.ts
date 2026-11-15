@@ -20,8 +20,7 @@
 // ---------------------------------------------------------------------------
 import { createHash } from "node:crypto";
 import { type AgeTier, PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "../src/lib/password-hashing";
+import { hashPassword } from "../src/lib/password-hashing";
 import { ensureAccessRoleDefinitions } from "../src/lib/access-role-definitions";
 import { bookingFinalPriceCents } from "../src/lib/booking-final-price";
 import { assertDemoSeedMayRun, DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
@@ -50,6 +49,7 @@ import {
   DUAL_HAT_ADMIN,
   E2E_ADMIN,
   EMAIL_2FA_ENROLLEE,
+  PASSKEY_ENROLLEE,
   IB_BOOKING_ID,
   IB_WINDOW,
   relDateOnly,
@@ -90,7 +90,7 @@ const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
 
 const DEMO_DOMAIN = DEMO_SEED_DOMAIN;
 const DEMO_PASSWORD = process.env.DEMO_SEED_PASSWORD ?? "demo1234";
-const PWHASH = bcrypt.hashSync(DEMO_PASSWORD, PASSWORD_BCRYPT_COST);
+let PWHASH: string;
 const SEASON_YEAR = 2026;
 
 // Date-only helper (schema uses @db.Date for most date columns).
@@ -327,6 +327,7 @@ async function main() {
   // were taken in the club's currency, and the column has no default (#3567).
   const demoRefundCurrency = stripeChargeCurrency(format);
   await assertDemoSeedSafety();
+  PWHASH = await hashPassword(DEMO_PASSWORD);
   await cleanup();
   console.log("Building demo data...");
 
@@ -1137,6 +1138,16 @@ async function main() {
     emailLocalPart(EMAIL_2FA_ENROLLEE.email),
     EMAIL_2FA_ENROLLEE.firstName,
     EMAIL_2FA_ENROLLEE.lastName,
+  );
+
+  // Passkey enrollee (#5160): bob's shape (finance VIEWER, no two-factor
+  // state) for e2e/passkey-second-factor.spec.ts, so that spec never enrols
+  // bob and breaks two-factor-login.spec.ts's never-enrolled precondition.
+  await makeMember(
+    emailLocalPart(PASSKEY_ENROLLEE.email),
+    PASSKEY_ENROLLEE.firstName,
+    PASSKEY_ENROLLEE.lastName,
+    { financeAccessLevel: "VIEWER" },
   );
 
   // Waitlist spec: fill a September window to capacity (lodge capacity is 20)

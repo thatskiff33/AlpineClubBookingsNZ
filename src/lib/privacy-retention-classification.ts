@@ -69,6 +69,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   PaymentTransaction: "personal",
   PaymentRefund: "personal",
   UnrecognisedStripePayment: "personal",
+  StripeDispute: "personal",
   RateLimitCounter: "personal",
   LoginThrottle: "personal",
   AlertCooldown: "personal",
@@ -132,6 +133,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   LodgeSettings: "personal",
   EmailMessageSetting: "personal",
   ClubIdentitySettings: "personal",
+  PrivacyHostingSettings: "personal",
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
   ClubTaxSettings: "personal", // #4632: each period records the Full Admin who scheduled it (updatedByMemberId).

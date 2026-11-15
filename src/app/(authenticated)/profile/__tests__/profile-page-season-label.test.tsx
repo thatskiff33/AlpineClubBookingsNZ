@@ -56,6 +56,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findUnique: mocks.memberFindUnique },
     webAuthnCredential: { findMany: async () => [] },
+    deletionRequest: { findFirst: async () => null },
+    emailChangeToken: { findFirst: async () => null },
   },
 }));
 
@@ -109,7 +111,7 @@ vi.mock("../notification-preferences", () => ({
   NotificationPreferences: () => <section>Notification preferences</section>,
 }));
 
-vi.mock("../family-group-section", () => ({
+vi.mock("@/components/profile/family-group-section", () => ({
   FamilyGroupSection: () => <section>Family group section</section>,
 }));
 

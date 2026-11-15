@@ -137,22 +137,32 @@ vi.mock("@/lib/email", () => ({
   sendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
   sendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-supplementary-invoices", () => ({
   createXeroSupplementaryInvoice: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-modification-credit-notes", () => ({
   createXeroCreditNoteForModification: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-booking-invoices", () => ({
   createXeroInvoiceForBooking: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-credit-notes", () => ({
   createXeroCreditNote: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: vi.fn().mockResolvedValue({ queueOperationId: "op1", message: "queued" }),
   enqueueXeroBookingInvoiceUpdateOperation: vi.fn().mockResolvedValue({ queueOperationId: "op2", message: "queued" }),
   enqueueXeroRefundCreditNoteOperation: vi.fn().mockResolvedValue({ queueOperationId: "op3", message: "queued" }),
-  enqueueXeroSupplementaryInvoiceOperation: vi.fn().mockResolvedValue({ queueOperationId: "op4", message: "queued" }),
   enqueueXeroModificationCreditNoteOperation: vi.fn().mockResolvedValue({ queueOperationId: "op5", message: "queued" }),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue(null),
   recordSkippedXeroBookingInvoiceUpdateOperation: vi.fn().mockResolvedValue({ queueOperationId: "op6", message: "skipped" }),
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent: vi.fn().mockResolvedValue({ released: 0, queueOperationIds: [] }),
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: vi.fn().mockResolvedValue({ queueOperationId: "op4", message: "queued" }),
 }));
 vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent: vi.fn().mockResolvedValue({ released: 0, queueOperationIds: [], outcome: "none-queued" }),

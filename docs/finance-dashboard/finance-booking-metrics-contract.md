@@ -23,7 +23,7 @@ The route accepts one or both of these window types:
   - `forwardTo`
   - optional `forwardAsOf` (defaults to the current date when omitted)
 
-All dates use `YYYY-MM-DD`.
+All dates use `YYYY-MM-DD` and must name a real calendar day; `2026-02-30` is rejected with `400`.
 
 At least one complete window is required. Partial realized or forward parameter pairs are rejected with `400`.
 

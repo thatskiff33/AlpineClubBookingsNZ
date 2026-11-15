@@ -90,6 +90,11 @@ does not record a refund (#4315).
    Fix the cause, then **Retry in background**. Check Xero first if the stuck
    run may already have created a document. **Reset stale running** does the
    same for every stuck operation at once.
+   A stuck inbound `WEBHOOK_RECONCILE` operation needs none of this: **Replay** its
+   event and that attempt takes the operation over. A crashed event stays
+   Processing and is not retried by itself, so it waits for a Replay. The
+   automatic retry takes the operation over only for an event that has already
+   ended Failed. Mark failed still works on it.
    Mark one **resolved** only after you have fixed it in Xero yourself: it is
    then treated as done and is never retried or recreated automatically,
    though the repair tool still lists it for information. You cannot resolve
@@ -269,6 +274,9 @@ one button that reaches Xero at all only asks it a question.
 
 1. Open **Xero Setup** (`/admin/xero/setup`, back-linked from **Integrations**) to
    configure account and item **mappings** and run one-time import/link tools.
+   The **Xero Mappings** shortcuts in Finance Setup and the setup checklist open
+   its **Account mapping** step (`?step=mapping`); if an earlier step is still
+   unfinished, the wizard opens that step first.
 2. **Import Members from Xero** maps each contact group to an age tier and can send
    invite emails; **Repair Canonical Links** and **Scan for Duplicates & Family
    Groups** clean up the link ledger.

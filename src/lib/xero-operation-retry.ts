@@ -37,6 +37,10 @@ import {
 } from "@/lib/xero-applied-credit-operation-serialization";
 import { asArray, asRecord, readNumber, readString } from "@/lib/xero-json";
 import {
+  modificationNoteCreateWasSent,
+  modificationNoteInvoiceRefusalRetryReason,
+} from "@/lib/xero-modification-note-refusal";
+import {
   parsePaymentCreditNoteRetryInput,
   readCashRefundMethod,
 } from "@/lib/xero-payment-credit-note-payload";
@@ -98,12 +102,43 @@ import {
 } from "@/lib/subscription-charge-already-paid";
 
 /**
- * The `@/lib/xero` module namespace, named because an `import()` type written
- * inline in a PARAMETER annotation is one of the two shapes Semgrep cannot
- * parse (#3318) - the module is still loaded dynamically, at the one call site
- * that does it.
+ * The Xero document services a retry calls, each from its focused module
+ * (#4930: the `@/lib/xero` facade that bundled them is gone). They are still
+ * loaded dynamically, at the one call site that does it; the type is named
+ * because an `import()` type written inline in a PARAMETER annotation is one of
+ * the two shapes Semgrep cannot parse (#3318).
  */
-type XeroModule = typeof import("@/lib/xero");
+type XeroModule = Awaited<ReturnType<typeof loadXeroDocumentServices>>;
+
+async function loadXeroDocumentServices() {
+  const [bookingInvoices, contacts, creditNotes, entranceFees, payments, membershipSync, modificationNotes, refundNotes, supplementary] = await Promise.all([
+    import("@/lib/xero-booking-invoices"),
+    import("@/lib/xero-contacts"),
+    import("@/lib/xero-credit-notes"),
+    import("@/lib/xero-entrance-fee-invoices"),
+    import("@/lib/xero-invoice-payments"),
+    import("@/lib/xero-membership-sync"),
+    import("@/lib/xero-modification-credit-notes"),
+    import("@/lib/xero-refund-note-settlement"),
+    import("@/lib/xero-supplementary-invoices"),
+  ]);
+  return {
+    allocateCreditNoteToInvoice: creditNotes.allocateCreditNoteToInvoice,
+    checkMembershipStatus: membershipSync.checkMembershipStatus,
+    createUnappliedXeroCreditNote: creditNotes.createUnappliedXeroCreditNote,
+    createUnappliedXeroCreditNoteForModification: creditNotes.createUnappliedXeroCreditNoteForModification,
+    createXeroCreditNote: creditNotes.createXeroCreditNote,
+    createXeroCreditNoteForModification: modificationNotes.createXeroCreditNoteForModification,
+    createXeroEntranceFeeInvoice: entranceFees.createXeroEntranceFeeInvoice,
+    createXeroInvoiceForBooking: bookingInvoices.createXeroInvoiceForBooking,
+    createXeroPaymentForInvoice: payments.createXeroPaymentForInvoice,
+    createXeroSupplementaryInvoice: supplementary.createXeroSupplementaryInvoice,
+    findOrCreateXeroContact: contacts.findOrCreateXeroContact,
+    finishRefundCreditNoteSettlement: refundNotes.finishRefundCreditNoteSettlement,
+    updateXeroBookingInvoiceForBooking: bookingInvoices.updateXeroBookingInvoiceForBooking,
+    updateXeroContact: contacts.updateXeroContact,
+  };
+}
 
 type RetryableOperation = Pick<
   XeroSyncOperation,
@@ -129,6 +164,7 @@ type RetryableOperation = Pick<
   // that omit it simply fall back to payload-based delta detection.
   queueType?: XeroSyncOperation["queueType"];
   lastErrorCode?: XeroSyncOperation["lastErrorCode"]; // #4688: optional; Retry's own refusal reads the stored row
+  lastErrorMessage?: XeroSyncOperation["lastErrorMessage"]; // #3993: a paid-off allocation or a shortfall before create
 };
 
 export class XeroOperationRetryError extends Error {
@@ -1203,6 +1239,12 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     }
 
     if (operation.entityType === "CREDIT_NOTE" && operation.operationType === "CREATE") {
+      // #3993: an edit note the invoice cannot take is not replayed. A payment's
+      // refund note is not this row, even if its message happens to say the same.
+      if (operation.localModel === "BookingModification") {
+        const refusal = modificationNoteInvoiceRefusalRetryReason(operation);
+        if (refusal) return { supported: false, reason: refusal };
+      }
       if (parseRefundCreditNoteRepairInput(operation)) {
         return { supported: true, reason: null };
       }
@@ -1352,6 +1394,8 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     }
 
     if (operation.localModel === "BookingModification" && operation.localId) {
+      const refusal = modificationNoteInvoiceRefusalRetryReason(operation);
+      if (refusal) return { supported: false, reason: refusal };
       return { supported: true, reason: null };
     }
 
@@ -1381,6 +1425,11 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     const queued = readQueuedOutboxPayload(operation.requestPayload);
     if (queued?.queueType === XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE) {
       return { supported: true, reason: null };
+    }
+    // #3993: an edit note's allocation row Xero refused as paid off is Resolved, not replayed.
+    if (operation.localModel === "BookingModification") {
+      const refusal = modificationNoteInvoiceRefusalRetryReason(operation);
+      if (refusal) return { supported: false, reason: refusal };
     }
     return parseAllocationRetryInput(operation)
       ? { supported: true, reason: null }
@@ -1576,7 +1625,7 @@ export async function retryXeroSyncOperation(
     return { message: "Queued the membership subscription invoice for retry." };
   }
 
-  const xero = await import("@/lib/xero");
+  const xero = await loadXeroDocumentServices();
   const createdByMemberId = options?.createdByMemberId ?? undefined;
 
   if (operation.status === "PARTIAL") {
@@ -2100,6 +2149,8 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
         ...(modificationRefundMethod ? { refundMethod: modificationRefundMethod } : {}),
         ...(modificationNoteWording ? { noteWording: modificationNoteWording } : {}),
+        // #3993: a retried row that already sent its create may have a note in Xero.
+        ...(modificationNoteCreateWasSent(operation.requestPayload) ? { earlierCreateSent: true } : {}),
         format,
       });
       return { message: "Retried Xero modification credit note creation." };

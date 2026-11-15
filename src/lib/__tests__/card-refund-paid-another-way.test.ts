@@ -106,6 +106,8 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
     return mocks.enqueueXeroRefundCreditNoteOperation(...args);
   },
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kick,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
   // #4324 (review C4): a change capture's anchor.
   lockSupplementaryInvoiceAnchor: (_tx: unknown, anchorId: string) => {
     calls.push(`lock-anchor:${anchorId}`);
@@ -198,6 +200,8 @@ vi.mock("@/lib/prisma", () => {
     prisma: {
       $transaction: (fn: (client: typeof tx) => Promise<unknown>) => fn(tx),
       paymentRecoveryOperation: { findMany: mocks.listOperations },
+      // #4851: a legacy whole-group row reads its settlement before it is listed.
+      groupBookingSettlement: { findMany: vi.fn().mockResolvedValue([]) },
       manualRefundTask: { findMany: mocks.listRecords, findUnique: (...args: unknown[]) => mocks.findApprovalTask(...args) },
       paymentTransaction: { findFirst: (...args: unknown[]) => mocks.findCapture(...args), findMany: async () => [] },
     },
@@ -1356,7 +1360,7 @@ describe("the list on the stuck-states page", () => {
     expect(rows).toEqual([expect.objectContaining({ operationId: "op-1", xeroRefundNote: "none" })]);
   });
 
-  it("lists only what the close accepts, with what each still owes", async () => {
+  it("lists a charge-backed refund and both organiser-card refunds, with what each still owes", async () => {
     const own = deadOperation();
     mocks.listOperations.mockResolvedValue([
       { ...own, payment: payment(own) },
@@ -1375,6 +1379,23 @@ describe("the list on the stuck-states page", () => {
         xeroRefundNote: "now",
         stripeMayHaveRefunded: false,
         laterStripeRefunds: [],
+        tryCardAgainRefusal: null,
+        settleKind: "charge",
+      }),
+      expect.objectContaining({
+        operationId: "op-group",
+        settleKind: "legacy-group",
+        owedCents: 0,
+        wholeAmountOnly: true,
+        xeroRefundNote: "none",
+        tryCardAgainRefusal: expect.stringContaining("old refund of the whole group"),
+      }),
+      expect.objectContaining({
+        operationId: "op-child",
+        settleKind: "organiser-child",
+        owedCents: 15_000,
+        wholeAmountOnly: true,
+        xeroRefundNote: "none",
         tryCardAgainRefusal: null,
       }),
     ]);

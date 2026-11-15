@@ -10,10 +10,10 @@ import { clubFormat } from "@/lib/club-format-server";
 import type { BoundClubFormat } from "@/lib/club-format-bound";
 import {
   applyManualBookingPayment,
-  ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
   type ManualBookingAdditionalOutcome,
 } from "@/lib/manual-booking-payment";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 
 const bodySchema = z
   .object({

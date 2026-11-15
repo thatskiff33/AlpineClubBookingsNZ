@@ -17,6 +17,8 @@ const SESSION_MEMBER_SECURITY_SELECT = {
   // #3603 (D1): when this member's login last went from on to off; see
   // `isLoginRevokedSession` below.
   sessionsRevokedAt: true,
+  twoFactorGraceStartedAt: true,
+  factorsResetAt: true,
   // #2620/#3542: refresh both canonical deletion signals so a session
   // minted before erasure dies on its next request. Neither enters the token.
   email: true,

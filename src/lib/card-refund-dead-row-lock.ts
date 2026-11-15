@@ -12,7 +12,7 @@ import {
 } from "@/lib/card-refund-dead-row";
 import { isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
 import { isPaymentRecoveryOperationExhausted } from "@/lib/payment-recovery-constants";
-import { isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
+import { isGroupSettlementRefundRecoveryKey, isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { onPlanWhere } from "@/lib/refused-card-refund-retry";
 
@@ -20,8 +20,12 @@ import { onPlanWhere } from "@/lib/refused-card-refund-retry";
  * #3372, #4368 (`INV-SSOT`; review D): THE ONE LOCK AND CLAIM OF EVERY
  * SETTLEMENT OF A DEAD CARD REFUND ROW - "Paid another way"
  * (`closeCardRefundPaidAnotherWay`), "Nothing left owed" and "Try the card
- * again" (`card-refund-dead-row-actions.ts`). Each says its own refusals; the
- * order and the claim are this module's.
+ * again" (`card-refund-dead-row-actions.ts`), and, since #4851, the group
+ * organiser's bank close (`closeGroupCardRefundPaidAnotherWay`) and the
+ * per-joiner re-arm (`tryOrganiserChildCardRefundAgain`). Each says its own
+ * refusals; the order and the claim are this module's. `accept` chooses which
+ * dead row may pass. The default, `charge-backed`, is the three settlements
+ * above. No new advisory key.
  *
  * `lock(1)` FIRST (`INV-LOCK-001`; registered as `lockDeadCardRefundRow#1`):
  * each moves or closes a refund debt, which every edit, acceptance, paid
@@ -61,11 +65,21 @@ export interface LockedDeadCardRefundRow {
   booking: { id: string; lodgeId: string; memberId: string | null };
 }
 
+/**
+ * Which dead row this settlement may take. `charge-backed` is today's three
+ * actions. `organiser-child` is only a per-joiner refund out of the organiser's
+ * combined card. `either-group` is that refund or a pre-#3653 whole-group
+ * refund. Any other row is a 409. The legacy key is not an owed card refund
+ * (`isOwedCardRefundOperation`); `either-group` must not use that test.
+ */
+export type DeadCardRefundLockAccept = "charge-backed" | "organiser-child" | "either-group";
+
 /** The locks, the re-read and the refusals, in that order. The first lock of its caller's transaction. */
 export async function lockDeadCardRefundRow(
   tx: Prisma.TransactionClient,
   operationId: string,
   refusals: DeadCardRefundRowRefusals,
+  accept: DeadCardRefundLockAccept = "charge-backed",
 ): Promise<LockedDeadCardRefundRow> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
   const operation = await tx.paymentRecoveryOperation.findUnique({
@@ -73,9 +87,17 @@ export async function lockDeadCardRefundRow(
     select: DEAD_CARD_REFUND_OPERATION_SELECT,
   });
   if (!operation) throw new DeadCardRefundActionError("Card refund not found.", 404);
-  if (!isOwedCardRefundOperation(operation)) throw new DeadCardRefundActionError(refusals.notOwedKind, 409);
-  // The list's own rule: an organiser child's refund skips the charge-backed preflight (`INV-PAY-145`).
-  if (isOrganiserChildRefundKey(operation.idempotencyKey)) throw new DeadCardRefundActionError(refusals.organiserChild, 409);
+  const child = isOrganiserChildRefundKey(operation.idempotencyKey);
+  const legacy = isGroupSettlementRefundRecoveryKey(operation.idempotencyKey);
+  if (accept === "charge-backed") {
+    if (!isOwedCardRefundOperation(operation)) throw new DeadCardRefundActionError(refusals.notOwedKind, 409);
+    // The list's own rule: an organiser child's refund skips the charge-backed preflight (`INV-PAY-145`).
+    if (child) throw new DeadCardRefundActionError(refusals.organiserChild, 409);
+  } else if (accept === "organiser-child") {
+    if (!child) throw new DeadCardRefundActionError(refusals.notOwedKind, 409);
+  } else if (!child && !legacy) {
+    throw new DeadCardRefundActionError(refusals.notOwedKind, 409);
+  }
   if (!isPaymentRecoveryOperationExhausted(operation)) {
     throw new DeadCardRefundActionError(
       operation.status === PaymentRecoveryOperationStatus.SUCCEEDED ? refusals.closed : refusals.notGivenUp,

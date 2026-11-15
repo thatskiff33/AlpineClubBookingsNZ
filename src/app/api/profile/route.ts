@@ -5,11 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
-import {
-  isXeroConnected,
-  syncManagedXeroContactGroupForMember,
-  updateXeroContact,
-} from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
+import { syncManagedXeroContactGroupForMember } from "@/lib/xero-contact-groups";
+import { updateXeroContact } from "@/lib/xero-contacts";
 import {
   buildXeroContactUpdatePayload,
   hasMemberXeroContactChanges,
@@ -45,6 +43,7 @@ import {
   grantSelfDietaryAccess,
   readMemberDietaryRequirements,
 } from "@/lib/member-dietary";
+import { dateOfBirthStringSchema } from "@/lib/date-only-schema";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -54,9 +53,7 @@ const profileSchema = z.object({
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(15).optional().nullable(),
-  dateOfBirth: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+  dateOfBirth: dateOfBirthStringSchema
     .optional()
     .nullable()
     .or(z.literal("")),

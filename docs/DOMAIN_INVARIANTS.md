@@ -20,7 +20,7 @@ description, so you can find the right file without opening more than one.
 
 | File under `docs/invariants/` | Prefixes | Read it when you are changing… |
 | --- | --- | --- |
-| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content and named lodge tokens |
+| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies |
 | [`money.md`](invariants/money.md) | `INV-MONEY` | anything holding cents: fee authorities, whole-lodge pricing, promo caps, subscription charges, or the Xero invoice identity behind them |
 | [`booking-dates-and-capacity.md`](invariants/booking-dates-and-capacity.md) | `INV-DATE`, `INV-CAP`, plus `INV-LIFE-062` | what day it is, who is present, how many beds, which bed, custodian bed holds |
 | [`payment-and-settlement.md`](invariants/payment-and-settlement.md) | `INV-PAY` | taking, clearing, crediting or refunding money |
@@ -77,6 +77,8 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 | `INV-PUB-001` | Fee/policy PageContent blocks are enabled and server-rendered; tokens alone publish nothing |
 | `INV-PUB-002` | Public fees use current effective-dated schedules; joining fees resolve from `JoiningFee` only |
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
+| `INV-PUB-004` | `{{data-hosting}}` publishes only the two typed hosting values, escaped, or fallback |
+| `INV-PUB-005` | Galleries serve current, smaller copies made at upload; originals kept |
 
 ## Money
 
@@ -284,7 +286,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-062` | One booking edit raises one charge request, derived from settled shares |
 | `INV-PAY-098` | A replacement ask carries the unpaid balance it retires, and records it |
 | `INV-PAY-112` | One edit's charge request is raised by one run at a time |
-| `INV-PAY-099` | A dismissed money task can be reopened; a completed one cannot |
+| `INV-PAY-099` | A dismissed money task can be reopened, except a retired edit review |
 | `INV-PAY-100` | Work-item grain follows the moved strands; the lead absorbs the settlement |
 | `INV-PAY-101` | Refund documents name the method from the settlement decision, never the source |
 | `INV-PAY-116` | Invoice-correction and officer-chosen cash notes have their own wordings |
@@ -362,9 +364,11 @@ Prefix `INV-PAY`.
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
-| `INV-PAY-150` | A cancellation leaves a live superseded capture to its own refund |
+| `INV-PAY-150` | Refund doors leave a live superseded capture to its own refund |
 | `INV-PAY-151` | Paid another way reverses a covered failed card refund |
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
+| `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
+| `INV-PAY-154` | A disputed capture is never refunded or credited |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -484,6 +488,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-059` | A guest's dietary value is seeded once, then carried by identity |
 | `INV-MOD-060` | An ordinary price ask's door and replay send one Stripe request |
 | `INV-MOD-061` | An edit's card refund and its replay send one Stripe request |
+| `INV-MOD-062` | An edit settles only the figures its preview showed |
 
 ### Adult-member hosting
 
@@ -791,6 +796,8 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-020` | Credential writes name a person or a named system actor, audited atomically |
 | `INV-PRIV-021` | Admin-origin issue-report screenshot pixels are Full-Admin-only; unknown origin fails closed |
 | `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
+| `INV-PRIV-023` | A stay's dietary value is cleared a club-set period after the stay |
+| `INV-PRIV-024` | Every outside recipient of personal data is in one census-held register |
 
 ## Membership Lifecycle
 
@@ -947,6 +954,7 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-035` | An unrecorded refund note holds its payment's refund notes until recorded |
 | `INV-INT-036` | An account-credit note stamps the one member credit it was raised for |
 | `INV-INT-037` | A manual grant queues one Xero note at approval |
+| `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
 
 ## Operations
 
@@ -964,6 +972,7 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-002` | Global before per-lodge; one helper mints the per-lodge capacity key |
 | `INV-LOCK-003` | Every global-lock call site is registered, by site, with its own reason |
 | `INV-LOCK-004` | A read taken under a lock uses the caller's transaction client |
+| `INV-LOCK-005` | Advisory-lock transactions use fresh READ COMMITTED snapshots |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |
@@ -980,6 +989,8 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-015` | A money seam is never mocked in a test asserting its money |
 | `INV-OPS-016` | Member journal grants and database guards forbid mutation |
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
+| `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
+| `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
 
 ## Product Configuration
 
@@ -1020,6 +1031,8 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-004` | Two instruments claiming independence must measure the same way; `stripComments` lives once |
 | `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
+| `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
+| `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
 
 ## Authentication
 
@@ -1042,3 +1055,6 @@ headings the index keeps verbatim.
 | `INV-AUTH-008` | Password or authenticator app, five minutes, client cannot stamp |
 | `INV-AUTH-009` | A passkey enrols; its challenge lasts two minutes |
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
+| `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
+| `INV-AUTH-012` | Officers use an app or passkey after grace |
+| `INV-AUTH-013` | Password work leaves the event loop; placeholders use one unusable hash |

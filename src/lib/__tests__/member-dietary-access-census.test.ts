@@ -149,7 +149,7 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   "src/app/(authenticated)/profile/page.tsx": "self reader, ON only",
   "src/app/(authenticated)/profile/profile-details-card.tsx":
     "passes the self value to the form",
-  "src/app/(authenticated)/profile/profile-form.tsx":
+  "src/components/profile/profile-form.tsx":
     "self form state; sends the key only while ON",
   "src/app/api/member/onboarding/route.ts": "self reader for onboarding, ON only",
   "src/components/member-onboarding-wizard.tsx": "onboarding form props",
@@ -242,6 +242,8 @@ const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
  * can never read a value back.
  */
 const BOOKING_WRITES_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
+  "src/lib/privacy-retention-jobs.ts": { reason: "#4916 bounded after-stay clear; no grant or value read", allow: [], side: "write" },
+  "src/lib/privacy-retention.ts": { reason: "#4916 count only; no guest or value read", allow: [], side: "write" },
   "src/app/api/bookings/route.ts": { reason: "W1/W2/W4 seeding read", ...WRITE_SIDE },
   "src/app/api/bookings/[id]/guests/route.ts": { reason: "W10 add guest", ...WRITE_SIDE },
   "src/lib/admin-booking-copy.ts": { reason: "W19 copy re-seeds", ...WRITE_SIDE },
