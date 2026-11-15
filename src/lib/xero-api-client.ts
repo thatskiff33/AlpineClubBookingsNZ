@@ -9,8 +9,24 @@
  * - getAuthenticatedXeroClient: returns a XeroClient with valid tokens,
  *   refreshing through a single in-process mutex.
  *
- * Higher-level helpers (contact repair, sync, invoices) live in src/lib/xero.ts.
+ * Higher-level helpers (contacts, sync, invoices) live in the focused
+ * `src/lib/xero-*` modules, every one of which reaches this transport.
  */
+
+/**
+ * `import "server-only"` makes the production build REFUSE this module in a
+ * browser bundle, at any depth (`INV-OPS-013`, #2850). It moved here from the
+ * retired `@/lib/xero` facade (#4930): every Xero service that calls the
+ * provider does so through this transport, so it is the Xero root the facade
+ * used to be. The token store, OAuth and mapping modules do not import it; they
+ * are server-only through `@/lib/prisma`, which carries the same marker.
+ * Operator CLIs reach it under plain Node, where that marker would throw at
+ * import, so every `tsx` invocation that reaches it runs with
+ * `--conditions=react-server` — which resolves `server-only` to an empty
+ * module. `cli-server-only-reach-census.test.ts` enforces that pairing;
+ * `docs/invariants/operations.md` carries the reasoning.
+ */
+import "server-only";
 
 import { XeroClient } from "xero-node";
 import { xeroTestClientOverride } from "./xero-test-client-override";
