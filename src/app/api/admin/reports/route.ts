@@ -30,10 +30,11 @@ import { clubTimeZone } from "@/lib/club-time/server";
 import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import { reportRangeLimitError } from "@/lib/date-range-presets";
 import { summarizeBookingMoneyReconciliations } from "@/lib/booking-money-reconciliation";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 const reportQuerySchema = z.object({
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  from: dateOnlyStringSchema,
+  to: dateOnlyStringSchema,
   deleted: z.enum(["hide", "include", "only"]).default("hide"),
   // Reporting lodge scope: omitted = all active lodges (occupancy denominator
   // is the summed active-lodge capacity); a value scopes to that lodge.

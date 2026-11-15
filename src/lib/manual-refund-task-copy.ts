@@ -36,7 +36,7 @@ import {
   EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
   manualRefundTaskKindAllowsSettlement,
 } from "@/lib/manual-refund-task-settlement-rules";
-import { STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
+import { namedDisputes } from "@/lib/stripe-dispute-note";
 import { formatCents } from "@/lib/utils";
 import type { EditReviewStillOwedPreview } from "@/lib/edit-financial-review-still-owed";
 
@@ -438,7 +438,7 @@ export function cancellationHandBackReason({ bookingId, refundPercentage, payee,
 }
 
 /**
- * #4911 (`INV-PAY-153`): THE REASON LINE of a paid cancellation handed to the
+ * #4911 (`INV-PAY-154`): THE REASON LINE of a paid cancellation handed to the
  * treasurer because the cardholder is disputing the card payment, or has won the
  * dispute. It names each dispute, so the treasurer can find it in Stripe before
  * deciding what, if anything, is still owed. Officer-facing, so no issue numbers.
@@ -452,7 +452,7 @@ export function disputedCancellationHandBackReason({ bookingId, refundPercentage
 }
 
 /**
- * #5061 follow-up (`INV-PAY-153`): THE REASON LINE of an edit's refund
+ * #5061 follow-up (`INV-PAY-154`): THE REASON LINE of an edit's refund
  * hand-back raised because the card payment is disputed - a lowered price whose
  * refund the app neither sends to the card nor holds as credit. Worded as the
  * cancel's (`disputedCancellationHandBackReason`), naming each dispute.
@@ -463,9 +463,4 @@ export function disputedEditRefundHandBackReason({ bookingId, editLabel, dispute
   disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
 }): string {
   return `Booking ${bookingId} lowered by a ${editLabel} while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes) || "since closed"}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the difference.`;
-}
-
-/** Each dispute as the reason lines name it: its Stripe id and status. */
-function namedDisputes(disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[]): string {
-  return disputes.map((dispute) => `${dispute.stripeDisputeId} (${STRIPE_DISPUTE_STATUS_LABEL[dispute.status]})`).join(", ");
 }

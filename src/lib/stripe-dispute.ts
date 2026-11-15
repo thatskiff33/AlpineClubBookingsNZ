@@ -1,5 +1,5 @@
 /**
- * #4911 (`INV-PAY-153`): a cardholder's dispute (chargeback) of a Stripe payment.
+ * #4911 (`INV-PAY-154`): a cardholder's dispute (chargeback) of a Stripe payment.
  *
  * Stripe takes a disputed amount back from the club's balance outside the app,
  * and before #4911 the webhook endpoint did not subscribe to `charge.dispute.*`,
@@ -51,7 +51,7 @@ import type { StripeDisputeAlertFields } from "@/lib/email-templates/admin-strip
 import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { getChargePaymentIntentId } from "@/lib/stripe";
+import { getChargePaymentIntentId } from "@/lib/stripe-charge";
 import {
   STRIPE_DISPUTE_NEXT_STEP,
   STRIPE_DISPUTE_STATUS_LABEL,
@@ -425,13 +425,19 @@ async function bookingOwnerName(bookingId: string | null): Promise<string> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     select: {
+      memberId: true,
       member: { select: { firstName: true, lastName: true } },
       organisation: { select: { name: true } },
     },
   });
   if (!booking) return NONE;
-  const owner = bookingOwner(booking).member;
-  return `${owner.firstName} ${owner.lastName}`.trim();
+  // `INV-SSOT-005`: the accessor answers who owns it, member or organisation.
+  // Only the owner projection is selected, never the organisation link
+  // (#3367): this decides nothing about a school. A member named but
+  // unreadable comes back empty; the alert still goes.
+  const owner = bookingOwner(booking).member as { firstName: string; lastName: string } | null;
+  if (!owner) return NONE;
+  return `${owner.firstName} ${owner.lastName}`.trim() || NONE;
 }
 
 async function alertFields(

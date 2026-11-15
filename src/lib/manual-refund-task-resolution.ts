@@ -13,6 +13,7 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { editReviewLaterRemovalRefusal } from "@/lib/edit-review-guest-removed-since-raised";
 import { chooseEditReviewSettlementRoute, executeEditReviewSettlement, queueEditReviewChargeInvoiceInTransaction, type EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { giveBackCancelledShareCredit, writeEditReviewAccountCredit, type EditReviewAccountCreditOutcome } from "@/lib/edit-financial-review-account-credit";
 import { cancelledBookingRefundInvoiceId, queueCancelledBookingHandBackNoteInTransaction, queueRefundRequestCreditNoteInTransaction, refundMethodForEditReviewRoute } from "@/lib/edit-financial-review-xero-leg";
@@ -20,7 +21,7 @@ import { releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting"
 import { applyGroupSettlementMirrorRefund, isBankTransferHandBackRoute } from "@/lib/group-settlement-mirror-hand-back"; // #3949
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import { applyLocalRefundAllocation, lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
@@ -58,11 +59,10 @@ import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-stor
  *
  * It sits beside `manual-booking-payment.ts` rather than inside it because the
  * two answer different questions — "the club has just taken cash for this
- * booking" versus "the club has just handed money back" — and share nothing but
- * the note-length rule and the error type, both of which have their own homes.
+ * booking" versus "the club has just handed money back" — and share only the
+ * note-length rule, re-exported below; the error type lives in its own module.
  * `INV-PAY-051` is the invariant these rules belong to.
  */
-export { ManualBookingPaymentError };
 export { MANUAL_PAYMENT_NOTE_MAX };
 
 export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
@@ -198,7 +198,7 @@ export async function resolveManualRefundTask(
       throw new ManualBookingPaymentError(editRefundHandBackDismissAfterCancelMessage(task.booking), 409); // #3949: names the organiser on a group child
     }
     const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); // #4042
-
+    const laterRemoval = resolution === "completed" && input.refuseIfGuestRemovedSinceRaised === true ? await editReviewLaterRemovalRefusal(tx, task, resolution) : null; if (laterRemoval) throw new ManualBookingPaymentError(laterRemoval, 409); // #4343: the clean-up's opt-in, under lock(1), which a consent removal also holds; an officer is warned instead (owner, 24 Oct)
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 
     // #3030 (owner decision D2): work out the amount this completion closes at,

@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
   MANUAL_PAYMENT_NOTE_MAX,
   reopenManualRefundTask,

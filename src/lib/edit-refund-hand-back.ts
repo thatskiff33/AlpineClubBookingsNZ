@@ -20,7 +20,7 @@ import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE, REVIEW_REFUND_EXCEEDS_UNPR
 import { netCollectedCardRefundSelect } from "@/lib/additional-ledger-gap";
 import { openCardRefundOwedCents } from "@/lib/open-card-refund-owed";
 import { sumInternetBankingMintedCentsForBookings } from "@/lib/internet-banking-late-cash-credit";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { bankTransferRefundPayee, type BankTransferRefundPayee } from "@/lib/group-organiser-paid";
 import { GroupCancelInProgressError, groupCancelInProgress } from "@/lib/group-cancel-in-progress";
@@ -49,7 +49,7 @@ import { paymentDisputedCaptureCents, type HoldingDispute } from "@/lib/stripe-d
  * Does this edit's refund go back by hand? True exactly when the edit returns
  * money (`refundAmountCents`, never the account-credit arm) and that money was
  * not captured through Stripe (`hasSucceededPayment`, the same test that
- * decides whether a Stripe refund runs), or (#5061 follow-up, `INV-PAY-153`)
+ * decides whether a Stripe refund runs), or (#5061 follow-up, `INV-PAY-154`)
  * it was, but a Stripe dispute holds it (`refundHeldForDispute`), so the
  * treasurer settles it. The one spelling for every door.
  */
@@ -89,7 +89,7 @@ async function refuseOrganiserHandBackWhileGroupCancelInProgress(tx: Prisma.Tran
 }
 
 /**
- * #5061 follow-up (`INV-PAY-153`): the disputes holding the payment, for the
+ * #5061 follow-up (`INV-PAY-154`): the disputes holding the payment, for the
  * hand-back's reason - the same read `applyPaymentAdjustments` made, repeated
  * under the same locks so it names the disputes that decided it.
  */

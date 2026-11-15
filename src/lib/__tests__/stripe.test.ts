@@ -7,7 +7,7 @@ vi.mock("@/lib/stripe-config", () => ({
   getOperationalStripeSecretKey: vi.fn().mockResolvedValue("sk_test_fake"),
 }));
 
-// #4911 (`INV-PAY-153`): `processRefund` reads the capture's holding disputes
+// #4911 (`INV-PAY-154`): `processRefund` reads the capture's holding disputes
 // first; none unless a test says otherwise.
 const mockStripeDisputeFindMany = vi.fn();
 vi.mock("@/lib/prisma", () => ({
@@ -351,7 +351,7 @@ describe("Stripe library", () => {
       mockStripeDisputeFindMany.mockReset().mockResolvedValue([]);
     });
 
-    it("#4911 (INV-PAY-153): refuses a capture with an open or lost dispute before Stripe is asked", async () => {
+    it("#4911 (INV-PAY-154): refuses a capture with an open or lost dispute before Stripe is asked", async () => {
       mockStripeDisputeFindMany.mockResolvedValue([
         { stripeDisputeId: "dp_1", stripePaymentIntentId: "pi_test_123", status: "LOST", amountCents: 5000 },
       ]);
@@ -359,7 +359,7 @@ describe("Stripe library", () => {
       const refused = processRefund({ paymentIntentId: "pi_test_123", amountCents: 5000, metadata: { bookingId: "booking_1" } });
 
       await expect(refused).rejects.toMatchObject({ name: "DisputedCaptureRefundRefusedError", paymentIntentId: "pi_test_123", lost: true });
-      await expect(refused).rejects.toThrow(/dp_1, lost/);
+      await expect(refused).rejects.toThrow(/Stripe dispute dp_1 \(lost\)/);
       expect(mockRefundsCreate).not.toHaveBeenCalled();
       expect(mockStripeDisputeFindMany).toHaveBeenCalledWith(expect.objectContaining({
         where: { stripePaymentIntentId: { in: ["pi_test_123"] }, status: { in: ["OPEN", "LOST"] } },

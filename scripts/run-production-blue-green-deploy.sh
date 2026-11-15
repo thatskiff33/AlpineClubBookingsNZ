@@ -1703,6 +1703,53 @@ require_resolved_caddy_tls_mode() {
   esac
 }
 
+# CADDY_WWW_REDIRECT and CADDY_LEGACY_ROUTES each select an on/off pair of
+# snippets in deploy/caddy (#4981), exactly as CADDY_TLS_MODE does, so any
+# other value would stop Caddy at step 17 on a missing import; refused here,
+# read as the caddy service would receive it.
+require_resolved_caddy_switch() {
+  local key="$1"
+  local purpose="$2"
+  local value
+
+  value="$(resolved_service_env_value "$CADDY_SERVICE" "$key")"
+  case "$value" in
+    on|off) return 0 ;;
+    *)
+      echo "$key must be 'on' or 'off' ($purpose); Docker Compose would hand the '${CADDY_SERVICE}' service '$(printable_deploy_value "$value")'. Set it in .env." >&2
+      return 1
+      ;;
+  esac
+}
+
+# With CADDY_LEGACY_ROUTES=on, Caddy forwards /finance-legacy* to
+# CADDY_FINANCE_LEGACY_UPSTREAM (deploy/caddy/legacy-routes-on.caddy). It has
+# no usable default: docker-compose.yml hands Caddy the sentinel below when
+# .env does not set it, which Caddy rejects, and this check refuses the
+# sentinel, an empty value and anything that is not one host:port first.
+CADDY_FINANCE_LEGACY_UPSTREAM_UNSET="set-CADDY_FINANCE_LEGACY_UPSTREAM-for-legacy-routes:none"
+require_resolved_caddy_legacy_upstream() {
+  local mode
+  local value
+
+  mode="$(resolved_service_env_value "$CADDY_SERVICE" CADDY_LEGACY_ROUTES)"
+  [ "$mode" = "on" ] || return 0
+  value="$(resolved_service_env_value "$CADDY_SERVICE" CADDY_FINANCE_LEGACY_UPSTREAM)"
+  if [ -z "$value" ] || [ "$value" = "$CADDY_FINANCE_LEGACY_UPSTREAM_UNSET" ]; then
+    echo "CADDY_LEGACY_ROUTES=on needs CADDY_FINANCE_LEGACY_UPSTREAM: the legacy finance dashboard's host:port as Caddy reaches it (for example 10.0.0.5:8501), set in .env. It has no default. Set CADDY_LEGACY_ROUTES=off if this club runs no legacy dashboard." >&2
+    return 1
+  fi
+  # A hostname or IPv4 address and a port: no scheme, path, space, second
+  # upstream or bracketed IPv6 literal. The first three would change what the
+  # snippet's directive means; an IPv6 literal is refused (with the reason in
+  # the message) so the accepted shape stays this one narrow pattern, and a
+  # dashboard reachable only by IPv6 is given a hostname instead.
+  if ! [[ "$value" =~ ^[A-Za-z0-9._-]+:[0-9]+$ ]]; then
+    echo "CADDY_FINANCE_LEGACY_UPSTREAM must be one host:port, a hostname or IPv4 address then a port, such as 10.0.0.5:8501 (no scheme, path or IPv6 literal; use a hostname for an IPv6-only dashboard); '$(printable_deploy_value "$value")' is not. Set it in .env." >&2
+    return 1
+  fi
+}
+
 # In local mode Caddy believes the client address a trusted proxy forwards, so
 # the proxies it trusts are an explicit setting (#4275): CADDY_TRUSTED_PROXIES,
 # the address or CIDR of the proxy in front, as the caddy service would receive
@@ -2438,7 +2485,8 @@ validate_repo_contract() {
 
 # Caddy validates the Caddyfile with the caddy service's WHOLE resolved
 # environment (#4275), not DOMAIN alone: the Caddyfile imports
-# `tls-{$CADDY_TLS_MODE:acme}.caddy` and reads CADDY_TRUSTED_PROXIES, MEET_HOST
+# `tls-{$CADDY_TLS_MODE:acme}.caddy` (and the CADDY_WWW_REDIRECT and
+# CADDY_LEGACY_ROUTES snippets) and reads CADDY_TRUSTED_PROXIES, MEET_HOST
 # and the rest, so validating without them checked the acme configuration on a
 # local-mode installation and left a broken local one to fail at step 17, after
 # the migration. Read from the step-3 render, so a shell export and every
@@ -4305,6 +4353,9 @@ validate_migration_lock_timeout_contract
 validate_resolved_email_transport
 require_resolved_caddy_tls_mode
 require_resolved_caddy_trusted_proxies
+require_resolved_caddy_switch CADDY_WWW_REDIRECT "whether www.<DOMAIN> redirects to <DOMAIN>"
+require_resolved_caddy_switch CADDY_LEGACY_ROUTES "whether Caddy serves a legacy finance dashboard's /finance-legacy route and bookings./dashboard. hosts"
+require_resolved_caddy_legacy_upstream
 validate_resolved_postgres_max_connections
 # Same reasoning (#3965): an unreadable bound must stop the deploy here, not
 # make the in-container read retry at step 14 compare against a non-number.

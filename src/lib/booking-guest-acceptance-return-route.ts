@@ -49,13 +49,7 @@ export type FullReductionReturnRoute =
  */
 export async function fullReductionReturnRoute(
   tx: Prisma.TransactionClient,
-  booking: {
-    id: string;
-    status: string;
-    finalPriceCents: number;
-    payment: LoadedBookingForModify["payment"];
-  },
-  loaded: LoadedBookingForModify,
+  booking: LoadedBookingForModify,
   priceDiffCents: number,
   /**
    * #3954: the reduction set against the booking's unpaid ask, read ONCE by the
@@ -78,12 +72,12 @@ export async function fullReductionReturnRoute(
   // live superseded capture are not cash this re-price can return.
   const settlementOptions = capturedCash
     ? calculateFullReductionSettlementOptions({
-        booking: loaded,
+        booking,
         netChargeCents: reduction.netChargeLeftCents,
         refundableCashCents: await refundableCashForModification(tx, booking.payment, reduction),
         todayAtClub,
-        // #5061 follow-up (`INV-PAY-153`): read under the acceptance's locks.
-        refundHeldForDispute: (await editReductionDisputeHold(tx, loaded)).cents > 0,
+        // #5061 follow-up (`INV-PAY-154`): read under the acceptance's locks.
+        refundHeldForDispute: (await editReductionDisputeHold(tx, booking)).cents > 0,
       })
     : null;
   // #3653 (composed by #3829): an organiser-paid child's cash goes back to the
@@ -95,7 +89,7 @@ export async function fullReductionReturnRoute(
   if (
     settlementOptions?.returnsToOrganiser &&
     booking.payment &&
-    !(await organiserCardCanReturnInFull(tx, loaded, booking.payment, settlementOptions.cardRefundAmountCents))
+    !(await organiserCardCanReturnInFull(tx, booking, booking.payment, settlementOptions.cardRefundAmountCents))
   ) {
     return null;
   }
@@ -103,7 +97,7 @@ export async function fullReductionReturnRoute(
   if (settlementOptions && cashCents === reductionCents) {
     return { kind: "money-back", settlementOptions, creditRemainder: null };
   }
-  const creditHolder = bookingOwner(loaded).memberId;
+  const creditHolder = bookingOwner(booking).memberId;
   if (creditHolder === null) return null;
   await lockMemberCreditLedger(creditHolder, tx);
   const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id, tx);

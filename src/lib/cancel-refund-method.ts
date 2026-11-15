@@ -40,7 +40,7 @@ export function forcedCancelRefundMethod(
  * Internet Banking is paid back by hand (owner decision, 22 Oct 2026). A hand-settled payment of the member's own
  * is paid back by hand on the method they chose; an Internet Banking one of their own is held as account credit.
  *
- * #4911 (`INV-PAY-153`): a capture the cardholder is disputing, or has won back, is handed to the treasurer too
+ * #4911 (`INV-PAY-154`): a capture the cardholder is disputing, or has won back, is handed to the treasurer too
  * (`disputed`, from `disputedCaptureCents` under the cancel's locks): no card refund and no account credit, since
  * either could pay back money the bank already returned. It is tiered on the credit tier, as a hand-settled payment's
  * hand-back is, so no card refund is planned for it. A joiner's refund to the organiser's card is the exception:

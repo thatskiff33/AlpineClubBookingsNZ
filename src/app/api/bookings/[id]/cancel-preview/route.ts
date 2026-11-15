@@ -35,7 +35,11 @@ import {
 import { checkRateLimit, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
 import { paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
 
-/** GET: cancellation breakdown for CancelBookingButton before confirmation. */
+/**
+ * GET /api/bookings/[id]/cancel-preview
+ * Returns the refund breakdown for a booking cancellation without actually cancelling.
+ * Used by CancelBookingButton to show amounts before the user confirms.
+ */
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -171,8 +175,7 @@ export async function GET(
     // no longer holds money.
     const organiserCard = paidByOrganiserCard(booking) ? await organiserChildCancelBasis(prisma, booking, booking.payment) : null;
     const organiserByBank = paidByOrganiserInternetBanking(booking); // #3949: refunded to the organiser by hand, on the card tiers
-    // #4911 (`INV-PAY-153`): the cancel's own read - a disputed capture's refund goes to the treasurer.
-    const disputed = (await paymentDisputedCaptureCents(prisma, booking.payment)).cents > 0;
+    const disputed = (await paymentDisputedCaptureCents(prisma, booking.payment)).cents > 0; // #4911 (`INV-PAY-154`): the cancel's own read
     const preview = calculateCancellationPreview({
       // #3643: the cash the cancel will record, not the invoice's face value.
       payment: partPayment
@@ -233,8 +236,7 @@ export async function GET(
       // tier, which is what the executed cancel uses), so preview parity holds;
       // this flag only lets the dialog say honestly what will happen.
       manualRefund: booking.payment.manuallyMarkedPaidAt !== null,
-      // #4911: handed to the treasurer on the credit tier, as a manual settlement is; the dialog says why.
-      ...(disputed && organiserCard === null && !organiserByBank ? { refundDisputed: true } : {}),
+      ...(disputed && organiserCard === null && !organiserByBank ? { refundDisputed: true } : {}), // #4911: to the treasurer on the credit tier, as a manual settlement is
       // The method the cancel will use whatever is chosen (an internet banking
       // payment refunds as account credit), from the cancel path's own home,
       // so the dialog offers only that option.
@@ -242,9 +244,6 @@ export async function GET(
     });
   } catch (error) {
     logger.error({ err: error }, "Error generating cancel preview");
-    return NextResponse.json(
-      { error: "Failed to generate cancellation preview" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to generate cancellation preview" }, { status: 500 });
   }
 }

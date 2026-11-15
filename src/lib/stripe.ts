@@ -1,8 +1,16 @@
-/** INV-OPS-013: server-only; CLIs require --conditions=react-server (enforced by cli-server-only-reach-census). */
+/**
+ * `import "server-only"` makes the production build REFUSE this module in a
+ * browser bundle, at any depth (`INV-OPS-013`, #2850). Operator CLIs reach it
+ * under plain Node, where that marker would throw at import, so every `tsx`
+ * invocation that reaches it runs with `--conditions=react-server` — which
+ * resolves `server-only` to an empty module. `cli-server-only-reach-census.test.ts`
+ * enforces that pairing; `docs/invariants/operations.md` carries the reasoning.
+ */
 import "server-only";
 
 import Stripe from "stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
+import { stripeTestClientOverride } from "@/lib/stripe-test-client-override";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   refuseBelowStripeMinimum,
@@ -24,22 +32,27 @@ let _stripe: Stripe | null = null;
 let _stripeKey: string | null = null;
 
 export async function getStripe(): Promise<Stripe> {
+  const testClient = stripeTestClientOverride(); // test-only seam (#4908)
+  if (testClient) return testClient;
   const key = await getOperationalStripeSecretKey();
   if (!key) {
     throw new Error("Stripe secret key is not configured");
   }
   if (!_stripe || _stripeKey !== key) {
-    _stripe = new Stripe(key, {
-      apiVersion: Stripe.API_VERSION,
-      typescript: true,
-    });
+    _stripe = new Stripe(key, { apiVersion: Stripe.API_VERSION, typescript: true });
     _stripeKey = key;
   }
   return _stripe;
 }
 
-/** INV-SSOT-003/INV-CONFIG-006: stripe-charge-currency derives currency from required club format,
- * refusing unsupported decimals and below-minimum amounts before provider calls (#3567 D1/D3/D7). */
+/**
+ * THE CHARGE CURRENCY IS THE CLUB'S STORED CURRENCY, AND NO CALLER STATES IT
+ * (#3567 D1; INV-SSOT-003, INV-CONFIG-006). Both wire calls below work it out
+ * from the `format` they require, through `stripeChargeCurrency`, and refuse a
+ * currency without two decimal places (D3) or an amount under the minimum (D7)
+ * before Stripe is called. The rule and its reasons live in
+ * `stripe-charge-currency.ts`, re-exported here for existing importers.
+ */
 export {
   stripeChargeCurrency,
   UnsupportedChargeCurrencyError,
@@ -202,9 +215,7 @@ export async function findOrCreateCustomer({
   });
 }
 
-/**
- * Process a refund based on cancellation policy.
- */
+/** Every card refund passes here, and a disputed capture is refused first (#4911, `INV-PAY-154`). */
 export async function processRefund({
   paymentIntentId,
   amountCents,
@@ -221,8 +232,6 @@ export async function processRefund({
   /** #4510 (`INV-PAY-147`): also send `idempotencyKey` as the refund's `refundSliceKey` evidence. */
   stampRefundSliceKey?: boolean;
 }): Promise<Stripe.Refund> {
-  // #4911 (`INV-PAY-153`): every card refund passes here, so no door refunds a
-  // capture the cardholder is disputing, or has won back from the club.
   await assertCaptureNotDisputed(paymentIntentId);
   const stripe = await getStripe();
   const params = {
@@ -237,15 +246,6 @@ export async function processRefund({
   }
 
   return stripe.refunds.create(params);
-}
-
-/** #4911: bounded, no-retry charge lookup when a dispute's payment_intent is empty. */
-export async function getChargePaymentIntentId(chargeId: string, timeoutMs: number): Promise<string | null> {
-  const stripe = await getStripe();
-  const charge = await stripe.charges.retrieve(chargeId, {}, boundedStripeRequest(timeoutMs));
-  const intent = charge.payment_intent;
-  if (!intent) return null;
-  return typeof intent === "string" ? intent : intent.id;
 }
 
 export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Refund[]> {
@@ -498,9 +498,9 @@ export async function stampPaymentIntentMetadata(
 /**
  * One request's bound, with no retries - the #3641 shape: the client sets no timeout
  * (stripe-node's ~80s and its retries), so a caller that must not wait that long says so.
- * The one spelling (#4693 review): every bounded read and write in this module takes it.
+ * The one spelling (#4693 review): every bounded Stripe read and write takes it.
  */
-function boundedStripeRequest(timeoutMs: number): Stripe.RequestOptions {
+export function boundedStripeRequest(timeoutMs: number): Stripe.RequestOptions {
   return { timeout: timeoutMs, maxNetworkRetries: 0 };
 }
 

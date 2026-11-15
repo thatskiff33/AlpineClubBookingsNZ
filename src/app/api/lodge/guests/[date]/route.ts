@@ -12,12 +12,10 @@ import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { formatXeroPhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { isCheckinBlockedByPendingReview } from "@/lib/booking-review";
 import { getGuestOperationalDayPresence, isGuestDepartureMorning, isGuestReturningOnDay, getOperationallyPresentGuestsForDay } from "@/lib/booking-guest-stay-ranges";
-
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
 /**
  * GET /api/lodge/guests/[date]
@@ -75,7 +73,7 @@ async function handleGet(req: NextRequest, dateStr: string) {
     return NextResponse.json({ error }, { status: status! });
   }
 
-  if (!dateSchema.safeParse(dateStr).success) {
+  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 

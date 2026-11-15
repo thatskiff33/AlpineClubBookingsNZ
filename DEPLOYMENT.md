@@ -112,7 +112,9 @@ you change a pool size, `max_connections`, or the replica count.
 
 Audience: Operator.
 
-By default every container connects as `tac`, the PostgreSQL superuser. Since
+New installations follow [First Bootstrap](#first-bootstrap) to provision the
+roles before the app starts. Existing installations use the switch-over below.
+Compose still defaults to `tac`, the PostgreSQL superuser for compatibility. Since
 #4453 a deployment can split that into roles that each hold only what their job
 needs. The application then cannot change a booking-ledger line or an audit entry,
 even if its credential leaks (owner decision, 27 Oct 2026). Deleting a booking
@@ -670,11 +672,11 @@ Generate unique secrets:
 openssl rand -base64 48   # AUTH_SECRET and NEXTAUTH_SECRET
 openssl rand -base64 24   # CRON_SECRET
 openssl rand -base64 24   # DB_PASSWORD
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+openssl rand -base64 32   # one DATA_ENCRYPTION_KEYS entry, written as <id>:<value>
 ```
 
-The Node command produces a 64-character hex key suitable for Xero token
-encryption variables.
+Read [Data-encryption keys](CONFIGURATION.md#data-encryption-keys-4456) before
+setting `DATA_ENCRYPTION_KEYS`.
 
 Minimum production categories:
 
@@ -700,8 +702,10 @@ Minimum production categories:
 - Auth: `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `AUTH_TRUST_HOST`
 - Public app: `DOMAIN`.
   `DOMAIN` is the root public host consumed by `Caddyfile` through the
-  `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, and `dashboard`
-  subdomains from that value.
+  `{$DOMAIN}` placeholder. Caddy also serves `www.<DOMAIN>` by default, and
+  `bookings.<DOMAIN>` and `dashboard.<DOMAIN>` only when
+  `CADDY_LEGACY_ROUTES=on`; see "Hostnames and DNS records" below for the
+  records each needs.
 - Modules: optional modules are database-backed in `ClubModuleSettings` and
   controlled from Admin > Modules after first login. No `FEATURE_*`
   environment variables are supported or read by the app.
@@ -831,18 +835,96 @@ Caddy binds privileged ports 80/443 and needs `NET_BIND_SERVICE`.
 
 ## First Bootstrap
 
-From the target host:
+Use these steps for a **new, empty installation**. They set a separate encryption
+key and restrict the application's database rights before anyone saves a
+credential. Existing deployments instead use [Switching a deployment over](#switching-a-deployment-over-bluegreen)
+and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
 
-```bash
-git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
-cd AlpineClubBookingsNZ
-cp .env.example .env
-# edit .env with your own values
-docker compose up -d --build postgres
-docker compose run --rm migrate
-docker compose up -d --build app app_blue app_green caddy
-docker compose ps
-```
+1. **Copy the configuration** on the target host:
+
+   ```bash
+   git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
+   cd AlpineClubBookingsNZ
+   cp .env.example .env
+   ```
+
+2. **Generate the secrets and edit `.env`** with your club's values. Generate a
+   separate data key with `openssl rand -base64 32` and set
+   `DATA_ENCRYPTION_KEYS=k2026:<that value>`. Nothing is stored yet, so no
+   re-encrypt is needed. Keep this key safe: after first use, never unset it or
+   roll back to a release without it; see the [key rollout and rollback notes](#adding-a-data-encryption-key-4456).
+   Generate four different passwords with `openssl rand -hex 24`: the operator's
+   `DB_PASSWORD`, then `APP_DB_PASSWORD`, `MIGRATION_DB_PASSWORD` and
+   `AUDIT_RETENTION_DB_PASSWORD`. Hex passwords need no URL encoding in the
+   connection strings below. Set a strong `AUTH_SECRET` too. **Leave `APP_DB_USER`, `MIGRATION_DB_USER` and
+   `AUDIT_RETENTION_DATABASE_URL` blank until step 6.**
+
+3. **Start only PostgreSQL**:
+
+   ```bash
+   docker compose up -d --build postgres
+   ```
+
+4. **Run the first migrations as the operator** (`tac`, whose password is
+   `DB_PASSWORD`; it replaces `<your-operator-password>` here and in step 5).
+   Override the container connection explicitly: the migration password chosen
+   in step 2 belongs to a role that does not exist yet. Provisioning needs these
+   migrations in place first:
+
+   ```bash
+   export DATABASE_URL="postgresql://tac:<your-operator-password>@postgres:5432/tacbookings"
+   docker compose --profile migrate run --rm -e DATABASE_URL migrate
+   unset DATABASE_URL
+   ```
+
+5. **Provision the roles before any app traffic.** See [Least-privilege database
+   roles](#least-privilege-database-roles) for what each role may do. Export the
+   same passwords you saved in step 2 in your private operator shell; Docker
+   reads the bare `-e` names rather than putting passwords on its command line.
+   Leave the role-name shell variables unset to use the documented defaults.
+
+   ```bash
+   export DB_ROLES_PROVISION_DATABASE_URL="postgresql://tac:<your-operator-password>@postgres:5432/tacbookings"
+   export MIGRATION_DB_PASSWORD=<your-migration-password> APP_DB_PASSWORD=<your-app-password> \
+     AUDIT_RETENTION_DB_PASSWORD=<your-retention-password>
+   docker compose --profile migrate run --rm --no-deps \
+     -e DB_ROLES_PROVISION_DATABASE_URL \
+     -e MIGRATION_DB_PASSWORD -e APP_DB_PASSWORD -e AUDIT_RETENTION_DB_PASSWORD \
+     -e APP_DB_USER -e MIGRATION_DB_USER -e AUDIT_RETENTION_DB_USER \
+     migrate ./node_modules/.bin/tsx scripts/provision-database-roles.ts --apply
+   unset DB_ROLES_PROVISION_DATABASE_URL MIGRATION_DB_PASSWORD APP_DB_PASSWORD AUDIT_RETENTION_DB_PASSWORD
+   ```
+
+   This is the container equivalent of `pnpm run db:provision-roles --apply`.
+   It transfers ownership and grants rights in one transaction. With no app
+   running, there is no app traffic to wait on its exclusive table locks.
+
+6. **Set all three switch variables together in `.env`** (the role passwords
+   are already there):
+
+   ```dotenv
+   APP_DB_USER=tac_app
+   MIGRATION_DB_USER=tac_migrator
+   AUDIT_RETENTION_DATABASE_URL=postgresql://tac_audit_retention:<your-retention-password>@postgres:5432/tacbookings?connection_limit=2&pool_timeout=10
+   ```
+
+   The app role cannot delete audit rows. The retention URL gives only the cron
+   leader the separate rights needed for nightly retention. If you also run
+   checkout tools such as `setup:check`, point their `DATABASE_URL` at the app
+   role, using the host/port reachable from that shell.
+
+7. **Start the web slots, Caddy and cron leader**:
+
+   ```bash
+   docker compose up -d --build app app_blue app_green caddy
+   docker compose ps
+   ```
+
+8. **Open Admin → Setup** after seeding the intended admin (below). Confirm
+   **Data Encryption Key** and **Database role** are complete before connecting
+   providers or enrolling authenticator apps. `pnpm run setup:check` shows the
+   same checks for its own shell connection; the database-role warning never
+   blocks an existing deployment.
 
 To validate the production image alone (without Compose), build it locally:
 
@@ -856,9 +938,11 @@ admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
 seasons/rates, email, Stripe, Xero). Optionally run `pnpm run setup:wizard`
 against the migrated database to bootstrap the club identity, capacity, and age
 tiers from the CLI — it writes those database settings rows (no `config/club.json`
-is written). `config/club.json` remains an optional seed/fallback only: copy
-`config/club.example.json` to `config/club.json` and edit it if you want to pin
-a boot-time fallback, but it is no longer required.
+is written). `config/club.json` remains an optional seed/fallback only, and only
+a process run from the checkout reads it (a host-run seed, or the app run
+outside Docker). The Docker app container has no `config/` folder, so editing
+the file on a Docker host changes nothing there. Copy `config/club.example.json`
+to `config/club.json` and edit it only for those cases; it is no longer required.
 
 Create or seed accounts only for the intended environment. The first admin
 from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
@@ -1081,6 +1165,38 @@ Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
 peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
 trusted proxy forwarded — see "Client IPs behind the proxy" below.
 
+### Hostnames and DNS records
+
+Caddy requests a certificate for every hostname the Caddyfile serves, so each
+one needs a DNS record (an `A` record, or a `CNAME` to `<DOMAIN>`) pointing at
+this host. A hostname with no record is not harmless: Caddy fails to obtain
+its certificate and logs the failure again on every retry. Which hostnames are
+served is set in `.env`, never by editing the Caddyfile:
+
+| Hostname | Served when | DNS record needed |
+| --- | --- | --- |
+| `<DOMAIN>` | always | yes |
+| `www.<DOMAIN>` | `CADDY_WWW_REDIRECT=on` (the default); redirects to `<DOMAIN>` | yes, or set `CADDY_WWW_REDIRECT=off` |
+| `bookings.<DOMAIN>`, `dashboard.<DOMAIN>` | `CADDY_LEGACY_ROUTES=on` only (default `off`) | only when on |
+| `MEET_HOST` | always (the MiroTalk video-meeting host) | only if the club uses MiroTalk |
+
+`CADDY_LEGACY_ROUTES=on` exists for an installation that still runs a legacy
+finance dashboard of its own. Besides the two hostnames it adds a
+`/finance-legacy*` route on `<DOMAIN>`: the app checks the user first (an
+active finance viewer past two-factor), then Caddy forwards the request to
+`CADDY_FINANCE_LEGACY_UPSTREAM`, the dashboard's `host:port` as the Caddy
+container reaches it. That setting has no default; the step-3 preflight
+refuses `on` without it, refuses anything that is not one `host:port` (a
+hostname or IPv4 address, then a port; give an IPv6-only dashboard a hostname),
+and refuses either switch set to anything but `on` or `off`. A club that never ran
+such a dashboard leaves both settings unset.
+
+**Upgrading from 0.13.2 or earlier:** those releases served the
+`/finance-legacy*` route (to a fixed private address) and the `bookings.` and
+`dashboard.` hosts unconditionally. An installation that relied on them must
+set `CADDY_LEGACY_ROUTES=on` and `CADDY_FINANCE_LEGACY_UPSTREAM` in `.env`
+before deploying this release, or the route and hosts disappear.
+
 ### Behind a TLS-terminating proxy: `CADDY_TLS_MODE=local`
 
 The shipped `Caddyfile` assumes Caddy is the public edge: `{$DOMAIN}` is an
@@ -1144,9 +1260,11 @@ skips the step-3 and step-4 checks, so a mistyped or missing value stops Caddy
 instead of the deploy: an unset `CADDY_TRUSTED_PROXIES` reaches Caddy as a
 placeholder it rejects.
 
-Do **not** edit `Caddyfile` on the host for this: the deploy refuses a dirty
-checkout, and the workspace it builds is a clean `git archive` that would drop
-the edit on the next release.
+Do **not** edit `Caddyfile` on the host for this, or for any other per-club
+choice: the deploy refuses a dirty checkout, and the workspace it builds is a
+clean `git archive` that would drop the edit on the next release. Every part
+of the edge that differs between clubs is a `.env` setting instead — this one,
+and the hostnames under "Hostnames and DNS records" below.
 
 #### Client IPs behind the proxy
 
@@ -1823,12 +1941,14 @@ Configure webhook endpoints for the deployed domain:
 - Xero: `/api/webhooks/xero`
 - SES SNS: `/api/webhooks/ses-sns`
 
-Stripe and SES webhook secrets are env-configured (`STRIPE_WEBHOOK_SECRET`,
-`SES_SNS_TOPIC_ARN`); rotate them if exposed. The **Xero** webhook key is **not**
-an env var since #2079 — it is captured in-app (Admin > Integrations) and stored
-encrypted, and the `/api/webhooks/xero` route resolves it from there and stays
-**fail-closed** (a missing/unreadable key rejects every delivery, it never
-accepts).
+The SES SNS topic is env-configured (`SES_SNS_TOPIC_ARN`). The **Stripe**
+webhook signing secret is captured in-app (Admin > Integrations > Stripe) and
+stored encrypted; the `STRIPE_WEBHOOK_SECRET` env var is ignored. The **Xero**
+webhook key is **not** an env var since #2079 — it is captured in-app
+(Admin > Integrations) and stored encrypted, and the `/api/webhooks/xero` route
+resolves it from there and stays **fail-closed** (a missing/unreadable key
+rejects every delivery, it never accepts). Rotate the Stripe signing secret and
+the Xero key if either is exposed.
 
 The guided setup wizard (**Admin → Xero → Setup**, step 4 "Webhooks", #2081)
 shows the exact delivery URL to paste into Xero, captures the webhook signing
@@ -1927,7 +2047,7 @@ keeps one record per cardholder dispute (chargeback), emails Finance when a
 dispute opens and when it closes, shows "Disputed by cardholder" on the
 booking and on **Finance → Payments**, and, while a dispute is open or lost,
 issues no card refund or account credit for that payment: a cancel, or an edit
-that lowers the price, is handed to the treasurer instead (`INV-PAY-153`). Disputes opened before the upgrade are
+that lowers the price, is handed to the treasurer instead (`INV-PAY-154`). Disputes opened before the upgrade are
 not back-filled, so check Stripe's **Disputes** page once after adding the
 events and handle any open dispute by hand.
 

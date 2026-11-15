@@ -49,8 +49,10 @@ vi.mock("@/lib/audit", () => ({
   getAuditEmailDomain: vi.fn().mockReturnValue("example.com"),
   getAuditRequestContext: vi.fn().mockReturnValue({}),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: vi.fn(),
 }));
 vi.mock("@/lib/xero-contact-sync", () => ({

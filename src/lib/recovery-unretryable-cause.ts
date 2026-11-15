@@ -27,7 +27,7 @@
  * way. Stripe was not asked for it; the row goes dead for the treasurer, who
  * checks the booking's refunds and closes it "Paid another way" if owed.
  *
- * The fifth (#4911, `INV-PAY-153`): a card refund of a capture the cardholder is
+ * The fifth (#4911, `INV-PAY-154`): a card refund of a capture the cardholder is
  * disputing, or has won back from the club (`disputedCaptureRefusal`). Stripe
  * refuses a refund of a disputed charge, and a lost dispute has already paid the
  * cardholder back, so every retry is refused the same way until a person acts.
@@ -40,7 +40,8 @@
  * alert. The debt stays on the row, and the stuck-state page lists it with the
  * exhausted recoveries.
  */
-import { PaymentRecoveryOperationType, type PaymentRecoveryOperation } from "@prisma/client";
+import { PaymentRecoveryOperationType, type PaymentRecoveryOperation, type StripeDisputeStatus } from "@prisma/client";
+import { namedDisputes } from "@/lib/stripe-dispute-note";
 
 import { CARRIED_ASK_PAYMENT_WAIT_MAX_MS, CarriedAskPaymentWaitExpiredError } from "@/lib/additional-ask-recovery-replay";
 import { bookingModificationTypeLabel } from "@/lib/booking-money-lines";
@@ -57,9 +58,8 @@ import { disputedCaptureRefusal } from "@/lib/stripe-dispute-hold";
 export const CARD_REFUND_RESERVATION_REFUSED_CAUSE = "The card refund was not sent: the refund it would pay is already reserved or paid from that card payment, so retrying would be refused the same way and the app stopped. Stripe was not asked for it. Check the booking's refunds against Stripe; if money is still owed, close this refund as paid another way.";
 
 /** #4911: what a card refund stopped by a cardholder's dispute says on its row and in the officers' alert. */
-export function disputedCaptureRefundCause(disputes: ReadonlyArray<{ stripeDisputeId: string; status: string }>): string {
-  const named = disputes.map((dispute) => `${dispute.stripeDisputeId} (${dispute.status.toLowerCase()})`).join(", ");
-  return `The card refund was not sent: the cardholder has disputed this card payment with their bank (Stripe dispute ${named}), so the app pays nothing back from it by card or as account credit. Retrying would be refused the same way, so the app stopped. Stripe was not asked for it. If the dispute is lost the cardholder already has the money back; if it is won, check what is still owed and refund it, or close this refund as paid another way.`;
+export function disputedCaptureRefundCause(disputes: ReadonlyArray<{ stripeDisputeId: string; status: StripeDisputeStatus }>): string {
+  return `The card refund was not sent: the cardholder has disputed this card payment with their bank (Stripe dispute ${namedDisputes(disputes)}), so the app pays nothing back from it by card or as account credit. Retrying would be refused the same way, so the app stopped. Stripe was not asked for it. If the dispute is lost the cardholder already has the money back; if it is won, check what is still owed and refund it, or close this refund as paid another way.`;
 }
 
 /** How the carried-ask wait's cause opens; the alert's wording keys on it (`recoveryFailureAlertMessage`). */

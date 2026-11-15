@@ -392,6 +392,8 @@ import "./primary-invoice-edit-race.realdb.test";
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-3953-` fixtures.
 import "./additional-capture-receipt.realdb.test";
 import "./additional-capture-receipt-sweep-retry.realdb.test";
+// #4434: a receipt split across invoices, sent and retried leg by leg.
+import "./additional-capture-receipt-legs.realdb.test";
 // #3953 round 7: a change capture whose ledger row carries no change stamp - a
 // review charge (read to its change by its reason) or an older member ask (the
 // booking's lock, taken before the anchor's) - still has one recorder. Skipped
@@ -586,6 +588,12 @@ import "./self-heal-bank-hand-back-sources.realdb.test";
 // a fresh card note under an after-void key. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4250-` fixtures.
 import "./resolved-voided-refund-note-coverage.realdb.test";
+// #4936 reuses it to prove the refund-note gap list's pre-filter drops only
+// payments their links' recorded amounts cover, lets legacy links without one
+// through to the exact reader, and lists exactly what that reader would.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4936-` fixtures.
+import "./refund-gap-prefilter.realdb.test";
 // #4256 reuses it to prove a PARTIAL invoice repair claims its row before it
 // writes or calls Xero: a resolve or a mark non-replayable committed while the
 // retry waits on its claim wins, two retries make one payment write, and a
@@ -763,6 +771,11 @@ import "./session-reauth.realdb.test";
 // succeeds, and one of two concurrent counter updates. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4617-` member.
 import "./webauthn.realdb.test";
+// #4618 reuses it to prove one grace stamp from two concurrent refreshes, no
+// grace after a reset, and no factor left when a reset races an enrolment.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4618-` members.
+import "./officer-two-factor.realdb.test";
 // #4445 reuses it to prove two writers merging metadata onto one Xero link
 // (an existing row, or a missing one both create) both keep their keys, and
 // that the one-statement merge writes what the old spread wrote. Skipped
@@ -809,6 +822,11 @@ import "./xero-account-credit-note-stamp.realdb.test";
 // line under the edit at the settle. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4661-` fixtures.
 import "./unpaid-edit-change-fee-owed.realdb.test";
+// #4924 reuses it to prove a save carrying figures its preview showed before the
+// club day crossed a change-fee band is refused with the fresh figures and writes
+// nothing. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its
+// own `race-4924-` fixtures.
+import "./edit-quoted-figures.realdb.test";
 // #4456 reuses it to prove a credential written under a data-encryption ring key
 // survives an AUTH_SECRET rotation and goes through the store's version-guarded
 // claim like any other: a re-key of a legacy row, a write that lost to a row
@@ -821,6 +839,19 @@ import "./data-encryption-key-ring.realdb.test";
 // dispute; a won dispute restores the credit path. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4911-` fixtures.
 import "./stripe-dispute-cancel.realdb.test";
+// INV-INT-038 (the #4921 prerequisite) reuses it to prove an abandoned inbound
+// Xero reconcile operation is recovered under a fresh claim: one winner among
+// racing takeovers or a racing Mark failed, and the abandoned attempt's late
+// outcome refused. It owns and cleans its own `race-alp546-` fixtures.
+import "./xero-inbound-abandoned-operation.realdb.test";
+// #4851 reuses it to prove Stuck States' settlement of a dead refund out of the
+// group organiser's card: a refund Stripe already holds is recorded and nobody is
+// paid again, a bank close raises the mirror and its no-Xero-note hand-back, a
+// bank close and a re-arm of one row queued behind lock(1) leave one winner, a
+// re-arm's first runner attempt reads Stripe by key before any send, and an old
+// whole-group row flips and mirrors. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
+// it owns and cleans its own `race-4851-` fixtures.
+import "./card-refund-group-settle.realdb.test";
 // The #5061 follow-up proves the same for an edit that lowers the price (date
 // change, guest removal, batch edit): one treasurer task, no money moved. It
 // owns and cleans its own `race-5061e-` fixtures.

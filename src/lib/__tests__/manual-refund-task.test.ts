@@ -104,7 +104,7 @@ const mocks = vi.hoisted(() => ({
   planKeptLateCaptureXeroRecord: vi.fn(),
   finishKeptLateCaptureXeroRecord: vi.fn(),
   settleKeptLateCaptureRecordOnApproval: vi.fn(),
-  // #5061 follow-up (`INV-PAY-153`): the dispute hold on the payment an account credit is allocated against.
+  // #5061 follow-up (`INV-PAY-154`): the dispute hold on the payment an account credit is allocated against.
   paymentDisputedCaptureCents: vi.fn(),
 }));
 
@@ -240,7 +240,7 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: (...a: unknown[]) => mocks.recordBookingEvent(...a),
 }));
-vi.mock("@/lib/payment-reconciliation", () => ({
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     status: number;
     constructor(message: string, status = 400) {
@@ -540,10 +540,10 @@ function offerUnpricedNight() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  mocks.paymentDisputedCaptureCents.mockResolvedValue({ cents: 0, disputes: [] });
-  mocks.readSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map(), totalCents: 0 });
-  mocks.appliedCredit.cents = 0;
+    vi.clearAllMocks();
+    mocks.readSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map(), totalCents: 0 });
+    mocks.paymentDisputedCaptureCents.mockResolvedValue({ cents: 0, disputes: [] });
+    mocks.appliedCredit.cents = 0;
   mocks.appliedCredit.payment = null;
   mocks.giveBackAppliedCredit.mockImplementation(
     async ({ giveBackCentsOf }: { giveBackCentsOf: (applied: number, payment: unknown) => Promise<number> }) => {
@@ -2006,13 +2006,13 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
         hasIssuedXeroInvoice: true,
         priceDiffCents: -7300,
         settlementAmountCents: 7300,
-        // A card refund issues an ordinary modification credit note; account
-        // credit issues the UNAPPLIED one. The method follows the route the money
-        // actually took rather than an election nobody made.
+        // A card refund is the payment's refund note, keyed on this task.
+        // Account credit issues the UNAPPLIED modification note. The method
+        // follows the route the money actually took.
         settlementMethod: "card",
-        // ...and the note says which instrument the money went back on
-        // (`INV-PAY-101`): this route refunded the card.
         refundMethod: "card",
+        paymentId: "payment-1",
+        reviewTaskId: "task-1",
         // The structural edit queued its own narration update when it committed.
         datesChanged: false,
         guestIdentityChanged: false,
@@ -2286,7 +2286,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     );
   });
 
-  it("MUTATION: refuses account credit against a disputed card payment (#5061 follow-up, INV-PAY-153)", async () => {
+  it("MUTATION: refuses account credit against a disputed card payment (#5061 follow-up, INV-PAY-154)", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(
       editReviewTask({
         paymentId: null,
@@ -4067,6 +4067,57 @@ describe("re-basing the booking's headline totals while settling (#3219)", () =>
         }),
       }),
     );
+  });
+
+  // #4343: the clean-up asks the resolver to refuse a completion whose guest a
+  // later removal already credited. An officer's completion is warned in the
+  // queue, not refused (owner, 24 Oct 2026), so the refusal is opt-in.
+  function laterRemovalReview() {
+    mocks.bookingGuestFindMany.mockResolvedValue([]);
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        reviewContext: reviewContext({
+          occurrence: {
+            bookingId: "booking-1",
+            bookingGuestId: "guest-1",
+            cause: "INEXACT_STORED_NIGHT_PRICES",
+            surrenderedNightDates: ["2026-08-01"],
+            addedNightDates: [],
+            storedEvidence: {
+              guestTotalCents: 20_000,
+              nightPrices: [
+                { date: "2026-08-01", priceCents: 10_000 },
+                { date: "2026-08-02", priceCents: 10_000 },
+              ],
+            },
+          },
+        }),
+      }),
+    );
+  }
+
+  const laterRemovalCompletion = {
+    taskId: "task-1",
+    resolution: "completed" as const,
+    note: "Priced from the stored nights.",
+    actingMemberId: "admin-1",
+    confirmedAmountCents: 10_000,
+    direction: "REFUND_TO_MEMBER" as const,
+    recordedNightPrices: null,
+  };
+
+  it("MUTATION: refuses the clean-up's completion of an edit review whose guest was removed after it was raised", async () => {
+    laterRemovalReview();
+    await expect(
+      resolveManualRefundTask({ ...laterRemovalCompletion, refuseIfGuestRemovedSinceRaised: true }, CLUB_FORMAT_TEST),
+    ).rejects.toThrow(/removed after it was raised/);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not refuse an officer's completion of that review: the queue warns them instead (owner, 24 Oct 2026)", async () => {
+    laterRemovalReview();
+    await expect(resolveManualRefundTask(laterRemovalCompletion, CLUB_FORMAT_TEST)).resolves.toBeDefined();
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalled();
   });
 
   it("SHAPE 2 (#3257): a surviving strand with NO night rows now RE-BASES from its stored total (#4317 review H1)", async () => {

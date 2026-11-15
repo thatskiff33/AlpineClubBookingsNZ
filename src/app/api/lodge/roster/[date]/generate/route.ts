@@ -12,8 +12,8 @@ import {
 import { getLodgeCapacity, FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { getOperationalRosterGuestsForDate } from "@/lib/roster-eligibility";
 import logger from "@/lib/logger";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const bodySchema = z.object({
   choreTemplateIds: z.array(z.string().min(1)).min(1),
 });
@@ -40,7 +40,7 @@ export async function POST(
   if (tier !== "admin" && tier !== "hut-leader") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!dateSchema.safeParse(dateStr).success) {
+  if (!dateOnlyStringSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 

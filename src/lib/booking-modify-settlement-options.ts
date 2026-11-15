@@ -4,7 +4,7 @@
 // the one basis both read. Code moved verbatim; import via
 // "@/lib/booking-modify" or "@/lib/booking-modify-settlement".
 
-import type { Prisma } from "@prisma/client";
+import { PaymentSource, type Prisma } from "@prisma/client";
 import {
   assertReductionReadForNet,
   type ReductionAgainstUnpaidAsk,
@@ -32,7 +32,6 @@ import {
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import type { OwnershipReader } from "@/lib/superseded-intent-ownership";
 import { paidByOrganiser, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
-import { PaymentSource } from "@prisma/client";
 import { paymentDisputedCaptureCents, type CaptureDisputeHold } from "@/lib/stripe-dispute-hold";
 
 export type BookingModificationSettlementOptions = {
@@ -58,7 +57,7 @@ export type BookingModificationSettlementOptions = {
    */
   organiserRefundByBankTransfer: boolean;
   /**
-   * #5061 follow-up (`INV-PAY-153`): an OPEN or LOST Stripe dispute holds the
+   * #5061 follow-up (`INV-PAY-154`): an OPEN or LOST Stripe dispute holds the
    * member's card payment (`editReductionDisputeHold`), so the reduction is
    * handed to the treasurer: no choice is offered, no card refund is made and
    * no account credit is minted (`heldForDisputeSettlementCents`).
@@ -66,13 +65,18 @@ export type BookingModificationSettlementOptions = {
   refundHeldForDispute: boolean;
 };
 
+/** The quote and the save both read this. A quote is advisory; the save rechecks under the Payment row. */
+export type ModificationRefundCashDb = OpenNonCancellationHandBackDb &
+  OwnershipReader &
+  Pick<Prisma.TransactionClient, "paymentTransaction">;
+
 /** What `editReductionDisputeHold` reads: the dispute rows and the payment's ledger captures. */
 export type EditDisputeHoldDb = Pick<Prisma.TransactionClient, "stripeDispute" | "paymentTransaction">;
 
 const NO_DISPUTE_HOLD: CaptureDisputeHold = { cents: 0, disputes: [] };
 
 /**
- * #5061 follow-up (`INV-PAY-153`): the Stripe dispute hold on the money a
+ * #5061 follow-up (`INV-PAY-154`): the Stripe dispute hold on the money a
  * reduction would return - the member's own captured card payment. A booking
  * the group organiser paid for is outside it: an organiser-card joiner's refund
  * is stopped by the refund chokepoint instead (`processRefund`), and an
@@ -91,18 +95,13 @@ export async function editReductionDisputeHold(
 }
 
 /**
- * #5061 follow-up (`INV-PAY-153`): what a disputed reduction hands to the
+ * #5061 follow-up (`INV-PAY-154`): what a disputed reduction hands to the
  * treasurer - the whole reduction on the credit tier, as a disputed paid
  * cancel's hand-back is (`cancelRefundDisposition`), whatever the member chose.
  */
 export function heldForDisputeSettlementCents(options: BookingModificationSettlementOptions): number {
   return options.accountCreditAmountCents;
 }
-
-/** The quote and the save both read this. A quote is advisory; the save rechecks under the Payment row. */
-export type ModificationRefundCashDb = OpenNonCancellationHandBackDb &
-  OwnershipReader &
-  Pick<Prisma.TransactionClient, "paymentTransaction">;
 
 /** One cash cap for the quote and save, after unpaid asks have been netted. */
 export async function refundableCashForModification(
@@ -219,7 +218,7 @@ export async function calculateModificationSettlementOptions({
       refundHeldForDispute: false,
     };
   }
-  // #5061 follow-up (`INV-PAY-153`): a disputed payment offers no choice; the treasurer has the reduction.
+  // #5061 follow-up (`INV-PAY-154`): a disputed payment offers no choice; the treasurer has the reduction.
   const refundHeldForDispute = (await editReductionDisputeHold(db, booking)).cents > 0;
   return {
     basisAmountCents,
@@ -281,7 +280,7 @@ export function calculateFullReductionSettlementOptions({
   /** The edit's cash basis (`refundableCashForModification`), read by the caller. */
   refundableCashCents: number;
   todayAtClub: CalendarDate;
-  /** #5061 follow-up: `editReductionDisputeHold` above zero, read by the caller under its locks (`INV-PAY-153`). */
+  /** #5061 follow-up: `editReductionDisputeHold` above zero, read by the caller under its locks (`INV-PAY-154`). */
   refundHeldForDispute: boolean;
 }): BookingModificationSettlementOptions | null {
   const basisAmountCents = settlementBasisCents(booking, netChargeCents, refundableCashCents);
@@ -355,7 +354,7 @@ export function resolveSelectedSettlementAmount({
   }
 
   if (settlementOptions.refundHeldForDispute) {
-    // #5061 follow-up (`INV-PAY-153`): money back, by the treasurer's hand - never account credit.
+    // #5061 follow-up (`INV-PAY-154`): money back, by the treasurer's hand - never account credit.
     const amountCents = heldForDisputeSettlementCents(settlementOptions);
     return {
       settlementMethod: amountCents > 0 ? ("card" as const) : null,

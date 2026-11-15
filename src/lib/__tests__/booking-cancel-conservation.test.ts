@@ -136,7 +136,7 @@ vi.mock("@/lib/waitlist", () => ({
   processWaitlistForDates: mocks.processWaitlistForDates,
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 
@@ -342,6 +342,10 @@ describe("cancel-after-reduction conservation matrix (#1031)", () => {
             // Xero-linked applied credit under the lock.
             paymentTransaction: {
               findFirst: vi.fn().mockResolvedValue(null),
+            },
+            // #4909: the claim releases the booking's promo uses on this tx.
+            promoRedemption: {
+              findFirst: mocks.promoRedemptionFindFirst,
             },
             memberCredit: {
               aggregate: vi

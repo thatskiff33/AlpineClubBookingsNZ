@@ -172,7 +172,7 @@ vi.mock("@/lib/utils", () => ({
     classes.filter(Boolean).join(" "),
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   getXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
 }));

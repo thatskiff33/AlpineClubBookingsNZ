@@ -114,7 +114,7 @@ export async function holdLateCaptureForTreasurerIfRequired(
     afterStripeRefused?: boolean; madeCents?: number;
     /** #4516 (M4c): the journal refused the refund's reservation, so Stripe was never asked; held whatever the setting. */
     afterReservationRefused?: boolean;
-    /** #4911 (`INV-PAY-153`): the cardholder disputes the capture, so the refund chokepoint refused it; held whatever the setting. */
+    /** #4911 (`INV-PAY-154`): the cardholder disputes the capture, so the refund chokepoint refused it; held whatever the setting. */
     afterDisputeRefused?: boolean;
   } = {},
 ): Promise<boolean> {
@@ -251,7 +251,7 @@ export async function holdLateCaptureReservationRefused(capture: HeldLateCapture
 }
 
 /**
- * #4911 (`INV-PAY-153`): the automatic refund of a late capture the cardholder is disputing was refused before
+ * #4911 (`INV-PAY-154`): the automatic refund of a late capture the cardholder is disputing was refused before
  * Stripe was asked (`disputedCaptureRefusal`). A redelivery would be refused the same way (`INV-PAY-128`), so it is
  * held for a treasurer, whatever the setting, and never re-thrown.
  */

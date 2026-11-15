@@ -1,5 +1,6 @@
-import { PaymentSource, PaymentStatus } from "@prisma/client";
+import { BookingStatus, PaymentSource, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { editDoorBooking, type EditDoorBookingOverrides } from "./support/edit-door-booking";
 
 import type { LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import type { CancellationRule } from "@/lib/cancellation";
@@ -73,8 +74,8 @@ const NO_HAND_BACKS = {
 const tx = { payment: { update: paymentUpdate }, ...NO_HAND_BACKS } as unknown as Parameters<typeof applyPaymentAdjustments>[0];
 
 /** $200, paid entirely by account credit: nothing captured, PAID. */
-function creditPaidBooking(overrides: { status?: string; payment?: Record<string, unknown>; memberId?: string | null } = {}) {
-  return {
+function creditPaidBooking(overrides: { status?: BookingStatus; payment?: NonNullable<EditDoorBookingOverrides["payment"]>; memberId?: string | null } = {}) {
+  return editDoorBooking({
     id: "booking_3809",
     status: overrides.status ?? "PAID",
     checkIn: CHECK_IN,
@@ -94,7 +95,7 @@ function creditPaidBooking(overrides: { status?: string; payment?: Record<string
       xeroInvoiceId: "INV-3809",
       ...overrides.payment,
     },
-  } as unknown as LoadedBookingForModify;
+  });
 }
 
 const reduce = (booking: LoadedBookingForModify, priceDiffCents = -5_000) =>
@@ -251,7 +252,7 @@ describe("#3809: every other booking settles exactly as before", () => {
     credit.policy = TIERS["100%"];
   });
 
-  it.each(["CONFIRMED", "PAYMENT_PENDING"])("MUTATION: a %s booking with nothing captured is still owing - the reduction lowers the invoice by the whole $50 and gives nothing back", async (status) => {
+  it.each([BookingStatus.CONFIRMED, BookingStatus.PAYMENT_PENDING])("MUTATION: a %s booking with nothing captured is still owing - the reduction lowers the invoice by the whole $50 and gives nothing back", async (status) => {
     const result = await reduce(creditPaidBooking({ status }));
 
     expect(credit.giveBack).not.toHaveBeenCalled();
@@ -358,10 +359,12 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
       appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     });
 
+    // #3993: the card's share is the payment's refund note (the card-paid
+    // invoice cannot take a modification note); the give-back keeps its own
+    // allocated note beside it.
     expect(decision.financialAction).toEqual(expect.objectContaining({
-      type: "modification-credit-note",
+      type: "refund-credit-note",
       refundAmountCents: 10_000,
-      refundMethod: "card",
       allocatedGiveBackCents: 5_000,
     }));
   });
@@ -410,7 +413,7 @@ describe("#3809: a booking paid by card AND credit gets back what an all-card on
 });
 
 /*
-  #5061 follow-up (`INV-PAY-153`): the door's options found the card payment
+  #5061 follow-up (`INV-PAY-154`): the door's options found the card payment
   disputed and so offered no choice. If the save's own read no longer sees the
   dispute (it closed between the two reads), the reduction still goes to the
   treasurer rather than silently returning nothing.

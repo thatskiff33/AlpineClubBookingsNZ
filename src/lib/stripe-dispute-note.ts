@@ -1,5 +1,5 @@
 /**
- * #4911 (`INV-PAY-153`): what the treasurer does about a Stripe dispute, per
+ * #4911 (`INV-PAY-154`): what the treasurer does about a Stripe dispute, per
  * stage and outcome - one copy shared by the hand-built HTML
  * (`email-templates/admin-stripe-dispute.ts`), the `{{disputeNextStep}}` token
  * an admin's saved body renders, and the registry's preview sample. A leaf
@@ -14,6 +14,14 @@ export const STRIPE_DISPUTE_STATUS_LABEL: Record<StripeDisputeStatus, string> = 
   LOST: "lost",
   CLOSED_OTHER: "closed with no funds taken",
 };
+
+/**
+ * The disputes a refusal, a recovery row's cause or a treasurer task names, as
+ * "dp_1 (open), dp_2 (lost)": one wording, so each surface names a dispute alike.
+ */
+export function namedDisputes(disputes: ReadonlyArray<{ stripeDisputeId: string; status: StripeDisputeStatus }>): string {
+  return disputes.map((dispute) => `${dispute.stripeDisputeId} (${STRIPE_DISPUTE_STATUS_LABEL[dispute.status]})`).join(", ");
+}
 
 /**
  * The statuses that hold a capture's refunds and credits: open, or lost to the

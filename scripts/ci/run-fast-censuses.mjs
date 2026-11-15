@@ -142,7 +142,7 @@ export const FAST_CENSUS_COMMANDS = [
     // Always `origin/main`, never the epic SHA `--base` names (#4831): see the
     // note above `main`.
     fixedBase: BUDGET_BASE_REF,
-    why: "the file-size ratchet and size-allowances.d/ ceilings",
+    why: "the file-size and function-length ratchets and size-allowances.d/ ceilings",
   },
 ];
 

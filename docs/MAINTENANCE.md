@@ -1053,6 +1053,68 @@ and by how much in total — run `pnpm run quality:budget --report`, or read the
 from the tree through the same function, so neither can drift from the other or
 from the gate.
 
+### Function-length ratchet
+
+The file-size budget measures whole files, so a 2,000-line function inside a
+file that is already allowed to be long passes it. `performBookingCancellation`
+is exactly that: one function of more than two thousand lines in a file whose
+size debt the file-size ratchet accepts (#4927). So `pnpm run quality:budget`
+runs a second ratchet in the same run, over functions, with the same rule:
+
+> Current length debt may stay. New debt and debt growth may not appear silently.
+
+**The ceiling is 300 lines** (`FUNCTION_LENGTH_LIMIT` in
+`scripts/lib/function-length-ratchet.ts`), a function a reviewer can still hold
+in their head in one sitting. Measured on 13 Nov 2026, 323 of 13,565 production
+functions are over it, carrying 93,716 lines of length debt; run
+`pnpm run quality:budget --report` for the current figure and the longest ten.
+
+**What counts as a function** is what a reader opens and reads top to bottom: a
+top-level `function` declaration, a function or arrow assigned to a top-level
+`const`/`let` (including one passed to a wrapping call such as `forwardRef(…)`
+or `memo(…)`, measured as the whole declaration), and a method, constructor, accessor or arrow-valued field of a
+top-level class (named `Class.member`). A function nested inside one of those is
+part of its length, not a unit of its own, so keeping a long function's phases
+as inner closures does not shorten it. Known limit: methods and function-valued
+properties of an object literal (such as `export const config = { jwt() {…} }`,
+or `wrap({ handler: async () => {…} })`) and namespace members are not measured,
+so a long function written in one of those shapes is not judged. A span runs from the first token to the
+closing token; the leading doc comment does not count. `scripts/lib/function-length.ts`
+is the measurement.
+
+For each production file a change touches (the same scope and the same base ref
+as the file-size ratchet, so `--base` means the same thing to both):
+
+- a function that was **within** 300 lines may not go over;
+- a function **already over** may not exceed the length it had on the base ref;
+- a **new** function may not arrive over 300.
+
+A function is matched by name within its file. A git rename of the file keeps
+each function's base length, and so does a function moved to another file the
+change touches or out of a file it deletes, provided that name exists in only
+one of the change's files on each side. A function moved in from outside the
+budgeted scope is judged as new. A split is therefore recognised as progress: the
+moved function keeps its old length as its ceiling and the old file loses it. Renaming
+a long function is not followed: the ratchet cannot tell a rename from a
+deletion plus a new function, so keep the name or split it while you are there.
+
+**When a function legitimately has to grow**, splitting it stays the preferred
+answer. Where the split is genuinely worse, declare it in this change's
+`size-allowances.d/` fragment, exactly as for a file, with `function:` naming
+`<path>#<name>` (the figure below is illustrative):
+
+```markdown
+function: src/lib/booking-cancel.ts#performBookingCancellation
+lines: 2114
+reason: the guard belongs inside the claim it protects until #4516 splits the
+  cancellation into its phases.
+```
+
+The same rules apply as for a file allowance: the recorded length must be the
+function's real length, it is one-shot, an unneeded one fails, and it may not
+cover a new function or carry one over 300 for the first time.
+[`size-allowances.d/README.md`](../size-allowances.d/README.md) has the format.
+
 ### Quality report
 
 Run the local maintainability report before opening broad refactor PRs, after
@@ -1124,7 +1186,7 @@ spelling to copy unless a runbook explicitly gives you another one. (One does:
 command `./node_modules/.bin/tsx --conditions=react-server ...` in full. That is
 correct and supported — what is never correct is a bare `pnpm exec tsx`.) The reason
 is not tidiness.
-`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and `@/lib/stripe`
+`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero-api-client` and `@/lib/stripe`
 each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
 the production build refuse to ship any of them to a member's browser. Since
 #3204 the club-timezone seed and the two environment-role readers carry it too,
@@ -1475,6 +1537,23 @@ its allocation refused) reports `MISSING_CREDIT_NOTE_ALLOCATION` with that
 operation's retry, never a fresh allocation; while a retry is running on it,
 or where the retry is refused, the report says the allocation is blocked and
 offers nothing, and you check again later or allocate it by hand in Xero.
+Since #3993 a paid-off allocation (Xero says the invoice has already been paid
+off, or the amount is greater than the amount outstanding) and a modification
+note the invoice cannot take are not retried and are not safe to apply: the
+report asks for manual review. For a card refund that already produced both
+notes, keep the refund note, which carries the Stripe refund payment. Void the
+modification note only after confirming it has no allocations or refunds. On
+the Xero operations screen, Resolve the partial operation and its failed
+requeue and allocate rows. Do not mark the row non-replayable, which warns
+forever. Do not void the refund note: inbound sync would retire its link and
+the next nightly run would raise another. A paid-off note recorded with any
+other method (or none) names no refund note: check how the money went back
+before allocating, refunding or voiding it. If the invoice cannot take the note
+on a re-run whose earlier attempt already sent the create to Xero (a worker
+that died before completing), the row says so and stays retryable: check Xero
+for an existing note for that edit before treating it as not created. This
+change does not perform that remedy, and it uses no production Xero, Stripe,
+or database.
 Since #4762 the same holds for an invoice-clearing note whose operation the
 retry refuses: reported blocked with the reason and the invoices left to
 allocate by hand, never a fresh allocation of the whole note against the
@@ -1922,6 +2001,45 @@ release is one you will not roll back. If a rollback becomes unavoidable
 afterwards, first reset the rewritten rows from their audit rows (each
 `booking-payment.stored-night-price.rate-derived` strand entry carries
 `fromPriceCents` and `fromSource` per night), then route back.
+
+### Settle open edit reviews and re-base frozen headlines (#4343)
+
+`pnpm run bookings:edit-review-cleanup` is the owner's one-off for edit reviews
+left from before every edit was priced automatically. It does nothing until it
+is run. Census (the default) and `--dry-run` keep nothing. `--apply` needs
+`--actor <memberId>` and is the only mode that writes.
+
+Census reports open edit reviews, frozen headlines (a booking that has a review,
+none of them still open, and a total that is not the sum of its guests),
+dismissed shortenings whose money stayed inside the guest's stored total, and
+the existing ledger night-line census. Dry-run prints the decision for each
+open review and, for each frozen headline, the four money columns before and
+after. That preview runs inside a transaction it rolls back.
+
+Apply settles each open review through the ordinary refund, credit or charge
+path, and charges the change fee when the edit moved check-in and had not
+already charged one. That fee is priced on the club day the edit was saved,
+through the normal late-notice fee rule, so an unpaid booking carries none. A
+review it cannot price, and one whose guest was removed after the review was
+raised, is closed with a note and no money moved; a removal that lands during
+the run is caught under the settlement lock and the review is dismissed
+instead. A resolver refusal stays open and is listed. The headline pass then re-bases each
+frozen booking through the same writer a review closure uses. It moves no cash,
+card charge, account credit or Xero document. A second apply changes nothing.
+
+Run it only from the image that contains this change, after that colour is the
+only one serving, and never during a mixed-colour window. Point `DATABASE_URL`
+at a non-production copy for the dry-run. Name the database yourself:
+
+```bash
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --dry-run
+DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
+```
+
+The before-values are on the booking's `PRICE_REBASE` history row and the audit
+entry, which is how a headline can be put back by hand. Do not roll production
+back below `5bab5c49`.
 
 ### Census the booking money verdicts, night-price provenance and edit reviews (#3278, #3531)
 

@@ -1,6 +1,7 @@
 import type { AgeTier, MemberGuestConsentStatus } from "@prisma/client";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import type { AggregatedPolicyExceptions } from "@/lib/booking-policy-exceptions";
+import type { EditQuotedFigures } from "@/lib/edit-quoted-figures";
 
 /**
  * The wire shapes the edit-booking panel is handed and the ones it reads back.
@@ -264,11 +265,16 @@ export interface SettlementOptions {
   returnsToOrganiser: boolean;
   /** #3949: by bank transfer, the organiser having paid by Internet Banking; else to their card. */
   organiserRefundByBankTransfer: boolean;
-  /** #5061 follow-up (`INV-PAY-153`): the card payment is disputed, so the treasurer hands the reduction back; no choice. */
+  /** #5061 follow-up (`INV-PAY-154`): the card payment is disputed, so the treasurer hands the reduction back; no choice. */
   refundHeldForDispute: boolean;
 }
 
 export interface QuoteResult {
+  /**
+   * #4924 (`INV-MOD-062`): the figures sent back unchanged on Save. Optional
+   * only because an older server omits it during a blue-green cutover.
+   */
+  quotedFigures?: EditQuotedFigures;
   newTotalPriceCents: number;
   newDiscountCents: number;
   newPromoAdjustmentCents: number;

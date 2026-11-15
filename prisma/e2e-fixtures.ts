@@ -272,6 +272,16 @@ export const EMAIL_2FA_ENROLLEE = {
   lastName: "Email",
 } as const;
 
+// Never-enrolled member the passkey spec (e2e/passkey-second-factor.spec.ts)
+// signs in as and enrols a passkey on (#5160). Seeded like bob, finance VIEWER
+// with no second factor, but kept apart from him: two-factor-login.spec.ts
+// asserts bob has never enrolled, so no other spec may sign bob in.
+export const PASSKEY_ENROLLEE = {
+  email: demoEmail("pip-passkey"),
+  firstName: "Pip",
+  lastName: "Passkey",
+} as const;
+
 // Owner of the capacity-filling booking for the waitlist spec (non-login).
 export const LODGE_FILL_OWNER = {
   email: demoEmail("lodge-fill"),
