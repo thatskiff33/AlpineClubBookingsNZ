@@ -5,9 +5,9 @@ import { getAuditRequestContext } from "@/lib/audit";
 import { requireAdmin } from "@/lib/session-guards";
 import {
   importMembersFromXeroGroups,
-  XeroDailyLimitError,
   XeroMemberImportValidationError,
-} from "@/lib/xero";
+} from "@/lib/xero-member-import";
+import { XeroDailyLimitError } from "@/lib/xero-api-client";
 import logger from "@/lib/logger";
 
 const importSchema = z.object({

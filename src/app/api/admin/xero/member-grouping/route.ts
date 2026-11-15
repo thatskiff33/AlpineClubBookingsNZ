@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { ageTierEnum, canonicalizeAgeTiers } from "@/lib/age-tier-schema";
-import { getXeroContactGroups, getXeroContactGroupCacheLastRefreshedAt } from "@/lib/xero";
+import { getXeroContactGroups, getXeroContactGroupCacheLastRefreshedAt } from "@/lib/xero-contact-groups";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { getXeroGroupingMode } from "@/lib/xero-member-grouping";
 import {

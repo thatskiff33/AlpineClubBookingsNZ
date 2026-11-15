@@ -82,10 +82,14 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-api-client", () => ({
   callXeroApi: mocks.callXeroApi,
   getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
+}));
+vi.mock("@/lib/xero-mappings", () => ({
   getResolvedAccountMapping: mocks.getResolvedAccountMapping,
+}));
+vi.mock("@/lib/xero-contact-cache", () => ({
   refreshXeroContactCachesFromContact: mocks.refreshXeroContactCachesFromContact,
 }));
 
