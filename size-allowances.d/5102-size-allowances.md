@@ -15,7 +15,7 @@ reason: adds the sr-only h1 for the loading state, heading levels on its card
   limit before this change; lifting it apart is a refactor of its own, not
   part of this fix.
 
-function: src/app/(website-dynamic)/booking-requests/booking-request-form.tsx#BookingRequestForm
+function: src/components/website/booking-request-form.tsx#BookingRequestForm
 lines: 454
 reason: marks two card titles `headingLevel="none"`, each with a comment
   saying why: the form is also embedded in CMS pages, so its place in the
@@ -30,7 +30,7 @@ reason: adds an sr-only h1 for the loading state and level 1 to two card
   inside `MemberGroupJoinPanel`, which was already over its limit before this
   change; lifting it apart is a refactor of its own, not part of this fix.
 
-function: src/app/(website-dynamic)/school-bookings/school-booking-form.tsx#SchoolBookingForm
+function: src/components/website/school-booking-form.tsx#SchoolBookingForm
 lines: 503
 reason: marks two card titles `headingLevel="none"`, each with a comment
   saying why: the form is also embedded in CMS pages, so its place in the
