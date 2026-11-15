@@ -18,7 +18,7 @@ reason: the refund appeal list gains its page state, its page in the URL
   same screen stays unpaged; moving one list out is a screen split of its own.
 
 file: src/app/(admin)/admin/membership/member-applications/page.tsx
-lines: 888
+lines: 889
 reason: the screen kept its filter only in memory; paging needs the filter
   and page read from and written to the URL, and that wiring belongs beside
   the filter state it mirrors rather than in a second module.
@@ -48,7 +48,7 @@ reason: the officer queue pager, its page state and its URL wiring; those
   not part of this fix.
 
 function: src/app/(admin)/admin/membership/member-applications/page.tsx#MemberApplicationsPage
-lines: 720
+lines: 721
 reason: the officer queue pager, its page state and its URL wiring; those
   lines sit inside the function `MemberApplicationsPage`, which was already
   over its limit before this change, and lifting it apart is a refactor of its
