@@ -2752,8 +2752,9 @@ refusal in a later change. Every other kind keeps its dismissal.
 
 **A card shortfall's part to check keeps its dismissal** (a capacity race's
 too), for an officer who has confirmed the card refund reached the member. **So
-does a disputed card payment's hand-back (#5061) once its disputes are LOST
-for at least its amount** (owner decision, 15 Nov 2026): the cardholder already
+does a disputed card payment's hand-back (#5061) once the disputes on its own
+payment are LOST for at least its amount** (owner decision, 15 Nov 2026; a
+group settlement's dispute filed on the organiser's booking never counts): the cardholder already
 has that money back through their bank. While a dispute is open, if the lost
 cents cover less, or if it was won or closed with no funds taken, OPEN ->
 DISMISSED is refused with a 409 saying which, writing nothing. Either dismissal

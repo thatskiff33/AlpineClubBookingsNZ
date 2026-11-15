@@ -351,6 +351,21 @@ async function cleanup() {
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
   });
 
+  it("(review) a lost group-settlement dispute filed on the booking, with no payment, does not unlock the booking's own hand-back", async () => {
+    const id = await cancelledBankBooking();
+    const taskId = await raiseHandBack(id);
+    const opened = new Date("2026-06-20T00:00:00.000Z");
+    // As #5061 records a dispute on an organiser's settlement: matched to the organiser's booking, no Payment or capture.
+    await db.stripeDispute.create({ data: { stripeDisputeId: `dp_${id}_settlement`, stripeChargeId: `ch_${id}_settlement`, bookingId: id,
+      amountCents: 100_000, currency: "nzd", reason: "fraudulent", status: "LOST", stripeStatus: "lost", stripeCreatedAt: opened, lastEventCreatedAt: opened,
+      stripeEventId: `evt_${id}_settlement` } });
+
+    // MUTATION: counting every dispute on the booking (not only the task's payment's) fails here: it would dismiss.
+    await expect(resolve(taskId, "dismissed")).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
+    expect((await eventOf(memberMoneyEventKeys.refundObligation("hand-back", taskId)))?.journal?.reversedBy).toBeNull();
+    expect(await queuePreview(taskId)).toMatchObject({ journalHandBackDismissRefusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, disputedHandBackLost: false });
+  });
+
   it("(owner decision, 15 Nov 2026) a dispute won between the queue's preview and the dismissal: refused, saying the club still owes it, and its debt stays open", async () => {
     const { id, task, disputeId, r05 } = await disputedCancel("OPEN");
     const { disputedHandBackDismissRefusal } = await import("@/lib/manual-refund-task-copy");

@@ -849,7 +849,7 @@ describe("resolveManualRefundTask", () => {
     // #4516 (owner decision, 15 Nov 2026): a disputed card payment's hand-back (#5061) is dismissed only once every
     // dispute on its booking is lost. MUTATIONS: dropping the lost requirement fails the open, won and mixed cases;
     // refusing it again fails the lost case; reading the disputes before the Payment row fails the order assertion.
-    const dispute = (status: string, id = "dp_1", amountCents = 9000) => ({ bookingId: "booking-1", stripeDisputeId: id, status, amountCents });
+    const dispute = (status: string, id = "dp_1", amountCents = 9000, paymentId: string | null = "payment-1") => ({ bookingId: "booking-1", stripeDisputeId: id, status, amountCents, paymentId });
 
     it("#4516: dismisses a disputed card payment's hand-back once its dispute is lost: Payment row, then the disputes re-read, then the claim, then its R05 withdrawn", async () => {
       mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST")]);
@@ -886,6 +886,14 @@ describe("resolveManualRefundTask", () => {
 
       expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
       expect(mocks.createAuditLog).not.toHaveBeenCalled();
+      expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
+    });
+
+    it("#4516 (review): a lost group-settlement dispute filed on the booking (no payment) is not this task's: generic refusal", async () => {
+      mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST", "dp_settlement", 100_000, null)]);
+
+      await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
+
       expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
     });
 

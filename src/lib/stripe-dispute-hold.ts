@@ -122,7 +122,11 @@ export function disputedCaptureRefusal(error: unknown): DisputedCaptureRefundRef
 }
 
 /** One dispute as the booking page and Finance -> Payments mark it. */
-export type DisputeMarker = { stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number };
+export type DisputeMarker = {
+  stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number;
+  /** The payment whose capture it disputes; null for a group organiser's settlement (#4516: the hand-back rule counts only its own payment's). */
+  paymentId: string | null;
+};
 
 /**
  * #4911 (`INV-PAY-154`): the disputes on these bookings, newest first, keyed by
@@ -140,7 +144,7 @@ export async function readDisputesByBookingId(
   if (bookingIds.length === 0) return byBooking;
   const disputes = await db.stripeDispute.findMany({
     where: { bookingId: { in: bookingIds } },
-    select: { bookingId: true, stripeDisputeId: true, status: true, amountCents: true },
+    select: { bookingId: true, stripeDisputeId: true, status: true, amountCents: true, paymentId: true },
     orderBy: [{ stripeCreatedAt: "desc" }, { stripeDisputeId: "asc" }],
   });
   for (const { bookingId, ...dispute } of disputes) {

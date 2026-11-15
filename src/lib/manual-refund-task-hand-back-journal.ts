@@ -72,8 +72,8 @@ export function isDismissibleCheckPart(task: HandBackFacts): boolean {
   return isJournalHandBackTask(task) && cancelCardShortfallPart(task) === "check";
 }
 
-/** The card disputes recorded on the task's booking (#5061, `readDisputesByBookingId`): their statuses and cents. */
-export type HandBackDisputes = readonly { status: StripeDisputeStatus; amountCents: number }[];
+/** The card disputes recorded on the task's booking (#5061, `readDisputesByBookingId`): status, cents and payment. */
+export type HandBackDisputes = readonly { status: StripeDisputeStatus; amountCents: number; paymentId: string | null }[];
 
 /** A cancellation's own journal hand-back: not a card shortfall part, nor an edit's or an appeal's hand-back. */
 export function isCancellationOwnHandBack(task: HandBackFacts): boolean {
@@ -81,11 +81,20 @@ export function isCancellationOwnHandBack(task: HandBackFacts): boolean {
 }
 
 /**
- * A cancellation's own hand-back on a booking with a card dispute recorded: the task a paid cancel of a disputed card
+ * The disputes on this task's own payment. A group organiser's settlement dispute (no payment, filed against the
+ * organiser's booking) is the joiners' money, already held from their refunds (`INV-PAY-154`), so it never counts
+ * against the organiser's own hand-back.
+ */
+function disputesOnTaskPayment(task: { paymentId: string | null }, disputes: HandBackDisputes): HandBackDisputes {
+  return task.paymentId === null ? [] : disputes.filter((dispute) => dispute.paymentId === task.paymentId);
+}
+
+/**
+ * A cancellation's own hand-back whose payment has a card dispute recorded: the task a paid cancel of a disputed card
  * payment raises (#5061, `INV-PAY-154`).
  */
-export function isDisputedCancellationHandBack(task: HandBackFacts, disputes: HandBackDisputes): boolean {
-  return disputes.length > 0 && isCancellationOwnHandBack(task);
+export function isDisputedCancellationHandBack(task: HandBackFacts & { paymentId: string | null }, disputes: HandBackDisputes): boolean {
+  return disputesOnTaskPayment(task, disputes).length > 0 && isCancellationOwnHandBack(task);
 }
 
 /** What a dismissal of this task does: refused (with the sentence shown), or allowed and withdrawing its debt. */
@@ -94,17 +103,20 @@ export type JournalHandBackDismissal = { refusal: string | null; withdraws: bool
 /**
  * THE dismissal rule for a journal hand-back (`INV-SSOT`): the server's door and the queue payload both ask it.
  * - A card shortfall's part to check keeps its dismissal (owner decision, 15 Nov 2026).
- * - A disputed card payment's hand-back is dismissed only once its disputes are lost (owner decision, 15 Nov 2026),
+ * - A disputed card payment's hand-back is dismissed only once the disputes on its own payment are lost (owner
+ *   decision, 15 Nov 2026),
  *   and only when the lost cents cover the task's: the decision rests on the cardholder already having the money
  *   back, which is true only of what the bank took back. While one is open, if they cover less, or if they were won
  *   or closed with no funds taken, it is refused: the club may still owe it.
  * - Every other journal hand-back is refused until the four-way dismissal ships (owner decision, 14 Nov 2026, Q6).
  * An allowed dismissal withdraws the task's refund debt exactly. Any other task is not this rule's.
  */
-export function journalHandBackDismissal(task: HandBackFacts & { amountCents: number | null }, disputes: HandBackDisputes): JournalHandBackDismissal {
+export function journalHandBackDismissal(task: HandBackFacts & { amountCents: number | null; paymentId: string | null },
+  bookingDisputes: HandBackDisputes): JournalHandBackDismissal {
   if (!isJournalHandBackTask(task)) return { refusal: null, withdraws: false, disputeLost: false };
   if (isDismissibleCheckPart(task)) return { refusal: null, withdraws: true, disputeLost: false };
-  if (!isDisputedCancellationHandBack(task, disputes)) return { refusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, withdraws: false, disputeLost: false };
+  if (!isDisputedCancellationHandBack(task, bookingDisputes)) return { refusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, withdraws: false, disputeLost: false };
+  const disputes = disputesOnTaskPayment(task, bookingDisputes);
   const refused = (refusal: string) => ({ refusal, withdraws: false, disputeLost: false });
   const open = disputes.find((dispute) => disputeHoldsCapture(dispute.status) && !disputeIsLost(dispute.status));
   if (open) return refused(disputedHandBackDismissRefusal(open.status));
