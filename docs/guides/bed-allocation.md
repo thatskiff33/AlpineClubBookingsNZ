@@ -84,7 +84,7 @@ year in one go).
    lodge access if you need to allocate beds at a particular lodge.
 
    **If the club has no active lodge**, the board says that instead of loading,
-   with a link to Lodge settings.
+   with a link to Lodges, where you can add or reactivate one.
 
    <!--
      ALT TEXT DESCRIBES THIS CAPTURE, NOT THE PAGE. The image predates #2937 and

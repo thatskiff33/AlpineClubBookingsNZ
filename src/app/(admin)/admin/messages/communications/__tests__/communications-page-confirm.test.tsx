@@ -15,7 +15,9 @@ import type React from "react";
   A bulk member email states its audience and recipient count before it sends
   (#4964). Submitting the form — the button, or Enter in Subject — only reads
   the count (a GET that spends no quota) and opens the confirmation dialog; the
-  POST that emails people waits for the officer to confirm.
+  POST that emails people waits for the officer to confirm. The sender chooses
+  the kind of message first (#4987); these tests send a newsletter, the kind
+  whose audience this confirmation step was first written for.
 */
 
 vi.mock("next-auth/react", () => ({
@@ -98,6 +100,8 @@ beforeEach(() => {
       recipientFilter: "all",
       totalRecipients: 320,
       eligibleRecipients: 312,
+      optedOut: 6,
+      neverOptedIn: 2,
     },
   };
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -111,6 +115,8 @@ beforeEach(() => {
           success: true,
           totalRecipients: 320,
           eligibleRecipients: 312,
+          optedOut: 6,
+          neverOptedIn: 2,
           queued: 312,
           filteredByPreference: 8,
         },
@@ -145,7 +151,17 @@ async function compose(subject = "Lodge closed this weekend") {
   fireEvent.change(screen.getByLabelText("Message Body"), {
     target: { value: "The road is shut." },
   });
+  // #4987: nothing is preselected; Send stays disabled until a kind is chosen.
+  fireEvent.click(screen.getByLabelText(/Club newsletter/));
   return subjectInput as HTMLInputElement;
+}
+
+// The reads of the count made so far: the live count beside the form, and the
+// fresh one a submit makes before it asks for confirmation.
+function countReads() {
+  return fetchMock.mock.calls.filter(([url]) =>
+    String(url).startsWith(`${SEND_URL}?recipientFilter=`),
+  );
 }
 
 // The result region, not the view-only banner's (also role="status").
@@ -174,8 +190,11 @@ describe("CommunicationsPage confirmation step (#4964)", () => {
     expect(dialog).toHaveTextContent(
       "The club can send 1 bulk email per hour, shared by all admins.",
     );
+    // The dialog also says which kind of message it is, and who is left out.
+    expect(dialog).toHaveTextContent("Kind of message: Club newsletter.");
+    expect(dialog).toHaveTextContent("Not sent to: 6 opted out, 2 never opted in.");
     expect(fetchMock).toHaveBeenCalledWith(
-      `${SEND_URL}?recipientFilter=all`,
+      `${SEND_URL}?recipientFilter=all&category=newsletter`,
     );
     expect(postCalls()).toHaveLength(0);
   });
@@ -215,26 +234,36 @@ describe("CommunicationsPage confirmation step (#4964)", () => {
     );
 
     await waitFor(() =>
-      expect(resultRegion()).toHaveTextContent("Sent to 312 recipients (8 opted out)."),
+      expect(resultRegion()).toHaveTextContent(
+        "Sent to 312 recipients (6 opted out, 2 never opted in).",
+      ),
     );
     expect(postCalls()).toHaveLength(1);
     expect(JSON.parse(postCalls()[0][1].body as string)).toEqual({
       subject: "Lodge closed this weekend",
       body: "The road is shut.",
       recipientFilter: "all",
+      category: "newsletter",
     });
   });
 
   it("offers no send when nobody would receive it", async () => {
     countAnswer = {
-      body: { limit: 1, windowSeconds: 3600, totalRecipients: 3, eligibleRecipients: 0 },
+      body: {
+        limit: 1,
+        windowSeconds: 3600,
+        totalRecipients: 3,
+        eligibleRecipients: 0,
+        optedOut: 0,
+        neverOptedIn: 3,
+      },
     };
     await compose();
     pressSend();
 
     await waitFor(() =>
       expect(resultRegion()).toHaveTextContent(
-        /nobody would receive this\. Nothing was sent\./,
+        'Nobody in "All Active Members" would receive this club newsletter (3 never opted in). Nothing was sent.',
       ),
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -285,6 +314,8 @@ describe("CommunicationsPage confirmation step (#4964)", () => {
           recipientFilter: filter,
           totalRecipients: 9,
           eligibleRecipients: 7,
+          optedOut: 2,
+          neverOptedIn: 0,
         },
       };
       await compose();
@@ -296,7 +327,7 @@ describe("CommunicationsPage confirmation step (#4964)", () => {
       pressSend();
       const dialog = await screen.findByRole("dialog");
       expect(fetchMock).toHaveBeenCalledWith(
-        `${SEND_URL}?recipientFilter=${filter}`,
+        `${SEND_URL}?recipientFilter=${filter}&category=newsletter`,
       );
       expect(
         within(dialog).getByText("Send this email to 7 people?"),
@@ -315,14 +346,19 @@ describe("CommunicationsPage confirmation step (#4964)", () => {
 
   it("takes no second submit while the first is being checked", async () => {
     const subjectInput = await compose();
+    // Let the live count beside the form settle, so only the submit's read is
+    // counted below.
+    await waitFor(() =>
+      expect(screen.getByTestId("communications-recipient-preview")).toHaveTextContent(
+        "Will be sent to 312 of 320 people",
+      ),
+    );
+    const readsBeforeSubmit = countReads().length;
     fireEvent.submit(subjectInput.form!);
     fireEvent.submit(subjectInput.form!);
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    const countReads = fetchMock.mock.calls.filter(([url]) =>
-      String(url).startsWith(`${SEND_URL}?recipientFilter=`),
-    );
-    expect(countReads).toHaveLength(1);
+    expect(countReads()).toHaveLength(readsBeforeSubmit + 1);
   });
 
   // useConfirm has no trigger element, so the page returns focus itself.

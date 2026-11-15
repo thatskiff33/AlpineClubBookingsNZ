@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { findDuplicateContacts } from "@/lib/xero";
+import { findDuplicateContacts } from "@/lib/xero-duplicate-contacts";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
 

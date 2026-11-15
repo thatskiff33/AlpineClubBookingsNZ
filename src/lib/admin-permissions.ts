@@ -220,6 +220,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/membership-cancellation-settings",
       "/api/admin/membership-lockout-settings",
       "/api/admin/membership-types",
+      "/api/admin/subscription-categories",
       "/api/admin/member-fields",
       "/api/admin/induction",
       "/api/admin/inductions",

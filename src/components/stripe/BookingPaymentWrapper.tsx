@@ -8,6 +8,7 @@ import PaymentForm from "./PaymentForm";
 import SetupForm from "./SetupForm";
 import { RedirectFailedNotice } from "./redirect-failed-notice";
 import { stripeReturnUrl, takeStripeReturn, type StripeReturn } from "@/lib/stripe-return";
+import { creditElectionOutcomeCopy, parseCreditElectionOutcome } from "@/lib/credit-election-outcome-copy";
 import { capacityCancellationRecovery } from "@/lib/booking-card-refund-copy";
 import { useClubFormat } from "@/components/club-format-provider";
 import { FocusedActionError } from "@/components/focused-action-error";
@@ -84,8 +85,8 @@ export default function BookingPaymentWrapper({
   // intent. chargedAmountCents is the amount actually taken today (the member
   // portion for a split); deferredGuestAmountCents is the non-member guest
   // portion charged closer to the stay. Rendered by PaymentForm instead of the
-  // client-computed amountCents prop so a split parent never shows the full
-  // party total against a member-portion charge.
+  // client-computed amountCents prop so every booking shows its actual card
+  // charge after credit, including the member-only charge on a split.
   const [chargedAmountCents, setChargedAmountCents] = useState<number | null>(
     null,
   );
@@ -96,6 +97,8 @@ export default function BookingPaymentWrapper({
   const [deferredGuestAmountCents, setDeferredGuestAmountCents] = useState<
     number | null
   >(null);
+  const [creditElection, setCreditElection] = useState<ReturnType<typeof parseCreditElectionOutcome>>(null);
+  const [completedWithCredit, setCompletedWithCredit] = useState(false);
   const [initFailed, setInitFailed] = useState(false);
   const [initRecoveryError, setInitRecoveryError] = useState("");
   const [confirmationError, setConfirmationError] = useState("");
@@ -253,6 +256,9 @@ export default function BookingPaymentWrapper({
       try {
         setLoading(true);
         setCheckingPayment(awaitedIntentId !== null);
+        setCreditElection(null);
+        setCompletedWithCredit(false);
+        setChargedAmountCents(null);
         setInitFailed(false);
         setInitRecoveryError("");
         setConfirmationError("");
@@ -269,6 +275,8 @@ export default function BookingPaymentWrapper({
         });
 
         const data = await response.json();
+        const election = parseCreditElectionOutcome(data.creditElection);
+        setCreditElection(election);
 
         if (!response.ok) {
           const cancellationRecovery =
@@ -357,6 +365,10 @@ export default function BookingPaymentWrapper({
         }
 
         if (data.alreadyPaid || data.alreadySaved) {
+          if (data.alreadyPaid && creditElectionOutcomeCopy(election, format)) {
+            setCompletedWithCredit(true);
+            return;
+          }
           paid = true;
           handleAlreadyComplete();
           return;
@@ -371,7 +383,7 @@ export default function BookingPaymentWrapper({
 
         // #1976 — adopt the server's charge figures when present (additive
         // fields; older/other responses simply omit them and PaymentForm falls
-        // back to the amountCents prop, preserving today's non-split display).
+        // back to the amountCents prop for consumers without a server figure).
         if (typeof data.chargedAmountCents === "number") {
           setChargedAmountCents(data.chargedAmountCents);
         }
@@ -407,6 +419,20 @@ export default function BookingPaymentWrapper({
     );
   }
 
+  const creditCopy = creditElectionOutcomeCopy(
+    creditElection, format,
+    initRecoveryError || confirmationError || initFailed || paymentFormClosed ? null : chargedAmountCents,
+  );
+
+  if (completedWithCredit) {
+    return (
+      <div className="rounded-md bg-success-3 p-4 text-sm text-success-11">
+        <p role="status" aria-label="Saved account credit">{creditCopy}</p>
+        <Button className="mt-4" onClick={onPaymentComplete}>Continue</Button>
+      </div>
+    );
+  }
+
   const initializationError = initFailed
     ? "We couldn't start the card payment. Your booking is saved - you can pay later from your booking page."
     : !loading && !checkingPayment && !clientSecret && !initRecoveryError
@@ -427,7 +453,7 @@ export default function BookingPaymentWrapper({
     <>
       <FocusedActionError
         id="booking-payment-recovery-error"
-        error={visibleError}
+        error={visibleError && creditCopy ? `${visibleError} ${creditCopy}` : visibleError}
         heading={visibleHeading}
         className="mb-4"
         action={
@@ -451,6 +477,9 @@ export default function BookingPaymentWrapper({
       ) : suppressPaymentContent ? null : (
         <>
         {redirectFailed ? <div className="mb-4"><RedirectFailedNotice /></div> : null}
+        {/* #4943: a recovery alert already carries the credit sentence, so it
+            appears here only when no alert is showing. */}
+        {creditCopy && !visibleError && <p role="status" aria-label="Saved account credit" className="mb-4 rounded-md bg-info-3 p-4 text-sm text-info-11">{creditCopy}</p>}
         <PreviousPaymentRefundingNotice show={previousPaymentRefunding} className="mb-4" />
         <StripeProvider clientSecret={clientSecret!}>
           {paymentMode === "payment" ? (

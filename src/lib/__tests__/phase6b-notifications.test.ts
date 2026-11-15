@@ -182,6 +182,23 @@ describe("N-08: shouldSendEmail", () => {
     expect(await shouldSendEmail("member-1", "marketingEmails")).toBe(false);
   });
 
+  // #4987: club notices are opt-out, so a member with no saved preferences
+  // receives them; newsletters (marketingEmails, above) stay opt-in.
+  it("returns true for clubNotices when no preference record exists", async () => {
+    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
+    const { shouldSendEmail } = await import("../email");
+    expect(await shouldSendEmail("member-1", "clubNotices")).toBe(true);
+  });
+
+  it("honours a stored clubNotices opt-out", async () => {
+    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
+      clubNotices: false,
+      marketingEmails: true,
+    });
+    const { shouldSendEmail } = await import("../email");
+    expect(await shouldSendEmail("member-1", "clubNotices")).toBe(false);
+  });
+
   it("respects stored preference (false)", async () => {
     mockPrisma.notificationPreference.findUnique.mockResolvedValue({
       bookingConfirmation: false,

@@ -35,6 +35,11 @@ assistants are all modules.
   deploy-time setup default off; general-purpose ones default on.
 - **Reach for it when** the capability is genuinely optional for a club — when
   some clubs would want it and others would not want it visible at all.
+- **A feature tied to one place is its own module, default off.** The
+  Whakapapa (Mt Ruapehu) conditions report is the example: it is the
+  `skifieldWhakapapa` module, split from the generic Snow.nz widget
+  (`skifieldConditions`) so a club at another mountain never inherits it
+  (#4932).
 
 A module toggle holds no secrets. A module that also needs credentials or
 inventory shows **Needs setup** until they exist, rather than failing at the
@@ -44,7 +49,7 @@ point of use.
 
 A **setting** is a stored value an admin edits in the app. Cancellation refund
 tiers, minimum stay, group discount, the subscription lockout policy, booking
-request rules, member-guest consent policy, hut-leader label, notification
+request rules, reminder and hold timings, member-guest consent policy, hut-leader label, notification
 recipients, email wording, public page content, colours and fonts are all
 settings.
 
@@ -54,14 +59,14 @@ settings.
 - Settings are stored in the database and take effect immediately. They do not
   need a redeploy, a `.env` edit, or a restart.
 
-**Install-time configuration** is the same lever, one layer down.
-`config/club.json` holds the values needed *before* an admin can sign in — club
-name, short name, public URL, contact addresses, bed capacity, age tiers and
-their integer-cent nightly rates. `pnpm run setup:wizard` writes it for you.
-[`../../CONFIGURATION.md`](../../CONFIGURATION.md) is the full reference for it
-and for every environment variable. Some of these values, including club name
-and the hut-leader label, can be overridden later from Admin → Appearance →
-Club Identity without touching the file.
+**Install-time configuration** is the same lever, set before the club opens.
+After the first migrate and seed, an admin sets club name, short name, contact
+addresses, bed capacity and age tiers at `/admin/setup`, or runs
+`pnpm run setup:wizard` against the migrated database, which writes the same
+database rows. Nightly rates are set at `/admin/seasons`. `config/club.json` is
+an optional seed and fallback, and the Docker app container never reads it.
+[`../../CONFIGURATION.md`](../../CONFIGURATION.md#club-config) is the full
+reference for it and for every environment variable.
 
 Provider credentials — Stripe, Xero, SES, Sentry, the AI keys, the backup
 destination — are **not** `.env` edits in current releases. They are entered
@@ -129,7 +134,7 @@ usernames, filesystem paths, server topology, or credentials.
 | --- | --- | --- |
 | We don't want this feature at all | Module toggle | [Modules](../guides/modules.md) |
 | We want it, with our own value or policy | Setting | The relevant admin area, [Setup](../guides/setup.md) |
-| We need it before an admin can log in | Install-time config | [`../../CONFIGURATION.md`](../../CONFIGURATION.md) |
+| We need the club's starting values (name, beds, age tiers) | Install-time config | [Setup](../guides/setup.md), then [`../../CONFIGURATION.md`](../../CONFIGURATION.md) |
 | The shipped starting value is wrong for everyone | Seed default | `prisma/seed.ts`, then upstream |
 | Our branding and wording | Setting | [Site Style](../guides/site-style.md), [Page Content](../guides/page-content.md) |
 | No configuration surface exists | Code change | [Contribute upstream](upstream-contributions.md) |

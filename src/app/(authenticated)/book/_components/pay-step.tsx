@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
-import type { CreatedBooking } from "./types";
+import type { CreatedBooking } from "@/components/book/booking-wizard-types";
 
 export function PayStep({
   createdBooking,

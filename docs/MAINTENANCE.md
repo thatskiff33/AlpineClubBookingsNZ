@@ -1186,7 +1186,7 @@ spelling to copy unless a runbook explicitly gives you another one. (One does:
 command `./node_modules/.bin/tsx --conditions=react-server ...` in full. That is
 correct and supported — what is never correct is a bare `pnpm exec tsx`.) The reason
 is not tidiness.
-`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and `@/lib/stripe`
+`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero-api-client` and `@/lib/stripe`
 each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
 the production build refuse to ship any of them to a member's browser. Since
 #3204 the club-timezone seed and the two environment-role readers carry it too,
@@ -3191,7 +3191,7 @@ dump file first; the script never touches S3 itself.
 To fetch a backup safely, use read-only S3 credentials from a workstation (never
 the production host) to copy one object out of the backup bucket. The backups
 live under the `tacbookings_s3backup/` prefix of the configured bucket. Read the
-destination **bucket** and **region** from **Admin → Integrations → Database
+destination **bucket** and **region** from **Admin → Monitoring & Support → Database
 Backups** (`/admin/backups`) — since #2095 the backup configuration lives in the
 encrypted in-app store, not in `BACKUP_S3_*` environment variables. Use your OWN
 read-only S3 credentials (from your operator secret store) rather than the app's
@@ -3254,7 +3254,11 @@ Every production deploy ships a tagged release (#4465), cut with
 [`scripts/release/cut-release.mjs`](../scripts/release/cut-release.mjs). `main`
 only moves through pull requests, so the release is cut in two phases with the
 release-prep pull request between them — the order v0.13.2 was cut in. Both
-phases print their whole plan and change nothing without `--execute`.
+phases print their whole plan and change nothing without `--execute`. The
+deploy script enforces the rule (#4978, `INV-OPS-019`): it refuses a commit no
+annotated `vX.Y.Z` tag on `origin` points at, unless
+`ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written `UNTAGGED_DEPLOY_COMMIT_REASON`
+are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
 
 1. From a clean checkout of `origin/main`, prepare the release-prep commit:
 
