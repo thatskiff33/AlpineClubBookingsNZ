@@ -83,7 +83,7 @@ rules:
               - metavariable-regex:
                   metavariable: $MOD
                   regex: >-
-                    ^(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env|club-time-zone-env|club-format-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)$
+                    ^(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero-api-client|stripe|env|club-time-zone-env|club-format-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)$
           # DYNAMIC forms. `await import("@/lib/prisma")` and
           # `require("@/lib/auth")` are not statements the static regex above
           # can see, and both put the module in the client bundle — `import()`
@@ -100,7 +100,7 @@ rules:
                   # quotes, so the quotes are optional-matched here rather than
                   # stripped.
                   regex: >-
-                    ^["']?(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env|club-time-zone-env|club-format-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)["']?$
+                    ^["']?(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero-api-client|stripe|env|club-time-zone-env|club-format-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)["']?$
     paths:
       exclude:
         # Fixtures for this rule are deliberate violations. Anchored with a

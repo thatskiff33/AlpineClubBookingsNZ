@@ -19,6 +19,7 @@ import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
+import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
 import {
   enqueueCapacityClaimFailedRefundRecovery,
   enqueueDuplicateCaptureRefundRecovery,
@@ -64,6 +65,7 @@ import { formatCents } from "@/lib/utils";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { releaseBookingPromoRedemptions } from "@/lib/promo";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import {
   bookingAmountOwedCents,
@@ -92,6 +94,7 @@ import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sy
 import { postBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { lockBookingRowForOwnerRead, postBookingReceipts, postRefundObligation, resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
 import type { ClubFormat } from "@/lib/club-format";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -238,22 +241,6 @@ type ManualSettlementSource = {
 };
 
 type BookingSettlementSource = StripeSettlementSource | ManualSettlementSource;
-
-/**
- * B5 (#2262): a domain refusal from the manual booking-payment paths, carrying
- * the HTTP status the route should answer with. Lives here (rather than in
- * manual-booking-payment.ts) so the settlement core can throw it without a
- * circular import.
- */
-export class ManualBookingPaymentError extends Error {
-  status: number;
-
-  constructor(message: string, status = 400) {
-    super(message);
-    this.name = "ManualBookingPaymentError";
-    this.status = status;
-  }
-}
 
 const MANUAL_XERO_INVOICE_REFUSAL =
   "This booking has an outstanding Xero invoice — record the payment against the invoice in Xero instead.";
@@ -1184,6 +1171,7 @@ async function settleBookingPaymentInTransaction(
           checkOut: booking.checkOut,
         },
       });
+      await releaseBookingPromoRedemptions(tx, booking.id);
 
       // #3369: the credit ledger is a MEMBER ledger and an organisation-owned
       // booking has none, so there is no key to take. Passing a null key would
@@ -1210,7 +1198,15 @@ async function settleBookingPaymentInTransaction(
       // both mint identical `capacity_claim_failed_<bookingId>_<pi>_<txn>_
       // <amount>` Stripe keys, Stripe answers repeats with the original
       // refunds, and the ledger dedupes on refund id.
-      const { slices: refundPlan, plannedAmountCents: plannedRefundCents } = await planStripeRefundAllocation({ paymentId: payment.id, amountCents, store: tx });
+      // #4872: leave a live superseded capture to its own refund. `amountCents` stays
+      // the capture just taken; what the plan cannot carry is still the shortfall task.
+      const heldBack = await readSupersededCaptureHeldBack(tx, payment.id);
+      const { slices: refundPlan, plannedAmountCents: plannedRefundCents } = await planStripeRefundAllocation({
+        paymentId: payment.id,
+        amountCents,
+        store: tx,
+        heldBackByTransaction: heldBack.byTransaction,
+      });
       // #4154 (`INV-PAY-135`): what the plan does not carry is a hand-back task to check, raised with the cancel.
       const shortfallTaskRaised = await raiseCapacityRaceRefundShortfallTask(tx, { bookingId: booking.id, paymentId: payment.id, paymentIntentId, chargedCents: amountCents, plannedRefundCents, format: settlement.format });
       if (plannedRefundCents > 0) {

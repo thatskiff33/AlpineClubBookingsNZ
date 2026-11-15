@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import {
@@ -16,14 +18,7 @@ import {
   formatStayDateOrNull,
 } from "@/lib/club-time";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import ApprovalMappingPanel, {
   type ReviewRequestPayload,
 } from "./_components/approval-mapping-panel";
@@ -170,8 +165,22 @@ export default function MemberApplicationsPage() {
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [searchingReplacementKey, setSearchingReplacementKey] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [error, setErrorMessage] = useState("");
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
+  const [loadError, setLoadError] = useState("");
+  const successRef = useRef<HTMLDivElement>(null);
+  // Only action failures request attention; background loads use loadError.
+  function setError(value: string) {
+    setErrorMessage(value);
+    if (value) setErrorAttentionKey((key) => key + 1);
+  }
   const [message, setMessage] = useState("");
+  useActionAttention({
+    error,
+    errorTarget: null, // FocusedActionError owns failure focus after dialog cleanup.
+    success: message,
+    successTarget: successRef,
+  });
   // #1786: which action is waiting on the admin's notify-or-not choice, and
   // whether the dialog is open. The choice is kept set while the dialog fades
   // out so its copy never flickers to the other action's wording.
@@ -180,7 +189,7 @@ export default function MemberApplicationsPage() {
 
   async function loadApplications(nextFilter = filter) {
     setLoading(true);
-    setError("");
+    setLoadError("");
 
     try {
       const params = new URLSearchParams();
@@ -189,7 +198,7 @@ export default function MemberApplicationsPage() {
       }
       const response = await fetch(`/api/admin/member-applications?${params.toString()}`);
       if (!response.ok) {
-        setError(await apiErrorMessageFromResponse(response, "Could not load member applications."));
+        setLoadError(await apiErrorMessageFromResponse(response, "Could not load member applications."));
         return;
       }
 
@@ -207,7 +216,7 @@ export default function MemberApplicationsPage() {
         return next;
       });
     } catch {
-      setError("Could not load member applications.");
+      setLoadError("Could not load member applications.");
     } finally {
       setLoading(false);
     }
@@ -217,6 +226,13 @@ export default function MemberApplicationsPage() {
     loadApplications(filter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
+
+  // A new view retires the last action's error (it described the old view); the
+  // attention key is untouched, so clearing never takes focus.
+  function changeFilter(value: string) {
+    setErrorMessage("");
+    setFilter(value);
+  }
 
   // #1786/E10: the approval panel validates the joining-fee decision + mapping
   // payload and hands it here; this opens the notify-choice dialog. The
@@ -557,29 +573,39 @@ export default function MemberApplicationsPage() {
               key={option.value}
               type="button"
               variant={filter === option.value ? "default" : "outline"}
-              onClick={() => setFilter(option.value)}
+              onClick={() => changeFilter(option.value)}
             >
               {option.label}
             </Button>
           ))}
           <DatasetResetButton
             disabled={filter === "PENDING_ADMIN"}
-            onReset={() => setFilter("PENDING_ADMIN")}
+            onReset={() => changeFilter("PENDING_ADMIN")}
           />
         </div>
       </div>
 
-      {message && (
-        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
-          {message}
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      <div
+        id="member-applications-success"
+        ref={successRef}
+        role="status"
+        aria-atomic="true"
+        className={message ? "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11" : "sr-only"}
+      >
+        {message}
+      </div>
+      <FocusedActionError
+        id="member-applications-error"
+        error={error}
+        attentionKey={errorAttentionKey}
+      />
+      <div
+        role="alert"
+        aria-atomic="true"
+        className={loadError ? "rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11" : "sr-only"}
+      >
+        {loadError}
+      </div>
 
       {loading ? (
         <Card>
@@ -773,46 +799,39 @@ export default function MemberApplicationsPage() {
           is a required field), so the dialog always shows on approve and reject.
           Both choices complete the review; the choice is recorded in the audit
           log. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={reviewDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && submittingId === null) setReviewDialogOpen(false);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {reviewChoice?.decision === "REJECT"
-                ? "Email the applicant about this rejection?"
-                : "Email the applicant about this approval?"}
-            </DialogTitle>
-            <DialogDescription>
-              {reviewChoice?.decision === "REJECT"
-                ? "The application is rejected either way. Choose whether the applicant receives the standard rejection email — your choice is recorded in the audit log."
-                : "The application is approved either way. Choose whether the applicant receives the standard approval email, which carries their account-setup link — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={submittingId !== null}
-              onClick={() => confirmReview(false)}
-            >
-              {reviewChoice?.decision === "REJECT"
+        onOpenChange={setReviewDialogOpen}
+        submitting={submittingId !== null}
+        title={
+          reviewChoice?.decision === "REJECT"
+            ? "Email the applicant about this rejection?"
+            : "Email the applicant about this approval?"
+        }
+        description={
+          reviewChoice?.decision === "REJECT"
+            ? "The application is rejected either way. Choose whether the applicant receives the standard rejection email — your choice is recorded in the audit log."
+            : "The application is approved either way. Choose whether the applicant receives the standard approval email, which carries their account-setup link — your choice is recorded in the audit log."
+        }
+        actions={{
+          kind: "choice",
+          withoutEmail: {
+            label:
+              reviewChoice?.decision === "REJECT"
                 ? "Reject without emailing"
-                : "Approve without emailing"}
-            </Button>
-            <Button
-              disabled={submittingId !== null}
-              onClick={() => confirmReview(true)}
-            >
-              {reviewChoice?.decision === "REJECT"
+                : "Approve without emailing",
+            variant: "outline",
+            onSelect: () => confirmReview(false),
+          },
+          withEmail: {
+            label:
+              reviewChoice?.decision === "REJECT"
                 ? "Reject and email applicant"
-                : "Approve and email applicant"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                : "Approve and email applicant",
+            onSelect: () => confirmReview(true),
+          },
+        }}
+      />
       </div>
     </div>
   );

@@ -198,10 +198,8 @@ vi.mock("@/lib/xero-config", async (importOriginal) => {
   };
 });
 
-import {
-  findOrCreateXeroContact,
-  resetXeroRateLimitStateForTests,
-} from "@/lib/xero";
+import { findOrCreateXeroContact } from "@/lib/xero-contacts";
+import { resetXeroRateLimitStateForTests } from "@/lib/xero-api-client";
 import {
   connectedXeroFixture,
   ensureStrongTestAuthSecret,

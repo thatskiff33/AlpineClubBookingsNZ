@@ -35,7 +35,7 @@ import { prisma } from "@/lib/prisma";
 import { CAPTURED_TRANSACTION_STATUS_LIST, isCapturedTransactionStatus } from "@/lib/payment-transaction-status";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { startXeroSyncOperation } from "@/lib/xero-sync";
-import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-operation-outbox";
+import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-supplementary-invoice-enqueue";
 import { XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE } from "@/lib/additional-capture-receipt-payload";
 import { additionalCaptureReceiptKey } from "@/lib/additional-capture-xero-receipt";
 import { readCaptureRecorder } from "@/lib/additional-capture-recorder";
@@ -157,7 +157,7 @@ export async function enqueueAdditionalCaptureReceiptOperation(
     // A release losing another caller's refusal can say already-released.
     // Under this same anchor, require the recorder's live unpaid change target;
     // falling back to the primary would pay an invoice that never billed it.
-    if (options?.requireUnpaidChangeInvoice && recorder.target?.kind !== "CHANGE_INVOICE") {
+    if (options?.requireUnpaidChangeInvoice && recorder.targets[0]?.kind !== "CHANGE_INVOICE") {
       return { outcome: "not-eligible", reason: "no-unpaid-change-invoice" };
     }
     const operation = await startXeroSyncOperation({

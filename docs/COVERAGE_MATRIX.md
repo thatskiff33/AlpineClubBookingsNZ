@@ -135,7 +135,7 @@ For what an officer sees and does on each screen, use the
 | `notifications` | support | email registry, `ARCHITECTURE.md` (email) | [guide](guides/notifications.md) | 4 |
 | `page-content` | content | `PUBLIC_PAGE_CONTENT_TOKENS.md` | [guide](guides/page-content.md) | 4 |
 | `payments` | finance | `ARCHITECTURE.md` (Stripe), `finance-dashboard/README.md` | [guide](guides/payments.md) | 1 |
-| `privacy-retention` | support (settings); membership:view additionally for application/member previews | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457) |
+| `privacy-retention` | support (settings); membership:view additionally for application/member previews; bookings:edit additionally for the after-stay dietary period and switch | [retention schedule](PRIVACY_RETENTION.md) | [retention schedule and controls](PRIVACY_RETENTION.md) | — (#4457, #4916) |
 | `promo-codes` | bookings | `ARCHITECTURE.md` (promo codes / redemptions) | [guide](guides/promo-codes.md) | 1 |
 | `refund-requests` | finance | `CANCELLATIONS.md`, `ARCHITECTURE.md` (refund recovery) | [guide](guides/refund-requests.md) | 2 |
 | `reports` | finance | `finance-dashboard/README.md` | [guide](guides/reports.md) | 1 |

@@ -89,7 +89,10 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // The per-lodge capacity try-lock reads the one boolean `pg_try_advisory_xact_lock`
   // returns. Member merge uses it where waiting would invert lodge → member
   // (#4876). The row is schema-decoded before the merge decides to refuse.
-  "src/lib/lodge-capacity-lock.ts": 1,
+  // #4929 (INV-LOCK-003): the second read asks `pg_locks`, a catalog view no
+  // Prisma model covers, whether this transaction holds the lodge key; its one
+  // boolean is schema-decoded before a lock-held writer proceeds.
+  "src/lib/lodge-capacity-lock.ts": 2,
   // #4162: the voided bank-transfer refund note scan's candidate ids - a status
   // read the way the link reader reads it (trimmed, any case) joined to the
   // payment's source, which no Prisma JSON filter expresses. Its rows are
@@ -128,6 +131,8 @@ const RAW_READ_INVENTORY: Record<string, number> = {
   // state. `pg_locks` is a catalog view no Prisma model covers; its one boolean
   // is schema-decoded before the store decides.
   "src/lib/global-lock-held.ts": 1,
+  // Server role attributes are not Prisma models; decoded before readiness uses them.
+  "src/lib/setup-readiness-db.ts": 1,
 };
 
 /**
