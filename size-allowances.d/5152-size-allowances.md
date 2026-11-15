@@ -8,14 +8,14 @@ reason: sweeps admin failed-response reads onto the shared refusal reader;
   own, not part of this fix.
 
 function: src/app/(admin)/admin/finance/reports/page.tsx#ReportsPage
-lines: 585
+lines: 586
 reason: sweeps admin failed-response reads onto the shared refusal reader;
   those lines sit inside the function `ReportsPage`, which was already over
   its limit before this change, and lifting it apart is a refactor of its own,
   not part of this fix.
 
 function: src/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel.tsx#SubscriptionBillingPanel
-lines: 401
+lines: 421
 reason: sweeps admin failed-response reads onto the shared refusal reader;
   those lines sit inside the function `SubscriptionBillingPanel`, which was
   already over its limit before this change, and lifting it apart is a
@@ -36,7 +36,7 @@ reason: sweeps admin failed-response reads onto the shared refusal reader;
   not part of this fix.
 
 function: src/app/(admin)/admin/rules/fees/_components/finance-fees-sections.tsx#FinanceFeesSections
-lines: 378
+lines: 472
 reason: sweeps admin failed-response reads onto the shared refusal reader;
   those lines sit inside the function `FinanceFeesSections`, which was already
   over its limit before this change, and lifting it apart is a refactor of its
@@ -46,5 +46,13 @@ function: src/app/(admin)/admin/rules/promo-codes/promo-codes-page-client.tsx#Pr
 lines: 1617
 reason: sweeps admin failed-response reads onto the shared refusal reader;
   those lines sit inside the function `PromoCodesPageClient`, which was
+  already over its limit before this change, and lifting it apart is a
+  refactor of its own, not part of this fix.
+
+function: src/app/(admin)/admin/membership/member-applications/page.tsx#MemberApplicationsPage
+lines: 724
+reason: converts admin failed-response reads to the shared reader (check ok
+  before parsing, fallback sentence for an unreadable body or rejected fetch);
+  those lines sit inside the function `MemberApplicationsPage`, which was
   already over its limit before this change, and lifting it apart is a
   refactor of its own, not part of this fix.

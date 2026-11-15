@@ -12,7 +12,7 @@ reason: the force-confirm handler reads a refusal through the shared reader
   capacity write it guards; the page's split is its own refactor.
 
 file: src/app/(admin)/admin/finance/reports/page.tsx
-lines: 777
+lines: 779
 reason: the report load reads a refusal through the shared reader and
   drops a stale reply in place; splitting the page shell for five lines
   would part the read from the request sequence it checks.
@@ -35,7 +35,7 @@ reason: the preview and search reads check ok before parsing, one line more;
   splitting the panel for one line would scatter its two fetches.
 
 file: src/app/(admin)/admin/membership/member-applications/page.tsx
-lines: 838
+lines: 893
 reason: the five officer actions check ok before parsing, one line more;
   splitting the page for one line would scatter its handlers.
 
