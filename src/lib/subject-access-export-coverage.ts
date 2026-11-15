@@ -242,6 +242,7 @@ export type AdditionalRecordModel = {
 export const SUBJECT_ACCESS_EXPORT_EXCLUSIONS = {
   fields: [
     "Password hashes, second-factor secrets, recovery codes and sign-in tokens: security secrets, existence disclosed on request.",
+    "Sign-in and two-factor settings, lockouts and their timestamps, and officers' reasons recorded on your membership: the privacy officer supplies what is yours on request.",
     "Other people's details, except the names, age tiers and prices of the guests on bookings you made; private officer notes; the bodies of emails: the privacy officer supplies what is yours on request.",
     "When your email address is shared with another member record, records filed only by that address (applications, requests, the email log): see emailKeyedRecords, and ask the privacy officer.",
     "Records held by Stripe, Xero, the email provider and in backups: ask the privacy officer.",

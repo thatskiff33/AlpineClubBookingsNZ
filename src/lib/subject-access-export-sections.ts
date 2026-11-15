@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { BookingRequestStatus } from "@prisma/client";
+import { isMemberWholeLodgeRequest } from "@/lib/booking-request";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { toMyWholeLodgeRequestStatus } from "@/lib/member-whole-lodge-requests";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
@@ -51,7 +52,7 @@ export async function buildSubjectAccessSections(key: SubjectAccessKey) {
           },
           orderBy: { createdAt: "asc" },
           select: {
-            type: true, status: true, exclusivityRequested: true, contactFirstName: true, contactLastName: true, contactEmail: true,
+            type: true, status: true, exclusivityRequested: true, requestedByMemberId: true, contactFirstName: true, contactLastName: true, contactEmail: true,
             contactPhone: true, checkIn: true, checkOut: true, message: true, schoolName: true,
             indicativePriceCents: true, priceCents: true, acceptedPriceCents: true,
             declineReason: true, responseMessage: true, createdAt: true,
@@ -104,6 +105,7 @@ export async function buildSubjectAccessSections(key: SubjectAccessKey) {
 type BookingRequestExportRow = {
   readonly status: BookingRequestStatus;
   readonly exclusivityRequested: boolean;
+  readonly requestedByMemberId: string | null;
   readonly checkIn: Date;
   readonly checkOut: Date;
   readonly indicativePriceCents: number | null;
@@ -112,23 +114,25 @@ type BookingRequestExportRow = {
 };
 
 /**
- * One booking request as the file shows it. A whole-lodge request carries the
- * member-facing status "My requests" shows, from the one mapping in
- * `member-whole-lodge-requests.ts`, and none of its price fields: the
- * officer-side states (`PRICED`, `QUOTED`, `QUERY_PENDING`...) and unsent
- * prices are not disclosed (owner decision, 15 Nov 2026, #4915; #2263).
- * Other requests keep their stored status and prices.
+ * One booking request as the file shows it. A member's whole-lodge request
+ * (the rows "My requests" lists, by `isMemberWholeLodgeRequest`) carries the
+ * member-facing status from the one mapping in `member-whole-lodge-requests.ts`
+ * and none of its price fields: the officer-side states (`PRICED`, `QUOTED`,
+ * `QUERY_PENDING`...) and unsent prices are not disclosed (owner decision,
+ * 15 Nov 2026, #4915; #2263). Other requests, a school's whole-lodge request
+ * included, keep their stored status and the prices quoted to the requester.
+ * The requesting member's id never leaves: it may name another member.
  */
 export function toSubjectAccessBookingRequest<Row extends BookingRequestExportRow>(row: Row) {
-  const { exclusivityRequested, indicativePriceCents, priceCents, acceptedPriceCents, ...request } = row;
+  const { exclusivityRequested, requestedByMemberId, indicativePriceCents, priceCents, acceptedPriceCents, ...request } = row;
   const dates = {
     checkIn: calendarDateOfDateOnlyInstant(row.checkIn),
     checkOut: calendarDateOfDateOnlyInstant(row.checkOut),
   };
-  if (exclusivityRequested) {
+  if (isMemberWholeLodgeRequest({ requestedByMemberId, exclusivityRequested })) {
     return { ...request, ...dates, wholeLodge: true, status: toMyWholeLodgeRequestStatus(row.status) };
   }
-  return { ...request, ...dates, wholeLodge: false, indicativePriceCents, priceCents, acceptedPriceCents };
+  return { ...request, ...dates, wholeLodge: exclusivityRequested, indicativePriceCents, priceCents, acceptedPriceCents };
 }
 
 async function memberOwnsEmailAddress(memberId: string, email: string): Promise<boolean> {

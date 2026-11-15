@@ -109,7 +109,7 @@ What the file contains, and what it leaves out:
   file says
   `emailKeyedRecords: withheld`; check those records by hand with the address's
   owner in mind.
-- A whole-lodge booking request shows the status the member sees on "My
+- A member's whole-lodge booking request shows the status they see on "My
   requests" (pending, approved, declined or withdrawn), not the booking
   officer's working state, and no price. This follows the owner's decision of
   15 Nov 2026 on #4915. It assumes those officer-side fields are not personal

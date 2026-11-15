@@ -50,7 +50,7 @@ export async function readAdditionalSubjectRecords(memberId: string) {
       where: { OR: [{ subjectMemberId: memberId }, { requesterId: memberId }] },
       select: { type: true, status: true, createdAt: true, reviewedAt: true },
     }),
-    prisma.deletionRequest.findMany({ where: own, select: { reviewedAt: true, createdAt: true } }),
+    prisma.deletionRequest.findMany({ where: own, select: { status: true, reason: true, reviewedAt: true, createdAt: true } }),
     prisma.adminCreditAdjustmentRequest.findMany({ where: own, select: { amountCents: true, reviewedAt: true, createdAt: true } }),
     prisma.committeeAssignment.findMany({
       where: own,

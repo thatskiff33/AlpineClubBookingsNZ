@@ -9,11 +9,12 @@ import { NextRequest } from "next/server";
 
 vi.mock("server-only", () => ({}));
 
-const mocks = vi.hoisted(() => ({ requireAdmin: vi.fn(), guestFindMany: vi.fn() }));
+const mocks = vi.hoisted(() => ({ requireAdmin: vi.fn(), guestFindMany: vi.fn(), actorIsFullAdmin: vi.fn() }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock("@/lib/prisma", () => ({ prisma: { bookingGuest: { findMany: mocks.guestFindMany } } }));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn() } }));
+vi.mock("@/lib/admin-account-guards", () => ({ actorIsFullAdmin: mocks.actorIsFullAdmin }));
 
 import { GET } from "../route";
 
@@ -28,6 +29,7 @@ function get(query: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   asAdmin(["ADMIN"]);
+  mocks.actorIsFullAdmin.mockResolvedValue(true);
   mocks.guestFindMany.mockResolvedValue([]);
 });
 
@@ -35,6 +37,13 @@ describe("subject access guest finder", () => {
   it("refuses anyone but a Full Admin", async () => {
     asAdmin(["ADMIN_MEMBERSHIP"]);
     expect((await get("name=Ana")).status).toBe(403);
+    expect(mocks.guestFindMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a session Full Admin whose database row no longer is one", async () => {
+    mocks.actorIsFullAdmin.mockResolvedValue(false);
+    expect((await get("name=Ana")).status).toBe(403);
+    expect(mocks.actorIsFullAdmin).toHaveBeenCalledWith(expect.anything(), "officer-1");
     expect(mocks.guestFindMany).not.toHaveBeenCalled();
   });
 

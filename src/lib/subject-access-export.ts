@@ -79,17 +79,21 @@ function holdsNonMemberRecords(sections: Awaited<ReturnType<typeof buildSubjectA
   ].some((rows) => rows.length > 0);
 }
 
-/** The original export's reads (profile, own bookings, chores, subscriptions, activity, dietary), unchanged in scope. */
+/** The original export's reads (profile, own bookings, chores, subscriptions, activity, dietary); the profile also carries the member's own entered and membership-date fields. */
 async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGrant) {
   const member = await prisma.member.findUnique({
     where: { id: memberId },
     select: {
+      title: true,
       firstName: true,
       lastName: true,
+      gender: true,
+      occupation: true,
       email: true,
       phoneCountryCode: true,
       phoneAreaCode: true,
       phoneNumber: true,
+      lodgeScreenPhoneOptIn: true,
       dateOfBirth: true,
       streetAddressLine1: true,
       streetAddressLine2: true,
@@ -107,6 +111,10 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
       ageTier: true,
       active: true,
       joinedDate: true,
+      lifeMemberDate: true,
+      leavingDate: true,
+      cancelledAt: true,
+      archivedAt: true,
       createdAt: true,
     },
   });
@@ -247,12 +255,16 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
   const club = await clubTime();
   return {
     profile: {
+      title: member.title,
       firstName: member.firstName,
       lastName: member.lastName,
+      gender: member.gender,
+      occupation: member.occupation,
       email: member.email,
       phoneCountryCode: member.phoneCountryCode ?? null,
       phoneAreaCode: member.phoneAreaCode ?? null,
       phoneNumber: member.phoneNumber ?? null,
+      lodgeScreenPhoneOptIn: member.lodgeScreenPhoneOptIn,
       dateOfBirth: member.dateOfBirth
         ? calendarDateOfDateOnlyInstant(member.dateOfBirth)
         : null,
@@ -262,6 +274,10 @@ async function readMemberRecords(memberId: string, exportGrant: DietaryAccessGra
       joinedDate: member.joinedDate
         ? calendarDateOfDateOnlyInstant(member.joinedDate)
         : null,
+      lifeMemberDate: member.lifeMemberDate ? calendarDateOfDateOnlyInstant(member.lifeMemberDate) : null,
+      leavingDate: member.leavingDate ? calendarDateOfDateOnlyInstant(member.leavingDate) : null,
+      cancelledAt: member.cancelledAt,
+      archivedAt: member.archivedAt,
       memberSince: member.createdAt.toISOString(),
       dietaryRequirements,
       bookingDietaryRequirements: ownBookingDietaryRequirements.map((row) => ({

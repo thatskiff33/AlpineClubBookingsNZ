@@ -16,11 +16,18 @@ import { toSubjectAccessBookingRequest } from "@/lib/subject-access-export-secti
  */
 const PRICE_FIELDS = ["indicativePriceCents", "priceCents", "acceptedPriceCents"] as const;
 
-function row(status: BookingRequestStatus, exclusivityRequested: boolean) {
+const MEMBER = "member-1";
+
+function row(
+  status: BookingRequestStatus,
+  exclusivityRequested: boolean,
+  requestedByMemberId: string | null = MEMBER,
+) {
   return {
-    type: "GENERAL" as const,
+    type: (requestedByMemberId ? "GENERAL" : "SCHOOL") as "GENERAL" | "SCHOOL",
     status,
     exclusivityRequested,
+    requestedByMemberId,
     contactEmail: "member@example.invalid",
     checkIn: new Date(Date.UTC(2026, 7, 10)),
     checkOut: new Date(Date.UTC(2026, 7, 12)),
@@ -61,6 +68,20 @@ describe("a whole-lodge request in the subject access file", () => {
       wholeLodge: true,
       checkIn: "2026-08-10",
       checkOut: "2026-08-12",
+    });
+  });
+
+  it("never carries the requesting member's id", () => {
+    expect(toSubjectAccessBookingRequest(row(BookingRequestStatus.PRICED, true))).not.toHaveProperty("requestedByMemberId");
+    expect(toSubjectAccessBookingRequest(row(BookingRequestStatus.QUOTED, false))).not.toHaveProperty("requestedByMemberId");
+  });
+
+  it("leaves a school's whole-lodge request, which 'My requests' never lists, with its quoted status and prices", () => {
+    expect(toSubjectAccessBookingRequest(row(BookingRequestStatus.QUOTE_SENT, true, null))).toMatchObject({
+      wholeLodge: true,
+      status: BookingRequestStatus.QUOTE_SENT,
+      priceCents: 92_222,
+      acceptedPriceCents: 93_333,
     });
   });
 

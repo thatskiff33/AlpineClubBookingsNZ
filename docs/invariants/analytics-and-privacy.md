@@ -960,7 +960,7 @@ differ. Decided on
   values follow `INV-PRIV-022`.
 - **An address is a key only when the subject owns it.** Records filed by email
   are withheld, and the file says so, when another member record shares it.
-- **A whole-lodge request shows what "My requests" shows:** the status from
+- **A member's whole-lodge request shows what "My requests" shows:** the status from
   `toMyWholeLodgeRequestStatus` (#2263), never an officer-side state like
   `PRICED`, and no price field
   ([owner decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4915#issuecomment-6888297799)).
