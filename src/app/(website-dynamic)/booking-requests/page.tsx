@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
+import { BookingRequestForm } from "@/components/website/booking-request-form";
 import { EmbeddedPageContentParts } from "@/components/website/embedded-page-content-parts";
 import {
   getCachedClubIdentity,

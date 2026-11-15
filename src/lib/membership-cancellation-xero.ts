@@ -31,12 +31,9 @@ import {
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
 import logger from "@/lib/logger";
-import {
-  callXeroApi,
-  getAuthenticatedXeroClient,
-  getResolvedAccountMapping,
-  refreshXeroContactCachesFromContact,
-} from "@/lib/xero";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { getResolvedAccountMapping } from "@/lib/xero-mappings";
+import { refreshXeroContactCachesFromContact } from "@/lib/xero-contact-cache";
 import { XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";

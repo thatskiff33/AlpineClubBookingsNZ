@@ -798,6 +798,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
 | `INV-PRIV-023` | A stay's dietary value is cleared a club-set period after the stay |
 | `INV-PRIV-024` | Every outside recipient of personal data is in one census-held register |
+| `INV-PRIV-025` | One subject access builder; every personal model placed; own rows only |
 
 ## Membership Lifecycle
 
@@ -976,6 +977,7 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-006` | A lock(1) waiter states the shared budget; contention is a 503 |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
+| `INV-OPS-020` | A row-capped admin list shows its total and reaches every row |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |
 | `INV-OPS-012` | Audit reclassification ships its backfill or files one; measured audience stated |
 | `INV-OPS-005` | Doomed columns need `@ignore`: static defaults and implicit `RETURNING` name them |
@@ -991,6 +993,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-016` | Member journal grants and database guards forbid mutation |
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
+| `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
 
 ## Product Configuration
 
@@ -1032,6 +1035,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
+| `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
 
 ## Authentication
 
@@ -1056,3 +1060,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
 | `INV-AUTH-012` | Officers use an app or passkey after grace |
+| `INV-AUTH-013` | Password work leaves the event loop; placeholders use one unusable hash |
