@@ -5316,12 +5316,17 @@ the pre-#4217 code). Now:
 - The Internet Banking settle (#4094) takes it after `lock(1)`, the lodge key
   and the member key, and re-reads the payment's figures under it; its rows are
   read under it. Its figure logic (#3979, `INV-PAY-126`) is unchanged, except
-  that a keep also counts an applied correction already synced there, from
-  link rows it reads plainly (#4095). After it commits, outside every lock, a
-  keep or a replay with an applied correction triggers the lock-free inbound
-  recount (`repairRefundedPaymentBusinessState`, no note of its own), whose
-  claim on the row as read loses to any writer in between; it adds no key.
-  Both run only when exactly one payment matches the invoice
+  that a keep sets the payment's whole refunded total its links record, read
+  plainly under the `Payment` row (`decideLinkedRefundedTotalCents`, with the
+  bank-transfer floor; #4449, replacing #4095's increment), and sends any floor
+  alert after its commit. The credit-note allocation write that would race it
+  takes the same row first (#4449, below), so whichever commits second counts
+  the correction and a writer queued on `lock(1)` reads the net. After it
+  commits, outside every lock, a keep or a replay with an applied correction
+  still triggers the lock-free inbound recount
+  (`repairRefundedPaymentBusinessState`, no note of its own) as a backstop,
+  whose claim on the row as read loses to any writer in between; it adds no
+  key. Both run only when exactly one payment matches the invoice
   (`matchedPayments === 1`): otherwise no payment's share of a correction is
   known, and neither counts one.
 - A cancellation hand-back's completion decides whether its Xero note stands
@@ -8083,12 +8088,36 @@ missing row (`createMany`, `skipDuplicates`, inactive) so two first writers
 serialise on it; a removal does not, because that row is already there. A
 stored stamp newer than the reading leaves the row as that newer write
 recorded it, so an older reading cannot turn a removed allocation back on or
-switch a newer one off. It writes no money column and takes no advisory key,
-so `INV-LOCK-001`, `INV-LOCK-002` and `INV-LOCK-003` are unchanged: the only
-lock is that one row, and nothing else is taken while it is held. A
+switch a newer one off. It takes no advisory key, so `INV-LOCK-001`,
+`INV-LOCK-002` and `INV-LOCK-003` are unchanged: the only lock is that one
+row, and nothing else is taken while it is held, except the `Payment` row a
+bank-transfer write takes before it (#4449, below). A
 same-invoice link at an older amount stays active; the recount keeps the
 newest. A voided reading, or a live reading a stored void or a newer snapshot
 refuses, turns nothing off.
+
+**The allocation write decides a bank-transfer total (#4449).** For a
+modification note, a written allocation whose invoice is the one invoice of
+exactly one payment, a bank-transfer one, takes that `Payment` row FIRST
+(`lockPaymentForRefundedTotal`, `FOR NO KEY UPDATE`), then reserves and locks
+its allocation row as above, writes it, and decides the payment's whole
+refunded total under the row (`decideLinkedRefundedTotalCents`, the
+bank-transfer floor, `INV-ADDPAY-021`), writing the total and status only when
+either changes; the floor alert goes out after the commit. Budget:
+`PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`. No provider call runs in it and it
+takes no advisory key, so `INV-LOCK-003`'s registry gains no entry. Order
+(`INV-LOCK-002`): the kept settle takes `lock(1)`, lodge, member, then the
+`Payment` row and reads links plainly; the recount and an explicit void take
+the `Payment` row and then only a refund-note link; the canonical-link healer
+takes a `CREDIT_NOTE` link and then the `Payment` row, both `NOWAIT`. No
+writer takes an allocation row and then a `Payment` row, so none is a cycle.
+A settle that commits first is read by the write, whose re-decided total counts
+the receipt it captured; a write that commits first is read by the settle. A
+card payment, an invoice matched to several payments, or one found only by its
+link takes no `Payment` row here and is decided by the recount alone.
+`kept-settle-queued-cancel.realdb.test.ts` drives both commit orders and a
+fold above the rows, each with a writer queued on `lock(1)` and the `Payment`
+row.
 
 **Mixed releases.** The own-row-first order is consistent within this release;
 the old canonical writer takes siblings before its own row. Running both on
