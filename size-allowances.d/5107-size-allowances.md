@@ -72,7 +72,7 @@ reason: the pending-review card heading now reads the refund-requests
   its own, not part of this fix.
 
 function: src/app/(admin)/admin/setup/setup-page-client.tsx#SetupPageClient
-lines: 449
+lines: 464
 reason: the Setup heading now reads the registry label, two more lines than
   the typed string it replaces; the card arrays that used to sit above it
   moved to hub-cards.ts (#4968). The function was already over its limit;
