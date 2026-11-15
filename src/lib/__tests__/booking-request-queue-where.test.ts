@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { ADMIN_LIST_DEFAULT_PAGE_SIZE } from "@/lib/admin-list-page";
 
 // #4969 review (INV-SSOT): the where-clause behind each Booking Requests queue
 // is built once, and the list a tab shows and the count that badges it both
@@ -116,7 +117,7 @@ describe("the counts and the lists read the same clauses (#4969)", () => {
     });
   });
 
-  it.each(["PENDING", "APPROVED", "REJECTED", "ALL"] as const)(
+  it.each(["PENDING", "APPROVED", "REJECTED"] as const)(
     "the Approvals list, filtered to %s, queries and totals with the builder's clause",
     async (status) => {
       const response = await listBookingReviews(
@@ -133,4 +134,47 @@ describe("the counts and the lists read the same clauses (#4969)", () => {
       expect(mocks.bookingCount).toHaveBeenCalledWith({ where });
     },
   );
+
+  // #5093 pages every queue (INV-OPS-020); the badge must still count what the
+  // tab lists across all its pages, never the one page on screen.
+  it("badges a queue longer than one page with every pending row, the list's total", async () => {
+    mocks.bookingCount.mockResolvedValue(ADMIN_LIST_DEFAULT_PAGE_SIZE + 15);
+    const counts = await getBookingRequestPendingCounts();
+    expect(counts.bookingReviews).toBe(ADMIN_LIST_DEFAULT_PAGE_SIZE + 15);
+    for (const [args] of mocks.bookingCount.mock.calls) {
+      expect(args).not.toHaveProperty("take");
+      expect(args).not.toHaveProperty("skip");
+    }
+
+    const response = await listBookingReviews(
+      new NextRequest("http://localhost/api/admin/booking-reviews?status=PENDING&page=1"),
+    );
+    const body = await response.json();
+    expect(mocks.bookingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: ADMIN_LIST_DEFAULT_PAGE_SIZE, skip: 0 }),
+    );
+    expect(body.total).toBe(counts.bookingReviews);
+    expect(body.pageSize).toBeLessThan(counts.bookingReviews);
+  });
+
+  // #5093 reads ALL as two groups so every pending row pages ahead of the
+  // decided ones (INV-OPS-020). Pending plus decided is every reviewed booking,
+  // the builder's ALL clause, and both groups start from the builder.
+  it("the Approvals list, filtered to ALL, reads the builder's pending clause, then the decided rows of its ALL clause", async () => {
+    mocks.bookingCount.mockResolvedValue(1);
+    const response = await listBookingReviews(
+      new NextRequest("http://localhost/api/admin/booking-reviews?status=ALL"),
+    );
+
+    expect(response.status).toBe(200);
+    const pending = buildBookingReviewListWhere("PENDING");
+    const decided = {
+      ...buildBookingReviewListWhere("ALL"),
+      adminReviewStatus: { in: ["APPROVED", "REJECTED"] },
+    };
+    for (const where of [pending, decided]) {
+      expect(mocks.bookingFindMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
+      expect(mocks.bookingCount).toHaveBeenCalledWith({ where });
+    }
+  });
 });

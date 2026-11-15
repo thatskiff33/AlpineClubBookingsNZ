@@ -23,7 +23,8 @@ Find it at **Admin → Bookings & Beds → Booking Requests**
 appears under **Admin → Needs Attention → Booking Requests**, and the badge
 counts waiting policy exceptions alongside the other queues.
 
-Each tab shows how many items are waiting on it. The four counts are worked out
+Each tab shows how many items are waiting on it, across every page of that
+queue, not only the 25 rows on screen. The four counts are worked out
 the same way as the sidebar badge, so they add up to it. The page reads them
 once, when it opens, so a badge can lag behind something you do on the page
 until you reload.
