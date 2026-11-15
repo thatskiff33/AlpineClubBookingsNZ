@@ -89,9 +89,7 @@ vi.mock("@/lib/induction", () => ({
 
 vi.mock("server-only", () => ({}));
 
-vi.mock("bcryptjs", () => ({
-  hash: vi.fn().mockResolvedValue("hashed-secret"),
-}));
+
 
 import { prisma } from "@/lib/prisma";
 import {
