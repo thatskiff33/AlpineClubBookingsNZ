@@ -17,6 +17,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -158,14 +159,13 @@ export function MemberGuestSettingsCard({
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown };
-        throw new Error(
-          typeof data.error === "string" ? data.error : "Failed to save",
-        );
+        throw await apiRefusalFromResponse(res, "Failed to save");
       }
       return toDraft((await res.json()) as SettingsPayload);
     },
     successMessage: "Member guest settings saved",
+    loadErrorFallback: "Failed to load member-guest settings",
+    saveErrorFallback: "Failed to save",
     // First save must be reachable on a never-saved club (#2142); after that,
     // an unchanged draft must not re-PUT — the route audits unconditionally,
     // and a no-op save would still record a privacy-posture re-affirmation the

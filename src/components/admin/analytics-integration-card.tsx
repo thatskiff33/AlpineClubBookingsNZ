@@ -33,6 +33,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { ApiRefusalError, apiErrorMessageFromBody } from "@/lib/api-error-message";
 // `analytics-settings-shared`, never `analytics-settings`: the latter is
 // `server-only`, and importing a VALUE from it here fails `pnpm run build` with
 // "'server-only' cannot be imported from a Client Component module" — and fails
@@ -105,6 +106,8 @@ interface AnalyticsDraft {
 
 const SETTINGS_ENDPOINT = "/api/admin/integrations/analytics";
 const RECONSENT_ENDPOINT = "/api/admin/integrations/analytics/reconsent";
+const LOAD_FALLBACK = "Could not load the Google Analytics settings.";
+const SAVE_FALLBACK = "Could not save the Google Analytics settings.";
 
 /**
  * Owner decision section 10, reproduced as the prominent warning the setup must
@@ -180,9 +183,7 @@ export function AnalyticsIntegrationCard() {
         signal,
         cache: "no-store",
       });
-      if (!response.ok) {
-        throw new Error("Could not load the Google Analytics settings.");
-      }
+      if (!response.ok) throw new Error(LOAD_FALLBACK);
       const payload = (await response.json()) as AnalyticsSettingsPayload;
       applyPayload(payload);
       return {
@@ -200,11 +201,7 @@ export function AnalyticsIntegrationCard() {
       if (response.status === 403) throw new ForbiddenSaveError();
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) {
-        const message =
-          payload && typeof payload === "object" && "error" in payload
-            ? String((payload as { error: unknown }).error)
-            : "Could not save the Google Analytics settings.";
-        throw new Error(message);
+        throw new ApiRefusalError(apiErrorMessageFromBody(payload, SAVE_FALLBACK));
       }
       const saved = payload as AnalyticsSettingsPayload;
       applyPayload(saved);
@@ -218,6 +215,8 @@ export function AnalyticsIntegrationCard() {
       };
     },
     successMessage: "Google Analytics settings saved.",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
   });
 
   const draft = section.draft;

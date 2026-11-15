@@ -26,7 +26,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
+import { apiErrorMessageFromResponse, ApiRefusalError } from "@/lib/api-error-message"
 import { dateOnlyFromIsoString } from "@/lib/date-only"
 import { formatStayDateOrNull } from "@/lib/club-time"
 import { useClubFormat } from "@/components/club-format-provider"
@@ -140,6 +140,7 @@ function MinStayForm({
     // The section renders its own `PolicyFeedback` above the list, so the
     // success copy is set by the parent when the form closes.
     successMessage: "",
+    saveErrorFallback: "Failed to save",
     // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
     // logs and revalidates unconditionally. Creating is the first-save
     // exception: there is no persisted row for the draft to be unchanged FROM.
@@ -476,7 +477,7 @@ export function MinimumNightStaySection() {
   const submitMinStay = useCallback(
     async (draft: MinStayDraft): Promise<MinStayDraft> => {
       if (!policyScopeReady) {
-        throw new Error("Choose an available policy scope before saving")
+        throw new ApiRefusalError("Choose an available policy scope before saving")
       }
       setError("")
       setSuccess("")
@@ -513,7 +514,7 @@ export function MinimumNightStaySection() {
           editorFocus.close()
           return draft
         }
-        throw new Error(message)
+        throw new ApiRefusalError(message)
       }
       const wasEditing = editingMinStayId !== null
       const saved = parseMinStayPolicy(await res.json().catch(() => null))

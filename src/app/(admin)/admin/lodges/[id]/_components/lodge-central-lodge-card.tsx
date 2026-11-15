@@ -21,6 +21,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 
 /**
  * Which lodge in the Alpine Central Server's registry THIS lodge is (#62).
@@ -107,12 +108,13 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
       });
       if (!response.ok) {
         if (response.status === 403) throw new ForbiddenSaveError();
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? "The link could not be saved.");
+        throw await apiRefusalFromResponse(response, "The link could not be saved.");
       }
       return toDraft((await response.json()) as CentralLodgeResponse);
     },
     successMessage: "Central lodge link saved.",
+    loadErrorFallback: "The central lodge link could not be read.",
+    saveErrorFallback: "The link could not be saved.",
     isDirty: (draft, saved) => draft.centralLodgeId !== saved.centralLodgeId,
   });
 

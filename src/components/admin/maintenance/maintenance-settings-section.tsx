@@ -24,6 +24,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 
 /**
  * The maintenance-report policy section (#2780). Lodge Operations.
@@ -74,14 +75,13 @@ export function MaintenanceSettingsSection({
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown };
-        throw new Error(
-          typeof data.error === "string" ? data.error : "Failed to save",
-        );
+        throw await apiRefusalFromResponse(res, "Failed to save");
       }
       return ((await res.json()) as { settings: Draft }).settings;
     },
     successMessage: "Maintenance report settings saved",
+    loadErrorFallback: "Failed to load these settings",
+    saveErrorFallback: "Failed to save",
     isValid: (draft) =>
       Number.isInteger(draft.photoRetentionDays) &&
       draft.photoRetentionDays >= 1 &&

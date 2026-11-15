@@ -9,6 +9,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state"
+import { ApiRefusalError, apiRefusalFromResponse } from "@/lib/api-error-message"
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { PolicyFeedback } from "./policy-feedback"
 
@@ -168,6 +169,8 @@ const SAVE_STEP_READ_FAILED =
 
 /** Every card reports the same thing, because they all write the same row. */
 const SAVE_SUCCESS = "Booking request settings saved"
+const LOAD_FAILED = "Failed to fetch booking request settings"
+const SAVE_FAILED = "Failed to save"
 
 /**
  * The section's only read, in both of its roles: the mount-time load, and the
@@ -198,9 +201,9 @@ async function fetchSettings(
       // clicking Save, so read-flavoured copy there would report a failure they
       // did not ask for and say nothing about the change they did (#2162
       // review).
-      throw new Error(SAVE_STEP_READ_FAILED)
+      throw new ApiRefusalError(SAVE_STEP_READ_FAILED)
     }
-    throw new Error("Failed to fetch booking request settings")
+    throw new Error(LOAD_FAILED)
   }
   return (await res.json()) as BookingRequestSettings
 }
@@ -226,8 +229,7 @@ async function putSettings(
   })
   if (!res.ok) {
     if (res.status === 403) throw new ForbiddenSaveError()
-    const data = await res.json()
-    throw new Error(data.error || "Failed to save")
+    throw await apiRefusalFromResponse(res, SAVE_FAILED)
   }
   return (await res.json()) as BookingRequestSettings
 }
@@ -329,6 +331,8 @@ export function PublicBookingRequestsSection() {
       return { showPricingToNonMembers: next.showPricingToNonMembers }
     },
     successMessage: SAVE_SUCCESS,
+    loadErrorFallback: LOAD_FAILED,
+    saveErrorFallback: SAVE_FAILED,
     // No first-save exception on any of the three cards, even though the GET
     // SYNTHESISES defaults when no row is stored (`getBookingRequestSettings`).
     // The exception exists so a form whose defaults are already correct can
@@ -369,11 +373,13 @@ export function PublicBookingRequestsSection() {
       // Merging one field of a cross-field pair CAN compose a pair the admin
       // never saw, which is why this check exists (see QUOTE_TIMING_CONFLICT).
       if (body.quoteReminderLeadDays >= body.quoteResponseTtlDays) {
-        throw new Error(QUOTE_TIMING_CONFLICT)
+        throw new ApiRefusalError(QUOTE_TIMING_CONFLICT)
       }
       return toQuoteTimingDraft(await putSettings(body))
     },
     successMessage: SAVE_SUCCESS,
+    loadErrorFallback: LOAD_FAILED,
+    saveErrorFallback: SAVE_FAILED,
     isDirty: isTimingDirty,
   })
 
@@ -389,6 +395,8 @@ export function PublicBookingRequestsSection() {
       )
     },
     successMessage: SAVE_SUCCESS,
+    loadErrorFallback: LOAD_FAILED,
+    saveErrorFallback: SAVE_FAILED,
     isDirty: isTimingDirty,
   })
 

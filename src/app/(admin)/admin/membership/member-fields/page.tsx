@@ -30,7 +30,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { apiErrorMessageFromBody, ApiRefusalError } from "@/lib/api-error-message";
 
 import { adminLink } from "@/lib/admin-hubs";
 interface FieldsResponse {
@@ -90,7 +90,7 @@ export default function AdminMemberFieldsPage() {
         | FieldsResponse
         | { error?: string };
       if (!response.ok || !("settings" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to load settings"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to load settings"));
       }
       return toDraft(body.settings);
     },
@@ -108,7 +108,7 @@ export default function AdminMemberFieldsPage() {
         // A stale tab or narrowed permission maps to the shared forbidden-save
         // copy (#1940), shown in the focused failure below.
         if (response.status === 403) throw new ForbiddenSaveError();
-        throw new Error(apiErrorMessageFromBody(body, "Failed to save settings"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to save settings"));
       }
       return toDraft(body.settings);
     },

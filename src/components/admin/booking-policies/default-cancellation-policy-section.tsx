@@ -25,6 +25,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state"
+import { ApiRefusalError, apiRefusalFromResponse } from "@/lib/api-error-message"
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
@@ -220,7 +221,7 @@ export function DefaultCancellationPolicySection() {
     },
     save: async (draft, savedSnapshot) => {
       if (!policyScopeReady) {
-        throw new Error("Choose an available policy scope before saving")
+        throw new ApiRefusalError("Choose an available policy scope before saving")
       }
       const lodgeId = scopeLodgeId
       // Captured at SUBMIT time — see `savedScopeNameRef`.
@@ -249,8 +250,7 @@ export function DefaultCancellationPolicySection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const data = await res.json()
-        throw new Error(data.error || "Failed to save")
+        throw await apiRefusalFromResponse(res, "Failed to save")
       }
       // The PUT echoes the stored partition back, so re-seed from THAT — the
       // route sorts and normalises the rules it persists.
@@ -263,6 +263,8 @@ export function DefaultCancellationPolicySection() {
       savedDraft.scope
         ? `Override saved for ${savedScopeNameRef.current ?? "lodge"}`
         : "Default policy saved",
+    loadErrorFallback: "Failed to fetch policy",
+    saveErrorFallback: "Failed to save",
     // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
     // logs `cancellation-policy.update` and revalidates the public pages
     // unconditionally — so a no-op save left an audit entry asserting a policy

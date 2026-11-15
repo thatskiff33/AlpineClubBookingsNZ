@@ -13,7 +13,7 @@ import {
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Label } from "@/components/ui/label"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
+import { apiErrorMessageFromResponse, ApiRefusalError } from "@/lib/api-error-message"
 import {
   ForbiddenSaveError,
   useSectionEditState,
@@ -257,7 +257,7 @@ export function AdultMemberHostingSection() {
       const policy = parsePolicy(await res.json().catch(() => null))
       if (!policy) {
         setLoadedScope(UNLOADED_SCOPE)
-        throw new Error("Failed to read the adult-member hosting policy")
+        throw new ApiRefusalError("Failed to read the adult-member hosting policy")
       }
       setLoadedScope(scope)
       setEffective(policy.effective)
@@ -266,7 +266,7 @@ export function AdultMemberHostingSection() {
     },
     save: async (draft) => {
       if (!policyScopeReady) {
-        throw new Error("Choose an available policy scope before saving")
+        throw new ApiRefusalError("Choose an available policy scope before saving")
       }
       const scope = scopeRef.current
       const res = await fetch(ENDPOINT, {
@@ -295,15 +295,17 @@ export function AdultMemberHostingSection() {
           setLoadedScope(UNLOADED_SCOPE)
           await reloadRef.current()
         }
-        throw new Error(message)
+        throw new ApiRefusalError(message)
       }
       const policy = parsePolicy(await res.json().catch(() => null))
-      if (!policy) throw new Error("Saved, but the response could not be read")
+      if (!policy) throw new ApiRefusalError("Saved, but the response could not be read")
       setEffective(policy.effective)
       setCustomScopeSeed(customScopeStartingPoint(policy))
       return toDraft(policy)
     },
     successMessage: "Adult-member hosting policy saved",
+    loadErrorFallback: "Failed to load the adult-member hosting policy",
+    saveErrorFallback: "Failed to save",
     // First save exception (#2142): until a row is persisted there is nothing
     // for the draft to be unchanged FROM — the GET synthesised it — so a first
     // save can store the club's choice even when it matches the built-in

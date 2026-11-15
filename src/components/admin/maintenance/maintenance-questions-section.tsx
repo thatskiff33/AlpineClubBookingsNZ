@@ -30,6 +30,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 import {
   MAX_MAINTENANCE_QUESTION_CHOICE_LENGTH,
   MAX_MAINTENANCE_QUESTION_CHOICES,
@@ -161,14 +162,13 @@ export function MaintenanceQuestionsSection() {
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown };
-        throw new Error(
-          typeof data.error === "string" ? data.error : "Failed to save the questions",
-        );
+        throw await apiRefusalFromResponse(res, "Failed to save the questions");
       }
       return toDraft(((await res.json()) as { questions: ServerQuestion[] }).questions);
     },
     successMessage: "Questions saved",
+    loadErrorFallback: "Failed to load the questions",
+    saveErrorFallback: "Failed to save the questions",
     isDirty: questionsDiffer,
     isValid: isValidDraft,
   });

@@ -22,6 +22,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 import {
   DISPLAY_NAME_GRANULARITY_LABELS,
   DISPLAY_NAME_GRANULARITY_VALUES,
@@ -117,14 +118,13 @@ export function LodgeRosterSettingsCard({ lodgeId }: { lodgeId: string }) {
       });
       if (!response.ok) {
         if (response.status === 403) throw new ForbiddenSaveError();
-        const body = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(body?.error ?? "That setting could not be saved.");
+        throw await apiRefusalFromResponse(response, "That setting could not be saved.");
       }
       return toDraft((await response.json()) as RosterSettingsResponse);
     },
     successMessage: "Roster name detail saved.",
+    loadErrorFallback: "The roster name setting could not be read.",
+    saveErrorFallback: "That setting could not be saved.",
     // Only the level is editable, so only the level can make the draft dirty.
     // The default and the module flag arrive from the server and go back
     // unchanged; comparing them would be comparing a fact with itself.

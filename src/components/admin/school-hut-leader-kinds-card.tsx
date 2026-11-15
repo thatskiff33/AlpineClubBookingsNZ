@@ -14,6 +14,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
   SCHOOL_HUT_LEADER_KINDS,
@@ -90,12 +91,13 @@ export function SchoolHutLeaderKindsCard({
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.error ?? "Failed to save");
+        throw await apiRefusalFromResponse(res, "Failed to save");
       }
       return ((await res.json()) as { kinds: SchoolHutLeaderKinds }).kinds;
     },
     successMessage: "Saved who can be hut leader for school bookings",
+    loadErrorFallback: "Failed to load who can be hut leader for school bookings",
+    saveErrorFallback: "Failed to save",
   });
 
   const draft = section.draft;

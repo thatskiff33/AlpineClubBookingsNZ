@@ -10,6 +10,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state"
+import { apiRefusalFromResponse } from "@/lib/api-error-message"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -110,12 +111,13 @@ export function GroupDiscountSection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const data = await res.json()
-        throw new Error(data.error || "Failed to save")
+        throw await apiRefusalFromResponse(res, "Failed to save")
       }
       return toDraft(await res.json())
     },
     successMessage: "Group discount settings saved",
+    loadErrorFallback: "Failed to fetch group discount",
+    saveErrorFallback: "Failed to save",
     // `allowPristineSave` stays at its default (false): an unchanged draft must
     // not re-PUT, because the write route logs `group-discount.update` and
     // revalidates the public pages unconditionally, so a no-op save would leave

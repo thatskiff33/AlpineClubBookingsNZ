@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useSectionEditState } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 import { useClubTime } from "@/components/club-time-provider";
 import { RETENTION_CHOICES } from "@/lib/club-post-retention-choices";
 
@@ -66,10 +67,7 @@ export function ClubPostRetentionSection({
         body: JSON.stringify({ retentionDays: draft.retentionDays }),
       });
       if (!res.ok) {
-        const payload = (await res.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(payload?.error ?? "That setting could not be saved.");
+        throw await apiRefusalFromResponse(res, "That setting could not be saved.");
       }
       const body = (await res.json()) as {
         settings: { retentionDays: number };

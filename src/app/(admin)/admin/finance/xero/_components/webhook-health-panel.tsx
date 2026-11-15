@@ -38,6 +38,8 @@ export function WebhookHealthPanel() {
     },
     isValid: (draft) => silentWebhookHoursSchema.safeParse(draft.hours).success,
     successMessage: "Webhook warning threshold saved.",
+    loadErrorFallback: "Could not load webhook health.",
+    saveErrorFallback: "Could not save the warning threshold.",
   });
   return <section className="my-6 space-y-3 rounded-lg border p-4" {...section.sectionRegionProps}>
     <AdminViewOnlySectionBanner canEdit={canEdit}>Finance edit access is required to change webhook monitoring.</AdminViewOnlySectionBanner>

@@ -33,7 +33,7 @@ import {
   SESSION_MAX_AGE_MAX_HOURS,
   SESSION_MAX_AGE_MIN_HOURS,
 } from "@/lib/session-max-age";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { apiErrorMessageFromBody, ApiRefusalError } from "@/lib/api-error-message";
 
 // Self-contained password-policy card for the Login & Security page (epic #2030,
 // child #2033; edit-gated in #2103). Kept fully independent — it loads and saves
@@ -115,7 +115,7 @@ export function PasswordPolicyCard() {
       });
       const body = (await response.json()) as SettingsResponse | { error?: string };
       if (!response.ok || !("policy" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to load password policy"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to load password policy"));
       }
       return toDraft(body.policy);
     },
@@ -129,7 +129,7 @@ export function PasswordPolicyCard() {
       const body = (await response.json()) as SettingsResponse | { error?: string };
       if (!response.ok || !("policy" in body)) {
         if (response.status === 403) throw new ForbiddenSaveError();
-        throw new Error(apiErrorMessageFromBody(body, "Failed to save password policy"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to save password policy"));
       }
       return toDraft(body.policy);
     },

@@ -23,6 +23,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { ApiRefusalError } from "@/lib/api-error-message";
 import type { ModuleSettingsValues } from "@/config/modules";
 import {
   DEFAULT_MAGIC_LINK_TTL_MINUTES,
@@ -79,7 +80,7 @@ async function putJson(url: string, body: unknown, failMessage: string) {
   });
   if (!res.ok) {
     if (res.status === 403) throw new ForbiddenSaveError();
-    throw new Error(failMessage);
+    throw new ApiRefusalError(failMessage);
   }
   return res;
 }
