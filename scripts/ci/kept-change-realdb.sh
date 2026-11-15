@@ -24,6 +24,7 @@ files=(
   src/lib/__tests__/additional-capture-receipt-legs.realdb.test.ts
   src/lib/__tests__/primary-invoice-edit-race.realdb.test.ts
   src/lib/__tests__/unpaid-edit-change-fee-owed.realdb.test.ts
+  src/lib/__tests__/price-preserving-edit-preview-save.realdb.test.ts
   src/lib/__tests__/edit-quoted-figures.realdb.test.ts
   # #4930: exercise reconciliation, cancellation and group settlement after
   # moving their shared imports; a skipped suite is rejected below.

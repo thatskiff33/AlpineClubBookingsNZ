@@ -231,6 +231,10 @@ Journey: Follow the redirect into the Changes tab of Booking Requests.
 
 Screen: `/admin/booking-policies`.
 
+The Cancellation section includes club-wide reminder and policy-exception hold
+timings. Choose Edit, adjust days, then Save or Cancel; existing requests keep
+their stamped hold deadlines.
+
 Shows: Booking rules and cancellation-policy settings.
 
 Journey: Review booking rules and cancellation policies before staging a change.
@@ -241,7 +245,7 @@ Journey: Review booking rules and cancellation policies before staging a change.
 
 Screen: `/admin/booking-requests`.
 
-Shows: Tabbed request queues and request details with their current status and actions.
+Shows: Tabbed request queues and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-020). A deep link to one booking or request pins it above the page when it is elsewhere.
 
 Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
 
@@ -327,7 +331,7 @@ Screen: `/admin/communications`.
 
 Shows: Member communication composition and audience selection.
 
-Journey: Choose recipients (the help line says who each reaches) and compose a message; Send to Members opens a confirmation naming the recipient count, audience and subject, with Cancel focused; confirm to send. The result is announced in a status region.
+Journey: Choose recipients (the help line says who each reaches), choose the kind of message (club notice or club newsletter, nothing preselected; a live count shows who it reaches and who is left out) and compose a message; Send to Members opens a confirmation naming the recipient count, audience, kind and subject, with Cancel focused; confirm to send. The result is announced in a status region.
 
 [Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -397,7 +401,7 @@ Journey: Choose a lodge, inspect lockers and assignments, and manage the selecte
 
 Screen: `/admin/member-applications`.
 
-Shows: Applications, nomination progress and officer decisions.
+Shows: Applications, nomination progress and officer decisions. The list pages 25 rows with a "Showing 1–25 of 40" total line; Pending admin lists the oldest first (INV-OPS-020).
 
 Journey: Review an application and its nominations, then approve or reject. Action failures take focus and scroll into view; successes are announced and brought into view.
 
@@ -429,7 +433,7 @@ Screen: `/admin/membership-cancellations`.
 
 Merged in (#4796): a Requests tab and a Settings tab (`?tab=settings`); `/admin/membership-cancellation` and `/admin/setup/cancellation` redirect to the Settings tab.
 
-Shows: The membership cancellation review queue; on the Settings tab, the cancellation copy and Xero handling.
+Shows: The membership cancellation and archive review queues, each paged 25 rows with its own total line (INV-OPS-020); on the Settings tab, the cancellation copy and Xero handling.
 
 Journey: Open a cancellation request and review its consequences before deciding it; or open Settings, from here or from Notifications & Email, to change the cancellation wording.
 
@@ -454,6 +458,16 @@ Shows: Membership types and their eligibility and billing configuration.
 Journey: Inspect a type, its eligibility and subscription settings before saving changes.
 
 [Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Subscription Categories — subscription-categories
+
+Screen: `/admin/subscription-categories`.
+
+Shows: Subscription categories and their fee, the second billing axis alongside membership type.
+
+Journey: Create or edit a category and its flat fee, then assign members from their profile.
+
+[Guide](guides/subscription-categories.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Subscription Lockout — subscription-lockout
 
@@ -493,7 +507,7 @@ Screen: `/admin/display`.
 
 Shows: The lobby-display hub, device management, templates, layouts and previews.
 
-Journey: Open Devices, Visual builder, Layouts, Templates or Reference from the display hub.
+Journey: Open Display Devices, Display Builder, Display Layouts, Display Templates or Display Reference from the display hub.
 
 [Guide](guides/display.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -643,7 +657,7 @@ Journey: Filter payments, open a record, and inspect its booking and provider st
 
 Screen: `/admin/refund-requests`.
 
-Shows: Refund requests with booking context and decision controls. A credit approval shows the account the requester chose.
+Shows: Refund requests with booking context and decision controls, paged 25 rows with a total line (INV-OPS-020). A credit approval shows the account the requester chose.
 
 Journey: Open a request, inspect the booking and amounts, then use the permitted decision action.
 
@@ -1058,7 +1072,13 @@ so a blind member can miss a declined card or a wrong sign-in code:
 
 - **A failure** goes in `FocusedActionError`
   (`src/components/focused-action-error.tsx`): mounted empty with its own
-  unique `id`, filled when the action fails, and focused.
+  unique `id`, filled when the action fails, and focused. The message and the
+  counter that re-fires it when the same failure repeats have one home,
+  `useActionFailure` (`src/hooks/use-action-failure.ts`, #4975): `fail`
+  records and counts, `clear` empties without counting. The setup wizards use
+  it. Four older pages still keep the same pair by hand (Chores, Lockers,
+  Lodges and Hut fees); they predate the hook and are unconverted, so new code
+  uses the hook rather than a fifth copy.
 - **A success or progress message** goes in a `StatusRegion`
   (`src/components/status-region.tsx`): a `role="status"` region mounted
   before the request, `sr-only` while empty, so only its text changes. It is the

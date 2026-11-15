@@ -28,6 +28,20 @@ counts waiting policy exceptions alongside the other queues.
 > **Approvals** and **Changes** tabs respectively. They have no separate screen,
 > so they are documented here.
 
+Every tab's list shows 25 requests a page, with a total line such as "Showing
+1–25 of 40" under it (shown even when everything fits on one page) and
+previous and next arrows with page numbers when there is more. On **Approvals**,
+**Changes**, **Public Requests** and **Policy Exceptions** the waiting filter
+lists the oldest request first, so the one that has waited longest is at the top; decided and **All**
+filters list the newest first, and **All** on Approvals keeps every pending
+booking ahead of the decided ones. Changing the filter or tab, or pressing
+**Reset**, returns to page 1; the page stays in the address (except on
+**Policy Exceptions**, which keeps its filter and page on screen only); and if deciding the last request on a page
+empties it, the list steps back a page. A link that opens one booking or
+request — from an email, **Needs Attention** or the Bookings Review chip —
+shows that record pinned above the list, with a note, when it is not on the
+page you are looking at.
+
 Money is integer cents (shown as dollars); dates are NZ date-only lodge nights.
 Every approve/reject/decline flow asks whether to email the member, and records
 your choice in the audit log — except on a booking that has **No emails**
@@ -36,6 +50,13 @@ nothing can be sent either way, so the dialog says so instead of asking. On a
 silenced booking a **reject** emails the member nothing at all: the cancellation
 notice that normally always goes out is withheld too, and the withheld messages
 are listed on the booking for you to relay.
+
+The club can set the policy-exception hold length under **Booking Policies →
+Cancellation → Reminder and hold timings** (1–30 days, default 7). Changing it
+applies to new requests only: an existing hold keeps its stamped deadline.
+The same section controls arrival reminder lead time and the first reminder
+for an extra payment (both default to 3 days). Changes are staged with Edit,
+then Save or Cancel.
 
 ## When you'd use it
 

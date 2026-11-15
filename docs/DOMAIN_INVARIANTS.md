@@ -119,6 +119,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-012` | Club `familyBillingMode` decides whether family billing exists; stale schedules raise exceptions |
 | `INV-MONEY-013` | A multi-family member's per-family fee bills only via their admin-chosen billing family |
 | `INV-MONEY-014` | One family/type/membership-year tuple carries at most one durable charge |
+| `INV-MONEY-046` | Subscription category is a second billing axis, independent of membership type |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
 | `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
 | `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
@@ -369,6 +370,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
 | `INV-PAY-154` | A disputed capture is never refunded or credited |
+| `INV-PAY-155` | The inbound recount takes each failed-later card refund off once |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -799,6 +801,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-023` | A stay's dietary value is cleared a club-set period after the stay |
 | `INV-PRIV-024` | Every outside recipient of personal data is in one census-held register |
 | `INV-PRIV-025` | One subject access builder; every personal model placed; own rows only |
+| `INV-PRIV-026` | Bulk email declares a category: club notices opt-out, newsletters opt-in |
 
 ## Membership Lifecycle
 
@@ -821,6 +824,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-003` | One cancellation at most credits a subscription invoice: durable first-writer claim |
 | `INV-LIFE-004` | Unpaid-invoice approval blocker excuses an invoice only while it awaits crediting |
 | `INV-LIFE-005` | Role, membership type, age tier, Xero group, committee: separate axes |
+| `INV-LIFE-094` | Subscription category is a fourth billing axis, independent of booking rights |
 | `INV-LIFE-089` | Last active Full Admin can never be deactivated, de-logined or archived |
 | `INV-LIFE-006` | Cancellation eligibility is an account-holder question, refusing exactly two record classes |
 | `INV-LIFE-007` | Member-raised route: active and can-log-in only; family candidates unfiltered by role |
@@ -974,8 +978,10 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-003` | Every global-lock call site is registered, by site, with its own reason |
 | `INV-LOCK-004` | A read taken under a lock uses the caller's transaction client |
 | `INV-LOCK-005` | Advisory-lock transactions use fresh READ COMMITTED snapshots |
+| `INV-LOCK-006` | A lock(1) waiter states the shared budget; contention is a 503 |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
+| `INV-OPS-020` | A row-capped admin list shows its total and reaches every row |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |
 | `INV-OPS-012` | Audit reclassification ships its backfill or files one; measured audience stated |
 | `INV-OPS-005` | Doomed columns need `@ignore`: static defaults and implicit `RETURNING` name them |
@@ -1034,6 +1040,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
 | `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
+| `INV-SSOT-009` | A charge's dedup key and display name share one builder only |
 
 ## Authentication
 

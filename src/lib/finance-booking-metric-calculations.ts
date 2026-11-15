@@ -1,22 +1,16 @@
-import { formatDateOnly } from "@/lib/date-only";
+import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 
-const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MILLISECONDS_PER_DAY = 86_400_000;
 
+/** A real calendar day as `YYYY-MM-DD`, to its date-only instant; anything else throws. */
 export function parseFinanceBookingMetricDate(
   value: string,
   fieldName: string
 ): Date {
-  if (!ISO_DATE_PATTERN.test(value)) {
-    throw new Error(`${fieldName} must use YYYY-MM-DD`);
+  if (!isDateOnlyString(value)) {
+    throw new Error(`${fieldName} must be a real calendar day as YYYY-MM-DD`);
   }
-
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  if (formatDateOnly(parsed) !== value) {
-    throw new Error(`${fieldName} must be a valid date`);
-  }
-
-  return parsed;
+  return parseDateOnly(value);
 }
 
 export function addUtcDays(date: Date, days: number): Date {
