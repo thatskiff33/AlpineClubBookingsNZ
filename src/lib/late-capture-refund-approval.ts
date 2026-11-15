@@ -8,7 +8,7 @@ import { automaticCancelledBookingRefundTaskReasons } from "@/lib/deleted-bookin
 import { finishApprovedLateCaptureRefund } from "@/lib/late-capture-refund-credit-note";
 import logger from "@/lib/logger";
 import { closeKeptCaptureReturn, postRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { enqueueLateCaptureApprovalRefundRecovery } from "@/lib/payment-recovery";
 import {
   buildLateCaptureApprovalRefundRecoveryIdempotencyKey,

@@ -228,6 +228,8 @@ APP_IMAGE="${APP_IMAGE:-}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-}"
 ALLOW_UNPUBLISHED_DEPLOY_COMMIT="${ALLOW_UNPUBLISHED_DEPLOY_COMMIT:-0}"
 UNPUBLISHED_DEPLOY_COMMIT_REASON="${UNPUBLISHED_DEPLOY_COMMIT_REASON:-}"
+ALLOW_UNTAGGED_DEPLOY_COMMIT="${ALLOW_UNTAGGED_DEPLOY_COMMIT:-0}"
+UNTAGGED_DEPLOY_COMMIT_REASON="${UNTAGGED_DEPLOY_COMMIT_REASON:-}"
 
 ACTIVE_UPSTREAM_FILE_REL="deploy/caddy/tacbookings-active.caddy"
 CADDY_CONFIG_CONTAINER_PATH="/etc/caddy/Caddyfile"
@@ -428,6 +430,105 @@ EOF
   warn "DEPLOYING AN UNPUBLISHED COMMIT. ${RESOLVED_REF} exists on no remote branch."
   warn "Reason given: ${UNPUBLISHED_DEPLOY_COMMIT_REASON}"
   warn "Push this commit as soon as the reason no longer holds, or the next release's preconditions are computed against a commit nobody else has."
+}
+
+# A release tag, spelled once for this script: a strict `vX.Y.Z`, the same
+# pattern as RELEASE_TAG in scripts/release/cut-release.mjs, so the tool that
+# cuts a release and the deploy that demands one cannot disagree about what a
+# release is. `deploy-release-tag-guard-script-contract.test.ts` runs both over
+# the same names. Bash's `=~` anchors to the whole string, never to a line.
+is_release_tag_name() {
+  [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+}
+
+# Production runs a published release, not whatever `main` was that day (#4978).
+#
+# #4465 wrote "every production deploy runs a tagged release" into the guides
+# and built `release:cut`, but nothing here enforced it, and months of `main`
+# could reach production with no release to name, report against or roll back
+# to. So the deploy itself refuses a commit that no release tag points at, with
+# the same flag-plus-written-reason override as the published-commit check
+# above.
+#
+# A release tag here means exactly what `release:cut publish` creates: an
+# ANNOTATED tag named like `v0.13.2`, as origin has it. Three things follow:
+#
+# - The answer comes from `git ls-remote --tags origin`, never from this clone's
+#   own tags, so a tag made on the deploy host and never pushed does not count.
+# - Only an annotated tag has a peeled `refs/tags/<name>^{}` line, and that line
+#   carries the COMMIT the tag points at (the unpeeled line carries the tag
+#   object's own id). Matching the peeled line against RESOLVED_REF therefore
+#   refuses a lightweight tag and a tag on a different commit in one test.
+# - The existing fetch (`--prune origin main`) is left alone: widening it to
+#   tags would change the stale-ref behaviour described above.
+#
+# An unreachable origin REFUSES, unlike the published-commit check, which
+# downgrades to a warning. That check can fall back on remote-tracking refs a
+# fetch once wrote; this one has no trustworthy local answer, because a local
+# tag is exactly what it exists to distrust. During an outage the override with
+# a reason gets the deploy through, and the reason is on record.
+validate_deploy_commit_is_release_tag() {
+  local remote_tags
+  local object_id
+  local ref
+  local tag_name
+  local release_tags=""
+  local refusal
+
+  local ls_remote_status=0
+  local ls_remote_error_file
+  local ls_remote_error
+
+  # git's stderr goes to its own file, so stdout stays pure ls-remote output
+  # and a failure can still show git's own reason (no such remote, an
+  # authentication failure, a network outage).
+  ls_remote_error_file="$(mktemp)"
+  remote_tags="$(git -C "$SOURCE_REPO" ls-remote --tags origin 'refs/tags/v*' 2>"$ls_remote_error_file")" \
+    || ls_remote_status=$?
+  ls_remote_error="$(cat "$ls_remote_error_file")"
+  rm -f "$ls_remote_error_file"
+
+  if [ "$ls_remote_status" -eq 0 ]; then
+    while IFS=$'\t' read -r object_id ref; do
+      case "$ref" in
+        'refs/tags/'*'^{}') ;;
+        *) continue ;;
+      esac
+      [ "$object_id" = "$RESOLVED_REF" ] || continue
+      tag_name="${ref#refs/tags/}"
+      tag_name="${tag_name%'^{}'}"
+      is_release_tag_name "$tag_name" || continue
+      release_tags="${release_tags:+${release_tags}, }${tag_name}"
+    done <<EOF
+$remote_tags
+EOF
+
+    if [ -n "$release_tags" ]; then
+      info "Deploy commit ${RESOLVED_REF} is release ${release_tags}, confirmed against origin."
+      return 0
+    fi
+    refusal="Deploy commit ${RESOLVED_REF} is not a release: no annotated vX.Y.Z tag on origin points at it."
+  else
+    refusal="Could not reach origin to confirm that deploy commit ${RESOLVED_REF} is a release, and a tag on this host alone does not count. git said: ${ls_remote_error//$'\n'/ }"
+  fi
+
+  if ! env_flag_is_true "$ALLOW_UNTAGGED_DEPLOY_COMMIT"; then
+    echo "$refusal" >&2
+    echo "Production runs published releases, so a club can say which version it is on and roll back to the one before." >&2
+    echo "Deploy a release (git fetch origin tag vX.Y.Z, then DEPLOY_REF=vX.Y.Z), or set ALLOW_UNTAGGED_DEPLOY_COMMIT=1 together with a non-empty UNTAGGED_DEPLOY_COMMIT_REASON explaining why." >&2
+    return 1
+  fi
+
+  if [ -z "$UNTAGGED_DEPLOY_COMMIT_REASON" ]; then
+    echo "$refusal" >&2
+    echo "ALLOW_UNTAGGED_DEPLOY_COMMIT is set, but UNTAGGED_DEPLOY_COMMIT_REASON is empty." >&2
+    echo "Deploying a commit that is not a release is a decision that has to be recorded. Set UNTAGGED_DEPLOY_COMMIT_REASON to the reason." >&2
+    return 1
+  fi
+
+  warn "DEPLOYING A COMMIT THAT IS NOT A RELEASE. ${refusal}"
+  warn "Reason given: ${UNTAGGED_DEPLOY_COMMIT_REASON}"
+  warn "Cut and deploy a release as soon as the reason no longer holds (pnpm run release:cut, DEPLOYMENT.md)."
 }
 
 # Where each image repository came from: the shell environment, the source
@@ -811,6 +912,7 @@ if [ "$WRAPPER_MODE" = "build-and-push-images" ]; then
   step "3/6" "Resolving build commit and image references"
   resolve_ref
   validate_deploy_commit_is_published
+  validate_deploy_commit_is_release_tag
   resolve_image_refs
 
   # Said BEFORE the build, not after the push. A production host is logged
@@ -838,8 +940,11 @@ if [ "$WRAPPER_MODE" = "build-and-push-images" ]; then
   WORKSPACE=""
 
   echo
-  echo "Built and pushed ${RESOLVED_REF}. Deploy it with:"
-  echo "  ./scripts/run-production-blue-green-deploy.sh"
+  # Print the commit that was built, not the bare command: that would resolve
+  # origin/main, which may be a different commit whose images were never built
+  # and which the release-tag check refuses (#4978).
+  echo "Built and pushed ${RESOLVED_REF}. Deploy exactly this commit with:"
+  echo "  DEPLOY_REF=${RESOLVED_REF} ./scripts/run-production-blue-green-deploy.sh"
   return 0
 fi
 
@@ -883,6 +988,9 @@ resolve_ref
 # Before the workspace is built, so a commit no remote holds never reaches a
 # `git archive`, an image build, or the database.
 validate_deploy_commit_is_published
+# The same ordering for the release-tag check: an untagged commit is refused,
+# unless the operator records why, before any image is resolved (#4978).
+validate_deploy_commit_is_release_tag
 resolve_image_refs
 
 step "4/8" "Creating deployment workspace"
@@ -1703,6 +1811,53 @@ require_resolved_caddy_tls_mode() {
   esac
 }
 
+# CADDY_WWW_REDIRECT and CADDY_LEGACY_ROUTES each select an on/off pair of
+# snippets in deploy/caddy (#4981), exactly as CADDY_TLS_MODE does, so any
+# other value would stop Caddy at step 17 on a missing import; refused here,
+# read as the caddy service would receive it.
+require_resolved_caddy_switch() {
+  local key="$1"
+  local purpose="$2"
+  local value
+
+  value="$(resolved_service_env_value "$CADDY_SERVICE" "$key")"
+  case "$value" in
+    on|off) return 0 ;;
+    *)
+      echo "$key must be 'on' or 'off' ($purpose); Docker Compose would hand the '${CADDY_SERVICE}' service '$(printable_deploy_value "$value")'. Set it in .env." >&2
+      return 1
+      ;;
+  esac
+}
+
+# With CADDY_LEGACY_ROUTES=on, Caddy forwards /finance-legacy* to
+# CADDY_FINANCE_LEGACY_UPSTREAM (deploy/caddy/legacy-routes-on.caddy). It has
+# no usable default: docker-compose.yml hands Caddy the sentinel below when
+# .env does not set it, which Caddy rejects, and this check refuses the
+# sentinel, an empty value and anything that is not one host:port first.
+CADDY_FINANCE_LEGACY_UPSTREAM_UNSET="set-CADDY_FINANCE_LEGACY_UPSTREAM-for-legacy-routes:none"
+require_resolved_caddy_legacy_upstream() {
+  local mode
+  local value
+
+  mode="$(resolved_service_env_value "$CADDY_SERVICE" CADDY_LEGACY_ROUTES)"
+  [ "$mode" = "on" ] || return 0
+  value="$(resolved_service_env_value "$CADDY_SERVICE" CADDY_FINANCE_LEGACY_UPSTREAM)"
+  if [ -z "$value" ] || [ "$value" = "$CADDY_FINANCE_LEGACY_UPSTREAM_UNSET" ]; then
+    echo "CADDY_LEGACY_ROUTES=on needs CADDY_FINANCE_LEGACY_UPSTREAM: the legacy finance dashboard's host:port as Caddy reaches it (for example 10.0.0.5:8501), set in .env. It has no default. Set CADDY_LEGACY_ROUTES=off if this club runs no legacy dashboard." >&2
+    return 1
+  fi
+  # A hostname or IPv4 address and a port: no scheme, path, space, second
+  # upstream or bracketed IPv6 literal. The first three would change what the
+  # snippet's directive means; an IPv6 literal is refused (with the reason in
+  # the message) so the accepted shape stays this one narrow pattern, and a
+  # dashboard reachable only by IPv6 is given a hostname instead.
+  if ! [[ "$value" =~ ^[A-Za-z0-9._-]+:[0-9]+$ ]]; then
+    echo "CADDY_FINANCE_LEGACY_UPSTREAM must be one host:port, a hostname or IPv4 address then a port, such as 10.0.0.5:8501 (no scheme, path or IPv6 literal; use a hostname for an IPv6-only dashboard); '$(printable_deploy_value "$value")' is not. Set it in .env." >&2
+    return 1
+  fi
+}
+
 # In local mode Caddy believes the client address a trusted proxy forwards, so
 # the proxies it trusts are an explicit setting (#4275): CADDY_TRUSTED_PROXIES,
 # the address or CIDR of the proxy in front, as the caddy service would receive
@@ -2438,7 +2593,8 @@ validate_repo_contract() {
 
 # Caddy validates the Caddyfile with the caddy service's WHOLE resolved
 # environment (#4275), not DOMAIN alone: the Caddyfile imports
-# `tls-{$CADDY_TLS_MODE:acme}.caddy` and reads CADDY_TRUSTED_PROXIES, MEET_HOST
+# `tls-{$CADDY_TLS_MODE:acme}.caddy` (and the CADDY_WWW_REDIRECT and
+# CADDY_LEGACY_ROUTES snippets) and reads CADDY_TRUSTED_PROXIES, MEET_HOST
 # and the rest, so validating without them checked the acme configuration on a
 # local-mode installation and left a broken local one to fail at step 17, after
 # the migration. Read from the step-3 render, so a shell export and every
@@ -4305,6 +4461,9 @@ validate_migration_lock_timeout_contract
 validate_resolved_email_transport
 require_resolved_caddy_tls_mode
 require_resolved_caddy_trusted_proxies
+require_resolved_caddy_switch CADDY_WWW_REDIRECT "whether www.<DOMAIN> redirects to <DOMAIN>"
+require_resolved_caddy_switch CADDY_LEGACY_ROUTES "whether Caddy serves a legacy finance dashboard's /finance-legacy route and bookings./dashboard. hosts"
+require_resolved_caddy_legacy_upstream
 validate_resolved_postgres_max_connections
 # Same reasoning (#3965): an unreadable bound must stop the deploy here, not
 # make the in-container read retry at step 14 compare against a non-number.
