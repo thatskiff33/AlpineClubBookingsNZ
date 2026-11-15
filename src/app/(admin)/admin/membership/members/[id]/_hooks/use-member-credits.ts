@@ -2,6 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromBody,
+  jsonObjectOrNull,
+  readApiErrorBody,
+  apiRefusalFromResponse,
+  refusalMessageOr,
+} from "@/lib/api-error-message";
 import type { AdminCreditGrantAccount } from "@/lib/admin-credit-grant-account";
 import { parseSignedDecimalDollarsToCents } from "@/lib/money-input";
 import type {
@@ -93,19 +101,19 @@ export function useMemberCredits(id: string) {
           ...(cents > 0 ? { grantAccount } : {}),
         }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = jsonObjectOrNull(await readApiErrorBody(res)) ?? {};
       if (!res.ok) {
-        throw new Error(data.error || "Failed to save adjustment");
+        throw new ApiRefusalError(apiErrorMessageFromBody(data, "Failed to save adjustment"));
       }
       setShowAdjustmentForm(false);
       setAdjustmentAmount("");
       setAdjustmentDescription("");
       setAdjustmentIdempotencyKey(null);
-      toast.success(data.message || "Credit adjustment submitted for approval");
+      toast.success((typeof data.message === "string" && data.message) || "Credit adjustment submitted for approval");
       await fetchCredits();
     } catch (err) {
       setAdjustmentError(
-        err instanceof Error ? err.message : "Failed to save adjustment",
+        refusalMessageOr(err, "Failed to save adjustment"),
       );
     } finally {
       setAdjustmentSaving(false);
@@ -133,8 +141,7 @@ export function useMemberCredits(id: string) {
         body: JSON.stringify({ decision }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to review adjustment");
+        throw await apiRefusalFromResponse(res, "Failed to review adjustment");
       }
 
       const data = await res.json();
@@ -142,7 +149,7 @@ export function useMemberCredits(id: string) {
       await fetchCredits();
     } catch (err) {
       setAdjustmentError(
-        err instanceof Error ? err.message : "Failed to review adjustment",
+        refusalMessageOr(err, "Failed to review adjustment"),
       );
     } finally {
       setReviewingAdjustmentId(null);

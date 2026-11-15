@@ -37,6 +37,7 @@ import {
   formatStayDateOrNull,
 } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { formatCents, formatCentsPlain } from "@/lib/utils";
 import { formatNetCollectedLedgerGapWarning } from "@/lib/payment-net-collected";
 import {
@@ -258,6 +259,7 @@ export default function ReportsPage() {
     const seq = ++fetchSeq.current;
     setLoading(true);
     setError(null);
+    const fallback = "Failed to fetch reports";
     try {
       const params = new URLSearchParams({ from, to });
       if (deleted !== "hide") {
@@ -268,21 +270,24 @@ export default function ReportsPage() {
       }
       const res = await fetch(`/api/admin/reports?${params.toString()}`);
       if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error || "Failed to fetch reports");
+        const message = await apiErrorMessageFromResponse(res, fallback);
+        if (seq !== fetchSeq.current) return;
+        // The refused query's message replaces the figures, rather than sitting
+        // above a previous range's (#4937: a range over the API's limit is the
+        // common case, and the inputs already show the new dates).
+        setData(null);
+        setError(message);
+        return;
       }
       const json = await res.json();
       // A response for a superseded query changes nothing — not the data, not the
       // error, not the spinner. The latest query owns all three.
       if (seq !== fetchSeq.current) return;
       setData(json);
-    } catch (err) {
+    } catch {
       if (seq !== fetchSeq.current) return;
-      // The refused query's message replaces the figures, rather than sitting
-      // above a previous range's (#4937: a range over the API's limit is the
-      // common case, and the inputs already show the new dates).
       setData(null);
-      setError(err instanceof Error ? err.message : "Failed to fetch reports");
+      setError(fallback);
     } finally {
       if (seq === fetchSeq.current) setLoading(false);
     }

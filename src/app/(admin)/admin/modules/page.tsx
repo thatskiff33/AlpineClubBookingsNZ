@@ -32,7 +32,13 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromBody,
+  jsonObjectOrNull,
+  readApiErrorBody,
+  refusalMessageOr,
+} from "@/lib/api-error-message";
 import { ModulesInfoNote } from "./_components/modules-info-note";
 
 type ModuleReadinessStatus =
@@ -156,16 +162,16 @@ export default function AdminModulesPage() {
       const response = await fetch("/api/admin/modules", {
         credentials: "same-origin",
       });
-      const body = (await response.json()) as ModulesResponse | { error?: string };
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as ModulesResponse | { error?: string };
       if (!response.ok || !("settings" in body) || !("modules" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to load modules"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to load modules"));
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
       return true;
     } catch (loadError) {
       setError(
-        loadError instanceof Error ? loadError.message : "Failed to load modules",
+        refusalMessageOr(loadError, "Failed to load modules"),
       );
       return false;
     } finally {
@@ -235,11 +241,11 @@ export default function AdminModulesPage() {
         body: JSON.stringify({ settings: draft }),
       });
       if (response.status === 403) {
-        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+        throw new ApiRefusalError(ADMIN_FORBIDDEN_SAVE_REASON);
       }
-      const body = (await response.json()) as ModulesResponse | { error?: string };
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as ModulesResponse | { error?: string };
       if (!response.ok || !("settings" in body) || !("modules" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to save modules"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to save modules"));
       }
       setPayload(body);
       setDraft(cloneSettings(body.settings));
@@ -247,7 +253,7 @@ export default function AdminModulesPage() {
       router.refresh();
     } catch (saveError) {
       setError(
-        saveError instanceof Error ? saveError.message : "Failed to save modules",
+        refusalMessageOr(saveError, "Failed to save modules"),
       );
     } finally {
       setSaving(false);

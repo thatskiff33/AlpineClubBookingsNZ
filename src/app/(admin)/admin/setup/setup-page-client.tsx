@@ -40,7 +40,7 @@ import {
   canOpenAdminPathWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { ApiRefusalError, apiErrorMessageFromBody, jsonObjectOrNull, readApiErrorBody, refusalMessageOr } from "@/lib/api-error-message";
 import type {
   ProgressStatus,
   Provider,
@@ -246,9 +246,9 @@ export function SetupPageClient({
       const response = await fetch("/api/admin/setup", {
         credentials: "same-origin",
       });
-      const body = (await response.json()) as SetupResponse | { error?: string };
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as SetupResponse | { error?: string };
       if (!response.ok || !("readiness" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to load setup readiness"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to load setup readiness"));
       }
       setReadiness(body.readiness);
       setProgress(body.progress);
@@ -256,11 +256,7 @@ export function SetupPageClient({
       if (!body.progress.completedAt) setFinishMessage("");
       return body;
     } catch (loadFailure) {
-      setLoadError(
-        loadFailure instanceof Error
-          ? loadFailure.message
-          : "Failed to load setup readiness",
-      );
+      setLoadError(refusalMessageOr(loadFailure, "Failed to load setup readiness"));
     } finally {
       setLoading(false);
     }
@@ -309,17 +305,13 @@ export function SetupPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, stepId }),
       });
-      const body = await response.json().catch(() => null);
+      const body = await readApiErrorBody(response);
       if (!response.ok) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to update setup progress"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to update setup progress"));
       }
       await loadSetup();
     } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Failed to update setup progress",
-      );
+      setError(refusalMessageOr(saveError, "Failed to update setup progress"));
     } finally {
       setSavingStep(null);
     }
@@ -336,18 +328,16 @@ export function SetupPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "finish" }),
       });
-      const body = await response.json().catch(() => null);
+      const body = await readApiErrorBody(response);
       if (!response.ok) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to finish setup"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to finish setup"));
       }
       const updated = await loadSetup();
       if (updated?.progress.completedAt) {
         setFinishMessage(SETUP_COMPLETE_MESSAGE);
       }
     } catch (finishError) {
-      setError(
-        finishError instanceof Error ? finishError.message : "Failed to finish setup",
-      );
+      setError(refusalMessageOr(finishError, "Failed to finish setup"));
     } finally {
       setFinishing(false);
     }
@@ -363,9 +353,9 @@ export function SetupPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider }),
       });
-      const body = (await response.json()) as ProviderTestResult | { error?: string };
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as ProviderTestResult | { error?: string };
       if (!response.ok || !("ok" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Provider test failed"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Provider test failed"));
       }
       setProviderResults((current) => ({
         ...current,
@@ -374,7 +364,7 @@ export function SetupPageClient({
       await loadSetup();
       if (!body.ok) setError(body.message);
     } catch (providerError) {
-      const message = providerError instanceof Error ? providerError.message : "Provider test failed";
+      const message = refusalMessageOr(providerError, "Provider test failed");
       setError(message);
       setProviderResults((current) => ({
         ...current,

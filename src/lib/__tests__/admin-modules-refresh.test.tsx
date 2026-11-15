@@ -127,7 +127,8 @@ describe("Modules layout refresh", () => {
     fetchMock.mockRejectedValueOnce(new Error("Connection lost"));
     await editModules();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
+    // A dropped connection shows the fallback, not the browser's own wording (#4976).
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to save modules");
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
@@ -161,7 +162,7 @@ describe("Modules layout refresh", () => {
     await screen.findByRole("checkbox", { name: "Waitlist" });
     fetchMock.mockRejectedValueOnce(new Error("Connection lost"));
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load modules");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(mocks.refresh).not.toHaveBeenCalled();
   });

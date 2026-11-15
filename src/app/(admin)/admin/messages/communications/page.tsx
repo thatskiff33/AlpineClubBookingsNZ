@@ -28,6 +28,7 @@ import {
 import type { BulkRecipientFilter } from "@/lib/bulk-communication-recipients";
 import { SendHistoryCard } from "./_components/send-history-card";
 import { useCommunicationsData } from "./_hooks/use-communications-data";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 type OfferedAudience = Exclude<BulkRecipientFilter, "custom">;
 
@@ -176,9 +177,8 @@ export default function CommunicationsPage() {
         body: JSON.stringify(message),
       });
 
-      const data = await res.json();
-
       if (res.ok) {
+        const data = await res.json();
         setResult({
           success: true,
           message: `Sent to ${data.eligibleRecipients} recipients (${data.filteredByPreference} opted out).`,
@@ -187,7 +187,10 @@ export default function CommunicationsPage() {
         setBody("");
         refreshHistory();
       } else {
-        setResult({ success: false, message: data.error });
+        setResult({
+          success: false,
+          message: await apiErrorMessageFromResponse(res, "Failed to send. Please try again."),
+        });
       }
     } catch {
       setResult({

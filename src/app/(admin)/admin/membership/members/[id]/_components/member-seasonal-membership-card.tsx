@@ -37,7 +37,13 @@ import type {
   MemberDetail,
   SeasonalMembershipAssignmentSummary,
 } from "../_types";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromBody,
+  jsonObjectOrNull,
+  readApiErrorBody,
+  refusalMessageOr,
+} from "@/lib/api-error-message";
 import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
@@ -241,20 +247,18 @@ export function MemberSeasonalMembershipCard({
       const response = await fetch("/api/admin/membership-types", {
         credentials: "same-origin",
       });
-      const body = (await response.json()) as
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
         | MembershipTypesResponse
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to load membership types"),
         );
       }
       setMembershipTypes(body.membershipTypes);
     } catch (loadError) {
       setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Failed to load membership types",
+        refusalMessageOr(loadError, "Failed to load membership types"),
       );
     } finally {
       setTypesLoading(false);
@@ -316,20 +320,18 @@ export function MemberSeasonalMembershipCard({
           }),
         },
       );
-      const body = (await response.json()) as
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
         | { preview: SeasonalMembershipPreview }
         | { error?: string };
       if (!response.ok || !("preview" in body)) {
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to preview membership change"),
         );
       }
       setPreview(body.preview);
     } catch (previewError) {
       setError(
-        previewError instanceof Error
-          ? previewError.message
-          : "Failed to preview membership change",
+        refusalMessageOr(previewError, "Failed to preview membership change"),
       );
     } finally {
       setPreviewing(false);
@@ -365,9 +367,9 @@ export function MemberSeasonalMembershipCard({
           }),
         },
       );
-      const body = (await response.json()) as { error?: string };
+      const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as { error?: string };
       if (!response.ok) {
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to save membership change"),
         );
       }
@@ -377,9 +379,7 @@ export function MemberSeasonalMembershipCard({
       await onSaved();
     } catch (saveError) {
       setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Failed to save membership change",
+        refusalMessageOr(saveError, "Failed to save membership change"),
       );
     } finally {
       setSaving(false);

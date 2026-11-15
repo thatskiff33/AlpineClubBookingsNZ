@@ -15,6 +15,7 @@ import { useConfirm } from "@/components/confirm-dialog";
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { useClubTime } from "@/components/club-time-provider";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
@@ -159,18 +160,24 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
     setLoading(true);
     setData(null);
     setLoadFeedback(null);
+    const fallback = "Could not load billing preview.";
     try {
       const response = await fetch(`/api/admin/subscription-billing?seasonYear=${selection.seasonYear}&decisionDate=${selection.decisionDate}`);
+      if (!response.ok) {
+        const text = await apiErrorMessageFromResponse(response, fallback);
+        if (generation !== loadGeneration.current) return;
+        setLoadFeedback({ kind: "error", text });
+        return;
+      }
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not load billing preview.");
       if (generation !== loadGeneration.current) return;
       setData(body);
       setDueDays(String(body.settings.invoiceDueDays));
       setFamilyBillingMode(body.settings.familyBillingMode);
-    } catch (error) {
+    } catch {
       if (generation !== loadGeneration.current) return;
       setData(null);
-      setLoadFeedback({ kind: "error", text: error instanceof Error ? error.message : "Could not load billing preview." });
+      setLoadFeedback({ kind: "error", text: fallback });
     } finally {
       if (generation === loadGeneration.current) setLoading(false);
     }
@@ -188,20 +195,25 @@ export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number })
   async function post(body: Record<string, unknown>): Promise<boolean> {
     setWorking(true);
     setMutationFeedback(null);
+    const fallback = "Billing action failed.";
     try {
       const response = await fetch("/api/admin/subscription-billing", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!response.ok) {
+        setData(null);
+        setMutationFeedback({ kind: "error", text: await apiErrorMessageFromResponse(response, fallback) });
+        return false;
+      }
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Billing action failed.");
       setMutationFeedback({ kind: "success", text: result.message || "Billing action completed." });
       await load();
       return true;
-    } catch (error) {
+    } catch {
       setData(null);
-      setMutationFeedback({ kind: "error", text: error instanceof Error ? error.message : "Billing action failed." });
+      setMutationFeedback({ kind: "error", text: fallback });
       return false;
     } finally {
       setWorking(false);

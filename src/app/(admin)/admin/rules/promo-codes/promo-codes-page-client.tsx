@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/card";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
@@ -645,6 +646,7 @@ export function PromoCodesPageClient({
       }
     }
 
+    const fallback = "Failed to save promo code";
     try {
       const url = editingId
         ? `/api/admin/promo-codes/${editingId}`
@@ -658,17 +660,18 @@ export function PromoCodesPageClient({
       });
 
       if (res.status === 403) {
-        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+        raiseError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
       }
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to save promo code");
+        raiseError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
 
       resetForm();
       fetchPromoCodes();
-    } catch (err) {
-      raiseError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      raiseError(fallback);
     } finally {
       setSaving(false);
     }
@@ -686,46 +689,51 @@ export function PromoCodesPageClient({
 
     if (!confirm(confirmMsg)) return;
 
+    const fallback = "Failed to delete";
     try {
       const res = await fetch(`/api/admin/promo-codes/${promo.id}`, {
         method: "DELETE",
       });
       if (res.status === 403) {
-        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
       }
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to delete");
+        setError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
       fetchPromoCodes();
       if (showArchived) fetchArchivedCodes();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      setError(fallback);
     }
   }
 
   async function handleRestore(id: string) {
     if (!lodgeScopeReady) return;
+    const fallback = "Failed to restore";
     try {
       const res = await fetch(`/api/admin/promo-codes/${id}`, {
         method: "PATCH",
       });
       if (res.status === 403) {
-        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
       }
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to restore");
+        setError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
       fetchPromoCodes();
       fetchArchivedCodes();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      setError(fallback);
     }
   }
 
   async function handleToggleActive(promo: PromoCode) {
     if (!lodgeScopeReady) return;
+    const fallback = "Failed to update";
     try {
       const res = await fetch(`/api/admin/promo-codes/${promo.id}`, {
         method: "PUT",
@@ -733,15 +741,16 @@ export function PromoCodesPageClient({
         body: JSON.stringify({ active: !promo.active }),
       });
       if (res.status === 403) {
-        throw new Error(ADMIN_FORBIDDEN_SAVE_REASON);
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
       }
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to update");
+        setError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
       fetchPromoCodes();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      setError(fallback);
     }
   }
 
