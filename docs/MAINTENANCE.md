@@ -3297,18 +3297,28 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      steps, so every tag has a section. Text above `## Unreleased` and every
      released section are left untouched. It refuses a guide with no
      `## Unreleased`, one that already has the version's section, one with a
-     `## ` line inside a code block, or one with a step added to a released
-     section since the previous tag.
+     `## ` line inside a code block, one with a step added since the previous
+     tag to a released section that tag already had, or any tracked document
+     (bar `CHANGELOG.md` and `changelog.d/`) that links the guide's
+     `#unreleased` anchor: the link would be left on the empty section, so link
+     the step's own heading instead. A release section that arrives whole
+     between two tags, such as a fork merging an upstream release, is not a
+     late step. It reads the previous tag's guide from that tag's commit and
+     refuses when the commit is not in the clone (a shallow clone), rather than
+     skip the check.
    - `docs/releases/v<version>.md`: a notes stub linking the version's
      changelog and upgrade-guide sections. It carries an unfinished marker
-     (`<!-- release-notes:unfinished -->`) that `publish` refuses.
+     (`<!-- release-notes:unfinished -->`), a note saying it is a stub and a
+     placeholder paragraph, and `publish` refuses while any of the three is
+     still in the page.
    - `docs/releases/README.md`: the page listed first under "Published release
      notes". The documentation hub links the index, not a version, so it needs
      no edit.
 
    The dry run lists each of these. Then, before merging the release-prep pull
    request, read the new upgrade section and drop any step that no longer
-   applies, and write the notes page, deleting its marker.
+   applies, and write the notes page, deleting the marker, the stub note and
+   the placeholder.
 2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
@@ -3394,7 +3404,8 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      into the wrong section. `prepare` refuses this too. Move the step under
      `## Unreleased` in a pull request, then fold it with `--amend`;
    - `docs/releases/v<version>.md` is missing, or still carries the unfinished
-     marker. Write the page through a pull request, then publish.
+     marker, the stub note or the placeholder paragraph. Write the page through
+     a pull request, then publish.
 
    The dry run also checks `gh auth status` and that `gh` can reach the
    repository, and says which release body it will use: the section itself,

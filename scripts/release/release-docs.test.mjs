@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,7 +12,10 @@ import {
   RELEASE_NOTES_UNFINISHED_MARKER,
   releaseNotesStub,
   stepsAddedToReleasedSections,
+  unfinishedStubParts,
   unreleasedUpgradeSteps,
+  UNRELEASED_LINK,
+  UNRELEASED_LINK_SEARCH,
   upgradeGuideHeading,
   writeReleaseDocs,
 } from "./release-docs.mjs";
@@ -139,9 +143,31 @@ describe("guarding released sections and odd guides (#4983)", () => {
     expect(stepsAddedToReleasedSections({ guide: merged, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
   });
 
+  it("does not call a release section that arrives whole between two tags late", () => {
+    // A fork merging an upstream tag, or a docs pull request backfilling a missing release.
+    const rolled = fileUpgradeSteps({ guide: FULL, heading: HEADING }).guide;
+    const section = "## v0.12.2 → v0.13.0\n\n### Upstream step (#600)\n\nDo it.\n\n---\n\n";
+    const arrived = rolled.replace("## v0.13.1 → v0.13.2", `${section}## v0.13.1 → v0.13.2`);
+    expect(stepTitles(arrived)).toContain("### Upstream step (#600)");
+    expect(stepsAddedToReleasedSections({ guide: arrived, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual([]);
+    // A late step in a section the tag already had is still caught beside it.
+    const alsoLate = arrived.replace("Already shipped; never rewritten.\n", "Already shipped; never rewritten.\n\n### Late (#4800)\n\nDo it.\n");
+    expect(stepsAddedToReleasedSections({ guide: alsoLate, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
+  });
+
   it("refuses a guide with a ## line inside a code block rather than splitting the block", () => {
     const fenced = FULL.replace("Open Admin → Xero and reconnect.", "```md\n## Example heading\n```");
     expect(() => fileUpgradeSteps({ guide: fenced, heading: HEADING })).toThrow(/docs\/UPGRADING\.md:\d+ has a "## " line inside a code block/);
+  });
+
+  it("finds a ## line inside a fence that holds a shorter fence, or a tilde fence, which a toggle would miss", () => {
+    const nested = FULL.replace("Open Admin → Xero and reconnect.", "````md\n```\n## Example heading\n```\n````");
+    expect(() => fileUpgradeSteps({ guide: nested, heading: HEADING })).toThrow(/docs\/UPGRADING\.md:\d+ has a "## " line inside a code block/);
+    const tilde = FULL.replace("Open Admin → Xero and reconnect.", "~~~md\n## Example heading\n~~~");
+    expect(() => fileUpgradeSteps({ guide: tilde, heading: HEADING })).toThrow(/inside a code block/);
+    // The same text outside a block is a real heading and is not refused here.
+    const crlf = FULL.replace(/\n/g, "\r\n");
+    expect(fileUpgradeSteps({ guide: crlf, heading: HEADING }).action).toBe("roll");
   });
 
   it("recognises the no-steps line even after someone reflows it", () => {
@@ -150,6 +176,21 @@ describe("guarding released sections and odd guides (#4983)", () => {
     const late = reflowed.replace("## Unreleased\n\n", "## Unreleased\n\n### Late (#4800)\n\nDo it.\n\n");
     const { guide } = fileUpgradeSteps({ guide: late, heading: HEADING, amend: true });
     expect(sectionBody(guide, HEADING)).toBe("### Late (#4800)\n\nDo it.");
+  });
+});
+
+describe("links to the upgrade guide's Unreleased heading (#4983)", () => {
+  it("names no tracked document, so a release can be prepared and a roll never orphans a link", () => {
+    // Not spelled out whole: this file is tracked and the search below would find it.
+    expect(UNRELEASED_LINK.startsWith("UPGRADING.md")).toBe(true);
+    expect(UNRELEASED_LINK.endsWith("#unreleased")).toBe(true);
+    const found = spawnSync("git", UNRELEASED_LINK_SEARCH, { cwd: path.resolve(import.meta.dirname, "..", ".."), encoding: "utf8" });
+    // git grep exits 1 for no match; anything above that is a failure of the search itself.
+    expect(found.status, found.stderr).toBeLessThanOrEqual(1);
+    expect(
+      found.stdout.split("\n").filter(Boolean),
+      `These link to ${UNRELEASED_LINK}. After a release is cut that heading is empty, so link the step's own heading instead (its anchor does not move).`,
+    ).toEqual([]);
   });
 });
 
@@ -201,6 +242,19 @@ describe("release-notes stub and index line (#4983)", () => {
     expect(stub).toContain("../../CHANGELOG.md#0140---2026-11-20");
     expect(stub).toContain("../UPGRADING.md#v0132--v0140");
     expect(stub).toContain("a minor release, the first release after `v0.13.2`");
+  });
+
+  it("is unfinished while any of the marker, the stub note or the placeholder remains", () => {
+    expect(unfinishedStubParts(stub)).toEqual(["the unfinished marker", 'the "Unfinished stub" note', "the placeholder paragraph"]);
+    // Deleting only the marker line must not let the rest of the stub publish.
+    const markerGone = stub.replace(`${RELEASE_NOTES_UNFINISHED_MARKER}\n`, "");
+    expect(unfinishedStubParts(markerGone)).toEqual(['the "Unfinished stub" note', "the placeholder paragraph"]);
+    const written = markerGone
+      .split("\n")
+      .filter((line) => !/^> \*\*Unfinished stub|^> (below|comment above)/.test(line) && !/^(Placeholder:|from the changelog section)/.test(line))
+      .join("\n");
+    expect(unfinishedStubParts(written)).toEqual([]);
+    expect(unfinishedStubParts(`${written}\nPlaceholder: summarise this.\n`)).toEqual(["the placeholder paragraph"]);
   });
 
   const INDEX = [

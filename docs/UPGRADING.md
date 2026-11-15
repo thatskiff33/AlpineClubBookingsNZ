@@ -13,52 +13,6 @@ It complements the two documents next to it and does not repeat them:
   synced and roll it onto a running database and deployment without losing data
   or breaking the live app color mid-deploy.
 
-## Correct the starter privacy policy (#4914)
-
-Migration `20261214010000_correct_starter_privacy_retention_and_hosting` updates
-only a privacy body that still exactly matches the previous starter copy. It
-corrects the email-log promise, removes fixed hosting and backup claims, and
-adds missing personal-data categories. A custom body is left untouched. If only
-the header was edited, the body is corrected and that header is kept.
-
-**After upgrading, read `/privacy`.** For an edited page, correct section 2 to
-include addresses, photos, dietary or allergy information, and the other profile
-and membership records your club holds. In section 5, check recipients against
-your enabled integrations and name your host, region and backup store. In section
-6, describe your actual hosting, backup access and encryption arrangements.
-Replace section 7's email-log sentence with
-`Email logs: {{email-log-retention}}.` and update the page's “Last updated” date.
-The token follows the saved Privacy retention settings, including when automatic
-deletion is switched off; no retention settings or jobs change in this release.
-
-**Blue/green and rollback:** the previous app leaves unknown tokens as literal
-text. Between migration and cutover an untouched policy may therefore display
-`{{email-log-retention}}` briefly. This display window is accepted for this data
-correction; the old app can still read and edit the row. If rolling back the app,
-edit section 7 by hand to state the current retention setting in plain language
-until the new app is restored. Do not change applied migration files. Preserve
-any custom body and re-export your configuration bundle after reviewing it.
-
-## Review privacy retention before enabling cleanup (#4457)
-
-The three automatic jobs from #4457 ship OFF. (The after-stay dietary clear
-from #4916 ships ON; see its entry under Unreleased.) After upgrading, review the
-[personal-data retention schedule](PRIVACY_RETENTION.md) and visit
-**Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
-member candidates and the configured periods before enabling any job. Defaults
-are 2 years for email logs, 1 year after reviewedAt for rejected applications,
-and 7 years after explicit leavingDate for former-member profile anonymisation.
-The periods are club settings. Disabling a job stops future cleanup; it cannot
-restore already deleted logs or applications, or anonymised profile values.
-
-Inactive members without leavingDate are listed separately and are never
-automatically erased. Establish a departure date from evidence rather than
-assuming an old login or inactive flag means the person left. Stable member
-IDs and financial references survive anonymisation for reconciliation.
-Existing audit, token, report and communications retention remains governed by
-its own lifecycle. Sentry Replay defaults OFF; before opting in, update the
-privacy notice to name Sentry Replay as described in [security notes](SECURITY.md#personal-data-retention-and-sentry-replay).
-
 ## Principles
 
 1. **Upgrade tag-to-tag, one release at a time.** Deploy released tags
@@ -181,6 +135,52 @@ as a red flag and check the release notes before deploying.
 ---
 
 ## Unreleased
+
+### Review privacy retention before enabling cleanup (#4457)
+
+The three automatic jobs from #4457 ship OFF. (The after-stay dietary clear
+from #4916 ships ON; see [its entry](#old-stays-dietary-notes-are-cleared-on-the-first-night-after-upgrading-4916).) After upgrading, review the
+[personal-data retention schedule](PRIVACY_RETENTION.md) and visit
+**Admin → Privacy retention** (`/admin/privacy-retention`) to inspect counts,
+member candidates and the configured periods before enabling any job. Defaults
+are 2 years for email logs, 1 year after reviewedAt for rejected applications,
+and 7 years after explicit leavingDate for former-member profile anonymisation.
+The periods are club settings. Disabling a job stops future cleanup; it cannot
+restore already deleted logs or applications, or anonymised profile values.
+
+Inactive members without leavingDate are listed separately and are never
+automatically erased. Establish a departure date from evidence rather than
+assuming an old login or inactive flag means the person left. Stable member
+IDs and financial references survive anonymisation for reconciliation.
+Existing audit, token, report and communications retention remains governed by
+its own lifecycle. Sentry Replay defaults OFF; before opting in, update the
+privacy notice to name Sentry Replay as described in [security notes](SECURITY.md#personal-data-retention-and-sentry-replay).
+
+### Correct the starter privacy policy (#4914)
+
+Migration `20261214010000_correct_starter_privacy_retention_and_hosting` updates
+only a privacy body that still exactly matches the previous starter copy. It
+corrects the email-log promise, removes fixed hosting and backup claims, and
+adds missing personal-data categories. A custom body is left untouched. If only
+the header was edited, the body is corrected and that header is kept.
+
+**After upgrading, read `/privacy`.** For an edited page, correct section 2 to
+include addresses, photos, dietary or allergy information, and the other profile
+and membership records your club holds. In section 5, check recipients against
+your enabled integrations and name your host, region and backup store. In section
+6, describe your actual hosting, backup access and encryption arrangements.
+Replace section 7's email-log sentence with
+`Email logs: {{email-log-retention}}.` and update the page's “Last updated” date.
+The token follows the saved Privacy retention settings, including when automatic
+deletion is switched off; no retention settings or jobs change in this release.
+
+**Blue/green and rollback:** the previous app leaves unknown tokens as literal
+text. Between migration and cutover an untouched policy may therefore display
+`{{email-log-retention}}` briefly. This display window is accepted for this data
+correction; the old app can still read and edit the row. If rolling back the app,
+edit section 7 by hand to state the current retention setting in plain language
+until the new app is restored. Do not change applied migration files. Preserve
+any custom body and re-export your configuration bundle after reviewing it.
 
 ### Building on your own server: raise `NODE_BUILD_OPTIONS` to 8192 (#5164)
 

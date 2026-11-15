@@ -31,8 +31,8 @@ future releases.
 
 `pnpm run release:cut prepare` writes each new release's page as a stub and
 lists it at the top of *Published release notes* (#4983). Finish the stub in the
-release-prep pull request and delete its unfinished marker:
-`release:cut publish` refuses while the marker is there. The
-[documentation hub](../README.md) links this index rather than a version, so a
-new release needs no edit there. The full order is the
+release-prep pull request, deleting its unfinished marker, the stub note and
+the placeholder paragraph: `release:cut publish` refuses while any of them is
+there. The [documentation hub](../README.md) links this index rather than a
+version, so a new release needs no edit there. The full order is the
 [release checklist](../MAINTENANCE.md#public-reference-release-checklist).

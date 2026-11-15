@@ -55,20 +55,24 @@ import {
   MAIN_REF,
   readFragments,
   releaseHeading,
+  releaseHeadingDate,
   releaseSection,
   releaseDateToday,
 } from "./compile-changelog.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
 import {
   hasUpgradeSection,
+  isStepTitle,
   planReleaseDocs,
   PUBLISHED_NOTES_HEADING,
   refuseStepsInReleasedSections,
   RELEASE_NOTES_DIR,
   RELEASE_NOTES_INDEX_PATH,
-  RELEASE_NOTES_UNFINISHED_MARKER,
   releaseNotesPath,
+  unfinishedStubParts,
   unreleasedUpgradeSteps,
+  UNRELEASED_LINK,
+  UNRELEASED_LINK_SEARCH,
   UPGRADE_GUIDE_PATH,
   upgradeGuideHeading,
   writeReleaseDocs,
@@ -321,16 +325,29 @@ function remoteTagCommit(cmd, tag) {
   return (peeled ?? lines[0]).split(/\s+/)[0];
 }
 
+/** `relative` as `commit` holds it, or `null` when that commit has no such file. */
+function fileAtCommit(cmd, commit, relative) {
+  const result = cmd.run("git", ["show", `${commit}:${relative}`]);
+  return result.status === 0 ? result.stdout : null;
+}
+
 /**
  * The upgrade guide as origin's `tag` released it, or `null` when there is no
  * such tag or its commit has no guide. Read by commit, since tags are never
- * fetched; a release tag is on main, so its commit is here.
+ * fetched. A release tag is on main, so its commit is normally here; when it is
+ * not (a shallow clone), the answer is unknown, not "no guide", so this refuses
+ * rather than let the released-section check pass without looking.
  */
 function upgradeGuideAtTag(cmd, tag) {
   const commit = tag ? remoteTagCommit(cmd, tag) : null;
   if (commit === null) return null;
-  const result = cmd.run("git", ["show", `${commit}:${UPGRADE_GUIDE_PATH}`]);
-  return result.status === 0 ? result.stdout : null;
+  if (!cmd.gitOk(["cat-file", "-e", `${commit}^{commit}`])) {
+    throw new ReleaseCutError(
+      `${tag} is at ${commit.slice(0, 12)} on ${REMOTE}, but that commit is not in this clone, so ${UPGRADE_GUIDE_PATH} as ${tag} released it cannot be read.`,
+      `Fetch it, then re-run: git fetch --no-tags ${REMOTE} ${commit} (a shallow clone needs git fetch --unshallow first).`,
+    );
+  }
+  return fileAtCommit(cmd, commit, UPGRADE_GUIDE_PATH);
 }
 
 /** The commit this clone's `tag` points at, or `null`. */
@@ -484,6 +501,13 @@ export function prepareRelease({
         ].join("\n"),
       );
     }
+    const preparedDate = releaseHeadingDate(section.heading, packageVersion);
+    if (preparedDate === null) {
+      throw new ReleaseCutError(
+        `CHANGELOG.md's "${section.heading}" is not shaped "${releaseHeading(packageVersion, "<YYYY-MM-DD>")}", so the date prepared for ${tag} cannot be read.`,
+        `Restore the heading to that shape on main, then re-run.`,
+      );
+    }
     plan = {
       version: packageVersion,
       tag,
@@ -491,7 +515,7 @@ export function prepareRelease({
       heading: section.heading,
       previousTag: latest?.tag ?? null,
       bump: preparedBump,
-      date: section.heading.slice(`## ${packageVersion} - `.length),
+      date: preparedDate,
     };
     log(`Late-fragment fold into ${tag} (${execute ? "EXECUTE" : "dry run — nothing is changed"})`);
     log(`  Base: ${MAIN_REF} ${main.slice(0, 12)}; appending to "${section.heading}"`);
@@ -538,6 +562,7 @@ export function prepareRelease({
     throw new ReleaseCutError("Nothing to release: changelog.d/ is empty and \"## Unreleased\" has no entries.");
   }
   // The upgrade guide and notes page record the same release boundary (#4983).
+  const releasedGuide = upgradeGuideAtTag(cmd, plan.previousTag);
   let docs;
   try {
     docs = planReleaseDocs({
@@ -547,12 +572,13 @@ export function prepareRelease({
       date: plan.date,
       bump: plan.bump,
       changelogHeading: plan.heading,
-      releasedGuide: upgradeGuideAtTag(cmd, plan.previousTag),
+      releasedGuide,
       amend,
     });
   } catch (error) {
     throw new ReleaseCutError(`Release documents: ${error.message}`, "Nothing was changed. Fix the named file on main, then re-run.");
   }
+  if (docs.upgrade.steps > 0) refuseLinksToUnreleased(cmd, docs.upgradeHeading);
   if (amend && !changelogWork && docs.files.length === 0) {
     throw new ReleaseCutError(
       `Nothing to fold: changelog.d/ is empty, neither CHANGELOG.md nor ${UPGRADE_GUIDE_PATH} has entries under "## Unreleased", and ${docs.notesPath} exists.`,
@@ -566,13 +592,22 @@ export function prepareRelease({
   const stagePaths = ["CHANGELOG.md", "package.json", FRAGMENTS_DIRNAME, ALLOWANCE_DIR, UPGRADE_GUIDE_PATH, RELEASE_NOTES_DIR].filter(
     (relative) => fs.existsSync(path.join(repoRoot, relative)),
   );
-  const message = amend ? `release: fold late fragments into ${plan.tag}` : `release: cut ${plan.tag}`;
+  // A docs-only fold (late upgrade steps, or a notes page that was never written) compiles nothing.
+  const message = !amend
+    ? `release: cut ${plan.tag}`
+    : changelogWork
+      ? `release: fold late fragments into ${plan.tag}`
+      : `release: fold late documents into ${plan.tag}`;
   const steps = [
     `git switch -c ${plan.branch}`,
     ...(amend ? [] : [`set package.json "version" ${packageVersion} -> ${plan.version}`]),
-    amend
-      ? `node scripts/release/compile-changelog.mjs ${plan.version} --append`
-      : `node scripts/release/compile-changelog.mjs ${plan.version} ${date}`,
+    ...(changelogWork
+      ? [
+          amend
+            ? `node scripts/release/compile-changelog.mjs ${plan.version} --append`
+            : `node scripts/release/compile-changelog.mjs ${plan.version} ${date}`,
+        ]
+      : []),
     ...(docs.files.length > 0 ? [`write ${docs.files.map((file) => file.relative).join(", ")}`] : []),
     `git add --all -- ${stagePaths.join(" ")}`,
     `git commit -m "${message}"`,
@@ -580,9 +615,13 @@ export function prepareRelease({
   log("Local steps:");
   steps.forEach((step, index) => log(`  ${index + 1}. ${step}`));
   const next = [
-    `Read "${plan.heading}" end to end; edit it for order and duplication and commit.`,
-    `Read "${docs.upgradeHeading}" in ${UPGRADE_GUIDE_PATH}: drop steps that no longer apply and commit.`,
-    `Finish ${docs.notesPath} and delete its unfinished marker before merging; publish refuses while it is there.`,
+    ...(changelogWork ? [`Read "${plan.heading}" end to end; edit it for order and duplication and commit.`] : []),
+    ...(docs.upgrade.action !== "none"
+      ? [`Read "${docs.upgradeHeading}" in ${UPGRADE_GUIDE_PATH}: drop steps that no longer apply and commit.`]
+      : []),
+    ...(docs.notesCreated
+      ? [`Finish ${docs.notesPath}: write the overview, then delete the stub note, its marker and the placeholder before merging; publish refuses while any is there.`]
+      : []),
     `git push -u ${REMOTE} ${plan.branch}, then open its pull request (body checked with pnpm run pr:check).`,
     `After it merges: pnpm run release:cut publish (dry run), then pnpm run release:cut publish --execute.`,
   ];
@@ -642,6 +681,25 @@ function lateFragmentRecovery(tag) {
   ].join("\n");
 }
 
+/**
+ * Refuse while a tracked document links to the upgrade guide's `## Unreleased`
+ * heading (`UNRELEASED_LINK`). Filing the steps leaves that link on the fresh,
+ * empty heading, and the link check still resolves it, so a reader following
+ * it finds nothing.
+ */
+function refuseLinksToUnreleased(cmd, upgradeHeading) {
+  const result = cmd.run("git", UNRELEASED_LINK_SEARCH);
+  if (result.status > 1) {
+    throw new ReleaseCutError(`Could not search for links to ${UNRELEASED_LINK}: ${result.stderr.trim() || "git grep failed"}.`, "Nothing was changed.");
+  }
+  const files = result.status === 0 ? result.stdout.split("\n").filter(Boolean) : [];
+  if (files.length === 0) return;
+  throw new ReleaseCutError(
+    `${files.join(", ")} link${files.length === 1 ? "s" : ""} to ${UNRELEASED_LINK}, which would point at an empty section once the steps are filed under "${upgradeHeading}".`,
+    "Nothing was changed. In each file, link the step's own heading instead (its anchor does not move), merge that pull request, then re-run.",
+  );
+}
+
 /** Recovery for upgrade-guide steps that are not filed under the release. */
 function upgradeGuideRecovery(tag) {
   return [
@@ -662,11 +720,7 @@ function upgradeGuideRecovery(tag) {
  */
 function refuseUnfiledReleaseDocs(cmd, { target, tag, version, previousTag }) {
   const at = target.slice(0, 12);
-  const show = (relative) => {
-    const result = cmd.run("git", ["show", `${target}:${relative}`]);
-    return result.status === 0 ? result.stdout : null;
-  };
-  const guide = show(UPGRADE_GUIDE_PATH) ?? "";
+  const guide = fileAtCommit(cmd, target, UPGRADE_GUIDE_PATH) ?? "";
   const heading = upgradeGuideHeading(previousTag, version);
   try {
     refuseStepsInReleasedSections({ guide, releasedGuide: upgradeGuideAtTag(cmd, previousTag), untaggedHeading: heading, previousTag });
@@ -688,7 +742,7 @@ function refuseUnfiledReleaseDocs(cmd, { target, tag, version, previousTag }) {
   }
   const waiting = unreleasedUpgradeSteps(guide) ?? [];
   if (waiting.length > 0) {
-    const titles = waiting.filter((line) => line.startsWith("### "));
+    const titles = waiting.filter(isStepTitle);
     throw new ReleaseCutError(
       `${UPGRADE_GUIDE_PATH} at ${at} still has upgrade steps under "## Unreleased"` +
         (titles.length > 0 ? ` (${titles.slice(0, 3).join("; ")}${titles.length > 3 ? "; …" : ""})` : "") +
@@ -697,21 +751,22 @@ function refuseUnfiledReleaseDocs(cmd, { target, tag, version, previousTag }) {
     );
   }
   const notesPath = releaseNotesPath(version);
-  const notes = show(notesPath);
+  const notes = fileAtCommit(cmd, target, notesPath);
   if (notes === null) {
     throw new ReleaseCutError(
       `${notesPath} is missing at ${at}: ${tag} has no release-notes page.`,
       [
         `Write it through a pull request, linked first under "${PUBLISHED_NOTES_HEADING.slice(3)}" in ${RELEASE_NOTES_INDEX_PATH},`,
         `  or let prepare write the stub: git switch --detach ${MAIN_REF} && pnpm run release:cut prepare --amend --execute`,
-        `Finish the page and delete its unfinished marker, merge it, then run pnpm run release:cut publish --execute`,
+        `Finish the page and delete its stub note, marker and placeholder, merge it, then run pnpm run release:cut publish --execute`,
       ].join("\n"),
     );
   }
-  if (notes.includes(RELEASE_NOTES_UNFINISHED_MARKER)) {
+  const unfinished = unfinishedStubParts(notes);
+  if (unfinished.length > 0) {
     throw new ReleaseCutError(
-      `${notesPath} at ${at} is still the unfinished stub (it carries ${RELEASE_NOTES_UNFINISHED_MARKER}).`,
-      `Write the page, delete the marker line, merge that pull request, then run pnpm run release:cut publish --execute`,
+      `${notesPath} at ${at} is still the unfinished stub (it still has ${unfinished.join(", ")}).`,
+      `Write the page, delete the stub note, its marker line and the placeholder, merge that pull request, then run pnpm run release:cut publish --execute`,
     );
   }
   return `"${heading}" in ${UPGRADE_GUIDE_PATH}, and ${notesPath}`;

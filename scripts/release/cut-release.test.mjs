@@ -20,7 +20,7 @@ import {
   ReleaseCutError,
 } from "./cut-release.mjs";
 import { githubHeadingAnchor, releaseSection } from "./compile-changelog.mjs";
-import { NO_UPGRADE_STEPS, RELEASE_NOTES_UNFINISHED_MARKER, unreleasedUpgradeSteps } from "./release-docs.mjs";
+import { NO_UPGRADE_STEPS, RELEASE_NOTES_UNFINISHED_MARKER, unreleasedUpgradeSteps, UNRELEASED_LINK } from "./release-docs.mjs";
 
 // Every test runs against a throwaway fixture: a bare "origin" and a clone of
 // it. The clone's origin URL is a GitHub URL that git's `insteadOf` rewrites to
@@ -375,7 +375,7 @@ describe("release:cut prepare on a fixture repository", () => {
     expect(text).toContain("4. write docs/UPGRADING.md, docs/releases/v0.14.0.md, docs/releases/README.md");
     expect(text).toContain("5. git add --all -- CHANGELOG.md package.json changelog.d size-allowances.d docs/UPGRADING.md docs/releases");
     expect(text).toContain('6. git commit -m "release: cut v0.14.0"');
-    expect(text).toContain("Finish docs/releases/v0.14.0.md and delete its unfinished marker before merging");
+    expect(text).toContain("Finish docs/releases/v0.14.0.md: write the overview, then delete the stub note, its marker and the placeholder before merging");
     expect(text).toContain("this phase never pushes");
     expect(text).toContain("Dry run: nothing was changed");
     expect(snapshot(repo)).toEqual(before);
@@ -524,7 +524,7 @@ describe("release:cut prepare on a fixture repository", () => {
 /** Stands in for the maintainer writing the notes stub on the release-prep branch. */
 function finishNotes(repo, version) {
   const file = path.join(repo, "docs", "releases", `v${version}.md`);
-  fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace(`${RELEASE_NOTES_UNFINISHED_MARKER}\n`, ""));
+  fs.writeFileSync(file, `# Release v${version}\n\nWhat this release changes, written by a maintainer.\n`);
   git(repo, "commit", "-qam", `docs: write the v${version} release notes`);
 }
 
@@ -737,8 +737,21 @@ describe("release documents: the upgrade guide and notes page (#4983)", () => {
       () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
       /docs\/releases\/v0\.13\.3\.md at [0-9a-f]{12} is still the unfinished stub/,
     );
-    expect(error.recovery).toContain("delete the marker line");
+    expect(error.recovery).toContain("delete the stub note, its marker line and the placeholder");
     expect(run.sideEffects()).toEqual([]);
+  });
+
+  it("refuses to publish when only the marker was deleted and the stub's own text remains", () => {
+    const { repo } = makeFixture();
+    prepareRelease({ repoRoot: repo, execute: true, date: "2026-10-31", run: fixtureRunner(repo), log: silentLog() });
+    const page = path.join(repo, "docs", "releases", "v0.13.3.md");
+    fs.writeFileSync(page, fs.readFileSync(page, "utf8").replace(`${RELEASE_NOTES_UNFINISHED_MARKER}\n`, ""));
+    git(repo, "commit", "-qam", "docs: delete only the marker");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+    expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /is still the unfinished stub \(it still has the "Unfinished stub" note, the placeholder paragraph\)/,
+    );
   });
 
   it("refuses to publish when the notes page is missing", () => {
@@ -773,6 +786,85 @@ describe("release documents: the upgrade guide and notes page (#4983)", () => {
       () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
       /docs\/UPGRADING\.md has upgrade step\(s\) in a section already released, which v0\.13\.2 did not have \(### Merged into a released section \(#4620\)\)/,
     );
+  });
+
+  /** A release section that arrives whole, as when a fork merges an upstream release tag. */
+  const addWholeReleasedSection = (repo) =>
+    editUpgrading(repo, (text) =>
+      text.replace(RELEASED_UPGRADE_SECTION, `${RELEASED_UPGRADE_SECTION}\n---\n\n## v0.13.0 → v0.13.1\n\n### Upstream step (#4600)\n\nDo it.\n`),
+    );
+
+  it("does not take a release section that arrived whole since the tag for a late step, in prepare or publish", () => {
+    const prepared = makeFixture();
+    mergeToMain(prepared.repo, "Merge upstream release v0.13.1", addWholeReleasedSection);
+    prepareRelease({ repoRoot: prepared.repo, execute: true, date: "2026-10-31", run: fixtureRunner(prepared.repo), log: silentLog() });
+    expect(fs.readFileSync(upgradingPath(prepared.repo), "utf8")).toContain("### Upstream step (#4600)");
+
+    const { repo } = mergedReleaseFixture();
+    mergeToMain(repo, "Merge upstream release v0.13.1", addWholeReleasedSection);
+    expect(publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() })).toMatchObject({ tag: "v0.13.3" });
+  });
+
+  it("still catches a late step in a section the tag had, beside one that arrived whole", () => {
+    const { repo } = makeFixture();
+    mergeToMain(repo, "Merge upstream release v0.13.1", addWholeReleasedSection);
+    mergeToMain(repo, "Merge pull request #4620", addStepToReleased);
+    expectRefusal(
+      () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /has upgrade step\(s\) in a section already released, which v0\.13\.2 did not have \(### Merged into a released section \(#4620\)\)/,
+    );
+  });
+
+  it("refuses rather than skip the released-section check when the previous tag's commit is not in this clone", () => {
+    const { repo } = makeFixture();
+    const real = fixtureRunner(repo);
+    // A shallow clone: the commit origin's tag names is not here to read.
+    const run = (command, args) =>
+      command === "git" && args[0] === "cat-file" && args[1] === "-e" ? { status: 1, stdout: "", stderr: "" } : real(command, args);
+    run.calls = real.calls;
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, execute: true, run, log: silentLog() }),
+      /v0\.13\.2 is at [0-9a-f]{12} on origin, but that commit is not in this clone/,
+    );
+    expect(error.recovery).toContain("git fetch --no-tags origin");
+    expect(snapshot(repo)).toEqual(before);
+  });
+
+  it("refuses a prepare while a document links the guide's Unreleased heading, which the roll would leave empty", () => {
+    const { repo } = makeFixture();
+    // Built, not written out: this file is tracked, and `prepare` refuses a tracked file naming the link.
+    const link = `[the guide](${UNRELEASED_LINK})`;
+    mergeToMain(repo, "Merge pull request #4630", (dir) => fs.writeFileSync(path.join(dir, "docs", "RUNBOOK.md"), `See ${link}.\n`));
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, execute: true, run: fixtureRunner(repo), log: silentLog() }),
+      /docs\/RUNBOOK\.md links to UPGRADING\.md#unreleased, which would point at an empty section once the steps are filed under "## v0\.13\.2 → v0\.13\.3"/,
+    );
+    expect(error.recovery).toContain("link the step's own heading instead");
+    expect(snapshot(repo)).toEqual(before);
+
+    // History is not guidance, and a release with no steps orphans nothing.
+    mergeToMain(repo, "Merge pull request #4631", (dir) => {
+      fs.rmSync(path.join(dir, "docs", "RUNBOOK.md"));
+      fs.appendFileSync(path.join(dir, "changelog.d", "4631-history.md"), `- **Old note (#4631).** See ${link}.\n`);
+    });
+    expect(prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() })).toMatchObject({ executed: false });
+    const none = makeFixture({ upgrading: UPGRADING.replace(`${UPGRADE_STEP}\n\n`, "") });
+    mergeToMain(none.repo, "Merge pull request #4630", (dir) => fs.writeFileSync(path.join(dir, "docs", "RUNBOOK.md"), `See ${link}.\n`));
+    expect(prepareRelease({ repoRoot: none.repo, run: fixtureRunner(none.repo), log: silentLog() })).toMatchObject({ executed: false });
+  });
+
+  it("refuses rather than pass when the search for links to the guide's Unreleased heading itself fails", () => {
+    const { repo } = makeFixture();
+    const real = fixtureRunner(repo);
+    const run = (command, args) => (command === "git" && args[0] === "grep" ? { status: 128, stdout: "", stderr: "fatal: not a git repository" } : real(command, args));
+    run.calls = real.calls;
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, execute: true, run, log: silentLog() }),
+      /Could not search for links to UPGRADING\.md#unreleased: fatal: not a git repository/,
+    );
+    expect(error.recovery).toContain("Nothing was changed");
   });
 
   it("refuses to publish when a step merged into a released section instead of the release's own", () => {
@@ -816,6 +908,53 @@ describe("release documents: the upgrade guide and notes page (#4983)", () => {
 
     git(repo, "push", "-q", "origin", "HEAD:main"); // the fold's pull request merges
     expect(publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() })).toMatchObject({ tag: "v0.13.3" });
+  });
+
+  it("prints a docs-only fold truthfully: no compile step, no changelog to re-read, a neutral commit message", () => {
+    const { repo } = mergedReleaseFixture();
+    mergeToMain(repo, "Merge pull request #4610", addLateStep);
+
+    const dry = silentLog();
+    prepareRelease({ repoRoot: repo, amend: true, run: fixtureRunner(repo), log: dry });
+    const text = dry.text();
+    expect(text).not.toContain("node scripts/release/compile-changelog.mjs");
+    expect(text).not.toContain('Read "## 0.13.3 - 2026-10-31" end to end');
+    expect(text).not.toContain("Finish docs/releases/v0.13.3.md");
+    expect(text).toContain('Read "## v0.13.2 → v0.13.3" in docs/UPGRADING.md');
+    expect(text).toContain('git commit -m "release: fold late documents into v0.13.3"');
+
+    prepareRelease({ repoRoot: repo, amend: true, execute: true, run: fixtureRunner(repo), log: silentLog() });
+    expect(git(repo, "log", "-1", "--format=%s")).toBe("release: fold late documents into v0.13.3");
+  });
+
+  it("says a missing notes page is the thing to finish when only the page was never written", () => {
+    const { repo } = mergedReleaseFixture();
+    // A release prepared before the tool wrote notes: neither the page nor its index line exists.
+    mergeToMain(repo, "Merge pull request #4611", (dir) => {
+      fs.rmSync(path.join(dir, "docs", "releases", "v0.13.3.md"));
+      fs.writeFileSync(path.join(dir, "docs", "releases", "README.md"), RELEASES_INDEX);
+    });
+    const dry = silentLog();
+    prepareRelease({ repoRoot: repo, amend: true, run: fixtureRunner(repo), log: dry });
+    const text = dry.text();
+    expect(text).toContain("Finish docs/releases/v0.13.3.md: write the overview");
+    expect(text).not.toContain("Read \"## v0.13.2 → v0.13.3\"");
+  });
+
+  it("refuses an amend whose changelog heading has no readable date, rather than write it into the notes stub", () => {
+    const { repo } = mergedReleaseFixture();
+    mergeToMain(repo, "Merge pull request #4640", (dir) => {
+      const changelog = path.join(dir, "CHANGELOG.md");
+      fs.writeFileSync(changelog, fs.readFileSync(changelog, "utf8").replace("## 0.13.3 - 2026-10-31", "## 0.13.3 (2026-10-31)"));
+      fs.rmSync(path.join(dir, "docs", "releases", "v0.13.3.md"));
+    });
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, amend: true, execute: true, run: fixtureRunner(repo), log: silentLog() }),
+      /CHANGELOG\.md's "## 0\.13\.3 \(2026-10-31\)" is not shaped "## 0\.13\.3 - <YYYY-MM-DD>"/,
+    );
+    expect(error.recovery).toContain("Restore the heading");
+    expect(snapshot(repo)).toEqual(before);
   });
 });
 

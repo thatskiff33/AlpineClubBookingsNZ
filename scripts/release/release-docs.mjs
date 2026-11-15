@@ -18,7 +18,16 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { githubHeadingAnchor, locateSection, stripBlankEdges, UNRELEASED_HEADING } from "./compile-changelog.mjs";
+import { fencedLines } from "../lib/markdown-blocks.mjs";
+import {
+  ANY_HEADING,
+  FRAGMENTS_DIRNAME,
+  githubHeadingAnchor,
+  locateSection,
+  stripBlankEdges,
+  toLines,
+  UNRELEASED_HEADING,
+} from "./compile-changelog.mjs";
 
 /** The upgrade guide clubs follow release by release. */
 export const UPGRADE_GUIDE_PATH = "docs/UPGRADING.md";
@@ -27,6 +36,21 @@ export const RELEASE_NOTES_DIR = "docs/releases";
 export const RELEASE_NOTES_INDEX_PATH = `${RELEASE_NOTES_DIR}/README.md`;
 /** The index section that lists published notes, newest first. */
 export const PUBLISHED_NOTES_HEADING = "## Published release notes";
+
+/**
+ * The link that points at the guide's pending steps. Filing them under a
+ * release leaves it on the fresh, empty heading and `docs:linkcheck` still
+ * resolves it, so `prepare` refuses while a document uses it (link the step's
+ * own heading instead: its anchor does not move).
+ */
+export const UNRELEASED_LINK = `${path.posix.basename(UPGRADE_GUIDE_PATH)}#unreleased`;
+/**
+ * The `git grep` arguments that list the tracked files using `UNRELEASED_LINK`.
+ * `CHANGELOG.md` and `changelog.d/` are history, not guidance. `prepare` runs
+ * this, and a test runs it over the checkout so a pull request that adds such a
+ * link fails there and not on the day of a release.
+ */
+export const UNRELEASED_LINK_SEARCH = ["grep", "-l", "-F", UNRELEASED_LINK, "--", ".", ":(exclude)CHANGELOG.md", `:(exclude)${FRAGMENTS_DIRNAME}`];
 
 /**
  * The body a release's upgrade section gets when nothing was filed under
@@ -40,13 +64,24 @@ export const NO_UPGRADE_STEPS = "No manual upgrade steps for this release: follo
  * refuses while it is present anywhere in the page.
  */
 export const RELEASE_NOTES_UNFINISHED_MARKER = "<!-- release-notes:unfinished -->";
+/** The stub's visible note and placeholder; deleting only the marker must not publish them. */
+const STUB_NOTE_LEAD = "> **Unfinished stub written by `release:cut prepare`.**";
+const STUB_PLACEHOLDER_LEAD = "Placeholder: summarise";
+const STUB_PARTS = [
+  { text: RELEASE_NOTES_UNFINISHED_MARKER, label: "the unfinished marker" },
+  { text: STUB_NOTE_LEAD, label: "the \"Unfinished stub\" note" },
+  { text: STUB_PLACEHOLDER_LEAD, label: "the placeholder paragraph" },
+];
 
 /** A horizontal rule; the upgrade guide closes each release section with one. */
 const SECTION_RULE = /^---[ \t]*$/;
 /** A release's upgrade section: `## v0.13.1 → v0.13.2`, or `## v0.1.0` for the first. */
 const RELEASE_SECTION_HEADING = /^## v\d/;
-/** A fenced code block's opening or closing line. */
-const FENCE = /^\s*(```|~~~)/;
+/** An upgrade step's title line, the unit a club follows. */
+const STEP_TITLE = /^### /;
+
+/** Whether `line` opens an upgrade step. */
+export const isStepTitle = (line) => STEP_TITLE.test(line);
 
 /** The upgrade-guide heading for the step from `previousTag` to `version`. */
 export function upgradeGuideHeading(previousTag, version) {
@@ -57,8 +92,6 @@ export function upgradeGuideHeading(previousTag, version) {
 export function releaseNotesPath(version) {
   return `${RELEASE_NOTES_DIR}/v${version}.md`;
 }
-
-const toLines = (text) => text.replace(/\r\n/g, "\n").split("\n");
 
 /**
  * A section body split into its steps (blank edges trimmed) and whether it is
@@ -75,7 +108,7 @@ function emitSection(heading, steps, ruled) {
   return [heading, "", ...(steps.length > 0 ? [...steps, ""] : []), ...(ruled ? ["---", ""] : [])];
 }
 
-const countSteps = (steps) => steps.filter((line) => line.startsWith("### ")).length;
+const countSteps = (steps) => steps.filter(isStepTitle).length;
 
 /** Whether `steps` is only the `NO_UPGRADE_STEPS` line, however it was reflowed. */
 const isNoStepsBody = (steps) => steps.join(" ").replace(/\s+/g, " ").trim() === NO_UPGRADE_STEPS;
@@ -83,31 +116,31 @@ const isNoStepsBody = (steps) => steps.join(" ").replace(/\s+/g, " ").trim() ===
 /**
  * The section reader splits on every `## ` line, so one inside a code block
  * would be taken for a heading and steps filed into the middle of the block.
+ * Blocks are found by the repository's one Markdown scanner, which also
+ * handles a longer fence holding a shorter one and a tilde fence.
  */
-function refuseFencedHeadings(lines) {
-  let fenced = false;
-  lines.forEach((line, index) => {
-    if (FENCE.test(line)) fenced = !fenced;
-    else if (fenced && line.startsWith("## ")) {
-      throw new Error(
-        `${UPGRADE_GUIDE_PATH}:${index + 1} has a "## " line inside a code block, which would be read as a section heading; indent or reword it.`,
-      );
-    }
-  });
+function refuseFencedHeadings(guide) {
+  const inside = fencedLines(guide).find((line) => ANY_HEADING.test(line.text));
+  if (inside) {
+    throw new Error(
+      `${UPGRADE_GUIDE_PATH}:${inside.number} has a "## " line inside a code block, which would be read as a section heading; indent or reword it.`,
+    );
+  }
 }
 
-/**
- * The `### ` step titles in the guide's released sections: every `## v…`
- * section except `untaggedHeading`'s.
- */
-export function releasedStepTitles(guide, untaggedHeading = null) {
-  const titles = [];
-  let released = false;
+/** `guide`'s released sections (`## v…`) as `{ heading, titles }`, each with its `### ` step titles. */
+function releasedSections(guide) {
+  const sections = [];
+  let current = null;
   for (const line of toLines(guide)) {
-    if (line.startsWith("## ")) released = RELEASE_SECTION_HEADING.test(line) && line.trimEnd() !== untaggedHeading;
-    else if (released && line.startsWith("### ")) titles.push(line.trimEnd());
+    if (ANY_HEADING.test(line)) {
+      current = RELEASE_SECTION_HEADING.test(line) ? { heading: line.trimEnd(), titles: [] } : null;
+      if (current) sections.push(current);
+    } else if (current && isStepTitle(line)) {
+      current.titles.push(line.trimEnd());
+    }
   }
-  return titles;
+  return sections;
 }
 
 /**
@@ -117,10 +150,20 @@ export function releasedStepTitles(guide, untaggedHeading = null) {
  * roll, landing in the section just released: its code ships in the next
  * release, but a club upgrading to it would never see the step. Reworded
  * prose in a released section is not a new step and passes.
+ *
+ * Only sections the tag's guide already had are judged. A release section that
+ * arrives whole between two tags (a fork merging an upstream tag, a backfill of
+ * a missing release) carries steps the tag never saw, and they are not late.
+ * `untaggedHeading`'s section is never judged: it is the release being cut.
  */
 export function stepsAddedToReleasedSections({ guide, releasedGuide, untaggedHeading }) {
-  const before = new Set(releasedStepTitles(releasedGuide));
-  return releasedStepTitles(guide, untaggedHeading).filter((title) => !before.has(title));
+  const before = releasedSections(releasedGuide);
+  const knownHeadings = new Set(before.map((section) => section.heading));
+  const knownTitles = new Set(before.flatMap((section) => section.titles));
+  return releasedSections(guide)
+    .filter((section) => section.heading !== untaggedHeading && knownHeadings.has(section.heading))
+    .flatMap((section) => section.titles)
+    .filter((title) => !knownTitles.has(title));
 }
 
 /**
@@ -155,7 +198,7 @@ export function hasUpgradeSection(guide, heading) {
  */
 export function fileUpgradeSteps({ guide, heading, amend = false }) {
   const lines = toLines(guide);
-  refuseFencedHeadings(lines);
+  refuseFencedHeadings(guide);
   const unreleased = locateSection(lines, (line) => UNRELEASED_HEADING.test(line));
   const exists = hasUpgradeSection(guide, heading);
   if (exists && !amend) {
@@ -214,9 +257,9 @@ export function releaseNotesStub({ version, previousTag, date, bump, changelogHe
     "",
     RELEASE_NOTES_UNFINISHED_MARKER,
     "",
-    "> **Unfinished stub written by `release:cut prepare`.** Replace the placeholder",
+    `${STUB_NOTE_LEAD} Replace the placeholder`,
     "> below with this release's overview, then delete this note and the marker",
-    "> comment above it. `release:cut publish` refuses while the marker is here.",
+    "> comment above it. `release:cut publish` refuses while any of them is here.",
     "",
     "> Part of the [release notes index](README.md).",
     "",
@@ -228,10 +271,19 @@ export function releaseNotesStub({ version, previousTag, date, bump, changelogHe
     "",
     "## What this release changes",
     "",
-    "Placeholder: summarise what operators, treasurers and committees need to know,",
+    `${STUB_PLACEHOLDER_LEAD} what operators, treasurers and committees need to know,`,
     "from the changelog section linked above.",
     "",
   ].join("\n");
+}
+
+/**
+ * What of the stub's own text `notes` still carries, as labels: the marker, the
+ * "Unfinished stub" note and the placeholder paragraph. Empty once someone has
+ * written the page, so deleting the marker alone does not pass `publish`.
+ */
+export function unfinishedStubParts(notes) {
+  return STUB_PARTS.filter((part) => notes.includes(part.text)).map((part) => part.label);
 }
 
 /**

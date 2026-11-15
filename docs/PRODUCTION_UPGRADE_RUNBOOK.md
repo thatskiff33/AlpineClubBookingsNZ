@@ -1708,7 +1708,7 @@ every `BookingGuest.dietaryRequirements` value whose stay ended more than 30
 days ago. If the club wants to keep them, untick **Enable after-stay dietary
 clearing** in **Admin → Privacy retention** before that run; nothing already
 cleared can be restored except from the pre-migrate backup. The previous colour
-never reads the new columns. See [`UPGRADING.md`](UPGRADING.md#unreleased) and
+never reads the new columns. See [the #4916 upgrade step](UPGRADING.md#old-stays-dietary-notes-are-cleared-on-the-first-night-after-upgrading-4916) and
 `INV-PRIV-023`.
 
 ### 3.2 Re-run the audit category backfills
