@@ -9,11 +9,8 @@ import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { requireAdmin } from "@/lib/session-guards";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
-import {
-  checkMembershipStatus,
-  findOrCreateXeroContact,
-  XeroContactValidationError,
-} from "@/lib/xero";
+import { checkMembershipStatus } from "@/lib/xero-membership-sync";
+import { findOrCreateXeroContact, XeroContactValidationError } from "@/lib/xero-contacts";
 import {
   enqueueXeroBookingInvoiceOperation,
   processQueuedXeroOutboxOperations,

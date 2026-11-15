@@ -70,7 +70,8 @@ vi.mock("@/lib/age-tier", () => ({
 }));
 
 vi.mock("@/lib/email", () => emailMock);
-vi.mock("@/lib/xero", () => xeroMock);
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: xeroMock.isXeroConnected }));
+vi.mock("@/lib/xero-contacts", () => ({ findOrCreateXeroContact: xeroMock.findOrCreateXeroContact }));
 vi.mock("@/lib/xero-operation-outbox", () => xeroOutboxMock);
 vi.mock("@/lib/membership-subscription-billing", () => subscriptionBillingMock);
 

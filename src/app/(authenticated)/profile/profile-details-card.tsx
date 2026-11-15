@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { ArrowLeft, ChevronDown, Loader2, Pencil, Save } from "lucide-react";
-import { ProfileForm } from "./profile-form";
+import { ProfileForm } from "@/components/profile/profile-form";
 import {
   Card,
   CardContent,

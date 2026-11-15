@@ -51,6 +51,7 @@ const {
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     member: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
@@ -172,7 +173,7 @@ vi.mock("@/lib/utils", () => ({
     classes.filter(Boolean).join(" "),
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   getXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
 }));
@@ -295,6 +296,7 @@ async function captureAnonymisationPayload(
     fn: (client: unknown) => unknown,
   ) => {
     const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       member: {
         count: vi.fn().mockResolvedValue(0),
@@ -661,6 +663,7 @@ describe("#2620 reactivation refusals, one path at a time", () => {
       fn: (client: unknown) => unknown,
     ) =>
       fn({
+        $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
         $executeRaw: vi.fn().mockResolvedValue(1),
         member: { updateMany, count: vi.fn().mockResolvedValue(2) },
         familyGroupMember: {
