@@ -1,4 +1,5 @@
 import { CHANGE_FEE_LINE_DESCRIPTION } from "@/lib/xero-modification-line-items";
+import { primaryInvoicePayloadHash } from "@/lib/member-money/internal/primary-invoice-plan";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -35,6 +36,9 @@ const mocks = vi.hoisted(() => {
     bookingModification: { findMany: vi.fn().mockResolvedValue([]) },
     // #3953: and the captures the payment's cash figure holds.
     paymentTransaction: { findMany: vi.fn().mockResolvedValue([]) },
+    // #4525 (M13): the primary invoice's export manifest, written after its link.
+    memberMoneyExportManifest: { findUnique: vi.fn().mockResolvedValue(null), createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    memberMoneyExportCoverage: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
   };
 
   const prisma = {
@@ -94,6 +98,10 @@ const mocks = vi.hoisted(() => {
     },
     paymentTransaction: {
       updateMany: vi.fn(),
+    },
+    // #4525 (M13): the booking's posted charge legs the manifest plans against; none unless a test says.
+    memberMoneyLine: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     xeroObjectLink: {
       findFirst: vi.fn(),
@@ -561,6 +569,73 @@ describe("createXeroInvoiceForBooking", () => {
       (line) => line.description === CHANGE_FEE_LINE_DESCRIPTION,
     );
     expect(feeLines).toEqual([expect.objectContaining({ unitAmount: 53.2, quantity: 1 })]);
+  });
+
+  describe("#4525 (M13): the primary invoice's export manifest", () => {
+    const stayLeg = (grossCents: number) => ({
+      account: "BOOKING_REVENUE", chargeIdentity: "booking:booking_1:charge", side: "CREDIT", amountCents: grossCents,
+      grossCents, netCents: grossCents, taxCents: 0, taxCode: "GST_INCLUSIVE_1500BP", bookingId: "booking_1", lodgeId: "lodge_1",
+    });
+    const manifestRows = () => mocks.tx.memberMoneyExportManifest.createMany.mock.calls.map(([arg]) => (arg as { data: unknown[] }).data[0]);
+
+    it("records a COVERED manifest and its one coverage row after the invoice link, from the lines it sent", async () => {
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([stayLeg(10000)]);
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      expect(manifestRows()).toEqual([expect.objectContaining({
+        documentRole: "PRIMARY_BOOKING_INVOICE", bookingId: "booking_1", outcome: "COVERED", reason: null,
+        lineTotalCents: 10000, providerInvoiceId: "inv_1",
+      })]);
+      expect(mocks.tx.memberMoneyExportCoverage.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({
+        documentRole: "PRIMARY_BOOKING_INVOICE", account: "BOOKING_REVENUE", chargeIdentity: "booking:booking_1:charge", coveredCents: 10000,
+      })] });
+      expect(mocks.tx.memberMoneyExportManifest.createMany.mock.invocationCallOrder[0])
+        .toBeGreaterThan(mocks.tx.payment.updateMany.mock.invocationCallOrder[0]);
+    });
+
+    it("still sends the invoice and completes the operation when its lines do not match the journal", async () => {
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([stayLeg(9999)]);
+      await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_1");
+      expect(mocks.xeroClientInstance.accountingApi.createInvoices).toHaveBeenCalledTimes(1);
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
+      expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+      expect(manifestRows()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "STAY_CENTS", lineTotalCents: 10000 })]);
+      expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
+    });
+
+    it("on a replay, records the manifest from the operation's stored lines and raises nothing", async () => {
+      const fixture = await mocks.prisma.booking.findUnique();
+      mocks.prisma.booking.findUnique.mockResolvedValueOnce({ ...fixture, payment: { ...fixture.payment, xeroInvoiceId: "inv_9", xeroInvoiceNumber: "INV-9" } });
+      const stored = [{ description: "Stored guest line", quantity: 2, unitAmount: 50, taxType: "OUTPUT2", accountCode: "200" }];
+      mocks.prisma.xeroSyncOperation.findUnique.mockImplementation(async (args: { select?: Record<string, boolean> }) =>
+        (args?.select?.requestPayload ? { requestPayload: { invoices: [{ lineItems: stored }] } } : { invoiceEmailDelivery: null }));
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([stayLeg(10000)]);
+      try {
+        await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_9");
+      } finally {
+        mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue({ invoiceEmailDelivery: null });
+      }
+      expect(mocks.xeroClientInstance.accountingApi.createInvoices).not.toHaveBeenCalled();
+      expect(manifestRows()).toEqual([expect.objectContaining({
+        outcome: "COVERED", lineTotalCents: 10000, providerInvoiceId: "inv_9",
+        payloadHash: primaryInvoicePayloadHash(stored as never), frozenMapping: expect.objectContaining({ source: "STORED_REQUEST" }),
+      })]);
+    });
+
+    it("on a replay whose operation stored no lines, records nothing", async () => {
+      const fixture = await mocks.prisma.booking.findUnique();
+      mocks.prisma.booking.findUnique.mockResolvedValueOnce({ ...fixture, payment: { ...fixture.payment, xeroInvoiceId: "inv_9", xeroInvoiceNumber: "INV-9" } });
+      await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_9");
+      expect(mocks.prisma.memberMoneyLine.findMany).not.toHaveBeenCalled();
+      expect(mocks.tx.memberMoneyExportManifest.createMany).not.toHaveBeenCalled();
+    });
+
+    it("sends and completes when the manifest cannot be written", async () => {
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([stayLeg(10000)]);
+      mocks.tx.memberMoneyExportManifest.createMany.mockRejectedValueOnce(new Error("manifest store down"));
+      await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_1");
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
+      expect(mocks.logger.error).toHaveBeenCalledWith(expect.objectContaining({ bookingId: "booking_1" }), expect.stringContaining("export manifest"));
+    });
   });
 
   it("#3980 review M1: reads the booking and its marked edits from one REPEATABLE READ snapshot", async () => {

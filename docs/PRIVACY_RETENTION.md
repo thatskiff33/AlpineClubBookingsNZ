@@ -237,6 +237,8 @@ see [backups](guides/backups.md), the
 | `MemberMoneyRefundReservationRelease` | Release evidence for reserved refund amounts | Kept for financial records | Keep |
 | `MemberMoneySourcePosting` | Exact financial source and journal-line coverage | Kept for financial records | Keep |
 | `StripeBalanceTransactionEvidence` | Stripe balance-transaction figures and the payment intent, refund and payout they belong to | Kept for financial records | Keep |
+| `MemberMoneyExportManifest` | Booking, sent Xero invoice id and what its lines cover | Kept for financial records | Keep |
+| `MemberMoneyExportCoverage` | Journal components a sent invoice bills | Kept for financial records | Keep |
 
 ## Maintaining coverage
 
