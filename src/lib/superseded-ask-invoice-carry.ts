@@ -93,7 +93,8 @@ import { isCapturedTransactionStatus, isOpenIntentTransactionStatus } from "@/li
 import { prisma } from "@/lib/prisma";
 import { SUPERSEDED_INTENT_OPERATION_TYPES } from "@/lib/superseded-intent-ownership";
 import { asRecord } from "@/lib/xero-json";
-import { kickQueuedXeroOutboxOperationsIfConnected, lockSupplementaryInvoiceAnchor } from "@/lib/xero-operation-outbox";
+import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
+import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-supplementary-invoice-enqueue";
 import { supplementaryInvoiceBilledCents } from "@/lib/xero-operation-outbox-payload";
 import {
   SUPPLEMENTARY_INVOICE_MOVED_UNPAID_KEY,

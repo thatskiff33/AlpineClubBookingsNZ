@@ -9,6 +9,9 @@ import {
   type AdminMemberLifecycleActionStatusFilter,
 } from "@/lib/member-lifecycle-actions";
 import logger from "@/lib/logger";
+import {
+  adminListPageQueryFields,
+} from "@/lib/admin-list-page";
 import { requireAdmin } from "@/lib/session-guards";
 
 const querySchema = z.object({
@@ -33,8 +36,7 @@ const querySchema = z.object({
     ])
     .optional()
     .default(MemberLifecycleActionRequestStatus.REQUESTED),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 });
 
 function mapStatusFilter(

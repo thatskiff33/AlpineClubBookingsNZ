@@ -604,7 +604,7 @@
   },
   "src/app/(lodge)/lodge/kiosk/page.tsx": {
     "design-system/no-raw-button": {
-      "count": 11
+      "count": 9
     },
     "design-system/no-raw-input": {
       "count": 1
@@ -621,7 +621,7 @@
       "count": 1
     }
   },
-  "src/app/(website-dynamic)/booking-requests/booking-request-form.tsx": {
+  "src/components/website/booking-request-form.tsx": {
     "design-system/no-raw-select": {
       "count": 3
     }
@@ -639,7 +639,7 @@
       "count": 1
     }
   },
-  "src/app/(website-dynamic)/school-bookings/school-booking-form.tsx": {
+  "src/components/website/school-booking-form.tsx": {
     "jsx-a11y/label-has-associated-control": {
       "count": 1
     }
