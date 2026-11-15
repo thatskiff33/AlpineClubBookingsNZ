@@ -240,7 +240,7 @@ describe("the seed screens its operator-chosen passwords", () => {
     const refuseAt = seedSource.indexOf(
       `if (!${screen}.ok) throw new Error(seedPasswordBreachedMessage("${name}"));`,
     );
-    const hashAt = seedSource.indexOf(`await bcrypt.hash(${variable}, PASSWORD_BCRYPT_COST)`);
+    const hashAt = seedSource.indexOf(`await hashPassword(${variable})`);
     expect(mainAt).toBeGreaterThan(-1);
     expect(firstWriteAt).toBeGreaterThan(0);
     expect(screenAt).toBeGreaterThan(mainAt);

@@ -21,7 +21,7 @@ import { releaseOrganiserExtraRefundNotes } from "@/lib/organiser-extra-netting"
 import { applyGroupSettlementMirrorRefund, isBankTransferHandBackRoute } from "@/lib/group-settlement-mirror-hand-back"; // #3949
 import { MANUAL_PAYMENT_NOTE_MAX, normaliseManualPaymentNote } from "@/lib/manual-subscription-payment";
 import { requireMemberCreditRecipient } from "@/lib/member-credit";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { enqueueEditFinancialReviewRefundRecovery } from "@/lib/payment-recovery";
 import { applyLocalRefundAllocation, lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
@@ -59,11 +59,11 @@ import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-stor
  *
  * It sits beside `manual-booking-payment.ts` rather than inside it because the
  * two answer different questions — "the club has just taken cash for this
- * booking" versus "the club has just handed money back" — and share nothing but
- * the note-length rule and the error type, both of which have their own homes.
+ * booking" versus "the club has just handed money back" — and share only the
+ * note-length rule, re-exported below; the error type lives in its own module.
  * `INV-PAY-051` is the invariant these rules belong to.
  */
-export { ManualBookingPaymentError, MANUAL_PAYMENT_NOTE_MAX };
+export { MANUAL_PAYMENT_NOTE_MAX };
 
 export type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";
 import type { ManualRefundTaskResolution } from "@/lib/manual-refund-task-resolution-input";

@@ -16,7 +16,7 @@ import {
 } from "@/lib/edit-financial-review-context";
 import { OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER } from "@/lib/edit-financial-review";
 import logger from "@/lib/logger";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import type { ClubFormat } from "@/lib/club-format";
 import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 import { storedNightPricesByKey } from "@/lib/stored-night-price-write";

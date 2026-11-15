@@ -4,7 +4,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { flushMemberSubscriptionHistory } from "@/lib/xero";
+import { flushMemberSubscriptionHistory } from "@/lib/xero-membership-sync";
 import { deactivateXeroObjectLinks } from "@/lib/xero-sync";
 import {
   unlinkedContactRecovery,
