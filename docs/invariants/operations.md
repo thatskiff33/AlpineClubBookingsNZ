@@ -483,13 +483,13 @@ rules first written here. #2765 extended it with the measured-audience half.
   policy-exception queue merges two tables, so it counts each and reads each
   only to the end of the page asked for: its total is exact.
 - Enforced by `src/lib/__tests__/admin-queue-pagination-census.test.ts`, which
-  names this ID: every client file fetching a route in `CAPPED_QUEUE_ROUTES`
-  must page through the hook, guard its reads with `beginLoad`, and render
-  `Pagination` outside its loading branch, or be exempt in `NOT_A_QUEUE_LIST`;
-  each route must call `adminListPage`. A new capped route needs adding to that
-  map. Every other admin list takes its range text from
-  `formatAdminListRange` and reads and writes its URL page through
-  `parseAdminListPageParam` and `setAdminListPageParam`.
+  names this ID: a client file fetching a route in `CAPPED_QUEUE_ROUTES` (new
+  capped routes go there) must page through the hook, guard its reads with
+  `beginLoad` and render `Pagination` outside its loading branch, or be exempt
+  in `NOT_A_QUEUE_LIST`; each route must call `adminListPage` and spread
+  `adminListPageQueryFields`. Other lists it walks take range text and URL
+  page from `formatAdminListRange`, `parseAdminListPageParam` and
+  `setAdminListPageParam`; one outside it keeps its own pager.
 
 ## INV-OPS-002
 

@@ -458,7 +458,7 @@ export default function AdminWaitlistPage() {
     updateQuery((params) => {
       params.delete("from");
       params.delete("to");
-      params.delete("page");
+      setAdminListPageParam(params, 1);
       params.delete("pageSize");
     });
   }

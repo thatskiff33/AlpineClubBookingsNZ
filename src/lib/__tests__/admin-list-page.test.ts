@@ -35,6 +35,18 @@ describe("admin list page helpers (INV-OPS-020)", () => {
     );
   });
 
+  it("does not claim a row on a page past the last one", () => {
+    expect(formatAdminListRange({ page: 99, pageSize: 25, total: 40 })).toBe(
+      "Showing 0 of 40",
+    );
+    expect(formatAdminListRange({ page: 3, pageSize: 25, total: 50 })).toBe(
+      "Showing 0 of 50",
+    );
+    expect(formatAdminListRange({ page: 2, pageSize: 25, total: 50 })).toBe(
+      "Showing 26–50 of 50",
+    );
+  });
+
   it("orders pending filters oldest first and the rest newest first", () => {
     expect(adminQueueCreatedOrder(true)).toBe("asc");
     expect(adminQueueCreatedOrder(false)).toBe("desc");

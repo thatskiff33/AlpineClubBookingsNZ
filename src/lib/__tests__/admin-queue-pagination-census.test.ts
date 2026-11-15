@@ -183,6 +183,14 @@ describe("row-capped officer queues page through every row (INV-OPS-020)", () =>
     expect(failures).toEqual([]);
   });
 
+  it("every capped route's schema spreads adminListPageQueryFields", () => {
+    const failures = Object.keys(CAPPED_QUEUE_ROUTES).filter((route) => {
+      const file = path.join(ROOT, "src/app", `${route}/route.ts`);
+      return !/\.\.\.adminListPageQueryFields\b/.test(stripComments(readFileSync(file, "utf8")));
+    });
+    expect(failures).toEqual([]);
+  });
+
   it("the gap check fails a list with no pager (mutation canary)", () => {
     const panel = stripComments(
       readFileSync(
@@ -225,10 +233,25 @@ const RANGE_START = /\(\s*[\w.]*[pP]age\s*-\s*1\s*\)\s*\*\s*[\w.]+\s*\+\s*1/;
 /** A client read of a list page from the URL. */
 const PAGE_PARAM_READ = /\.get\(\s*["'](?:page|archivePage|inPage|opPage)["']\s*\)/g;
 
-/** A hand-rolled page-URL write: `if (page > 1) params.set("page", ...)`. */
-const PAGE_PARAM_WRITE = /if\s*\(\s*[\w.]+\s*>\s*1\s*\)\s*[\w.]+\.set\(\s*["'](?:page|archivePage|inPage|opPage)["']/;
+const PAGE_KEY = String.raw`["'](?:page|archivePage|inPage|opPage)["']`;
 
-/** Files that read a page key without parsing it, with the reason. */
+/**
+ * A hand-rolled page-URL write, in each form the lists used before
+ * `setAdminListPageParam`: a page-conditioned `.set` (`if (page > 1)
+ * params.set("page", ...)`, braced or not, or `page > 1 ? params.set(...) : ...`),
+ * a `setOrDelete("inPage", page > 1 ? ... : "")`, and a bare `.delete("page")`,
+ * which is a reset to page 1 and reads `setAdminListPageParam(params, 1)`.
+ * A `.set` that always sends the page (an API request builder) is not a URL write.
+ */
+const PAGE_PARAM_WRITE = new RegExp(
+  [
+    String.raw`[\w.]+\s*>\s*1\s*(?:\)\s*\{?|\?)\s*[\w.]+\.set\(\s*${PAGE_KEY}`,
+    String.raw`\bsetOrDelete\(\s*${PAGE_KEY}\s*,[^;]*?>\s*1`,
+    String.raw`\.delete\(\s*${PAGE_KEY}\s*\)`,
+  ].join("|"),
+);
+
+/** Files that read or carry a page key without parsing it, with the reason. */
 const RAW_PAGE_READS: Record<string, string> = {
   "src/components/admin/booking-filters.tsx":
     "carries the URL's page value through a filter change verbatim; the bookings page parses it",
@@ -260,7 +283,9 @@ describe("admin lists share the page parser and range text (INV-OPS-020)", () =>
   });
 
   it("every page written into a URL goes through setAdminListPageParam", () => {
-    expect(files.filter((file) => PAGE_PARAM_WRITE.test(code.get(file)!))).toEqual([]);
+    expect(
+      files.filter((file) => !(file in RAW_PAGE_READS) && PAGE_PARAM_WRITE.test(code.get(file)!)),
+    ).toEqual([]);
   });
 
   it("enumerates the lists that parse a page key, so an empty walk cannot pass", () => {
@@ -295,7 +320,67 @@ describe("admin lists share the page parser and range text (INV-OPS-020)", () =>
     expect(RANGE_START.test("const start = (pagination.page - 1) * pagination.pageSize + 1")).toBe(true);
     expect(unparsedPageReads('parseAdminListPageParam(searchParams.get("opPage"))')).toEqual([]);
     expect(unparsedPageReads('Number(searchParams.get("opPage"))')).toEqual(['.get("opPage")']);
-    expect(PAGE_PARAM_WRITE.test('if (page > 1) params.set("page", String(page))')).toBe(true);
-    expect(PAGE_PARAM_WRITE.test('if (archivePageNumber > 1) queueParams.set("archivePage", "2")')).toBe(true);
+  });
+
+  it("the write check fails every hand-written form and passes the shared writer (mutation canary)", () => {
+    const handWritten = [
+      'if (page > 1) params.set("page", String(page))',
+      'if (archivePageNumber > 1) queueParams.set("archivePage", "2")',
+      'if (page > 1) {\n  params.set("page", String(page));\n}',
+      'page > 1 ? params.set("page", String(page)) : params.delete("page")',
+      'setOrDelete("inPage", page > 1 ? String(page) : "")',
+      'params.delete("page")',
+      "params.delete('opPage')",
+    ];
+    for (const write of handWritten) expect(PAGE_PARAM_WRITE.test(write), write).toBe(true);
+    const allowed = [
+      'setAdminListPageParam(params, page, "opPage")',
+      'params.set("page", String(page))',
+      'params.set("pageSize", String(pageSize))',
+      'params.delete("pageSize")',
+    ];
+    for (const write of allowed) expect(PAGE_PARAM_WRITE.test(write), write).toBe(false);
+  });
+});
+
+/**
+ * The `page` and `pageSize` a capped route accepts are `adminListPageQueryFields`
+ * (page from 1, 25 a page, 100 at most). A schema that spells the same
+ * `pageSize` out again is a second definition: change the shared cap and it
+ * would keep answering the old one.
+ */
+const SHARED_PAGE_SIZE_DEFINITION =
+  /\bpageSize\s*:\s*z\s*\.coerce\s*\.number\(\s*\)\s*\.int\(\s*\)\s*\.min\(\s*1\s*\)\s*\.max\(\s*100\s*\)(?:\s*\.optional\(\s*\))?\s*\.default\(\s*25\s*\)/;
+
+describe("a capped route takes its page fields from one definition (INV-OPS-020)", () => {
+  const files = sourceFiles(SRC)
+    .map(relative)
+    .filter((file) => file !== LIST_PAGE_HELPER);
+
+  it("no schema re-declares the shared page size", () => {
+    // Only a file that names `pageSize` can spell it out, so the comment
+    // stripper runs on those few rather than on the whole tree.
+    const redeclared = files.filter((file) => {
+      const source = readFileSync(path.join(ROOT, file), "utf8");
+      return source.includes("pageSize") && SHARED_PAGE_SIZE_DEFINITION.test(stripComments(source));
+    });
+    expect(redeclared).toEqual([]);
+  });
+
+  it("the shared page size is still spelled the way the check looks for it (mutation canary)", () => {
+    const helper = stripComments(readFileSync(path.join(ROOT, LIST_PAGE_HELPER), "utf8"));
+    expect(helper).toMatch(/ADMIN_LIST_MAX_PAGE_SIZE\s*=\s*100/);
+    expect(helper).toMatch(/ADMIN_LIST_DEFAULT_PAGE_SIZE\s*=\s*25/);
+    expect(
+      SHARED_PAGE_SIZE_DEFINITION.test("pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),"),
+    ).toBe(true);
+    expect(
+      SHARED_PAGE_SIZE_DEFINITION.test(
+        "pageSize: z.coerce\n    .number()\n    .int()\n    .min(1)\n    .max(100)\n    .default(25),",
+      ),
+    ).toBe(true);
+    expect(
+      SHARED_PAGE_SIZE_DEFINITION.test("pageSize: z.coerce.number().int().min(1).max(200).default(50),"),
+    ).toBe(false);
   });
 });

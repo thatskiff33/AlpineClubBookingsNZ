@@ -53,7 +53,11 @@ export function adminListPage({
   }
 }
 
-/** "Showing 1–25 of 40"; "Showing 0 of 0" for an empty list. */
+/**
+ * "Showing 1–25 of 40"; "Showing 0 of 0" for an empty list; and, for a page
+ * past the last row (a stale link), "Showing 0 of 40" rather than a range that
+ * claims a row the page does not hold.
+ */
 export function formatAdminListRange({
   page,
   pageSize,
@@ -64,9 +68,9 @@ export function formatAdminListRange({
   total: number
 }): string {
   if (total <= 0) return "Showing 0 of 0"
-  const first = Math.min((page - 1) * pageSize + 1, total)
-  const last = Math.min(page * pageSize, total)
-  return `Showing ${first}–${last} of ${total}`
+  const offset = (page - 1) * pageSize
+  if (offset >= total) return `Showing 0 of ${total}`
+  return `Showing ${offset + 1}–${Math.min(page * pageSize, total)} of ${total}`
 }
 
 /**

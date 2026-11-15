@@ -38,6 +38,7 @@ import {
   startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { adminListPageQueryFields } from "@/lib/admin-list-page";
 
 /**
  * An amount filter typed into the payments search box, in integer cents.
@@ -121,8 +122,7 @@ export const adminPaymentsQuerySchema = z.object({
   amountMax: amountSchema.optional(),
   sortBy: sortBySchema,
   sortDir: z.enum(["asc", "desc"]).optional().default("desc"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 }).superRefine((value, ctx) => {
   if (
     value.amountExact === undefined &&

@@ -1934,19 +1934,25 @@ page. The officer queues — member applications, refund appeals, booking
 approvals, change requests, public requests, policy exceptions, the
 membership cancellation and archive queues, and both deletion-request
 queues — do so today: pending filters read
-oldest first, a filter change returns to page 1, the page is kept in the URL,
-a slower read for a page the officer has left never replaces the list, the
-pager stays mounted through a read so keyboard focus survives a page change,
-and a focused `bookingId=` / `requestId=` link pins its record when it is off
-the page. The policy exceptions queue merges two tables, so it counts each
-and reads each only to the end of the page asked for: its total is exact.
+oldest first, a filter change returns to page 1, the page is kept in the URL
+wherever the screen keeps its filter there (not the deletion-request queues or
+the policy exceptions tab, which keep it in memory), a slower read for a page
+the officer has left never replaces the list, the pager stays mounted through a
+read so keyboard focus survives a page change, and a focused `bookingId=` /
+`requestId=` link pins its record when it is off the page (approvals, change
+requests and public requests, the queues that read a record by id). The
+policy exceptions queue merges two tables, so it counts each and reads each only
+to the end of the page asked for: its total is exact.
 `admin-queue-pagination-census.test.ts` fails a client file that reads a capped
 queue route without the hook and the pager. The other paged admin lists
 (bookings, members, payments, subscriptions, waitlist, audit log, Xero inbound
-events and operations, promo redemptions) keep their own pagers but share
-`formatAdminListRange` for the range text and
+events and operations, promo redemptions) page through their own state rather
+than the hook but share `formatAdminListRange` for the range text and
 `parseAdminListPageParam` / `setAdminListPageParam` for the URL page; the same
-census fails hand-rolled range arithmetic or an unparsed page read.
+census fails hand-rolled range arithmetic, an unparsed page read or a
+hand-written page write. Three paged lists sit outside this: system issue
+reports, messages notice reads and the privacy retention preview keep their own
+pagers until next changed.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
