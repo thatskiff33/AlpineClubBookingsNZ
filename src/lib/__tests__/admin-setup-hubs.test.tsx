@@ -317,6 +317,9 @@ describe("admin setup hub pages", () => {
 
     expect(html).toContain("Finance Dashboard");
     expect(html).toContain("Xero Mappings");
+    // The card opens Xero Setup at its Account mapping step, not an anchor
+    // Xero Sync never renders (#4972).
+    expect(html).toContain('href="/admin/xero/setup?step=mapping"');
     expect(html).toContain("Finance Report Mappings");
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("Finance mappings editor");

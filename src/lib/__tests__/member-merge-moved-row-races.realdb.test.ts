@@ -20,6 +20,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { acquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { RACE_TRANSACTION_BUDGET } from "./support/race-lock-waits";
 import {
@@ -210,6 +211,9 @@ function completingSignOff(tx: Prisma.TransactionClient) {
       prisma,
       "afterApproverShare",
       () => prisma.$transaction(async (tx) => {
+        // The keys approveBedAllocations takes before this writer (#4929).
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        await acquireLodgeCapacityLock(tx, LODGE);
         await tx.$executeRaw`SELECT 1 FROM "Member" WHERE "id" = ${MASTER} FOR KEY SHARE`;
         await pauseIn("afterApproverShare", tx);
         await approveBedAllocationsWithLocksHeld({ approvedByMemberId: MASTER, allocationIds: [ALLOCATION], db: tx });

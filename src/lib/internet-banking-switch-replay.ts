@@ -2,7 +2,7 @@ import type { Payment } from "@prisma/client";
 
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { isXeroConnected } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import {
   enqueueXeroAppliedCreditAllocationOperation,
   enqueueXeroBookingInvoiceOperation,

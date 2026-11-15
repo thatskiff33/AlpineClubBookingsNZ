@@ -18,7 +18,7 @@ vi.mock("sonner", () => ({
   },
 }));
 
-vi.mock("@/app/(authenticated)/profile/profile-form", () => ({
+vi.mock("@/components/profile/profile-form", () => ({
   ProfileForm: ({ onSaved }: { onSaved?: () => void }) => (
     <button type="button" onClick={onSaved}>
       save-profile
@@ -26,7 +26,7 @@ vi.mock("@/app/(authenticated)/profile/profile-form", () => ({
   ),
 }));
 
-vi.mock("@/app/(authenticated)/profile/family-group-section", () => ({
+vi.mock("@/components/profile/family-group-section", () => ({
   FamilyGroupSection: () => <div data-testid="family-group-section" />,
 }));
 
