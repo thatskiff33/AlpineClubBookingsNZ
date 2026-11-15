@@ -206,10 +206,10 @@ History, measurements and rejected alternatives: #3126 (and #3123, #3131,
   code DOES, and classify its matches rather than converging every hit.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
   `stripComments`. Use it; do not write a second.**
-  179 test files, seven test helpers and one CI script import it.
-  `ssot-comment-stripper-guard.test.ts` requires that sentence and the module's
-  docblock to state the count it measures by IMPORT SPECIFIER, not path text.
-  **Measure it; never increment it.**
+  Test files across the suite, seven test helpers and one CI script import it.
+  No count is published (#5199): `ssot-comment-stripper-guard.test.ts` names
+  the non-test importers by IMPORT SPECIFIER, not path text, and fails on a
+  published count.
 - **`ssot/no-local-comment-stripper`** (`eslint.config.mjs`) reports any
   function naming a JavaScript block-comment delimiter or comparing characters
   against a slash and a star — and, at module scope, code naming BOTH block
