@@ -21,6 +21,12 @@ const mocks = vi.hoisted(() => ({
   createAuditLog: vi.fn(),
 }));
 
+// #4915: the sections the export gained have their own tests
+// (subject-access-export.realdb.test.ts); this file is about the reads it kept.
+vi.mock("@/lib/subject-access-export-sections", () => ({
+  buildSubjectAccessSections: vi.fn(async () => ({})),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     seasonalMembershipAssignment: { findUnique: vi.fn().mockResolvedValue(null) },
