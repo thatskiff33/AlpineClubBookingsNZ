@@ -42,6 +42,7 @@ export function OpeningCreditBatchesCard({
   const format = useClubFormat()
   const clubTime = useClubTime()
   const [batches, setBatches] = useState<Batch[] | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   // Bumped on each Import press so the dialog remounts with an empty import.
   const [importRun, setImportRun] = useState(0)
@@ -55,13 +56,17 @@ export function OpeningCreditBatchesCard({
     return instant === null ? iso : clubTime.instantDateTime(instant)
   }
 
+  // A failed read says so rather than showing an empty list: "no batches posted"
+  // must never stand in for "could not load the batches" on a money screen.
   const load = useCallback(async () => {
-    const response = await fetch("/api/admin/opening-credits")
-    if (response.ok) {
+    try {
+      const response = await fetch("/api/admin/opening-credits")
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const body = (await response.json()) as { batches: Batch[] }
       setBatches(body.batches)
-    } else {
-      setBatches([])
+      setLoadFailed(false)
+    } catch {
+      setLoadFailed(true)
     }
   }, [])
 
@@ -115,7 +120,11 @@ export function OpeningCreditBatchesCard({
         </ViewOnlyActionButton>
       </CardHeader>
       <CardContent>
-        {batches === null ? (
+        {loadFailed ? (
+          <p role="alert" className="text-sm text-destructive">
+            The opening-credit batches could not be loaded. Refresh the page to try again.
+          </p>
+        ) : batches === null ? (
           <p className="text-sm text-muted-foreground">Loading...</p>
         ) : batches.length === 0 ? (
           <p className="text-sm text-muted-foreground">No opening-credit batches have been posted.</p>
