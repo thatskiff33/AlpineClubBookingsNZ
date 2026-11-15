@@ -49,7 +49,7 @@ import { Readable } from "stream";
 // ruleid: acb-client-server-boundary
 import { recordAudit } from "@/lib/audit";
 // ruleid: acb-client-server-boundary
-import { getXeroClient } from "@/lib/xero";
+import { callXeroApi } from "@/lib/xero-api-client";
 
 // The club-timezone environment seed (#2989). It reads `process.env.TZ`, and
 // since #3204 it carries `import "server-only"` — so the production build
@@ -151,7 +151,7 @@ export function Fixture() {
       {String(fs)} {String(readFile)} {String(spawn)} {formatClubDate(requireCalendarDate("2026-04-16"))}
       {String(describePrismaError)} {String(useAuthState)} {String(createHmac)}
       {String(hostname)} {String(request)} {String(Readable)} {String(recordAudit)}
-      {String(getXeroClient)} {String(pathToRegexp)} {String(cryptoRandomId)}
+      {String(callXeroApi)} {String(pathToRegexp)} {String(cryptoRandomId)}
       {String(classifyEnvironmentClubTimeZoneSeed)}
       {String(listSelectableClubTimeZones)}
       {String({} as PrismaClient)} {String({} as Session)} {String({} as Adapter)}

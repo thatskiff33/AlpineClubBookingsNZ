@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { BaseSequencer } from "vitest/node";
 
@@ -148,6 +148,44 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
     const step = workflow.jobs.typecheck.steps.find((item) => item.run === "pnpm run typecheck");
     const heapMb = Number(/--max-old-space-size=(\d+)/.exec(step.env?.NODE_OPTIONS ?? "")?.[1]);
     expect(heapMb).toBeGreaterThanOrEqual(12288);
+  });
+
+  // #5164: `next build` type-checks the app project in a worker that inherits
+  // NODE_OPTIONS, and a cold run peaked at about 4.6 GB (#5053), over Node's
+  // ~4 GB default on the hosted runner. Every `next build` CI runs gets the
+  // one ceiling ci.yml's `Build` step states the reason for. A census of every
+  // workflow, not a named list, so a new build site cannot quietly miss it.
+  it("gives every `next build` in CI the same 8 GB heap ceiling", () => {
+    const HEAP = "--max-old-space-size=8192";
+    const workflowsDir = path.join(root, ".github", "workflows");
+    const sites = [];
+    for (const file of readdirSync(workflowsDir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
+      const parsed = parseWorkflowYaml(readFileSync(path.join(workflowsDir, file), "utf8"));
+      for (const [id, job] of Object.entries(parsed.jobs ?? {})) {
+        for (const step of job.steps ?? []) {
+          const where = `${file} → ${id} → ${step.name ?? step.uses ?? step.run}`;
+          const run = step.run ?? "";
+          if (/\bpnpm run build(?:\s|$)|\bnext build\b|server-only-boundary-selftest\.mjs/.test(run)) {
+            sites.push(where);
+            expect(step.env?.NODE_OPTIONS, where).toBe(HEAP);
+          } else if (/\bdocker build\b/.test(run)) {
+            sites.push(where);
+            expect(run, where).toContain('--build-arg NODE_OPTIONS="${NODE_BUILD_OPTIONS}"');
+            expect(job.env?.NODE_BUILD_OPTIONS, where).toBe(HEAP);
+          } else if (step.uses?.startsWith("docker/build-push-action@")) {
+            sites.push(where);
+            expect(step.with?.["build-args"]?.split("\n"), where).toContain("NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}");
+            expect(job.env?.NODE_BUILD_OPTIONS, where).toBe(HEAP);
+          }
+        }
+      }
+    }
+    // Build + self-test, the Trivy image, two GHCR images, the E2E image and
+    // its cache export, the rollover proof's image: the census is not empty.
+    expect(sites.length, sites.join("\n")).toBeGreaterThanOrEqual(8);
+    // The local E2E stack builds the same image through compose.
+    const stack = readFileSync(path.join(root, "scripts", "e2e-stack.sh"), "utf8");
+    expect(stack).toContain(`export NODE_BUILD_OPTIONS="\${NODE_BUILD_OPTIONS:-${HEAP}}"`);
   });
 
   it("keeps the build's output proofs after the build, in the build job, unconditional", () => {
@@ -466,5 +504,30 @@ describe("e2e.yml's required jobs, their shards and the run action", () => {
     const checkedOrBuiltin = new Set(["seed_database", "reset_database", "capture_fixture_date", "local", "echo", "mkdir", "compose", "cp", "snapshot"]);
     expect(called.filter((name) => !checkedOrBuiltin.has(name))).toEqual([]);
     expect(stack.slice(stack.indexOf("prepare() {"))).toContain("e2e/setup/seed-stripe-credentials.ts");
+  });
+});
+
+// #5192: `ubuntu-latest` is a moving label. While GitHub rolled it from 24.04
+// to 26.04, the same commit got either image by chance, and on 26.04 the
+// runner's PostgreSQL 17 `pg_dump` broke the required roles proof against the
+// PostgreSQL 16 service. Every job in every workflow names one pinned image;
+// moving to a newer one changes this constant and every workflow together.
+describe("every workflow job runs on the one pinned runner image (#5192)", () => {
+  const RUNNER_IMAGE = "ubuntu-24.04";
+
+  it("names the pinned image on every job, never a moving label", () => {
+    const workflowsDir = path.join(root, ".github", "workflows");
+    const jobs = [];
+    for (const file of readdirSync(workflowsDir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
+      const parsed = parseWorkflowYaml(readFileSync(path.join(workflowsDir, file), "utf8"));
+      for (const [id, job] of Object.entries(parsed.jobs ?? {})) {
+        // A job that calls a reusable workflow has no runner of its own.
+        if (job.uses) continue;
+        jobs.push(`${file} → ${id}`);
+        expect(job["runs-on"], `${file} → ${id}`).toBe(RUNNER_IMAGE);
+      }
+    }
+    // Vacuity guard: the census read real workflows.
+    expect(jobs.length).toBeGreaterThanOrEqual(30);
   });
 });
