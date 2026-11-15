@@ -177,7 +177,7 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
       return openCardRefundOwedCents(payment);
     }
 
-    /** The edit door's enqueue, exactly as `executeBookingModificationRefund` sends it. */
+    /** The edit's debt, exactly as its transaction writes it (`reserveModificationRefundDebts`, #4992). */
     async function queueRefusedSlice(
       plan: Array<{ paymentTransactionId: string; amountCents: number; stripeKeySuffix?: string }> = [QUEUED_SLICE],
       amountCents = REFUSED_CENTS,
@@ -282,7 +282,7 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
     });
 
     it("an edit's made-but-unrecorded refund is marked by slice evidence after charge.refunded (#3984, #4510)", async () => {
-      const { executeBookingModificationRefund } = await import("@/lib/booking-modification-settlement");
+      const { executeBookingModificationRefund, reserveModificationRefundDebts } = await import("@/lib/booking-modification-settlement");
       const { syncRefundsFromStripeCharge } = await import("@/lib/payment-transactions");
       const { runPaymentRecoveryOperationNow } = await import("@/lib/payment-recovery");
       await deletePaymentRows();
@@ -306,13 +306,20 @@ const CANCEL_ADDITIONAL_INTENT = "pi_race_4083_cancel_additional";
         return refunds.get(key);
       };
       try {
+        // #4992: the edit's transaction writes the debt with its frozen plan before the attempt.
+        const ownCardRefund = await prisma.$transaction((tx) => reserveModificationRefundDebts(tx, {
+          door: "dateChange", pendingRefundAmountCents: 8000, plan: null, bookingId: BOOKING_ID,
+          payment: { id: PAYMENT_ID } as never, bookingModificationId: MODIFICATION_ID,
+        }));
+        expect((await queuedRow()).allocationPlan).toEqual([{ paymentTransactionId: PRIMARY_TXN, amountCents: 8000 }]);
         const outcome = await executeBookingModificationRefund({ format: CLUB_FORMAT_TEST, bookingId: BOOKING_ID,
-          result: { pendingRefundAmountCents: 8000, paymentId: PAYMENT_ID, bookingModificationId: MODIFICATION_ID, organiserChildRefund: null } as never,
-          idempotencyKeyPrefix: `mod_dates_refund_${BOOKING_ID}`, failureMessage: "test refund failed", recoveryFailureMessage: "test enqueue failed" });
+          result: { pendingRefundAmountCents: 8000, paymentId: PAYMENT_ID, bookingModificationId: MODIFICATION_ID, organiserChildRefund: null, ownCardRefund } as never,
+          door: "dateChange", failureMessage: "test refund failed" });
         restoreFault?.();
         expect(outcome.refundDestination).toBe("own_card_pending");
         expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(0);
         const row = await queuedRow();
+        expect(row.status).toBe("PENDING");
         expect(row.allocationPlan).toEqual([{ paymentTransactionId: PRIMARY_TXN, amountCents: 8000 }]);
 
         await syncRefundsFromStripeCharge({ stripeChargeId: "ch_race_3984", paymentIntentId: "pi_race_4083_primary",
