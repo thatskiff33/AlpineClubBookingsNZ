@@ -44,7 +44,7 @@ reason: adds the getAdminPage import and renders the page heading from its
   this fix.
 
 file: src/app/(admin)/admin/membership/member-applications/page.tsx
-lines: 838
+lines: 890
 reason: adds the getAdminPage import and renders the page heading from its
   registry label in place of a typed string (#4968). The file was already
   over its limit; splitting it apart is a refactor of its own, not part of
