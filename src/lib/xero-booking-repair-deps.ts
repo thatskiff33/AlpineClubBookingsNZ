@@ -14,10 +14,10 @@ import {
   enqueueXeroCreditNoteAllocationOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
-  enqueueXeroSupplementaryInvoiceOperation,
   processQueuedXeroOutboxOperations,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
+import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-supplementary-invoice-enqueue";
 import {
   enqueueXeroSyncOperationRetry,
   processQueuedXeroOperationRetries,

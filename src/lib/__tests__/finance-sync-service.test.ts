@@ -27,6 +27,8 @@ const {
 
 vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: mockGetAuthenticatedXeroClient,
+  callXeroApi: (fn: () => unknown, options: unknown) =>
+    mockCallXeroApi(fn, options),
 }));
 
 vi.mock("@/lib/finance-sync-storage", () => ({
@@ -39,11 +41,6 @@ vi.mock("@/lib/finance-sync-storage", () => ({
 vi.mock("@/lib/finance-monthly-fact-store", () => ({
   replaceMonthlyFacts: mockReplaceMonthlyFacts,
   loadFinanceMonthlyChartContext: mockLoadFinanceMonthlyChartContext,
-}));
-
-vi.mock("@/lib/xero", () => ({
-  callXeroApi: (fn: () => unknown, options: unknown) =>
-    mockCallXeroApi(fn, options),
 }));
 
 import {

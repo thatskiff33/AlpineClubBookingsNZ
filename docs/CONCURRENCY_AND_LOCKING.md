@@ -187,6 +187,21 @@ never deadlock. Writers that compose several *same-family* locks (multiple
 per-lodge locks, or multiple per-member locks) acquire them in **sorted key
 order** for the same reason. (`INV-LOCK-002`.)
 
+### Checking caller-held locks (#4929)
+
+Exports ending in `LockHeld` or `LocksHeld` inspect `pg_locks` before relying
+on their caller’s locks (`INV-LOCK-003`). The global check lives in
+`global-lock-held.ts`; the lodge check lives beside the single key mint in
+`lodge-capacity-lock.ts`. A missing key throws `GlobalLockNotHeldError` or
+`LodgeCapacityLockNotHeldError`. These checks acquire nothing. A key-only
+lookup may precede the lodge check; mutable state is still re-read afterward.
+The member-merge sweep checks its supplied lodge keys without requiring global.
+The export census prevents an unchecked entrypoint from being added, and
+`lock-held-writer-refusal.test.ts` proves each writer checks the lodge its own
+rows sit in. The real-PostgreSQL proof of the probe,
+`bed-allocation-lock-held.realdb.test.ts`, runs in the required migration
+drift job.
+
 ### Fresh reads after waiting on locks
 
 Lock, re-read, claim requires READ COMMITTED (`INV-LOCK-005`). Leave Prisma's
@@ -594,7 +609,7 @@ are the literal `1`.
 | **Diagnostics budget reserve (per month)** | `hashtext("diagnostics-budget-reserve"), hashtext(<month>)` | `reserveDiagnosticsBudget` **and** `settleDiagnosticsRoundtrip` (`ai-diagnostics-usage.ts`, AID-2 #2371) | — | Serialises every AI Diagnostics budget RESERVE **and** SETTLE for one billing month so the reserve's read-check-insert (sum live reservations + settled spend, compare to budget, insert reservation) is atomic against concurrent reservers AND against a settle's reservation-delete + `settledCents` increment. A burst of paid diagnostics roundtrips therefore cannot push `settled + reserved` over the monthly budget, and a settle can never commit mid-reserve to under-count committed spend; a lost claim (over budget) inserts nothing and denies the paid call. Different months do not contend. Held only for the milliseconds of each short transaction; the provider call runs entirely OUTSIDE both. Both take ONLY this key (no second lock), so no ordering cycle is possible. See "Composition: diagnostics budget reserve" below. |
 | **Xero inbound cycle run claim** | session `hashtext("cron-run-claim"), hashtext(jobName)` | `withCronRunClaim` through `runXeroCronTaskList` (#4432) and `runXeroWebhookInboundKick` (#4922) | — | Scheduled inbound, HTTP cron, whole-club sync-now and the Xero webhook's after-response kick share one dedicated autocommit connection's fail-fast claim. A kick that finds it held applies row-claimed stored events only. It wraps the cycle without an open transaction; domain writers retain their own transaction locks. Connection death recovers it, with no expiring live-holder lease. See the Xero inbound cycle run claim section below. |
 | **Backup run claim** | `hashtext("backup:run-lock")` | `claimBackupRun` (`backup-run.ts`, #2095) | — | Single-flights managed database backups across containers (nightly cron vs admin run-now). Held only for the milliseconds of the reap-stale → active-check → insert-RUNNING claim transaction; the `pg_dump`/upload pipeline runs entirely outside any transaction, so a crashed run can never wedge the lock (a dead RUNNING row is reaped by heartbeat age on the next claim). Single-lock holder; composes with no other family. The config-transfer pre-apply safety backup deliberately bypasses this claim (it must run inline; concurrent dumps are independent snapshots writing uniquely-named files). |
-| **Xero supplementary invoice per anchor** | `hashtext("xero-supplementary-invoice"), hashtext(<BookingModification id, or ManualRefundTask id for a second ask, or Booking id for the change-capture receipt's planning gate and plan store and the enqueue's booking-first key, #3953>)` | `enqueueXeroSupplementaryInvoiceOperation` (`xero-operation-outbox.ts`, #3170) | anchor | Single-flights "does this booking change already have a supplementary invoice going out?" so one edit can never send two. Held only for the milliseconds of the link-check -> queued-check -> raise-or-create transaction; the Xero round trip happens later, in the outbox worker, entirely outside it. Who holds this key, in what order, and what proves it: [Xero supplementary invoice per anchor](#xero-supplementary-invoice-per-anchor-who-holds-the-key-3170) and the five sections after it. |
+| **Xero supplementary invoice per anchor** | `hashtext("xero-supplementary-invoice"), hashtext(<BookingModification id, or ManualRefundTask id for a second ask, or Booking id for the change-capture receipt's planning gate and plan store and the enqueue's booking-first key, #3953>)` | `enqueueXeroSupplementaryInvoiceOperation` (`xero-supplementary-invoice-enqueue.ts`, #3170; moved out of the outbox by #4930) | anchor | Single-flights "does this booking change already have a supplementary invoice going out?" so one edit can never send two. Held only for the milliseconds of the link-check -> queued-check -> raise-or-create transaction; the Xero round trip happens later, in the outbox worker, entirely outside it. Who holds this key, in what order, and what proves it: [Xero supplementary invoice per anchor](#xero-supplementary-invoice-per-anchor-who-holds-the-key-3170) and the five sections after it. |
 
 The `MemberParentPartnerExclusion` rows are the database serialization layer for
 the member-partner-link family (#3271). They are not a new advisory-lock family.
