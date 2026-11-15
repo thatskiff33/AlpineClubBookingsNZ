@@ -42,7 +42,9 @@ normal way to adopt this is **configure, don't fork**, on four levers:
   module's out-of-the-box default.
 - **Setting** — every club has the capability, each supplies its own value or
   policy. Edited in the app, stored in the database, live immediately; no
-  redeploy, no `.env` edit. Install-time values live in `config/club.json`.
+  redeploy, no `.env` edit. A fresh install's club settings are set at
+  `/admin/setup`; `config/club.json` is only an optional seed
+  ([`CONFIGURATION.md`](CONFIGURATION.md#club-config)).
 - **Seed default** — the value a fresh install starts with. Change it when it is
   a poor starting point for a *typical* club, and send that upstream.
 - **Code change** — only when the behaviour genuinely is not expressible through
@@ -168,9 +170,13 @@ credentials.
 **Adopting this for your club** is a documented, tested path, and every step is
 configuration:
 
-1. Set your club name, beds, age tiers, and integer-cent rates in
-   `config/club.json` (or run `pnpm run setup:wizard`).
-2. Seed the first admin, then finish the in-app checklist at `/admin/setup`.
+1. Migrate and seed the first admin, then sign in.
+2. Set your club name, beds and age tiers at `/admin/setup` (or run
+   `pnpm run setup:wizard` against the migrated database), set nightly rates at
+   `/admin/seasons`, and finish the rest of the checklist there. The Docker app
+   container never reads `config/club.json`, so its seed starts from
+   placeholder values; the file is optional
+   ([`CONFIGURATION.md`](CONFIGURATION.md#club-config)).
 3. Brand it — colours, fonts, and logo at `/admin/site-style`, no redeploy
    needed — and replace the included club branding and copy with your own
    ([`NOTICE.md`](NOTICE.md)).

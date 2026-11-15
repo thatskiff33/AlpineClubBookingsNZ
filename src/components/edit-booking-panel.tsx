@@ -15,7 +15,7 @@ import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import {
   partyNeedsSupervisionJustification,
   predictMemberGuestConsent,
-} from "@/app/(authenticated)/book/_components/member-guest-preview";
+} from "@/components/book/member-guest-preview";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";

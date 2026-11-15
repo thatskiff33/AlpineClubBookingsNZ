@@ -1,7 +1,7 @@
-import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
-import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
-import { BookingRequestFormEmbed } from "@/app/(website-dynamic)/booking-requests/booking-request-form-embed";
-import { SchoolBookingFormEmbed } from "@/app/(website-dynamic)/school-bookings/school-booking-form-embed";
+import { ContactPageClient } from "@/components/website/contact-page-client";
+import { JoinApplyPageClient } from "@/components/website/join-apply-page-client";
+import { BookingRequestFormEmbed } from "@/components/website/booking-request-form-embed";
+import { SchoolBookingFormEmbed } from "@/components/website/school-booking-form-embed";
 import { CommitteeMembersGrid } from "@/components/website/committee-members-grid";
 import { PhotoGalleryToken } from "@/components/website/photo-gallery-token";
 import { SkifieldConditionsWidget } from "@/components/website/skifield-conditions-widget";

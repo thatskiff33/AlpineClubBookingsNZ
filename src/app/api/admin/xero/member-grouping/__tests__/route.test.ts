@@ -41,7 +41,7 @@ vi.mock("@/lib/xero-member-grouping-resync", () => ({
 vi.mock("@/lib/xero-member-grouping", () => ({
   getXeroGroupingMode: mocks.getXeroGroupingMode,
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroups: mocks.getXeroContactGroups,
   getXeroContactGroupCacheLastRefreshedAt:
     mocks.getXeroContactGroupCacheLastRefreshedAt,

@@ -41,8 +41,8 @@ vi.mock("@/lib/page-content-html", async () => {
 vi.mock("@/lib/page-content-embeds", () => ({ buildEmbeddedBody: mocks.buildBody }));
 vi.mock("@/lib/auth-redirect", () => ({ buildBookingLoginPath: () => "/login" }));
 vi.mock("next/navigation", () => ({ notFound: () => { throw new Error("not found"); } }));
-vi.mock("@/app/(website)/contact/contact-page-client", () => ({ ContactPageClient: () => <div>Contact form</div> }));
-vi.mock("@/app/(website)/join/apply/join-apply-page-client", () => ({ JoinApplyPageClient: () => <div>Join form</div> }));
+vi.mock("@/components/website/contact-page-client", () => ({ ContactPageClient: () => <div>Contact form</div> }));
+vi.mock("@/components/website/join-apply-page-client", () => ({ JoinApplyPageClient: () => <div>Join form</div> }));
 vi.mock("@/components/website/committee-members-grid", () => ({ CommitteeMembersGrid: () => <div>Committee</div> }));
 vi.mock("@/components/website/photo-gallery-token", () => ({ PhotoGalleryToken: () => <div>Gallery</div> }));
 vi.mock("@/components/website/skifield-conditions-widget", () => ({ SkifieldConditionsWidget: () => <div>Conditions</div> }));

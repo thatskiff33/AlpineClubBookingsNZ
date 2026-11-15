@@ -257,7 +257,7 @@ vi.mock("@/lib/capacity", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
+
 
 // Keep the real BookingMemberNightConflictError; only the assertion is a spy.
 vi.mock("@/lib/booking-member-night-conflicts", async (importOriginal) => {
