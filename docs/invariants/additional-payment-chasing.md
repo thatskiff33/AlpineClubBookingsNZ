@@ -101,8 +101,8 @@ admin surface showed one. These rules now hold:
 ### INV-ADDPAY-024
 
 - **What the member is told.** While the stay is still ahead, the member is
-  emailed at most twice per obligation: `ADDITIONAL_PAYMENT_REMINDER_DAYS`
-  (3) days after the extra was raised, and
+  emailed at most twice per obligation: the club's
+  `additionalPaymentReminderDays` (default 3) days after the extra was raised, and
   `ADDITIONAL_PAYMENT_FINAL_REMINDER_DAYS_BEFORE_CHECK_IN` (2) days before
   check-in. The pre-arrival reminder also names the amount when one is owing.
   Nothing is ever auto-cancelled or auto-expired, and the chase stops the
@@ -115,7 +115,7 @@ admin surface showed one. These rules now hold:
 - **Nothing raised before the chase existed is chased, and the cutover is a
   fact rather than a plan.** An obligation whose episode started before the
   cutover is never emailed about by the cron: on first deploy every pre-existing
-  delta is already past the day-3 threshold, so without this the first pass
+  delta is already past the first-reminder threshold, so without this the first pass
   would mail the whole backlog at once, and legacy rows with no ADDITIONAL
   transaction would date the demand from the payment row's creation rather than
   the day the price changed. Those deltas stay on every admin surface and can
@@ -132,7 +132,7 @@ admin surface showed one. These rules now hold:
   backlog mailed on the first pass, which is the exact failure the guard exists
   to prevent. Run rows are pruned after 90 days, which can only move the cutover
   forward to the oldest surviving run — still months behind anything this job
-  chases three days after it is raised. A read failure sends nothing that pass:
+  chases, at most 30 days after it is raised. A read failure sends nothing that pass:
   not knowing where the cutover is must never mean "email everyone".
 
 ### INV-ADDPAY-026

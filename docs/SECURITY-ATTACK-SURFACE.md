@@ -430,7 +430,7 @@ for recipients, data flows and enablement; they do not keep recipient lists.
 - `servernz` — the Alpine Central Server API key, issued by the central server
   to this club. Stranding it stops the nightly Other Clubs sync (upload and
   download) until an admin re-enters it under Admin → Integrations → Alpine
-  Central Server. The same namespace holds `push_secret`, the secret the
+  Central Server Setup. The same namespace holds `push_secret`, the secret the
   central server issued when this install registered for pushes; it verifies
   the posts and free-beds webhooks, and `push_registered_url`, the callback
   address that secret was issued for (a `NEXTAUTH_URL` on another origin, host name or port, never takes the
@@ -2687,11 +2687,12 @@ there the whole point is that the URL gives no signal at all. That is why both
 The goal recorded on #2465 was that *one anonymous request cannot reveal whether
 a module runs*. Stated that broadly it is not achievable, and pretending
 otherwise would leave the next reviewer trusting a claim this file cannot
-support. Four modules have endpoints whose whole job is to answer an anonymous
+support. Five modules have endpoints whose whole job is to answer an anonymous
 caller with real data — `lobbyDisplay` (a wall-mounted screen pairs and polls
 with no human session), `addressAutocomplete` (the address lookup runs on the
-public join and booking forms), `skifieldConditions` (the mountain report is
-public content) and `groupBookings` (the school/group enquiry form is a public
+public join and booking forms), `skifieldConditions` and `skifieldWhakapapa`
+(the Snow.nz widget and the Whakapapa report are public content) and
+`groupBookings` (the school/group enquiry form is a public
 page). Those endpoints answer differently when the module is on because
 answering is the point.
 
@@ -3968,7 +3969,7 @@ calendar managers and audited per mint, which is why this stays low severity.
 
 **What #2940 changed, and what it deliberately did not.** The key, the host
 username and the host password are now club-editable: a Full Admin sets them on
-**Admin → Integrations → Video meetings**, where they are stored in the encrypted
+**Admin → Integrations → Video Meetings Setup**, where they are stored in the encrypted
 `IntegrationCredential` store under provider `mirotalk`, and the environment
 variables become a per-field fallback. Four properties are worth stating because
 they are what makes that safe rather than merely convenient.
