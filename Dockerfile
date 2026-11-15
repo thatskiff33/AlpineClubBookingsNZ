@@ -111,7 +111,7 @@ ENV RELEASE_ID=$RELEASE_ID
 # was editing this line locally and re-applying it after every `git pull`.
 #
 # Set it through compose, which maps NODE_BUILD_OPTIONS from .env onto this arg:
-#   NODE_BUILD_OPTIONS=--max-old-space-size=4096
+#   NODE_BUILD_OPTIONS=--max-old-space-size=8192
 #
 # Deliberately NOT named NODE_OPTIONS on the .env side. That name is read by
 # every Node process, so a developer who has it set in their shell for an

@@ -53,8 +53,14 @@ jobs:
   # `needs:`, fail at once on it (scripts/ci/wait-for-run-artifacts.mjs).
   e2e-image:
     name: E2E app image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      # Heap ceiling for the builder stage's `next build`, passed as the
+      # Dockerfile's build-only NODE_OPTIONS arg to both builds below (#5164).
+      # Value and reason: the `Build` step of `Production build` in ci.yml. Job-level, not workflow-level: no workflow env
+      # reaches `e2e-db`.
+      NODE_BUILD_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -124,6 +130,7 @@ jobs:
           # the builder verbatim, so a `#` comment there becomes a build arg.
           build-args: |
             RELEASE_ID=${{ github.sha }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: |
             type=gha,scope=alpineclubbookingsnz-app
             type=gha,scope=alpineclubbookingsnz-e2e
@@ -151,6 +158,8 @@ jobs:
 
       # The shards are already running on the uploaded image. This rebuild is
       # all cache hits on the same builder; it only exports the layer cache.
+      # Its build args must match the build above exactly, NODE_OPTIONS
+      # included, or the `next build` layer misses and runs again.
       - name: Export the layer cache
         if: steps.scope.outputs.needed != 'false'
         continue-on-error: true
@@ -162,6 +171,7 @@ jobs:
           outputs: type=cacheonly
           build-args: |
             RELEASE_ID=${{ github.sha }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-e2e
 
       - name: Export the Next.js build cache
@@ -183,7 +193,7 @@ jobs:
   # (require-test-shards.test.mjs) keeps `secrets.` out of this job.
   e2e-db:
     name: E2E seeded database
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -250,7 +260,7 @@ jobs:
   # account's job cap turned into queueing (run 40248216639, #4397).
   playwright:
     name: Playwright E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Setup + the artifact wait (45) + its own shard + the gate (75): the
     # gate's own error reports before this fires.
     timeout-minutes: 165
@@ -319,7 +329,7 @@ jobs:
   e2e-shard:
     name: E2E shard (${{ matrix.shard }}/3)
     needs: [e2e-image, e2e-db]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -378,7 +388,7 @@ jobs:
   # `Playwright E2E`, for the same reason.
   multi-lodge:
     name: E2E multi-lodge
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 95
     permissions:
       contents: read

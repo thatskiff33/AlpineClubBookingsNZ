@@ -285,7 +285,7 @@ x-app-service: &app-service
       # Empty unless an operator sets NODE_BUILD_OPTIONS, so this changes nothing
       # for a deployment that does not need it. Typical use is raising the heap
       # on a small server whose `next build` is being OOM-killed:
-      #   NODE_BUILD_OPTIONS=--max-old-space-size=4096
+      #   NODE_BUILD_OPTIONS=--max-old-space-size=8192
       NODE_OPTIONS: ${NODE_BUILD_OPTIONS:-}
       # #2352 D1: the release identifier the per-release public-website CSP nonce
       # is derived from. A BUILD arg, not a runtime env var, deliberately — the
