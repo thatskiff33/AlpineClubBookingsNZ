@@ -263,7 +263,7 @@ describe("admin query validation and pagination", () => {
       expect(response.status).toBe(200);
       expect(body.data).toHaveLength(25);
       expect(body.data.length).toBeLessThanOrEqual(body.pageSize);
-      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30 });
+      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30, totalPages: 2 });
       expect(mocks.refundRequestFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: "PENDING" },
@@ -441,7 +441,7 @@ describe("admin query validation and pagination", () => {
       expect(response.status).toBe(200);
       expect(body.applications).toHaveLength(25);
       expect(body.applications.length).toBeLessThanOrEqual(body.pageSize);
-      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30 });
+      expect(body).toMatchObject({ page: 1, pageSize: 25, total: 30, totalPages: 2 });
       expect(mocks.memberApplicationFindMany).toHaveBeenCalledWith({
         where: undefined,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
