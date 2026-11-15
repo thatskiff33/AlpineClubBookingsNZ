@@ -55,6 +55,7 @@ import {
 } from "@/lib/club-time";
 import { adminHref } from "@/lib/admin-hubs";
 import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
   formatAdminListRange,
   parseAdminListPageParam,
   setAdminListPageParam,
@@ -389,7 +390,7 @@ export default function AuditLogPage() {
   const [entityType, setEntityType] = useState(searchParams.get("entityType") || "all");
   const [search, setSearch] = useState(searchParams.get("q") || "");
   const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")));
-  const [pageSize] = useState(25);
+  const [pageSize] = useState(ADMIN_LIST_DEFAULT_PAGE_SIZE);
   const [entries, setEntries] = useState<AuditTimelineEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);

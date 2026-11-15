@@ -285,8 +285,10 @@ booking is refused with a message pointing there; settle it as described in
 
 ### Read the results table
 
-1. The toolbar shows "Showing N of M bookings found". Sort any sortable column
-   (Member, Last Updated, Stay, Guests, Total, Status) by clicking its header.
+1. The toolbar shows the count, "M bookings found"; when there is more than one
+   page, the pager below the table gives the range ("Showing 26–50 of 101").
+   Sort any sortable column (Member, Last Updated, Stay, Guests, Total,
+   Status) by clicking its header.
 2. Each row shows the member, the stay dates and nights, the guest count
    (total and how many are non-members), the price, the status chip, and the
    payment method. A **Review** chip on the Status cell links straight to the

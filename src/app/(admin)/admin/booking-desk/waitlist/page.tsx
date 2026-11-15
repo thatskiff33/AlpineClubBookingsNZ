@@ -48,6 +48,7 @@ import { useClubFormat } from "@/components/club-format-provider";
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 import { adminHref } from "@/lib/admin-hubs";
 import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
   adminListPage,
   formatAdminListRange,
   parseAdminListPageParam,
@@ -468,7 +469,7 @@ export default function AdminWaitlistPage() {
     from === "" &&
     to === "" &&
     queryPage === 1 &&
-    queryPageSize === 25;
+    queryPageSize === ADMIN_LIST_DEFAULT_PAGE_SIZE;
 
   function handlePageSizeChange(nextPageSize: string) {
     updateQuery((params) => {

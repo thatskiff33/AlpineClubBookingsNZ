@@ -4,16 +4,24 @@
  * Every officer queue route caps a read at `pageSize` rows (25 by default,
  * 100 at most). The route spreads `adminListPage(...)` into its JSON so each
  * client reads the same four keys, and the client renders the total through
- * `formatAdminListRange`. Pure: safe in route handlers and client components.
+ * `formatAdminListRange`. The audit timeline reads the same line for the
+ * member's own Account Activity list. Pure: safe in route handlers and client
+ * components.
  */
 import { z } from "zod"
 
 export const ADMIN_LIST_DEFAULT_PAGE_SIZE = 25
 export const ADMIN_LIST_MAX_PAGE_SIZE = 100
 
+/**
+ * The `page` query field alone, for a list route whose page size is its own
+ * (the Xero panels fall back to a `limit`; the audit logs cap at 50).
+ */
+export const adminListPageField = z.coerce.number().int().min(1).optional().default(1)
+
 /** The `page` / `pageSize` query fields each capped route spreads into its schema. */
 export const adminListPageQueryFields = {
-  page: z.coerce.number().int().min(1).optional().default(1),
+  page: adminListPageField,
   pageSize: z.coerce
     .number()
     .int()

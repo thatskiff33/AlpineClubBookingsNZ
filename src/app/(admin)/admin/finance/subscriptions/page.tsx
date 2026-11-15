@@ -52,6 +52,7 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { SortHeader } from "@/components/admin/sort-header";
 import { Pagination } from "@/components/admin/admin-pagination";
 import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
   adminListPage,
   formatAdminListRange,
   parseAdminListPageParam,
@@ -267,7 +268,7 @@ export default function SubscriptionsPage() {
   const [sortBy, setSortBy] = useState<SubscriptionSortBy>(() => getSortBy(searchParams.get("sortBy")));
   const [sortDir, setSortDir] = useState<SortDir>(() => getSortDir(searchParams.get("sortDir")));
   const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")));
-  const [pageSize] = useState(25);
+  const [pageSize] = useState(ADMIN_LIST_DEFAULT_PAGE_SIZE);
   const [data, setData] = useState<Subscription[]>([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
@@ -723,7 +724,7 @@ export default function SubscriptionsPage() {
         toolbar={
           loadError ? null : (
             <p>
-              Showing {data.length} of {total} subscription{total === 1 ? "" : "s"}
+              {total} subscription{total === 1 ? "" : "s"}
             </p>
           )
         }

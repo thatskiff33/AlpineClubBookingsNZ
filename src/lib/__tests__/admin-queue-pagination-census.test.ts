@@ -352,6 +352,15 @@ describe("admin lists share the page parser and range text (INV-OPS-020)", () =>
 const SHARED_PAGE_SIZE_DEFINITION =
   /\bpageSize\s*:\s*z\s*\.coerce\s*\.number\(\s*\)\s*\.int\(\s*\)\s*\.min\(\s*1\s*\)\s*\.max\(\s*100\s*\)(?:\s*\.optional\(\s*\))?\s*\.default\(\s*25\s*\)/;
 
+/**
+ * The same for `page`: a route that cannot spread the whole object (the Xero
+ * panels size their own page) takes `adminListPageField`. A list with a
+ * ceiling of its own (`.max(10_000)`, the image library) is a different rule
+ * and does not match.
+ */
+const SHARED_PAGE_DEFINITION =
+  /\bpage\s*:\s*z\s*\.coerce\s*\.number\(\s*\)\s*\.int\(\s*\)\s*\.min\(\s*1\s*\)(?:\s*\.optional\(\s*\))?\s*\.default\(\s*1\s*\)/;
+
 describe("a capped route takes its page fields from one definition (INV-OPS-020)", () => {
   const files = sourceFiles(SRC)
     .map(relative)
@@ -365,6 +374,24 @@ describe("a capped route takes its page fields from one definition (INV-OPS-020)
       return source.includes("pageSize") && SHARED_PAGE_SIZE_DEFINITION.test(stripComments(source));
     });
     expect(redeclared).toEqual([]);
+  });
+
+  it("no schema re-declares the shared page field", () => {
+    const redeclared = files.filter((file) => {
+      const source = readFileSync(path.join(ROOT, file), "utf8");
+      return source.includes("page") && SHARED_PAGE_DEFINITION.test(stripComments(source));
+    });
+    expect(redeclared).toEqual([]);
+  });
+
+  it("the shared page field is still spelled the way the check looks for it (mutation canary)", () => {
+    const helper = stripComments(readFileSync(path.join(ROOT, LIST_PAGE_HELPER), "utf8"));
+    expect(helper).toMatch(/adminListPageField\s*=\s*z\.coerce\.number\(\)\.int\(\)\.min\(1\)\.optional\(\)\.default\(1\)/);
+    expect(SHARED_PAGE_DEFINITION.test("page: z.coerce.number().int().min(1).optional().default(1),")).toBe(true);
+    expect(SHARED_PAGE_DEFINITION.test("page: z.coerce.number().int().min(1).default(1),")).toBe(true);
+    expect(SHARED_PAGE_DEFINITION.test("page: z.coerce\n    .number()\n    .int()\n    .min(1)\n    .default(1),")).toBe(true);
+    expect(SHARED_PAGE_DEFINITION.test("page: z.coerce.number().int().min(1).max(10_000).default(1),")).toBe(false);
+    expect(SHARED_PAGE_DEFINITION.test("page: adminListPageField,")).toBe(false);
   });
 
   it("the shared page size is still spelled the way the check looks for it (mutation canary)", () => {

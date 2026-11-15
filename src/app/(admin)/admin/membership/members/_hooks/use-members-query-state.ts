@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page"
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page"
 import type { Filters } from "../_types"
 import { emptyFilters, getInitialLifecycleStatus } from "../_utils"
 
@@ -22,7 +26,7 @@ export function useMembersQueryState() {
   const [search, setSearch] = useState(searchParams.get("q") || "")
   const [debouncedSearch, setDebouncedSearch] = useState(search)
   const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")))
-  const [pageSize] = useState(25)
+  const [pageSize] = useState(ADMIN_LIST_DEFAULT_PAGE_SIZE)
   const [sortBy, setSortBy] = useState(searchParams.get("sortBy") || "name")
   const [sortDir, setSortDir] = useState<"asc" | "desc">(
     (searchParams.get("sortDir") as "asc" | "desc") || "asc"

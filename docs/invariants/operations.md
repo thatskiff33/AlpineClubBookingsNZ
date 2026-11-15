@@ -492,8 +492,8 @@ rules first written here. #2765 extended it with the measured-audience half.
 
 - **A row-capped admin list shows its total and reaches every row (#4960).**
   When an admin route answers one page of a list, every screen that reads it
-  for that list shows the total ("Showing 1–25 of 40", even on a single page)
-  and a pager that reaches the last row, in the same change that adds the cap.
+  for that list has a pager that reaches the last row, and an officer queue
+  shows the total even on a single page, in the same change that adds the cap.
   A cap with no pager is silent data loss (#297).
 - One shape, one pager. A capped route parses `adminListPageQueryFields` and
   answers through `adminListPage`, both in `src/lib/admin-list-page.ts`; a

@@ -40,7 +40,12 @@ import type { XeroOperation } from "./types"
 import { useClubFormat } from "@/components/club-format-provider"
 import { XeroFailureExplanation } from "@/components/admin/xero-failure-explanation"
 import { useResolveOperation } from "./use-resolve-operation"
-import { formatAdminListRange, parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page"
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page"
 import { RawPayloads } from "./raw-payloads"
 
 export function OperationsPanel({
@@ -112,7 +117,6 @@ export function OperationsPanel({
   // #4220: set by "Show them"; see FailedViewNotice.
   const [revealedHiddenCount, setRevealedHiddenCount] = useState<number | null>(null)
   const noticeRegionRef = useRef<HTMLDivElement>(null)
-  const pageSize = 25
   const [urlSyncEnabled, setUrlSyncEnabled] = useState(hasOperationsUrlState)
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
   const [markingNonReplayableOperationId, setMarkingNonReplayableOperationId] = useState<string | null>(null)
@@ -227,7 +231,7 @@ export function OperationsPanel({
         failureState: failureStateFilter,
         resourceId: resourceIdFilter,
         page: String(page),
-        pageSize: String(pageSize),
+        pageSize: String(ADMIN_LIST_DEFAULT_PAGE_SIZE),
       })
       if (createdFrom) params.set("createdFrom", createdFrom)
       if (createdTo) params.set("createdTo", createdTo)
@@ -510,14 +514,14 @@ export function OperationsPanel({
             ))}
           </div>
         )}
-        {total > pageSize ? (
+        {total > ADMIN_LIST_DEFAULT_PAGE_SIZE ? (
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              {formatAdminListRange({ page, pageSize, total })}
+              {formatAdminListRange({ page, pageSize: ADMIN_LIST_DEFAULT_PAGE_SIZE, total })}
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value - 1) }}>Previous</Button>
-              <Button variant="outline" size="sm" disabled={page * pageSize >= total} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value + 1) }}>Next</Button>
+              <Button variant="outline" size="sm" disabled={page * ADMIN_LIST_DEFAULT_PAGE_SIZE >= total} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value + 1) }}>Next</Button>
             </div>
           </div>
         ) : null}

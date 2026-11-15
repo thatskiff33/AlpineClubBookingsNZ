@@ -627,10 +627,7 @@ export default async function AdminBookingsPage({
             aria-label="Bookings"
             className="min-w-[56rem]"
             toolbar={
-              <p>
-                Showing {bookings.length} of {total} bookings found
-                {totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""}
-              </p>
+              <p>{total} bookings found</p>
             }
           >
             <TableHeader>
