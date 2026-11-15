@@ -174,11 +174,12 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   },
   {
     flag: "skifieldConditions",
-    prefixes: [
-      "/api/admin/mountain-conditions",
-      "/api/skifield-whakapapa",
-      "/api/skifield-conditions",
-    ],
+    prefixes: ["/api/skifield-conditions"],
+  },
+  {
+    // The Whakapapa-specific report and its admin cache (#4932).
+    flag: "skifieldWhakapapa",
+    prefixes: ["/api/admin/mountain-conditions", "/api/skifield-whakapapa"],
   },
   {
     // Deliberately OUTSIDE /lodge and /api/lodge: those prefixes are gated by

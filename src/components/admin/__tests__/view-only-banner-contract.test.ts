@@ -425,8 +425,9 @@ const FIGURES = {
    * bank refund note. MEASURED by re-running this census.
    */
   // 15 Nov 2026, #4971: 391 -> 396 after merging main (#4618, #5081). Setup gates its five support write controls. MEASURED by running this census.
-  // 396 -> 398 (fork #121, upstream PR #5143): the Food Orders settings card's Edit and Save, under its own banner. MEASURED.
-  callSites: 398, // 390 -> 391 (#4618): the officer two-factor card's Edit/Save under its own banner. MEASURED. // 388 -> 390 (#4918): Where members' data is held adds Edit and Save under its own banner. MEASURED. // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
+  // 396 -> 401 (#4496): the Subscription Categories page's five controls, under its own banner. MEASURED by running this census on the merged tree.
+  // 401 -> 403 (fork #121, upstream PR #5143): the Food Orders settings card's Edit and Save, under its own banner. MEASURED.
+  callSites: 403, // 390 -> 391 (#4618): the officer two-factor card's Edit/Save under its own banner. MEASURED. // 388 -> 390 (#4918): Where members' data is held adds Edit and Save under its own banner. MEASURED. // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -484,8 +485,9 @@ const FIGURES = {
   // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
   // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
   // 15 Nov 2026, #4971: 336 -> 341 after merging main (#4618, #5081). The five Setup controls use their support section banner. MEASURED by running this census.
-  // 341 -> 343 (fork #121, upstream PR #5143): the Food Orders card's two, static opt-outs. MEASURED.
-  optOuts: 343, // 335 -> 336 (#4618): the officer two-factor card's own banner opt-out. MEASURED. // 333 -> 335 (#4918): the same two, static opt-outs. MEASURED. // 331 -> 333 (#4368): the same two, static opt-outs. MEASURED. // #4457 adds two section-banner opt-outs. 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
+  // 346 -> 348 (fork #121, upstream PR #5143): the Food Orders card's two, static opt-outs. MEASURED.
+  // 341 -> 346 (#4496): the same five, static opt-outs. MEASURED.
+  optOuts: 348, // 335 -> 336 (#4618): the officer two-factor card's own banner opt-out. MEASURED. // 333 -> 335 (#4918): the same two, static opt-outs. MEASURED. // 331 -> 333 (#4368): the same two, static opt-outs. MEASURED. // #4457 adds two section-banner opt-outs. 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
   /**
    * `describeReason={false}` — needs a banner in the SAME file.
    *
@@ -577,8 +579,9 @@ const FIGURES = {
    * notes panel's own banner. MEASURED by re-running this census.
    */
   // 15 Nov 2026, #4971: 296 -> 301 after merging main (#4618, #5081). The Setup controls and support banner share one file. MEASURED by running this census.
-  // 301 -> 303 (fork #121, upstream PR #5143): the Food Orders settings card's Edit and Save. MEASURED.
-  staticOptOuts: 303, // 298 -> 296 (#5081): the Lodge properties card's Edit and (De)activate moved to their own file and are render-site vouched by the Lodges page. MEASURED. // 297 -> 298 (#4618): the officer two-factor card, under its own banner. MEASURED. // 295 -> 297 (#4918): Where members' data is held's Edit and Save, under its own banner. MEASURED. // 293 -> 295 (#4368): the dead card refund panel's "Try the card again" and "Nothing left owed", under its own banner. MEASURED. // 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. MEASURED. // #4457 adds two local-banner opt-outs. 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
+  // 306 -> 308 (fork #121, upstream PR #5143): the Food Orders settings card's Edit and Save. MEASURED.
+  // 301 -> 306 (#4496): the same five, beside the page's own banner. MEASURED.
+  staticOptOuts: 308, // 298 -> 296 (#5081): the Lodge properties card's Edit and (De)activate moved to their own file and are render-site vouched by the Lodges page. MEASURED. // 297 -> 298 (#4618): the officer two-factor card, under its own banner. MEASURED. // 295 -> 297 (#4918): Where members' data is held's Edit and Save, under its own banner. MEASURED. // 293 -> 295 (#4368): the dead card refund panel's "Try the card again" and "Nothing left owed", under its own banner. MEASURED. // 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. MEASURED. // #4457 adds two local-banner opt-outs. 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -674,8 +677,9 @@ const FIGURES = {
    * finance-gated inside a support page for the same reason.
    */
   // 15 Nov 2026, #4971: 107 -> 108 after merging main (#4618). Setup adds its support section banner; the lodge card keeps its own. MEASURED by running this census.
-  // 108 -> 109 (fork #121, upstream PR #5143): the Food Orders settings card renders its own banner. MEASURED.
-  bannerComponents: 109, // 106 -> 107 (#4618): the officer two-factor card on Login & Security, banner and all. MEASURED. // 105 -> 106 (#4918): the privacy hosting panel renders its own banner. MEASURED. // 104 -> 105 (#4368): "Card refunds paid back twice" moved out of the dead card refund panel into its own file, banner and all. MEASURED. // #4457 adds the retention banner alongside #4555’s Xero banners. 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
+  // 108 -> 109 (#4496): the Subscription Categories page renders its own banner. MEASURED.
+  // 109 -> 110 (fork #121, upstream PR #5143): the Food Orders settings card renders its own banner. MEASURED.
+  bannerComponents: 110, // 106 -> 107 (#4618): the officer two-factor card on Login & Security, banner and all. MEASURED. // 105 -> 106 (#4918): the privacy hosting panel renders its own banner. MEASURED. // 104 -> 105 (#4368): "Card refunds paid back twice" moved out of the dead card refund panel into its own file, banner and all. MEASURED. // #4457 adds the retention banner alongside #4555’s Xero banners. 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older
