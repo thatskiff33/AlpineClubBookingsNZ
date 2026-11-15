@@ -1259,12 +1259,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **107 components render a banner, and
- 336 of the 391 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **108 components render a banner, and
+ 341 of the 396 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 336 split by WHICH rule
-covers them: **296** pass the literal
+test currently pins, which is the only authority.) Those 341 split by WHICH rule
+covers them: **301** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **40**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
@@ -1324,6 +1324,13 @@ default** (`describeReason` left at `true`), in three shapes:
   dead buttons. Any second banner for the finance scope would break the owner's
   one-banner-per-page decision and trip the nesting rule, so the per-button
   reason stays. Bucket by SCOPE, not by folder, when reading this figure.
+
+The Setup Wizard gates checklist progress, provider tests and completion on
+`support` edit access (#4971). Its support banner stays mounted through loading
+and errors. The embedded `LodgeCapacityCard` keeps its own `lodge` edit banner:
+support edit access does not grant lodge edit access, or the reverse. The
+banner census checks this specific cross-area pair separately from duplicate
+banners covering the same permission.
 
 Every figure in this section is asserted mechanically by
 `src/components/admin/__tests__/view-only-banner-contract.test.ts` — the totals,
@@ -1936,6 +1943,23 @@ disappear as their fields are fixed, so nothing is announced while the person
 types. The first form on the layer is the committee page's role form, a
 submit-style form rather than a staged section; no staged section uses the
 layer yet.
+
+**A row-capped admin list shows its total and reaches every row
+(`INV-OPS-020`, #4960).** An admin route that answers one page of a list
+answers through `adminListPage` (`src/lib/admin-list-page.ts`), and every
+screen that reads it for that list pages through `useAdminQueuePage`
+(`src/components/admin/use-admin-queue-page.ts`) and renders the shared
+`Pagination` with its "Showing 1–25 of 40" total line, shown even on a single
+page. The eight officer queues — member applications, refund appeals, booking
+approvals, change requests, public requests, policy exceptions, and the
+membership cancellation and archive queues — do so today: pending filters read
+oldest first, a filter change returns to page 1, the page is kept in the URL,
+a slower read for a page the officer has left never replaces the list, the
+pager stays mounted through a read so keyboard focus survives a page change,
+and a focused `bookingId=` / `requestId=` link pins its record when it is off
+the page. The policy exceptions queue merges two tables, so it counts each
+and reads each only to the end of the page asked for: its total is exact. `admin-queue-pagination-census.test.ts` fails a client file that
+reads a capped queue route without the hook and the pager.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same
