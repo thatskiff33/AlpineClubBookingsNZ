@@ -275,10 +275,10 @@ data-migration suites with the same no-skip check (its header has the rule).
 `typecheck` runs `scripts/ci/sekreton-typecheck.sh` (production project only,
 skipped under 6 GiB); PR CI keeps the rest.
 `fast-censuses` (`pnpm run ci:fast-censuses`) and `migrations` first run
-[`sekreton-fetch-main.sh`](../../scripts/ci/sekreton-fetch-main.sh): refresh
-`origin/main` from `origin`, else `gh`, else the local `main`; fetch errors
-fail.
-`realdb-all` remains advisory; cite its result before PR readiness.
+`sekreton-prepare-base.sh`: fetch `origin` (failure fails), or without one use
+local `main`.
+The `realdb-all` job on GitHub remains advisory, so cite its actual result
+separately before making the PR ready.
 
 ## Checking `main` after a merge
 

@@ -21,6 +21,8 @@ import {
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import { fixedClubClock } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
+import { clubDownloadFilename } from "@/lib/club-download-filename";
+import { getClubIdentity } from "@/lib/club-identity-settings";
 import { formatDateOnly } from "@/lib/date-only";
 import { escapeCsvCell } from "@/lib/csv";
 import { isDeletedAccountRecord, notDeletedAccountWhere } from "@/lib/deleted-account";
@@ -532,11 +534,16 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    const filename = clubDownloadFilename(
+      (await getClubIdentity()).shortName,
+      `members-${today}`,
+      "csv",
+    );
     return new Response(csv, {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="tac-members-${today}.csv"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
   } catch (error) {
