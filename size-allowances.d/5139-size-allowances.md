@@ -9,14 +9,6 @@ reason: the page reads and writes its URL page through the shared parser and
   Splitting a 1000-line route page shell is a refactor of its own, not part of
   this change.
 
-file: src/app/(admin)/admin/finance/payments/page.tsx
-lines: 1503
-reason: the page drops its local page parser and range arithmetic for the
-  shared helpers, but the five-name import of those helpers (the default page
-  size included) adds two lines more than the removed code (+2 net). Splitting
-  a 1500-line route page shell is a refactor of its own, not part of this
-  change.
-
 file: src/app/(admin)/admin/finance/subscriptions/page.tsx
 lines: 893
 reason: the page drops its local page parser and range arithmetic for the
