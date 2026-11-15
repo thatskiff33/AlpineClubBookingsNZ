@@ -21,10 +21,7 @@ import {
   usePolicyScopeOptions,
 } from "./policy-scope-select"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import {
-  ForbiddenSaveError,
-  useSectionEditState,
-} from "@/hooks/use-section-edit-state"
+import { ForbiddenSaveError, useSectionEditState } from "@/hooks/use-section-edit-state"
 import { ApiRefusalError, apiRefusalFromResponse } from "@/lib/api-error-message"
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,

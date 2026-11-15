@@ -171,6 +171,8 @@ const SAVE_STEP_READ_FAILED =
 const SAVE_SUCCESS = "Booking request settings saved"
 const LOAD_FAILED = "Failed to fetch booking request settings"
 const SAVE_FAILED = "Failed to save"
+/** What a card shows when a failure carries no sentence of its own (#4976). */
+const FAILURE_FALLBACKS = { loadErrorFallback: LOAD_FAILED, saveErrorFallback: SAVE_FAILED }
 
 /**
  * The section's only read, in both of its roles: the mount-time load, and the
@@ -331,8 +333,7 @@ export function PublicBookingRequestsSection() {
       return { showPricingToNonMembers: next.showPricingToNonMembers }
     },
     successMessage: SAVE_SUCCESS,
-    loadErrorFallback: LOAD_FAILED,
-    saveErrorFallback: SAVE_FAILED,
+    ...FAILURE_FALLBACKS,
     // No first-save exception on any of the three cards, even though the GET
     // SYNTHESISES defaults when no row is stored (`getBookingRequestSettings`).
     // The exception exists so a form whose defaults are already correct can
@@ -378,8 +379,7 @@ export function PublicBookingRequestsSection() {
       return toQuoteTimingDraft(await putSettings(body))
     },
     successMessage: SAVE_SUCCESS,
-    loadErrorFallback: LOAD_FAILED,
-    saveErrorFallback: SAVE_FAILED,
+    ...FAILURE_FALLBACKS,
     isDirty: isTimingDirty,
   })
 
@@ -395,8 +395,7 @@ export function PublicBookingRequestsSection() {
       )
     },
     successMessage: SAVE_SUCCESS,
-    loadErrorFallback: LOAD_FAILED,
-    saveErrorFallback: SAVE_FAILED,
+    ...FAILURE_FALLBACKS,
     isDirty: isTimingDirty,
   })
 
