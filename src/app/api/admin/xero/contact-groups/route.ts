@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import {
   getXeroContactGroupCacheLastRefreshedAt,
   getXeroContactGroups,
-} from "@/lib/xero";
+} from "@/lib/xero-contact-groups";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
 

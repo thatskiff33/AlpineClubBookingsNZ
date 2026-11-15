@@ -70,8 +70,8 @@ import {
 import {
   attachMergeDietaryRequirements,
   isDietaryFieldEnabled,
-  redactDietaryMergeRow,
 } from "@/lib/member-dietary";
+import { redactDietaryMergeRow } from "@/lib/member-dietary-field";
 
 /**
  * E11 (#1937) — additive, master-wins member profile merge.

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
 import { queueOrganiserExtraForChange } from "@/lib/organiser-extra-invoice-queue";
 const enqueue = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueOrganiserExtraInvoiceInTransaction: enqueue }));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({ enqueueOrganiserExtraInvoiceInTransaction: enqueue }));
 const tx = {} as Prisma.TransactionClient;
 const booking = { id: "child", organiserSettled: true, parentBookingId: "parent", payment: { source: "INTERNET_BANKING" } };
 const change = { id: "change", memberId: "actor", priceDiffCents: 5000, changeFeeCents: 1000 };

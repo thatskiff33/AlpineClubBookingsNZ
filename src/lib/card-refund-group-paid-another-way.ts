@@ -58,7 +58,7 @@ import {
   finishRecordedOrganiserChildRefund,
   recordOrganiserChildRefundInTransaction,
 } from "@/lib/organiser-child-refund-executor";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
   groupSettlementIdForRefundRecoveryKey,
   isGroupSettlementRefundRecoveryKey,

@@ -186,6 +186,19 @@ and the next **Mark Departed** records their next check-out. If the return
 arrival is never recorded, the card still reads **Departed** on the following
 departure morning: tap it once to clear that, and again to record the departure.
 
+Each tap says what the hut leader wants, not "switch it" (#4965). **Mark
+Arrived** asks for "arrived" and the green **Arrived** label asks for "not
+arrived", so a deliberate tap on a done label still undoes it — but tapping
+twice because nothing seemed to happen no longer does. While a request is on
+its way the button reads **Saving…** and cannot be pressed; the rest of the list
+stays usable. If the lodge Wi-Fi resends a tap, the server sees the guest is
+already in that state and records nothing, so no misleading "cleared" entry
+lands in the audit log. Chore ticks show the same **Saving…** state.
+
+If a check-in, check-out or chore tick fails, the message appears in red right
+under that guest or chore and stays until the hut leader taps **Dismiss** or
+that row's next tap succeeds. Screen readers announce it.
+
 Checking someone out clears the **suggested** chores they can no longer do —
 only up to the next night they are booked in for. Chores rostered for a later
 part of the same stay are left alone, and any chore already **confirmed** is
@@ -320,6 +333,7 @@ whom.
 | "Lodge account not found. Run the database seed to create it." | The kiosk account row is missing | Seed the database, or create the account (multi-lodge) |
 | A kiosk account is flagged **Ambiguous** | It has staff access at more than one lodge | Set **Operates lodge** to a single lodge and save |
 | A kiosk falls back to the wrong lodge | The account is not bound to a lodge | Bind it to its lodge under **Operates lodge** (multi-lodge) |
+| A red "Failed to update arrival" (or departure, or chore) stays under a row | The kiosk did not get a confirmed answer, so the screen may not match what was saved (a tap can reach the server and its reply be lost on poor Wi-Fi) | Tap the button again once the Wi-Fi is back. A repeat is safe: if the first tap was saved, the second changes nothing and the row catches up. The message clears when it succeeds. If it keeps failing, reload the day |
 | **Mark Arrived** answers "this guest is not booked in for this night" | The page has been open since an earlier night, so its buttons are stale | Reload the day. The guest's booking has a gap over the night on screen — they went home — and the refreshed list shows who is actually staying |
 | The kiosk tablet asks for its password again | It went more than 30 days without the kiosk page being opened, or the account it is signed in with is not the kiosk account (it holds a role besides **User** and **Lodge**, so it gets 8 hours) | Sign in again with the kiosk account's details from **Lodge Account Settings**. If it keeps happening overnight, check that account's **User Type** is "Lodge (kiosk account)" |
 | The kiosk tablet's clock or time zone is set wrong | The device clock is separate from the club's calendar | Nothing to change for the kiosk: it takes "today" from the club's New Zealand day, so the week strip, the **Today** button and the night it opens on stay correct — and a kiosk left sitting on the week strip rolls onto the new day at the club's midnight without a reload (an open day list stays put; press **Today**). Fix the device clock only if people read the time off the tablet itself |
