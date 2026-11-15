@@ -672,11 +672,11 @@ Generate unique secrets:
 openssl rand -base64 48   # AUTH_SECRET and NEXTAUTH_SECRET
 openssl rand -base64 24   # CRON_SECRET
 openssl rand -base64 24   # DB_PASSWORD
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+openssl rand -base64 32   # one DATA_ENCRYPTION_KEYS entry, written as <id>:<value>
 ```
 
-The Node command produces a 64-character hex key suitable for Xero token
-encryption variables.
+Read [Data-encryption keys](CONFIGURATION.md#data-encryption-keys-4456) before
+setting `DATA_ENCRYPTION_KEYS`.
 
 Minimum production categories:
 
@@ -702,8 +702,10 @@ Minimum production categories:
 - Auth: `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `AUTH_TRUST_HOST`
 - Public app: `DOMAIN`.
   `DOMAIN` is the root public host consumed by `Caddyfile` through the
-  `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, and `dashboard`
-  subdomains from that value.
+  `{$DOMAIN}` placeholder. Caddy also serves `www.<DOMAIN>` by default, and
+  `bookings.<DOMAIN>` and `dashboard.<DOMAIN>` only when
+  `CADDY_LEGACY_ROUTES=on`; see "Hostnames and DNS records" below for the
+  records each needs.
 - Modules: optional modules are database-backed in `ClubModuleSettings` and
   controlled from Admin > Modules after first login. No `FEATURE_*`
   environment variables are supported or read by the app.
@@ -844,18 +846,34 @@ Caddy binds privileged ports 80/443 and needs `NET_BIND_SERVICE`.
 
 ## First Bootstrap
 
+Install a **release**, not `main`. `main` is the development branch: what it
+holds on the day you clone has not been through a release, and it has no
+version name to report a bug against or roll back to. Releases are listed on
+the repository's GitHub **Releases** page.
+
 Use these steps for a **new, empty installation**. They set a separate encryption
 key and restrict the application's database rights before anyone saves a
 credential. Existing deployments instead use [Switching a deployment over](#switching-a-deployment-over-bluegreen)
 and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
 
-1. **Copy the configuration** on the target host:
+1. **Check out the latest release and copy the configuration** on the target
+   host:
 
    ```bash
    git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
    cd AlpineClubBookingsNZ
+   git fetch --tags
+   git checkout -B main "$(git describe --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' origin/main)"
+   git describe --exact-match   # prints the release you are on, e.g. v0.13.2
    cp .env.example .env
    ```
+
+   The `git checkout` line finds the newest release tag on `main` and holds this
+   checkout's `main` branch at it. The deploy script expects the host checkout to
+   be on a branch called `main`, so the branch name stays and only the commit is
+   the release. If `git describe --exact-match` prints an error instead of a
+   version, you are not on a release: check the Releases page and run
+   `git checkout -B main <tag>` with the tag shown there.
 
 2. **Generate the secrets and edit `.env`** with your club's values. Generate a
    separate data key with `openssl rand -base64 32` and set
@@ -947,9 +965,11 @@ admin and complete configuration at `/admin/setup` (identity, lodges/capacity,
 seasons/rates, email, Stripe, Xero). Optionally run `pnpm run setup:wizard`
 against the migrated database to bootstrap the club identity, capacity, and age
 tiers from the CLI — it writes those database settings rows (no `config/club.json`
-is written). `config/club.json` remains an optional seed/fallback only: copy
-`config/club.example.json` to `config/club.json` and edit it if you want to pin
-a boot-time fallback, but it is no longer required.
+is written). `config/club.json` remains an optional seed/fallback only, and only
+a process run from the checkout reads it (a host-run seed, or the app run
+outside Docker). The Docker app container has no `config/` folder, so editing
+the file on a Docker host changes nothing there. Copy `config/club.example.json`
+to `config/club.json` and edit it only for those cases; it is no longer required.
 
 Create or seed accounts only for the intended environment. The first admin
 from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
@@ -969,11 +989,17 @@ The supported AlpineClubBookingsNZ deploy path is:
 ./scripts/run-production-blue-green-deploy.sh
 ```
 
-The script snapshots the resolved `origin/main` commit into a clean deployment
-workspace, selects the matching GHCR image tags, copies the environment file,
-preserves Caddy upstream state, then re-enters itself with
-`--internal-blue-green-deploy` to run the blue/green deployment engine before it
-fast-forwards the clean checkout after success.
+The script snapshots the resolved commit (`origin/main` unless `DEPLOY_REF`
+names another) into a clean deployment workspace, selects the matching GHCR
+image tags, copies the environment file, preserves Caddy upstream state, then
+re-enters itself with `--internal-blue-green-deploy` to run the blue/green
+deployment engine before it fast-forwards the clean checkout after success.
+
+Since #4978 it refuses a commit that is not a published release, so the plain
+command above works only while `origin/main` is itself a tagged release. To
+deploy a release, name it — see [Cut the release first](#cut-the-release-first-4465)
+— and to deploy anything else, record why — see
+[The deploy refuses a commit that is not a release](#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
 
 For a fork, set `GHCR_APP_IMAGE_REPOSITORY` and
 `GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults —
@@ -989,7 +1015,9 @@ shell environment; the `.env` route survives it.
 
 Every production deploy runs a tagged release, so adopting clubs and forks can
 tell which `main` commit is a known-good release, and a rollback has a version
-to name. Before the deploy, cut the release with `pnpm run release:cut`
+to name. The deploy script enforces this (#4978): it refuses a commit no
+release tag points at unless you record a reason. Before the deploy, cut the
+release with `pnpm run release:cut`
 ([`scripts/release/cut-release.mjs`](scripts/release/cut-release.mjs)) — the
 full order, its refusals and its recovery messages are in
 [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md#public-reference-release-checklist),
@@ -1045,14 +1073,69 @@ at all, the deploy does not refuse on that ground: it warns that it could not
 confirm, says the local refs may be stale, and continues. An outage is not a
 reason to block a deploy whose commit really is pushed.
 
+### The deploy refuses a commit that is not a release (#4978)
+
+Straight after the published-commit check, and before any image is resolved,
+pulled or built and before any workspace or migration, the wrapper asks
+`origin` which release tags point at the commit it resolved. It does this in
+both modes, so `--build-and-push-images` will not build images for an untagged
+commit either. It passes only when an **annotated** tag named like `v0.13.2`,
+**on `origin`**, points at that exact commit, which is exactly what
+`pnpm run release:cut publish` creates. It refuses:
+
+- a commit no tag points at, which is what plain `origin/main` is between
+  releases;
+- a lightweight tag (`git tag v1.2.3` without `-a`);
+- a tag that exists only in the deploy host's clone and was never pushed;
+- a tag with another name pattern, such as `v1.2.3-rc1`.
+
+If `origin` cannot be reached at all, the deploy **refuses**. This is the
+opposite of the published-commit check above, on purpose: that check can fall
+back on remote-tracking refs, but the only local answer here is a local tag,
+which is exactly what this check does not trust. Use the override during an
+outage.
+
+The override takes a flag and a written reason, like the one above:
+
+```bash
+ALLOW_UNTAGGED_DEPLOY_COMMIT=1 \
+UNTAGGED_DEPLOY_COMMIT_REASON="hotfix for a failed payment webhook; release follows" \
+  ./scripts/run-production-blue-green-deploy.sh
+```
+
+The flag on its own is refused. With a reason, the deploy carries on and prints
+a warning with the reason in the deploy log on the host. Cut and deploy a
+release as soon as the reason no longer holds.
+
+A staging host that deploys `main` on purpose runs the same command with a
+standing reason:
+
+```bash
+ALLOW_UNTAGGED_DEPLOY_COMMIT=1 \
+UNTAGGED_DEPLOY_COMMIT_REASON="staging: rehearsing main before the next release" \
+  ./scripts/run-production-blue-green-deploy.sh
+```
+
+Both variables are read from the shell only, not from `.env`, and `sudo`
+strips the shell environment. If you run the script under `sudo`, pass them
+through explicitly, for example
+`sudo ALLOW_UNTAGGED_DEPLOY_COMMIT=1 UNTAGGED_DEPLOY_COMMIT_REASON="..." ./scripts/run-production-blue-green-deploy.sh`.
+
+A fork that does not tag its own releases needs the override on every deploy.
+The better fix is to tag releases in the fork with `pnpm run release:cut`; see
+[`docs/UPGRADING.md`](docs/UPGRADING.md#principles).
+
 ### Building the images on the host (#3539)
 
 When CI cannot build the images — a depleted Actions budget, a registry you
 cannot reach from CI — build them on the deploy host with the supported mode
-rather than by hand:
+rather than by hand. Build the release you are about to deploy, not whatever
+`origin/main` is, because the deploy refuses a commit that is not a release
+(see [the release-tag refusal](#the-deploy-refuses-a-commit-that-is-not-a-release-4978)):
 
 ```bash
-./scripts/run-production-blue-green-deploy.sh --build-and-push-images
+git fetch origin tag v0.14.0
+DEPLOY_REF=v0.14.0 ./scripts/run-production-blue-green-deploy.sh --build-and-push-images
 ```
 
 **This mode pushes, so the host needs a GHCR token with `write:packages`** —
@@ -1076,10 +1159,12 @@ gate can no longer confirm it warmed the release being deployed (it warns
 instead), and the public website's per-release CSP nonce falls back to a
 per-build seed.
 
-Then deploy the pushed tags normally:
+Then deploy the same commit. The build prints the exact command, with
+`DEPLOY_REF` set to the commit it built; deploying the release tag is the same
+thing:
 
 ```bash
-./scripts/run-production-blue-green-deploy.sh
+DEPLOY_REF=v0.14.0 ./scripts/run-production-blue-green-deploy.sh
 ```
 
 ### A failed deploy leaves a record (#3539)
@@ -1172,6 +1257,38 @@ Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
 peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
 trusted proxy forwarded — see "Client IPs behind the proxy" below.
 
+### Hostnames and DNS records
+
+Caddy requests a certificate for every hostname the Caddyfile serves, so each
+one needs a DNS record (an `A` record, or a `CNAME` to `<DOMAIN>`) pointing at
+this host. A hostname with no record is not harmless: Caddy fails to obtain
+its certificate and logs the failure again on every retry. Which hostnames are
+served is set in `.env`, never by editing the Caddyfile:
+
+| Hostname | Served when | DNS record needed |
+| --- | --- | --- |
+| `<DOMAIN>` | always | yes |
+| `www.<DOMAIN>` | `CADDY_WWW_REDIRECT=on` (the default); redirects to `<DOMAIN>` | yes, or set `CADDY_WWW_REDIRECT=off` |
+| `bookings.<DOMAIN>`, `dashboard.<DOMAIN>` | `CADDY_LEGACY_ROUTES=on` only (default `off`) | only when on |
+| `MEET_HOST` | always (the MiroTalk video-meeting host) | only if the club uses MiroTalk |
+
+`CADDY_LEGACY_ROUTES=on` exists for an installation that still runs a legacy
+finance dashboard of its own. Besides the two hostnames it adds a
+`/finance-legacy*` route on `<DOMAIN>`: the app checks the user first (an
+active finance viewer past two-factor), then Caddy forwards the request to
+`CADDY_FINANCE_LEGACY_UPSTREAM`, the dashboard's `host:port` as the Caddy
+container reaches it. That setting has no default; the step-3 preflight
+refuses `on` without it, refuses anything that is not one `host:port` (a
+hostname or IPv4 address, then a port; give an IPv6-only dashboard a hostname),
+and refuses either switch set to anything but `on` or `off`. A club that never ran
+such a dashboard leaves both settings unset.
+
+**Upgrading from 0.13.2 or earlier:** those releases served the
+`/finance-legacy*` route (to a fixed private address) and the `bookings.` and
+`dashboard.` hosts unconditionally. An installation that relied on them must
+set `CADDY_LEGACY_ROUTES=on` and `CADDY_FINANCE_LEGACY_UPSTREAM` in `.env`
+before deploying this release, or the route and hosts disappear.
+
 ### Behind a TLS-terminating proxy: `CADDY_TLS_MODE=local`
 
 The shipped `Caddyfile` assumes Caddy is the public edge: `{$DOMAIN}` is an
@@ -1235,9 +1352,11 @@ skips the step-3 and step-4 checks, so a mistyped or missing value stops Caddy
 instead of the deploy: an unset `CADDY_TRUSTED_PROXIES` reaches Caddy as a
 placeholder it rejects.
 
-Do **not** edit `Caddyfile` on the host for this: the deploy refuses a dirty
-checkout, and the workspace it builds is a clean `git archive` that would drop
-the edit on the next release.
+Do **not** edit `Caddyfile` on the host for this, or for any other per-club
+choice: the deploy refuses a dirty checkout, and the workspace it builds is a
+clean `git archive` that would drop the edit on the next release. Every part
+of the edge that differs between clubs is a `.env` setting instead — this one,
+and the hostnames under "Hostnames and DNS records" below.
 
 #### Client IPs behind the proxy
 
@@ -1914,12 +2033,14 @@ Configure webhook endpoints for the deployed domain:
 - Xero: `/api/webhooks/xero`
 - SES SNS: `/api/webhooks/ses-sns`
 
-Stripe and SES webhook secrets are env-configured (`STRIPE_WEBHOOK_SECRET`,
-`SES_SNS_TOPIC_ARN`); rotate them if exposed. The **Xero** webhook key is **not**
-an env var since #2079 — it is captured in-app (Admin > Integrations) and stored
-encrypted, and the `/api/webhooks/xero` route resolves it from there and stays
-**fail-closed** (a missing/unreadable key rejects every delivery, it never
-accepts).
+The SES SNS topic is env-configured (`SES_SNS_TOPIC_ARN`). The **Stripe**
+webhook signing secret is captured in-app (Admin > Integrations > Stripe) and
+stored encrypted; the `STRIPE_WEBHOOK_SECRET` env var is ignored. The **Xero**
+webhook key is **not** an env var since #2079 — it is captured in-app
+(Admin > Integrations) and stored encrypted, and the `/api/webhooks/xero` route
+resolves it from there and stays **fail-closed** (a missing/unreadable key
+rejects every delivery, it never accepts). Rotate the Stripe signing secret and
+the Xero key if either is exposed.
 
 The guided setup wizard (**Admin → Xero → Setup**, step 4 "Webhooks", #2081)
 shows the exact delivery URL to paste into Xero, captures the webhook signing

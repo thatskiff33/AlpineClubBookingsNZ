@@ -186,8 +186,8 @@ const SENSITIVE_JSON_KEY_FRAGMENTS = new Set([
   // the exact key "password" never matched `passwordHash`, and `totpSecret`
   // matched nothing at all, so the LOG redactor was strictly weaker than the
   // audit writer — the opposite of what any reader would assume, and reachable
-  // (`api/admin/members/import` puts `row.passwordHash` in a request body,
-  // which Sentry captures as `event.request.data`). Fragments, matching
+  // (any route body carrying a `passwordHash` key reaches Sentry as
+  // `event.request.data`). Fragments, matching
   // `audit.ts`'s `includes("password")` / `includes("secret")`, so a hash, a
   // confirmation field or a TOTP seed cannot be missed on a spelling. The named
   // one-off tokens below have no shared fragment; `token` itself is NOT a
