@@ -117,6 +117,11 @@ const JAVASCRIPT_VITEST_TESTS = [
   // #4452: `lanes:stale` is a read-only `.mjs` tool run with bare node; its
   // suite stays JavaScript like the other script suites here.
   "scripts/lanes-stale.test.mjs",
+  // ALP-586: pins that the `.mjs` release tool and the `.mjs` docs link check
+  // share one heading-anchor rule. It imports both bare-node tools, whose export
+  // surfaces (cut-release.mjs alone has 17) other lanes change, so it stays
+  // JavaScript beside their suites rather than needing a declaration for each.
+  "scripts/lib/github-heading-anchor.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
   // #4465: `release:cut` drives the `.mjs` compiler under bare node, so its
   // suite stays JavaScript beside the compiler's.
