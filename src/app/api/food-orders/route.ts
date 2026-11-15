@@ -27,6 +27,7 @@ import { foodOfficerEmail, loadFoodOrderSettings } from "@/lib/food-order-settin
 import { createFoodOrder } from "@/lib/food-orders";
 import logger from "@/lib/logger";
 import {
+  filterLodgesByEligibility,
   getEligibleLodgeIdsForMember,
   isMemberEligibleToBookLodge,
 } from "@/lib/lodge-access";
@@ -92,10 +93,7 @@ export async function GET() {
   // A member restricted to some lodges for booking orders food only for those
   // (owner answer on PR #5143, question 6): the same rule, and the same
   // helper, as every other lodge-scoped member surface.
-  const allowedLodgeIds = new Set(access.allLodges ? [] : access.lodgeIds);
-  const lodges = access.allLodges
-    ? activeLodges
-    : activeLodges.filter((lodge) => allowedLodgeIds.has(lodge.id));
+  const lodges = filterLodgesByEligibility(access, activeLodges);
 
   return NextResponse.json({
     // Whether there is anybody to send an order to. The address itself is not
