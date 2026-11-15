@@ -1,8 +1,8 @@
 import { createAuditLog } from "@/lib/audit";
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import { prisma } from "@/lib/prisma";
 
 const EMAIL_FAILURE_REVIEW_ACTION = "email.failure.reviewed";
-const EMAIL_FAILURE_MAX_ATTEMPTS = 3;
 const MAX_EXHAUSTED_FAILURE_SCAN = 200;
 
 export class EmailFailureReviewError extends Error {
@@ -53,7 +53,7 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
     where: {
       status: "FAILED",
       attempts: {
-        gte: EMAIL_FAILURE_MAX_ATTEMPTS,
+        gte: EMAIL_RETRY_MAX_ATTEMPTS,
       },
     },
     orderBy: [
@@ -127,7 +127,7 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
       activeCount: active.length,
       reviewedCount: reviewed.length,
       scannedCount: decorated.length,
-      maxAttempts: EMAIL_FAILURE_MAX_ATTEMPTS,
+      maxAttempts: EMAIL_RETRY_MAX_ATTEMPTS,
     },
     failures: active.slice(0, boundedLimit),
     recentlyReviewed: reviewed.slice(0, 10),
@@ -162,7 +162,7 @@ export async function markExhaustedEmailFailureReviewed(
 
   if (
     emailLog.status !== "FAILED" ||
-    emailLog.attempts < EMAIL_FAILURE_MAX_ATTEMPTS
+    emailLog.attempts < EMAIL_RETRY_MAX_ATTEMPTS
   ) {
     throw new EmailFailureReviewError(
       "Only exhausted failed email records can be archived from this recovery queue.",
