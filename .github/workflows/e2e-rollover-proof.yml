@@ -100,6 +100,10 @@ jobs:
       STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
       STRIPE_TEST_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
       APP_IMAGE: tacbookings-e2e-app:ci
+      # Heap ceiling for the builder stage's `next build`, passed as the
+      # Dockerfile's build-only NODE_OPTIONS arg (#5164). Value and reason:
+      # the `Build` step of `Production build` in ci.yml.
+      NODE_BUILD_OPTIONS: --max-old-space-size=8192
       # The club's zone, as the E2E stack seeds it (docker-compose.yml → TZ).
       # Named here so the proof step can say what it is comparing against.
       CLUB_TIME_ZONE: Pacific/Auckland
@@ -378,6 +382,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_SENTRY_DSN=
             RELEASE_ID=${{ github.sha }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: |
             type=gha,scope=alpineclubbookingsnz-app
             type=gha,scope=alpineclubbookingsnz-e2e

@@ -676,8 +676,20 @@ jobs:
       - name: Generate Prisma client
         run: pnpm run db:generate
 
+      # `next build` type-checks the app project in a worker that inherits
+      # NODE_OPTIONS. A cold `typecheck:src` peaked at about 4.6 GB on
+      # 12 Nov 2026 (#5053), above Node's default ceiling (about 4 GB on the
+      # 16 GB hosted runner), so this required build failed or passed by chance
+      # with "JavaScript heap out of memory" (#5164). 8 GB leaves headroom, and
+      # nothing else runs beside the build here. `Typecheck` needs 12 GB
+      # because it checks the test and e2e projects too (#4752). Every other
+      # `next build` in CI, including the Docker image builds (as the
+      # Dockerfile's build-only NODE_OPTIONS arg) and scripts/e2e-stack.sh,
+      # uses this same value; `require-test-shards.test.mjs` keeps them equal.
       - name: Build
         run: pnpm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
 
       # Must run AFTER the build: production CSP is nonce-only and Next stamps
       # its nonce into inline bootstrap scripts only during DYNAMIC rendering,
@@ -726,6 +738,9 @@ jobs:
       # through that gate, so `require-test-shards.test.mjs` pins the job
       # unconditional too.
       - name: Prove the server-only boundary still refuses a seeded client import
+        # The seeded build is a real `next build`: the `Build` step's ceiling.
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: |
           set -euo pipefail
           log="${RUNNER_TEMP:-/tmp}/server-only-boundary-selftest.log"
@@ -1736,6 +1751,10 @@ jobs:
       # not a build arg — nothing Stripe is inlined into the image.
       NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
+      # Heap ceiling for the builder stage's `next build`, passed as the
+      # Dockerfile's build-only NODE_OPTIONS arg; it never reaches the image's
+      # runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
+      NODE_BUILD_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1781,6 +1800,7 @@ jobs:
             --build-arg GIT_COMMIT_SHA="${GIT_COMMIT_SHA}" \
             --build-arg KNOWLEDGE_BUNDLE_OBSERVED_AT="${KNOWLEDGE_BUNDLE_OBSERVED_AT}" \
             --build-arg RELEASE_ID="${GIT_COMMIT_SHA}" \
+            --build-arg NODE_OPTIONS="${NODE_BUILD_OPTIONS}" \
             --tag "${IMAGE_REF}" \
             .
 
@@ -1859,6 +1879,10 @@ jobs:
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
       # Stripe credentials are DB-only (#2082) — no Stripe build args or env here.
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+      # Heap ceiling for the builder stage's `next build` in both image builds,
+      # passed as the Dockerfile's build-only NODE_OPTIONS arg; it never reaches
+      # the published image's runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
+      NODE_BUILD_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1915,6 +1939,7 @@ jobs:
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
             RELEASE_ID=${{ env.GIT_COMMIT_SHA }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: type=gha,scope=alpineclubbookingsnz-app
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-app
 
@@ -1963,6 +1988,7 @@ jobs:
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: type=gha,scope=alpineclubbookingsnz-migrate
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate
 
