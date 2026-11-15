@@ -102,12 +102,43 @@ import {
 } from "@/lib/subscription-charge-already-paid";
 
 /**
- * The `@/lib/xero` module namespace, named because an `import()` type written
- * inline in a PARAMETER annotation is one of the two shapes Semgrep cannot
- * parse (#3318) - the module is still loaded dynamically, at the one call site
- * that does it.
+ * The Xero document services a retry calls, each from its focused module
+ * (#4930: the `@/lib/xero` facade that bundled them is gone). They are still
+ * loaded dynamically, at the one call site that does it; the type is named
+ * because an `import()` type written inline in a PARAMETER annotation is one of
+ * the two shapes Semgrep cannot parse (#3318).
  */
-type XeroModule = typeof import("@/lib/xero");
+type XeroModule = Awaited<ReturnType<typeof loadXeroDocumentServices>>;
+
+async function loadXeroDocumentServices() {
+  const [bookingInvoices, contacts, creditNotes, entranceFees, payments, membershipSync, modificationNotes, refundNotes, supplementary] = await Promise.all([
+    import("@/lib/xero-booking-invoices"),
+    import("@/lib/xero-contacts"),
+    import("@/lib/xero-credit-notes"),
+    import("@/lib/xero-entrance-fee-invoices"),
+    import("@/lib/xero-invoice-payments"),
+    import("@/lib/xero-membership-sync"),
+    import("@/lib/xero-modification-credit-notes"),
+    import("@/lib/xero-refund-note-settlement"),
+    import("@/lib/xero-supplementary-invoices"),
+  ]);
+  return {
+    allocateCreditNoteToInvoice: creditNotes.allocateCreditNoteToInvoice,
+    checkMembershipStatus: membershipSync.checkMembershipStatus,
+    createUnappliedXeroCreditNote: creditNotes.createUnappliedXeroCreditNote,
+    createUnappliedXeroCreditNoteForModification: creditNotes.createUnappliedXeroCreditNoteForModification,
+    createXeroCreditNote: creditNotes.createXeroCreditNote,
+    createXeroCreditNoteForModification: modificationNotes.createXeroCreditNoteForModification,
+    createXeroEntranceFeeInvoice: entranceFees.createXeroEntranceFeeInvoice,
+    createXeroInvoiceForBooking: bookingInvoices.createXeroInvoiceForBooking,
+    createXeroPaymentForInvoice: payments.createXeroPaymentForInvoice,
+    createXeroSupplementaryInvoice: supplementary.createXeroSupplementaryInvoice,
+    findOrCreateXeroContact: contacts.findOrCreateXeroContact,
+    finishRefundCreditNoteSettlement: refundNotes.finishRefundCreditNoteSettlement,
+    updateXeroBookingInvoiceForBooking: bookingInvoices.updateXeroBookingInvoiceForBooking,
+    updateXeroContact: contacts.updateXeroContact,
+  };
+}
 
 type RetryableOperation = Pick<
   XeroSyncOperation,
@@ -1594,7 +1625,7 @@ export async function retryXeroSyncOperation(
     return { message: "Queued the membership subscription invoice for retry." };
   }
 
-  const xero = await import("@/lib/xero");
+  const xero = await loadXeroDocumentServices();
   const createdByMemberId = options?.createdByMemberId ?? undefined;
 
   if (operation.status === "PARTIAL") {

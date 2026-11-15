@@ -86,6 +86,13 @@ Screen: Booking detail and its payment action, or an emailed payment link.
 
 Journey: Open the booking, check the lodge it names (`INV-CAP-039`), inspect what is owed and choose an available payment method. Switching an unpaid card booking to internet banking asks for confirmation first, because the member cannot switch back to card. Read the resulting status before leaving; bank payments can remain pending while settlement is checked.
 
+The card form and success message use the intent's server `chargedAmountCents`,
+including for non-split bookings. `creditElection` on fresh, reused, already-paid
+and the processing, superseded and below-minimum 409 responses explains the amount applied and any balance/price
+shortfall. Credit-only completion waits for **Continue**, so both the wizard
+and booking page let the member read the outcome before moving on. Recovery
+messages disclose credit already applied without promising another card charge.
+
 [Guide](user-guide/paying-for-your-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Guest consent
@@ -392,7 +399,7 @@ Screen: `/admin/member-applications`.
 
 Shows: Applications, nomination progress and officer decisions.
 
-Journey: Open an application, review its details and nominations, and use the available decision actions.
+Journey: Review an application and its nominations, then approve or reject. Action failures take focus and scroll into view; successes are announced and brought into view.
 
 [Guide](guides/member-applications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -412,7 +419,7 @@ Screen: `/admin/members`.
 
 Shows: A searchable member list and individual membership records.
 
-Journey: Search or filter members, open a profile, and use its permitted membership actions.
+Journey: Search or filter members, open a profile, and use its permitted membership actions. Merge preview and execution failures take focus and scroll into view.
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -980,7 +987,7 @@ Screen: `/admin/setup`.
 
 Shows: The installation setup hub and configuration cards.
 
-Journey: Open the setup card for the configuration task you need.
+Journey: Open a setup card, run a provider test, or update a step. Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
 
 [Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
