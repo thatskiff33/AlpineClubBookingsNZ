@@ -12,7 +12,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
 import { isLateCaptureHandBackTask } from "@/lib/late-capture-hand-back-task";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
+import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment } from "@/lib/booking-payment-state";
 import { readBookingHasEnded } from "@/lib/booking-ended";
 import {
   chooseEditReviewChargeRoute,
@@ -26,7 +26,6 @@ export { queueEditReviewChargeInvoiceInTransaction } from "@/lib/edit-financial-
 import { REVIEW_CHARGE_WRONG_KIND_MESSAGE } from "@/lib/edit-financial-review-charge-refusals";
 import {
   REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE,
-  REVIEW_CREDIT_DISPUTED_MESSAGE,
   REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
   REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
 } from "@/lib/edit-financial-review-refund-refusals";
@@ -56,7 +55,7 @@ import {
   capturedShareOwedAfterCancellation,
 } from "@/lib/edit-financial-review-cancel-netting";
 import type { EditReviewSettlementTask } from "@/lib/edit-financial-review-settlement-task";
-import { paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
+import { reviewCreditAllocationPaymentId } from "@/lib/edit-financial-review-credit-dispute";
 import { cardShortfallSettlement } from "@/lib/cancel-card-refund-shortfall-settle";
 import type { CapacityRaceStripeRefunded } from "@/lib/capacity-race-refunded-total-correction";
 import { alertGroupMirrorRefundXeroByHand, chooseGroupSettlementMirrorRoute, chooseReviewGroupSettlementMirrorRoute, type GroupSettlementMirrorRoute } from "@/lib/group-settlement-mirror-hand-back";
@@ -498,28 +497,12 @@ export async function chooseEditReviewSettlementRoute({
     throw new ManualBookingPaymentError(REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE, 409);
   }
 
-  const allocateAgainstPaymentId = hasCapturedPayment(task.booking.payment)
-    ? (task.booking.payment?.id ?? null)
-    : null;
-  // #5061 follow-up (`INV-PAY-154`): no credit against a card payment the bank is taking back.
-  if (allocateAgainstPaymentId !== null && (await reviewCreditPaymentDisputedCents(store, allocateAgainstPaymentId)) > 0) {
-    throw new ManualBookingPaymentError(REVIEW_CREDIT_DISPUTED_MESSAGE, 409);
-  }
-
   return {
     kind: "account-credit",
     bookingModificationId,
-    allocateAgainstPaymentId,
+    // #5061 follow-up (`INV-PAY-154`): refused while a dispute holds that payment.
+    allocateAgainstPaymentId: await reviewCreditAllocationPaymentId(store, task.booking.payment),
   };
-}
-
-/** The OPEN or LOST dispute hold on the payment an account-credit share is allocated against. */
-async function reviewCreditPaymentDisputedCents(store: Prisma.TransactionClient, paymentId: string): Promise<number> {
-  const payment = await store.payment.findUnique({
-    where: { id: paymentId },
-    select: { id: true, stripePaymentIntentId: true, additionalPaymentIntentId: true },
-  });
-  return payment ? (await paymentDisputedCaptureCents(store, payment)).cents : 0;
 }
 
 /**
