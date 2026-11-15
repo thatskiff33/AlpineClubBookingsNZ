@@ -132,6 +132,22 @@ booking's History shows a line saying so ("Saved account credit was not
 applied"). The club is told at the same time, so if you would rather have the
 difference back than keep the credit for next time, just ask.
 
+## Download your invoice
+
+When your club uses Xero for its accounts, your booking page has a **Download
+invoice** button beside **Edit Booking** once the club has raised the invoice.
+It saves Xero's own PDF of that invoice, so it is the same invoice the club's
+accounts hold, with the same invoice number.
+
+- If Xero can't be reached just then, you'll see a message; try again later.
+- If the booking has more than one invoice (for example a change that added to
+  the price), the page asks you to contact the club for copies instead.
+- A cancelled booking has no invoice to download, and a place your group
+  organiser paid for by internet banking is on the organiser's invoice.
+- A guest on someone else's booking does not see the button.
+
+Clubs that don't use Xero don't show the button yet.
+
 ## Split charges for non-member guests
 
 When a **Members First** hold splits a mixed party (your members are booked now,
