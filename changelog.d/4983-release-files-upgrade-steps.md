@@ -8,5 +8,7 @@
   A club upgrading from one release to the next can now find the steps for
   the release it is installing, instead of a pile under "Unreleased" that
   reads as "not in my version yet". The tool will not publish a release while
-  its upgrade section or notes page is missing or unfinished, or while
-  upgrade steps added after preparation are still waiting under "Unreleased".
+  its upgrade section or notes page is missing, while the notes page is still
+  the unfinished stub, or while upgrade steps added after preparation are
+  still waiting under "Unreleased" or have landed in an earlier release's
+  section.

@@ -757,6 +757,15 @@ describe("release documents: the upgrade guide and notes page (#4983)", () => {
       /docs\/releases\/v0\.13\.3\.md is missing at [0-9a-f]{12}: v0\.13\.3 has no release-notes page/,
     );
     expect(error.recovery).toContain("pnpm run release:cut prepare --amend --execute");
+
+    // The recovery it names must work in the very state it was printed for: the page is gone but
+    // its index line is still there, so the fold writes the stub and leaves the index alone.
+    const indexPath = path.join(repo, "docs", "releases", "README.md");
+    const indexBefore = fs.readFileSync(indexPath, "utf8");
+    expect(indexBefore).toContain("](v0.13.3.md)");
+    prepareRelease({ repoRoot: repo, amend: true, execute: true, run: fixtureRunner(repo), log: silentLog() });
+    expect(fs.readFileSync(path.join(repo, "docs", "releases", "v0.13.3.md"), "utf8")).toContain(RELEASE_NOTES_UNFINISHED_MARKER);
+    expect(fs.readFileSync(indexPath, "utf8")).toBe(indexBefore);
   });
 
   it("refuses to publish when the upgrade guide has no section for the release", () => {
@@ -781,6 +790,17 @@ describe("release documents: the upgrade guide and notes page (#4983)", () => {
       () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
       /docs\/UPGRADING\.md has upgrade step\(s\) in a section already released, which v0\.13\.2 did not have \(### Merged into a released section \(#4620\)\)/,
     );
+  });
+
+  it("lets a prepare and a publish through when only a released step's title was reworded", () => {
+    const reword = (dir) => editUpgrading(dir, (text) => text.replace("### An older step (#1234)", "### An older step (#1234, typo fixed)"));
+    const prepared = makeFixture();
+    mergeToMain(prepared.repo, "Merge pull request #4621", reword);
+    expect(prepareRelease({ repoRoot: prepared.repo, run: fixtureRunner(prepared.repo), log: silentLog() })).toMatchObject({ executed: false });
+
+    const { repo } = mergedReleaseFixture();
+    mergeToMain(repo, "Merge pull request #4621", reword);
+    expect(publishRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() })).toMatchObject({ tag: "v0.13.3" });
   });
 
   /** A release section that arrives whole, as when a fork merges an upstream release tag. */

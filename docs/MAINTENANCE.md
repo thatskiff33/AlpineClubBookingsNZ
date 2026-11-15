@@ -3301,7 +3301,8 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      tag to a released section that tag already had, or any tracked document
      (bar `CHANGELOG.md` and `changelog.d/`) that links the guide's
      `#unreleased` anchor: the link would be left on the empty section, so link
-     the step's own heading instead. A release section that arrives whole
+     the step's own heading instead. Prose that says "see Unreleased" with no
+     link is not found: name the step instead. A release section that arrives whole
      between two tags, such as a fork merging an upstream release, is not a
      late step. It reads the previous tag's guide from that tag's commit and
      refuses when the commit is not in the clone (a shallow clone), rather than
@@ -3399,10 +3400,13 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      untagged version's section (and rolls the guide if prep never did).
      `--carry-late-fragments` does **not** carry upgrade steps, because a
      step a club never sees under its release is the harm this check stops;
-   - `docs/UPGRADING.md` has a `### ` step under an already-released section
-     that the previous tag did not have — a late pull request merged its step
-     into the wrong section. `prepare` refuses this too. Move the step under
-     `## Unreleased` in a pull request, then fold it with `--amend`;
+   - `docs/UPGRADING.md` has more `### ` steps in an already-released section
+     than the previous tag's copy of that section — a late pull request merged
+     its step into the wrong section. Rewording a released step's title adds no
+     step, so it is not refused. `prepare` refuses this too, before it has
+     written anything: move the step under `## Unreleased` in a pull request,
+     then run `prepare` again. After a refused `publish`, move it the same way,
+     then fold it with `--amend`;
    - `docs/releases/v<version>.md` is missing, or still carries the unfinished
      marker, the stub note or the placeholder paragraph. Write the page through
      a pull request, then publish.

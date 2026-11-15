@@ -3176,7 +3176,8 @@ changelog section before starting.
      onto `MembershipTypeSeasonRate` (#2129 step 1) and narrowed the remaining
      writes on the two column-carrying models (#2130 STEP 1.5), and Release B
      dropped `SeasonRate`, `XeroItemCodeMapping.isMember` and the
-     `AgeTierSetting.xeroContactGroup*` columns — see the Unreleased section.)*
+     `AgeTierSetting.xeroContactGroup*` columns — see
+     [Release B](#release-b-the-two-contract-migrations).)*
 3. **The two additive migrations need no special handling.**
    `20260719150000_add_post_login_landing` adds a `PostLoginLanding` enum plus a
    nullable `Member.postLoginLanding` column with no default (metadata-only

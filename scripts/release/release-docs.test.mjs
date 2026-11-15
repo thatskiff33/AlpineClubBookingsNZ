@@ -10,6 +10,8 @@ import {
   NO_UPGRADE_STEPS,
   planReleaseDocs,
   RELEASE_NOTES_UNFINISHED_MARKER,
+  RELEASE_SECTION_HEADING,
+  releaseNotesIndexLists,
   releaseNotesStub,
   stepsAddedToReleasedSections,
   unfinishedStubParts,
@@ -155,6 +157,30 @@ describe("guarding released sections and odd guides (#4983)", () => {
     expect(stepsAddedToReleasedSections({ guide: alsoLate, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
   });
 
+  it("counts steps per section: a late step under a title other releases use is caught, a retitle is not", () => {
+    // `### Post-upgrade actions` and `### Before deployment` repeat across release sections of the real guide.
+    const repeated = FULL.replace("### An older step (#1000)", "### Post-upgrade actions").replace("### An even older step (#900)", "### Post-upgrade actions");
+    const rolled = fileUpgradeSteps({ guide: repeated, heading: HEADING }).guide;
+    const judge = (guide) => stepsAddedToReleasedSections({ guide, releasedGuide: repeated, untaggedHeading: HEADING });
+    expect(judge(rolled)).toEqual([]);
+
+    const late = rolled.replace("Already shipped; never rewritten.\n", "Already shipped; never rewritten.\n\n### Post-upgrade actions\n\nDo it.\n");
+    expect(judge(late)).toEqual(["### Post-upgrade actions"]);
+
+    // Rewording a released step's title adds no step, so it is not late.
+    expect(judge(rolled.replace("### Post-upgrade actions", "### Post-upgrade actions (typo fixed)"))).toEqual([]);
+    // A retitle beside a real late step is still caught: the section gained a step. Which of the
+    // two titles is the new one cannot be told from text, so one is named and the message says why.
+    const both = late.replace("### Post-upgrade actions\n\nAlready", "### Post-upgrade actions (typo fixed)\n\nAlready");
+    expect(judge(both)).toHaveLength(1);
+  });
+
+  it("writes the released heading in the shape the section reader recognises", () => {
+    expect(RELEASE_SECTION_HEADING.test(upgradeGuideHeading("v0.13.2", "0.14.0"))).toBe(true);
+    expect(RELEASE_SECTION_HEADING.test(upgradeGuideHeading(null, "0.1.0"))).toBe(true);
+    expect(RELEASE_SECTION_HEADING.test("## Unreleased")).toBe(false);
+  });
+
   it("refuses a guide with a ## line inside a code block rather than splitting the block", () => {
     const fenced = FULL.replace("Open Admin → Xero and reconnect.", "```md\n## Example heading\n```");
     expect(() => fileUpgradeSteps({ guide: fenced, heading: HEADING })).toThrow(/docs\/UPGRADING\.md:\d+ has a "## " line inside a code block/);
@@ -280,6 +306,13 @@ describe("release-notes stub and index line (#4983)", () => {
     expect(() => addReleaseNotesIndexLine({ index: "# Release notes\n", version: "0.14.0", date: "x", bump: "minor" })).toThrow(
       /no "## Published release notes" section/,
     );
+  });
+
+  it("says whether the index already links a version's page, by the page's own link", () => {
+    expect(releaseNotesIndexLists(INDEX, "0.13.2")).toBe(true);
+    expect(releaseNotesIndexLists(INDEX, "0.14.0")).toBe(false);
+    // v0.13.2.md is not v0.13.20.md.
+    expect(releaseNotesIndexLists(INDEX, "0.13.20")).toBe(false);
   });
 });
 

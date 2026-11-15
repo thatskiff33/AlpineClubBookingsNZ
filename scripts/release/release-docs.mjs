@@ -10,7 +10,8 @@
  * guide and writes the notes stub through these helpers, and `release:cut
  * publish` refuses a commit where either is missing or unfinished.
  *
- * Everything here is pure except `planReleaseDocs`, which only reads files.
+ * Everything here is pure except `planReleaseDocs` (which reads files) and
+ * `writeReleaseDocs` (which writes them).
  * The `## Unreleased` sentinel and the section reader are the changelog
  * compiler's own (`INV-SSOT`); only the heading shape differs: the upgrade
  * guide names the step taken (`## v0.13.2 → v0.14.0`), not a date.
@@ -75,13 +76,17 @@ const STUB_PARTS = [
 
 /** A horizontal rule; the upgrade guide closes each release section with one. */
 const SECTION_RULE = /^---[ \t]*$/;
-/** A release's upgrade section: `## v0.13.1 → v0.13.2`, or `## v0.1.0` for the first. */
-const RELEASE_SECTION_HEADING = /^## v\d/;
 /** An upgrade step's title line, the unit a club follows. */
 const STEP_TITLE = /^### /;
 
 /** Whether `line` opens an upgrade step. */
 export const isStepTitle = (line) => STEP_TITLE.test(line);
+
+/**
+ * A release's upgrade section: `## v0.13.1 → v0.13.2`, or `## v0.1.0` for the
+ * first. The shape `upgradeGuideHeading` writes, so keep the two together.
+ */
+export const RELEASE_SECTION_HEADING = /^## v\d/;
 
 /** The upgrade-guide heading for the step from `previousTag` to `version`. */
 export function upgradeGuideHeading(previousTag, version) {
@@ -148,8 +153,14 @@ function releasedSections(guide) {
  * tag (`releasedGuide`) did not have. A pull request opened before a cut that
  * appends its step at the end of `## Unreleased` merges cleanly after the
  * roll, landing in the section just released: its code ships in the next
- * release, but a club upgrading to it would never see the step. Reworded
- * prose in a released section is not a new step and passes.
+ * release, but a club upgrading to it would never see the step.
+ *
+ * A section is late when it holds MORE `### ` steps than the tag's copy of it,
+ * not when a title is new. Titles repeat across releases (`### Before
+ * deployment`, `### Post-upgrade actions`), so a title test lets a late step
+ * through under a name some other section uses; and retitling a released step
+ * adds nothing, so it must not be refused. Reworded prose passes for the same
+ * reason. The steps named are the section's titles the tag's copy lacked.
  *
  * Only sections the tag's guide already had are judged. A release section that
  * arrives whole between two tags (a fork merging an upstream tag, a backfill of
@@ -157,13 +168,23 @@ function releasedSections(guide) {
  * `untaggedHeading`'s section is never judged: it is the release being cut.
  */
 export function stepsAddedToReleasedSections({ guide, releasedGuide, untaggedHeading }) {
-  const before = releasedSections(releasedGuide);
-  const knownHeadings = new Set(before.map((section) => section.heading));
-  const knownTitles = new Set(before.flatMap((section) => section.titles));
-  return releasedSections(guide)
-    .filter((section) => section.heading !== untaggedHeading && knownHeadings.has(section.heading))
-    .flatMap((section) => section.titles)
-    .filter((title) => !knownTitles.has(title));
+  const tagTitles = new Map(releasedSections(releasedGuide).map((section) => [section.heading, section.titles]));
+  return releasedSections(guide).flatMap((section) => {
+    const before = tagTitles.get(section.heading);
+    if (section.heading === untaggedHeading || before === undefined || section.titles.length <= before.length) return [];
+    return withoutEach(section.titles, before);
+  });
+}
+
+/** `titles` less one occurrence of each of `known`: a multiset difference, so a repeated title still counts. */
+function withoutEach(titles, known) {
+  const remaining = [...known];
+  return titles.filter((title) => {
+    const at = remaining.indexOf(title);
+    if (at < 0) return true;
+    remaining.splice(at, 1);
+    return false;
+  });
 }
 
 /**
@@ -286,6 +307,11 @@ export function unfinishedStubParts(notes) {
   return STUB_PARTS.filter((part) => notes.includes(part.text)).map((part) => part.label);
 }
 
+/** Whether `index` (the release index) already links `version`'s page. */
+export function releaseNotesIndexLists(index, version) {
+  return toLines(index).some((line) => line.includes(`](v${version}.md)`));
+}
+
 /**
  * `index` (the release index) with `version`'s page added as the first line of
  * "Published release notes". Refuses an index without that section, or one
@@ -294,7 +320,7 @@ export function unfinishedStubParts(notes) {
 export function addReleaseNotesIndexLine({ index, version, date, bump }) {
   const lines = toLines(index);
   const page = `v${version}.md`;
-  if (lines.some((line) => line.includes(`](${page})`))) {
+  if (releaseNotesIndexLists(index, version)) {
     throw new Error(`${RELEASE_NOTES_INDEX_PATH} already lists ${page}.`);
   }
   const found = locateSection(lines, (line) => line.trimEnd() === PUBLISHED_NOTES_HEADING);
@@ -318,7 +344,8 @@ export function refuseStepsInReleasedSections({ guide, releasedGuide, untaggedHe
     throw new Error(
       `${UPGRADE_GUIDE_PATH} has upgrade step(s) in a section already released, which ${previousTag} did not have ` +
         `(${added.slice(0, 3).join("; ")}${added.length > 3 ? "; …" : ""}). Their changes ship in the next release, ` +
-        `so move them under "## Unreleased" with a pull request.`,
+        `so move them under "## Unreleased" with a pull request. A title you only reworded is not a new step and is not ` +
+        `counted: if one is listed here, a real new step sits beside it in that section.`,
     );
   }
 }
@@ -363,11 +390,14 @@ export function planReleaseDocs({ repoRoot, version, previousTag, date, bump, ch
   }
   if (!notesExists) {
     const stub = releaseNotesStub({ version, previousTag, date, bump, changelogHeading, upgradeHeading });
-    const index = addReleaseNotesIndexLine({ index: read(RELEASE_NOTES_INDEX_PATH), version, date, bump });
     files.push({ relative: notesPath, text: stub, created: true });
-    files.push({ relative: RELEASE_NOTES_INDEX_PATH, text: index, created: false });
     describe.push(`${notesPath}: new notes stub, marked unfinished until it is written`);
-    describe.push(`${RELEASE_NOTES_INDEX_PATH}: list v${version} first under "Published release notes"`);
+    // A page deleted or never committed can leave its index line behind: the fold writes the page only.
+    const indexText = read(RELEASE_NOTES_INDEX_PATH);
+    if (!(amend && releaseNotesIndexLists(indexText, version))) {
+      files.push({ relative: RELEASE_NOTES_INDEX_PATH, text: addReleaseNotesIndexLine({ index: indexText, version, date, bump }), created: false });
+      describe.push(`${RELEASE_NOTES_INDEX_PATH}: list v${version} first under "Published release notes"`);
+    }
   }
   return { upgradeHeading, upgrade, notesPath, notesCreated: !notesExists, files, describe };
 }
