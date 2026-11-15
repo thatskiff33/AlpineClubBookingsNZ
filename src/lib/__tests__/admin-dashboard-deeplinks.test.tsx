@@ -188,9 +188,9 @@ describe("admin dashboard deep links", () => {
     // The count is the shared work-queue counter's, on this render's club day
     // (#4962); its finished-stay predicate (#1709) is pinned in
     // admin-pending-counts.test.ts rather than duplicated here.
-    expect(vi.mocked(getAdminPendingCounts)).toHaveBeenCalledWith({
-      today: getTodayDateOnly(ENVIRONMENT_CLUB_ZONE),
-    });
+    expect(vi.mocked(getAdminPendingCounts)).toHaveBeenCalledWith(
+      expect.objectContaining({ today: getTodayDateOnly(ENVIRONMENT_CLUB_ZONE) }),
+    );
   });
 
   it("hides the unpaid finished stays card when no finished stay is owing", async () => {

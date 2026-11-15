@@ -7,7 +7,7 @@ import {
   AdminWorkQueueCards,
   getAdminWorkQueueCards,
 } from "@/components/admin/admin-work-queue-cards";
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, adminLink } from "@/lib/admin-hubs";
 import { NEEDS_ATTENTION_LABEL } from "@/lib/admin-nav-panels";
 import {
   emptyAdminPermissionMatrix,
@@ -149,6 +149,14 @@ describe("the officer work queue registry", () => {
     const tasks = queue("manual-refund-tasks");
     expect(tasks.href(CLUB_DAY)).toBe(adminHref("payments"));
     expect(tasks.counts).toEqual(["manualRefundTasks"]);
+  });
+
+  it("takes the hut-leaders queue's page and name from the hub registry, not a copied path", () => {
+    // It was the one page-backed queue with a literal path and label, so a move
+    // or rename in the hub registry left its badge and permission check behind.
+    const hutLeaders = queue("hut-leaders");
+    expect(hutLeaders.href(CLUB_DAY)).toBe(adminHref("hut-leaders"));
+    expect(hutLeaders.label).toBe(adminLink("hut-leaders").label);
   });
 
   it("shows the Stuck States headline only to an officer with support access", () => {

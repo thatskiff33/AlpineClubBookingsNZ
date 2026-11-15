@@ -350,8 +350,8 @@ export const ADMIN_WORK_QUEUES: readonly AdminWorkQueue[] = [
   {
     // Relabelled with the club's hut-leader term where it is shown (#3976).
     key: "hut-leaders",
-    label: "Hut Leaders",
-    href: () => "/admin/hut-leaders",
+    label: adminLink("hut-leaders").label,
+    href: () => adminHref("hut-leaders"),
     icon: Bell,
     counts: ["unassignedHutLeaderDates"],
     tone: "warning",

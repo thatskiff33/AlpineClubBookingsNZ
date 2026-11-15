@@ -108,6 +108,32 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
   const features = await loadEffectiveModuleFlags();
   const bedAllocationEnabled = features.bedAllocation;
 
+  // `today` IS STILL PASSED, and the reason changed with #3123 —
+  // `getUnassignedHutLeaderDates` no longer falls back to `getTodayDateOnly()`
+  // and `APP_TIME_ZONE`, so this is no longer the difference between the
+  // container's day and the club's. What it is now is the difference between
+  // ONE reading of the club's day and TWO. The two officer cards either side
+  // of this one (roster, bed allocation) are windowed from `today` above; let
+  // the coverage card resolve its own and a request that crosses club midnight
+  // between the two reads paints one card a day ahead of its neighbours, which
+  // is the same defect CT-4 (#2870) found here wearing a different cause. It
+  // also saves the extra settings read the fallback would perform
+  // (INV-CONFIG-002).
+  //
+  // #3818: the amber card and "Handovers this week" (today and the six days
+  // after it) read ONE cover. The handovers, and the names they need, are
+  // read only when the actor can see that card — the same gate the page
+  // applies when rendering it.
+  const hutLeaderCoverage = permissionMatrix.then((matrix) =>
+    getHutLeaderDashboardCoverage({
+      scope: { kind: "all" },
+      today,
+      handovers: canViewAdminHrefWithMatrix(matrix, "/admin/hut-leaders")
+        ? { from: today, to: dateOnlyInstantOf(addCalendarDays(todayKey, 6)) }
+        : null,
+    }),
+  );
+
   const [
     totalMembers,
     activeMembers,
@@ -191,32 +217,21 @@ async function getStats(permissionMatrix: Promise<AdminPermissionMatrix>) {
     // Every officer work queue (#4962), from the one counter the sidebar's
     // Needs Attention badges read, on this render's club day. The dashboard
     // used to run its own copies of these queries and drifted from the sidebar.
-    getAdminPendingCounts({ today }),
-    // `today` IS STILL PASSED, and the reason changed with #3123 —
-    // `getUnassignedHutLeaderDates` no longer falls back to `getTodayDateOnly()`
-    // and `APP_TIME_ZONE`, so this is no longer the difference between the
-    // container's day and the club's. What it is now is the difference between
-    // ONE reading of the club's day and TWO. The two officer cards either side
-    // of this one (roster, bed allocation) are windowed from `today` above; let
-    // the coverage card resolve its own and a request that crosses club midnight
-    // between the two reads paints one card a day ahead of its neighbours, which
-    // is the same defect CT-4 (#2870) found here wearing a different cause. It
-    // also saves the extra settings read the fallback would perform
-    // (INV-CONFIG-002).
     //
-    // #3818: the amber card and "Handovers this week" (today and the six days
-    // after it) read ONE cover. The handovers, and the names they need, are
-    // read only when the actor can see that card — the same gate the page
-    // applies when rendering it.
-    permissionMatrix.then((matrix) =>
-      getHutLeaderDashboardCoverage({
-        scope: { kind: "all" },
-        today,
-        handovers: canViewAdminHrefWithMatrix(matrix, "/admin/hut-leaders")
-          ? { from: today, to: dateOnlyInstantOf(addCalendarDays(todayKey, 6)) }
-          : null,
-      }),
-    ),
+    // The uncovered-nights count is taken from the coverage read started above,
+    // not a second scan of the same window: the attention card's number, the Hut
+    // Leader Assignment card's number and the nights listed on both are then one
+    // array's length, so a leader assigned or a booking made mid-render cannot
+    // leave them disagreeing.
+    getAdminPendingCounts({
+      today,
+      supplied: {
+        unassignedHutLeaderDates: hutLeaderCoverage.then(
+          (coverage) => coverage.unassignedDates.length,
+        ),
+      },
+    }),
+    hutLeaderCoverage,
     // Whether this club is multi-lodge, for the ADR-002 Presentation Rule below.
     // Keyed on the CLUB, not on how many lodges happen to be uncovered (#2917
     // review): a two-lodge club whose gaps all sit at one lodge must still be

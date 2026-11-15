@@ -26,6 +26,7 @@ const ROOT = process.cwd();
 const DASHBOARD = "src/app/(admin)/admin/dashboard/page.tsx";
 const SIDEBAR = "src/components/admin-sidebar.tsx";
 const COUNTER = "src/lib/admin-pending-counts.ts";
+const REGISTRY = "src/lib/admin-work-queues.ts";
 
 /** The source without comments, so prose naming a queue is not a finding. */
 function code(file: string): string {
@@ -65,7 +66,7 @@ function queueHelpers(): string[] {
  * and why. Anything else linking a queue page is a hand-wired card.
  */
 const DASHBOARD_QUEUE_LINKS_ALLOWED: Record<string, string> = {
-  "/admin/hut-leaders":
+  [adminHref("hut-leaders")]:
     "the Hut Leader officer card and the handovers card, not the coverage queue's card",
   [adminHref("payments")]:
     "the Net Collected revenue card, not the manual refund queue's card",
@@ -142,6 +143,13 @@ describe("officer work queue census (INV-SSOT-010)", () => {
       (href) => queuePaths.has(href) && !(href in DASHBOARD_QUEUE_LINKS_ALLOWED),
     );
     expect(strays).toEqual([]);
+  });
+
+  it("names no admin path in the registry by hand: every page comes from the hub registry", () => {
+    // The hut-leaders queue was the one literal path, so a move in the hub
+    // registry would have left its badge and its permission check on the old
+    // route. A new queue links through `adminHref`, which follows the move.
+    expect(code(REGISTRY).match(/["'`]\/admin\/[\w/-]*/g) ?? []).toEqual([]);
   });
 
   it("builds no queue deep link outside the registry", () => {

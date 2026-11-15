@@ -201,6 +201,56 @@ describe("getAdminPendingCounts", () => {
     );
   });
 
+  it("uses a count the caller supplies and does not scan for it a second time (#4962 review)", async () => {
+    // The dashboard already reads the uncovered nights for its hut-leader cards
+    // and hands that number in, so the page holds one number, from one read.
+    const counts = await getAdminPendingCounts({
+      supplied: { unassignedHutLeaderDates: Promise.resolve(7) },
+    });
+
+    expect(counts.unassignedHutLeaderDates).toBe(7);
+    expect(counts.unavailable).toEqual([]);
+    expect(mocks.getUnassignedHutLeaderDates).not.toHaveBeenCalled();
+    // Every other queue is still counted.
+    expect(counts.bookingReviews).toBe(5);
+    expect(counts.issueReports).toBe(11);
+  });
+
+  it("names a supplied count that rejects as unavailable, whenever it rejects (#4962 review)", async () => {
+    // Rejected while the club day is still being read (a real database round
+    // trip, a macrotask here), so nothing awaits it yet: that must be reported as
+    // a failed count, and must not surface as an unhandled rejection, which
+    // vitest turns into a failed run.
+    mocks.clubTimeSettingsFindUnique.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                timeZone: "America/Denver",
+                updatedByMemberId: null,
+                updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+              }),
+            20,
+          ),
+        ),
+    );
+    const failed = Promise.reject(new Error("coverage read failed"));
+
+    const counts = await getAdminPendingCounts({
+      supplied: { unassignedHutLeaderDates: failed },
+    });
+
+    expect(counts.unavailable).toEqual(["unassignedHutLeaderDates"]);
+    expect(counts.unassignedHutLeaderDates).toBe(0);
+    expect(counts.bookingReviews).toBe(5);
+    expect(mocks.getUnassignedHutLeaderDates).not.toHaveBeenCalled();
+    expect(mocks.loggerError).toHaveBeenCalledWith(
+      expect.objectContaining({ count: "unassignedHutLeaderDates" }),
+      expect.any(String),
+    );
+  });
+
   it("uses the club day a caller passes rather than reading its own", async () => {
     // The dashboard holds one club day for its whole render (#3123).
     const passed = new Date("2026-05-01T00:00:00.000Z");

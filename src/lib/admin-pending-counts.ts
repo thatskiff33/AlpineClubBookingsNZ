@@ -110,13 +110,28 @@ const PENDING_COUNTERS = {
  * are bounded on it, and independent reads across the batch could straddle club
  * midnight. A caller that already holds the day (the dashboard) passes it, so
  * its own cards and these counts describe the same day.
+ *
+ * `supplied` is a count the caller is already reading for its own page, handed
+ * in so the page holds one number rather than two scans of the same window: the
+ * counter for that key does not run, and a rejection settles as `unavailable`
+ * like any other. The dashboard supplies the uncovered nights its hut-leader
+ * cards list (#4962).
  */
 export async function getAdminPendingCounts(input?: {
   today?: Date;
+  supplied?: Partial<Record<AdminPendingCountKey, Promise<number>>>;
 }): Promise<AdminPendingCounts> {
+  // A supplied promise may reject while `today` is still being read; mark it
+  // handled now so that is never an unhandled rejection. `allSettled` below
+  // still reports the failure.
+  for (const promise of Object.values(input?.supplied ?? {})) {
+    promise.catch(() => undefined);
+  }
   const today = input?.today ?? (await clubTodayDateOnlyInstant());
   const settled = await Promise.allSettled(
-    ADMIN_PENDING_COUNT_KEYS.map((key) => PENDING_COUNTERS[key]({ today })),
+    ADMIN_PENDING_COUNT_KEYS.map(
+      (key) => input?.supplied?.[key] ?? PENDING_COUNTERS[key]({ today }),
+    ),
   );
 
   const counts = { unavailable: [] } as unknown as AdminPendingCounts;

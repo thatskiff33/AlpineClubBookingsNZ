@@ -674,3 +674,6 @@ the sidebar's Needs Attention section render that list and nothing else. #4962.
   with the same numbers.
 - **A failed count is not zero.** Each counter settles on its own; a failure
   is listed in `unavailable` and both surfaces say so.
+- **One read per page.** When a page already reads a queue's rows, it hands the
+  count to `getAdminPendingCounts` as `supplied` rather than scanning twice. The
+  dashboard does this for uncovered hut-leader nights.

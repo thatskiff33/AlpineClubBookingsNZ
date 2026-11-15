@@ -581,6 +581,39 @@ describe("admin dashboard hut-leader coverage card", () => {
     expect(html).toContain("5 Jul · 2 guests (Basin Lodge, archived)");
   });
 
+  it("holds ONE number for uncovered nights: the attention card, the officer card and the list agree (#4962 review)", async () => {
+    vi.mocked(prisma.lodge.count).mockResolvedValue(1);
+    // A counter that scanned for itself would answer 99 here. The dashboard hands
+    // the counter the coverage read it already holds, so the registry's number is
+    // that read's length, and the page cannot show 3 beside a list of 2.
+    vi.mocked(getAdminPendingCounts).mockImplementation(async (input) => ({
+      ...ZERO_ADMIN_PENDING_COUNTS,
+      unassignedHutLeaderDates:
+        (await input?.supplied?.unassignedHutLeaderDates) ?? 99,
+      unavailable: [],
+    }));
+    vi.mocked(getHutLeaderDashboardCoverage).mockResolvedValue({
+      unassignedDates: [
+        uncoveredLodgeNight("2026-07-05", "lodge-a", "Alpine Lodge"),
+        uncoveredLodgeNight("2026-07-06", "lodge-a", "Alpine Lodge"),
+        uncoveredLodgeNight("2026-07-07", "lodge-a", "Alpine Lodge"),
+      ],
+      handovers: [],
+    });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).toContain("3 upcoming nights with guests but no hut leader who counts");
+    expect(html).toContain('aria-label="3 waiting"');
+    expect(html).not.toContain('aria-label="99 waiting"');
+    // The Hut Leader Assignment officer card beside it: the same 3.
+    expect(html).toMatch(
+      />3<\/div><p[^>]*>upcoming nights with guests but no hut leader staying/,
+    );
+    // One read of the coverage for the whole page.
+    expect(vi.mocked(getHutLeaderDashboardCoverage)).toHaveBeenCalledTimes(1);
+  });
+
   it("shows a single-lodge club the bare dates and the plain wording it saw before", async () => {
     vi.mocked(prisma.lodge.count).mockResolvedValue(1);
     // The sidebar badge's number, from the same coverage read (#4962).

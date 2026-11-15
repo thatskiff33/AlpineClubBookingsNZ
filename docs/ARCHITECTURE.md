@@ -2567,7 +2567,11 @@ the sidebar reads it through `GET /api/admin/pending-counts`. Its per-queue
 where-clauses mirror the individual queue routes. Each counter settles on its
 own (`Promise.allSettled`): a failed one reads as zero and is named in the
 payload's `unavailable` list, so both surfaces say which counts are missing
-rather than reading the failure as "nothing to do". The admin layout is
+rather than reading the failure as "nothing to do". A caller that already reads
+a queue's rows for its own page passes that count in `supplied`, so the page
+holds one number from one read: the dashboard does this for uncovered
+hut-leader nights, and its two hut-leader cards and the listed nights cannot
+disagree. The admin layout is
 persistent, so the sidebar refetches on every pathname change, on window focus,
 when the tab becomes visible, and on the `admin-queue-changed` window event a
 queue page fires after a decision (`notifyAdminQueueChanged` in
