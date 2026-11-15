@@ -1,7 +1,7 @@
 # Size allowances for #5139
 
 file: src/app/(admin)/admin/booking-desk/waitlist/page.tsx
-lines: 1026
+lines: 1027
 reason: the page reads and writes its URL page through the shared parser and
   writer and takes its range sentence from formatAdminListRange. The local
   range arithmetic comes out, but the four-name import of the shared helpers
