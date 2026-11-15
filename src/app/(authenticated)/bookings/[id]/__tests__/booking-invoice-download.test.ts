@@ -22,6 +22,12 @@ import {
   resolveBookingInvoiceOffer,
 } from "../_lib/booking-invoice-download";
 import { resolveBookingDetailViewer } from "../_lib/booking-detail-viewer";
+import { createAuditLog } from "@/lib/audit";
+import { bookingHasAnySupplementaryInvoiceEvidence } from "@/lib/booking-supplementary-invoice-identities";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
+import { isXeroConnected } from "@/lib/xero-token-store";
+import { loadBookingDetail } from "../_lib/load-booking-detail";
 
 const OWNER_ID = "owner-1";
 
@@ -227,5 +233,35 @@ describe("prepareBookingInvoiceDownload", () => {
     const result = await prepareBookingInvoiceDownload("ckbooking1234567", session("officer-1", "ADMIN_BOOKINGS"), request, d);
     expect(result).toMatchObject({ kind: "PDF" });
     expect(d.writeAudit).toHaveBeenCalledWith(expect.objectContaining({ subjectMemberId: null }));
+  });
+});
+
+describe("prepareBookingInvoiceDownload with its real dependencies", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("reads Xero's PDF once through the metered client: no retries, no breaker arming", async () => {
+    const getInvoiceAsPdf = vi.fn(async () => ({ body: Buffer.from("%PDF-1.4") }));
+    vi.mocked(loadBookingDetail).mockResolvedValue(booking());
+    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({ xeroIntegration: true } as never);
+    vi.mocked(bookingHasAnySupplementaryInvoiceEvidence).mockResolvedValue(false);
+    vi.mocked(isXeroConnected).mockResolvedValue(true);
+    vi.mocked(getAuthenticatedXeroClient).mockResolvedValue({ xero: { accountingApi: { getInvoiceAsPdf } }, tenantId: "tenant-1" } as never);
+    vi.mocked(callXeroApi).mockImplementation(async (call: () => Promise<unknown>) => call() as never);
+
+    const result = await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), { ipAddress: null });
+
+    expect(result).toMatchObject({ kind: "PDF", fileName: "Invoice-INV-0042.pdf" });
+    expect(getInvoiceAsPdf).toHaveBeenCalledWith("tenant-1", "xero-primary-id");
+    expect(callXeroApi).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(callXeroApi).mock.calls[0][1]).toEqual({
+      operation: "getInvoiceAsPdf",
+      resourceType: "INVOICE",
+      workflow: "bookingInvoiceDownload",
+      maxRetries: 0,
+      maxTransientRetries: 0,
+      maxWaitSec: 0,
+      armTransientBreaker: false,
+    });
+    expect(createAuditLog).toHaveBeenCalledTimes(1);
   });
 });
