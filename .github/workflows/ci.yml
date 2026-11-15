@@ -44,7 +44,14 @@ concurrency:
 jobs:
   dependency-review:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    # Every job names its runner image, never `ubuntu-latest` (#5192). GitHub
+    # moves that label to a new Ubuntu release over several weeks, so the same
+    # commit ran on 24.04 or 26.04 by chance. On 26.04 the runner's pg_dump is
+    # PostgreSQL 17 and writes `SET transaction_timeout`, which the PostgreSQL
+    # 16 service refuses, failing `Migration drift check` for every pull
+    # request. Moving to a newer image is a deliberate change: update every
+    # workflow together; `require-test-shards.test.mjs` keeps them equal.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -123,7 +130,7 @@ jobs:
   # advisory. This one is required and also runs on pushes to `main`.
   dependency-audit:
     name: Dependency audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -174,7 +181,7 @@ jobs:
 
   static-analysis:
     name: Static analysis gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -353,7 +360,7 @@ jobs:
   # pass or a real failure.
   secret-scan:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -493,7 +500,7 @@ jobs:
   # GitHub treats a skipped required job as satisfying branch protection.
   test-shard:
     name: Test shard (${{ matrix.shard }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -552,7 +559,7 @@ jobs:
   # environment as `verify` (`require-test-shards.test.mjs` pins all of it).
   typecheck:
     name: Typecheck
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -601,7 +608,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -642,7 +649,7 @@ jobs:
 
   build:
     name: Production build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -676,8 +683,20 @@ jobs:
       - name: Generate Prisma client
         run: pnpm run db:generate
 
+      # `next build` type-checks the app project in a worker that inherits
+      # NODE_OPTIONS. A cold `typecheck:src` peaked at about 4.6 GB on
+      # 12 Nov 2026 (#5053), above Node's default ceiling (about 4 GB on the
+      # 16 GB hosted runner), so this required build failed or passed by chance
+      # with "JavaScript heap out of memory" (#5164). 8 GB leaves headroom, and
+      # nothing else runs beside the build here. `Typecheck` needs 12 GB
+      # because it checks the test and e2e projects too (#4752). Every other
+      # `next build` in CI, including the Docker image builds (as the
+      # Dockerfile's build-only NODE_OPTIONS arg) and scripts/e2e-stack.sh,
+      # uses this same value; `require-test-shards.test.mjs` keeps them equal.
       - name: Build
         run: pnpm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
 
       # Must run AFTER the build: production CSP is nonce-only and Next stamps
       # its nonce into inline bootstrap scripts only during DYNAMIC rendering,
@@ -726,6 +745,9 @@ jobs:
       # through that gate, so `require-test-shards.test.mjs` pins the job
       # unconditional too.
       - name: Prove the server-only boundary still refuses a seeded client import
+        # The seeded build is a real `next build`: the `Build` step's ceiling.
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: |
           set -euo pipefail
           log="${RUNNER_TEMP:-/tmp}/server-only-boundary-selftest.log"
@@ -740,7 +762,7 @@ jobs:
           fi
 
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 75 does not mean a
     # 75-minute run is acceptable; it means a genuinely wedged job is still
     # killed rather than burning an hour of budget indefinitely.
@@ -1055,7 +1077,7 @@ jobs:
 
   migration-drift:
     name: Migration drift check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # #2672 raised this from 15: this job also hosts every opt-in real-Postgres
     # lock harness, and the member-merge shared-double suite added below drives
     # ten real merge/writer interleavings whose own describe budget is 120s each.
@@ -1505,7 +1527,7 @@ jobs:
   # fails inside this job when the URL is absent, rather than skipping quietly.
   data-migration-verification:
     name: Data migration verification
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1613,7 +1635,7 @@ jobs:
   # `scripts/booking-ledger-seed-gate.sh`) is in the quarantine file.
   realdb-all:
     name: Real-PostgreSQL suites (all, advisory)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
     # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
     # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
@@ -1727,7 +1749,7 @@ jobs:
   # instead of weakening anything.
   docker-image-security:
     name: Image security gate (Trivy CRITICAL)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1736,6 +1758,10 @@ jobs:
       # not a build arg — nothing Stripe is inlined into the image.
       NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
+      # Heap ceiling for the builder stage's `next build`, passed as the
+      # Dockerfile's build-only NODE_OPTIONS arg; it never reaches the image's
+      # runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
+      NODE_BUILD_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1781,6 +1807,7 @@ jobs:
             --build-arg GIT_COMMIT_SHA="${GIT_COMMIT_SHA}" \
             --build-arg KNOWLEDGE_BUNDLE_OBSERVED_AT="${KNOWLEDGE_BUNDLE_OBSERVED_AT}" \
             --build-arg RELEASE_ID="${GIT_COMMIT_SHA}" \
+            --build-arg NODE_OPTIONS="${NODE_BUILD_OPTIONS}" \
             --tag "${IMAGE_REF}" \
             .
 
@@ -1832,7 +1859,7 @@ jobs:
   publish-ghcr-images:
     name: Publish GHCR images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs:
       - verify
@@ -1859,6 +1886,10 @@ jobs:
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
       # Stripe credentials are DB-only (#2082) — no Stripe build args or env here.
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+      # Heap ceiling for the builder stage's `next build` in both image builds,
+      # passed as the Dockerfile's build-only NODE_OPTIONS arg; it never reaches
+      # the published image's runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
+      NODE_BUILD_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1915,6 +1946,7 @@ jobs:
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
             RELEASE_ID=${{ env.GIT_COMMIT_SHA }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: type=gha,scope=alpineclubbookingsnz-app
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-app
 
@@ -1963,6 +1995,7 @@ jobs:
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: type=gha,scope=alpineclubbookingsnz-migrate
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate
 
