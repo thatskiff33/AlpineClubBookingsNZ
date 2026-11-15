@@ -6,6 +6,7 @@ import logger from "../../logger";
 import { providerAmountToCents } from "../../money-provider-amount";
 import { readBookingChargeLegs } from "./booking-journal-read";
 import {
+  confirmBilledPrimaryInvoice,
   planPrimaryBookingInvoice,
   planPrimaryInvoiceUpdate,
   planReplayedPrimaryBookingInvoice,
@@ -36,7 +37,8 @@ export async function planPrimaryInvoiceManifest(input: Omit<PrimaryInvoicePlanI
 }
 
 export type PrimaryInvoiceManifestSource =
-  | { kind: "BUILT"; bookingId: string; plan: PrimaryInvoicePlan | null }
+  /** A raise: the plan made before sending, and the lines Xero says the returned invoice bills. */
+  | { kind: "BUILT"; bookingId: string; plan: PrimaryInvoicePlan | null; billedLines: LineItem[] }
   /** The replay: the claimed operation's stored `invoices[0].lineItems`, or null when it holds none. */
   | { kind: "REPLAY"; bookingId: string; storedLines: LineItem[] | null };
 
@@ -50,7 +52,7 @@ export async function recordPrimaryInvoiceManifest(source: PrimaryInvoiceManifes
   try {
     let plan: PrimaryInvoicePlan | null;
     if (source.kind === "BUILT") {
-      plan = source.plan;
+      plan = source.plan && confirmBilledPrimaryInvoice(source.plan, source.billedLines);
     } else {
       if (!source.storedLines) return;
       plan = planReplayedPrimaryBookingInvoice({ bookingId, storedLines: source.storedLines, postedLegs: await readBookingChargeLegs(prisma, bookingId) });

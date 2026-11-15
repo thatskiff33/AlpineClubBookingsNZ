@@ -54,6 +54,7 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
+import { adminHref } from "@/lib/admin-hubs"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import type {
@@ -121,7 +122,7 @@ function ReviewRow({
         */}
         {row.erasure === "ANONYMISED_BY_DELETION_REQUEST" ? (
           <a
-            href={buildHrefWithReturnTo(`/admin/members/${row.memberId}`, returnTo)}
+            href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: row.memberId })}`, returnTo)}
             className="font-mono font-medium text-primary hover:underline"
           >
             {row.memberId}

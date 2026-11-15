@@ -14,6 +14,39 @@ set -Eeuo pipefail
 # quotes, missed `export KEY=` and took the FIRST duplicate, while Compose
 # unquotes, honours `export` and takes the LAST.
 
+# Extract only the requested image; a compose render can contain secrets.
+compose_service_image_ref() {
+  printf '%s\n' "$1" | awk -v service="$2" '
+    /^[^[:space:]]/ { in_services = ($0 == "services:"); in_service = 0; next }
+    in_services && /^  [^[:space:]]/ { in_service = ($0 == "  " service ":"); next }
+    in_service && /^    image:/ {
+      sub(/^    image:[[:space:]]*/, "")
+      gsub(/^["\047]|["\047]$/, "")
+      print
+      # Keep consuming input: exiting early can SIGPIPE printf on a large render.
+      in_service = 0
+    }
+  '
+}
+
+resolve_caddy_image_ref() {
+  local rendered="${RESOLVED_COMPOSE_CONFIG:-}"
+  local image_ref
+
+  # Slot seeding runs in the wrapper before the engine's canonical render.
+  # Resolve from the prepared workspace with the engine's image overrides.
+  if [ -z "$rendered" ]; then
+    rendered="$(
+      cd "$WORKSPACE" &&
+      APP_IMAGE="$APP_IMAGE" MIGRATE_IMAGE="$MIGRATE_IMAGE" \
+        docker compose --project-name "$COMPOSE_PROJECT_NAME" --profile "*" config 2>/dev/null
+    )" || return 1
+  fi
+  image_ref="$(compose_service_image_ref "$rendered" "$CADDY_SERVICE")" || return 1
+  [[ "$image_ref" =~ ^[^[:space:]@]+@sha256:[a-fA-F0-9]{64}$ ]] || return 1
+  printf '%s' "$image_ref"
+}
+
 trim_whitespace() {
   local value="$1"
   value="${value#"${value%%[![:space:]]*}"}"
@@ -523,13 +556,16 @@ seed_active_upstream_from_live_bind_mount() {
 infer_active_service_from_caddy_autosave() {
   local volume_name="${COMPOSE_PROJECT_NAME}_${CADDY_CONFIG_VOLUME_SUFFIX}"
   local active_service
+  local caddy_image_ref
 
+  # Cheap volume check first: a host with no Caddy volume skips the compose render.
   docker volume inspect "$volume_name" >/dev/null 2>&1 || return 1
+  caddy_image_ref="$(resolve_caddy_image_ref)" || return 1
 
   active_service="$(
     docker run --rm \
       -v "${volume_name}:/config:ro" \
-      caddy:2-alpine \
+      "$caddy_image_ref" \
       sh -lc "if [ -f /config/caddy/autosave.json ]; then grep -oE 'app(_(blue|green))?:3000' /config/caddy/autosave.json | head -n1 | cut -d: -f1; fi" \
       2>/dev/null || true
   )"
@@ -2409,6 +2445,11 @@ validate_repo_contract() {
 # Compose default apply here exactly as they will to the running container.
 CADDY_VALIDATION_ENV_FILE=""
 validate_caddy_contract() {
+  local caddy_image_ref
+  if ! caddy_image_ref="$(resolve_caddy_image_ref)"; then
+    echo "Unable to resolve a digest-pinned Caddy image from Compose; refusing Caddy validation" >&2
+    return 1
+  fi
   local domain
   local entry
   local status=0
@@ -2436,7 +2477,7 @@ validate_caddy_contract() {
     --env-file "$CADDY_VALIDATION_ENV_FILE" \
     -v "$PROJECT_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" \
     -v "$PROJECT_DIR/deploy/caddy:/etc/caddy/deploy:ro" \
-    caddy:2-alpine \
+    "$caddy_image_ref" \
     caddy validate --config /etc/caddy/Caddyfile >/dev/null; then
     status=0
   else
@@ -2778,17 +2819,7 @@ get_service_image_ref() {
     echo "Unable to resolve image for service $service: Compose configuration failed" >&2
     return 1
   fi
-  image_ref="$(printf '%s\n' "$rendered" | awk -v service="$service" '
-    /^[^[:space:]]/ { in_services = ($0 == "services:"); in_service = 0; next }
-    in_services && /^  [^[:space:]]/ { in_service = ($0 == "  " service ":"); next }
-    in_service && /^    image:/ {
-      sub(/^    image:[[:space:]]*/, "")
-      gsub(/^["\047]|["\047]$/, "")
-      print
-      # Keep consuming input: exiting early can SIGPIPE printf on a large render.
-      in_service = 0
-    }
-  ')" || return 1
+  image_ref="$(compose_service_image_ref "$rendered" "$service")" || return 1
   if [ -z "$image_ref" ]; then
     echo "Unable to resolve image for service $service: Compose returned no image" >&2
     return 1

@@ -592,6 +592,21 @@ describe("createXeroInvoiceForBooking", () => {
       })] });
       expect(mocks.tx.memberMoneyExportManifest.createMany.mock.invocationCallOrder[0])
         .toBeGreaterThan(mocks.tx.payment.updateMany.mock.invocationCallOrder[0]);
+      // #4525 review: the manifest hashes exactly the lines sent, so a composition drift fails here.
+      const [, sent] = mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls.at(-1) as [unknown, { invoices: [{ lineItems: never[] }] }];
+      expect(manifestRows()).toEqual([expect.objectContaining({ payloadHash: primaryInvoicePayloadHash(sent.invoices[0].lineItems) })]);
+    });
+
+    it("#4525 review: records a CONFLICT and no coverage when Xero returns an ORIGINAL invoice billing other lines", async () => {
+      // A replayed create under the same idempotency key returns the first run's invoice, built before an edit.
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValueOnce({
+        body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1", total: 0, status: "PAID",
+          lineItems: [{ description: "Jordan - (ADULT, Member) - 1 night", quantity: 1, unitAmount: 80 }] }] },
+      });
+      mocks.prisma.memberMoneyLine.findMany.mockResolvedValueOnce([stayLeg(10000)]);
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      expect(manifestRows()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "STAY_CENTS", providerInvoiceId: "inv_1" })]);
+      expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
     });
 
     it("still sends the invoice and completes the operation when its lines do not match the journal", async () => {
@@ -3749,6 +3764,11 @@ describe("createXeroCreditNoteForModification", () => {
           },
         ],
       },
+    });
+    // #3993: an edit's note first reads what the invoice still owes. These
+    // cases are about notes the invoice CAN take, so it is open for $100.
+    mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_1", status: "AUTHORISED", amountDue: 100 }] },
     });
   });
 

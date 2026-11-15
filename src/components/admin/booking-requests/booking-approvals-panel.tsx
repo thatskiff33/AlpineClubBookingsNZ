@@ -14,14 +14,7 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AdminViewOnlySectionBanner,
@@ -581,67 +574,66 @@ export function BookingApprovalsPanel({
           dialog always asks; the choice itself is recorded in the audit log.
           It suppresses only the review approval/rejection notice — the shared
           cancellation flow behind a reject is unaffected. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && reviewingId === null) setNotifyDialogOpen(false);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {notifyChoice?.noEmails
-                ? notifyChoice.decision === "REJECTED"
-                  ? "Decline this booking?"
-                  : "Approve this booking?"
-                : notifyChoice?.decision === "REJECTED"
-                  ? "Email the member about this decline?"
-                  : "Email the member about this approval?"}
-            </DialogTitle>
-            <DialogDescription>
-              {notifyChoice?.noEmails
-                ? notifyChoice.decision === "REJECTED"
-                  ? "The booking will be declined and cancelled. Nothing at all is emailed to the member — not even the standard cancellation notice."
-                  : "The booking will be approved."
-                : notifyChoice?.decision === "REJECTED"
-                  ? "The booking is declined and cancelled either way, and the member always receives the standard cancellation notice. Choose whether they also receive the review-declined explainer email — your choice is recorded in the audit log."
-                  : "The booking is approved either way. Choose whether the member receives the standard review-approved email — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          {/* #2259: with the booking's "No emails" switch on, the review
-              outcome email is withheld whatever is chosen — and so, on the
-              reject path, is the cancellation notice the copy above would
-              otherwise promise. No choice is offered. */}
-          {notifyChoice?.noEmails && <BookingNoEmailsNotice />}
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={reviewingId !== null}
-              onClick={() =>
-                notifyChoice?.noEmails ? confirmSilenced() : confirmNotify(false)
+        onOpenChange={setNotifyDialogOpen}
+        submitting={reviewingId !== null}
+        title={
+          notifyChoice?.noEmails
+            ? notifyChoice.decision === "REJECTED"
+              ? "Decline this booking?"
+              : "Approve this booking?"
+            : notifyChoice?.decision === "REJECTED"
+              ? "Email the member about this decline?"
+              : "Email the member about this approval?"
+        }
+        description={
+          notifyChoice?.noEmails
+            ? notifyChoice.decision === "REJECTED"
+              ? "The booking will be declined and cancelled. Nothing at all is emailed to the member — not even the standard cancellation notice."
+              : "The booking will be approved."
+            : notifyChoice?.decision === "REJECTED"
+              ? "The booking is declined and cancelled either way, and the member always receives the standard cancellation notice. Choose whether they also receive the review-declined explainer email — your choice is recorded in the audit log."
+              : "The booking is approved either way. Choose whether the member receives the standard review-approved email — your choice is recorded in the audit log."
+        }
+        // #2259: with the booking's "No emails" switch on, the review outcome
+        // email is withheld whatever is chosen — and so, on the reject path,
+        // is the cancellation notice the copy above would otherwise promise.
+        // No choice is offered.
+        notice={notifyChoice?.noEmails ? <BookingNoEmailsNotice /> : null}
+        actions={
+          notifyChoice?.noEmails
+            ? {
+                kind: "single",
+                action: {
+                  label:
+                    notifyChoice.decision === "REJECTED"
+                      ? "Reject booking"
+                      : "Approve booking",
+                  variant: "outline",
+                  onSelect: confirmSilenced,
+                },
               }
-            >
-              {notifyChoice?.noEmails
-                ? notifyChoice.decision === "REJECTED"
-                  ? "Reject booking"
-                  : "Approve booking"
-                : notifyChoice?.decision === "REJECTED"
-                  ? "Reject without emailing"
-                  : "Approve without emailing"}
-            </Button>
-            {!notifyChoice?.noEmails && (
-              <Button
-                disabled={reviewingId !== null}
-                onClick={() => confirmNotify(true)}
-              >
-                {notifyChoice?.decision === "REJECTED"
-                  ? "Reject and email member"
-                  : "Approve and email member"}
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            : {
+                kind: "choice",
+                withoutEmail: {
+                  label:
+                    notifyChoice?.decision === "REJECTED"
+                      ? "Reject without emailing"
+                      : "Approve without emailing",
+                  variant: "outline",
+                  onSelect: () => confirmNotify(false),
+                },
+                withEmail: {
+                  label:
+                    notifyChoice?.decision === "REJECTED"
+                      ? "Reject and email member"
+                      : "Approve and email member",
+                  onSelect: () => confirmNotify(true),
+                },
+              }
+        }
+      />
       </div>
     </div>
   );

@@ -824,6 +824,25 @@ owner decisions on #3820):
   club whose `Lodge` table has one active row — the same per-lodge rules apply
   with the lodge dimension hidden by the ADR-002 presentation rule.
 
+### INV-CAP-039
+
+- Every member- or guest-facing screen that shows or takes payment for an
+  existing booking names that booking's lodge, read from the booking row
+  (`booking.lodge.name`, or the payment-link context's `lodgeName`) and never
+  the club's default lodge (#2918, #2919). A screen that asks someone to review
+  or pay must show every fact that tells one booking from another, and the
+  lodge is one of them (#4948).
+- The booking page's Stay Details card, the public payment link's payable card
+  and the arrival card name the lodge **always**, in a one-lodge club too, as
+  the booking wizard's review step does (#2701): a screen that looks the same
+  whether or not the lodge is right cannot warn anyone.
+- Member booking **lists** (My Bookings and the dashboard's Next Stay, draft
+  and Recent Bookings rows) follow the ADR-002 presentation rule through one
+  helper, `bookingListLodgeLabel` in `src/lib/lodges.ts`: the name shows unless
+  exactly one lodge is active, and always on a row whose lodge is archived. The
+  active-lodge count is read on the server, never from a client-side list that
+  can fail to load. Admin booking screens and emails are outside this rule.
+
 ### INV-CAP-002
 
 - `lodgeId` is **`NOT NULL`** on the six entity tables (`LodgeRoom`, `Locker`,

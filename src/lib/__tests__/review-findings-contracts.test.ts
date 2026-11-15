@@ -1252,6 +1252,19 @@ describe("review finding source/schema contracts", () => {
         "MUTATION: rolling back the Member locks but not the moved induction still deadlocks the sign-off",
       ],
     },
+    {
+      issue: "#4860",
+      suite: "member-merge booking row",
+      stepName: "Test member-merge booking-row races against dedicated PostgreSQL",
+      file: "src/lib/__tests__/member-merge-booking-row-races.realdb.test.ts",
+      cases: [
+        "MUTATION: a writer holding the later-inserted booking and then updating the earlier one never deadlocks with the merge: the writer commits and the merge re-points both",
+        "MUTATION: while that writer holds only the later-inserted booking, the merge waits on it and does not hold the earlier one",
+        "a writer holding the earlier-inserted booking and then updating the later one never deadlocks with the merge: both commit",
+        "MUTATION: two sessions locking those two bookings in crossed order still deadlock",
+        "MUTATION: while merge holds the captured bookings, a child row's foreign key to one commits without waiting, and a sibling writer's row lock is still refused (#5004)",
+      ],
+    },
   ])("runs the $suite race suite against the same dedicated PostgreSQL ($issue)", ({ issue, stepName, file, cases }) => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const migrateStep = workflow.indexOf(
@@ -4188,6 +4201,30 @@ describe("review finding source/schema contracts", () => {
     // no-refund message instead.
     expect(routeSurface).toContain("originalPaymentCaptured");
     expect(routeSurface).toContain("cancellationHasNoPayment");
+
+    // #4946: the paid booking's schedule is ON THE PAGE, not only in the help
+    // widget, and it is the booking's own lodge's schedule — the one the cancel
+    // settles with — rather than the club default lodge's.
+    expect(routeSurface).toContain("<CancellationScheduleBlock");
+    expect(routeSurface).toContain(
+      "loadCancellationPolicy(booking.checkIn, booking.lodgeId)",
+    );
+  });
+
+  it("shows the cancellation schedule on the review step, before the primary button (#4946)", () => {
+    // Terms that bind money belong on the screen where the member commits. The
+    // block is unconditional, so it shows for card, internet banking, credit
+    // and split paths alike, and sits above the Confirm / Continue button.
+    const reviewStep = stripComments(
+      readRepoFile("src/app/(authenticated)/book/_components/review-step.tsx"),
+    );
+    const block = reviewStep.indexOf("<CancellationScheduleBlock");
+    expect(block).toBeGreaterThan(-1);
+    expect(block).toBeLessThan(reviewStep.indexOf('"Continue to Payment"'));
+    expect(block).toBeLessThan(reviewStep.indexOf('"Confirm Booking"'));
+    // Phrased as what happens once paid (PR #1389 owner rule), and as the club's
+    // CURRENT schedule, because the terms are read live at cancel time.
+    expect(reviewStep).toContain("If you pay and later cancel, the club's current");
   });
 
   it("removes the E2E ride-through allowances for the two fixed races (F28)", () => {

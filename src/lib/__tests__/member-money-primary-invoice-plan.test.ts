@@ -10,7 +10,9 @@ import { planPromoAdjustmentLines, promoAdjustmentLineItems } from "@/lib/xero-p
 import { stableDigest } from "@/lib/stable-digest";
 import { sanitizeForJson } from "@/lib/xero-sync";
 import type { PostedRevenueLeg } from "@/lib/member-money/internal/components";
+import { buildPrimaryInvoiceLines } from "@/lib/xero-primary-invoice-lines";
 import {
+  confirmBilledPrimaryInvoice,
   planPrimaryBookingInvoice,
   planReplayedPrimaryBookingInvoice,
   type PrimaryInvoicePlanInput,
@@ -171,5 +173,40 @@ describe("planReplayedPrimaryBookingInvoice (#4525)", () => {
       postedLegs: [leg("BOOKING_REVENUE", STAY, 14000), leg("FEE_REVENUE", "fee:a", 2500)] });
     expect(replayed.payloadHash).toBe(built.payloadHash);
     expect(replayed).toMatchObject({ outcome: "COVERED", lineTotalCents: 16500, frozenMapping: { source: "STORED_REQUEST" } });
+  });
+});
+
+describe("confirmBilledPrimaryInvoice (#4525 review)", () => {
+  const covered = () => planPrimaryBookingInvoice(input({ changeFeeCents: 2500, postedLegs: [leg("BOOKING_REVENUE", STAY, 14000), leg("FEE_REVENUE", "fee:a", 2500)] }));
+
+  it("plans exactly the lines the sender's one composition builds", () => {
+    const i = input({ changeFeeCents: 2500 });
+    expect(planPrimaryBookingInvoice(i).lines).toEqual(buildPrimaryInvoiceLines(i).lines);
+  });
+
+  it("keeps a COVERED plan when Xero's invoice bills the lines planned", () => {
+    const plan = covered();
+    expect(plan.outcome).toBe("COVERED");
+    expect(confirmBilledPrimaryInvoice(plan, sanitizeForJson(plan.lines) as never)).toBe(plan);
+  });
+
+  it("turns a replayed create's ORIGINAL invoice, billing other stay lines, into a conflict that covers nothing", () => {
+    const plan = covered();
+    const original = [{ description: "Ana One - earlier stay", quantity: 1, unitAmount: 120 }, changeFeeLineItem(2500, mapping)];
+    const confirmed = confirmBilledPrimaryInvoice(plan, original);
+    expect(confirmed).toMatchObject({ outcome: "CONFLICT", reason: "STAY_CENTS", payloadHash: plan.payloadHash, lineTotalCents: 16500 });
+    expect(confirmed).not.toHaveProperty("coverage");
+    expect(confirmed.frozenMapping).toMatchObject({ componentTaxCodes: [] });
+  });
+
+  it("names the fee when only the change-fee line differs", () => {
+    const plan = covered();
+    const stay = plan.lines.filter((line) => line.description !== changeFeeLineItem(2500, mapping).description);
+    expect(confirmBilledPrimaryInvoice(plan, [...stay, changeFeeLineItem(2000, mapping)])).toMatchObject({ outcome: "CONFLICT", reason: "FEE_CENTS" });
+  });
+
+  it("leaves a conflict as it was", () => {
+    const plan = planPrimaryBookingInvoice(input({ postedLegs: [leg("BOOKING_REVENUE", STAY, 13999)] }));
+    expect(confirmBilledPrimaryInvoice(plan, [])).toBe(plan);
   });
 });

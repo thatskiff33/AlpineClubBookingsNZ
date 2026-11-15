@@ -46,6 +46,7 @@ import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { restoreDumpWithoutOwnershipOrPrivileges } from "@/lib/backup-restore-validation";
 import { APPEND_ONLY_FORBIDDEN_TABLE_PRIVILEGES, APPEND_ONLY_SCHEMA_MIGRATION, buildDatabaseRolesSql } from "@/lib/database-roles";
+import { readSetupDatabaseRole } from "@/lib/setup-readiness-db";
 import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
 import { buildAiDiagnosticsRoleSql } from "@/lib/diagnostics/tools/provision-role";
 
@@ -338,6 +339,46 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
       await admin.end().catch(() => {});
     });
 
+    it("reports server role facts for the operator, application and superuser membership (INV-OPS-018)", async () => {
+      const { PrismaClient: Prisma } = await import("@prisma/client");
+      const { createPrismaPgAdapter } = await import("@/lib/prisma-adapter");
+      const operator = new Prisma({ adapter: createPrismaPgAdapter(urlFor(DATABASES.upgrade)) });
+      try {
+        expect(await readSetupDatabaseRole(operator)).toEqual({
+          name: new URL(RACE_DB_URL).username, isSuperuser: true,
+        });
+        expect(await readSetupDatabaseRole(appPrisma)).toEqual({ name: ROLES.app, isSuperuser: false });
+        await withClient(urlFor(DATABASES.upgrade), async (client) => {
+          const operatorName = new URL(RACE_DB_URL).username.replace(/"/g, '""');
+          await client.query(`GRANT "${operatorName}" TO "${ROLES.app}"`);
+          try {
+            expect(await readSetupDatabaseRole(appPrisma)).toEqual({ name: ROLES.app, isSuperuser: true });
+          } finally {
+            await client.query(`REVOKE "${operatorName}" FROM "${ROLES.app}"`);
+          }
+        });
+      } finally {
+        await operator.$disconnect();
+      }
+    });
+
+    it("treats a superuser login narrowed by SET ROLE as a superuser (INV-OPS-018)", async () => {
+      const { PrismaClient: Prisma } = await import("@prisma/client");
+      const { createPrismaPgAdapter } = await import("@/lib/prisma-adapter");
+      const operator = new Prisma({ adapter: createPrismaPgAdapter(urlFor(DATABASES.upgrade)) });
+      try {
+        // current_user is the app role; session_user is still the superuser
+        // login, which could RESET ROLE back to it.
+        const snapshot = await operator.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`SET LOCAL ROLE "${ROLES.app.replace(/"/g, '""')}"`);
+          return readSetupDatabaseRole(tx);
+        });
+        expect(snapshot).toEqual({ name: ROLES.app, isSuperuser: true });
+      } finally {
+        await operator.$disconnect();
+      }
+    });
+
     describe("migrations", () => {
       it("runs every migration as the migration role on an empty database, with no superuser", async () => {
         expect(migrateResult.status).toBe(0);
@@ -436,8 +477,8 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         const database = DATABASES.journal;
         await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${DATABASES.fresh}"`);
         // The release before these append-only tables, provisioned: take the
-        // journal, the M4a reservation tables and the Stripe evidence table
-        // away, then apply those migrations as the migrator. StripePayout is
+        // journal, the M4a reservation tables, the M13 export manifest and the
+        // Stripe evidence table away, then apply those migrations as the migrator. StripePayout is
         // dropped with them so its migration can be reapplied; it stays mutable.
         await withClient(urlFor(database), (client) => client.query(`
           DROP TABLE ${MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`).join(", ")} CASCADE;
@@ -453,15 +494,14 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
             "MemberMoneyExportConflictReason";
           DELETE FROM "_prisma_migrations" WHERE migration_name IN (
             '20261127010000_member_money_journal', '20261210080000_member_money_applications',
-            '20261210130000_member_money_export_manifest',
-            '20261213010000_member_money_export_supplementary',
-            '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
+            '20261211010000_stripe_balance_evidence',
+            '20261213010000_member_money_export_supplementary', '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
         expect(deployGrantsCheck(database)).toBe("");
         // Applied as prisma migrate deploy applies them: each file, as the migration role.
         await withClient(urlFor(database, "migrator"), async (client) => {
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261127010000_member_money_journal/migration.sql"), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261210080000_member_money_applications/migration.sql"), "utf8"));
-          await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261210130000_member_money_export_manifest/migration.sql"), "utf8"));
+          await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261211010000_stripe_balance_evidence/migration.sql"), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261213010000_member_money_export_supplementary/migration.sql"), "utf8"));
         });

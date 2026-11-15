@@ -69,7 +69,10 @@ const NAMED_READERS: Record<string, ReaderSite> = {
     historySink: /moneyBuildUp:\s*promoMoneyBuildUpSelection\.historyMetadata/,
     // #3828: the resolved figure is the aggregate the per-code promotion lines
     // must add up to (`xero-promo-adjustment-lines.ts`), or the one line.
-    amountSink: /const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}promoMoneyBuildUpSelection[\s\S]{0,5000}planPromoAdjustmentLines\(\{\s*aggregateCents: xeroPromoAdjustmentCents,/,
+    // #4525 review: the lines are composed once, in `buildPrimaryInvoiceLines`,
+    // so the figure reaches `planPromoAdjustmentLines` through that composer's
+    // `promo.aggregateCents` (pinned below), unchanged.
+    amountSink: /const xeroPromoAdjustmentCents = d3CompatibleBookingMoneyBuildUpCents\([\s\S]{0,100}promoMoneyBuildUpSelection[\s\S]{0,5000}promo:\s*\{\s*aggregateCents: xeroPromoAdjustmentCents,[\s\S]{0,1000}buildPrimaryInvoiceLines\(primaryLineInput\)/,
   },
 };
 
@@ -116,6 +119,10 @@ describe("#3277 canonical stored-money reader census", () => {
         site.amountSink,
       );
     }
+    // #4525 review: the sender's composer hands that figure to the promo line plan as it was.
+    expect(productionCode("src/lib/xero-primary-invoice-lines.ts")).toMatch(
+      /planPromoAdjustmentLines\(\{\s*aggregateCents: input\.promo\.aggregateCents,/,
+    );
   });
 
   it("pins each reader on the safe side of its mutation or provider boundary", () => {
