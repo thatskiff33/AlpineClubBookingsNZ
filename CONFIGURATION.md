@@ -1927,7 +1927,7 @@ action; scoped admins cannot merge.
 | `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose (`web-blue`, `web-green`, `cron-leader`, `staging`). Names which container **slot** this is. **Never read to decide whether this installation is production** — that is `APP_ENVIRONMENT_ROLE` above (`INV-CONFIG-003`). |
 | `NODE_ENV`                         | Runtime mode set by Node/Next.                                                                       |
 | `NEXT_RUNTIME`                     | Runtime marker set by Next.js instrumentation.                                                       |
-| `npm_package_version`              | Package version exposed by npm scripts.                                                              |
+| `APP_VERSION`                      | **Not a runtime variable; do not set it (#4985).** The app's version is stamped at build time from `package.json` by `next.config.ts`, so changing it means building a new image. Health checks, **System Health**, config-transfer exports, support-evidence packs and server Sentry events all report it. It replaces the version variable npm and pnpm set only when they launch a script, which the production image (`node server.js`) never had, so health checks and server Sentry events reported "0.1.0" and exports and evidence packs reported "unknown". |
 
 ## Environment Role
 
@@ -2796,7 +2796,7 @@ rate-limited, or temporarily unavailable.
 | `GROUP_CANCEL_RESUME_GRACE_MINUTES`   | Grace before the group-settlement-reaper resumes a crash-interrupted organiser-cancel cleanup (#1236); defaults to 15 minutes. |
 | `WAITLIST_TRANSACTION_RETRY_ATTEMPTS` | Optional waitlist transaction retry count.                                  |
 | `WAITLIST_TRANSACTION_RETRY_DELAY_MS` | Optional waitlist transaction retry delay.                                  |
-| `NODE_BUILD_OPTIONS`                  | Optional Node flags for `docker compose build` only, applied to `next build` as `NODE_OPTIONS` inside the builder stage, for both the `app` and the `migrate` image builds (#3824). Empty by default. Typically `--max-old-space-size=4096` where a small server's build is OOM-killed. Does NOT affect the running container. |
+| `NODE_BUILD_OPTIONS`                  | Optional Node flags for `docker compose build` only, applied to `next build` as `NODE_OPTIONS` inside the builder stage, for both the `app` and the `migrate` image builds (#3824). Empty by default, which leaves Node's default heap ceiling (about a quarter of the machine's memory, up to about 4 GB). The build's type check needs about 4.6 GB (#5164), so unset or `--max-old-space-size=4096` can fail with "JavaScript heap out of memory" or "Failed to type check". Use `--max-old-space-size=8192`, the value CI builds with, on a machine with at least 8 GB free for the build; with less, deploy a published image instead (`APP_IMAGE`). Does NOT affect the running container. |
 | `BACKUP_CRON_SCHEDULE`                | Cron expression for the nightly backup schedule (cron-leader timing).       |
 | `BACKUP_LOCAL_HOST_DIR`               | Host directory bind-mounted into the app container for local database backups. Used only by `docker-compose.yml`; empty uses the `backup_data` named volume instead. Must be owned by uid 1001. |
 | `BACKUP_LOCAL_DIR`                    | Path **inside the container** that mount lands on (default `/backups`). What the app writes to, and the value `/admin/backups` pre-fills. A path saved on that page overrides it. |
