@@ -849,7 +849,7 @@ describe("resolveManualRefundTask", () => {
     // #4516 (owner decision, 15 Nov 2026): a disputed card payment's hand-back (#5061) is dismissed only once every
     // dispute on its booking is lost. MUTATIONS: dropping the lost requirement fails the open, won and mixed cases;
     // refusing it again fails the lost case; reading the disputes before the Payment row fails the order assertion.
-    const dispute = (status: string, id = "dp_1") => ({ bookingId: "booking-1", stripeDisputeId: id, status, amountCents: 9000 });
+    const dispute = (status: string, id = "dp_1", amountCents = 9000) => ({ bookingId: "booking-1", stripeDisputeId: id, status, amountCents });
 
     it("#4516: dismisses a disputed card payment's hand-back once its dispute is lost: Payment row, then the disputes re-read, then the claim, then its R05 withdrawn", async () => {
       mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST")]);
@@ -876,6 +876,9 @@ describe("resolveManualRefundTask", () => {
       ["won", [dispute("WON")], /the card payment's dispute was won, so the club still owes it/],
       ["closed with no funds taken", [dispute("CLOSED_OTHER")], /the card payment's dispute was closed with no funds taken, so the club still owes it/],
       ["lost on one charge, open on another", [dispute("LOST", "dp_1"), dispute("OPEN", "dp_2")], /while the card payment's dispute is open/],
+      // Review (High): the lost cents must cover the $90.00 task; the cardholder has only what the bank took back.
+      ["lost for less than the refund", [dispute("LOST", "dp_1", 5000)], /the lost card dispute covered only part of it/],
+      ["lost for less, won on the rest", [dispute("LOST", "dp_1", 5000), dispute("WON", "dp_2", 4000)], /the lost card dispute covered only part of it/],
     ])("#4516: refuses a disputed card payment's hand-back while its dispute is %s, before the claim, writing nothing", async (_label, disputes, message) => {
       mocks.stripeDisputeFindMany.mockResolvedValue(disputes);
 
@@ -884,6 +887,14 @@ describe("resolveManualRefundTask", () => {
       expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
       expect(mocks.createAuditLog).not.toHaveBeenCalled();
       expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
+    });
+
+    it("#4516: a lost dispute covering the refund dismisses even beside a won one on another charge", async () => {
+      mocks.stripeDisputeFindMany.mockResolvedValue([dispute("WON", "dp_1", 1000), dispute("LOST", "dp_2", 9000)]);
+
+      await dismissTask();
+
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledTimes(1);
     });
 
     it("#4516: an edit's hand-back on a booking with a lost dispute is still refused, and reads no disputes", async () => {

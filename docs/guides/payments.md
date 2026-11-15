@@ -200,10 +200,16 @@ member is told the club will arrange their refund.
    shortfall's part to check can still be dismissed, once you have confirmed
    the card refund reached the member (owner decision, 15 Nov 2026; see below).
    So can the hand-back a cancellation raises when the cardholder is disputing
-   the card payment, once Stripe records the dispute as lost: the cardholder
-   already has the money back through their bank, so dismiss it with a note.
-   While the dispute is open, or if the club won it, the app refuses and says
-   why: the club may still owe that refund.
+   the card payment, once Stripe records the dispute as lost for at least the
+   refund due: the cardholder already has the money back through their bank,
+   so dismiss it with a note. While the dispute is open, if the club won it, or
+   if it was lost for less than the refund, the app refuses and says why: the
+   club may still owe that refund (for a part-lost dispute, take it to the
+   treasurer rather than marking it paid in full). In rare cases Stripe turns a
+   lost dispute into a "late win" and returns the money to the club; the app
+   sends no new alert for that, so if you see one, reopen the dismissed task
+   (the recently dismissed list offers it for 30 days; after that, take it to
+   the treasurer) and pay the member.
    A task dismissed before this change can still be reopened.
 
 **The same task for a booking change (#3827).** When a member or an officer

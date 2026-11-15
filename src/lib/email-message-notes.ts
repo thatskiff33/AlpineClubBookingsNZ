@@ -317,7 +317,7 @@ export const DISPUTED_CANCELLATION_ALERT_LEAD =
 
 /** Its paragraph after the lead, shared by the HTML and the note: when to pay it, and when it may be dismissed. */
 export const DISPUTED_CANCELLATION_ALERT_BODY =
-  "While the dispute is open, or if the club wins it, the club may still owe this refund: once the dispute is decided for the club, pay it by bank transfer and mark the task paid back. If the dispute is lost, the cardholder already has the money back through their bank: dismiss the task with a note. It cannot be dismissed before the dispute is recorded as lost.";
+  "While the dispute is open, or if the club wins it, the club may still owe this refund: once the dispute is decided for the club, pay it by bank transfer and mark the task paid back. If the dispute is lost for at least the refund due, the cardholder already has the money back through their bank: dismiss the task with a note. It cannot be dismissed before then; if the dispute was lost for less, take it to the treasurer.";
 
 /**
  * The cash situation's next step, shared by the HTML and the note. #4516 (owner decision, 14 Nov 2026): the task

@@ -437,7 +437,14 @@ export function disputedHandBackDismissRefusal(status: StripeDisputeStatus): str
     : `This refund can't be dismissed: the card payment's dispute was ${STRIPE_DISPUTE_STATUS_LABEL[status]}, so the club still owes it. Mark it paid once the money has gone back.`;
 }
 
-/** The dismiss dialog's sentence for that hand-back once its dispute is lost (#4516, owner decision 15 Nov 2026). */
+/**
+ * That hand-back when its lost disputes cover less than its refund: the cardholder has only part of it back, so it is
+ * neither dismissed nor marked paid in full (that would pay the lost part twice).
+ */
+export const DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL =
+  "This refund can't be dismissed: the lost card dispute covered only part of it, so the club may still owe the rest. Take it to the treasurer, and do not mark it paid in full: the cardholder already has the disputed part back.";
+
+/** The dismiss dialog's sentence for that hand-back once its lost dispute covers it (#4516, owner decision 15 Nov 2026). */
 export const DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION =
   "The card payment's dispute was lost, so the cardholder already has this money back through their bank. Dismissing closes the task without refunding anything and takes the refund off what the club owes. Say so in the note.";
 
@@ -472,5 +479,5 @@ export function disputedCancellationHandBackReason({ bookingId, refundPercentage
   refundPercentage: number;
   disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
 }): string {
-  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time. If the dispute is lost, the cardholder already has the money: dismiss this task.`;
+  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time. If the dispute is lost for at least this refund, the cardholder already has it: dismiss this task.`;
 }

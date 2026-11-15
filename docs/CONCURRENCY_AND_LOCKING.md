@@ -7307,10 +7307,12 @@ then the booking row, then the Payment row (#4516 M4d), so its cash posts
 against the owner. A card shortfall part to check's dismissal, and a disputed
 card payment's hand-back's, take the same three before the claim, then withdraw
 the R05 (owner decisions, 15 Nov 2026); a lost claim withdraws nothing. The
-disputed one re-reads its booking's disputes after the Payment row: the dispute
-writer takes none of these locks, but LOST is final (a closed dispute never
-reopens), so a lost read cannot be undone before the claim, and an open or won
-read refuses, writing nothing. Every other hand-back writer and the late-cash mint hold
+disputed one re-reads its booking's disputes after the Payment row and answers
+them as recorded at that read: the dispute writer takes none of these locks and
+serialises only on its own `StripeDispute` row, so no cycle exists. An open,
+won or short read refuses, writing nothing. A dispute never reopens to open;
+Stripe's rare "late win" (lost to won) can still land after the read, and is a
+stated limit in the payments guide. Every other hand-back writer and the late-cash mint hold
 `lock(1)`. An organisation's late-cash hand-back (`invoice-paid-effects.ts`)
 posts its R05 after the delivery's Payment row, so it reads the owner plainly
 rather than taking the booking row: no Payment -> booking edge, and no member

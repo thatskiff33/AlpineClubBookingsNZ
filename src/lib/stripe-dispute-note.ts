@@ -38,7 +38,8 @@ export function disputeHoldsCapture(status: StripeDisputeStatus): boolean {
 /**
  * Whether a dispute was decided for the cardholder, who then already has the money back through their bank: the
  * one rule the refund refusal (`DisputedCaptureRefundRefusedError.lost`) and the disputed hand-back's dismissal
- * (#4516, owner decision 15 Nov 2026) read. LOST is final: a closed dispute never reopens.
+ * (#4516, owner decision 15 Nov 2026) read. A closed dispute never reopens to open; Stripe calls lost final but
+ * allows a rare "late win" (lost to won), which updates the row like any newer closed outcome.
  */
 export function disputeIsLost(status: StripeDisputeStatus): boolean {
   return status === "LOST";
@@ -60,7 +61,7 @@ export const STRIPE_DISPUTE_NEXT_STEP: Record<StripeDisputeStatus, string> = {
   LOST:
     "The dispute was decided for the cardholder: the money is not coming back and the cardholder already has it. Do not refund or credit this payment. " +
     "Record the loss and Stripe's dispute fee in Xero by hand against the Stripe clearing account, as the deployment guide's lost-dispute procedure describes. " +
-    "If the booking was cancelled and its refund handed to the treasurer, dismiss that task on the payments board with a note: the cardholder already has the money.",
+    "If the booking was cancelled and its refund handed to the treasurer, that task can be dismissed on the payments board once the lost amount covers it: the cardholder already has the money.",
   CLOSED_OTHER:
     "Stripe closed this dispute without taking funds (an inquiry or a prevented dispute). Refunds and credits for this payment follow the normal rules again.",
 };

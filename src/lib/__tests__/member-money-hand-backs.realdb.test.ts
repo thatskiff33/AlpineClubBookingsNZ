@@ -264,7 +264,7 @@ async function cleanup() {
   });
 
   /** A card booking settled for real, its capture disputed (`status`), cancelled by a member asking for a card refund (#5061). */
-  async function disputedCancel(status: "OPEN" | "LOST") {
+  async function disputedCancel(status: "OPEN" | "LOST", disputedCents = 20_000) {
     const id = `${PREFIX}${++sequence}`;
     const intent = `pi_${id}`;
     await createHistoryBooking(db, names, id, { payment: { amountCents: 20_000, source: "STRIPE", intent } });
@@ -273,7 +273,7 @@ async function cleanup() {
     const capture = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId: `${id}-payment`, stripePaymentIntentId: intent }, select: { id: true } });
     const opened = new Date("2026-06-20T00:00:00.000Z");
     await db.stripeDispute.create({ data: { stripeDisputeId: `dp_${id}`, stripeChargeId: `ch_${id}`, stripePaymentIntentId: intent, paymentTransactionId: capture.id,
-      paymentId: `${id}-payment`, bookingId: id, amountCents: 20_000, currency: "nzd", reason: "fraudulent", status, stripeStatus: status.toLowerCase(),
+      paymentId: `${id}-payment`, bookingId: id, amountCents: disputedCents, currency: "nzd", reason: "fraudulent", status, stripeStatus: status.toLowerCase(),
       stripeCreatedAt: opened, lastEventCreatedAt: opened, stripeEventId: `evt_${id}` } });
     // INV-PAY-154: the member asked for a card refund; the dispute hands the whole refund due to the treasurer instead.
     const { cancelBooking } = await import("@/lib/booking-cancel");
@@ -335,6 +335,19 @@ async function cleanup() {
 
     expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "DISMISSED" });
     expect((await eventOf(r05))?.journal?.reversedBy).not.toBeNull();
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  it("(review, High) a dispute lost for less than the refund: refused, never dismissed or withdrawn, and the queue says so", async () => {
+    const { id, task, r05 } = await disputedCancel("LOST", 1_000);
+    expect(task.amountCents).toBeGreaterThan(1_000);
+    const { DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL } = await import("@/lib/manual-refund-task-copy");
+
+    // MUTATION: dropping the coverage check fails here: the $10.00 lost dispute would close a larger refund.
+    await expect(resolve(task.id, "dismissed")).rejects.toMatchObject({ status: 409, message: DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL });
+    expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "OPEN" });
+    expect((await eventOf(r05))?.journal?.reversedBy).toBeNull();
+    expect(await queuePreview(task.id)).toMatchObject({ journalHandBackDismissRefusal: DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, disputedHandBackLost: false });
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
   });
 

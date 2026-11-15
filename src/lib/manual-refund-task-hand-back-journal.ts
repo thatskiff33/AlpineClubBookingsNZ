@@ -13,9 +13,9 @@ import {
 import { lockMemberCreditLedger, requireMemberCreditRecipient } from "@/lib/member-credit";
 import { postHandBackPayment, postRefundObligation, withdrawRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
-import { disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
+import { DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
-import { disputeIsLost } from "@/lib/stripe-dispute-note";
+import { disputeHoldsCapture, disputeIsLost } from "@/lib/stripe-dispute-note";
 
 /**
  * #4516 (Ledger M4d): WHICH MANUAL REFUND TASKS THE MEMBER-MONEY JOURNAL RECORDS AS A HAND-BACK DEBT, and the
@@ -72,15 +72,20 @@ export function isDismissibleCheckPart(task: HandBackFacts): boolean {
   return isJournalHandBackTask(task) && cancelCardShortfallPart(task) === "check";
 }
 
-/** The card disputes recorded on the task's booking (#5061, `readDisputesByBookingId`): only their statuses count here. */
-export type HandBackDisputes = readonly { status: StripeDisputeStatus }[];
+/** The card disputes recorded on the task's booking (#5061, `readDisputesByBookingId`): their statuses and cents. */
+export type HandBackDisputes = readonly { status: StripeDisputeStatus; amountCents: number }[];
+
+/** A cancellation's own journal hand-back: not a card shortfall part, nor an edit's or an appeal's hand-back. */
+export function isCancellationOwnHandBack(task: HandBackFacts): boolean {
+  return isJournalHandBackTask(task) && !isNonCancellationHandBackTask(task) && cancelCardShortfallPart(task) === null;
+}
 
 /**
  * A cancellation's own hand-back on a booking with a card dispute recorded: the task a paid cancel of a disputed card
- * payment raises (#5061, `INV-PAY-154`). Not a card shortfall part, nor an edit's or an appeal's hand-back.
+ * payment raises (#5061, `INV-PAY-154`).
  */
 export function isDisputedCancellationHandBack(task: HandBackFacts, disputes: HandBackDisputes): boolean {
-  return disputes.length > 0 && isJournalHandBackTask(task) && !isNonCancellationHandBackTask(task) && cancelCardShortfallPart(task) === null;
+  return disputes.length > 0 && isCancellationOwnHandBack(task);
 }
 
 /** What a dismissal of this task does: refused (with the sentence shown), or allowed and withdrawing its debt. */
@@ -89,35 +94,39 @@ export type JournalHandBackDismissal = { refusal: string | null; withdraws: bool
 /**
  * THE dismissal rule for a journal hand-back (`INV-SSOT`): the server's door and the queue payload both ask it.
  * - A card shortfall's part to check keeps its dismissal (owner decision, 15 Nov 2026).
- * - A disputed card payment's hand-back is dismissed only once every dispute on its booking is lost; while one is
- *   open, won or closed with no funds taken, the club may still owe it (owner decision, 15 Nov 2026).
+ * - A disputed card payment's hand-back is dismissed only once its disputes are lost (owner decision, 15 Nov 2026),
+ *   and only when the lost cents cover the task's: the decision rests on the cardholder already having the money
+ *   back, which is true only of what the bank took back. While one is open, if they cover less, or if they were won
+ *   or closed with no funds taken, it is refused: the club may still owe it.
  * - Every other journal hand-back is refused until the four-way dismissal ships (owner decision, 14 Nov 2026, Q6).
  * An allowed dismissal withdraws the task's refund debt exactly. Any other task is not this rule's.
  */
-export function journalHandBackDismissal(task: HandBackFacts, disputes: HandBackDisputes): JournalHandBackDismissal {
+export function journalHandBackDismissal(task: HandBackFacts & { amountCents: number | null }, disputes: HandBackDisputes): JournalHandBackDismissal {
   if (!isJournalHandBackTask(task)) return { refusal: null, withdraws: false, disputeLost: false };
   if (isDismissibleCheckPart(task)) return { refusal: null, withdraws: true, disputeLost: false };
-  if (isDisputedCancellationHandBack(task, disputes)) {
-    const notLost = disputes.find((dispute) => !disputeIsLost(dispute.status));
-    return notLost ? { refusal: disputedHandBackDismissRefusal(notLost.status), withdraws: false, disputeLost: false }
-      : { refusal: null, withdraws: true, disputeLost: true };
-  }
-  return { refusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, withdraws: false, disputeLost: false };
+  if (!isDisputedCancellationHandBack(task, disputes)) return { refusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, withdraws: false, disputeLost: false };
+  const refused = (refusal: string) => ({ refusal, withdraws: false, disputeLost: false });
+  const open = disputes.find((dispute) => disputeHoldsCapture(dispute.status) && !disputeIsLost(dispute.status));
+  if (open) return refused(disputedHandBackDismissRefusal(open.status));
+  const lostCents = disputes.filter((dispute) => disputeIsLost(dispute.status)).reduce((sum, dispute) => sum + dispute.amountCents, 0);
+  if (task.amountCents !== null && lostCents >= task.amountCents) return { refusal: null, withdraws: true, disputeLost: true };
+  return refused(lostCents > 0 ? DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL : disputedHandBackDismissRefusal(disputes[0]!.status));
 }
 
 /**
  * The rule, asked by the door under the claim's locks. `lock(1)` and the booking row are held; a cancellation's own
  * hand-back then takes its Payment row (completion's order; the withdrawal re-takes it, waiting on nothing) and only
- * then re-reads its booking's disputes, never trusting a read made before the locks. LOST is final (a closed dispute
- * never reopens, `INV-PAY-154`), so no later write can undo a lost read; one that reads open or won refuses, writing
- * nothing. An edit's or an appeal's hand-back reads no disputes.
+ * then re-reads its booking's disputes, never trusting a read made before the locks. The dispute writer takes none
+ * of these locks, so the dismissal answers the disputes as recorded at that read: one that reads open, won or short
+ * refuses, writing nothing. A dispute never reopens to open (`INV-PAY-154`); Stripe calls lost final but allows a rare
+ * "late win", which this decision cannot foresee (a stated limit in `docs/guides/payments.md`). Others read no disputes.
  */
-export async function decideJournalHandBackDismissal(tx: Prisma.TransactionClient, task: HandBackFacts & { bookingId: string; paymentId: string | null },
+export async function decideJournalHandBackDismissal(tx: Prisma.TransactionClient,
+  task: HandBackFacts & { bookingId: string; paymentId: string | null; amountCents: number | null },
   resolution: "completed" | "dismissed"): Promise<JournalHandBackDismissal> {
   if (resolution !== "dismissed" || !isJournalHandBackTask(task)) return { refusal: null, withdraws: false, disputeLost: false };
-  if (isNonCancellationHandBackTask(task)) return journalHandBackDismissal(task, []);
-  if (task.paymentId !== null) await lockPaymentForRefundedTotal(tx, task.paymentId);
-  const disputes = cancelCardShortfallPart(task) === null ? (await readDisputesByBookingId(tx, [task.bookingId])).get(task.bookingId) ?? [] : [];
+  if (!isNonCancellationHandBackTask(task) && task.paymentId !== null) await lockPaymentForRefundedTotal(tx, task.paymentId);
+  const disputes = isCancellationOwnHandBack(task) ? (await readDisputesByBookingId(tx, [task.bookingId])).get(task.bookingId) ?? [] : [];
   return journalHandBackDismissal(task, disputes);
 }
 
