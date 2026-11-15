@@ -521,7 +521,7 @@ describe("admin query validation and pagination", () => {
       expect(mocks.deletionRequestFindMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { status: { in: ["PENDING", "APPROVAL_IN_PROGRESS"] } },
-          // INV-OPS-017: the pending queue reads oldest first.
+          // INV-OPS-019: the pending queue reads oldest first.
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           take: 25,
           skip: 0,

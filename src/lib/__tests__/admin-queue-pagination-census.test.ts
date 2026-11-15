@@ -241,7 +241,7 @@ function unparsedPageReads(code: string): string[] {
     .map((match) => match[0]);
 }
 
-describe("admin lists share the page parser and range text (INV-OPS-017)", () => {
+describe("admin lists share the page parser and range text (INV-OPS-019)", () => {
   // API routes read `page` through their zod schema (`adminListPageQueryFields`).
   const files = sourceFiles(SRC)
     .map(relative)

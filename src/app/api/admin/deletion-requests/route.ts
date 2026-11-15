@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     const [requests, total] = await Promise.all([
       prisma.deletionRequest.findMany({
         where,
-        // INV-OPS-017: the pending queue reads oldest first, so the request
+        // INV-OPS-019: the pending queue reads oldest first, so the request
         // that has waited longest is on page 1; id breaks createdAt ties.
         orderBy: [
           { createdAt: adminQueueCreatedOrder(status === "PENDING") },

@@ -212,7 +212,7 @@ describe("AdminInitiatedDeletionSection (#1938)", () => {
     expect(lifecycleUrls.length).toBeGreaterThan(0);
     expect(lifecycleUrls[0]).toContain("page=1");
 
-    // The shared pager (INV-OPS-017): both controls and the range text, and
+    // The shared pager (INV-OPS-019): both controls and the range text, and
     // the self-service list states its empty total too.
     const next = screen.getByRole("button", { name: "Next page" });
     expect(next).not.toBeNull();

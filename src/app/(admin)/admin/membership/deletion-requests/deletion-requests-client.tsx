@@ -155,7 +155,7 @@ export default function DeletionRequestsClient({
     ? isFullAdmin(session.user)
     : false;
   const [statusFilter, setStatusFilter] = useState("PENDING");
-  // INV-OPS-017: each list pages through the shared hook, so a status change
+  // INV-OPS-019: each list pages through the shared hook, so a status change
   // returns both to page 1 and a slower read for a page left behind never
   // replaces the one shown. The page stays in memory, as the filter does.
   const requestsPage = useAdminQueuePage({ filterKey: statusFilter });
