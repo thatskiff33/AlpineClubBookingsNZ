@@ -87,6 +87,8 @@ has passed.
 2. **Join Work Party** opens **Book a Stay** with the stay filled in — check-in on
    the first night (or today, if it has started), check-out the morning after the
    last night — and the lodge and "I am attending a working bee" ticked.
+   An unfinished booking kept in the browser tab is not brought back over it;
+   it is still there the next time the member opens **Book** directly.
 3. The member adds guests and pays as usual. Joining *is* a booking: there is no
    separate sign-up list, every booking rule still applies (capacity, minimum
    stay, booking windows), and a full lodge shows the usual message.
