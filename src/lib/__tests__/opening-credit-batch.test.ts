@@ -140,6 +140,16 @@ describe("buildOpeningCreditPreview (#4988)", () => {
     expect(result.errorCount).toBe(0);
   });
 
+  it("reads the holders before looking up the batch key, so a post committing between the reads reads as already posted", async () => {
+    // Two reads outside a transaction: a concurrent post of this same file can
+    // commit between them. Holders first means its credits are seen only if
+    // its batch row is seen too (the real-PostgreSQL double-confirm race).
+    await preview();
+    const holdersRead = db.memberCredit.findMany.mock.invocationCallOrder[0]!;
+    const keyLookup = db.openingCreditBatch.findUnique.mock.invocationCallOrder[0]!;
+    expect(holdersRead).toBeLessThan(keyLookup);
+  });
+
   it("refuses a member still holding credit from an unreversed batch, so a corrected file cannot credit twice", async () => {
     db.memberCredit.findMany.mockResolvedValue([{ memberId: "m-b" }]);
     const result = await preview();

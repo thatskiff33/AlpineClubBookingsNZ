@@ -188,6 +188,17 @@ export async function buildOpeningCreditPreview(
   };
   let { valid, errorCount } = tally();
   let batchKey = errorCount === 0 ? openingCreditBatchKey(valid) : null;
+  // The holders are read BEFORE the batch key is looked up. These are two
+  // reads outside any transaction, and a concurrent post of this same file can
+  // commit between them. Read in this order, that post is either invisible to
+  // both reads (the confirm then meets the unique key) or visible to the
+  // lookup (already posted). Read the other way round, the lookup could miss it
+  // and the holders read see its credits, so the file's own credits would
+  // report every row as "already holds opening credit" instead.
+  const holders = await membersHoldingOpeningCredit(
+    db,
+    rows.flatMap((row) => (row.memberId ? [row.memberId] : [])),
+  );
   const existing = batchKey
     ? await db.openingCreditBatch.findUnique({
         where: { batchKey },
@@ -199,10 +210,6 @@ export async function buildOpeningCreditPreview(
   // unreversed batch would be credited twice. Re-previewing that same file
   // reports it as already posted instead.
   if (!existing) {
-    const holders = await membersHoldingOpeningCredit(
-      db,
-      rows.flatMap((row) => (row.memberId ? [row.memberId] : [])),
-    );
     for (const row of rows) {
       if (row.memberId && holders.has(row.memberId)) row.errors.push(OPENING_CREDIT_ALREADY_HELD);
     }
