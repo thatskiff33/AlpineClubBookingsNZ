@@ -24,7 +24,7 @@ reason: the Xero sync and manual-payment handlers parse only a success and
   lines would move the handlers away from their state.
 
 file: src/app/(admin)/admin/hut-leaders/page.tsx
-lines: 1514
+lines: 1513
 reason: the leader writes read a refusal, including its capacity and
   amendment details, through the shared reader inside each handler; splitting
   the page is a separate refactor.
