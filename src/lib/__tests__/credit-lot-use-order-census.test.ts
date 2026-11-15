@@ -105,6 +105,9 @@ const NOT_A_USE_ORDER: Record<string, string> = {
   "src/lib/edit-financial-review-account-credit.ts > creditSliceStillOwedAfterCancellation":
     "reads at most two cancellation-restore rows and refuses when there are " +
     "two, so which row comes first cannot change the answer.",
+  "src/lib/subject-access-export-sections.ts > readMemberSections":
+    "#4915: lists the subject's own credit rows, oldest first, in their privacy access file; " +
+    "a read-only copy for the member, and no lot is used, allocated or minted from it.",
 };
 
 /**

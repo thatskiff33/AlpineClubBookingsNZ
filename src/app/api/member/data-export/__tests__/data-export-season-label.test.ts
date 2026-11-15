@@ -56,6 +56,12 @@ vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// #4915: the sections the export gained have their own tests
+// (subject-access-export.realdb.test.ts); this file is about the reads it kept.
+vi.mock("@/lib/subject-access-export-sections", () => ({
+  buildSubjectAccessSections: vi.fn(async () => ({})),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findUnique: mocks.memberFindUnique },
@@ -64,7 +70,8 @@ vi.mock("@/lib/prisma", () => ({
     bookingGuest: { findMany: vi.fn(async () => []) },
     choreAssignment: { findMany: mocks.choreFindMany },
     memberSubscription: { findMany: mocks.subscriptionFindMany },
-    auditLog: { findMany: mocks.auditFindMany },
+    // #4915: the export writes its own audit row.
+    auditLog: { findMany: mocks.auditFindMany, create: vi.fn(async () => ({})) },
   },
 }));
 

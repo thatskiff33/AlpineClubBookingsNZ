@@ -68,7 +68,7 @@ Journey: Read upcoming stays and account notices, then open a booking or choose 
 
 Screen: `/book`.
 
-Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer.
+Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer. Work survives profile detours and refreshes in the same tab; expired dates are dropped. Submit, waitlist join, draft save, exception request, sign-out or Start again clears it.
 
 [Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -115,7 +115,7 @@ Journey: Join the waitlist for full nights, open an offer, and accept before its
 
 Screen: `/profile`.
 
-Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment. A deletion request awaiting review, or an email change awaiting its link, stays shown in its section after a reload until it resolves.
+Journey: Use the section rail to open personal details, sign-in security, notification preferences or privacy controls. Stage and save the relevant section. Privacy & Data downloads the member's own subject access file. Sign-in security lists saved passkeys and can add or remove one without changing the authenticator-app or email enrolment. A deletion request awaiting review, or an email change awaiting its link, stays shown in its section after a reload until it resolves.
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -231,6 +231,10 @@ Journey: Follow the redirect into the Changes tab of Booking Requests.
 
 Screen: `/admin/booking-policies`.
 
+The Cancellation section includes club-wide reminder and policy-exception hold
+timings. Choose Edit, adjust days, then Save or Cancel; existing requests keep
+their stamped hold deadlines.
+
 Shows: Booking rules and cancellation-policy settings.
 
 Journey: Review booking rules and cancellation policies before staging a change.
@@ -241,7 +245,7 @@ Journey: Review booking rules and cancellation policies before staging a change.
 
 Screen: `/admin/booking-requests`.
 
-Shows: Tabbed request queues and request details with their current status and actions.
+Shows: Tabbed request queues and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-020). A deep link to one booking or request pins it above the page when it is elsewhere.
 
 Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
 
@@ -327,7 +331,7 @@ Screen: `/admin/communications`.
 
 Shows: Member communication composition and audience selection.
 
-Journey: Choose recipients (the help line says who each reaches) and compose a message; Send to Members opens a confirmation naming the recipient count, audience and subject, with Cancel focused; confirm to send. The result is announced in a status region.
+Journey: Choose recipients (the help line says who each reaches), choose the kind of message (club notice or club newsletter, nothing preselected; a live count shows who it reaches and who is left out) and compose a message; Send to Members opens a confirmation naming the recipient count, audience, kind and subject, with Cancel focused; confirm to send. The result is announced in a status region.
 
 [Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -397,7 +401,7 @@ Journey: Choose a lodge, inspect lockers and assignments, and manage the selecte
 
 Screen: `/admin/member-applications`.
 
-Shows: Applications, nomination progress and officer decisions.
+Shows: Applications, nomination progress and officer decisions. The list pages 25 rows with a "Showing 1–25 of 40" total line; Pending admin lists the oldest first (INV-OPS-020).
 
 Journey: Review an application and its nominations, then approve or reject. Action failures take focus and scroll into view; successes are announced and brought into view.
 
@@ -419,7 +423,7 @@ Screen: `/admin/members`.
 
 Shows: A searchable member list and individual membership records.
 
-Journey: Search or filter members, open a profile, and use its permitted membership actions. Merge preview and execution failures take focus and scroll into view.
+Journey: Search or filter members, open a profile, and use its permitted membership actions. A Full Admin answers an access request from a profile's Lifecycle & Deletion section: download that member's subject access report, or find someone else by email or a non-member guest by name. Merge preview and execution failures take focus and scroll into view.
 
 [Guide](guides/members.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -429,7 +433,7 @@ Screen: `/admin/membership-cancellations`.
 
 Merged in (#4796): a Requests tab and a Settings tab (`?tab=settings`); `/admin/membership-cancellation` and `/admin/setup/cancellation` redirect to the Settings tab.
 
-Shows: The membership cancellation review queue; on the Settings tab, the cancellation copy and Xero handling.
+Shows: The membership cancellation and archive review queues, each paged 25 rows with its own total line (INV-OPS-020); on the Settings tab, the cancellation copy and Xero handling.
 
 Journey: Open a cancellation request and review its consequences before deciding it; or open Settings, from here or from Notifications & Email, to change the cancellation wording.
 
@@ -454,6 +458,16 @@ Shows: Membership types and their eligibility and billing configuration.
 Journey: Inspect a type, its eligibility and subscription settings before saving changes.
 
 [Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Subscription Categories — subscription-categories
+
+Screen: `/admin/subscription-categories`.
+
+Shows: Subscription categories and their fee, the second billing axis alongside membership type.
+
+Journey: Create or edit a category and its flat fee, then assign members from their profile.
+
+[Guide](guides/subscription-categories.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Subscription Lockout — subscription-lockout
 
@@ -493,7 +507,7 @@ Screen: `/admin/display`.
 
 Shows: The lobby-display hub, device management, templates, layouts and previews.
 
-Journey: Open Devices, Visual builder, Layouts, Templates or Reference from the display hub.
+Journey: Open Display Devices, Display Builder, Display Layouts, Display Templates or Display Reference from the display hub.
 
 [Guide](guides/display.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -643,7 +657,7 @@ Journey: Filter payments, open a record, and inspect its booking and provider st
 
 Screen: `/admin/refund-requests`.
 
-Shows: Refund requests with booking context and decision controls. A credit approval shows the account the requester chose.
+Shows: Refund requests with booking context and decision controls, paged 25 rows with a total line (INV-OPS-020). A credit approval shows the account the requester chose.
 
 Journey: Open a request, inspect the booking and amounts, then use the permitted decision action.
 

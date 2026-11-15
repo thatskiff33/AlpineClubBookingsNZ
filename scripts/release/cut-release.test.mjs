@@ -9,7 +9,6 @@ import {
   computeRelease,
   FEATURE_FRAGMENT_SUFFIX,
   fragmentBump,
-  githubHeadingAnchor,
   latestReleaseTag,
   main,
   MAX_RELEASE_NOTES_CHARS,
@@ -301,11 +300,6 @@ describe("package.json, remote and release-body helpers", () => {
     expect(parseGitHubRemote("file:///srv/git/origin.git")).toBeNull();
     expect(parseGitHubRemote("https://github.com/o")).toBeNull();
     expect(parseGitHubRemote("")).toBeNull();
-  });
-
-  it("computes the anchor GitHub gives a release heading", () => {
-    expect(githubHeadingAnchor("## 0.13.3 - 2026-10-31")).toBe("0133---2026-10-31");
-    expect(githubHeadingAnchor("## Unreleased")).toBe("unreleased");
   });
 
   it("publishes the section as-is up to the limit and a short linked body beyond it", () => {

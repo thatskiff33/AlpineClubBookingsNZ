@@ -18,7 +18,10 @@ export default function MountainConditionsAdminPage() {
           Mountain Conditions
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Review and edit the cached Whakapapa mountain conditions JSON payload.
+          Review and edit the cached Whakapapa (Mt Ruapehu) conditions
+          report, the data behind the {"{{skifield-whakapapa}}"} token. This
+          page belongs to the Whakapapa conditions report module; widgets for
+          other ski fields come from Snow.nz and need no cache here.
         </p>
       </div>
 
