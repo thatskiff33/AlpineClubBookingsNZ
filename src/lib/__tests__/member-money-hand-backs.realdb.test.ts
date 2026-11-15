@@ -8,7 +8,7 @@ import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
+import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures, settleHistoryByCard } from "./support/booking-ledger-history";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { raceSession } from "./support/race-session-double";
@@ -139,6 +139,7 @@ async function chargedBooking(charges: ReadonlyArray<["STRIPE" | "INTERNET_BANKI
 const eventOf = (eventKey: string) => db.memberMoneyEvent.findUnique({ where: { eventKey }, include: { journal: { include: { reversedBy: true, applications: true, lines: true } } } });
 
 async function cleanup() {
+  await db.stripeDispute.deleteMany({ where: { stripeDisputeId: { startsWith: `dp_${PREFIX}` } } });
   await cleanHistories(db, PREFIX);
   await db.auditLog.deleteMany({ where: { OR: [{ actorMemberId: ADMIN }, { memberId: ADMIN }] } });
   await db.memberAccessRole.deleteMany({ where: { memberId: ADMIN } });
@@ -259,6 +260,38 @@ async function cleanup() {
     expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: bank.taskId } })).toMatchObject({ status: "OPEN", completedAt: null });
     expect((await eventOf(bankR05))?.journal?.reversedBy).toBeNull();
     expect(await db.auditLog.count({ where: { targetId: id, action: "booking-payment.manual-refund-task.dismiss" } })).toBe(1);
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  it("(#5061 reconciled) a paid cancel of a disputed card booking posts the hand-back's R05 once and no card R05; its Dismiss is refused like any bank hand-back", async () => {
+    const id = `${PREFIX}${++sequence}`;
+    const intent = `pi_${id}`;
+    await createHistoryBooking(db, names, id, { payment: { amountCents: 20_000, source: "STRIPE", intent } });
+    await settleHistoryByCard(id, 20_000);
+    expect(await eventOf(memberMoneyEventKeys.bookingCharge(id))).not.toBeNull(); // the settle posted R01: the booking is in the population
+    const capture = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId: `${id}-payment`, stripePaymentIntentId: intent }, select: { id: true } });
+    const opened = new Date("2026-06-20T00:00:00.000Z");
+    await db.stripeDispute.create({ data: { stripeDisputeId: `dp_${id}`, stripeChargeId: `ch_${id}`, stripePaymentIntentId: intent, paymentTransactionId: capture.id,
+      paymentId: `${id}-payment`, bookingId: id, amountCents: 20_000, currency: "nzd", reason: "fraudulent", status: "LOST", stripeStatus: "lost",
+      stripeCreatedAt: opened, lastEventCreatedAt: opened, stripeEventId: `evt_${id}` } });
+
+    // INV-PAY-154: the member asked for a card refund; the dispute hands the whole refund due to the treasurer instead.
+    const { cancelBooking } = await import("@/lib/booking-cancel");
+    expect((await cancelBooking(id, names.officerId, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card")).status).toBe(200);
+    const tasks = await db.manualRefundTask.findMany({ where: { bookingId: id }, select: { id: true, amountCents: true, reason: true } });
+    expect(tasks).toHaveLength(1);
+    const task = tasks[0]!;
+    expect(task.reason).toContain(`dp_${id}`);
+    expect(task.amountCents).toBeGreaterThan(0);
+    // One refund debt for the one refund: the hand-back's, for its cents. No card refund was planned, so no card R05.
+    expect(await handBackDebts(task.id)).toEqual([{ obligationKey: memberMoneyEventKeys.refundObligation("hand-back", task.id), faceCents: task.amountCents }]);
+    expect(await db.memberMoneyObligation.count({ where: { obligationKey: { startsWith: memberMoneyEventKeys.refundObligation("cancellation", id) } } })).toBe(0);
+    expect(await db.memberMoneyObligation.count({ where: { kind: "REFUND", lines: { some: { bookingId: id } } } })).toBe(1);
+    expect(await db.paymentRecoveryOperation.count({ where: { bookingId: id } })).toBe(0);
+
+    // A real bank hand-back (owner decision, 14 Nov 2026, Q6): its dismissal is refused, its debt stays open.
+    await expect(resolve(task.id, "dismissed")).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
+    expect((await eventOf(memberMoneyEventKeys.refundObligation("hand-back", task.id)))?.journal?.reversedBy).toBeNull();
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
   });
 

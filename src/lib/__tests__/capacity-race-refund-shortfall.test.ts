@@ -149,7 +149,7 @@ describe("the capacity race's refund shortfall task (#4154, INV-PAY-135)", () =>
     expect(capacityRaceShortfallIntentId({ kind: "EDIT_FINANCIAL_REVIEW", occurrenceKey: CHECK_KEY, bookingId: "booking-1" })).toBeNull();
     // The officer is told it is records drift to check first, and how to close it either way.
     expect(task.reason).toContain("only $80.00 of the $100.00 charge refundable");
-    expect(task.reason).toContain("Check Stripe first; dismiss this with a note only once its card refund is confirmed."); // #4516: a part to check keeps its dismissal (owner, 15 Nov 2026)
+    expect(task.reason).toContain("Check Stripe and the bank before paying; dismiss only once its refund is confirmed."); // #4516: a part to check keeps its dismissal (owner, 15 Nov 2026)
     // #4154 review (M3): mark first, then pay - one order on every officer surface.
     expect(task.reason).toContain("If it is owed, mark this paid back first, once the card refund has gone through, then pay it by bank transfer straight after the app accepts");
     expect(task.reason).not.toMatch(/pay it by bank transfer and mark/i);

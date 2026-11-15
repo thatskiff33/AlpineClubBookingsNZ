@@ -81,7 +81,7 @@ export function capacityRaceRefundShortfallMessage(figures: ShortfallFigures, fo
  * task's own column, so it is not repeated here.
  */
 export function capacityRaceShortfallTaskReason(figures: ShortfallFigures, format: ClubFormat): string {
-  return `Cancelled because the dates filled up while this card payment was going through. ${refundedSentence(figures, format)} Check Stripe first; dismiss this with a note only once its card refund is confirmed. If it is owed, mark this paid back first, once the card refund has gone through, then pay it by bank transfer straight after the app accepts (#4154).`;
+  return `Cancelled because the dates filled up while this card payment was going through. ${refundedSentence(figures, format)} Check Stripe and the bank before paying; dismiss only once its refund is confirmed. If it is owed, mark this paid back first, once the card refund has gone through, then pay it by bank transfer straight after the app accepts (#4154).`;
 }
 
 /**
