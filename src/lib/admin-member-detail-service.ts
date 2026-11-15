@@ -14,10 +14,10 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import {
   getXeroContactGroupMemberships,
-  isXeroConnected,
   syncManagedXeroContactGroupForMember,
-  updateXeroContact,
-} from "@/lib/xero";
+} from "@/lib/xero-contact-groups";
+import { isXeroConnected } from "@/lib/xero-token-store";
+import { updateXeroContact } from "@/lib/xero-contacts";
 import {
   buildXeroContactUpdatePayload,
   hasMemberXeroContactChanges,
@@ -514,6 +514,11 @@ export async function getAdminMemberDetail(params: {
                 // #2106: drives whether the age-tier picker offers/forces N/A.
                 allowedAgeTiers: { select: { ageTier: true } },
               },
+            },
+            // Subscription-category decoupling: independent billing axis,
+            // required by serializeSeasonalMembershipAssignment.
+            subscriptionCategory: {
+              select: { id: true, key: true, name: true, isActive: true },
             },
           },
         },

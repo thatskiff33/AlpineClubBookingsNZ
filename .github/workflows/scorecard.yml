@@ -12,7 +12,7 @@ jobs:
   scorecard:
     # Advisory only: never add this check to branch protection or release needs.
     name: OpenSSF Scorecard (advisory)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

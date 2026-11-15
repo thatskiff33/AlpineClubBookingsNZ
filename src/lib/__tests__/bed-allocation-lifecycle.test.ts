@@ -290,6 +290,7 @@ async function reconcileBedAllocationsForBooking(input: {
 
 function makeDb(overrides: Record<string, unknown> = {}) {
   const db: any = {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     clubModuleSettings: {
       findUnique: vi.fn().mockResolvedValue({ bedAllocation: true }),
     },
@@ -450,7 +451,7 @@ describe("bed allocation lifecycle", () => {
       createdCount: 0,
       promotedCount: 0,
     });
-    expect(db.booking.findUnique).not.toHaveBeenCalled();
+    expect(db.booking.findUnique).toHaveBeenCalledWith({ where: { id: "booking-1" }, select: { lodgeId: true } });
     expect(db.bedAllocation.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -3319,6 +3320,7 @@ describe("sweepFuturePartnerSharedAllocationsWithLocksHeld (#1756)", () => {
 
   function makeSweepDb() {
     return {
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       bedAllocation: {
         findMany: vi.fn().mockResolvedValue([]),
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -3381,6 +3383,7 @@ describe("sweepFuturePartnerSharedAllocationsWithLocksHeld (#1756)", () => {
       name: ["Ben", "Birch"],
     });
     db.bedAllocation.findMany
+      .mockResolvedValueOnce([{ room: { lodgeId: "lodge-1" } }])
       // 1: second-occupant rows whose guest is member-a or member-b
       .mockResolvedValueOnce([pairNight1, pairNight2, stalePairRow])
       // 2: primaries on the candidate bed-nights
@@ -3426,7 +3429,7 @@ describe("sweepFuturePartnerSharedAllocationsWithLocksHeld (#1756)", () => {
     // Future-only, second-occupant-only candidate query (past nights are
     // filtered in SQL, so they can never be swept).
     expect(db.bedAllocation.findMany).toHaveBeenNthCalledWith(
-      1,
+      2,
       expect.objectContaining({
         where: expect.objectContaining({
           isSecondOccupant: true,
@@ -3492,6 +3495,7 @@ describe("sweepFuturePartnerSharedAllocationsWithLocksHeld (#1756)", () => {
       name: ["Pat", "Pine"],
     });
     db.bedAllocation.findMany
+      .mockResolvedValueOnce([{ room: { lodgeId: "lodge-1" } }])
       // 1: rows where member-m IS the second occupant
       .mockResolvedValueOnce([ownSecondRow])
       // 2: member-m's own PRIMARY bed-nights
@@ -3570,6 +3574,7 @@ describe("sweepFuturePartnerSharedAllocationsWithLocksHeld (#1756)", () => {
   it("pair scope: skips a candidate whose primary is missing (orphan) rather than guessing the pair", async () => {
     const db = makeSweepDb();
     db.bedAllocation.findMany
+      .mockResolvedValueOnce([{ room: { lodgeId: "lodge-1" } }])
       .mockResolvedValueOnce([
         allocationRow({
           id: "alloc-orphan",
@@ -3628,6 +3633,7 @@ describe("sweepUnbackedFutureSharedDoublesWithLocksHeld (#2595)", () => {
     guestRowLodgeIds: (string | null)[] = [SWEEP_LODGE_ID],
   ) {
     return {
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       bedAllocation: {
         findMany: vi.fn().mockResolvedValue([]),
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -4460,7 +4466,7 @@ describe("bed allocation member-guest consent exclusion (D-12, #2307)", () => {
       db: db as any,
     });
 
-    const args = db.booking.findUnique.mock.calls[0][0];
+    const args = db.booking.findUnique.mock.calls.find(([args]: any[]) => args.select.guests)?.[0];
     expect(args.select.guests.where.OR).toEqual([
       { consentStatus: null },
       { consentStatus: "CONFIRMED" },
@@ -4474,7 +4480,7 @@ describe("bed allocation member-guest consent exclusion (D-12, #2307)", () => {
     // the intended coherence — they must not be occupying a bunk on the board
     // either — and it is asserted here so it cannot be mistaken for a bug later.
     const db = makeDb();
-    db.booking.findUnique.mockImplementation(async (args: any) => ({
+    db.booking.findUnique.mockImplementation(async (args: any) => Object.keys(args.select).length === 1 && args.select.lodgeId ? { lodgeId: "lodge-1" } : ({
       id: "booking-1",
       status: BookingStatus.PAID,
       deletedAt: null,
@@ -4898,6 +4904,7 @@ describe("the partner-share writers take the day they are given (#3123)", () => 
   it("bounds the #1756 sweep's candidate reads on the supplied day", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
     const db = {
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       bedAllocation: { findMany, deleteMany: vi.fn() },
       memberPartnerLink: { findMany: vi.fn().mockResolvedValue([]) },
       member: { findMany: vi.fn().mockResolvedValue([]) },
@@ -4925,6 +4932,7 @@ describe("the partner-share writers take the day they are given (#3123)", () => 
   it("bounds the merge sweep's candidate reads on the supplied day", async () => {
     const findMany = vi.fn().mockResolvedValue([]);
     const db = {
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       bedAllocation: { findMany, deleteMany: vi.fn() },
       bookingGuest: {
         findMany: vi.fn().mockResolvedValue([{ booking: { lodgeId: LODGE } }]),

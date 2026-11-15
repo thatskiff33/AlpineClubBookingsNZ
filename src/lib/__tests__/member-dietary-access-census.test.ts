@@ -149,11 +149,11 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
   "src/app/(authenticated)/profile/page.tsx": "self reader, ON only",
   "src/app/(authenticated)/profile/profile-details-card.tsx":
     "passes the self value to the form",
-  "src/app/(authenticated)/profile/profile-form.tsx":
+  "src/components/profile/profile-form.tsx":
     "self form state; sends the key only while ON",
   "src/app/api/member/onboarding/route.ts": "self reader for onboarding, ON only",
   "src/components/member-onboarding-wizard.tsx": "onboarding form props",
-  "src/app/api/member/data-export/route.ts":
+  "src/lib/subject-access-export.ts":
     "the subject's own full export (ON or OFF, owner decision 20 Sep 2026)",
   "src/lib/admin-member-detail-service.ts":
     "membership-admin detail reader and editor writer",
@@ -171,6 +171,8 @@ const DIETARY_REACH: Readonly<Record<string, CensusEntry>> = {
     "member CSV import writer, ON and membership:edit only",
   "src/lib/member-merge-field-rules.ts": "fill-if-blank merge rule",
   "src/lib/member-merge-field-kinds.ts": "merge screen value kind",
+  // #4915: moved from the door, for its size budget; it reads nothing.
+  "src/lib/member-dietary-field.ts": "names the merge diff row whose values redactDietaryMergeRow redacts",
   // #3029: the booking value's readers. None WRITES the column by name (rule 8).
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-guest-dietary.ts": {
     reason: "booking-admin reader (R1): mints the grant, returns rows to the page",
@@ -203,6 +205,8 @@ const DIETARY_MODULE_IMPORTERS: Readonly<Record<string, CensusEntry>> = {
   "src/app/api/profile/route.ts": "self write (profile and onboarding)",
   "src/app/api/member/onboarding/route.ts": "self display grant",
   "src/app/api/member/data-export/route.ts": "self data-export grant",
+  "src/lib/subject-access-export.ts": "shared subject export reader",
+  "src/app/api/admin/members/subject-access/route.ts": "Full Admin subject access grant",
   "src/app/api/admin/members/[id]/route.ts": "membership grant from requireAdmin",
   "src/app/api/admin/members/route.ts": "membership grant for create",
   "src/app/api/admin/members/export/route.ts": "membership grant for the CSV column",
@@ -306,6 +310,8 @@ const RAW_WILDCARD_EXEMPT: Readonly<Record<string, string>> = {
 const CONSTRUCTOR_EXEMPT: Readonly<Record<string, string>> = {
   "prisma/seed.ts": "seeds a fresh database; writes rows, returns none to anyone",
   "prisma/demo-seed.ts": "seeds demo data; writes rows, returns none to anyone",
+  "prisma/load-volume-seed.ts":
+    "seeds load-test history on a throwaway local database (#4940); writes rows, prints counts only",
   "scripts/rehearse-epic-deploy.ts":
     "rehearsal against a scratch database with the OLD generated client; reads " +
     "take:1 per model only to prove the columns resolve, and records counts",
