@@ -26,6 +26,8 @@ const {
     booking: { findMany: vi.fn(), findUnique: vi.fn() },
     payment: { updateMany: vi.fn() },
     cronJobRun: { findFirst: vi.fn() },
+    // #4932: no saved BookingDefaults row unless a test says otherwise.
+    bookingDefaults: { findUnique: vi.fn(async (): Promise<unknown> => null) },
     /*
       #3035: this cron asks the delivery policy BEFORE it claims anything, and
       that resolver reads the environment-safety override. A missing delegate is
@@ -527,6 +529,37 @@ describe("sendAdditionalPaymentReminders", () => {
     expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
     expect(mockPrisma.payment.updateMany).not.toHaveBeenCalled();
     expect(result.skippedBookingIds).toEqual(["booking-1"]);
+  });
+
+  // #4932: the wait before the first reminder is the club's own setting.
+  it("waits the club's own number of days before the first reminder", async () => {
+    const timing = (additionalPaymentReminderDays: number) =>
+      mockPrisma.bookingDefaults.findUnique.mockResolvedValueOnce({
+        preArrivalReminderDays: 3,
+        additionalPaymentReminderDays,
+        policyExceptionHoldDays: 7,
+      });
+
+    // Owing for nine days and more: a ten-day club is still waiting...
+    mockPrisma.booking.findMany.mockResolvedValue([booking()]);
+    timing(10);
+    const waiting = await sendAdditionalPaymentReminders();
+    expect(waiting.reminderDays).toBe(10);
+    expect(waiting.initialSentBookingIds).toEqual([]);
+    expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
+
+    // ...while a one-day club chases an extra raised under two days ago.
+    mockPrisma.booking.findMany.mockResolvedValue([
+      booking({
+        payment: {
+          transactions: [{ createdAt: new Date("2026-10-09T00:00:00.000Z") }],
+        },
+      }),
+    ]);
+    timing(1);
+    const sent = await sendAdditionalPaymentReminders();
+    expect(sent.reminderDays).toBe(1);
+    expect(sent.initialSentBookingIds).toEqual(["booking-1"]);
   });
 
   it("sends the last-chance nudge close to check-in and closes both stamps", async () => {
