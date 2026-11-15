@@ -54,7 +54,7 @@ const session = (id: string, role: string) =>
 const viewerFor = (b: never, id: string, role: string) =>
   resolveBookingDetailViewer({ session: session(id, role), booking: b });
 
-const noSupplementary = { readSupplementary: vi.fn(async () => ({ invoiceIds: [], incomplete: false, revision: "r" })) };
+const noSupplementary = { readSupplementary: vi.fn(async () => ({ invoiceIds: [] as string[], incomplete: false, revision: "r" })) };
 const XERO_ON = { xeroIntegration: true };
 
 function offer(b: never, id = OWNER_ID, role = "USER", modules = XERO_ON, deps = noSupplementary) {
@@ -133,7 +133,7 @@ describe("prepareBookingInvoiceDownload", () => {
       fetchXeroInvoicePdf: vi.fn(async () => pdf),
       writeAudit: vi.fn(async () => undefined),
       ...overrides,
-    } as never as Parameters<typeof prepareBookingInvoiceDownload>[3];
+    } as never as NonNullable<Parameters<typeof prepareBookingInvoiceDownload>[3]>;
   }
   const request = { ipAddress: "203.0.113.9" };
 
