@@ -26,7 +26,7 @@ import {
 import { editReviewHandBackLinesWhere } from "@/lib/edit-financial-review-charge-shape";
 import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import type { ClubFormat } from "@/lib/club-format";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
   buildBookingCancellationRefundIdempotencyKey,
   buildEditFinancialReviewRefundRecoveryIdempotencyKey,

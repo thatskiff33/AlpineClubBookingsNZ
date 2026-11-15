@@ -97,12 +97,18 @@ vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   syncManagedXeroContactGroupForMember: vi.fn(),
+  getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
-  getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
+}));
+vi.mock("@/lib/xero-entrance-fee-invoices", () => ({
   createXeroEntranceFeeInvoice: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
