@@ -670,7 +670,7 @@ const CENSUS_CEILING = {
   // stepped with `club-time` (`addCalendarDays`), not this adapter. No
   // `timeZone` is taken anywhere in the file's use of it. Re-measured by
   // RUNNING this suite on the merged tree, not by adding one to the literal.
-  dateOnlyImporters: 224, // 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
+  dateOnlyImporters: 223, // 224 -> 223 (#4915): the data-export route left; the subject access export reads dates through club-time. 228/232 -> 231 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #77's one, zone-free, on upstream's 228. Re-measured by RUNNING this suite on the merged tree.
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
