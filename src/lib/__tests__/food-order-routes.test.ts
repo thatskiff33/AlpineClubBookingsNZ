@@ -53,7 +53,6 @@ vi.mock("@/lib/club-time/server", async () => {
   };
 });
 vi.mock("@/lib/rate-limit", () => ({
-  rateLimiters: { foodOrderMember: { id: "food-order-member" } },
   applyMemberScopedRateLimit: async () =>
     mocks.rateLimited
       ? NextResponse.json({ error: "Too many requests" }, { status: 429 })
@@ -247,10 +246,12 @@ describe("Received and price: the access matrix", () => {
     ["member", 404],
     ["owner", 403],
     ["organisation", 403],
-    ["committee", 200],
+    // Owner decision on PR #5143 (15 Nov 2026): committee sees but does not manage.
+    ["committee", 403],
     ["hutLeaderInWindow", 200],
     ["hutLeaderOutOfWindow", 404],
-    ["hutLeaderOtherLodge", 403],
+    // A hut leader elsewhere cannot even see a lodge-a order (owner decision, 15 Nov 2026).
+    ["hutLeaderOtherLodge", 404],
     ["lodgeViewAdmin", 403],
     ["lodgeEditAdmin", 200],
   ];
@@ -403,8 +404,28 @@ describe("placing an order", () => {
     ]);
   });
 
+  // Owner answer on PR #5143, question 6: ordering follows booking eligibility.
+  it("offers and accepts only the lodges a booking-restricted member may book", async () => {
+    fakeDb.bookingRestrictions.push({ memberId: "member-1", lodgeId: "lodge-b" });
+    const form = await (await formGet()).json();
+    expect(form.lodges.map((lodge: { id: string }) => lodge.id)).toEqual(["lodge-b"]);
+
+    const refused = await placeOrder({ ...VALID_ORDER, lodgeId: "lodge-a" });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: "Please choose the lodge the food is for." });
+    expect(fakeDb.orders).toHaveLength(0);
+    expect(mocks.sendFoodOrderPlacedEmail).not.toHaveBeenCalled();
+
+    expect((await placeOrder({ ...VALID_ORDER, lodgeId: "lodge-b" })).status).toBe(201);
+  });
+
+  it("offers every active lodge to a member with no booking restriction", async () => {
+    const form = await (await formGet()).json();
+    expect(form.lodges.map((lodge: { id: string }) => lodge.id)).toEqual(["lodge-a", "lodge-b"]);
+  });
+
   it("stores a decimal quantity normalised, and it round-trips to the history as text", async () => {
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     const res = await placeOrder({
       ...VALID_ORDER,
       items: [line("Rice", "0.50", "PACKETS"), line("Flour", "250.00", "GRAMS")],
@@ -442,11 +463,11 @@ describe("placing an order", () => {
 describe("closing an order", () => {
   it("two confirmations at once close it once, with one audit row", async () => {
     const order = seedOrder();
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     const [first, second] = await Promise.all([receive(order.id), receive(order.id)]);
     expect([first.status, second.status].sort()).toEqual([200, 409]);
     expect(fakeDb.orders[0]?.status).toBe("RECEIVED");
-    expect(fakeDb.orders[0]?.receivedById).toBe("committee-1");
+    expect(fakeDb.orders[0]?.receivedById).toBe("admin-edit");
     expect(fakeDb.audit.filter((row) => row.action === "food_order.received")).toHaveLength(1);
   });
 
@@ -462,7 +483,7 @@ describe("closing an order", () => {
     // The draining colour closes an order without marking its items. The
     // order-row guard (status OPEN) is what refuses it: nothing is written.
     const order = seedOrder({ status: "RECEIVED", receivedById: "x" }, ["Bread", "Milk"]);
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     const res = await receive(order.id, [`${order.id}-item-0`]);
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/already been marked received/);
@@ -483,7 +504,7 @@ describe("history totals by year", () => {
   }
 
   beforeEach(() => {
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     seedOrder({ neededBy: day("2025-12-31"), priceCents: 100 });
     seedOrder({ neededBy: day("2026-01-01"), priceCents: 200 });
     seedOrder({ neededBy: day("2026-07-05"), priceCents: null });
@@ -552,14 +573,14 @@ describe("receiving items (a checklist)", () => {
 
   it("the last item closes the order, stamped with that moment and person, and writes the received audit", async () => {
     const order = seedOrder({}, ["Bread", "Milk"]);
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     expect((await receive(order.id, [`${order.id}-item-0`])).status).toBe(200);
     expect(fakeDb.orders[0]?.status).toBe("OPEN");
     const res = await receive(order.id, [`${order.id}-item-1`]);
     expect(await res.json()).toMatchObject({ status: "RECEIVED", remaining: 0 });
     const stored = fakeDb.orders[0]!;
     expect(stored.status).toBe("RECEIVED");
-    expect(stored.receivedById).toBe("committee-1");
+    expect(stored.receivedById).toBe("admin-edit");
     expect(stored.receivedAt?.getTime()).toBe(stored.items[1]!.receivedAt?.getTime());
     expect(fakeDb.audit.map((row) => row.action)).toEqual([
       "food_order.items_received",
@@ -570,7 +591,7 @@ describe("receiving items (a checklist)", () => {
 
   it("two people ticking the last items at once close the order once", async () => {
     const order = seedOrder({}, ["Bread", "Milk"]);
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     const [first, second] = await Promise.all([
       receive(order.id, [`${order.id}-item-0`, `${order.id}-item-1`]),
       receive(order.id, [`${order.id}-item-1`]),
@@ -583,7 +604,7 @@ describe("receiving items (a checklist)", () => {
 
   it("items already received answer 409 and change nothing", async () => {
     const order = seedOrder({}, ["Bread", "Milk"]);
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     await receive(order.id, [`${order.id}-item-0`]);
     const before = fakeDb.audit.length;
     const updatedAt = fakeDb.orders[0]!.items[0]!.receivedAt;
@@ -598,7 +619,7 @@ describe("receiving items (a checklist)", () => {
   it("an item of another order is refused with 400 and nothing is written", async () => {
     const order = seedOrder({}, ["Bread"]);
     const other = seedOrder({ id: "other-order" }, ["Milk"]);
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     const res = await receive(order.id, [`${order.id}-item-0`, `${other.id}-item-0`]);
     expect(res.status).toBe(400);
     expect(fakeDb.orders.flatMap((row) => row.items).every((item) => item.receivedAt === null)).toBe(true);
@@ -615,7 +636,7 @@ describe("receiving items (a checklist)", () => {
   for (const [label, itemIds] of badBodies) {
     it(`refuses ${label} with 400`, async () => {
       seedOrder({}, ["Bread"]);
-      mocks.session = ROLES.committee();
+      mocks.session = ROLES.lodgeEditAdmin();
       expect((await receive("seed-1", itemIds)).status).toBe(400);
       expect(fakeDb.audit).toHaveLength(0);
     });
@@ -623,7 +644,7 @@ describe("receiving items (a checklist)", () => {
 
   it("refuses an unknown body field and a missing body", async () => {
     const order = seedOrder();
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     const extra = await receivedPost(
       jsonRequest(`/api/food-orders/${order.id}/received`, "POST", {
         itemIds: [`${order.id}-item-0`],
@@ -641,9 +662,9 @@ describe("receiving items (a checklist)", () => {
   });
 
   it("the history lists each item with when and by whom it was received", async () => {
-    fakeDb.members.push({ id: "committee-1", firstName: "Cara", lastName: "Committee", email: "c@x.test" });
+    fakeDb.members.push({ id: "admin-edit", firstName: "Cara", lastName: "Committee", email: "c@x.test" });
     const order = seedOrder({ memberId: "member-1" }, ["Bread", "Milk"]);
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     await receive(order.id, [`${order.id}-item-1`]);
     const res = await historyGet(jsonRequest("/api/food-orders/history", "GET"));
     const row = (await res.json()).orders[0];
@@ -676,7 +697,7 @@ describe("recording the price", () => {
 
   it("saving the same amount again writes no audit row", async () => {
     const order = seedOrder({ priceCents: 1000 });
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     expect((await price(order.id, 1000)).status).toBe(200);
     expect(fakeDb.audit).toHaveLength(0);
   });
@@ -685,7 +706,7 @@ describe("recording the price", () => {
   for (const value of badPrices) {
     it(`refuses ${JSON.stringify(value)} as a price`, async () => {
       const order = seedOrder();
-      mocks.session = ROLES.committee();
+      mocks.session = ROLES.lodgeEditAdmin();
       expect((await price(order.id, value)).status).toBe(400);
       expect(fakeDb.orders[0]?.priceCents).toBeNull();
       expect(fakeDb.audit).toHaveLength(0);
@@ -694,7 +715,7 @@ describe("recording the price", () => {
 
   it("refuses a stale screen: the price it showed is no longer stored (409, nothing written)", async () => {
     const order = seedOrder({ priceCents: 1000 });
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     const res = await price(order.id, 2000, null);
     expect(res.status).toBe(409);
     expect(fakeDb.orders[0]?.priceCents).toBe(1000);
@@ -703,7 +724,7 @@ describe("recording the price", () => {
 
   it("refuses a request without expectedCents, or with an invalid one", async () => {
     const order = seedOrder();
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     const noExpected = await pricePatch(
       jsonRequest(`/api/food-orders/${order.id}/price`, "PATCH", { priceCents: 100 }),
       params(order.id),
@@ -716,7 +737,7 @@ describe("recording the price", () => {
 
   it("a price changed between the route's read and its write answers 409 and writes no audit row", async () => {
     const order = seedOrder({ priceCents: 1000 });
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     // Another officer's save lands after this request read the order but
     // before its guarded update runs.
     const original = fakePrisma.foodOrder.updateMany;
@@ -735,7 +756,7 @@ describe("recording the price", () => {
 
   it("accepts zero cents", async () => {
     const order = seedOrder();
-    mocks.session = ROLES.committee();
+    mocks.session = ROLES.lodgeEditAdmin();
     expect((await price(order.id, 0)).status).toBe(200);
     expect(fakeDb.orders[0]?.priceCents).toBe(0);
   });
@@ -757,7 +778,7 @@ describe("the history", () => {
   it("a member sees only their own orders and their totals, and may manage none", async () => {
     const { status, body } = await history();
     expect(status).toBe(200);
-    expect(body.canViewAll).toBe(false);
+    expect(body.seesOthersOrders).toBe(false);
     expect(body.orders).toHaveLength(2);
     expect(body.orders.every((row: { isOwn: boolean }) => row.isOwn)).toBe(true);
     expect(body.orders.every((row: { canManage: boolean }) => !row.canManage)).toBe(true);
@@ -765,23 +786,44 @@ describe("the history", () => {
     expect(body.priceTotalCents).toBe(3500);
   });
 
-  it("a committee member sees every order, with the count and price total", async () => {
+  it("a committee member sees every order, with the count and price total, and manages none", async () => {
     mocks.session = ROLES.committee();
     const { body } = await history();
-    expect(body.canViewAll).toBe(true);
+    expect(body.seesOthersOrders).toBe(true);
     expect(body.orderCount).toBe(4);
     expect(body.pricedCount).toBe(3);
     expect(body.priceTotalCents).toBe(3900);
+    expect(body.orders.every((row: { canManage: boolean }) => !row.canManage)).toBe(true);
+  });
+
+  it("Lodge Operations edit sees and manages every order", async () => {
+    mocks.session = ROLES.lodgeEditAdmin();
+    const { body } = await history();
+    expect(body.orderCount).toBe(4);
     expect(body.orders.every((row: { canManage: boolean }) => row.canManage)).toBe(true);
   });
 
-  it("a hut leader sees every order but manages only their lodge's", async () => {
+  it("a hut leader sees and manages only the orders at the lodge they lead", async () => {
     mocks.session = ROLES.hutLeaderInWindow();
     const { body } = await history();
-    expect(body.orderCount).toBe(4);
+    expect(body.seesOthersOrders).toBe(true);
+    expect(body.orderCount).toBe(3);
+    expect(body.priceTotalCents).toBe(1400);
     for (const row of body.orders as Array<{ lodgeId: string; canManage: boolean }>) {
-      expect(row.canManage).toBe(row.lodgeId === "lodge-a");
+      expect(row.lodgeId).toBe("lodge-a");
+      expect(row.canManage).toBe(true);
     }
+    expect((await history("?lodgeId=lodge-b")).body.orderCount).toBe(0);
+  });
+
+  it("a hut leader still sees their own order at another lodge, without managing it", async () => {
+    seedOrder({ memberId: "leader-3", lodgeId: "lodge-a", neededBy: day("2026-07-06") });
+    mocks.session = ROLES.hutLeaderOtherLodge();
+    const { body } = await history();
+    const rows = body.orders as Array<{ lodgeId: string; isOwn: boolean; canManage: boolean }>;
+    expect(rows.filter((row) => row.lodgeId === "lodge-a")).toEqual([
+      expect.objectContaining({ isOwn: true, canManage: false }),
+    ]);
   });
 
   it("filters by lodge, status and needed-by range, and totals the filter", async () => {
@@ -825,7 +867,7 @@ describe("the history", () => {
       for (let i = 0; i < 30; i += 1) {
         seedOrder({ memberId: "bulk", neededBy: day("2026-12-01") });
       }
-      mocks.session = ROLES.committee();
+      mocks.session = ROLES.lodgeEditAdmin();
       const target = fakeDb.orders.find((row) => row.memberId === "other-2")!;
       const { body } = await history(`?order=${target.id}`);
       expect(body.orders.some((row: { id: string }) => row.id === target.id)).toBe(false);
@@ -846,6 +888,13 @@ describe("the history", () => {
       expect(hidden.body.linkedOrder).toBeNull();
       expect(missing.body.linkedOrder).toBeNull();
       expect(JSON.stringify(hidden.body)).not.toContain(other.id);
+    });
+
+    it("shows a hut leader nothing for another lodge's order", async () => {
+      const elsewhere = seedOrder({ memberId: "other-3", lodgeId: "lodge-b", neededBy: day("2026-07-07") });
+      mocks.session = ROLES.hutLeaderInWindow();
+      const { body } = await history(`?order=${elsewhere.id}`);
+      expect(body.linkedOrder).toBeNull();
     });
   });
 });

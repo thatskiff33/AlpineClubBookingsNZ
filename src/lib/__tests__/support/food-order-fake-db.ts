@@ -49,6 +49,7 @@ export const fakeDb = {
     { id: "lodge-b", name: "Lodge B", active: true, isDefault: false },
   ],
   members: [] as Array<{ id: string; firstName: string; lastName: string; email: string }>,
+  bookingRestrictions: [] as Array<{ memberId: string; lodgeId: string }>,
   settings: null as null | { officerEmail: string | null; officerLabel: string },
   nextId: 1,
 };
@@ -59,6 +60,7 @@ export function resetFakeDb() {
   fakeDb.committee.length = 0;
   fakeDb.hutLeaders.length = 0;
   fakeDb.members.length = 0;
+  fakeDb.bookingRestrictions.length = 0;
   fakeDb.settings = null;
   fakeDb.nextId = 1;
 }
@@ -67,7 +69,15 @@ type Where = Record<string, unknown>;
 
 function matchesOrder(order: FakeFoodOrder, where: Where): boolean {
   for (const [key, condition] of Object.entries(where)) {
+    if (key === "OR" && Array.isArray(condition)) {
+      if (!condition.some((branch) => matchesOrder(order, branch as Where))) return false;
+      continue;
+    }
     const value = (order as unknown as Record<string, unknown>)[key];
+    if (condition && typeof condition === "object" && "in" in condition) {
+      if (!(condition as { in: unknown[] }).in.includes(value)) return false;
+      continue;
+    }
     if (key === "neededBy" && condition && typeof condition === "object") {
       const range = condition as { gte?: Date; lte?: Date };
       if (range.gte && order.neededBy.getTime() < range.gte.getTime()) return false;
@@ -244,6 +254,14 @@ export const fakePrisma = {
       };
       return fakeDb.settings;
     },
+  },
+  memberLodgeAccess: {
+    findMany: async ({ where }: { where: { memberId: string; kind: string } }) =>
+      where.kind === "BOOKING_RESTRICTION"
+        ? fakeDb.bookingRestrictions
+            .filter((row) => row.memberId === where.memberId)
+            .map(({ lodgeId }) => ({ lodgeId }))
+        : [],
   },
   lodge: {
     findMany: async () => fakeDb.lodges.map(({ id, name }) => ({ id, name })),

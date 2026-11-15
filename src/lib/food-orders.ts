@@ -9,8 +9,8 @@ import {
 } from "@/lib/food-order-rules";
 import {
   canManageFoodOrder,
-  canViewAllFoodOrders,
   canViewFoodOrder,
+  foodOrderVisibility,
   type FoodOrderViewer,
 } from "@/lib/food-order-access";
 import { calendarDateOfDateOnlyInstant, calendarDateParts } from "@/lib/club-time";
@@ -312,7 +312,8 @@ export type FoodOrderHistoryRow = {
 };
 
 export type FoodOrderHistory = {
-  canViewAll: boolean;
+  /** True when the viewer sees other members' orders, so rows name who ordered. */
+  seesOthersOrders: boolean;
   orders: FoodOrderHistoryRow[];
   page: number;
   pageSize: number;
@@ -466,7 +467,7 @@ async function toHistoryRows(
 
 /**
  * One order by id, for the link in the food officer's email: the row when the
- * viewer may see it (their own, or any when they see all), and null otherwise —
+ * viewer may see it (`canViewFoodOrder`: their own, or one their visibility covers), and null otherwise —
  * an order they may not see and one that does not exist answer the same.
  */
 export async function findFoodOrderHistoryRow(
@@ -483,21 +484,33 @@ export async function findFoodOrderHistoryRow(
 }
 
 /**
- * The history the viewer may see: their own orders, or every order when
- * `canViewAllFoodOrders`. The count and the price total cover the whole filter,
+ * The history the viewer may see: their own orders plus whatever
+ * `foodOrderVisibility` admits (every lodge, or a hut leader's lodges). The count and the price total cover the whole filter,
  * not just the page — they are the figures forecasting needs.
  */
 export async function listFoodOrderHistory(
   viewer: FoodOrderViewer,
   filters: FoodOrderHistoryFilters,
 ): Promise<FoodOrderHistory> {
-  const canViewAll = canViewAllFoodOrders(viewer);
+  const visibility = foodOrderVisibility(viewer);
+  const seesOthersOrders = visibility.kind !== "own";
+  const visibleWhere: Prisma.FoodOrderWhereInput =
+    visibility.kind === "all"
+      ? {}
+      : visibility.kind === "lodges"
+        ? {
+            OR: [
+              { memberId: viewer.memberId },
+              { lodgeId: { in: [...visibility.lodgeIds] } },
+            ],
+          }
+        : { memberId: viewer.memberId };
   const neededBy: Prisma.DateTimeFilter = {};
   if (filters.neededFrom) neededBy.gte = filters.neededFrom;
   if (filters.neededTo) neededBy.lte = filters.neededTo;
 
   const where: Prisma.FoodOrderWhereInput = {
-    ...(canViewAll ? {} : { memberId: viewer.memberId }),
+    ...visibleWhere,
     ...(filters.lodgeId ? { lodgeId: filters.lodgeId } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.neededFrom || filters.neededTo ? { neededBy } : {}),
@@ -528,7 +541,7 @@ export async function listFoodOrderHistory(
   ]);
 
   return {
-    canViewAll,
+    seesOthersOrders,
     page,
     pageSize: FOOD_ORDER_HISTORY_PAGE_SIZE,
     orderCount: totals._count._all,

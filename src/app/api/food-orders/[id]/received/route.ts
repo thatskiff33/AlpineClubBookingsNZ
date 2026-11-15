@@ -22,8 +22,8 @@ import { requireActiveSession } from "@/lib/session-guards";
  * food can arrive in parts). The order closes as Received when its last item
  * is (fork #121 owner decision 7).
  *
- * Who: `canManageFoodOrder` — committee, a hut leader at THIS order's lodge
- * today, or Lodge Operations edit. An order the caller may not even see answers
+ * Who: `canManageFoodOrder` — a hut leader at THIS order's lodge today, or
+ * Lodge Operations edit. An order the caller may not even see answers
  * 404, so the route is not an oracle for other members' order ids; one they can
  * see but not manage answers 403.
  *
@@ -61,7 +61,7 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          "Only a committee member, a hut leader at this lodge, or a Lodge Operations admin can mark this order's items received.",
+          "Only a hut leader at this lodge or a Lodge Operations edit admin can mark this order's items received.",
       },
       { status: 403 },
     );

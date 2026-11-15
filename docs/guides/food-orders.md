@@ -15,8 +15,9 @@ has three parts:
   can add a note. A card on the
   member dashboard, beside **Report an issue**, links to it.
 - **Food orders** (`/food-orders`), the order history. Members see their own
-  orders. Committee members, hut leaders at a lodge today and Lodge Operations
-  admins see every order, with filters and the totals the club forecasts from.
+  orders. Committee members and Lodge Operations admins see every order, and a
+  hut leader whose access window covers today sees the orders at the lodges they
+  lead, with filters and the totals the club forecasts from.
 - **Food Orders** settings (`/admin/food-orders`, **Admin → Lodge Operations →
   Food Orders**): the email address orders are sent to, and what your club calls
   the person who buys the food.
@@ -61,12 +62,13 @@ Between steps 1 and 5 — and whenever the address is empty — members who open
 ### Place an order (members)
 
 1. From the dashboard, click **Order food**.
-2. Choose the lodge and the **Needed by** date (today or later, in the club's own
+2. Choose the lodge (only the lodges you may book are offered) and the
+   **Needed by** date (today or later, in the club's own
    calendar).
 3. Add one line per item: what it is, the **Quantity** (more than 0, up to two
    decimal places, for example 0.5 or 250), and its **Type** — Items, Grams,
-   Kilograms, Liters, Loaves, Packets, Bottles, Cans, Bags, Boxes, Punnets
-   or Milliliters, Items by default. The type reads singular when the quantity is
+   Kilograms, Litres, Loaves, Packets, Bottles, Cans, Bags, Boxes, Punnets
+   or Millilitres, Items by default. The type reads singular when the quantity is
    exactly 1 ("1 Packet") and plural otherwise ("0.5 Packets", "2 Packets"), and
    the order, the history and the email all show the line that way, for example
    "2 Loaves — Wholemeal". Use **Add item** and **Remove**; an order holds 1 to 50
@@ -81,8 +83,8 @@ history either way. Each member can place up to 10 orders an hour.
 
 The link in the email opens **Food orders** with that order pinned at the top as
 **Linked order**, whichever page of the history it would fall on. It shows the
-order only to someone who may see it: the member who placed it, or a committee
-member, current hut leader or Lodge Operations admin. Anyone else sees the
+order only to someone who may see it: the member who placed it, a committee
+member or Lodge Operations admin, or a current hut leader at that order's lodge. Anyone else sees the
 history with nothing extra, the same as for a link to an order that does not
 exist.
 
@@ -98,10 +100,11 @@ item.
    example, "Open — 2 of 5 items received". When the last item is ticked the
    order closes as **Received**, recorded with that moment and person.
 
-Who can do this: any member with an active committee role, a hut leader whose
-access window covers today **at that order's lodge** (from the day before their
-first night to the day after their last), and admins with Lodge Operations
-**edit**. Everyone else who can see the order sees the same list with each
+Who can do this: a hut leader whose access window covers today **at that
+order's lodge** (from the day before their first night to the day after their
+last), and admins with Lodge Operations **edit**. A committee role on its own
+lets a member see every order but not tick or price one; give a committee member
+who handles food Lodge Operations edit. Everyone else who can see the order sees the same list with each
 received item marked. If two people tick the same items at the same moment, the
 items are recorded once and the second is told they were already received; the
 page reloads to show who did. The **Status** filter counts a partly received
@@ -151,7 +154,7 @@ listed, and when there are no earlier years there is nothing to open.
 | Items per order | 1 to 50 |
 | Item description | Required, up to 200 characters |
 | Item quantity | More than 0, at most 99999.99, up to two decimal places |
-| Item type | Items (default), Grams, Kilograms, Liters, Loaves, Packets, Bottles, Cans, Bags, Boxes, Punnets, Milliliters; singular for exactly 1 |
+| Item type | Items (default), Grams, Kilograms, Litres, Loaves, Packets, Bottles, Cans, Bags, Boxes, Punnets, Millilitres; singular for exactly 1 |
 | Note | Optional, up to 1,000 characters |
 | Needed by | A club calendar day, today or later |
 | Orders per member | 10 an hour |
@@ -171,7 +174,8 @@ emails; orders are still saved and shown in the history.
 | The pages 404 and the dashboard card is missing | The `foodOrders` module is off | Turn it on under **Admin → Setup → Modules** |
 | Members see "Food ordering is not set up yet" | No email address is saved | Enter one on the Food Orders settings page |
 | The food officer is not getting orders | The address is wrong or out of date, or the email is muted under Delivery Rules | Check the address on the settings page and the `food-order-placed` rule. Every order is still in the history |
-| A hut leader cannot tick items received | Their access window does not cover today, or the order is for a different lodge | A committee member or a Lodge Operations edit admin can tick them |
+| A hut leader cannot tick items received | Their access window does not cover today, or the order is for a different lodge | A Lodge Operations edit admin can tick them |
+| A member cannot choose a lodge when ordering | The member's bookings are restricted to other lodges | Ordering follows booking eligibility; change the member's lodge access if they should order for it |
 | An item was ticked by mistake | Received is final; there is no untick | Note it on the order with the officer; the audit log records who ticked what and when |
 | An organisation account cannot order | By design | Catering for organisation stays is arranged through the booking officer |
 | A price save says somebody else changed it | Somebody saved a different price after your screen loaded | The order reloads with the stored price; check it and enter yours again if it is still right |

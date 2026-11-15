@@ -6,8 +6,20 @@ import {
   type FoodOrderViewer,
 } from "@/lib/food-order-access";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { getClientIp } from "@/lib/rate-limit";
+import { getClientIp, type RateLimitConfig } from "@/lib/rate-limit";
 import type { requireActiveSession } from "@/lib/session-guards";
+
+/**
+ * Placing an order: 10 an hour per member (and ten times that per IP, through
+ * `applyMemberScopedRateLimit`), like `rateLimiters.maintenanceReportMember`.
+ * Not `authSensitive`: there is no credential behind it. Kept here rather than
+ * in `rateLimiters` because `rate-limit.ts` is at its file-size budget.
+ */
+export const FOOD_ORDER_MEMBER_RATE_LIMIT: RateLimitConfig = {
+  id: "food-order-member",
+  limit: 10,
+  windowSeconds: 60 * 60,
+};
 
 /**
  * The guard every member food-order route opens with (fork #121), so the four

@@ -540,10 +540,10 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     key: "foodOrders",
     label: "Food orders",
     description:
-      "Members order food for a lodge stay from a card on their dashboard. Each order is emailed to your food officer, and a hut leader or committee member marks it received when it arrives. The price can be recorded for the club's history; nothing is charged.",
+      "Members order food for a lodge stay from a card on their dashboard. Each order is emailed to your food officer, and a hut leader or Lodge Operations admin marks it received when it arrives. The price can be recorded for the club's history; nothing is charged.",
     dependencies: [
       "Enter the food officer's email address under Admin → Lodge → Food Orders before members can order. Until then the order page says ordering is not set up.",
-      "Hut leaders at that lodge, committee members and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) and record its price. The price is a record only: it is never charged, invoiced or sent to Xero.",
+      "Hut leaders at that lodge and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) and record its price. The price is a record only: it is never charged, invoiced or sent to Xero.",
       "When off, the order and history pages and their APIs return Not Found, and the dashboard card and settings page are hidden. Existing orders are kept.",
     ],
   },

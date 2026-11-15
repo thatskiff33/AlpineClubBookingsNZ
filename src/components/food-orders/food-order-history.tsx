@@ -25,12 +25,12 @@ import { FoodOrderTotals, type FoodOrderYearTotalView } from "./food-order-total
 /**
  * The food-order history (fork #121): filters, the order count and price total
  * for the filter, a page of orders, and a pager. Whether the viewer sees every
- * order or only their own is the server's answer (`canViewAll`), never decided
+ * other members' orders or only their own is the server's answer (`seesOthersOrders`), never decided
  * here.
  */
 
 type HistoryPayload = {
-  canViewAll: boolean;
+  seesOthersOrders: boolean;
   orders: FoodOrderHistoryItem[];
   page: number;
   pageSize: number;
@@ -205,7 +205,7 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
               </h2>
               <FoodOrderRow
                 order={payload.linkedOrder}
-                showOrderedBy={payload.canViewAll}
+                showOrderedBy={payload.seesOthersOrders}
                 highlighted
                 onChanged={() => void load()}
               />
@@ -220,7 +220,7 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
                 <FoodOrderRow
                   key={order.id}
                   order={order}
-                  showOrderedBy={payload.canViewAll}
+                  showOrderedBy={payload.seesOthersOrders}
                   highlighted={false}
                   onChanged={() => void load()}
                 />

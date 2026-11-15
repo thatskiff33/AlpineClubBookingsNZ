@@ -8,9 +8,10 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 /**
  * Food order history (fork #121). A member sees their own orders; committee
- * members, current hut leaders and Lodge Operations admins see every order,
- * with filters and the totals the club forecasts from. Which of the two a
- * viewer gets is decided by the history API (`canViewAllFoodOrders`).
+ * members and Lodge Operations admins see every order, and a current hut
+ * leader the orders at the lodges they lead, with filters and the totals the
+ * club forecasts from. What a viewer gets is decided by the history API
+ * (`foodOrderVisibility`).
  *
  * The module is checked here as well as by the proxy's feature-route rule, so
  * the gate does not live only in middleware. `?order=<id>` (the link in the

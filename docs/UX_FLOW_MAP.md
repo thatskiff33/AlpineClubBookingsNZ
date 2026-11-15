@@ -147,7 +147,7 @@ Journey: When enabled, read recent posts, page to older posts, or compose a mess
 
 Screen: `/food-order` and `/food-orders`.
 
-Journey: When enabled, open Order food from the dashboard, choose the lodge and needed-by date, add item lines (description, quantity and type, such as 2 Loaves), then send. Food orders lists your orders. Committee, current hut leaders and Lodge Operations admins see every order; committee, hut leaders at that order's lodge and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) or record its price. The totals panel adds a By year breakdown, earlier years collapsed under Previous years. An emailed link pins its order at the top.
+Journey: When enabled, open Order food from the dashboard, choose the lodge (only those the member may book) and needed-by date, add item lines (description, quantity and type, such as 2 Loaves), then send. Food orders lists your orders. Committee and Lodge Operations admins see every order, and a current hut leader the orders at their lodge; hut leaders at that order's lodge and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) or record its price. The totals panel adds a By year breakdown, earlier years collapsed under Previous years. An emailed link pins its order at the top.
 
 [Guide](guides/food-orders.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

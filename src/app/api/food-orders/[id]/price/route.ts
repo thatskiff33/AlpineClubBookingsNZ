@@ -74,7 +74,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         error:
-          "Only a committee member, a hut leader at this lodge, or a Lodge Operations admin can record this order's price.",
+          "Only a hut leader at this lodge or a Lodge Operations edit admin can record this order's price.",
       },
       { status: 403 },
     );

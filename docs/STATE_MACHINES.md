@@ -3176,10 +3176,14 @@ price (either status): updateMany WHERE priceCents = the amount the caller's
   the old and new cents; the price moves no money
 ```
 
-Who may make either transition is `canManageFoodOrder`: an active committee
-assignment, a hut leader whose access window covers today at that order's lodge,
-or Lodge Operations edit. No advisory lock is taken: the order shares no row or
-key with any booking, capacity or settlement writer.
+Who may make either transition is `canManageFoodOrder`: a hut leader whose
+access window covers today at that order's lodge, or Lodge Operations edit (a
+committee role alone does not; owner decision on PR #5143, 15 Nov 2026). No
+advisory lock is taken: the order shares no row or key with any booking,
+capacity or settlement writer. The receipt and price races are checked against
+real PostgreSQL by `food-order-races.realdb.test.ts`: two concurrent final
+ticks close the order once, and two price saves from one screen leave one
+winner and one conflict.
 
 ## Refund And Credit Lifecycle
 

@@ -18,9 +18,9 @@ import { prisma } from "@/lib/prisma";
 import { requireActiveSession } from "@/lib/session-guards";
 
 /**
- * The food-order history (fork #121). A member gets their own orders; a viewer
- * `canViewAllFoodOrders` admits (committee, a current hut leader, Lodge
- * Operations view) gets every order. Both can filter by lodge, status and a
+ * The food-order history (fork #121). A member gets their own orders; committee
+ * and Lodge Operations view get every order, and a current hut leader the
+ * orders at the lodges they lead (`foodOrderVisibility`). All can filter by lodge, status and a
  * needed-by date range, paged, with the order count and price total for the
  * whole filter. Each row carries `canManage` from `canManageFoodOrder`, which is
  * the only thing the page uses to show the Received and price controls.

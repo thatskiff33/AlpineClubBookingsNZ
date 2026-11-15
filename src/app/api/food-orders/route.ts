@@ -9,6 +9,7 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { notifyFoodOfficerOfOrder } from "@/lib/food-order-email";
 import {
+  FOOD_ORDER_MEMBER_RATE_LIMIT,
   foodOrderAuditContext,
   requireFoodOrderViewer,
 } from "@/lib/food-order-route";
@@ -25,8 +26,12 @@ import {
 import { foodOfficerEmail, loadFoodOrderSettings } from "@/lib/food-order-settings";
 import { createFoodOrder } from "@/lib/food-orders";
 import logger from "@/lib/logger";
+import {
+  getEligibleLodgeIdsForMember,
+  isMemberEligibleToBookLodge,
+} from "@/lib/lodge-access";
 import { prisma } from "@/lib/prisma";
-import { applyMemberScopedRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { applyMemberScopedRateLimit } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
 
 /**
@@ -74,15 +79,23 @@ export async function GET() {
   const guard = await requireFoodOrderViewer(() => requireActiveSession());
   if (!guard.ok) return guard.response;
 
-  const [settings, lodges, club] = await Promise.all([
+  const [settings, activeLodges, access, club] = await Promise.all([
     loadFoodOrderSettings(),
     prisma.lodge.findMany({
       where: { active: true },
       orderBy: [{ isDefault: "desc" }, { name: "asc" }],
       select: { id: true, name: true },
     }),
+    getEligibleLodgeIdsForMember(prisma, guard.memberId),
     clubTime(),
   ]);
+  // A member restricted to some lodges for booking orders food only for those
+  // (owner answer on PR #5143, question 6): the same rule, and the same
+  // helper, as every other lodge-scoped member surface.
+  const allowedLodgeIds = new Set(access.allLodges ? [] : access.lodgeIds);
+  const lodges = access.allLodges
+    ? activeLodges
+    : activeLodges.filter((lodge) => allowedLodgeIds.has(lodge.id));
 
   return NextResponse.json({
     // Whether there is anybody to send an order to. The address itself is not
@@ -106,7 +119,7 @@ export async function POST(request: NextRequest) {
   const { memberId } = guard;
 
   const limited = await applyMemberScopedRateLimit(
-    rateLimiters.foodOrderMember,
+    FOOD_ORDER_MEMBER_RATE_LIMIT,
     request,
     memberId,
   );
@@ -139,19 +152,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const [officerEmail, lodge] = await Promise.all([
+  const [officerEmail, lodge, eligible] = await Promise.all([
     foodOfficerEmail(),
     prisma.lodge.findFirst({
       where: { id: parsed.data.lodgeId, active: true },
       select: { id: true },
     }),
+    isMemberEligibleToBookLodge(prisma, memberId, parsed.data.lodgeId),
   ]);
   // Refused, never stored: an order nobody would be told about is worse than
   // an error the member can see.
   if (!officerEmail) {
     return NextResponse.json({ error: NOT_SET_UP }, { status: 409 });
   }
-  if (!lodge) {
+  // A lodge the member may not book answers exactly as one that does not
+  // exist: the list they were offered never contained it.
+  if (!lodge || !eligible) {
     return NextResponse.json(
       { error: "Please choose the lodge the food is for." },
       { status: 400 },

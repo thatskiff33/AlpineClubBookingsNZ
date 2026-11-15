@@ -28,8 +28,9 @@ export const FOOD_ORDER_ITEM_QUANTITY_MAX = "99999.99";
  * The unit a quantity is counted in — the owner's "Type" list, in the owner's
  * order. The codes are the `FoodOrderUnit` enum; the labels are what people see,
  * singular for exactly 1 and plural otherwise ("1 Packet", "0.5 Packets").
- * "Box"/"Boxes" is the correct plural of the owner's "Boxs"; "Liter" and
- * "Milliliter" keep the owner's spelling.
+ * "Box"/"Boxes" is the correct plural of the owner's "Boxs". The labels use NZ
+ * spelling, "Litre" and "Millilitre" (owner answer on PR #5143, question 8);
+ * the enum codes LITERS and MILLILITERS are stored values and stay as they are.
  */
 export const FOOD_ORDER_UNITS = [
   "ITEMS",
@@ -56,7 +57,7 @@ export const FOOD_ORDER_UNIT_LABELS: Record<
   ITEMS: { singular: "Item", plural: "Items" },
   GRAMS: { singular: "Gram", plural: "Grams" },
   KILOGRAMS: { singular: "Kilogram", plural: "Kilograms" },
-  LITERS: { singular: "Liter", plural: "Liters" },
+  LITERS: { singular: "Litre", plural: "Litres" },
   LOAVES: { singular: "Loaf", plural: "Loaves" },
   PACKETS: { singular: "Packet", plural: "Packets" },
   BOTTLES: { singular: "Bottle", plural: "Bottles" },
@@ -64,7 +65,7 @@ export const FOOD_ORDER_UNIT_LABELS: Record<
   BAGS: { singular: "Bag", plural: "Bags" },
   BOXES: { singular: "Box", plural: "Boxes" },
   PUNNETS: { singular: "Punnet", plural: "Punnets" },
-  MILLILITERS: { singular: "Milliliter", plural: "Milliliters" },
+  MILLILITERS: { singular: "Millilitre", plural: "Millilitres" },
 };
 
 export function isFoodOrderUnit(value: unknown): value is FoodOrderUnitValue {

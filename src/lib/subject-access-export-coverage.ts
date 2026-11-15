@@ -230,6 +230,10 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberMoneyRefundReservationRelease: SHARED,
   // #4520: Stripe's own balance transaction, keyed by a payment intent rather than a member.
   StripeBalanceTransactionEvidence: OPERATIONAL,
+  // Food orders (PR #5143): the subject's own orders and their lines.
+  FoodOrderSettings: CLUB_CONFIG,
+  FoodOrder: "additionalRecords.FoodOrder",
+  FoodOrderItem: "additionalRecords.FoodOrderItem",
 } as const satisfies Record<PersonalModel, Placement>;
 
 /** The models that have their own list under `additionalRecords`. */

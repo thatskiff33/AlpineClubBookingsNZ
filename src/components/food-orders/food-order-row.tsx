@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useClubFormat } from "@/components/club-format-provider";
 import { useClubTime } from "@/components/club-time-provider";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,6 +34,12 @@ import { FoodOrderItems, type FoodOrderItemView } from "./food-order-items";
  * 2026); the order closes on the server when its last item is. The footer
  * holds both actions — "Mark selected received" and the price — as one row of
  * default-height controls that wraps on a narrow screen.
+ *
+ * Outcomes are announced (PR #5143 review, finding 4): a failure through
+ * `FocusedActionError`, which takes focus; a success through a permanently
+ * mounted `role="status"` region ("2 items received", "Price saved"). When the
+ * last tick closes the order the checklist and its buttons unmount, so focus
+ * moves to that status region instead of falling to the page body.
  */
 
 export type FoodOrderHistoryItem = {
@@ -69,6 +76,16 @@ export function FoodOrderRow({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [errorAttention, setErrorAttention] = useState(0);
+  const [status, setStatus] = useState("");
+  const statusRef = useRef<HTMLParagraphElement>(null);
+  const focusStatusAfterReload = useRef(false);
+
+  function fail(message: string) {
+    setStatus("");
+    setError(message);
+    setErrorAttention((count) => count + 1);
+  }
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const unreceivedIds = order.items
@@ -99,10 +116,20 @@ export function FoodOrderRow({
     setPriceDraft(order.priceCents === null ? "" : formatCentsPlain(order.priceCents));
   }, [order.priceCents]);
 
+  // Focus follows the reload that unmounted the checklist (the order closed).
+  useEffect(() => {
+    if (!focusStatusAfterReload.current || order.status !== "RECEIVED") return;
+    focusStatusAfterReload.current = false;
+    statusRef.current?.focus();
+  }, [order.status]);
+
   async function markSelectedReceived() {
     if (selected.size === 0) return;
+    const count = selected.size;
+    const closesOrder = count === unreceivedIds.length;
     setBusy(true);
     setError("");
+    setStatus("");
     try {
       const res = await fetch(`/api/food-orders/${encodeURIComponent(order.id)}/received`, {
         method: "POST",
@@ -110,15 +137,21 @@ export function FoodOrderRow({
         body: JSON.stringify({ itemIds: [...selected] }),
       });
       if (res.status === 409) {
-        setError(await apiErrorMessageFromResponse(res, "This order changed. It has been reloaded."));
+        fail(await apiErrorMessageFromResponse(res, "This order changed. It has been reloaded."));
         onChanged();
         return;
       }
       if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not mark those items received."));
       setSelected(new Set());
+      setStatus(
+        closesOrder
+          ? "All items received. The order is closed."
+          : `${count} ${count === 1 ? "item" : "items"} received.`,
+      );
+      focusStatusAfterReload.current = closesOrder;
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not mark those items received.");
+      fail(err instanceof Error ? err.message : "Could not mark those items received.");
     } finally {
       setBusy(false);
     }
@@ -127,11 +160,12 @@ export function FoodOrderRow({
   async function savePrice() {
     const priceCents = parseDecimalDollarsToCents(priceDraft);
     if (!isValidFoodOrderPriceCents(priceCents)) {
-      setError("Enter the price as an amount of zero or more, such as 42.50.");
+      fail("Enter the price as an amount of zero or more, such as 42.50.");
       return;
     }
     setBusy(true);
     setError("");
+    setStatus("");
     try {
       const res = await fetch(`/api/food-orders/${encodeURIComponent(order.id)}/price`, {
         method: "PATCH",
@@ -140,14 +174,15 @@ export function FoodOrderRow({
         body: JSON.stringify({ priceCents, expectedCents: order.priceCents }),
       });
       if (res.status === 409) {
-        setError(await apiErrorMessageFromResponse(res, "This order changed. It has been reloaded."));
+        fail(await apiErrorMessageFromResponse(res, "This order changed. It has been reloaded."));
         onChanged();
         return;
       }
       if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not save the price."));
+      setStatus("Price saved.");
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save the price.");
+      fail(err instanceof Error ? err.message : "Could not save the price.");
     } finally {
       setBusy(false);
     }
@@ -213,10 +248,23 @@ export function FoodOrderRow({
           </p>
         </div>
 
-        {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
+        {order.canManage ? (
+          <>
+            <FocusedActionError
+              id={`food-order-error-${domKey}`}
+              error={error}
+              attentionKey={errorAttention}
+            />
+            {/* Permanently mounted, so the first message is not dropped. */}
+            <p
+              ref={statusRef}
+              role="status"
+              tabIndex={-1}
+              className="text-sm text-muted-foreground empty:hidden focus:outline-none"
+            >
+              {status}
+            </p>
+          </>
         ) : null}
 
         {order.canManage ? (

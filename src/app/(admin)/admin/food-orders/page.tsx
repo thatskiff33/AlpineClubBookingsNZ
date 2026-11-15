@@ -25,9 +25,9 @@ export default async function FoodOrdersAdminPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Food Orders</h1>
         <p className="text-sm text-muted-foreground">
           Where members&apos; food orders are emailed, and what your club calls
-          the person who buys the food. Members place orders and see their own,
-          and hut leaders and committee members see every order, under Food
-          orders in the members&apos; area.
+          the person who buys the food. Members place orders and see their own;
+          committee members see every order, and hut leaders their lodge&apos;s,
+          under Food orders in the members&apos; area.
         </p>
       </header>
 
