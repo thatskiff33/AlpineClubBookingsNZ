@@ -27,11 +27,13 @@ export async function GET(
   });
   if (inactiveResponse) return inactiveResponse;
 
-  const limited = await checkRateLimit(
-    rateLimiters.bookingQuery,
-    `booking-invoice:${session.user.id}`,
-  );
-  if (!limited.success) return rateLimitedResponse(limited);
+  // Every download is a live Xero read: a per-member and a per-booking budget
+  // keep one member, or several officers on one booking, from spending the
+  // club's Xero minute and daily limits.
+  const memberLimit = await checkRateLimit(rateLimiters.bookingInvoiceDownload, session.user.id);
+  if (!memberLimit.success) return rateLimitedResponse(memberLimit);
+  const bookingLimit = await checkRateLimit(rateLimiters.bookingInvoiceDownloadPerBooking, id);
+  if (!bookingLimit.success) return rateLimitedResponse(bookingLimit);
 
   const download = await prepareBookingInvoiceDownload(id, session, {
     ipAddress: getClientIp(request),

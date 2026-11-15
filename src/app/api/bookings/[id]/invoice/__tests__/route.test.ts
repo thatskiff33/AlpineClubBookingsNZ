@@ -15,7 +15,7 @@ vi.mock("@/lib/rate-limit", () => ({
   checkRateLimit: mocks.checkRateLimit,
   getClientIp: () => "203.0.113.9",
   rateLimitedResponse: () => new Response(null, { status: 429 }),
-  rateLimiters: { bookingQuery: { id: "booking-query" } },
+  rateLimiters: { bookingInvoiceDownload: { id: "member" }, bookingInvoiceDownloadPerBooking: { id: "booking" } },
 }));
 vi.mock("@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download", () => ({
   prepareBookingInvoiceDownload: mocks.prepare,
@@ -48,7 +48,22 @@ describe("GET /api/bookings/[id]/invoice", () => {
     mocks.checkRateLimit.mockResolvedValueOnce({ success: false });
     expect((await call()).status).toBe(429);
     expect(mocks.prepare).not.toHaveBeenCalled();
-    expect(mocks.checkRateLimit).toHaveBeenCalledWith({ id: "booking-query" }, "booking-invoice:member-1");
+  });
+
+  it("throttles per member and per booking, with the download's own budgets", async () => {
+    mocks.prepare.mockResolvedValue({ kind: "NOT_FOUND" });
+    await call();
+    expect(mocks.checkRateLimit).toHaveBeenNthCalledWith(1, { id: "member" }, "member-1");
+    expect(mocks.checkRateLimit).toHaveBeenNthCalledWith(2, { id: "booking" }, "b1");
+    mocks.checkRateLimit.mockResolvedValueOnce({ success: true }).mockResolvedValueOnce({ success: false });
+    expect((await call()).status).toBe(429);
+    expect(mocks.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the download budgets of its own, tighter than the booking read limiter", async () => {
+    const { rateLimiters } = await vi.importActual<typeof import("@/lib/rate-limit")>("@/lib/rate-limit");
+    expect(rateLimiters.bookingInvoiceDownload).toMatchObject({ limit: 10, windowSeconds: 3600 });
+    expect(rateLimiters.bookingInvoiceDownloadPerBooking).toMatchObject({ limit: 20, windowSeconds: 3600 });
   });
 
   it("serves the PDF privately, uncached, as an attachment", async () => {
