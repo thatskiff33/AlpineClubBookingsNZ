@@ -159,7 +159,13 @@ async function withdrawRefundObligationPart(tx: Db, context: MemberMoneyPostingC
   const { part } = input;
   const open = Math.max(0, refundFamilyOpenCents(input.state, input.live));
   const cents = part.amountCents === "open" ? open : Math.min(part.amountCents, open);
-  if (cents <= 0 || await eventPosted(tx, part.eventKey)) return false;
+  if (await eventPosted(tx, part.eventKey)) {
+    if (part.amountCents === "open") return false;
+    // A reduction's key names the lost disputes it counted; posted already, a new reduction under it means a
+    // dispute's amount changed since. Refused, so the door rolls back rather than lowering the task alone.
+    throw new MemberMoneyPlanError([`part withdrawal ${part.eventKey} is already posted, so a further part cannot use its name`]);
+  }
+  if (cents <= 0) return false;
   const { lodgeId } = await tx.booking.findUniqueOrThrow({ where: { id: input.bookingId }, select: { lodgeId: true } });
   const booking = { bookingId: input.bookingId, lodgeId };
   const tip = await refundFamilyTip(tx, context, booking, input.live, await refundDebtor(tx, input.bookingId, part.debtorRead));

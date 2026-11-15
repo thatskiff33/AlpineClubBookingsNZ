@@ -10,6 +10,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { disputedHandBackReductionMessage, reduceDisputedHandBack } from "@/lib/manual-refund-task-dispute-reduction";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { DISPUTED_HAND_BACK_REDUCTION_FAILED } from "@/lib/manual-refund-task-copy";
 
 /**
  * POST /api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute
@@ -68,6 +69,6 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     logger.error({ err: error, taskId: id }, "Disputed hand-back reduction failed");
-    return NextResponse.json({ error: "Could not reduce the refund." }, { status: 500 });
+    return NextResponse.json({ error: DISPUTED_HAND_BACK_REDUCTION_FAILED }, { status: 500 });
   }
 }

@@ -410,6 +410,21 @@ async function cleanup() {
       expect(memberMoneyConservationProblems(await state(d.id))).toEqual([]);
     });
 
+    it("review: Mark paid at the full amount is refused while lost for part; after the reduction it pays only what is still owed", async () => {
+      const d = await disputedCancel("LOST", 1_000);
+      const was = d.task.amountCents!;
+      const { DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING } = await import("@/lib/manual-refund-task-copy");
+      await expect(markPaid(d.task.id)).rejects.toMatchObject({ status: 409, message: DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING });
+      expect(await eventOf(memberMoneyEventKeys.handBackPaid(d.task.id))).toBeNull();
+      await reduce(d.task.id, was, 1_000);
+      await markPaid(d.task.id);
+      expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: d.task.id } })).toMatchObject({ status: "COMPLETED", amountCents: was - 1_000 });
+      expect(await r14Lines(d.task.id)).toEqual([`CREDIT BANK ${was - 1_000}`, `DEBIT REFUND_PAYABLE ${was - 1_000}`]);
+      expect(await r14Applied(d.task.id)).toBe(was - 1_000);
+      expect(await r05Open(d.id, d.r05)).toBe(0);
+      expect(memberMoneyConservationProblems(await state(d.id))).toEqual([]);
+    });
+
     it("refuses the reduction while the dispute is open or after it was won, writing nothing", async () => {
       const d = await disputedCancel("OPEN", 1_000);
       const { disputedHandBackReductionRefusal } = await import("@/lib/manual-refund-task-copy");
@@ -442,7 +457,7 @@ async function cleanup() {
       expect(await eventOf(memberMoneyEventKeys.handBackRestWithdrawn(d.task.id))).toBeNull();
     });
 
-    it("racing Mark paid for the amount the officer saw, exactly one wins and nothing is withdrawn or paid twice", async () => {
+    it("racing Mark paid for the amount the officer saw, the reduction wins (Mark paid is refused at the full amount either way) and nothing is withdrawn or paid twice", async () => {
       const d = await disputedCancel("LOST", 1_000);
       const was = d.task.amountCents!;
       const markPaidAsSeen = () => resolution.resolveManualRefundTask({ taskId: d.task.id, resolution: "completed", note: null, actingMemberId: names.officerId,

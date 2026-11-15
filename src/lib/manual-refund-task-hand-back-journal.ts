@@ -15,7 +15,8 @@ import { postHandBackPayment, postRefundObligation, withdrawRefundObligation, ty
 import { memberMoneyEventKeys } from "@/lib/member-money";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import {
-  DISPUTED_HAND_BACK_FULLY_LOST_REDUCTION_REFUSAL, DISPUTED_HAND_BACK_NOTHING_TO_REDUCE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, DISPUTED_HAND_BACK_REDUCED_REFUSAL,
+  DISPUTED_HAND_BACK_FULLY_LOST_REDUCTION_REFUSAL, DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_NOTHING_TO_REDUCE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL,
+  DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, DISPUTED_HAND_BACK_REDUCED_REFUSAL,
   disputedHandBackDismissRefusal, disputedHandBackReductionRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL, NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL,
 } from "@/lib/manual-refund-task-copy";
 import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
@@ -147,7 +148,8 @@ export function journalHandBackDismissal(task: HandBackFacts & { amountCents: nu
 }
 
 /**
- * The rule, asked by the dismissal door and the reduction door under their claim's locks. `lock(1)` and the booking row are held; a cancellation's own
+ * The rule, asked by the dismissal door and the reduction door under their claim's locks, and by a completion,
+ * which it refuses while lost disputes are unapplied (it would pay the lost part again). `lock(1)` and the booking row are held; a cancellation's own
  * hand-back then takes its Payment row (completion's order; the withdrawal re-takes it, waiting on nothing) and only
  * then re-reads its booking's disputes, never trusting a read made before the locks. The dispute writer takes none
  * of these locks, so the dismissal answers the disputes as recorded at that read: one that reads open, won or short
@@ -157,10 +159,18 @@ export function journalHandBackDismissal(task: HandBackFacts & { amountCents: nu
 export async function decideJournalHandBackDismissal(tx: Prisma.TransactionClient,
   task: HandBackFacts & { bookingId: string; paymentId: string | null; amountCents: number | null; raisedAmountCents: number | null },
   resolution: "completed" | "dismissed"): Promise<JournalHandBackDismissal> {
-  if (resolution !== "dismissed" || !isJournalHandBackTask(task)) return notThisRules;
+  if (!isJournalHandBackTask(task)) return notThisRules;
+  const readDisputes = async () => (await readDisputesByBookingId(tx, [task.bookingId])).get(task.bookingId) ?? [];
+  if (resolution === "completed") {
+    // #4516 review: Mark paid would pay again what the cardholder already has back. Read without the Payment row,
+    // which a completion takes after its member-credit lock (`lockCancellationHandBackBeforeClaim`, INV-LOCK-002).
+    if (!isCancellationOwnHandBack(task)) return notThisRules;
+    const rule = journalHandBackDismissal(task, await readDisputes());
+    const refusal = rule.reduction ? DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING : rule.disputeLost ? DISPUTED_HAND_BACK_LOST_NOT_PAYABLE : null;
+    return { ...notThisRules, refusal };
+  }
   if (!isNonCancellationHandBackTask(task) && task.paymentId !== null) await lockPaymentForRefundedTotal(tx, task.paymentId);
-  const disputes = isCancellationOwnHandBack(task) ? (await readDisputesByBookingId(tx, [task.bookingId])).get(task.bookingId) ?? [] : [];
-  return journalHandBackDismissal(task, disputes);
+  return journalHandBackDismissal(task, isCancellationOwnHandBack(task) ? await readDisputes() : []);
 }
 
 /** Whether the completion takes `lock(1)` and the booking row first: a late-capture approval or a journal hand-back. */

@@ -76,7 +76,8 @@ export const memberMoneyEventKeys = {
   /**
    * #4516 (owner decision, 15 Nov 2026, comment 6893252570): a hand-back reduced by card disputes lost for part of it,
    * named by the task and the lost disputes counted, sorted. A further reduction needs a further lost dispute, so
-   * each reduction names a different set, and a replay of one finds its batch.
+   * each reduction names a different set; the door refuses a replay, and the journal refuses a second part under a
+   * name already posted (a dispute whose amount changed since).
    */
   handBackReduced: (taskId: string, lostDisputeIds: readonly string[]) => {
     if (lostDisputeIds.length === 0) throw new Error("A hand-back reduction names at least one lost dispute.");

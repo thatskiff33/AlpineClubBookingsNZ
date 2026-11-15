@@ -442,7 +442,18 @@ export function disputedHandBackDismissRefusal(status: StripeDisputeStatus): str
  * 6893252570): not dismissed, and not marked paid in full (that would pay the lost part twice), but reduced.
  */
 export const DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL =
-  "This refund can't be dismissed: the lost card dispute covered only part of it. Reduce it by the lost amount instead; the rest stays owed.";
+  "This refund can't be dismissed: the lost card dispute covered only part of it. Reduce it by the lost amount instead; the rest stays owed. Do not mark it paid in full: the cardholder already has the lost part back.";
+
+/** Mark paid on that hand-back while a lost dispute's cents are not yet applied: it would pay the lost part twice. */
+export const DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING =
+  "This refund can't be marked paid at its full amount: a card dispute was lost for part of it, and the cardholder already has that part back. Reduce it by the lost amount first.";
+
+/** Mark paid on that hand-back once its lost disputes cover it: the cardholder already has all of it back. */
+export const DISPUTED_HAND_BACK_LOST_NOT_PAYABLE =
+  "This refund can't be marked paid: the card dispute was lost for all of it, so the cardholder already has the money back. Dismiss it instead.";
+
+/** The reduce action failed for a reason the server did not name: the route's answer and the screen's fallback. */
+export const DISPUTED_HAND_BACK_REDUCTION_FAILED = "Could not reduce the refund.";
 
 /** That hand-back once every lost dispute has reduced it and the rest is still owed. */
 export const DISPUTED_HAND_BACK_REDUCED_REFUSAL =

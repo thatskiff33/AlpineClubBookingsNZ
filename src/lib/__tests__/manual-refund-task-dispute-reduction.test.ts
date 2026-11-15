@@ -83,6 +83,12 @@ describe("reducing a disputed card payment's hand-back by a dispute lost for par
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
+  it("review: a legacy row with no raised amount records its original with the first reduction, so the same loss never reduces twice", async () => {
+    withTask({ raisedAmountCents: null as unknown as number });
+    await reduce();
+    expect(mocks.taskUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { amountCents: 7_000, raisedAmountCents: 10_000 } }));
+  });
+
   it("a second lost dispute reduces again, by only what is not yet applied", async () => {
     withTask({ amountCents: 7_000 });
     mocks.disputeFindMany.mockResolvedValue([dispute("LOST", 3_000, "dp_1"), dispute("LOST", 2_000, "dp_2")]);

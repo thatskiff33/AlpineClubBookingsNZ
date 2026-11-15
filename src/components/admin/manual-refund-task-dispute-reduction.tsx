@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { disputedHandBackReductionSummary } from "@/lib/manual-refund-task-copy";
+import { DISPUTED_HAND_BACK_REDUCTION_FAILED, disputedHandBackReductionSummary } from "@/lib/manual-refund-task-copy";
 
 /**
  * #4516 (owner decision, 15 Nov 2026, comment 6893252570): a disputed card payment's hand-back whose disputes were
@@ -51,7 +51,7 @@ export function ManualRefundTaskDisputeReduction({
       });
       const data = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
       if (!response.ok) {
-        toast.error(data?.error ?? "Could not reduce the refund.");
+        toast.error(data?.error ?? DISPUTED_HAND_BACK_REDUCTION_FAILED);
       } else {
         toast.success(data?.message ?? "Refund reduced.");
         setOpen(false);

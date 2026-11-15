@@ -64,7 +64,8 @@ export async function reduceDisputedHandBack(input: {
     const stillOwedCents = wasCents - reducedByCents;
     const claimed = await tx.manualRefundTask.updateMany({
       where: { id: task.id, status: ManualRefundTaskStatus.OPEN, amountCents: wasCents },
-      data: { amountCents: stillOwedCents },
+      // A legacy row raised before `raisedAmountCents` existed records its original here, so applied = raised less owed.
+      data: { amountCents: stillOwedCents, ...(task.raisedAmountCents === null ? { raisedAmountCents: wasCents } : {}) },
     });
     if (claimed.count === 0) throw new ManualBookingPaymentError(DISPUTED_HAND_BACK_REDUCTION_STALE_MESSAGE, 409);
     await withdrawReducedHandBackDebt(tx, journal, { task, reduction: { ...decision.reduction, cents: reducedByCents }, actingMemberId: input.actingMemberId });

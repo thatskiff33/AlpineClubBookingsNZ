@@ -231,7 +231,7 @@ describe("part of a hand-back's debt withdrawn (#4516, owner decision 15 Nov 202
       part: { ...part, debtorRead: "booking-row" } });
   const open = (t: Awaited<ReturnType<typeof owedBack>>) => 8_000 - t.family(t.root).paid;
 
-  it("withdraws exactly the cents asked, the mirror of the R05 for them, paying it; a replay posts nothing", async () => {
+  it("withdraws exactly the cents asked, the mirror of the R05 for them, paying it; a second part under its name is refused", async () => {
     const t = await owedBack();
     const first = keys.handBackReduced(TASK, ["dp_b", "dp_a"]);
     expect(first).toBe(keys.handBackReduced(TASK, ["dp_a", "dp_b"])); // sorted: one spelling per set of lost disputes
@@ -239,7 +239,8 @@ describe("part of a hand-back's debt withdrawn (#4516, owner decision 15 Nov 202
     expect(t.linesOf(first)).toEqual(["CREDIT MEMBER_RECEIVABLE 3000", "DEBIT REFUND_PAYABLE 3000"]);
     expect(t.applied(first)).toBe(3_000);
     expect(open(t)).toBe(5_000);
-    expect(await withdraw(t, { eventKey: first, amountCents: 3_000 })).toBe(false);
+    // A second part under a name already used is a different reduction (a dispute's amount changed): refused, never posted.
+    await expect(withdraw(t, { eventKey: first, amountCents: 3_000 })).rejects.toThrow(/already posted/);
     expect(open(t)).toBe(5_000);
     expect(t.caps()).toEqual([]);
   });
