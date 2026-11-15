@@ -5432,7 +5432,7 @@ model ClubModuleSettings {
   // Whakapapa (Mt Ruapehu) conditions report (#4932): the /api/skifield-whakapapa
   // feed, its admin cache and the admin Mountain Conditions page, split out of
   // skifieldConditions, which keeps only the generic widget. Default OFF so a new
-  // install opts in; migration 20261220010000_add_skifield_whakapapa_module
+  // install opts in; migration 20261221010000_add_skifield_whakapapa_module
   // copies each existing install's skifieldConditions value across. Safe to add
   // as a defaulted column because every read narrows to
   // CLUB_MODULE_SETTINGS_COLUMN_SELECT.

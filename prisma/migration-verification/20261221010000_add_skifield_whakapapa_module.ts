@@ -23,7 +23,7 @@ const MODULE_ROWS = `SELECT "id", "skifieldConditions", "skifieldWhakapapa", "ki
   FROM "ClubModuleSettings" ORDER BY "id"`;
 
 const verification: DataMigrationVerification = {
-  migration: "20261220010000_add_skifield_whakapapa_module",
+  migration: "20261221010000_add_skifield_whakapapa_module",
   intent:
     "Add ClubModuleSettings.skifieldWhakapapa, default false, and keep each existing install's Whakapapa report as it was by copying its skifieldConditions value. A fresh install, which holds no member on its first migrate, keeps the default and starts with the report off.",
   idempotentReRun: true,

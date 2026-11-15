@@ -1,4 +1,4 @@
-import { asciiSlug } from "@/lib/ascii-slug";
+import { slugify } from "@/lib/slug";
 
 /**
  * The prefix used when nothing of the club's short name survives slugifying,
@@ -15,7 +15,7 @@ export const CLUB_DOWNLOAD_FALLBACK_PREFIX = "club";
  * browser), never `clubConfig`, which ignores what the club saved.
  */
 export function clubDownloadPrefix(shortName: string): string {
-  return asciiSlug(shortName, CLUB_DOWNLOAD_FALLBACK_PREFIX);
+  return slugify(shortName) || CLUB_DOWNLOAD_FALLBACK_PREFIX;
 }
 
 /** `<club-prefix>-<stem>.<extension>`, e.g. `mhsc-report-2026-07-01.csv`. */

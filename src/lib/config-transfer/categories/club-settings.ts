@@ -371,7 +371,7 @@ export const SINGLETONS: SingletonSpec[] = [
     defaults: () => DEFAULT_MODULE_SETTINGS,
     // A bundle from before #4932 has no skifieldWhakapapa: there,
     // skifieldConditions also switched the Whakapapa report on, so it carries
-    // that answer across — as migration 20261220010000 does for a database.
+    // that answer across — as migration 20261221010000 does for a database.
     reconcile: (incoming) =>
       "skifieldWhakapapa" in incoming ||
       typeof incoming.skifieldConditions !== "boolean"
