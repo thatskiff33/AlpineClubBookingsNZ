@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 const mocks = vi.hoisted(() => ({
   canEdit: vi.fn(),
@@ -164,7 +165,7 @@ describe("subscription billing panel", () => {
     vi.stubGlobal("fetch", vi.fn(() => successResponse(xeroPayload(false, 1) as never)));
     render(<SubscriptionBillingPanel seasonYear={2026} />);
     expect(await screen.findByText("Subscription invoicing needs Xero")).toBeTruthy();
-    expect(screen.getByText(new RegExp(SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE.replace(/[().]/g, "\\$&")))).toBeTruthy();
+    expect(screen.getByText(new RegExp(escapeRegExp(SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE)))).toBeTruthy();
     expect(screen.getByText("1 charge is waiting for Xero")).toBeTruthy();
     expect(screen.queryByText("Set the subscription income account in Xero mappings")).toBeNull();
     expect(screen.getByText("Open exceptions").nextSibling?.textContent).toBe("1");
