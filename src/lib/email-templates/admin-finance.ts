@@ -559,7 +559,7 @@ export function adminManualRefundTaskTemplate(data: {
       "The member's cancellation refund has been worked out under the club's normal policy, but there is no card charge to reverse and no Xero invoice to credit, so the system has raised a hand-back task instead of pretending money moved. The member has been told the club will arrange the refund."
     )}
     ${paragraph(
-      "Pay the member back, then mark the task complete on the payments board so the ledger records the refund. If the member declines it, or it was settled another way, dismiss the task with a note."
+      "Pay the member back, then mark the task complete on the payments board so the ledger records the refund. For now the task cannot be dismissed: if the member declines it, or it was settled another way, leave it open (dismissing with a reason comes in a later update)."
     )}`}
     ${infoTable([
       { label: manualRefundTaskAlertRecipientLabel(situation), value: escapeHtml(data.memberName) },
