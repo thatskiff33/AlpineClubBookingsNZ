@@ -14,15 +14,8 @@ reason: splits the Whakapapa module off the generic conditions widget, adds
   lines sit inside this file, which was already over its limit before this
   change, and lifting it apart is a refactor of its own, not part of this fix.
 
-file: src/app/api/member/data-export/route.ts
-lines: 423
-reason: splits the Whakapapa module off the generic conditions widget, adds
-  three club booking-timing settings and club-named download filenames; those
-  lines sit inside this file, which was already over its limit before this
-  change, and lifting it apart is a refactor of its own, not part of this fix.
-
 file: src/lib/booking-exception-request-service.ts
-lines: 2492
+lines: 2498
 reason: splits the Whakapapa module off the generic conditions widget, adds
   three club booking-timing settings and club-named download filenames; those
   lines sit inside this file, which was already over its limit before this
@@ -67,14 +60,6 @@ reason: splits the Whakapapa module off the generic conditions widget, adds
 
 function: src/app/api/admin/members/export/route.ts#GET
 lines: 496
-reason: splits the Whakapapa module off the generic conditions widget, adds
-  three club booking-timing settings and club-named download filenames; those
-  lines sit inside the function `GET`, which was already over its limit before
-  this change, and lifting it apart is a refactor of its own, not part of this
-  fix.
-
-function: src/app/api/member/data-export/route.ts#GET
-lines: 359
 reason: splits the Whakapapa module off the generic conditions widget, adds
   three club booking-timing settings and club-named download filenames; those
   lines sit inside the function `GET`, which was already over its limit before
