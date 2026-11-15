@@ -4,11 +4,13 @@
 # scripts/run-production-blue-green-deploy.sh by #4980).
 #
 # SOURCED, NEVER RUN. It defines functions and nothing else, so sourcing it has no
-# side effect. Two callers source it:
+# side effect. Four callers source it:
 #
 # - scripts/run-production-blue-green-deploy.sh, for its wrapper and its engine;
 # - scripts/check-environment-role.sh, First Bootstrap's role gate, through
-#   scripts/lib/environment-role-check.sh.
+#   scripts/lib/environment-role-check.sh;
+# - scripts/e2e-stack.sh and scripts/load-stack.sh, which export a whole env file
+#   into their shell with `read_compose_env_file` (last section below).
 #
 # Living in its own file is what lets both reach the SAME grammar: sourcing the
 # deploy script would start the production wrapper, so before #4980 nothing
@@ -181,4 +183,28 @@ compose_env_file_value() {
   )"
   value="$(printf '%s' "$value" | sed -E 's/[[:space:]]+#.*$//')"
   strip_matching_quotes "$(trim_whitespace "$value")"
+}
+
+# ---------------------------------------------------------------------------
+# Exporting a whole env file into the calling shell (the e2e and load stacks)
+# ---------------------------------------------------------------------------
+#
+# Exports every KEY=VALUE in a compose-style env file into the calling shell.
+# Used by scripts/e2e-stack.sh and scripts/load-stack.sh, so both stacks read
+# their env file the same way.
+#
+# Not `source`: values may contain spaces (e.g. cron schedules), and unquoted
+# values may carry trailing "  # comment" annotations. A key given twice takes
+# its LAST value, as Compose's own --env-file does.
+read_compose_env_file() {
+  local line key value
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    value="${value%%[[:space:]]\#*}" # strip inline comment
+    value="${value%"${value##*[![:space:]]}"}" # trim trailing whitespace
+    export "$key=$value"
+  done < "$1"
 }

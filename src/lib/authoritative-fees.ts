@@ -107,8 +107,20 @@ export function validateFeeComponents(input: {
     }
     return;
   }
+  validateInvoiceableFeeComponents(components, amountCents, "An invoiceable membership fee must have at least one component.", format);
+}
+
+// The invoiceable half of the component lifecycle invariant, shared by the
+// membership annual fee and the subscription-category fee so the label,
+// cent-range and sum-to-total rules cannot drift between them (#4496 review).
+function validateInvoiceableFeeComponents(
+  components: FeeComponentInput[],
+  amountCents: number,
+  emptyMessage: string,
+  format: ClubFormat,
+) {
   if (components.length === 0) {
-    throw new FeeScheduleValidationError("An invoiceable membership fee must have at least one component.");
+    throw new FeeScheduleValidationError(emptyMessage);
   }
   for (const component of components) {
     if (!component.label.trim()) {
@@ -124,6 +136,24 @@ export function validateFeeComponents(input: {
       `Fee components must sum to the fee amount (${formatCents(amountCents, format)}); the supplied components sum to ${formatCents(sum, format)}.`,
     );
   }
+}
+
+// Subscription-category decoupling: the component-lifecycle invariant for a
+// SubscriptionCategoryFee. A category fee has no billingBasis/NO_INVOICE
+// concept (it is always invoiced), so it skips straight to the shared
+// invoiceable rules validateFeeComponents also applies.
+export function validateSubscriptionCategoryFeeComponents(input: {
+  components: FeeComponentInput[];
+  amountCents: number;
+},
+  format: ClubFormat,
+) {
+  validateInvoiceableFeeComponents(
+    input.components,
+    input.amountCents,
+    "An invoiceable subscription category fee must have at least one component.",
+    format,
+  );
 }
 
 export function scheduleOverlapWhere(input: {
@@ -270,9 +300,38 @@ export async function getEffectiveMembershipAnnualFee(
   });
 }
 
+/**
+ * Resolve the effective flat subscription-category fee (subscription-category
+ * decoupling project). Unlike {@link getEffectiveMembershipAnnualFee} there is
+ * no age-tier dimension and no flat-vs-tier precedence to apply — a
+ * SubscriptionCategoryFee is always a single flat row per
+ * (subscriptionCategoryId, effectiveFrom) window, so this is a direct
+ * exact-window lookup. Components are always included, same reason as
+ * {@link getEffectiveMembershipAnnualFee}: they are the invoice lines, and
+ * order must agree byte-for-byte with the frozen charge-component snapshot.
+ *
+ * `asOf` is REQUIRED for the same reasons as {@link getEffectiveJoiningFee}.
+ */
+export async function getEffectiveSubscriptionCategoryFee(
+  params: { subscriptionCategoryId: string },
+  asOf: Date,
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+) {
+  const activeWindow = {
+    effectiveFrom: { lte: asOf },
+    OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
+  };
+  const include = { components: { orderBy: [{ sortOrder: "asc" as const }, { id: "asc" as const }] } };
+  return store.subscriptionCategoryFee.findFirst({
+    where: { subscriptionCategoryId: params.subscriptionCategoryId, ...activeWindow },
+    orderBy: { effectiveFrom: "desc" },
+    include,
+  });
+}
+
 export async function lockFeeSchedule(
   tx: Prisma.TransactionClient,
-  domain: "membership" | "entrance" | "joining",
+  domain: "membership" | "entrance" | "joining" | "subscriptionCategory",
   key: string,
 ) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`fee-schedule:${domain}:${key}`}))`;
