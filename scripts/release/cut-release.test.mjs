@@ -19,7 +19,7 @@ import {
   releaseBody,
   ReleaseCutError,
 } from "./cut-release.mjs";
-import { githubHeadingAnchor, releaseSection } from "./compile-changelog.mjs";
+import { releaseSection } from "./compile-changelog.mjs";
 import { NO_UPGRADE_STEPS, RELEASE_NOTES_UNFINISHED_MARKER, unreleasedUpgradeSteps, UNRELEASED_LINK } from "./release-docs.mjs";
 
 // Every test runs against a throwaway fixture: a bare "origin" and a clone of
@@ -278,6 +278,16 @@ describe("argument parsing", () => {
     expect(main(["nonsense"], { log: silentLog(), error: errors })).toBe(1);
     expect(errors.text()).toMatch(/release:cut stopped: Name a phase/);
     expect(errors.text()).toMatch(/Usage: pnpm run release:cut prepare/);
+  });
+
+  // Vitest's transform tolerates what Node refuses (an identifier imported twice after a merge, a
+  // missing export), so every other test here can pass over a script `pnpm run release:cut` cannot load.
+  it("loads and runs under Node itself, not only through Vitest", () => {
+    const script = path.resolve(import.meta.dirname, "cut-release.mjs");
+    const result = spawnSync(process.execPath, [script, "nonsense"], { encoding: "utf8" });
+    expect(result.stderr).not.toMatch(/SyntaxError|ERR_MODULE_NOT_FOUND|does not provide an export/);
+    expect(result.stderr).toMatch(/release:cut stopped: Name a phase/);
+    expect(result.status).toBe(1);
   });
 });
 

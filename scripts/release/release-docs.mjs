@@ -19,11 +19,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { githubHeadingAnchor } from "../lib/github-heading-anchor.mjs";
 import { fencedLines } from "../lib/markdown-blocks.mjs";
 import {
   ANY_HEADING,
   FRAGMENTS_DIRNAME,
-  githubHeadingAnchor,
   locateSection,
   stripBlankEdges,
   toLines,

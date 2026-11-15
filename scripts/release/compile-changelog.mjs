@@ -146,16 +146,6 @@ export function locateSection(lines, isHeading) {
   return { start, end: nextOffset >= 0 ? start + 1 + nextOffset : lines.length };
 }
 
-/** The anchor GitHub gives a Markdown heading (lower case, punctuation dropped, spaces to hyphens). */
-export function githubHeadingAnchor(heading) {
-  return heading
-    .replace(/^#+\s*/, "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
-    .replace(/\s/g, "-");
-}
-
 const isVersionHeading = (version) => (line) => line.startsWith(`## ${version} `);
 
 /**

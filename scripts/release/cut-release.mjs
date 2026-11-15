@@ -51,7 +51,6 @@ import {
   compileChangelog,
   DATE_PATTERN,
   FRAGMENTS_DIRNAME,
-  githubHeadingAnchor,
   isFragmentName,
   MAIN_REF,
   readFragments,
