@@ -7,28 +7,28 @@ only the registration lines land here, with their comments trimmed to one or two
 lines.
 
 file: src/app/(authenticated)/dashboard/page.tsx
-lines: 979
+lines: 1008
 reason: the Order food card is its own component (food-order-dashboard-card.tsx);
   the page only gains the two imports and the module- and organisation-gated
   render beside "Report an issue", which has to sit with the other module cards.
 
 file: src/components/admin-sidebar.tsx
-lines: 1149
+lines: 1101
 reason: the Food Orders entry in the Lodge Operations section; the sidebar's
   items are one list and an entry cannot live elsewhere.
 
 file: src/lib/admin-permissions.ts
-lines: 952
+lines: 953
 reason: the `/api/admin/food-orders` prefix in the lodge area's route map, which
   is the one place an admin API prefix gets its permission area.
 
 file: src/lib/config-transfer/categories/club-settings.ts
-lines: 1198
+lines: 1231
 reason: the `foodOrders` module flag's travel classification, which every module
   flag must carry in this one list.
 
 file: src/lib/email-message-registry.ts
-lines: 2481
+lines: 2526
 reason: the `food-order-placed` template's audience, trigger metadata, required
   token and six approved tokens; each is one entry in a registry table that has
   to name every template.
@@ -37,3 +37,10 @@ file: src/proxy.ts
 lines: 1217
 reason: the `/api/food-orders/:path*` matcher entry; Next requires the matcher
   as a static literal in this file, or the module gate never runs on the API.
+
+function: src/app/(authenticated)/dashboard/page.tsx#DashboardPage
+lines: 844
+reason: the same module- and organisation-gated Order food render beside
+  "Report an issue" (five lines with its comment); the card's body is its own
+  component, and the gate has to sit in the page's card list with the other
+  module cards, so splitting the page is a separate change.
