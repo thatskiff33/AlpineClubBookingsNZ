@@ -1376,6 +1376,29 @@ describe("#4370: a card refund Stripe failed later is taken off the recount once
     });
   });
 
+  it("MUTATION (notes outside the snapshot): the refund notes the raw total counts are read in the failure term's snapshot", async () => {
+    // A refund note's link moves no Payment column, so the claim cannot catch one linked between two reads:
+    // the notes counted and the subtraction sized against them must come from the one snapshot.
+    arrange({ aboveCashCents: 8000 });
+    const txLinkFindMany = vi.fn((args: unknown) => mocks.xeroObjectLinkFindMany(args));
+    snapshot.open.mockImplementationOnce((client: unknown, run: (tx: unknown) => Promise<unknown>) =>
+      run({ ...(client as object), xeroObjectLink: { findMany: txLinkFindMany } }),
+    );
+    const isCountedNotesRead = (call: unknown[]) => {
+      const where = (call[0] as { where: { xeroObjectType?: string; role?: unknown } }).where;
+      return where.xeroObjectType === "CREDIT_NOTE" && JSON.stringify(where.role) === JSON.stringify({ in: ["REFUND_CREDIT_NOTE", "ACCOUNT_CREDIT_NOTE"] });
+    };
+
+    await recount(PaymentSource.STRIPE);
+
+    expect(snapshot.open).toHaveBeenCalledTimes(1);
+    const inSnapshot = txLinkFindMany.mock.calls.filter(isCountedNotesRead).length;
+    expect(inSnapshot).toBe(1);
+    // Every read of the counted notes went through the snapshot's client, none beside it.
+    expect(mocks.xeroObjectLinkFindMany.mock.calls.filter(isCountedNotesRead).length).toBe(inSnapshot);
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+  });
+
   it("reads the failure record from the repaired payments' card refund rows, and the failed refunds' own amounts", async () => {
     arrange({ aboveCashCents: 8000 });
 

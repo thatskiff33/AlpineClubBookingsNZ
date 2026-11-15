@@ -31,9 +31,12 @@
  * never written, and never raised over the failure either.
  *
  * Reads only, in one read-only snapshot (`withReadOnlySnapshot`): no lock, no
- * Xero call. The reversal-link writer moves no Payment column, so the caller's
- * compare-and-set claim (#3979) cannot see a reversal linked mid-read; the one
- * snapshot is what keeps the live, raised and coverage reads agreeing on it.
+ * Xero call. Neither the reversal-link writer nor a refund note's link writer
+ * moves a Payment column, so the caller's compare-and-set claim (#3979) cannot
+ * see a reversal or a note linked mid-read. The one snapshot keeps the live,
+ * raised and coverage reads agreeing, and with them the caller's own read of
+ * the refund notes it counts (`readNotesCounted`): the subtraction is sized
+ * against the same notes the raw total adds, never a note linked in between.
  */
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -44,14 +47,17 @@ import { readRefundNoteCoverageAboveCashCents } from "@/lib/refund-note-coverage
 import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
 import { readCardRefundReversalCentsByPayment } from "@/lib/xero-resolved-in-xero-fences";
 
-export async function readFailedCardRefundRecountCentsByPayment(
+export async function readFailedCardRefundRecountCentsByPayment<NotesCounted>(
   payments: ReadonlyArray<{ id: string; bookingId: string; refundedAmountCents: number }>,
-): Promise<Map<string, number>> {
-  const centsByPayment = new Map<string, number>();
-  if (payments.length === 0) return centsByPayment;
+  readNotesCounted: (db: Prisma.TransactionClient) => Promise<NotesCounted>,
+): Promise<{ notesCounted: NotesCounted; centsByPayment: Map<string, number> }> {
   const paymentIds = payments.map((payment) => payment.id);
   return withReadOnlySnapshot(prisma, async (tx) => {
     // Sequential: one transaction's connection runs one statement at a time.
+    // The caller's notes first, in the snapshot every read below shares.
+    const notesCounted = await readNotesCounted(tx);
+    const centsByPayment = new Map<string, number>();
+    if (payments.length === 0) return { notesCounted, centsByPayment };
     const liveReversalCents = await readCardRefundReversalCentsByPayment(paymentIds, tx, "live");
     const raisedReversalCents = await readCardRefundReversalCentsByPayment(paymentIds, tx, "raised");
     const failedLaterCents = await readFailedLaterCardRefundCentsByPayment(paymentIds, tx);
@@ -62,7 +68,7 @@ export async function readFailedCardRefundRecountCentsByPayment(
       const cents = (liveReversalCents.get(payment.id) ?? 0) + failureRecordCents;
       if (cents > 0) centsByPayment.set(payment.id, cents);
     }
-    return centsByPayment;
+    return { notesCounted, centsByPayment };
   });
 }
 
@@ -79,6 +85,8 @@ async function readFailedLaterCardRefundCentsByPayment(paymentIds: readonly stri
   });
   const failedRefundIds = new Set<string>();
   for (const operation of operations) {
+    // A failed-later row's own refund, read from its key: its slices name it too where it
+    // has a plan, and the Set keeps it once; a row with no readable plan has only its key.
     const ownRefundId = cardRefundFailedLaterRefundId(operation.idempotencyKey);
     if (ownRefundId) failedRefundIds.add(ownRefundId);
     for (const slice of parseRefundAllocationPlan(operation.allocationPlan) ?? []) {

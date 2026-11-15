@@ -187,9 +187,10 @@ export async function repairRefundedPaymentBusinessState(input: {
 
   // #4215 (`INV-PAY-118`): requests' paid-back cash, read AFTER the payment rows, so one completed in between loses the claim
   // below. #4288: the note's own refund-note row too; its void may move no Payment column, so `repairOne` re-reads it locked.
-  // #4370 (`INV-PAY-155`): and what card refunds Stripe failed later take off, subtracted before the clamp and every floor.
-  const [directRefundLinks, modificationAllocationLinks, refundRequestPaidBackCentsByPaymentId, currentNoteRows, failedCardRefundCentsByPaymentId] = await Promise.all([
-    prisma.xeroObjectLink.findMany({
+  // #4370 (`INV-PAY-155`): and what card refunds Stripe failed later take off, subtracted before the clamp and every floor,
+  // read in one snapshot with the refund notes it is subtracted from, so a note linked between the two cannot split them.
+  const [{ notesCounted: directRefundLinks, centsByPayment: failedCardRefundCentsByPaymentId }, modificationAllocationLinks, refundRequestPaidBackCentsByPaymentId, currentNoteRows] = await Promise.all([
+    readFailedCardRefundRecountCentsByPayment(payments, (db) => db.xeroObjectLink.findMany({
       where: {
         localModel: "Payment",
         localId: {
@@ -206,7 +207,7 @@ export async function repairRefundedPaymentBusinessState(input: {
         xeroObjectId: true,
         metadata: true,
       },
-    }),
+    })),
     // The note's own role only: a payment's role-less links mirror its refund and account notes (#4786).
     prisma.xeroObjectLink.findMany({
       where: { localModel: "Payment", localId: { in: paymentIds }, xeroObjectType: "ALLOCATION", role: NOTE_ALLOCATION_ROLE, active: true },
@@ -214,7 +215,6 @@ export async function repairRefundedPaymentBusinessState(input: {
     }),
     readRefundRequestPaidBackCentsByPaymentId(paymentIds),
     input.creditNoteId === null ? new Map<string, { active: boolean; metadata: unknown }>() : readRefundNoteRowsByPayment(input.creditNoteId, paymentIds, prisma),
-    readFailedCardRefundRecountCentsByPayment(payments),
   ]);
 
   // #3979 (`INV-PAY-126`): a bank-transfer payment's modification notes are

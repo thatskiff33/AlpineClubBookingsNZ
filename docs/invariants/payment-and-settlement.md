@@ -4204,9 +4204,9 @@ the `organiser-extra-*` suites and `xero-booking-repair-organiser-billing.test.t
   (`INV-PAY-114`) are unchanged. A payment with no failed refund recounts
   exactly as before.
 - Reads only, after the payment rows, in one read-only snapshot: no Xero call,
-  no new lock. The claim on the row as read (#3979) is kept, but cannot see a
-  reversal linked mid-read; the snapshot keeps the reads agreeing on it. An
-  affected payment is corrected at its next credit-note event.
+  no new lock. The claim on the row as read (#3979) cannot see a reversal or
+  note linked mid-read, so the notes counted share that snapshot. A
+  bank-transfer payment is corrected at its next credit-note event.
 - Limits: a failed refund naming no booking raises no row, so it is not taken
   off; a card total already overstated stays, alerted, under the raise-only
   floor.
