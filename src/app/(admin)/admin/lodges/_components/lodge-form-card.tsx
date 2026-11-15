@@ -45,7 +45,8 @@ export function LodgeFormCard({
   creating: boolean;
   form: LodgeFormState;
   setForm: Dispatch<SetStateAction<LodgeFormState>>;
-  canEdit: boolean;
+  /** Undefined while the edit access is still loading; the fields stay disabled. */
+  canEdit: boolean | undefined;
   saving: boolean;
   /** The capacity field is marked invalid while its failure is shown. */
   capacityInvalid: boolean;
