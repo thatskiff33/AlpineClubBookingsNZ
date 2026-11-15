@@ -6652,8 +6652,9 @@ before reading its obligation. That is the precondition of the member-level
 application path. The row lock is always the last lock its transaction takes.
 The R19 joining fee posts in its own short transaction after the outbox insert,
 which stays on the global client so `startXeroSyncOperation`'s lost-race
-recovery still runs. Proved against real PostgreSQL by
-`member-money-subscriptions.realdb.test.ts`.
+recovery still runs. `member-money-subscriptions.realdb.test.ts` runs the
+doors on real PostgreSQL, including a re-bill reversal refused without
+`lock(1)`; the confirm and cancellation unit suites pin the lock order.
 
 ## A credit note spent outside the app: global, then the member's credit ledger (#4219)
 

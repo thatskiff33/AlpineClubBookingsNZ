@@ -56,7 +56,7 @@ export function planSubscriptionCharge(
   }
   const sum = facts.components.reduce((total, component) => total + component.chargedAmountCents, 0);
   if (facts.billingBasis !== "NO_INVOICE" && sum !== facts.chargedAmountCents) {
-    problems.push(`the components add up to ${sum} cents, not the charge's ${facts.chargedAmountCents}`);
+    problems.push(`the components of charge ${facts.chargeId} do not add up to its charged amount`);
   }
   if (problems.length > 0) throw new MemberMoneyPlanError(problems);
 
