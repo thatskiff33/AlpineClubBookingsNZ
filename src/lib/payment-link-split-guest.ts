@@ -28,6 +28,7 @@ import { revokePaymentLinkById } from "@/lib/payment-link";
 import { prisma } from "@/lib/prisma";
 import { savedPaymentMethodForBooking } from "@/lib/saved-payment-method";
 import { savedCardChargeCents } from "@/lib/booking-payment-state";
+import { isSplitGuestChild } from "@/lib/split-guest-children";
 import type { ClubFormat } from "@/lib/club-format";
 
 /** A freshly minted split-guest link: the raw token (emailable exactly once)
@@ -185,13 +186,12 @@ export async function issueSplitGuestPaymentLink(
   if (
     !booking ||
     booking.deletedAt ||
-    booking.status !== BookingStatus.PENDING ||
-    !booking.parentBookingId ||
-    // #796 group joiners share parentBookingId but always carry a join row;
-    // they settle via their own join-time link or organiser settlement, never
-    // via the split-guest flow.
-    booking.groupBookingJoin ||
-    !booking.hasNonMembers ||
+    // The one split-guest child rule (#738), shared with every caller that
+    // picks a child to send this link to: PENDING, linked to a parent,
+    // carrying non-members and not a #796 group joiner (joiners share
+    // parentBookingId but always carry a join row; they settle via their own
+    // join-time link or organiser settlement, never via the split-guest flow).
+    !isSplitGuestChild(booking) ||
     // #4357 (`INV-PAY-119`): worth, not the bare price - a change fee recorded
     // on a $0 child's payment is still owed, and the cron sends it this link.
     savedCardChargeCents(booking) <= 0

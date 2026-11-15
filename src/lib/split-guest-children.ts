@@ -7,8 +7,8 @@ import { BookingStatus, type Prisma } from "@prisma/client";
  * flow). One definition for every caller that picks the children a
  * split-guest payment link goes to: the member's "send guest payment link"
  * route and the officer's fresh-copy panel. `issueSplitGuestPaymentLink`
- * re-checks the same shape on the loaded row, plus deletion and the saved-card
- * rule, before it mints anything.
+ * applies {@link isSplitGuestChild} to the row it loads, plus deletion and the
+ * saved-card rule, before it mints anything.
  *
  * Kept in its own dependency-free module so routes and services can import it
  * without pulling in the issuer (which several tests replace with a mock).

@@ -2154,6 +2154,22 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["is not PENDING", { status: BookingStatus.CONFIRMED }],
+    ["carries no non-members", { hasNonMembers: false }],
+  ])(
+    "returns not_payable when the child %s, through the shared split-guest child rule (INV-SSOT)",
+    async (_label, overrides) => {
+      mockedBookingFindUnique.mockResolvedValue(splitChild(overrides) as never);
+
+      const result = await issueSplitGuestPaymentLink("child-1", CLUB_FORMAT_TEST);
+
+      expect(result).toEqual({ outcome: "not_payable" });
+      expect(mockedPaymentLinkCreate).not.toHaveBeenCalled();
+      expect(sendSplitGuestPaymentLinkEmail).not.toHaveBeenCalled();
+    }
+  );
+
   it("returns not_payable when the parent payment carries a saved card — the cron will auto-charge (#1967 FIX-5)", async () => {
     mockedBookingFindUnique.mockResolvedValue(
       splitChild({
