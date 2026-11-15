@@ -47,7 +47,7 @@ import {
   recordedReissuedAskInvoiceCents,
   type FoldedIncreaseAsk,
 } from "@/lib/unpaid-ask-offset-marker";
-import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-operation-outbox";
+import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-supplementary-invoice-enqueue";
 
 /**
  * Whether a just-minted ask is still live: not retired since. Paid counts as

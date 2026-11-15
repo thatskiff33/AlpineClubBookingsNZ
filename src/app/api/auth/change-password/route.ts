@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import bcrypt from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { hashPassword, verifyPassword } from "@/lib/password-hashing";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -68,7 +67,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const isValid = await bcrypt.compare(currentPassword, member.passwordHash);
+  const isValid = await verifyPassword(currentPassword, member.passwordHash);
   if (!isValid) {
     return NextResponse.json(
       { error: "Current password is incorrect" },
@@ -82,7 +81,7 @@ export async function POST(req: NextRequest) {
   const screen = await screenChosenPassword(newPassword, policy);
   if (!screen.ok) return breachedPasswordRefusal(screen);
 
-  const newHash = await bcrypt.hash(newPassword, PASSWORD_BCRYPT_COST);
+  const newHash = await hashPassword(newPassword);
 
   await prisma.$transaction([
     prisma.member.update({

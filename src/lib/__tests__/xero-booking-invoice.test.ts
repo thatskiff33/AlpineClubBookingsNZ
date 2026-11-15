@@ -319,13 +319,13 @@ vi.mock("@/lib/xero-config", async (importOriginal) => {
   };
 });
 
+import { createXeroCreditNoteForModification } from "@/lib/xero-modification-credit-notes";
+import { createXeroCreditNote } from "@/lib/xero-credit-notes";
 import {
-  createXeroCreditNoteForModification,
-  createXeroCreditNote,
   createXeroInvoiceForBooking,
-  resetXeroRateLimitStateForTests,
   updateXeroBookingInvoiceForBooking,
-} from "@/lib/xero";
+} from "@/lib/xero-booking-invoices";
+import { resetXeroRateLimitStateForTests } from "@/lib/xero-api-client";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import {
   connectedXeroFixture,

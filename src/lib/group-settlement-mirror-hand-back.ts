@@ -10,7 +10,7 @@ import { assertGroupMirrorHandBackWithinUnpromisedCash } from "@/lib/edit-refund
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { mirrorPlanRefundedCents } from "@/lib/group-settlement-refund-plan";
 import { isGroupSettlementMirrorHandBackKind } from "@/lib/group-settlement-mirror-kinds";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
 import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import logger from "@/lib/logger";

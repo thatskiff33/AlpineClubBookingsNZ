@@ -34,8 +34,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 
-vi.mock("bcryptjs", () => ({ hash: async () => "hashed" }));
-
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: async () => ({
     ok: true as const,
@@ -81,14 +79,18 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 
 // No live provider: the Xero client is a stub throughout.
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-api-client", () => ({
   getAuthenticatedXeroClient: async () => ({
     xero: { accountingApi: { getContact: mocks.getContact } },
     tenantId: "tenant-1",
   }),
   callXeroApi: async (fn: () => Promise<unknown>) => fn(),
+}));
+vi.mock("@/lib/xero-contact-cache", () => ({
   refreshXeroContactCachesFromContact:
     mocks.refreshXeroContactCachesFromContact,
+}));
+vi.mock("@/lib/xero-membership-sync", () => ({
   syncMemberSubscriptionHistoryForLinkedContact:
     mocks.syncMemberSubscriptionHistoryForLinkedContact,
 }));
