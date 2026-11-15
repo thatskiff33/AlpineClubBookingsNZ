@@ -63,7 +63,7 @@ const offerDependencies = {
 export async function resolveBookingInvoiceOffer(
   input: {
     booking: BookingDetailRecord;
-    viewer: Pick<BookingDetailViewer, "canSeeOwnerCredit">;
+    viewer: Pick<BookingDetailViewer, "canSeeOwnerCredit" | "nonOwnerAdminViewer">;
     modules: Pick<FeatureFlags, "xeroIntegration">;
   },
   dependencies = offerDependencies,
@@ -74,10 +74,11 @@ export async function resolveBookingInvoiceOffer(
     xeroModuleOn: input.modules.xeroIntegration,
   });
   if (!primary) return { kind: "NONE" };
+  const askClub = { kind: "ASK_CLUB", staffViewer: input.viewer.nonOwnerAdminViewer } as const;
   // The page's read loads the payment's ADDITIONAL rows (any status, withdrawn
   // included); one is enough to say a further invoice may exist.
-  if ((input.booking.payment?.transactions.length ?? 0) > 0) return { kind: "ASK_CLUB" };
-  if (await dependencies.hasAnySupplementaryInvoice(input.booking.id)) return { kind: "ASK_CLUB" };
+  if ((input.booking.payment?.transactions.length ?? 0) > 0) return askClub;
+  if (await dependencies.hasAnySupplementaryInvoice(input.booking.id)) return askClub;
   return { kind: "XERO_INVOICE", invoiceNumber: primary.invoiceNumber };
 }
 

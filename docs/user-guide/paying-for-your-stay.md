@@ -140,8 +140,10 @@ It saves Xero's own PDF of that invoice, so it is the same invoice the club's
 accounts hold, with the same invoice number.
 
 - If Xero can't be reached just then, you'll see a message; try again later.
-- If the booking has more than one invoice (for example a change that added to
-  the price), the page asks you to contact the club for copies instead.
+  If the page says the invoice is no longer available, refresh it.
+- If the booking may have more than one invoice (for example a change that
+  added to the price), the page says so and asks you to contact the club for
+  copies instead.
 - A cancelled booking has no invoice to download, and a place your group
   organiser paid for by internet banking is on the organiser's invoice.
 - A guest on someone else's booking does not see the button.

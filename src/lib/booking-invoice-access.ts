@@ -15,7 +15,9 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
  *   invoice (`Payment.xeroInvoiceId`).
  * - `ASK_CLUB`: the booking has, or may have, a further Xero invoice for a
  *   change to it (a supplementary invoice). Offering the primary alone would
- *   hand over an incomplete record, so the page says to ask the club instead.
+ *   hand over an incomplete record, so the page says where to get copies:
+ *   `staffViewer` (an officer or admin on someone else's booking,
+ *   `nonOwnerAdminViewer`) is told to open Xero; anyone else to ask the club.
  *
  * THE ONE RULE for the button and `GET /api/bookings/[id]/invoice`
  * (`INV-SSOT`): the page renders this answer and the route serves only
@@ -24,7 +26,7 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 export type BookingInvoiceOffer =
   | { kind: "NONE" }
   | { kind: "XERO_INVOICE"; invoiceNumber: string | null }
-  | { kind: "ASK_CLUB" };
+  | { kind: "ASK_CLUB"; staffViewer: boolean };
 
 type InvoiceOfferBooking = {
   status: string;

@@ -70,6 +70,14 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
     }
   });
 
+  it("follows bookings-area view: a Read-only Admin and a membership officer are offered it, a content officer is not", async () => {
+    // ADMIN_MEMBERSHIP's seeded bundle carries bookings:view (and finance:view), so
+    // the page already shows it the owner's money; one audience, not a second rule.
+    expect(await offer(booking(), "readonly-1", "ADMIN_READONLY")).toEqual({ kind: "XERO_INVOICE", invoiceNumber: "INV-0042" });
+    expect(await offer(booking(), "membership-1", "ADMIN_MEMBERSHIP")).toEqual({ kind: "XERO_INVOICE", invoiceNumber: "INV-0042" });
+    expect(await offer(booking(), "content-1", "ADMIN_CONTENT")).toEqual({ kind: "NONE" });
+  });
+
   it("offers nothing to a linked guest or a stranger (the owner-credit audience)", async () => {
     expect(await offer(booking(), "guest-1", "USER")).toEqual({ kind: "NONE" });
     expect(await offer(booking(), "stranger-1", "USER")).toEqual({ kind: "NONE" });
@@ -102,13 +110,19 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
 
   it("asks the member to contact the club when the payment has any additional ask", async () => {
     const asked = booking({}, { transactions: [{ withdrawnAt: new Date("2026-06-30T00:00:00.000Z") }] });
-    expect(await offer(asked)).toEqual({ kind: "ASK_CLUB" });
+    expect(await offer(asked)).toEqual({ kind: "ASK_CLUB", staffViewer: false });
     expect(noSupplementary.hasAnySupplementaryInvoice).not.toHaveBeenCalled();
+  });
+
+  it("frames the further-invoice line for staff on someone else's booking, not as the booker", async () => {
+    const asked = booking({}, { transactions: [{}] });
+    expect(await offer(asked, "officer-1", "ADMIN_BOOKINGS")).toEqual({ kind: "ASK_CLUB", staffViewer: true });
+    expect(await offer(asked, "readonly-1", "ADMIN_READONLY")).toEqual({ kind: "ASK_CLUB", staffViewer: true });
   });
 
   it("asks the member to contact the club when any supplementary invoice exists — a card receipt with no ADDITIONAL row included", async () => {
     const receiptOnly = { hasAnySupplementaryInvoice: vi.fn(async () => true) };
-    expect(await offer(booking(), OWNER_ID, "USER", XERO_ON, receiptOnly)).toEqual({ kind: "ASK_CLUB" });
+    expect(await offer(booking(), OWNER_ID, "USER", XERO_ON, receiptOnly)).toEqual({ kind: "ASK_CLUB", staffViewer: false });
     expect(receiptOnly.hasAnySupplementaryInvoice).toHaveBeenCalledWith("ckbooking1234567");
   });
 });
