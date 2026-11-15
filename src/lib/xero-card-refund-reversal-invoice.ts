@@ -25,7 +25,7 @@
  */
 import { Invoice, LineAmountTypes, type LineItem } from "xero-node";
 import type { Prisma } from "@prisma/client";
-import { addCalendarDays, requireCalendarDate } from "@/lib/club-time";
+import { addCalendarDays, isCalendarDate, requireCalendarDate } from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -257,8 +257,11 @@ export async function createXeroCardRefundReversalInvoice(
     let invoiceNumber = invoiceLink?.xeroObjectNumber ?? null;
     let invoiceBody: unknown = null;
     const storedDate = asRecord(invoiceLink?.metadata)?.documentDate;
+    // A real day, not just the shape: this worker writes `documentDate` from a
+    // real day, so a stored non-day is corruption and falls back to choosing the
+    // date afresh rather than sending Xero a date it would refuse.
     let dated =
-      typeof storedDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(storedDate)
+      isCalendarDate(storedDate)
         ? { date: storedDate, redated: storedDate !== closedOn, lockKnown: true }
         : await chooseDocumentDate(closedOn, providers);
 
