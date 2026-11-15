@@ -345,29 +345,26 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 178 test files, seven test
+  `stripComments`, and since #3164 a lint rule enforces it.** Test files across the suite, seven test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
-  twelve minutes later in CI. **Use it; do not write a second.** The figure was
-  published as 48 while the module's own docblock said 53 and the tree said 53,
-  which is this ID applied to its own entry: two statements of one fact, and
-  nothing comparing them. It was re-measured at #3180; at #3196 it was
-  INCREMENTED rather than measured — one added for the single file that lane
-  converged, on top of a figure that was itself one high; and #3191 then added
-  two importers of its own. **Something compares them now**:
-  `ssot-comment-stripper-guard.test.ts` counts the importers in the tree and
-  requires both this sentence and the module's own docblock to state that
-  number, so the next drift fails a test instead of waiting for a reviewer.
-- **Count that figure by IMPORT SPECIFIER, not by path text**, which is what the
-  pin does — the two statements of it can only agree if they are measured the
-  same way, which is this ID applied to itself again. The module is reached
+  twelve minutes later in CI. **Use it; do not write a second.** A count of
+  those test files used to be published here and in the module's docblock,
+  and it is this ID applied to its own entry: it drifted three times with
+  nothing comparing the two, and once a test compared them it turned `main`
+  red three times, because two branches that each added a test made the
+  identical edit and git merged them cleanly. **No count is published now
+  (#5199)**: `ssot-comment-stripper-guard.test.ts` names every non-test
+  importer, requires this sentence in both places, and fails if either states
+  a count again.
+- **The census finds importers by IMPORT SPECIFIER, not by path text.** The
+  module is reached
   through four spellings (`@/lib/__tests__/support/strip-comments`,
   `./support/strip-comments`, `./strip-comments`, and the CI script's relative
   path with its `.ts` extension), and two further files name that path as DATA
   rather than importing it: `eslint.config.mjs` inside the rule's own message
   and `ssot-comment-stripper-guard.test.ts` as the lint target it feeds ESLint.
   A grep for the path text counts both, and the module's own docblock as well.
-  **Measure it; never increment it.**
 - **A population measured by NAME is not the population**, and the count above
   is the evidence. #3132 converged the copies spelled `stripComments` and closed;
   seven more were alive that day under the name `withoutComments`, and #3164
