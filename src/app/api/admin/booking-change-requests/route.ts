@@ -14,11 +14,17 @@ import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { loadMemberGuestFindGate } from "@/lib/member-guest-find-service";
 import { carriedPromoCodes } from "@/lib/booking-change-request-promo";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
+import {
+  adminListPage,
+  adminQueueCreatedOrder,
+  adminListPageQueryFields,
+  adminQueueFocusIdField,
+} from "@/lib/admin-list-page";
 
 const querySchema = z.object({
   status: z.enum(["REQUESTED", "APPROVED", "REJECTED", "ALL"]).optional().default("REQUESTED"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
+  requestId: adminQueueFocusIdField,
 });
 
 export async function GET(req: NextRequest) {
@@ -33,7 +39,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const { status, page, pageSize } = parsed.data;
+  const { status, page, pageSize, requestId } = parsed.data;
   // #2524: POLICY_EXCEPTION rows share this table but are decided through the
   // booking-policy exception workflow (#2525) and surface only in the unified
   // queue. Scope this legacy locked-period queue to LOCKED_PERIOD so those rows
@@ -41,8 +47,14 @@ export async function GET(req: NextRequest) {
   // unified queue's kind:"POLICY_EXCEPTION" filter. Both findMany and count
   // reuse this `where`, so the guard applies to the total as well as the page.
   // The clause itself lives in `booking-request-queue-where.ts`, where the
-  // Changes tab's pending badge reads it too (#4969).
-  const where = buildLockedPeriodChangeRequestListWhere(status);
+  // Changes tab's pending badge reads it too (#4969); a focused deep link
+  // narrows the list to its one request, never the badge (INV-OPS-020).
+  const where = {
+    ...buildLockedPeriodChangeRequestListWhere(status),
+    ...(requestId ? { id: requestId } : {}),
+  };
+  // The pending queue reads oldest first (INV-OPS-020).
+  const direction = adminQueueCreatedOrder(status === "REQUESTED");
   const [requests, total] = await Promise.all([
     prisma.bookingChangeRequest.findMany({
       where,
@@ -95,7 +107,7 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: direction }, { id: direction }],
       take: pageSize,
       skip: (page - 1) * pageSize,
     }),
@@ -197,5 +209,9 @@ export async function GET(req: NextRequest) {
       : null
     : null;
 
-  return NextResponse.json({ data, page, pageSize, total, memberGuestFind });
+  return NextResponse.json({
+    data,
+    ...adminListPage({ page, pageSize, total }),
+    memberGuestFind,
+  });
 }
