@@ -1494,6 +1494,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 404 -> 406 unpinned (#4516): the refused card refund reservation and its OPERATOR release, `payment`.
     // RE-MEASURED with `pnpm run audit:census`.
     // 406 -> 408 unpinned (#4368): a dead card refund's "Nothing left owed" and "Try the card again", `payment`.
+    // 408 -> 410 unpinned (#4915): the member's data download and the Full Admin subject access report, `privacy`.
     // RE-MEASURED with `pnpm run audit:census`.
     // 408 -> 409 unpinned (#4916): the after-stay dietary clear's count row, `privacy`.
     // 409 -> 411 unpinned (#4851): a group organiser's dead card refund paid another way (one site) or tried again, `payment`.
@@ -1501,9 +1502,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 412 -> 413 unpinned (#4618): the officer two-factor policy save, `security`.
     // RE-MEASURED with `pnpm run audit:census`.
-    // 413 -> 416 unpinned (#4496): the three Subscription Categories admin-CRUD writers, `admin`.
+    // 413 -> 415 unpinned (#4915): the two subject access writers, `privacy`.
+    // 415 -> 418 unpinned (#4496): the three Subscription Categories admin-CRUD writers, `admin`.
     // RE-MEASURED with `pnpm run audit:census` on the merged tree.
-    ).toEqual({ pinned: 130, unpinned: 416 });
+    ).toEqual({ pinned: 130, unpinned: 418 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

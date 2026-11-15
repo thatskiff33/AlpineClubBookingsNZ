@@ -799,6 +799,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
 | `INV-PRIV-023` | A stay's dietary value is cleared a club-set period after the stay |
 | `INV-PRIV-024` | Every outside recipient of personal data is in one census-held register |
+| `INV-PRIV-025` | One subject access builder; every personal model placed; own rows only |
 
 ## Membership Lifecycle
 
@@ -977,6 +978,7 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-005` | Advisory-lock transactions use fresh READ COMMITTED snapshots |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
+| `INV-OPS-020` | A row-capped admin list shows its total and reaches every row |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |
 | `INV-OPS-012` | Audit reclassification ships its backfill or files one; measured audience stated |
 | `INV-OPS-005` | Doomed columns need `@ignore`: static defaults and implicit `RETURNING` name them |

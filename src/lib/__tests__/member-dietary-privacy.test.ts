@@ -40,6 +40,8 @@ import {
   dietaryRequirementsInputSchema,
   isDietaryRequirementsWithinLimit,
   normalizeDietaryRequirements,
+  redactDietaryMergeRow,
+  redactDietaryValueForRecord,
 } from "@/lib/member-dietary-field";
 import {
   attachMergeDietaryRequirements,
@@ -53,8 +55,6 @@ import {
   loadDietaryRequirementsForDisplay,
   readMemberDietaryRequirements,
   readMemberDietaryRequirementsByIds,
-  redactDietaryMergeRow,
-  redactDietaryValueForRecord,
 } from "@/lib/member-dietary";
 import {
   loadMemberFieldsFlags,
