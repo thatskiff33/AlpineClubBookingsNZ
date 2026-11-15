@@ -130,6 +130,21 @@ describe("bulk-membership-type routes (#2107)", () => {
       expect(mocks.bulkSave).not.toHaveBeenCalled();
     });
 
+    it("refuses an applyFrom day that does not exist (2026-02-30)", async () => {
+      const res = await savePost(
+        req({
+          ids: ["m-1"],
+          seasonYear: 2026,
+          membershipTypeId: "t-1",
+          applyFrom: "2026-02-30",
+          reason: "x",
+          previewTokens: { "m-1": "tok" },
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(mocks.bulkSave).not.toHaveBeenCalled();
+    });
+
     it("passes a valid request through to the lib wrapper", async () => {
       const res = await savePost(
         req({
@@ -167,6 +182,14 @@ describe("bulk-membership-type routes (#2107)", () => {
     it("rejects an empty ids array", async () => {
       const res = await previewPost(req({ ids: [], seasonYear: 2026, membershipTypeId: "t-1" }));
       expect(res.status).toBe(400);
+    });
+
+    it("refuses an applyFrom day that does not exist (2026-02-30)", async () => {
+      const res = await previewPost(
+        req({ ids: ["m-1"], seasonYear: 2026, membershipTypeId: "t-1", applyFrom: "2026-02-30" }),
+      );
+      expect(res.status).toBe(400);
+      expect(mocks.getPreview).not.toHaveBeenCalled();
     });
 
     it("previews previewable members and reports archived/not-found skips by id", async () => {

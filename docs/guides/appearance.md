@@ -15,7 +15,7 @@ The cards are:
 
 | Card | Opens | What it does |
 | --- | --- | --- |
-| **Club Identity** | `/admin/appearance/identity` | Club name, short name, hut-leader label, and your lodge's public details (covered below). |
+| **Club Identity** | `/admin/appearance/identity` | Club name, short name, hut-leader label, your lodge's public details, and where members' data is held (covered below). |
 | **Site Style** | `/admin/site-style` | The public theme, brand colours, fonts, logo, and first-run style completion. See [Site Style](site-style.md). |
 | **Site Content** | `/admin/site-content` | Shared site chrome such as the footer columns. See [Site Content](site-content.md). |
 | **Page Content** | `/admin/page-content` | The database-backed public pages, menus, tokens, and publishing state. See [Page Content](page-content.md). |
@@ -82,6 +82,15 @@ change these pages.
    per lodge in the **Edit** form under **Setup → Lodges**
    ([Lodges](lodges.md#edit-a-lodges-identity)); both screens edit the same
    lodge record.
+5. Under **Where members' data is held**, click **Edit** and enter the
+   **Hosting provider** (the company that runs your server and database) and
+   **Where your data is held** (the country or region; name both if your
+   database and backups are held in different places). Each is one line of
+   plain text, at most 120 characters; leave one blank if you don't know it.
+   Click **Save hosting details**. The `{{data-hosting}}` page token publishes
+   these values, with wording that points members to your Privacy Officer for
+   a blank one ([token catalogue](../PUBLIC_PAGE_CONTENT_TOKENS.md)). Keep them
+   current — the [privacy-incident guide](privacy-incidents.md) relies on them.
 
 ## Settings reference
 

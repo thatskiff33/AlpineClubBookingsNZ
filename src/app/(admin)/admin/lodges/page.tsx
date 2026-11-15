@@ -1,10 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Pencil, Plus, Settings2, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -17,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
+import { FocusedActionError } from "@/components/focused-action-error";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
@@ -31,6 +31,7 @@ import {
   parseConfiguredLodgeCapacity,
 } from "@/lib/lodge-effective-capacity";
 import { AddLodgeCapacityField } from "./_components/add-lodge-capacity-field";
+import { LodgePropertiesCard } from "./_components/lodge-properties-card";
 import { OtherLodgesPanel } from "./_components/other-lodges-panel";
 import {
   emptyForm,
@@ -49,7 +50,29 @@ export default function AdminLodgesPage() {
   const canEdit = useAdminAreaEditAccess("lodge");
   const [lodges, setLodges] = useState<LodgeRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // A failed READ is passive: it is shown above the form, hides the list and
+  // moves nothing. A failed save or (de)activation is the admin's own action,
+  // so it takes focus through the permanently mounted recovery alert, and
+  // `actionAttention` re-takes it when the same failure repeats.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
+  const [actionAttention, setActionAttention] = useState(0);
+  // The alert's own id and the capacity field's `aria-describedby` target: one
+  // literal, so renaming the alert cannot orphan the field's link.
+  const actionErrorId = "lodges-page-error";
+  // An edit save closes the form, taking the focused Save button with it, so
+  // a landed save positions at the top of the page; failure still wins (#2934).
+  const [savesLanded, setSavesLanded] = useState(0);
+  const pageRef = useRef<HTMLDivElement>(null);
+  useActionAttention({
+    // `FocusedActionError` owns the failure focus. The error is passed so a
+    // failure beats a landed save in one batch; no handler makes that batch
+    // today (a landed save clears the error first), so this is a guard only.
+    error: actionError,
+    errorTarget: null,
+    success: savesLanded,
+    successTarget: pageRef,
+  });
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -60,7 +83,7 @@ export default function AdminLodgesPage() {
 
   const loadLodges = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     try {
       const response = await fetch("/api/admin/lodges");
       if (!response.ok) {
@@ -69,7 +92,7 @@ export default function AdminLodgesPage() {
       const data = (await response.json()) as { lodges: LodgeRecord[] };
       setLodges(data.lodges);
     } catch {
-      setError("Could not load lodges. Please try again.");
+      setLoadError("Could not load lodges. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -96,11 +119,20 @@ export default function AdminLodgesPage() {
     setEditingId(null);
     setCreating(false);
     setForm(emptyForm);
+    // Cancel closes the form a standing failure such as "Lodge name is
+    // required." was about, so it dismisses the action failure. A failed
+    // Deactivate shown at the same time goes with it.
+    setActionError("");
+  }
+
+  function failAction(message: string) {
+    setActionError(message);
+    setActionAttention((count) => count + 1);
   }
 
   async function submitForm() {
     if (!form.name.trim()) {
-      setError("Lodge name is required.");
+      failAction("Lodge name is required.");
       return;
     }
     const bankAccountError = lodgeFormBankAccountError(form);
@@ -114,13 +146,13 @@ export default function AdminLodgesPage() {
     // `POST /api/admin/lodges` enforces (INV-SSOT-001).
     const typedCapacity = parseConfiguredLodgeCapacity(form.capacity);
     if (creating && typedCapacity.kind !== "valid") {
-      setError(NEW_LODGE_CAPACITY_REQUIRED_MESSAGE);
+      failAction(NEW_LODGE_CAPACITY_REQUIRED_MESSAGE);
       setCapacityInvalid(true);
       return;
     }
     setCapacityInvalid(false);
     setSaving(true);
-    setError(null);
+    setActionError("");
     try {
       const response = creating
         ? await fetch("/api/admin/lodges", {
@@ -138,7 +170,7 @@ export default function AdminLodgesPage() {
             body: JSON.stringify(formPayload(form)),
           });
       if (response.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        failAction(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
       if (!response.ok) {
@@ -155,9 +187,10 @@ export default function AdminLodgesPage() {
         return;
       }
       cancelEdit();
+      setSavesLanded((count) => count + 1);
       await loadLodges();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save lodge");
+      failAction(err instanceof Error ? err.message : "Failed to save lodge");
     } finally {
       setSaving(false);
     }
@@ -165,7 +198,7 @@ export default function AdminLodgesPage() {
 
   async function setActive(lodge: LodgeRecord, active: boolean, force = false) {
     setSaving(true);
-    setError(null);
+    setActionError("");
     try {
       const response = await fetch(`/api/admin/lodges/${lodge.id}`, {
         method: "PATCH",
@@ -173,7 +206,7 @@ export default function AdminLodgesPage() {
         body: JSON.stringify(force ? { active, force: true } : { active }),
       });
       if (response.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        failAction(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
       if (!response.ok) {
@@ -215,7 +248,7 @@ export default function AdminLodgesPage() {
       }
       await loadLodges();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update lodge");
+      failAction(err instanceof Error ? err.message : "Failed to update lodge");
     } finally {
       setSaving(false);
     }
@@ -248,7 +281,7 @@ export default function AdminLodgesPage() {
   );
 
   return (
-    <div>
+    <div ref={pageRef}>
       {viewOnlyBanner}
       <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -259,17 +292,24 @@ export default function AdminLodgesPage() {
             change once a second active lodge exists.
           </p>
         </div>
-        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={startCreate} disabled={saving || showForm || loading || error !== null}>
+        <ViewOnlyActionButton canEdit={canEdit} describeReason={false} onClick={startCreate} disabled={saving || showForm || loading || loadError !== null}>
           <Plus className="mr-2 h-4 w-4" />
           Add lodge
         </ViewOnlyActionButton>
       </div>
 
-      {error ? (
-        <p id="lodges-page-error" className="text-sm text-destructive" role="alert">
-          {error}
+      {loadError ? (
+        <p className="text-sm text-destructive" role="alert">
+          {loadError}
         </p>
       ) : null}
+
+      <FocusedActionError
+        id={actionErrorId}
+        error={actionError}
+        attentionKey={actionAttention}
+        className="scroll-mt-20"
+      />
 
       {showForm ? (
         <Card>
@@ -300,8 +340,8 @@ export default function AdminLodgesPage() {
               <AddLodgeCapacityField
                 value={form.capacity}
                 onChange={(capacity) => setForm((prev) => ({ ...prev, capacity }))}
-                invalid={capacityInvalid && error !== null}
-                errorId="lodges-page-error"
+                invalid={capacityInvalid && actionError !== ""}
+                errorId={actionErrorId}
               />
             ) : null}
             <div className="grid gap-4 sm:grid-cols-2">
@@ -360,77 +400,16 @@ export default function AdminLodgesPage() {
         </Card>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5" />
-            Lodge properties
-          </CardTitle>
-          <CardDescription>
-            At least one lodge must stay active. Deactivated lodges are kept
-            for history but cannot take new bookings.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <p className="text-sm text-muted-foreground">Loading lodges...</p>
-          ) : error ? null : lodges.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No lodges found.</p>
-          ) : (
-            <ul className="divide-y">
-              {lodges.map((lodge) => (
-                <li
-                  key={lodge.id}
-                  className="flex flex-wrap items-center justify-between gap-2 py-3"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{lodge.name}</span>
-                      <Badge variant={lodge.active ? "default" : "secondary"}>
-                        {lodge.active ? "Active" : "Inactive"}
-                      </Badge>
-                    </div>
-                    {lodge.travelNote ? (
-                      <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-                        {lodge.travelNote}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button asChild variant="outline" size="sm">
-                      <Link href={`/admin/lodges/${lodge.id}`}>
-                        <Settings2 className="mr-2 h-4 w-4" />
-                        Configure
-                      </Link>
-                    </Button>
-                    <ViewOnlyActionButton
-                      canEdit={canEdit}
-                      describeReason={false}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => startEdit(lodge)}
-                      disabled={saving}
-                    >
-                      <Pencil className="mr-2 h-4 w-4" />
-                      Edit
-                    </ViewOnlyActionButton>
-                    <ViewOnlyActionButton
-                      canEdit={canEdit}
-                      describeReason={false}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void setActive(lodge, !lodge.active)}
-                      disabled={saving}
-                    >
-                      {lodge.active ? "Deactivate" : "Activate"}
-                    </ViewOnlyActionButton>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <LodgePropertiesCard
+        lodges={lodges}
+        loading={loading}
+        loadFailed={loadError !== null}
+        canEdit={canEdit}
+        saving={saving}
+        onEdit={startEdit}
+        onSetActive={(lodge, active) => void setActive(lodge, active)}
+        ancestorRendersViewOnlyBanner
+      />
 
       <OtherLodgesPanel ancestorRendersViewOnlyBanner />
       </div>

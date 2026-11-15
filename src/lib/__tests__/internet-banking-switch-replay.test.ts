@@ -15,7 +15,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroAppliedCreditAllocationOperation: mocks.enqueueAllocation,
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kick,
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: mocks.isXeroConnected }));
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: mocks.isXeroConnected }));
 vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError, info: vi.fn(), warn: vi.fn() } }));
 
 import {

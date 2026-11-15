@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import bcrypt from "bcryptjs";
-import { PASSWORD_BCRYPT_COST } from "@/lib/password-hashing";
+import { hashPassword } from "@/lib/password-hashing";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
@@ -84,7 +83,7 @@ export async function POST(req: NextRequest) {
     const screen = await screenChosenPassword(password, policy);
     if (!screen.ok) return breachedPasswordRefusal(screen);
 
-    const passwordHash = await bcrypt.hash(password, PASSWORD_BCRYPT_COST);
+    const passwordHash = await hashPassword(password);
     const passwordChangedAt = new Date();
 
     await prisma.$transaction([

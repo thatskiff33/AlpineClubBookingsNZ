@@ -1,4 +1,4 @@
-/** Unit witnesses for the inert M4a paths: run the real builder, store and caps.
+/** Unit witnesses for the M4a paths: run the real builder, store and caps.
  * The realdb suite separately proves PostgreSQL locking and deferred checks. */
 import type { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";

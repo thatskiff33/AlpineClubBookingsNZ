@@ -403,7 +403,7 @@ export async function createXeroSupplementaryInvoice(params: {
   if (organiserBilling && localModel === "BookingModification") {
     const claim = operationClaim!;
     const waived = await prisma.$transaction(async (tx) => {
-      const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+      const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
       await lockSupplementaryInvoiceAnchor(tx, localId);
       if (!(await organiserExtraWaivedBeforeRaised(tx, localId))) return false;
       await tx.xeroSyncOperation.updateMany({

@@ -75,7 +75,7 @@ vi.mock("@/lib/waitlist", () => ({ processWaitlistForDates: mocks.processWaitlis
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: mocks.recordBookingEvent,
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: vi.fn().mockResolvedValue(false) }));
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: vi.fn().mockResolvedValue(false) }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroAccountCreditNoteOperation: vi.fn(),
   enqueueXeroModificationCreditNoteOperation: vi.fn(),
@@ -138,6 +138,8 @@ describe("cancelBooking split cascade (#738)", () => {
               updateMany: mocks.bookingUpdateMany,
             },
             payment: { update: vi.fn() },
+            // #4909: the claim releases the booking's promo uses on this tx.
+            promoRedemption: { findFirst: mocks.promoRedemptionFindFirst },
           });
         }
         return Promise.all(fnOrActions as Array<Promise<unknown>>);

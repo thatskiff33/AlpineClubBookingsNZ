@@ -171,6 +171,8 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => {
   };
 });
 // #4516 (M4c): the reservation step runs on PostgreSQL (`member-money-refunds.realdb.test.ts`).
+// #4911: the superseded refund's dispute check; undisputed unless a test says (the real read: stripe-dispute-hold.test.ts).
+const mockAssertCaptureNotDisputed = vi.hoisted(() => vi.fn(async (_paymentIntentId: string) => {}));
 const mockReserveCardRefundAttempt = vi.hoisted(() => vi.fn(async () => ({ outcome: "skipped", reason: "outside-population" })));
 vi.mock("@/lib/prisma", () => {
   const prisma = {
@@ -229,6 +231,10 @@ vi.mock("@/lib/prisma", () => {
   return { prisma: { ...prisma, $transaction } };
 });
 
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  assertCaptureNotDisputed: (paymentIntentId: string) => mockAssertCaptureNotDisputed(paymentIntentId),
+}));
 vi.mock("@/lib/recorded-card-refund-notes", () => ({ queueRecordedCardRefundNotes: vi.fn().mockResolvedValue({ queueOperationId: null }) }));
 vi.mock("@/lib/stripe", () => ({
   listRefundsForPaymentIntent: (...args: unknown[]) => mockListRefundsForPaymentIntent(...args),
@@ -321,8 +327,10 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   // the real attach helper below loads against a complete double.
   OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES: ["PENDING", "RUNNING", "WAITING_PAYMENT"],
   hasReleasedXeroSupplementaryInvoiceOperationsForPaymentIntent: vi.fn(),
-  lockSupplementaryInvoiceAnchor: vi.fn(),
   releaseWaitingSupplementaryInvoiceOperations: vi.fn(),
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  lockSupplementaryInvoiceAnchor: vi.fn(),
 }));
 
 /**
@@ -395,6 +403,8 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   // #4359: the preflight's no-plan fallback and the executor share this pure filter.
   capturedStripeTransactions: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).capturedStripeTransactions,
+  // #4872 review (INV-SSOT): a missing plan is sized by the shared pure card planner, real here.
+  planCardRefundFromLedger: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).planCardRefundFromLedger,
   // #4699 review: the superseded refund is sized through this pure headroom fold.
   refundHeadroomIncrementCents: ((await importOriginal()) as typeof import("@/lib/payment-transactions")).refundHeadroomIncrementCents,
   // #4217: the runner's claim hold locks the Payment row before the recovery row.
@@ -479,6 +489,13 @@ vi.mock("@/lib/logger", () => ({
 // the format it always did.
 const clubFormatMock = vi.hoisted(() => vi.fn());
 const mockLockPaymentForRefundedTotal = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<undefined>>(async () => undefined));
+const mockReadSupersededCaptureHeldBack = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(async () => ({ byTransaction: new Map(), totalCents: 0 })),
+);
+vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
+  readSupersededCaptureHeldBack: (...args: unknown[]) => mockReadSupersededCaptureHeldBack(...args),
+}));
 // #4316: what the shared retirement routine writes when a replay's booking ended mid-mint.
 const mock4316 = vi.hoisted(() => ({ paymentUpdate: vi.fn(), transactionFindFirst: vi.fn(), markFailed: vi.fn() }));
 // #3567: when the club format last changed, for the stale-queue alert.
@@ -554,6 +571,8 @@ function supersededFlipOrder(): number {
 
 beforeEach(() => {
   clubFormatMock.mockResolvedValue(CLUB_FORMAT_TEST);
+  mockReadSupersededCaptureHeldBack.mockReset();
+  mockReadSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map(), totalCents: 0 });
 });
 
 /**
@@ -2609,6 +2628,282 @@ describe("payment recovery worker", () => {
     );
   });
 
+  function queuePlanlessModification(operation: ReturnType<typeof makeOperation>) {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
+    mockPaymentRecoveryFindMany.mockImplementation((args?: { where?: { attempts?: { gte?: number } } }) => {
+      if (isStaleWorkerSweep(args)) return Promise.resolve([]);
+      return Promise.resolve([{ ...operation, status: "PENDING" }]);
+    });
+  }
+
+  /** Booking charge, then a newer captured superseded charge. Newest-first reaches the second first. */
+  function bookingAndSupersededCharges() {
+    // A bank charge (no intent) is spliced in by one case below.
+    const transactions: { id: string; source: string; stripePaymentIntentId: string | null; amountCents: number; refundedAmountCents: number; status: PaymentStatus; createdAt: Date }[] = [
+      { id: "txn-primary", source: "STRIPE", stripePaymentIntentId: "pi_primary", amountCents: 13_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-01T00:00:00.000Z") },
+      { id: "txn-superseded", source: "STRIPE", stripePaymentIntentId: "pi_superseded", amountCents: 6_500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-06-01T00:00:00.000Z") },
+    ];
+    return { id: "payment-1", stripePaymentIntentId: "pi_primary", transactions };
+  }
+
+  it("a missing plan leaves a live superseded capture's charge out of the slices (#4872)", async () => {
+    const legacy = makeOperation({
+      id: "recovery-hold-back",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: null,
+      idempotencyKey: "booking_modification_refund_mod-hold",
+      stripeKeyPrefix: "mod_dates_refund_booking-1_mod-hold",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(legacy);
+    mockPaymentFindUnique.mockResolvedValue(bookingAndSupersededCharges());
+    mockReadSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map([["txn-superseded", 6_500]]), totalCents: 6_500 });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "recovery-hold-back" },
+      data: { allocationPlan: [{ paymentTransactionId: "txn-primary", amountCents: 4_000 }] },
+    }));
+    expect(mockRefundPaymentTransactions.mock.calls[0]?.[0].allocation).toEqual([
+      { paymentTransactionId: "txn-primary", amountCents: 4_000 },
+    ]);
+  });
+
+  it("a missing plan does not freeze the bank row that sits ahead of the booking card (#4872)", async () => {
+    const legacy = makeOperation({
+      id: "recovery-hold-back-bank",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: null,
+      idempotencyKey: "booking_modification_refund_mod-hold-bank",
+      stripeKeyPrefix: "mod_dates_refund_booking-1_mod-hold-bank",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(legacy);
+    const charges = bookingAndSupersededCharges();
+    charges.transactions.splice(1, 0, {
+      id: "txn-bank", source: "INTERNET_BANKING", stripePaymentIntentId: null, amountCents: 10_000, refundedAmountCents: 0,
+      status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-15T00:00:00.000Z"),
+    });
+    mockPaymentFindUnique.mockResolvedValue(charges);
+    mockReadSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map([["txn-superseded", 6_500]]), totalCents: 6_500 });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: { allocationPlan: [{ paymentTransactionId: "txn-primary", amountCents: 4_000 }] },
+    }));
+    expect(mockRefundPaymentTransactions.mock.calls[0]?.[0].allocation).toEqual([
+      { paymentTransactionId: "txn-primary", amountCents: 4_000 },
+    ]);
+  });
+
+  it("keeps the debt when a bank row is all that remains beside a held capture (#4872)", async () => {
+    const legacy = makeOperation({
+      id: "recovery-bank-only",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: null,
+      idempotencyKey: "booking_modification_refund_mod-bank-only",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(legacy);
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_superseded",
+      transactions: [
+        { id: "txn-bank", source: "INTERNET_BANKING", stripePaymentIntentId: null, amountCents: 10_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-15T00:00:00.000Z") },
+        { id: "txn-superseded", source: "STRIPE", stripePaymentIntentId: "pi_superseded", amountCents: 6_500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-06-01T00:00:00.000Z") },
+      ],
+    });
+    mockReadSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map([["txn-superseded", 6_500]]), totalCents: 6_500 });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(0);
+    expect(result.failed + result.retried).toBe(1);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    const written = JSON.stringify([...mockPaymentRecoveryUpdate.mock.calls, ...mockPaymentRecoveryUpdateMany.mock.calls]);
+    expect(written).toContain("A live superseded capture still owns part of this refund; retry before planning");
+    expect(written).not.toContain("allocationPlan");
+  });
+
+  it("does not close a missing plan when the only remaining money is a bank row (#4872)", async () => {
+    const legacy = makeOperation({
+      id: "recovery-bank-headroom",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: null,
+      idempotencyKey: "booking_modification_refund_mod-bank-headroom",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(legacy);
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: null,
+      transactions: [
+        { id: "txn-bank", source: "INTERNET_BANKING", stripePaymentIntentId: null, amountCents: 10_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-15T00:00:00.000Z") },
+      ],
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(0);
+    expect(result.failed + result.retried).toBe(1);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    const written = JSON.stringify([...mockPaymentRecoveryUpdate.mock.calls, ...mockPaymentRecoveryUpdateMany.mock.calls]);
+    expect(written).toContain("A missing card-refund plan cannot be frozen onto a non-card charge; retry before planning");
+    expect(written).not.toContain("allocationPlan");
+  });
+
+  it("does not freeze a short card plan when a bank row holds the rest of the debt (#4872 review)", async () => {
+    const legacy = makeOperation({
+      id: "recovery-card-and-bank",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: null,
+      idempotencyKey: "booking_modification_refund_mod-card-and-bank",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(legacy);
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_primary",
+      transactions: [
+        { id: "txn-primary", source: "STRIPE", stripePaymentIntentId: "pi_primary", amountCents: 2_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-01T00:00:00.000Z") },
+        { id: "txn-bank", source: "INTERNET_BANKING", stripePaymentIntentId: null, amountCents: 10_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-15T00:00:00.000Z") },
+      ],
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(0);
+    expect(result.failed + result.retried).toBe(1);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    const written = JSON.stringify([...mockPaymentRecoveryUpdate.mock.calls, ...mockPaymentRecoveryUpdateMany.mock.calls]);
+    expect(written).toContain("A missing card-refund plan cannot be frozen onto a non-card charge; retry before planning");
+    expect(written).not.toContain("allocationPlan");
+  });
+
+  it("keeps the debt when the hold-back is all that a missing plan could send (#4872)", async () => {
+    const legacy = makeOperation({
+      id: "recovery-held-only",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: null,
+      idempotencyKey: "booking_modification_refund_mod-held-only",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(legacy);
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_superseded",
+      transactions: [
+        { id: "txn-superseded", source: "STRIPE", stripePaymentIntentId: "pi_superseded", amountCents: 6_500, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-06-01T00:00:00.000Z") },
+      ],
+    });
+    mockReadSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map([["txn-superseded", 6_500]]), totalCents: 6_500 });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(0);
+    expect(result.failed + result.retried).toBe(1);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    const written = JSON.stringify([...mockPaymentRecoveryUpdate.mock.calls, ...mockPaymentRecoveryUpdateMany.mock.calls]);
+    expect(written).toContain("A live superseded capture still owns part of this refund; retry before planning");
+    expect(written).not.toContain("allocationPlan");
+  });
+
+  it("still closes a missing plan when recorded refunds, not the hold-back, leave nothing to send (#4872)", async () => {
+    const legacy = makeOperation({
+      id: "recovery-already-refunded",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: null,
+      idempotencyKey: "booking_modification_refund_mod-recorded",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(legacy);
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_primary",
+      transactions: [
+        { id: "txn-primary", source: "STRIPE", stripePaymentIntentId: "pi_primary", amountCents: 13_000, refundedAmountCents: 13_000, status: PaymentStatus.REFUNDED, createdAt: new Date("2026-05-01T00:00:00.000Z") },
+      ],
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ allocationPlan: expect.anything() }),
+    }));
+  });
+
+  it("retries before planning when a charge arrives during preflight (#4872)", async () => {
+    const legacy = makeOperation({
+      id: "recovery-checked",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: null,
+      idempotencyKey: "booking_modification_refund_mod-checked",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(legacy);
+    const before = {
+      id: "payment-1",
+      stripePaymentIntentId: "pi_primary",
+      transactions: [
+        { id: "txn-primary", source: "STRIPE", stripePaymentIntentId: "pi_primary", amountCents: 13_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-05-01T00:00:00.000Z") },
+      ],
+    };
+    const arrived = {
+      ...before,
+      transactions: [
+        ...before.transactions,
+        { id: "txn-late", source: "STRIPE", stripePaymentIntentId: "pi_late", amountCents: 2_000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED, createdAt: new Date("2026-06-02T00:00:00.000Z") },
+      ],
+    };
+    mockPaymentFindUnique.mockImplementation(async () => (openTransactions.count > 0 ? arrived : before));
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(0);
+    const written = JSON.stringify([...mockPaymentRecoveryUpdate.mock.calls, ...mockPaymentRecoveryUpdateMany.mock.calls]);
+    expect(written).toContain("Refundable charges changed during refund preflight; retry before planning");
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
+  it("does not re-plan a stored allocation that sits on a charge the hold-back now owns (#4872)", async () => {
+    const frozen = [{ paymentTransactionId: "txn-superseded", amountCents: 4_000 }];
+    const stored = makeOperation({
+      id: "recovery-stored-held",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      amountCents: 4_000,
+      allocationPlan: frozen,
+      idempotencyKey: "booking_modification_refund_mod-stored",
+      stripeKeyPrefix: "mod_dates_refund_booking-1_mod-stored",
+      paymentTransactionId: null,
+    });
+    queuePlanlessModification(stored);
+    mockPaymentFindUnique.mockResolvedValue(bookingAndSupersededCharges());
+    mockReadSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map([["txn-superseded", 6_500]]), totalCents: 6_500 });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockRefundPaymentTransactions.mock.calls[0]?.[0].allocation).toEqual(frozen);
+    expect(mockPaymentRecoveryUpdate).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ allocationPlan: expect.anything() }),
+    }));
+  });
+
+
   it("enqueueRefundRequestRefundRecovery persists the route-frozen allocation plan (#1510)", async () => {
     await enqueueRefundRequestRefundRecovery({
       bookingId: "booking-1",
@@ -2864,6 +3159,32 @@ describe("payment recovery worker", () => {
     expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: "recovery-refused", attempts: 1 }),
       data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.FAILED, lastError: CARD_REFUND_RESERVATION_REFUSED_CAUSE, nextRetryAt: null }),
+    }));
+  });
+
+  it("#4911: a superseded refund of a disputed capture is refused before anything is reserved, and the row stops dead", async () => {
+    const { DisputedCaptureRefundRefusedError } = await import("@/lib/stripe-dispute-hold");
+    const { disputedCaptureRefundCause } = await import("@/lib/recovery-unretryable-cause");
+    const disputes = [{ stripeDisputeId: "dp_1", stripePaymentIntentId: "pi_superseded", status: "OPEN" as const, amountCents: 10000 }];
+    const supersededOp = makeOperation({ id: "recovery-disputed", type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT, attempts: 1 });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(supersededOp);
+    mockPaymentRecoveryFindMany.mockImplementation((args?: { where?: { attempts?: { gte?: number } } }) =>
+      Promise.resolve(isStaleWorkerSweep(args) ? [] : [{ ...supersededOp, status: "PENDING" }]),
+    );
+    mockPaymentTransactionFindUnique.mockResolvedValue({
+      id: "txn-1", paymentId: "payment-1", stripePaymentIntentId: "pi_superseded", amountCents: 10000, refundedAmountCents: 0, status: PaymentStatus.SUCCEEDED,
+    });
+    mockAssertCaptureNotDisputed.mockRejectedValueOnce(new DisputedCaptureRefundRefusedError("pi_superseded", disputes));
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(mockAssertCaptureNotDisputed).toHaveBeenCalledWith("pi_superseded");
+    expect(mockReserveCardRefundAttempt).not.toHaveBeenCalled();
+    expect(mockProcessRefund).not.toHaveBeenCalled();
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "recovery-disputed" }),
+      data: expect.objectContaining({ status: PaymentRecoveryOperationStatus.FAILED, lastError: disputedCaptureRefundCause(disputes), nextRetryAt: null }),
     }));
   });
 

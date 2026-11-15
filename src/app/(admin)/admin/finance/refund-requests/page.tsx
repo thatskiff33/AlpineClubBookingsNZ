@@ -18,14 +18,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog"
 import { Label } from "@/components/ui/label"
 import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
@@ -200,6 +193,8 @@ export default function RefundRequestsPage() {
     { id: string; status: "APPROVED" | "REJECTED"; noEmails: boolean } | null
   >(null)
   const [notifyDialogOpen, setNotifyDialogOpen] = useState(false)
+  const approvedAmountCents = parseDecimalDollarsToCents(approvedAmount)
+  const rejectingAppeal = notifyChoice?.status === "REJECTED"
   const currentParams = new URLSearchParams(searchParams.toString())
   currentParams.delete("status")
   if (filter !== "PENDING") currentParams.set("status", filter)
@@ -743,7 +738,7 @@ export default function RefundRequestsPage() {
                   const isReviewing = reviewingCreditId === request.id
                   const accountMissing = request.amountCents > 0 && !request.grantAccount
                   const creditLedgerHref = buildHrefWithReturnTo(
-                    `/admin/members/${request.member.id}#account-credit`,
+                    `${adminHref("member-detail", { id: request.member.id })}#account-credit`,
                     currentRefundRequestsPath
                   )
 
@@ -754,7 +749,7 @@ export default function RefundRequestsPage() {
                           <div>
                             <CardTitle className="text-lg">
                               <Link
-                                href={buildHrefWithReturnTo(`/admin/members/${request.member.id}`, currentRefundRequestsPath)}
+                                href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: request.member.id })}`, currentRefundRequestsPath)}
                                 className="hover:underline"
                               >
                                 {request.member.firstName} {request.member.lastName}
@@ -803,7 +798,7 @@ export default function RefundRequestsPage() {
                           <div>
                             <span className="text-muted-foreground">Member:</span>{" "}
                             <Link
-                              href={buildHrefWithReturnTo(`/admin/members/${request.member.id}`, currentRefundRequestsPath)}
+                              href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: request.member.id })}`, currentRefundRequestsPath)}
                               className="text-info-11 hover:underline"
                             >
                               Open member
@@ -906,62 +901,61 @@ export default function RefundRequestsPage() {
           pattern. The refund decision is applied either way; the choice is
           recorded in the audit log. A refund appellant always has an email on
           file, so the dialog is shown for every approve and reject. */}
-      <Dialog
+      <NotifyChoiceDialog
         open={notifyDialogOpen}
-        onOpenChange={(open) => {
-          if (!open && !processingRefund) setNotifyDialogOpen(false)
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {notifyChoice?.noEmails
-                ? notifyChoice.status === "REJECTED"
-                  ? "Reject this appeal?"
-                  : "Process this refund?"
-                : notifyChoice?.status === "REJECTED"
-                  ? "Email the member about this decision?"
-                  : "Email the member about this refund?"}
-            </DialogTitle>
-            <DialogDescription>
-              {notifyChoice?.noEmails
-                ? notifyChoice.status === "REJECTED"
-                  ? "The appeal will be rejected."
-                  : "The refund will be processed."
-                : notifyChoice?.status === "REJECTED"
-                  ? "The appeal is rejected either way. Choose whether the member receives the standard refund-appeal outcome email — your choice is recorded in the audit log."
-                  : "The refund is processed either way. Choose whether the member receives the standard refund-appeal outcome email — your choice is recorded in the audit log."}
-            </DialogDescription>
-          </DialogHeader>
-          {/* #2259: with the booking's "No emails" switch on the outcome email
-              is withheld whatever is chosen, so the choice is not offered. */}
-          {notifyChoice?.noEmails && <BookingNoEmailsNotice />}
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              disabled={processingRefund}
-              onClick={() =>
-                notifyChoice?.noEmails ? confirmSilenced() : confirmNotify(false)
+        onOpenChange={setNotifyDialogOpen}
+        submitting={processingRefund}
+        title={
+          notifyChoice?.noEmails
+            ? rejectingAppeal ? "Reject this appeal?" : "Process this refund?"
+            : rejectingAppeal
+              ? "Email the member about this decision?"
+              : "Email the member about this refund?"
+        }
+        description={
+          notifyChoice?.noEmails
+            ? rejectingAppeal ? "The appeal will be rejected." : "The refund will be processed."
+            : rejectingAppeal
+              ? "The appeal is rejected either way. Choose whether the member receives the standard refund-appeal outcome email — your choice is recorded in the audit log."
+              : "The refund is processed either way. Choose whether the member receives the standard refund-appeal outcome email — your choice is recorded in the audit log."
+        }
+        summary={
+          // #4966: the only confirmation before the money moves, so repeat the
+          // amount — parsed exactly as `handleRefundReview` sends it (#2685),
+          // never the raw text, so the figure shown is the figure refunded.
+          notifyChoice?.status === "APPROVED" && approvedAmountCents !== null ? (
+            <p className="text-sm" data-testid="refund-appeal-confirm-amount">
+              Refund amount: <strong>{formatCents(approvedAmountCents, format)}</strong>
+            </p>
+          ) : null
+        }
+        // #2259: with the booking's "No emails" switch on the outcome email
+        // is withheld whatever is chosen, so the choice is not offered.
+        notice={notifyChoice?.noEmails ? <BookingNoEmailsNotice /> : null}
+        actions={
+          notifyChoice?.noEmails
+            ? {
+                kind: "single",
+                action: {
+                  label: rejectingAppeal ? "Reject appeal" : "Approve refund",
+                  variant: "outline",
+                  onSelect: confirmSilenced,
+                },
               }
-            >
-              {notifyChoice?.noEmails
-                ? notifyChoice.status === "REJECTED"
-                  ? "Reject appeal"
-                  : "Approve refund"
-                : notifyChoice?.status === "REJECTED"
-                  ? "Reject without emailing"
-                  : "Approve without emailing"}
-            </Button>
-            {!notifyChoice?.noEmails && (
-              <Button disabled={processingRefund} onClick={() => confirmNotify(true)}>
-                {notifyChoice?.status === "REJECTED"
-                  ? "Reject and email member"
-                  : "Approve and email member"}
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            : {
+                kind: "choice",
+                withoutEmail: {
+                  label: rejectingAppeal ? "Reject without emailing" : "Approve without emailing",
+                  variant: "outline",
+                  onSelect: () => confirmNotify(false),
+                },
+                withEmail: {
+                  label: rejectingAppeal ? "Reject and email member" : "Approve and email member",
+                  onSelect: () => confirmNotify(true),
+                },
+              }
+        }
+      />
       </div>
     </div>
   )

@@ -342,6 +342,7 @@ model AttributeFirstThing {
     "MembershipSubscriptionChargeCoverage.memberId",
     "NotificationDeliveryPolicy.updatedByMemberId",
     "PageContent.updatedByMemberId",
+    "PrivacyHostingSettings.updatedByMemberId",
     "PublicContentSettings.updatedByMemberId",
     "SetupProgress.completedByMemberId",
     "SiteBanner.createdByMemberId",

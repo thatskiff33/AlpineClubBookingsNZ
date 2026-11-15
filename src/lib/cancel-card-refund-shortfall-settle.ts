@@ -14,7 +14,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { capacityRaceShortfallIntentId } from "@/lib/capacity-race-shortfall-task-key";
 import { cancelCardShortfallOccurrenceKey, cancelCardShortfallPart } from "@/lib/manual-refund-task-settlement-rules";
 import { isPaymentRecoveryOperationExhausted, isPaymentRecoveryOperationInFlight } from "@/lib/payment-recovery-constants";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { bookingCancelCardRefundRecoveryWhere, CARD_REFUND_FAILED_LATER_RECOVERY_PREFIX, isBookingCancelCardRefundRecoveryKey } from "@/lib/payment-recovery-keys";
 import { CARD_REFUND_STILL_OWED_RECOVERY_PREFIX } from "@/lib/card-refund-still-owed-keys";
 import { cardRefundStillOwedOrigin } from "@/lib/card-refund-still-owed-origin";
@@ -203,6 +203,8 @@ export async function cardShortfallSettlement(
     return { preferTransactionIds: [chargeId], onlyTransactionIds: [chargeId], nothingToAllocateMessage: capacityRaceNothingToAllocateMessage(xero) };
   }
   // A part to check settles only on what the bank-transfer part leaves (coordinator, PR #4122).
+  // #4872: the completion passes the superseded-capture hold-back into the allocation, so after
+  // these preferred non-card charges the newest-first fall-through does not take a live superseded capture.
   if (part === "check") {
     const bank = await store.manualRefundTask.findUnique({
       where: { occurrenceKey: cancelCardShortfallOccurrenceKey(task.bookingId, "bank") },

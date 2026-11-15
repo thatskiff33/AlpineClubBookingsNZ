@@ -26,6 +26,8 @@ import {
   type BedAllocationDb,
 } from "@/lib/bed-allocation-admin-contract";
 import type { DashboardRoom } from "@/lib/bed-allocation-board-payload";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 export interface RoomsAndBedsConfigurationPayload {
   rooms: DashboardRoom[];
@@ -343,6 +345,10 @@ export async function updateBedAllocationRoomWithLocksHeld(input: {
    */
   today: Date;
 }) {
+  await assertGlobalLockHeld(input.db, "updateBedAllocationRoomWithLocksHeld");
+  const lockKey = await input.db.lodgeRoom.findUnique({ where: { id: input.id }, select: { lodgeId: true } });
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.lodgeId, "updateBedAllocationRoomWithLocksHeld");
+
   const db = input.db;
 
   // #2286: deactivating a room takes every bed in it out of the pool, so it
@@ -508,6 +514,10 @@ export async function deleteBedAllocationRoomWithLocksHeld(input: {
   lodgeId?: string;
   db: BedAllocationDb;
 }): Promise<LodgeRoom> {
+  await assertGlobalLockHeld(input.db, "deleteBedAllocationRoomWithLocksHeld");
+  const lockKey = await input.db.lodgeRoom.findUnique({ where: { id: input.id }, select: { lodgeId: true } });
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.lodgeId, "deleteBedAllocationRoomWithLocksHeld");
+
   // The history guard and bed+room deletes share the caller's transaction so a
   // concurrent allocation cannot slip between them.
   const db = input.db;

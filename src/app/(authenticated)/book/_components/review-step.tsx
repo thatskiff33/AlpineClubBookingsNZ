@@ -13,8 +13,9 @@ import {
 import {
   memberGuestConsentPreviewColumns,
   pendingMemberGuestFirstNames,
-} from "./member-guest-preview";
+} from "@/components/book/member-guest-preview";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CancellationScheduleBlock } from "@/components/booking/cancellation-schedule-block";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
@@ -59,7 +60,8 @@ import type {
   PriceQuote,
   RoomOption,
   WorkPartyEvent,
-} from "./types";
+} from "@/components/book/booking-wizard-types";
+import { BOOKING_EXCEPTION_REQUEST_ID, BOOKING_WIZARD_ERROR_ID } from "@/components/book/booking-wizard-types";
 
 export function ReviewStep({
   checkIn,
@@ -69,6 +71,7 @@ export function ReviewStep({
   priceQuote,
   lodgeId,
   selectedLodge,
+  cancellationSchedule,
   reviewGuestPayload,
   bookingDateStrings,
   perGuestDatesEnabled,
@@ -132,6 +135,7 @@ export function ReviewStep({
   exceptionOffer,
   replaceExceptionRequestId,
   submitExceptionRequest,
+  reviewReasonMissing = false,
 }: {
   // NZ date-only lodge nights (#2474).
   checkIn: string | null;
@@ -141,6 +145,11 @@ export function ReviewStep({
   priceQuote: PriceQuote;
   lodgeId: string | null;
   selectedLodge: LodgeOption | null;
+  /**
+   * #4946: the club's current cancellation schedule rows for THIS lodge and
+   * check-in, or null when unknown (the block then shows its neutral fallback).
+   */
+  cancellationSchedule: readonly string[] | null;
   reviewGuestPayload: GuestData[];
   bookingDateStrings: { checkIn: string; checkOut: string } | null;
   perGuestDatesEnabled: boolean;
@@ -236,8 +245,12 @@ export function ReviewStep({
     memberMessage: string;
     supersedeRequestId: string | null;
   }) => Promise<ExceptionRequestSubmitResult>;
+  /** The wizard's error box holds the missing-reason refusal right now (#4945). */
+  reviewReasonMissing?: boolean;
 }) {
   const format = useClubFormat();
+  // The reason field is what the refusal is about until it is filled in.
+  const reasonRefused = reviewReasonMissing && !memberReviewJustification.trim();
   // The club's own age-tier labels, so the request card names a tier the way every
   // other member-facing screen does rather than echoing the raw enum.
   const ageTierOptions = useAgeTierOptions();
@@ -674,6 +687,8 @@ export function ReviewStep({
               </p>
               <Textarea
                 id="review-justification"
+                aria-invalid={reasonRefused || undefined}
+                aria-describedby={reasonRefused ? BOOKING_WIZARD_ERROR_ID : undefined}
                 value={memberReviewJustification}
                 onChange={(e) => setMemberReviewJustification(e.target.value)}
                 rows={3}
@@ -923,6 +938,8 @@ export function ReviewStep({
           member's next honest move is either to change the proposal or to ask. */}
       {exceptionOffer && bookingDateStrings ? (
         <RequestOfficerApprovalCard
+          // #4945: where the error box's "Go to the request" link lands.
+          id={BOOKING_EXCEPTION_REQUEST_ID}
           source="NEW_BOOKING"
           offer={exceptionOffer}
           replaceRequestId={replaceExceptionRequestId}
@@ -991,6 +1008,14 @@ export function ReviewStep({
       ) : null}
 
       {waitlistOnly ? waitlistAlternateLodges : null}
+
+      {/* #4946: the refund terms sit on the screen where the member commits,
+          directly above the primary button, on every payment path. Phrased as
+          what happens once paid, never as a refund of money not yet taken. */}
+      <CancellationScheduleBlock
+        rows={cancellationSchedule}
+        lead="If you pay and later cancel, the club's current cancellation schedule for this stay refunds what you have paid as follows:"
+      />
 
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={() => setStep("guests")}>
