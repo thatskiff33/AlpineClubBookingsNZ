@@ -599,6 +599,12 @@ describe("GET /api/lodge/instructions (kiosk surface)", () => {
     expect(response.status).toBe(400);
     expect(mocks.checkLodgeAuth).not.toHaveBeenCalled();
   });
+
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    const response = await kioskGET(kioskRequest("2026-02-30"));
+    expect(response.status).toBe(400);
+    expect(mocks.checkLodgeAuth).not.toHaveBeenCalled();
+  });
 });
 
 describe("text token resolution", () => {
