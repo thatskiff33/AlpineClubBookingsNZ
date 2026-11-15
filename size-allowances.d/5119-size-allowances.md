@@ -1,14 +1,14 @@
 # Size allowances for #5119
 
 function: src/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel.tsx#SubscriptionBillingPanel
-lines: 405
+lines: 425
 reason: refuses Xero invoice work while Xero is off; those lines sit inside
   the function `SubscriptionBillingPanel`, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part
   of this fix.
 
 function: src/lib/membership-subscription-billing.ts#buildSubscriptionBillingPreview
-lines: 1132
+lines: 1834
 reason: refuses Xero invoice work while Xero is off; those lines sit inside
   the function `buildSubscriptionBillingPreview`, which was already over its
   limit before this change, and lifting it apart is a refactor of its own, not
