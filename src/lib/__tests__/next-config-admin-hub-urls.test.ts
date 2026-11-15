@@ -484,7 +484,7 @@ describe("next.config.ts over the moved Members hub", () => {
   // Members moved in C9 (#4806). The prefix is `membership`, not `members`.
   it("PREMISE: every Members page has moved", () => {
     const members = ADMIN_PAGES.filter((page) => page.hub === "members");
-    expect(members).toHaveLength(15);
+    expect(members).toHaveLength(16);
     expect(members.filter((page) => !page.moved).map((page) => page.id)).toEqual([]);
   });
 
