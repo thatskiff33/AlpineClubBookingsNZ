@@ -56,7 +56,7 @@ import type { MemberGuestCandidate } from "@/lib/member-guest-find";
 import {
   partyNeedsSupervisionJustification,
   predictMemberGuestConsent,
-} from "../_components/member-guest-preview";
+} from "@/components/book/member-guest-preview";
 import {
   readExceptionOffer,
   type ExceptionOffer,
@@ -86,7 +86,7 @@ import {
   type WorkPartyEvent,
   isBookingBlockedBySubscription,
   readSubscriptionLockoutView,
-} from "../_components/types";
+} from "@/components/book/booking-wizard-types";
 
 /*
  * #4942: what a wizard write says when its reply cannot be read. Each POST can

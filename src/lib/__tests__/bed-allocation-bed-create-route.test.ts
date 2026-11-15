@@ -138,6 +138,7 @@ describe("bed-allocation bed routes P2003 mapping (#1700)", () => {
     prismaTransaction.mockImplementation(
       async (cb: (tx: unknown) => Promise<unknown>) =>
         cb({
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           // Room already deleted: the FOR UPDATE lock matches no rows...
           $executeRaw: txExecuteRaw.mockResolvedValue(0),
           lodgeBed: {
@@ -176,6 +177,7 @@ describe("bed-allocation bed routes P2003 mapping (#1700)", () => {
     prismaTransaction.mockImplementation(
       async (cb: (tx: unknown) => Promise<unknown>) =>
         cb({
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           $executeRaw: txExecuteRaw.mockResolvedValue(1),
           lodgeBed: {
             findUnique: txLodgeBedFindUnique.mockResolvedValue({

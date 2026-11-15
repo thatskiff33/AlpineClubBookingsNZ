@@ -675,7 +675,7 @@ let observerClient: PrismaClient;
       await clearReviewRunState();
 
       const { enqueueXeroSupplementaryInvoiceOperation } = await import(
-        "@/lib/xero-operation-outbox"
+        "@/lib/xero-supplementary-invoice-enqueue"
       );
 
       const lockHeld = deferred();
@@ -938,7 +938,7 @@ let observerClient: PrismaClient;
       lateCaptureAlert.mockClear();
 
       const { enqueueXeroSupplementaryInvoiceOperation } = await import(
-        "@/lib/xero-operation-outbox"
+        "@/lib/xero-supplementary-invoice-enqueue"
       );
       const { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } =
         await import("@/lib/xero-supplementary-invoice-late-capture");
