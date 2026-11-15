@@ -131,6 +131,7 @@ vi.mock("@/lib/xero-contact-create-recovery", () => ({
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { PUT as updateMember, GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
+import { DATE_ONLY_INVALID_MESSAGE } from "@/lib/date-only-schema";
 import {
   buildAccountEditForm,
   buildAccountPayload,
@@ -258,6 +259,26 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     const res = await updateMember(makePutRequest("m1", { dateOfBirth: "15/01/1990" }), { params: Promise.resolve({ id: "m1" }) });
     expect(res.status).toBe(422);
   });
+
+  // ALP-574: each of these date-only update fields goes through
+  // `dateOnlyStringSchema`, so a non-existent day is refused at the schema —
+  // before the route even looks up the existing member row.
+  it.each(["dateOfBirth", "joinedDate", "leavingDate", "lifeMemberDate"] as const)(
+    "rejects a non-existent day for %s",
+    async (field) => {
+      mockedAuth.mockResolvedValue(adminSession);
+
+      const res = await updateMember(
+        makePutRequest("m1", { [field]: "2026-02-30" }),
+        { params: Promise.resolve({ id: "m1" }) },
+      );
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.details[field]).toEqual([DATE_ONLY_INVALID_MESSAGE]);
+      expect(prisma.member.findUnique).not.toHaveBeenCalled();
+      expect(prisma.member.update).not.toHaveBeenCalled();
+    },
+  );
 
   it("returns 422 for firstName exceeding max length", async () => {
     mockedAuth.mockResolvedValue(adminSession);

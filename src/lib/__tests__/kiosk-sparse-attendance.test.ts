@@ -49,6 +49,13 @@ vi.mock("@/lib/audit", () => ({
   })),
 }));
 
+// A pass-through spy: the real roster keys, so the no-op case can prove the
+// depart route stops before taking any of them (#4965).
+vi.mock("@/lib/roster-lock", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/roster-lock");
+  return { ...actual, lockRosterDates: vi.fn(actual.lockRosterDates) };
+});
+
 const mockAuth = vi.fn();
 vi.mock("@/lib/auth", () => ({ auth: () => mockAuth() }));
 
@@ -76,13 +83,22 @@ function sparseGuest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function request(dateKey: string, action: "arrive" | "depart", guestId: string) {
+/**
+ * `wanted` is the #4965 wanted-state field (`arrived` / `departed`). Left out,
+ * the body is exactly what a kiosk page opened before #4965 still sends.
+ */
+function request(
+  dateKey: string,
+  action: "arrive" | "depart",
+  guestId: string,
+  wanted?: Record<string, boolean>,
+) {
   return new Request(
     `http://localhost/api/lodge/guests/${dateKey}/${action}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bookingGuestId: guestId }),
+      body: JSON.stringify({ bookingGuestId: guestId, ...wanted }),
     },
   ) as never;
 }
@@ -322,6 +338,266 @@ describe("the arrive ENDPOINT refuses a gap night (#2737)", () => {
     expect(mockPrisma.bookingGuest.update).toHaveBeenCalledWith({
       where: { id: "g-sparse" },
       data: { arrivedAt: expect.any(Date) },
+    });
+  });
+});
+
+describe("the kiosk sends the state it WANTS, so a repeat changes nothing (#4965)", () => {
+  /**
+   * The double tap. On slow lodge Wi-Fi the hut leader taps Mark Arrived, sees
+   * nothing happen and taps again. When these endpoints were toggles the second
+   * request un-did the first and left a "cleared" audit row behind. The kiosk
+   * now says which state it wants, and asking for the state already stored is
+   * a no-op: no write and no audit row.
+   *
+   * MUTATION PROBE: make the routes ignore `arrived` / `departed` (pass
+   * `wanted: undefined` to the helper) and every "no-op" case below fails.
+   */
+  // Imported lazily, like the routes: a static import would load `@/lib/prisma`
+  // before `mockPrisma` exists.
+  let logAudit: typeof import("@/lib/audit").logAudit;
+  let lockRosterDates: typeof import("@/lib/roster-lock").lockRosterDates;
+  beforeEach(async () => {
+    ({ logAudit } = await import("@/lib/audit"));
+    ({ lockRosterDates } = await import("@/lib/roster-lock"));
+  });
+
+  const contiguousGuest = (overrides: Record<string, unknown> = {}) => ({
+    ...sparseGuest(overrides),
+    nights: [
+      { stayDate: utc("2026-07-11") },
+      { stayDate: utc("2026-07-12") },
+      { stayDate: utc("2026-07-13") },
+      { stayDate: utc("2026-07-14") },
+    ],
+  });
+
+  describe("arrive", () => {
+    it("records the arrival when asked for one", async () => {
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(contiguousGuest());
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+      const res = await PUT(
+        request("2026-07-11", "arrive", "g-sparse", { arrived: true }),
+        params("2026-07-11"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.bookingGuest.update).toHaveBeenCalledWith({
+        where: { id: "g-sparse" },
+        data: { arrivedAt: expect.any(Date) },
+      });
+      expect(logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "lodge.guest.arrived" }),
+      );
+    });
+
+    it("is a no-op when the guest is already here: no write, no audit row", async () => {
+      const arrivedAt = new Date("2026-07-11T03:00:00.000Z");
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(
+        contiguousGuest({ arrivedAt }),
+      );
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+      const res = await PUT(
+        request("2026-07-11", "arrive", "g-sparse", { arrived: true }),
+        params("2026-07-11"),
+      );
+
+      expect(res.status).toBe(200);
+      // The same shape a write returns, carrying the stored values, so the
+      // kiosk draws the row as it really is.
+      await expect(res.json()).resolves.toEqual({
+        success: true,
+        arrivedAt: arrivedAt.toISOString(),
+        departedAt: null,
+      });
+      expect(mockPrisma.bookingGuest.update).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    });
+
+    it("clears an arrival only when one is recorded", async () => {
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(
+        contiguousGuest({ arrivedAt: new Date("2026-07-11T03:00:00.000Z") }),
+      );
+      await PUT(
+        request("2026-07-11", "arrive", "g-sparse", { arrived: false }),
+        params("2026-07-11"),
+      );
+      expect(mockPrisma.bookingGuest.update).toHaveBeenCalledWith({
+        where: { id: "g-sparse" },
+        data: { arrivedAt: null },
+      });
+      expect(logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "lodge.guest.arrival_cleared" }),
+      );
+
+      vi.clearAllMocks();
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(contiguousGuest());
+      const res = await PUT(
+        request("2026-07-11", "arrive", "g-sparse", { arrived: false }),
+        params("2026-07-11"),
+      );
+      expect(res.status).toBe(200);
+      expect(mockPrisma.bookingGuest.update).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    });
+
+    it("still records a sparse stay's RETURN although `arrivedAt` is already set (#2628)", async () => {
+      // `arrivedAt` holds the first segment's check-in, so a naive "already
+      // arrived" test would refuse to check a returning guest back in — ever.
+      // "Already here" is `arrivedAt && !departedAt`, and the departure from the
+      // 12th means they are not.
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(
+        sparseGuest({ arrivedAt: utc("2026-07-11"), departedAt: utc("2026-07-12") }),
+      );
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+      const res = await PUT(
+        request("2026-07-14", "arrive", "g-sparse", { arrived: true }),
+        params("2026-07-14"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.bookingGuest.update).toHaveBeenCalledWith({
+        where: { id: "g-sparse" },
+        data: { arrivedAt: expect.any(Date), departedAt: null },
+      });
+      const data = await res.json();
+      expect(data.departedAt).toBeNull();
+    });
+
+    it("keeps the old toggle for a body with no `arrived`, as a pre-#4965 page sends", async () => {
+      // Blue-green: a kiosk page already open across the deploy sends only the
+      // id. It must keep the behaviour it was written against — a second press
+      // clears the arrival.
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(
+        contiguousGuest({ arrivedAt: new Date("2026-07-11T03:00:00.000Z") }),
+      );
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+      await PUT(request("2026-07-11", "arrive", "g-sparse"), params("2026-07-11"));
+
+      expect(mockPrisma.bookingGuest.update).toHaveBeenCalledWith({
+        where: { id: "g-sparse" },
+        data: { arrivedAt: null },
+      });
+    });
+
+    it("rejects a wanted state that is not a boolean", async () => {
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(contiguousGuest());
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+      const res = await PUT(
+        request("2026-07-11", "arrive", "g-sparse", {
+          arrived: "yes" as unknown as boolean,
+        }),
+        params("2026-07-11"),
+      );
+
+      expect(res.status).toBe(400);
+      expect(mockPrisma.bookingGuest.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("depart", () => {
+    it("records the departure and sweeps when asked for one", async () => {
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(sparseGuest());
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/depart/route");
+      const res = await PUT(
+        request("2026-07-15", "depart", "g-sparse", { departed: true }),
+        params("2026-07-15"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.bookingGuest.update).toHaveBeenCalledWith({
+        where: { id: "g-sparse" },
+        data: { departedAt: expect.any(Date) },
+      });
+      expect(mockPrisma.choreAssignment.deleteMany).toHaveBeenCalledTimes(1);
+      expect(logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "lodge.guest.departed" }),
+      );
+    });
+
+    it("is a no-op on a repeat: locks first, then no roster keys, write, sweep or audit row", async () => {
+      const departedAt = new Date("2026-07-14T21:00:00.000Z");
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(
+        sparseGuest({ arrivedAt: utc("2026-07-14"), departedAt }),
+      );
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/depart/route");
+      const res = await PUT(
+        request("2026-07-15", "depart", "g-sparse", { departed: true }),
+        params("2026-07-15"),
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        success: true,
+        departedAt: departedAt.toISOString(),
+      });
+      // The decision is made from the row read under the global lock, so the
+      // lock is still taken; nothing after the decision runs.
+      expect(mockPrisma.$executeRaw).toHaveBeenCalled();
+      expect(lockRosterDates).not.toHaveBeenCalled();
+      expect(mockPrisma.choreAssignment.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.bookingGuest.update).not.toHaveBeenCalled();
+      expect(mockPrisma.choreAssignment.deleteMany).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    });
+
+    it("clears a stale departure when asked, without sweeping", async () => {
+      // The guide's stale-Departed card: the first tap clears, the next records.
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(
+        sparseGuest({ arrivedAt: utc("2026-07-11"), departedAt: utc("2026-07-12") }),
+      );
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/depart/route");
+      await PUT(
+        request("2026-07-15", "depart", "g-sparse", { departed: false }),
+        params("2026-07-15"),
+      );
+
+      expect(mockPrisma.bookingGuest.update).toHaveBeenCalledWith({
+        where: { id: "g-sparse" },
+        data: { departedAt: null },
+      });
+      expect(mockPrisma.choreAssignment.deleteMany).not.toHaveBeenCalled();
+      expect(logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "lodge.guest.departure_cleared" }),
+      );
+    });
+
+    it("is a no-op when asked to clear a departure that is not recorded", async () => {
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(sparseGuest());
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/depart/route");
+      const res = await PUT(
+        request("2026-07-15", "depart", "g-sparse", { departed: false }),
+        params("2026-07-15"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.bookingGuest.update).not.toHaveBeenCalled();
+      expect(logAudit).not.toHaveBeenCalled();
+    });
+
+    it("keeps the old toggle for a body with no `departed`, as a pre-#4965 page sends", async () => {
+      mockPrisma.bookingGuest.findFirst.mockResolvedValue(
+        sparseGuest({ departedAt: new Date("2026-07-14T21:00:00.000Z") }),
+      );
+
+      const { PUT } = await import("@/app/api/lodge/guests/[date]/depart/route");
+      await PUT(request("2026-07-15", "depart", "g-sparse"), params("2026-07-15"));
+
+      expect(mockPrisma.bookingGuest.update).toHaveBeenCalledWith({
+        where: { id: "g-sparse" },
+        data: { departedAt: null },
+      });
     });
   });
 });

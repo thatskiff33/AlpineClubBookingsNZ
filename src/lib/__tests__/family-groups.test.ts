@@ -88,6 +88,7 @@ import {
   sendChildRequestRejectedEmail,
 } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
+import { DATE_OF_BIRTH_INVALID_MESSAGE } from "@/lib/date-only-schema";
 
 const mockedAuth = vi.mocked(auth);
 const mockedPrisma = vi.mocked(prisma, true);
@@ -938,6 +939,27 @@ describe("PUT /api/members/family/[memberId]/details", () => {
     });
     expect(mockedPrisma.member.update).not.toHaveBeenCalled();
   });
+
+  it("rejects a non-existent day of birth before touching the database (ALP-574)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "USER", accessRoles: [{ role: "USER" }] } } as any);
+
+    const { PUT } = await import("@/app/api/members/family/[memberId]/details/route");
+    const res = await PUT(
+      makeReq("/api/members/family/child-1/details", "PUT", {
+        firstName: "Sam",
+        lastName: "Smith",
+        dateOfBirth: "2026-02-30",
+        inheritContactFromSelf: true,
+      }),
+      { params: Promise.resolve({ memberId: "child-1" }) }
+    );
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      details: { dateOfBirth: [DATE_OF_BIRTH_INVALID_MESSAGE] },
+    });
+    expect(mockedPrisma.member.update).not.toHaveBeenCalled();
+  });
 });
 
 // =========================================================================
@@ -1150,6 +1172,24 @@ describe("Family change request endpoints", () => {
         requestedEmail: "dad@test.com",
       }),
     });
+  });
+
+  it("rejects a same-email adult request with a non-existent day of birth (ALP-574)", async () => {
+    mockedAuth.mockResolvedValue(memberSession);
+
+    const { POST } = await import("@/app/api/members/family/request-adult/route");
+    const res = await POST(makeReq("/api/members/family/request-adult", "POST", {
+      familyGroupId: "fg1",
+      firstName: "Mum",
+      lastName: "Smith",
+      dateOfBirth: "2026-02-30",
+    }));
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      details: { dateOfBirth: [DATE_OF_BIRTH_INVALID_MESSAGE] },
+    });
+    expect(mockedPrisma.familyGroupJoinRequest.create).not.toHaveBeenCalled();
   });
 
   it("creates a family member removal request", async () => {
