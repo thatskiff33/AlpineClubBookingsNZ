@@ -66,9 +66,13 @@ vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: (...args: unknown[]) => mockComputeAgeTier(...args),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   syncManagedXeroContactGroupForMember: vi.fn(),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: vi.fn(),
 }));
 vi.mock("@/lib/rate-limit", () => ({
@@ -163,6 +167,7 @@ function putMember(id: string, body: Record<string, unknown>) {
 function mockUpdateTransaction() {
   vi.mocked(prisma.$transaction).mockImplementation(async (operation: any) =>
     operation({
+      $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
       $executeRaw: vi.fn().mockResolvedValue(1),
       member: {
         update: prisma.member.update,

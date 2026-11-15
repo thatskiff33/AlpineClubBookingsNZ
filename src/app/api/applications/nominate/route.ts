@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import {
-  confirmNomination,
-  MembershipApplicationError,
-} from "@/lib/nomination";
+import { confirmNomination } from "@/lib/nomination";
+import { MembershipApplicationError } from "@/lib/member-application-fields";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { isActionTokenFormat } from "@/lib/action-tokens";
