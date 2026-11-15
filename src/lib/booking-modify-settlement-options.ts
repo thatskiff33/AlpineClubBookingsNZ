@@ -33,6 +33,7 @@ import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-bac
 import type { OwnershipReader } from "@/lib/superseded-intent-ownership";
 import { paidByOrganiser, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { paymentDisputedCaptureCents, type CaptureDisputeHold } from "@/lib/stripe-dispute-hold";
+import { heldForDisputeSettlementCents } from "@/lib/edit-dispute-held-settlement";
 
 export type BookingModificationSettlementOptions = {
   basisAmountCents: number;
@@ -92,15 +93,6 @@ export async function editReductionDisputeHold(
   if (!payment || payment.source !== PaymentSource.STRIPE || paidByOrganiser(booking)) return NO_DISPUTE_HOLD;
   if (!isSettledBookingStatus(booking.status) || !hasCapturedPayment(payment)) return NO_DISPUTE_HOLD;
   return paymentDisputedCaptureCents(db, payment);
-}
-
-/**
- * #5061 follow-up (`INV-PAY-154`): what a disputed reduction hands to the
- * treasurer - the whole reduction on the credit tier, as a disputed paid
- * cancel's hand-back is (`cancelRefundDisposition`), whatever the member chose.
- */
-export function heldForDisputeSettlementCents(options: BookingModificationSettlementOptions): number {
-  return options.accountCreditAmountCents;
 }
 
 /** One cash cap for the quote and save, after unpaid asks have been netted. */

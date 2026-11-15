@@ -599,6 +599,7 @@ export async function settleGuestAcceptanceRepriceAfterCommit(params: {
       settlementAmountCents: reprice.xeroRefundAmountCents,
       settlementMethod: reprice.settlementMethod,
       refundedThroughStripe: reprice.hasSucceededPayment && !reprice.refundHeldForDispute, paymentId, // #5061 follow-up (`INV-PAY-154`)
+      refundHeldForDispute: reprice.refundHeldForDispute,
       ...(reprice.creditReturnedAsApplied ? { refundMethod: "account-credit" as const } : {}),
       // An acceptance never raises a settled booking's price (see
       // `repriceBookingAfterGuestAcceptance`), so there is no Stripe ask to wait on.

@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { formatCents } from "@/lib/utils";
 import { disputedRefundSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
+import { heldForDisputeSettlementCents } from "@/lib/edit-dispute-held-settlement";
 import type { PromoAction } from "@/components/edit-booking/hooks/use-promo-selection";
 import type { PromoInfo, QuoteResult } from "@/components/edit-booking/types";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -417,10 +418,10 @@ export function PriceSummaryCard({
                       : "No refund is available for this reduction under the current policy."}
                   </p>
                 ) : quote.settlementOptions.refundHeldForDispute ? (
-                  // #5061 follow-up (`INV-PAY-154`): the save hands the credit tier to the treasurer, in the email's words.
+                  // #5061 follow-up (`INV-PAY-154`): the save's own held amount, in the email's words.
                   <p data-testid="disputed-refund-notice">
                     {disputedRefundSentence(
-                      formatCents(quote.settlementOptions.accountCreditAmountCents, format),
+                      formatCents(heldForDisputeSettlementCents(quote.settlementOptions), format),
                       actingAsAdmin ? "the member's" : "your",
                     )}
                   </p>

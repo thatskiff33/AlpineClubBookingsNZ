@@ -183,6 +183,16 @@ export interface ClassifyXeroBookingEditSettlementInput {
    * primary update nor a "skipped" one is recorded for it.
    */
   organiserBankPlace?: boolean;
+  /**
+   * #5061 follow-up (`INV-PAY-154`): a Stripe dispute held this reduction's
+   * refund, so it went to the treasurer as a hand-back and no money has moved.
+   * Its cash share raises no Xero note, as the disputed cancel posts nothing:
+   * the card-paid invoice owes nothing to allocate a note against (#3993), and
+   * a lost dispute means the refund is never paid. The treasurer records in
+   * Xero by hand whatever they do (`DEPLOYMENT.md`). An applied-credit
+   * give-back is not card money and keeps its own note.
+   */
+  refundHeldForDispute?: boolean;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -247,12 +257,17 @@ export function classifyXeroBookingEditSettlement(
         : "Positive booking-edit delta needs an unpaid supplementary invoice; no confirmed additional Stripe payment exists.",
     };
   } else if (xeroNetAmountCents < 0) {
-    const refundAmountCents = Math.max(0, input.settlementAmountCents ?? Math.abs(xeroNetAmountCents));
+    // #5061 follow-up (`INV-PAY-154`): a refund held for a dispute raises no cash note.
+    const refundAmountCents = input.refundHeldForDispute
+      ? 0
+      : Math.max(0, input.settlementAmountCents ?? Math.abs(xeroNetAmountCents));
     const giveBackCents = Math.max(0, input.appliedCreditGiveBackCents ?? 0);
     if (refundAmountCents <= 0 && giveBackCents <= 0) {
       financialAction = {
         type: "none",
-        reason: "Booking edit reduction has no policy-returnable settlement amount.",
+        reason: input.refundHeldForDispute
+          ? "A Stripe dispute holds this reduction's refund: it is with the treasurer, who records in Xero by hand whatever is paid."
+          : "Booking edit reduction has no policy-returnable settlement amount.",
       };
     } else if (input.organiserChildRefundOwnsCreditNote) {
       financialAction = {

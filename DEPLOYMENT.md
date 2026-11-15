@@ -2142,7 +2142,10 @@ not back-filled, so check Stripe's **Disputes** page once after adding the
 events and handle any open dispute by hand.
 
 **Recording a lost dispute in Xero (treasurer, by hand).** The app posts
-nothing to Xero for a dispute. When the Finance alert says a dispute was lost:
+nothing to Xero for a dispute, nor a credit note for a cancel's or edit's
+refund it handed to the treasurer because of one. If you pay such a refund
+while the dispute is open, record the refund in Xero by hand as you would any
+bank-transfer refund. When the Finance alert says a dispute was lost:
 
 1. In Stripe, open the dispute and note the disputed amount, Stripe's dispute
    fee and the payout that carried the withdrawal.

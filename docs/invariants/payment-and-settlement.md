@@ -4253,12 +4253,13 @@ alert nobody received answers 500).
 - **Finance alerts**, unmuteable, once ever: open, close, and a LOST dispute
   later WON (reverse the Xero loss entry).
 - **A record, not money.** No ledger line, journal, refund, `Payment` total or
-  Xero posting; the treasurer records a lost dispute in Xero by hand
+  Xero posting (held edit refunds included); the treasurer posts by hand
   (`DEPLOYMENT.md`).
 - Limits: a dispute recorded after a cancel's or edit's read is not seen by
   it; a joiner's reduction owed to the organiser's card is refused only at
   `processRefund`; a task raised before a win stays with the treasurer.
 - Proven by `stripe-dispute.test.ts`, `admin-stripe-dispute-alert.test.ts`,
   `cancel-refund-method.test.ts`, `manual-refund-task.test.ts`,
-  `stripe-dispute-cancel.realdb.test.ts` and
-  `stripe-dispute-edit.realdb.test.ts`.
+  `stripe-dispute-cancel.realdb.test.ts`,
+  `stripe-dispute-edit.realdb.test.ts` and
+  `xero-booking-edit-settlement.test.ts`.
