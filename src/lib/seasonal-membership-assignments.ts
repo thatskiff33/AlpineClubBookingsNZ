@@ -28,6 +28,7 @@ import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import {
   isOrganisationMember,
   resolveAccessRoleTokens,
+  type AccessRoleInput,
 } from "@/lib/access-roles";
 import { membershipTypeAgeExemption } from "@/lib/membership-types";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
@@ -480,6 +481,132 @@ function verifySeasonalMembershipPreviewToken(
   );
 }
 
+/**
+ * Subscription-category decoupling: resolve, look up and validate the category a
+ * seasonal-membership change would leave the member on. Resolved and validated
+ * completely independently of membershipType — a category member's booking
+ * rights are decided solely by membershipType, never by this lookup. `changed`
+ * is likewise compared independently of the membership-type comparisons: a
+ * category edit never implies, and is never implied by, a type edit.
+ */
+async function resolveSubscriptionCategoryChange(input: {
+  db: SeasonalMembershipReadClient;
+  requestedId: string | null | undefined;
+  previousId: string | null;
+}): Promise<
+  | { ok: false; result: JsonRouteResult }
+  | {
+      ok: true;
+      category: (SubscriptionCategorySummary & { isBuiltIn: boolean }) | null;
+      changed: boolean;
+    }
+> {
+  const { db, previousId } = input;
+  // `undefined` (the field omitted) carries the member's CURRENT category
+  // forward unchanged — see getSeasonalMembershipChangePreview's
+  // `subscriptionCategoryId` doc comment for why this must not default to
+  // null the way a present `null` legitimately does.
+  const newSubscriptionCategoryId =
+    input.requestedId === undefined ? previousId : input.requestedId;
+  const newSubscriptionCategory = newSubscriptionCategoryId
+    ? await db.subscriptionCategory.findUnique({
+        where: { id: newSubscriptionCategoryId },
+        select: subscriptionCategorySelect,
+      })
+    : null;
+
+  if (newSubscriptionCategoryId && !newSubscriptionCategory) {
+    return {
+      ok: false,
+      result: jsonResult({ error: "Subscription category not found" }, { status: 404 }),
+    };
+  }
+
+  // These two checks apply ONLY when the category is ACTUALLY CHANGING —
+  // not merely "the field was present in the request". Review finding,
+  // second round: the single-member admin card always sends this field
+  // explicitly, re-submitting the member's CURRENT category on every save
+  // even when the admin is only changing something else (membership type,
+  // apply-from) and deliberately left the category alone. Gating on
+  // presence alone meant that once a member's category was archived, the
+  // admin could never save ANYTHING about that member again — not just the
+  // category — until they also touched it, which is not what "archived
+  // subscription categories cannot be newly assigned" is supposed to mean.
+  // When the field was omitted entirely (bulk membership-type assignment,
+  // Xero import), the resolved value above is the member's PRESERVED
+  // existing category for the same reason; refusing the save because that
+  // pre-existing value happens to be archived would break an unrelated bulk
+  // operation over a category nobody asked to touch either. The billing
+  // engine's own ARCHIVED_SUBSCRIPTION_CATEGORY_ASSIGNED exception is what
+  // actually protects billing for a preserved-but-archived category in both
+  // cases.
+  const changed = newSubscriptionCategoryId !== previousId;
+  if (changed) {
+    if (newSubscriptionCategory && !newSubscriptionCategory.isActive) {
+      return {
+        ok: false,
+        result: jsonResult(
+          { error: "Archived subscription categories cannot be newly assigned" },
+          { status: 409 },
+        ),
+      };
+    }
+    // Review finding: the built-in "Individual" sentinel is a routing signal
+    // (null means Individual), never a real, assignable category — only the
+    // UI's own dropdown filter stopped an admin picking it, so any other
+    // caller (API, future bulk/import path) could assign it directly.
+    if (newSubscriptionCategory?.isBuiltIn) {
+      return {
+        ok: false,
+        result: jsonResult(
+          { error: "The built-in Individual category cannot be assigned directly — leave the field empty instead." },
+          { status: 409 },
+        ),
+      };
+    }
+  }
+  return { ok: true, category: newSubscriptionCategory, changed };
+}
+
+/**
+ * #2106: resolve the age tier this change lands the member on. The assignment
+ * save never submits a tier, so the resulting tier is org force > new-type
+ * force > a preserved ALLOWED-type manual N/A > the current person tier (or a
+ * DOB-derived restore when un-forcing a previously-N/A member).
+ */
+async function resolvePreviewAgeTiers(input: {
+  member: AccessRoleInput & { ageTier: AgeTier | null; dateOfBirth: Date | null };
+  allowedAgeTiers: AgeTier[];
+  clubCurrentSeasonYear: number;
+}): Promise<{ currentAgeTier: AgeTier; resultingAgeTier: AgeTier }> {
+  const { member } = input;
+  const currentAgeTier: AgeTier = member.ageTier ?? "ADULT";
+  const newTypeExemption = membershipTypeAgeExemption(input.allowedAgeTiers);
+  const isOrg = isOrganisationMember({
+    accessRoleTokens: resolveAccessRoleTokens(member),
+    legacyRole: member.role,
+  });
+  const restorePersonTier: AgeTier =
+    currentAgeTier !== "NOT_APPLICABLE"
+      ? currentAgeTier
+      : member.dateOfBirth
+        ? await computeAgeTier(
+            member.dateOfBirth,
+            getSeasonStartDate(input.clubCurrentSeasonYear),
+          )
+        : "ADULT";
+  const resolvedAgeTier = resolveEnforcedAgeTier({
+    isOrganisation: isOrg,
+    typeExemption: newTypeExemption,
+    currentAgeTier,
+    restorePersonTier,
+  });
+  const resultingAgeTier: AgeTier = resolvedAgeTier.ok
+    ? resolvedAgeTier.ageTier
+    : currentAgeTier;
+  return { currentAgeTier, resultingAgeTier };
+}
+
 export async function getSeasonalMembershipChangePreview(params: {
   memberId: string;
   seasonYear: number;
@@ -572,23 +699,6 @@ export async function getSeasonalMembershipChangePreview(params: {
     }),
   ]);
 
-  // `undefined` (the field omitted) carries the member's CURRENT category
-  // forward unchanged — see the param's own doc comment for why this must
-  // not default to null the way a present `null` legitimately does.
-  const newSubscriptionCategoryId =
-    params.subscriptionCategoryId === undefined
-      ? previousAssignment?.subscriptionCategoryId ?? null
-      : params.subscriptionCategoryId;
-  // Subscription-category decoupling: resolved and validated completely
-  // independently of membershipType — a category member's booking rights
-  // are decided solely by membershipType above, never by this lookup.
-  const newSubscriptionCategory = newSubscriptionCategoryId
-    ? await db.subscriptionCategory.findUnique({
-        where: { id: newSubscriptionCategoryId },
-        select: subscriptionCategorySelect,
-      })
-    : null;
-
   if (!member) {
     return jsonResult({ error: "Member not found" }, { status: 404 });
   }
@@ -604,48 +714,14 @@ export async function getSeasonalMembershipChangePreview(params: {
     );
   }
 
-  if (newSubscriptionCategoryId && !newSubscriptionCategory) {
-    return jsonResult({ error: "Subscription category not found" }, { status: 404 });
-  }
-
-  // These two checks apply ONLY when the category is ACTUALLY CHANGING —
-  // not merely "the field was present in the request". Review finding,
-  // second round: the single-member admin card always sends this field
-  // explicitly, re-submitting the member's CURRENT category on every save
-  // even when the admin is only changing something else (membership type,
-  // apply-from) and deliberately left the category alone. Gating on
-  // presence alone meant that once a member's category was archived, the
-  // admin could never save ANYTHING about that member again — not just the
-  // category — until they also touched it, which is not what "archived
-  // subscription categories cannot be newly assigned" is supposed to mean.
-  // When the field was omitted entirely (bulk membership-type assignment,
-  // Xero import), the resolved value above is the member's PRESERVED
-  // existing category for the same reason; refusing the save because that
-  // pre-existing value happens to be archived would break an unrelated bulk
-  // operation over a category nobody asked to touch either. The billing
-  // engine's own ARCHIVED_SUBSCRIPTION_CATEGORY_ASSIGNED exception is what
-  // actually protects billing for a preserved-but-archived category in both
-  // cases.
-  const subscriptionCategoryIsChanging =
-    newSubscriptionCategoryId !== (previousAssignment?.subscriptionCategoryId ?? null);
-  if (subscriptionCategoryIsChanging) {
-    if (newSubscriptionCategory && !newSubscriptionCategory.isActive) {
-      return jsonResult(
-        { error: "Archived subscription categories cannot be newly assigned" },
-        { status: 409 },
-      );
-    }
-    // Review finding: the built-in "Individual" sentinel is a routing signal
-    // (null means Individual), never a real, assignable category — only the
-    // UI's own dropdown filter stopped an admin picking it, so any other
-    // caller (API, future bulk/import path) could assign it directly.
-    if (newSubscriptionCategory?.isBuiltIn) {
-      return jsonResult(
-        { error: "The built-in Individual category cannot be assigned directly — leave the field empty instead." },
-        { status: 409 },
-      );
-    }
-  }
+  const categoryChange = await resolveSubscriptionCategoryChange({
+    db,
+    requestedId: params.subscriptionCategoryId,
+    previousId: previousAssignment?.subscriptionCategoryId ?? null,
+  });
+  if (!categoryChange.ok) return categoryChange.result;
+  const { category: newSubscriptionCategory, changed: subscriptionCategoryChanged } =
+    categoryChange;
 
   const bookingSelect = {
     id: true,
@@ -745,36 +821,11 @@ export async function getSeasonalMembershipChangePreview(params: {
     (subscription) => subscription.seasonYear === params.seasonYear,
   );
 
-  // #2106: resolve the age tier this change lands the member on. The assignment
-  // save never submits a tier, so the resulting tier is org force > new-type
-  // force > a preserved ALLOWED-type manual N/A > the current person tier (or a
-  // DOB-derived restore when un-forcing a previously-N/A member).
-  const currentAgeTier: AgeTier = member.ageTier ?? "ADULT";
-  const newTypeExemption = membershipTypeAgeExemption(
-    (newMembershipType.allowedAgeTiers ?? []).map((tier) => tier.ageTier),
-  );
-  const isOrg = isOrganisationMember({
-    accessRoleTokens: resolveAccessRoleTokens(member),
-    legacyRole: member.role,
+  const { currentAgeTier, resultingAgeTier } = await resolvePreviewAgeTiers({
+    member,
+    allowedAgeTiers: (newMembershipType.allowedAgeTiers ?? []).map((tier) => tier.ageTier),
+    clubCurrentSeasonYear: params.clubCurrentSeasonYear,
   });
-  const restorePersonTier: AgeTier =
-    currentAgeTier !== "NOT_APPLICABLE"
-      ? currentAgeTier
-      : member.dateOfBirth
-        ? await computeAgeTier(
-            member.dateOfBirth,
-            getSeasonStartDate(params.clubCurrentSeasonYear),
-          )
-        : "ADULT";
-  const resolvedAgeTier = resolveEnforcedAgeTier({
-    isOrganisation: isOrg,
-    typeExemption: newTypeExemption,
-    currentAgeTier,
-    restorePersonTier,
-  });
-  const resultingAgeTier: AgeTier = resolvedAgeTier.ok
-    ? resolvedAgeTier.ageTier
-    : currentAgeTier;
 
   const previousMembershipType = previousAssignment?.membershipType ?? null;
   const bookingBehaviorChanged = previousMembershipType
@@ -785,11 +836,6 @@ export async function getSeasonalMembershipChangePreview(params: {
     ? previousMembershipType.subscriptionBehavior !==
       newMembershipType.subscriptionBehavior
     : true;
-  // Subscription-category decoupling: changed-checked independently of the
-  // membershipType comparisons above — a category edit never implies, and is
-  // never implied by, a type edit.
-  const subscriptionCategoryChanged =
-    (previousAssignment?.subscriptionCategoryId ?? null) !== newSubscriptionCategoryId;
 
   const previewWithoutToken: Omit<
     SeasonalMembershipChangePreview,
@@ -853,6 +899,45 @@ export async function getSeasonalMembershipChangePreview(params: {
       previewToken: buildSeasonalMembershipPreviewToken(previewWithoutToken),
     },
   });
+}
+
+/**
+ * The critical audit row's metadata for a seasonal-membership save: the
+ * membership-type, subscription-category, apply-from and age-tier before and
+ * after, taken from the verified preview.
+ */
+function seasonalAssignmentAuditMetadata(input: {
+  preview: SeasonalMembershipChangePreview;
+  seasonYear: number;
+  adminReason: string;
+  partnerSharedAllocationsSwept: number;
+}) {
+  const { preview } = input;
+  return {
+    seasonYear: input.seasonYear,
+    adminReason: input.adminReason,
+    previousMembershipType: preview.previousAssignment?.membershipType,
+    newMembershipType: preview.newMembershipType,
+    // Subscription-category decoupling: surfaced alongside the
+    // membership-type fields but changed/audited independently.
+    previousSubscriptionCategory:
+      preview.previousAssignment?.subscriptionCategory ?? null,
+    newSubscriptionCategory: preview.newSubscriptionCategory,
+    subscriptionCategoryChanged: preview.subscriptionCategoryChanged,
+    previousApplyFrom: preview.previousAssignment?.applyFrom ?? null,
+    newApplyFrom: preview.applyFrom,
+    affectedCounts: preview.affectedCounts,
+    bookingBehaviorChanged: preview.bookingBehaviorChanged,
+    subscriptionBehaviorChanged: preview.subscriptionBehaviorChanged,
+    behaviorChanged: preview.behaviorChanged,
+    resultingBookingBehavior: preview.resultingBookingBehavior,
+    resultingSubscriptionBehavior: preview.resultingSubscriptionBehavior,
+    // #2106: old/new age tier surfaced on this critical record.
+    previousAgeTier: preview.currentAgeTier,
+    newAgeTier: preview.resultingAgeTier,
+    ageTierChanged: preview.ageTierChanged,
+    partnerSharedAllocationsSwept: input.partnerSharedAllocationsSwept,
+  };
 }
 
 export async function saveSeasonalMembershipAssignment(params: {
@@ -1082,30 +1167,12 @@ export async function saveSeasonalMembershipAssignment(params: {
         severity: "critical",
         outcome: "success",
         summary: "Seasonal membership type changed",
-        metadata: {
+        metadata: seasonalAssignmentAuditMetadata({
+          preview,
           seasonYear: params.seasonYear,
           adminReason: reason,
-          previousMembershipType: preview.previousAssignment?.membershipType,
-          newMembershipType: preview.newMembershipType,
-          // Subscription-category decoupling: surfaced alongside the
-          // membership-type fields but changed/audited independently.
-          previousSubscriptionCategory: preview.previousAssignment?.subscriptionCategory ?? null,
-          newSubscriptionCategory: preview.newSubscriptionCategory,
-          subscriptionCategoryChanged: preview.subscriptionCategoryChanged,
-          previousApplyFrom: preview.previousAssignment?.applyFrom ?? null,
-          newApplyFrom: preview.applyFrom,
-          affectedCounts: preview.affectedCounts,
-          bookingBehaviorChanged: preview.bookingBehaviorChanged,
-          subscriptionBehaviorChanged: preview.subscriptionBehaviorChanged,
-          behaviorChanged: preview.behaviorChanged,
-          resultingBookingBehavior: preview.resultingBookingBehavior,
-          resultingSubscriptionBehavior: preview.resultingSubscriptionBehavior,
-          // #2106: old/new age tier surfaced on this critical record.
-          previousAgeTier: preview.currentAgeTier,
-          newAgeTier: preview.resultingAgeTier,
-          ageTierChanged: preview.ageTierChanged,
           partnerSharedAllocationsSwept: sweptShares.length,
-        },
+        }),
         request: params.request,
       }),
     );

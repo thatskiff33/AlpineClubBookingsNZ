@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import {
   Archive,
   Loader2,
@@ -17,7 +16,6 @@ import { adminHref, adminLink } from "@/lib/admin-hubs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import { useConfirm } from "@/components/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -31,234 +29,39 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
-  ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
-import {
-  createEmptyDraft,
-  draftFromCategory,
-  draftPayload,
-  validateDraft,
-  type DraftSubscriptionCategory,
-  type EditorTarget,
-  type SubscriptionCategoriesResponse,
-  type SubscriptionCategory,
+import type {
+  DraftSubscriptionCategory,
+  SubscriptionCategory,
 } from "./_components/subscription-category-draft";
-
+import { useSubscriptionCategories } from "./_components/use-subscription-categories";
 
 export default function AdminSubscriptionCategoriesPage() {
   const canEdit = useAdminAreaEditAccess("membership");
-  const { confirm, confirmDialog } = useConfirm();
-
-  const [subscriptionCategories, setSubscriptionCategories] = useState<SubscriptionCategory[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [savedMessage, setSavedMessage] = useState("");
-
-  const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null);
-  const [newDraft, setNewDraft] = useState<DraftSubscriptionCategory>(createEmptyDraft());
-  const [drafts, setDrafts] = useState<Record<string, DraftSubscriptionCategory>>({});
-  const [creating, setCreating] = useState(false);
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  async function loadSubscriptionCategories() {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch("/api/admin/subscription-categories", {
-        credentials: "same-origin",
-      });
-      const body = (await response.json()) as SubscriptionCategoriesResponse | { error?: string };
-      if (!response.ok || !("subscriptionCategories" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to load subscription categories"));
-      }
-      setSubscriptionCategories(body.subscriptionCategories);
-      setDrafts(Object.fromEntries(body.subscriptionCategories.map((category) => [category.id, draftFromCategory(category)])));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load subscription categories");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadSubscriptionCategories();
-  }, []);
-
-  function openNewEditor() {
-    setNewDraft(createEmptyDraft());
-    setEditorTarget({ mode: "new" });
-  }
-
-  function openEditEditor(category: SubscriptionCategory) {
-    setDrafts((current) => ({ ...current, [category.id]: draftFromCategory(category) }));
-    setEditorTarget({ mode: "edit", subscriptionCategoryId: category.id });
-  }
-
-  async function createSubscriptionCategory() {
-    setCreating(true);
-    setError("");
-    setSavedMessage("");
-    try {
-      const validationError = validateDraft(newDraft);
-      if (validationError) {
-        throw new Error(validationError);
-      }
-      const response = await fetch("/api/admin/subscription-categories", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draftPayload(newDraft)),
-      });
-      const body = (await response.json()) as
-        | { subscriptionCategory: SubscriptionCategory }
-        | { error?: string };
-      if (!response.ok || !("subscriptionCategory" in body)) {
-        if (response.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON);
-          return;
-        }
-        throw new Error(apiErrorMessageFromBody(body, "Failed to create subscription category"));
-      }
-      setSubscriptionCategories((current) => [...current, body.subscriptionCategory]);
-      setDrafts((current) => ({ ...current, [body.subscriptionCategory.id]: draftFromCategory(body.subscriptionCategory) }));
-      setNewDraft(createEmptyDraft());
-      setEditorTarget(null);
-      setSavedMessage("Subscription category created.");
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Failed to create subscription category");
-    } finally {
-      setCreating(false);
-    }
-  }
-
-  async function saveSubscriptionCategory(category: SubscriptionCategory, overrideDraft?: DraftSubscriptionCategory) {
-    const draft = overrideDraft ?? drafts[category.id];
-    if (!draft) return false;
-
-    setSavingId(category.id);
-    setError("");
-    setSavedMessage("");
-    try {
-      const validationError = validateDraft(draft);
-      if (validationError) {
-        throw new Error(validationError);
-      }
-      const response = await fetch(`/api/admin/subscription-categories/${category.id}`, {
-        method: "PATCH",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draftPayload(draft)),
-      });
-      const body = (await response.json()) as
-        | { subscriptionCategory: SubscriptionCategory }
-        | { error?: string };
-      if (!response.ok || !("subscriptionCategory" in body)) {
-        if (response.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON);
-          return false;
-        }
-        throw new Error(apiErrorMessageFromBody(body, "Failed to save subscription category"));
-      }
-      setSubscriptionCategories((current) =>
-        current.map((item) => (item.id === body.subscriptionCategory.id ? body.subscriptionCategory : item)));
-      setDrafts((current) => ({ ...current, [body.subscriptionCategory.id]: draftFromCategory(body.subscriptionCategory) }));
-      setSavedMessage("Subscription category saved.");
-      return true;
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save subscription category");
-      return false;
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  async function setActive(category: SubscriptionCategory, isActive: boolean) {
-    const draft = drafts[category.id] ?? draftFromCategory(category);
-    const nextDraft = { ...draft, isActive };
-    setDrafts((current) => ({ ...current, [category.id]: nextDraft }));
-    await saveSubscriptionCategory(category, nextDraft);
-  }
-
-  async function deleteSubscriptionCategory(category: SubscriptionCategory) {
-    setDeletingId(category.id);
-    setError("");
-    setSavedMessage("");
-    try {
-      const response = await fetch(`/api/admin/subscription-categories/${category.id}`, {
-        method: "DELETE",
-        credentials: "same-origin",
-      });
-      const body = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (!response.ok || !body?.ok) {
-        if (response.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON);
-          return;
-        }
-        throw new Error(apiErrorMessageFromBody(body, "Failed to delete subscription category"));
-      }
-      setSubscriptionCategories((current) => current.filter((item) => item.id !== category.id));
-      setDrafts((current) => {
-        const next = { ...current };
-        delete next[category.id];
-        return next;
-      });
-      setSavedMessage(`Deleted ${category.name}.`);
-    } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete subscription category");
-    } finally {
-      setDeletingId(null);
-    }
-  }
-
-  async function requestDelete(category: SubscriptionCategory) {
-    setError("");
-    setSavedMessage("");
-    const confirmed = await confirm({
-      title: `Delete ${category.name}?`,
-      description: "Permanently deletes this subscription category. This cannot be undone.",
-      confirmLabel: "Delete category",
-      cancelLabel: "Cancel",
-      destructive: true,
-    });
-    if (!confirmed) return;
-    await deleteSubscriptionCategory(category);
-  }
-
-  const editingCategory =
-    editorTarget?.mode === "edit"
-      ? subscriptionCategories.find((category) => category.id === editorTarget.subscriptionCategoryId) ?? null
-      : null;
-  const editorDraft =
-    editorTarget?.mode === "new"
-      ? newDraft
-      : editingCategory
-        ? drafts[editingCategory.id] ?? draftFromCategory(editingCategory)
-        : null;
-
-  function setEditorDraft(next: DraftSubscriptionCategory) {
-    if (editorTarget?.mode === "new") {
-      setNewDraft(next);
-    } else if (editingCategory) {
-      setDrafts((current) => ({ ...current, [editingCategory.id]: next }));
-    }
-  }
-
-  async function saveEditor() {
-    if (editorTarget?.mode === "new") {
-      await createSubscriptionCategory();
-      return;
-    }
-    if (editingCategory && editorDraft) {
-      const ok = await saveSubscriptionCategory(editingCategory, editorDraft);
-      if (ok) setEditorTarget(null);
-    }
-  }
-
-  const editorSaving = editorTarget?.mode === "new" ? creating : Boolean(editingCategory && savingId === editingCategory.id);
+  const {
+    subscriptionCategories,
+    loading,
+    error,
+    savedMessage,
+    creating,
+    savingId,
+    deletingId,
+    editorTarget,
+    setEditorTarget,
+    editingCategory,
+    editorDraft,
+    setEditorDraft,
+    editorSaving,
+    loadSubscriptionCategories,
+    openNewEditor,
+    openEditEditor,
+    setActive,
+    requestDelete,
+    saveEditor,
+    confirmDialog,
+  } = useSubscriptionCategories();
 
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-8">
@@ -334,160 +137,228 @@ export default function AdminSubscriptionCategoriesPage() {
             <p className="text-sm text-muted-foreground">No subscription categories yet.</p>
           ) : (
             subscriptionCategories.map((category) => (
-              <article
+              <SubscriptionCategoryCard
                 key={category.id}
-                className="rounded-lg border border-border bg-card p-4 shadow-sm"
-              >
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-lg font-semibold text-foreground">{category.name}</h2>
-                      <Badge variant={category.isActive ? "default" : "secondary"}>
-                        {category.isActive ? "Active" : "Archived"}
-                      </Badge>
-                      <Badge variant={category.isBuiltIn ? "outline" : "secondary"}>
-                        {category.isBuiltIn ? "Built-in" : "Custom"}
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Key: {category.key} · {category.assignmentCount} member
-                      {category.assignmentCount === 1 ? "" : "s"} assigned ·{" "}
-                      {category.feeCount} fee schedule{category.feeCount === 1 ? "" : "s"}
-                    </p>
-                    {category.description && (
-                      <p className="max-w-2xl text-sm text-muted-foreground">{category.description}</p>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 xl:justify-end">
-                    <ViewOnlyActionButton
-                      canEdit={canEdit}
-                      describeReason={false}
-                      type="button"
-                      variant="outline"
-                      onClick={() => openEditEditor(category)}
-                    >
-                      <Pencil className="mr-2 h-4 w-4" />
-                      Edit
-                    </ViewOnlyActionButton>
-                    {!category.isBuiltIn && (
-                      <ViewOnlyActionButton
-                        canEdit={canEdit}
-                        describeReason={false}
-                        type="button"
-                        variant="outline"
-                        onClick={() => void setActive(category, !category.isActive)}
-                        disabled={savingId === category.id}
-                      >
-                        {savingId === category.id ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : category.isActive ? (
-                          <Archive className="mr-2 h-4 w-4" />
-                        ) : (
-                          <RotateCcw className="mr-2 h-4 w-4" />
-                        )}
-                        {category.isActive ? "Archive" : "Reactivate"}
-                      </ViewOnlyActionButton>
-                    )}
-                    {!category.isBuiltIn && (
-                      <ViewOnlyActionButton
-                        canEdit={canEdit}
-                        describeReason={false}
-                        type="button"
-                        variant="outline"
-                        onClick={() => void requestDelete(category)}
-                        disabled={deletingId === category.id}
-                        aria-label={`Delete ${category.name}`}
-                      >
-                        {deletingId === category.id ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="mr-2 h-4 w-4" />
-                        )}
-                        Delete
-                      </ViewOnlyActionButton>
-                    )}
-                  </div>
-                </div>
-              </article>
+                category={category}
+                canEdit={canEdit}
+                saving={savingId === category.id}
+                deleting={deletingId === category.id}
+                onEdit={() => openEditEditor(category)}
+                onToggleActive={() => void setActive(category, !category.isActive)}
+                onDelete={() => void requestDelete(category)}
+              />
             ))
           )}
         </div>
       </div>
 
-      <Dialog open={editorTarget !== null} onOpenChange={(open) => !open && setEditorTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {editorTarget?.mode === "new" ? "New subscription category" : `Edit ${editingCategory?.name ?? ""}`}
-            </DialogTitle>
-            <DialogDescription>
-              Categories only affect how a member&apos;s subscription is billed
-              — never their booking rights or rate.
-            </DialogDescription>
-          </DialogHeader>
-          {editorDraft && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="subscription-category-name">Name</Label>
-                <Input
-                  id="subscription-category-name"
-                  value={editorDraft.name}
-                  onChange={(event) => setEditorDraft({ ...editorDraft, name: event.target.value })}
-                  placeholder="e.g. Couple"
-                  disabled={editingCategory?.isBuiltIn}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="subscription-category-description">Description</Label>
-                <Textarea
-                  id="subscription-category-description"
-                  value={editorDraft.description}
-                  onChange={(event) => setEditorDraft({ ...editorDraft, description: event.target.value })}
-                  placeholder="Optional note for other admins"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="subscription-category-sort-order">Sort order</Label>
-                <Input
-                  id="subscription-category-sort-order"
-                  inputMode="numeric"
-                  value={editorDraft.sortOrder}
-                  onChange={(event) => setEditorDraft({ ...editorDraft, sortOrder: event.target.value })}
-                  placeholder="Lower numbers list first"
-                />
-              </div>
-              {editingCategory && !editingCategory.isBuiltIn && (
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="subscription-category-active"
-                    checked={editorDraft.isActive}
-                    onCheckedChange={(checked) => setEditorDraft({ ...editorDraft, isActive: checked })}
-                  />
-                  <Label htmlFor="subscription-category-active">Active</Label>
-                </div>
-              )}
-            </div>
+      <SubscriptionCategoryEditorDialog
+        open={editorTarget !== null}
+        isNew={editorTarget?.mode === "new"}
+        editingCategory={editingCategory}
+        draft={editorDraft}
+        canEdit={canEdit}
+        saving={editorSaving}
+        onDraftChange={setEditorDraft}
+        onClose={() => setEditorTarget(null)}
+        onSave={() => void saveEditor()}
+      />
+
+      {confirmDialog}
+    </div>
+  );
+}
+
+/** One category's summary row and its Edit, Archive/Reactivate and Delete actions. */
+function SubscriptionCategoryCard({
+  category,
+  canEdit,
+  saving,
+  deleting,
+  onEdit,
+  onToggleActive,
+  onDelete,
+}: {
+  category: SubscriptionCategory;
+  canEdit: boolean;
+  saving: boolean;
+  deleting: boolean;
+  onEdit: () => void;
+  onToggleActive: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <article
+      className="rounded-lg border border-border bg-card p-4 shadow-sm"
+    >
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold text-foreground">{category.name}</h2>
+            <Badge variant={category.isActive ? "default" : "secondary"}>
+              {category.isActive ? "Active" : "Archived"}
+            </Badge>
+            <Badge variant={category.isBuiltIn ? "outline" : "secondary"}>
+              {category.isBuiltIn ? "Built-in" : "Custom"}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Key: {category.key} · {category.assignmentCount} member
+            {category.assignmentCount === 1 ? "" : "s"} assigned ·{" "}
+            {category.feeCount} fee schedule{category.feeCount === 1 ? "" : "s"}
+          </p>
+          {category.description && (
+            <p className="max-w-2xl text-sm text-muted-foreground">{category.description}</p>
           )}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditorTarget(null)}>
-              Cancel
-            </Button>
+        </div>
+
+        <div className="flex flex-wrap gap-2 xl:justify-end">
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
+            type="button"
+            variant="outline"
+            onClick={onEdit}
+          >
+            <Pencil className="mr-2 h-4 w-4" />
+            Edit
+          </ViewOnlyActionButton>
+          {!category.isBuiltIn && (
             <ViewOnlyActionButton
               canEdit={canEdit}
               describeReason={false}
               type="button"
-              onClick={() => void saveEditor()}
-              disabled={editorSaving}
+              variant="outline"
+              onClick={onToggleActive}
+              disabled={saving}
             >
-              {editorSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              Save
+              {saving ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : category.isActive ? (
+                <Archive className="mr-2 h-4 w-4" />
+              ) : (
+                <RotateCcw className="mr-2 h-4 w-4" />
+              )}
+              {category.isActive ? "Archive" : "Reactivate"}
             </ViewOnlyActionButton>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          )}
+          {!category.isBuiltIn && (
+            <ViewOnlyActionButton
+              canEdit={canEdit}
+              describeReason={false}
+              type="button"
+              variant="outline"
+              onClick={onDelete}
+              disabled={deleting}
+              aria-label={`Delete ${category.name}`}
+            >
+              {deleting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Delete
+            </ViewOnlyActionButton>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
 
-      {confirmDialog}
-    </div>
+/** The create/edit dialog for one category draft. */
+function SubscriptionCategoryEditorDialog({
+  open,
+  isNew,
+  editingCategory,
+  draft,
+  canEdit,
+  saving,
+  onDraftChange,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  isNew: boolean;
+  editingCategory: SubscriptionCategory | null;
+  draft: DraftSubscriptionCategory | null;
+  canEdit: boolean;
+  saving: boolean;
+  onDraftChange: (next: DraftSubscriptionCategory) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {isNew ? "New subscription category" : `Edit ${editingCategory?.name ?? ""}`}
+          </DialogTitle>
+          <DialogDescription>
+            Categories only affect how a member&apos;s subscription is billed
+            — never their booking rights or rate.
+          </DialogDescription>
+        </DialogHeader>
+        {draft && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="subscription-category-name">Name</Label>
+              <Input
+                id="subscription-category-name"
+                value={draft.name}
+                onChange={(event) => onDraftChange({ ...draft, name: event.target.value })}
+                placeholder="e.g. Couple"
+                disabled={editingCategory?.isBuiltIn}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="subscription-category-description">Description</Label>
+              <Textarea
+                id="subscription-category-description"
+                value={draft.description}
+                onChange={(event) => onDraftChange({ ...draft, description: event.target.value })}
+                placeholder="Optional note for other admins"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="subscription-category-sort-order">Sort order</Label>
+              <Input
+                id="subscription-category-sort-order"
+                inputMode="numeric"
+                value={draft.sortOrder}
+                onChange={(event) => onDraftChange({ ...draft, sortOrder: event.target.value })}
+                placeholder="Lower numbers list first"
+              />
+            </div>
+            {editingCategory && !editingCategory.isBuiltIn && (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="subscription-category-active"
+                  checked={draft.isActive}
+                  onCheckedChange={(checked) => onDraftChange({ ...draft, isActive: checked })}
+                />
+                <Label htmlFor="subscription-category-active">Active</Label>
+              </div>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+          >
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            Save
+          </ViewOnlyActionButton>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
