@@ -47,7 +47,7 @@ const SCANNED_DIR = join(process.cwd(), "src", "app", "(admin)");
  * lower count passes, a higher one fails.
  */
 const SIBLING_LANE =
-  "Edited by a sibling lane (ALP-529, ALP-570, ALP-576, ALP-577, ALP-578 or ALP-581) not yet merged; ALP-649 converts it after it lands.";
+  "Edited by a sibling lane (ALP-577, ALP-578 or ALP-581) not yet merged; ALP-649 converts it after it lands.";
 
 const KNOWN_UNGUARDED: Record<string, { reads: number; reason: string }> = {
   "src/app/(admin)/admin/booking-desk/book/page.tsx": { reads: 1, reason: SIBLING_LANE },
@@ -56,8 +56,8 @@ const KNOWN_UNGUARDED: Record<string, { reads: number; reason: string }> = {
   "src/app/(admin)/admin/lockers/page.tsx": { reads: 3, reason: SIBLING_LANE },
   "src/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card.tsx": { reads: 2, reason: SIBLING_LANE },
   "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": { reads: 1, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": { reads: 3, reason: SIBLING_LANE },
-  "src/app/(admin)/admin/rules/seasons/page.tsx": { reads: 3, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": { reads: 1, reason: SIBLING_LANE },
+  "src/app/(admin)/admin/rules/seasons/page.tsx": { reads: 1, reason: SIBLING_LANE },
   "src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx": { reads: 7, reason: SIBLING_LANE },
   "src/app/(admin)/admin/work-parties/page.tsx": { reads: 5, reason: SIBLING_LANE },
 };

@@ -9,7 +9,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromBody,
+  jsonObjectOrNull,
+  readApiErrorBody,
+  refusalMessageOr,
+} from "@/lib/api-error-message";
 
 // The full admin CRUD shape from /api/admin/subscription-categories — a
 // superset of the slim SubscriptionCategorySummary embedded on an assignment
@@ -56,11 +62,11 @@ export function MemberSubscriptionCategoryField({
         const response = await fetch("/api/admin/subscription-categories", {
           credentials: "same-origin",
         });
-        const body = (await response.json()) as
+        const body = (jsonObjectOrNull(await readApiErrorBody(response)) ?? {}) as
           | SubscriptionCategoriesResponse
           | { error?: string };
         if (!response.ok || !("subscriptionCategories" in body)) {
-          throw new Error(
+          throw new ApiRefusalError(
             apiErrorMessageFromBody(body, "Failed to load subscription categories"),
           );
         }
@@ -68,9 +74,7 @@ export function MemberSubscriptionCategoryField({
       } catch (loadError) {
         if (!cancelled) {
           onLoadError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Failed to load subscription categories",
+            refusalMessageOr(loadError, "Failed to load subscription categories"),
           );
         }
       } finally {
