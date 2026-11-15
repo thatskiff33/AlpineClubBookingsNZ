@@ -110,6 +110,12 @@ const DOORS: Record<string, string> = {
   "src/lib/booking-ledger-back-post.ts": "R26: lines a door could not post, filled in for a booking already in the journal",
   // #4628 (M3c): through `postPendingBookingJournal`, from the lines the confirmation would post.
   "src/lib/booking-ledger-pending-charge.ts": "R01 at a bank-transfer binding; R02/R04 for a charge still pending",
+  // #4519 (M7): subscriptions and joining fees.
+  "src/lib/membership-subscription-billing.ts": "R18 on a confirm's charge create; a post-void re-bill's replacement",
+  "src/lib/xero-operation-outbox.ts": "R19 beside the entrance-fee outbox insert",
+  "src/lib/manual-subscription-payment.ts": "R08 for a single-member mark-paid; reversed on mark-unpaid",
+  "src/lib/membership-subscription-charge-close.ts": "R08 for a close as already paid",
+  "src/lib/membership-cancellation-xero.ts": "R20 after the cancellation credit note exists, under lock(1)",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -153,16 +159,18 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/lib/edit-review-cleanup.ts",
   "src/lib/edit-review-cleanup-headline.ts",
   "scripts/edit-review-cleanup.ts",
+  // #4519 (M7): approval resolves the joining fee's context before its transaction and hands it to the R19 enqueue.
+  "src/lib/nomination.ts",
 ];
 /** Anything a context resolver may say about the journal: the `./doors` entry, the resolvers and the context type. */
-const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;
+const RESOLVER_VOCABULARY = /["']@\/lib\/member-money\/doors["']|\bresolveBookingMoneyPostingContext\b|\bresolveBookingDoorClock\b|\bresolveSubscriptionMoneyPostingContext\b|\bMemberMoneyPostingContext\b|\bBookingJournalContext\b/g;
 const BOUNDARY = "src/lib/member-money/";
 /** M3a (#4626): the one file that creates journal rows. */
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
 /** M3b's door entry points (#4627), and M3c's pending charge (#4628). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn)\b/;
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postSubscriptionCharge|postJoiningFeeCharge|postSubscriptionManualReceipt|reverseSubscriptionManualReceipt|postSubscriptionCloseReceipt|reverseSubscriptionChargeForCredit)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's

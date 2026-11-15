@@ -125,6 +125,14 @@ const TWO_TIER_LOCK_INVARIANTS = ["INV-LOCK-001", "INV-LOCK-002", "INV-LOCK-003"
  */
 const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
   {
+    site: "confirmSubscriptionBillingPreview#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
+    reason: "#4519: a confirm that re-bills a voided subscription reverses the old charge's SUBSCRIPTION_REVENUE (R18 replacement), so it takes the global key before the season key; a first bill takes neither reversal nor this key.",
+  },
+  {
+    site: "postCancellationCreditToJournal#1", tier: "GLOBAL", invariant: "INV-LOCK-001",
+    reason: "#4519: the cancellation credit note reverses the subscription charge's revenue (R20); global key alone, then the charge row lock, re-reading live coverage inside. Xero calls run outside this transaction.",
+  },
+  {
     site: "anonymiseFormerMember#1", tier: "GLOBAL", invariant: "INV-LOCK-002",
     reason: "Retention tests open booking money before erasing identity, excluding capture/cancel/refund; global then member lifecycle and credit, then the Xero Member row fence. Preserves all money and booking references.",
   },
@@ -1529,6 +1537,13 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // writer and "Paid another way". See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Member-money applications and refund reservations" and the M4c paragraph.
   "src/lib/member-money/internal/application-read.ts": 1,
+  // #4519 (Ledger M7): the subscription receipt, mark-unpaid and credit doors
+  // lock the MembershipSubscriptionCharge row before reading its obligation, so
+  // member-level applications to it serialise (prepareMemberLevelApplications'
+  // precondition). Taken last: after lock(1) where the credit holds it, and
+  // after the season or manual-payment fence of its caller; no counterpart
+  // takes a lock after it. See docs/CONCURRENCY_AND_LOCKING.md -> the M7 note.
+  "src/lib/member-money/internal/subscription-posting.ts": 1,
   // #4823: member merge re-points `Payment.manuallyMarkedPaidByMemberId` with one
   // sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT` over every row
   // naming the duplicate, then the update. Merge takes no lock(1) and holds

@@ -25,6 +25,16 @@ const { prismaMock, auditMock, emailMock, loggerMock, hostingMock } = vi.hoisted
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
+// #4519: R08 has its own suites; here the doors only record the call.
+const journalMock = vi.hoisted(() => ({
+  postSubscriptionManualReceipt: vi.fn(async () => null),
+  reverseSubscriptionManualReceipt: vi.fn(async () => null),
+}));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveSubscriptionMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+  ...journalMock,
+}));
 vi.mock("@/lib/audit", () => auditMock);
 vi.mock("@/lib/email/membership", () => emailMock);
 vi.mock("@/lib/logger", () => ({
@@ -287,6 +297,7 @@ describe("applyManualSubscriptionPayment (#1944)", () => {
 describe("manual mark-paid member notification (#2260)", () => {
   const charge = (overrides: Record<string, unknown> = {}) => ({
     charge: {
+      id: "charge-1",
       chargedAmountCents: 12345,
       billingBasis: "PER_MEMBER",
       _count: { coverage: 1 },
@@ -328,6 +339,9 @@ describe("manual mark-paid member notification (#2260)", () => {
 
     expect(result).toMatchObject({ memberNotified: true, receipt: "queued" });
     expect(sendMembershipPaymentRecordedEmail).toHaveBeenCalledTimes(1);
+    // #4519: R08 for the frozen charge amount, inside the mark-paid's transaction.
+    expect(journalMock.postSubscriptionManualReceipt).toHaveBeenCalledWith(tx, { journal: "context" },
+      expect.objectContaining({ chargeId: "charge-1", amountCents: 12345, actorMemberId: "admin-1" }));
     const sent = vi.mocked(sendMembershipPaymentRecordedEmail).mock.calls[0][0];
     expect(sent).toMatchObject({
       email: "ada@example.org",
@@ -385,6 +399,15 @@ describe("manual mark-paid member notification (#2260)", () => {
     },
   );
 
+  it("reverses the journal receipt of the mark-paid it undoes, on the active coverage's charge (#4519)", async () => {
+    const markedAt = new Date("2026-05-01T00:00:00.000Z");
+    const tx = wireTransaction(paidRow({ status: "PAID", manuallyMarkedPaidAt: markedAt }));
+    await applyManualSubscriptionPayment({ subscriptionId: "sub-1", direction: "unpaid", actingMemberId: "admin-1" });
+    expect(journalMock.reverseSubscriptionManualReceipt).toHaveBeenCalledWith(tx, { journal: "context" },
+      { chargeId: "charge-1", paidAt: markedAt, actorMemberId: "admin-1" });
+    expect(journalMock.postSubscriptionManualReceipt).not.toHaveBeenCalled();
+  });
+
   it("omits the amount when the season has no active charge coverage", async () => {
     wireTransaction(paidRow({ chargeCoverage: [] }));
 
@@ -426,6 +449,8 @@ describe("manual mark-paid member notification (#2260)", () => {
       expect.objectContaining({ amountCents: null }),
       CLUB_FORMAT_TEST,
     );
+    // #4519: and no journal receipt, whose amount would be just as wrong.
+    expect(journalMock.postSubscriptionManualReceipt).not.toHaveBeenCalled();
   });
 
   it("omits the amount when one charge fans out over several subscriptions, whatever its basis", async () => {

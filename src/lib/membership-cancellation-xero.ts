@@ -12,6 +12,11 @@ import {
 } from "@/lib/membership-cancellation-settings";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
+import {
+  resolveSubscriptionMoneyPostingContext,
+  reverseSubscriptionChargeForCredit,
+  type SubscriptionCreditOutcome,
+} from "@/lib/member-money/doors";
 import { prisma } from "@/lib/prisma";
 import {
   buildXeroIdempotencyKey,
@@ -670,6 +675,11 @@ export async function createXeroMembershipCancellationCreditNote(
   });
 
   if (existingCreditLink?.xeroObjectId) {
+    // R20 before the allocation, so an allocated retry still finds the amount due.
+    const journal = await postCancellationCreditToJournal({
+      invoiceId, leavingMemberId: subscription.memberId, creditNoteId: existingCreditLink.xeroObjectId,
+      creditedCents: amountCents, actorMemberId: params.createdByMemberId,
+    });
     await allocateMembershipCancellationCreditNote({
       creditNoteId: existingCreditLink.xeroObjectId,
       invoiceId,
@@ -686,6 +696,7 @@ export async function createXeroMembershipCancellationCreditNote(
           existingCreditNoteId: existingCreditLink.xeroObjectId,
           invoiceId,
           amountCents,
+          journal,
         },
         xeroObjectType: "CREDIT_NOTE",
         xeroObjectId: existingCreditLink.xeroObjectId,
@@ -846,6 +857,12 @@ export async function createXeroMembershipCancellationCreditNote(
         amountCents,
       },
     });
+    // R20 once the note's link exists: a journal refusal fails this attempt,
+    // and the retry takes the existing-link branch above and posts once.
+    const journal = await postCancellationCreditToJournal({
+      invoiceId, leavingMemberId: subscription.memberId, creditNoteId: createdNote.creditNoteID,
+      creditedCents: amountCents, actorMemberId: params.createdByMemberId,
+    });
 
     let allocationError: unknown = null;
     try {
@@ -870,6 +887,7 @@ export async function createXeroMembershipCancellationCreditNote(
         allocationError,
         invoiceId,
         amountCents,
+        journal,
       },
       xeroObjectType: "CREDIT_NOTE",
       xeroObjectId: createdNote.creditNoteID,
@@ -916,6 +934,35 @@ export async function createXeroMembershipCancellationCreditNote(
     await failXeroSyncOperation(creditOperationClaim!, error);
     throw error;
   }
+}
+
+/**
+ * R20 (#4519, Ledger M7): a credit note for the whole of an unpaid charge
+ * reverses that charge's journal debt. A short transaction of its own, after
+ * the Xero call, takes `lock(1)` first (a revenue reversal) and re-reads under
+ * it whether the leaver is still the last live member the invoice covers. The
+ * outcome, with both figures, goes on the operation's response payload.
+ */
+async function postCancellationCreditToJournal(input: {
+  invoiceId: string;
+  leavingMemberId: string;
+  creditNoteId: string;
+  creditedCents: number;
+  actorMemberId?: string;
+}): Promise<SubscriptionCreditOutcome> {
+  const charge = await prisma.membershipSubscriptionCharge.findUnique({ where: { xeroInvoiceId: input.invoiceId }, select: { id: true } });
+  if (!charge) return { outcome: "nothing-to-reverse", creditedCents: input.creditedCents, chargedCents: null };
+  const journalContext = await resolveSubscriptionMoneyPostingContext();
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const stillCovered = await findOtherLiveMembersCoveredBySubscriptionInvoice({
+      invoiceId: input.invoiceId, leavingMemberId: input.leavingMemberId, db: tx,
+    });
+    return reverseSubscriptionChargeForCredit(tx, journalContext, {
+      chargeId: charge.id, creditNoteId: input.creditNoteId, creditedCents: input.creditedCents,
+      leaverIsLastLiveMember: stillCovered.length === 0, actorMemberId: input.actorMemberId ?? null,
+    });
+  });
 }
 
 async function allocateMembershipCancellationCreditNote(params: {

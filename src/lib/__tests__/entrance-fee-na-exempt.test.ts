@@ -11,6 +11,7 @@ vi.mock("@/lib/prisma", () => ({
     seasonalMembershipAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     membershipType: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn() },
     familyGroupMember: { findMany: vi.fn().mockResolvedValue([]) },
+    $transaction: (run: (tx: unknown) => unknown) => run({}),
     xeroItemCodeMapping: { findFirst: vi.fn() },
     xeroAccountMapping: { findUnique: vi.fn() },
     xeroObjectLink: { findFirst: vi.fn() },
@@ -42,6 +43,14 @@ vi.mock("@/lib/xero-api-client", async (importOriginal) => {
 vi.mock("@/lib/xero-contacts", () => ({
   findOrCreateXeroContact: vi.fn(),
   retryXeroWriteWithContactRepair: vi.fn(),
+}));
+
+// #4519: an exempt member's R19 is a ZERO; its posting has its own suites.
+const mockPostJoiningFeeCharge = vi.fn(async () => null);
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveSubscriptionMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+  postJoiningFeeCharge: (...args: unknown[]) => mockPostJoiningFeeCharge(...(args as [])),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -117,6 +126,9 @@ describe("enqueueXeroEntranceFeeInvoiceOperation exemption", () => {
     expect(result.queueOperationId).toBeNull();
     expect(result.message).toBe(ENTRANCE_FEE_EXEMPT_MESSAGE);
     expect(prisma.xeroSyncOperation.findFirst).not.toHaveBeenCalled();
+    // #4519: the override never reaches the journal either; R19 is a ZERO.
+    expect(mockPostJoiningFeeCharge).toHaveBeenCalledWith(expect.anything(), { journal: "context" },
+      expect.objectContaining({ memberId: "org1", feeAmountCents: 0, exempt: true }));
   });
 });
 

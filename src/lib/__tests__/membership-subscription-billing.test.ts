@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   settings: { findUnique: vi.fn() },
   coverage: { findMany: vi.fn() },
-  subscriptions: { findMany: vi.fn() },
+  subscriptions: { findMany: vi.fn(), findFirst: vi.fn() },
+  postSubscriptionCharge: vi.fn(async () => null),
   members: { findMany: vi.fn() },
   membershipTypes: { findMany: vi.fn() },
   charges: { findMany: vi.fn() },
@@ -70,6 +71,13 @@ vi.mock("@/lib/prisma", () => ({
       run: (tx: unknown) => unknown,
     ) => run(billingTransactionClient()),
   },
+}));
+
+// #4519: the journal doors have their own suites; here they only record the call.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveSubscriptionMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+  postSubscriptionCharge: mocks.postSubscriptionCharge,
 }));
 
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));

@@ -40,6 +40,7 @@ import {
   resolveInheritedEmailSourceId,
 } from "@/lib/member-parent-links";
 import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
+import { resolveSubscriptionMoneyPostingContext } from "@/lib/member-money/doors";
 import { prisma } from "@/lib/prisma";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
@@ -1504,6 +1505,10 @@ export async function approveMemberApplication(
     (applicantMapped
       ? { action: "SKIP", reason: "Mapped to existing member" }
       : { action: "CREATE" });
+  // #4519 (Ledger M7): the joining fee's journal context, for the same reason.
+  const entranceFeeJournalContext = entranceFeeDecision.action === "CREATE"
+    ? await resolveSubscriptionMoneyPostingContext()
+    : undefined;
 
   const approved = await prisma.$transaction(async (tx) => {
     await lockMembershipApplication(tx, applicationId);
@@ -2250,7 +2255,7 @@ export async function approveMemberApplication(
 
         entranceFeeQueue = await enqueueXeroEntranceFeeInvoiceOperation(
           applicantMember.id,
-          { ...entranceFeeInvoiceOptions, store: tx }
+          { ...entranceFeeInvoiceOptions, store: tx, journalContext: entranceFeeJournalContext }
         );
       } catch (err) {
         // Non-database failures stay non-fatal, matching the pre-#1886

@@ -114,6 +114,7 @@ import type {
   MembershipCancellationSharedInvoiceRoute,
 } from "@/lib/membership-cancellation-blocker-messages";
 import { isUnpaidInvoiceBlocker } from "@/lib/membership-cancellation-blocker-messages";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { fixedClubClock } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -210,6 +211,8 @@ function compareCoveredMembers(
   return left.memberId < right.memberId ? -1 : 1;
 }
 
+type CoveredMembersReader = Pick<Prisma.TransactionClient, "memberSubscription" | "membershipSubscriptionChargeCoverage" | "member">;
+
 /**
  * Members whose membership is still live, per subscription invoice id.
  *
@@ -218,6 +221,8 @@ function compareCoveredMembers(
  */
 export async function loadLiveMembersCoveredBySubscriptionInvoices(
   invoiceIds: readonly string[],
+  /** A transaction's client, where the answer must hold under its locks (#4519, R20). */
+  db: CoveredMembersReader = prisma,
 ): Promise<Map<string, MembershipCancellationCoveredMember[]>> {
   const uniqueInvoiceIds = [...new Set(invoiceIds)].filter(Boolean);
   const coveredByInvoiceId = new Map<
@@ -227,7 +232,7 @@ export async function loadLiveMembersCoveredBySubscriptionInvoices(
   if (uniqueInvoiceIds.length === 0) return coveredByInvoiceId;
 
   const [subscriptions, coverage] = await Promise.all([
-    prisma.memberSubscription.findMany({
+    db.memberSubscription.findMany({
       where: { xeroInvoiceId: { in: uniqueInvoiceIds } },
       select: { memberId: true, xeroInvoiceId: true },
     }),
@@ -243,7 +248,7 @@ export async function loadLiveMembersCoveredBySubscriptionInvoices(
     // held ONLY by a coverage claim (the PAID-at-invoice-time shape above) that
     // collapses the covered set to nothing and lets a sibling's cancellation
     // credit the invoice in full while a covered member remains (#2400 review, F6).
-    prisma.membershipSubscriptionChargeCoverage.findMany({
+    db.membershipSubscriptionChargeCoverage.findMany({
       where: {
         releasedAt: null,
         charge: { xeroInvoiceId: { in: uniqueInvoiceIds } },
@@ -275,7 +280,7 @@ export async function loadLiveMembersCoveredBySubscriptionInvoices(
   ];
   if (memberIds.length === 0) return coveredByInvoiceId;
 
-  const members = await prisma.member.findMany({
+  const members = await db.member.findMany({
     where: { id: { in: memberIds } },
     select: {
       id: true,
@@ -320,10 +325,11 @@ export async function loadLiveMembersCoveredBySubscriptionInvoices(
 export async function findOtherLiveMembersCoveredBySubscriptionInvoice(params: {
   invoiceId: string;
   leavingMemberId: string;
+  db?: CoveredMembersReader;
 }): Promise<MembershipCancellationCoveredMember[]> {
   const covered = await loadLiveMembersCoveredBySubscriptionInvoices([
     params.invoiceId,
-  ]);
+  ], params.db);
   return (covered.get(params.invoiceId) ?? []).filter(
     (member) => member.memberId !== params.leavingMemberId,
   );

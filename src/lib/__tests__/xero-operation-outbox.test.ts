@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
+  postJoiningFeeCharge: vi.fn(async () => null),
   executeOrganiserExtraAdjustment: vi.fn(),
   findUniqueGroupBooking: vi.fn(),
   readPaidAnotherWayCloseShare: vi.fn(),
@@ -87,6 +88,13 @@ vi.mock("@/lib/organiser-extra-adjustment", () => ({ executeOrganiserExtraAdjust
  * audit rows, and nothing else in this file touches `@/lib/audit`, so the double
  * is inert for every other test here.
  */
+// #4519: R19 has its own suites; here the door only records the call.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveSubscriptionMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+  postJoiningFeeCharge: mocks.postJoiningFeeCharge,
+}));
+
 vi.mock("@/lib/audit", () => ({
   createAuditLog: mocks.createAuditLog,
 }));
@@ -248,6 +256,7 @@ vi.mock("@/lib/xero-mappings", () => ({
     amountCents: number
   ) => `member:${memberId}:joining-fee-invoice:${category}:${amountCents}:v2`,
   getEntranceFeeContext: mocks.getEntranceFeeContext,
+  ENTRANCE_FEE_EXEMPT_MESSAGE: "exempt",
 }));
 
 vi.mock("@/lib/xero-applied-credit-allocation", () => ({
@@ -423,6 +432,26 @@ describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
         },
       })
     );
+    // #4519: R19 for the frozen outbox amount, after the insert.
+    expect(mocks.postJoiningFeeCharge).toHaveBeenCalledWith(expect.anything(), { journal: "context" }, {
+      memberId: "member_1", feeAmountCents: 15000, exempt: false, actorMemberId: "admin_1",
+    });
+  });
+
+  it("refuses a caller's transaction without a journal context resolved before it (#4519)", async () => {
+    await expect(enqueueXeroEntranceFeeInvoiceOperation("member_1", { store: {} as never })).rejects.toThrow(/journal context/);
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.postJoiningFeeCharge).not.toHaveBeenCalled();
+  });
+
+  it("posts an exempt member's R19 as a ZERO and queues nothing (#4519)", async () => {
+    mocks.getEntranceFeeContext.mockResolvedValue({ category: "ADULT", exempt: true, feeMapping: { itemCode: "EF-ADULT", amountCents: 15000 } });
+    await expect(enqueueXeroEntranceFeeInvoiceOperation("member_1", { createdByMemberId: "admin_1", amountCents: 500 }))
+      .resolves.toEqual(expect.objectContaining({ queueOperationId: null }));
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.postJoiningFeeCharge).toHaveBeenCalledWith(expect.anything(), { journal: "context" }, {
+      memberId: "member_1", feeAmountCents: 0, exempt: true, actorMemberId: "admin_1",
+    });
   });
 
   it("queues entrance fee invoices with admin amount and narration overrides", async () => {

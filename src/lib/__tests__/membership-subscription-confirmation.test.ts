@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   familyGroupMemberGroupBy: vi.fn(),
   familyMarkerFindMany: vi.fn(),
   chargeUpsert: vi.fn(),
+  chargeFindUnique: vi.fn(),
+  subscriptionFindFirst: vi.fn(),
+  postSubscriptionCharge: vi.fn(async () => null),
   subscriptionUpsert: vi.fn(),
   subscriptionFindMany: vi.fn(),
   exceptionUpdateMany: vi.fn(),
@@ -33,13 +36,13 @@ vi.mock("@/lib/prisma", () => {
     $transaction: mocks.transaction,
     membershipSubscriptionBillingSettings: { findUnique: mocks.settingsFind },
     membershipSubscriptionChargeCoverage: { findMany: mocks.coverageFindMany, findUnique: mocks.coverageFindUnique, findFirst: mocks.coverageFindFirst },
-    membershipSubscriptionCharge: { findMany: mocks.chargeFindMany, upsert: mocks.chargeUpsert },
+    membershipSubscriptionCharge: { findMany: mocks.chargeFindMany, upsert: mocks.chargeUpsert, findUnique: mocks.chargeFindUnique },
     familyGroupMember: { findMany: mocks.familyGroupMemberFindMany, groupBy: mocks.familyGroupMemberGroupBy },
     familyGroupSeasonInvoiceMarker: { findMany: mocks.familyMarkerFindMany },
     membershipBillingException: { updateMany: mocks.exceptionUpdateMany, upsert: mocks.exceptionUpsert },
     member: { findMany: mocks.memberFindMany },
     membershipType: { findMany: mocks.typeFindMany },
-    memberSubscription: { upsert: mocks.subscriptionUpsert, findMany: mocks.subscriptionFindMany },
+    memberSubscription: { upsert: mocks.subscriptionUpsert, findMany: mocks.subscriptionFindMany, findFirst: mocks.subscriptionFindFirst },
     xeroSyncOperation: { count: mocks.operationCount, create: mocks.operationCreate },
   };
   mocks.client = client;
@@ -48,6 +51,12 @@ vi.mock("@/lib/prisma", () => {
 vi.mock("@/lib/authoritative-fees", () => ({ getEffectiveMembershipAnnualFee: mocks.fee, getFamilyBillingMode: mocks.familyMode }));
 vi.mock("@/lib/xero-mappings", () => ({ getResolvedAccountMapping: mocks.mapping }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
+// #4519: R18 has its own suites; here the door only records the call.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveSubscriptionMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+  postSubscriptionCharge: mocks.postSubscriptionCharge,
+}));
 vi.mock("@/lib/xero-subscription-invoices", () => ({ enqueueMembershipSubscriptionChargeOperation: mocks.enqueue }));
 
 import {
@@ -120,6 +129,18 @@ describe("membership subscription confirmation", () => {
     expect(replay.chargeIds).toEqual(["charge-1"]);
     expect(mocks.chargeUpsert).toHaveBeenCalledTimes(1);
     expect(mocks.operationCreate).toHaveBeenCalledTimes(1);
+    // #4519: R18 once, for the created charge, with nothing replaced.
+    expect(mocks.postSubscriptionCharge).toHaveBeenCalledTimes(1);
+    expect(mocks.postSubscriptionCharge).toHaveBeenCalledWith(mocks.client, { journal: "context" },
+      expect.objectContaining({ facts: expect.objectContaining({ chargeId: "charge-1" }), replacesChargeIds: [] }));
+  });
+
+  it("posts no R18 for a charge row its idempotency key already found (#4519)", async () => {
+    const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+    mocks.chargeFindUnique.mockResolvedValueOnce({ id: "charge-1" });
+    await confirmSubscriptionBillingPreview({ preview, expectedConfirmationToken: preview.confirmationToken, source: "ANNUAL_BATCH" });
+    expect(mocks.chargeUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.postSubscriptionCharge).not.toHaveBeenCalled();
   });
 
   it("rechecks an archived stored role default during confirm and snapshots one charge", async () => {
@@ -174,6 +195,35 @@ describe("membership subscription confirmation", () => {
     });
     const keyV1 = (mocks.chargeUpsert.mock.calls[1][0] as { where: { idempotencyKey: string } }).where.idempotencyKey;
     expect(keyV1).not.toBe(keyV0);
+  });
+
+  it("a re-bill after a void takes lock(1) before the season key and names the released charge it replaces (#4519)", async () => {
+    const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+    const client = mocks.client as { $executeRaw: ReturnType<typeof vi.fn> };
+    client.$executeRaw.mockClear();
+    mocks.subscriptionFindFirst.mockResolvedValueOnce({ id: "subscription-1" });
+    mocks.subscriptionUpsert.mockResolvedValue({ id: "subscription-1", memberId: "member-1", voidGeneration: 1 });
+    mocks.coverageFindFirst.mockReset().mockImplementation(async ({ where }: { where: { releasedAt: unknown } }) =>
+      where.releasedAt === null ? null : { chargeId: "charge-voided" });
+    await confirmSubscriptionBillingPreview({ preview, expectedConfirmationToken: preview.confirmationToken, source: "ANNUAL_BATCH" });
+    const locks = client.$executeRaw.mock.calls.map((call) => (call[0] as TemplateStringsArray).join("?"));
+    expect(locks[0]).toBe("SELECT pg_advisory_xact_lock(1)");
+    expect(locks[1]).toContain("hashtext");
+    expect(mocks.subscriptionFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { seasonYear: 2026, voidGeneration: { gt: 0 }, memberId: { in: ["member-1"] } },
+    }));
+    expect(mocks.postSubscriptionCharge).toHaveBeenCalledWith(mocks.client, { journal: "context" },
+      expect.objectContaining({ replacesChargeIds: ["charge-voided"] }));
+  });
+
+  it("a first bill takes no lock(1) (#4519)", async () => {
+    const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-07-13T00:00:00.000Z") });
+    const client = mocks.client as { $executeRaw: ReturnType<typeof vi.fn> };
+    client.$executeRaw.mockClear();
+    mocks.subscriptionFindFirst.mockResolvedValue(null);
+    await confirmSubscriptionBillingPreview({ preview, expectedConfirmationToken: preview.confirmationToken, source: "ANNUAL_BATCH" });
+    const locks = client.$executeRaw.mock.calls.map((call) => (call[0] as TemplateStringsArray).join("?"));
+    expect(locks.some((sql) => sql.includes("pg_advisory_xact_lock(1)"))).toBe(false);
   });
 
   /** A kid whose closed family charge had only the kid's payment reversed (#4110). */

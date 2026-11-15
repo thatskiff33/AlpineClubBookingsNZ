@@ -83,6 +83,18 @@ export const memberMoneyEventKeys = {
    * owner that now collects it as a zero-net stand-in, so its application keeps the obligation's debtor.
    */
   mergeFollow: (event: MemberMoneyEventKey, to: string) => key(`merge-follow|${event}|${nestedPart(to)}`),
+  /**
+   * #4519 (M7): R18, once per subscription charge row, posted when the confirm creates it. A post-void re-bill is
+   * a new charge row, so it has its own key.
+   */
+  subscriptionCharge: (chargeId: string) => key(`subscription-charge:${part(chargeId, "subscription charge id")}`),
+  /** R19: once per member, as the entrance-fee invoice is enqueued once per member. */
+  joiningFee: (memberId: string) => key(`joining-fee:${part(memberId, "member id")}`),
+  /** R08: an officer's mark-paid, named by the instant it stamped; a mark-unpaid then a new mark-paid is a new receipt. */
+  subscriptionReceipt: (chargeId: string, paidAtEpochMs: number) =>
+    key(`subscription-receipt:${part(chargeId, "subscription charge id")}:${revision(paidAtEpochMs)}`),
+  /** R08: a close as already paid, which happens once per charge. */
+  subscriptionCloseReceipt: (chargeId: string) => key(`subscription-close-receipt:${part(chargeId, "subscription charge id")}`),
   /** An exact whole-batch reversal: the database allows one per journal, so the journal names it. */
   reversal: (journalId: string) => key(`reversal:${part(journalId, "journal id")}`),
 } as const;

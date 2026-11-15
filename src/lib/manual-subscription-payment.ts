@@ -4,6 +4,11 @@ import type { MembershipFeeBillingBasis, SubscriptionStatus } from "@prisma/clie
 import { createAuditLog } from "@/lib/audit";
 import { sendMembershipPaymentRecordedEmail } from "@/lib/email/membership";
 import logger from "@/lib/logger";
+import {
+  postSubscriptionManualReceipt,
+  resolveSubscriptionMoneyPostingContext,
+  reverseSubscriptionManualReceipt,
+} from "@/lib/member-money/doors";
 import { prisma } from "@/lib/prisma";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
@@ -199,6 +204,8 @@ export async function applyManualSubscriptionPayment(
   // `clubTimeSettings.findUnique` and would take a second pooled connection
   // under the lock.
   const clubTodayForFanout = await clubTodayDateOnlyInstant();
+  // #4519 (Ledger M7): the journal context, before the transaction too.
+  const journalContext = await resolveSubscriptionMoneyPostingContext();
 
   // The write commits first; the member email is dispatched afterwards, never
   // inside the transaction (no provider call inside a database transaction).
@@ -229,6 +236,7 @@ export async function applyManualSubscriptionPayment(
           select: {
             charge: {
               select: {
+                id: true,
                 chargedAmountCents: true,
                 billingBasis: true,
                 _count: { select: { coverage: true } },
@@ -294,6 +302,15 @@ export async function applyManualSubscriptionPayment(
           "This subscription changed while you were marking it paid — refresh and try again.",
           409,
         );
+      }
+      // R08: the cash, collected against the charge's journal obligation, only
+      // when the receipt would print a figure for this member alone.
+      const coveringCharge = subscription.chargeCoverage?.[0]?.charge;
+      const cashCents = receiptAmountCents(coveringCharge);
+      if (coveringCharge && cashCents !== null) {
+        await postSubscriptionManualReceipt(tx, journalContext, {
+          chargeId: coveringCharge.id, amountCents: cashCents, paidAt: now, actorMemberId: input.actingMemberId,
+        });
       }
       const updated = await tx.memberSubscription.findUniqueOrThrow({
         where: { id: subscription.id },
@@ -395,6 +412,13 @@ export async function applyManualSubscriptionPayment(
         "This subscription changed while you were reversing the manual payment — refresh and try again.",
         409,
       );
+    }
+    // R08 reversed: the receipt posted for the mark-paid being undone, if any.
+    const coveringChargeId = subscription.chargeCoverage?.[0]?.charge.id;
+    if (coveringChargeId) {
+      await reverseSubscriptionManualReceipt(tx, journalContext, {
+        chargeId: coveringChargeId, paidAt: subscription.manuallyMarkedPaidAt, actorMemberId: input.actingMemberId,
+      });
     }
     const updated = await tx.memberSubscription.findUniqueOrThrow({
       where: { id: subscription.id },

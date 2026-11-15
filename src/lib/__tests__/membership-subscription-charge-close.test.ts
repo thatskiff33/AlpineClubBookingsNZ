@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   coverageUpdateMany: vi.fn(),
   audit: vi.fn(),
   findLiveOperation: vi.fn(),
+  postSubscriptionCloseReceipt: vi.fn(async () => null),
   tx: {} as Record<string, unknown>,
 }));
 
@@ -27,6 +28,12 @@ vi.mock("@/lib/prisma", () => {
   return { prisma: { $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)) } };
 });
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
+// #4519: R08's close receipt has its own suites; here the door only records the call.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  resolveSubscriptionMoneyPostingContext: vi.fn(async () => ({ journal: "context" })),
+  postSubscriptionCloseReceipt: mocks.postSubscriptionCloseReceipt,
+}));
 vi.mock("@/lib/xero-subscription-invoices", () => ({
   findLiveSubscriptionInvoiceOperation: mocks.findLiveOperation,
 }));
@@ -105,6 +112,10 @@ describe("closeAlreadyPaidSubscriptionCharge (#4098)", () => {
       { where: { chargeId: "charge-1", releasedAt: null, subscription: { status: "PAID" } }, data: { releasedAt: expect.any(Date), subscriptionStatusAtClose: "PAID" } },
       { where: { chargeId: "charge-1", releasedAt: null, subscription: { status: "NOT_REQUIRED" } }, data: { releasedAt: expect.any(Date), subscriptionStatusAtClose: "NOT_REQUIRED" } },
     ]);
+    // #4519: the charge's face collected as cash, at the close's own instant.
+    const releasedAt = (mocks.coverageUpdateMany.mock.calls[0][0] as { data: { releasedAt: Date } }).data.releasedAt;
+    expect(mocks.postSubscriptionCloseReceipt).toHaveBeenCalledWith(mocks.tx, { journal: "context" },
+      expect.objectContaining({ chargeId: "charge-1", closedAt: releasedAt }));
     expect(mocks.audit).toHaveBeenCalledTimes(1);
     const [entry, client] = mocks.audit.mock.calls[0];
     expect(client).toBeDefined();
