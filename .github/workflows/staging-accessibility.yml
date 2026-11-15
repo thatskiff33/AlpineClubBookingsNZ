@@ -22,7 +22,7 @@ concurrency:
 jobs:
   lighthouse:
     name: Lighthouse accessibility baseline
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
       name: staging
