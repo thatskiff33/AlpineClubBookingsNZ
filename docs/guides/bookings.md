@@ -40,7 +40,11 @@ date-only lodge night (no times), matching the rules in
 
 2. The calendar shows the month with each night's remaining beds (for example
    "14 beds") and coloured bars for the bookings on those nights. The colour
-   legend under the calendar maps each colour to a booking status.
+   legend under the calendar maps each colour to a booking status. A row of
+   status pills above it switches each status on or off, including **Awaiting
+   Review**, whose bookings hold beds. Only **Cancelled** starts switched off.
+   The browser remembers which statuses you switched off, and a status added
+   later shows by default.
 
 ### Find a specific booking
 
@@ -414,6 +418,11 @@ members and non-members alike.
 - **It belongs to this stay.** A member changing their profile later does not
   change the booking, and changing the booking does not change their profile.
   Use it for a one-off trip requirement, or to record a non-member's needs.
+- **It is cleared after the stay.** By default every guest's value is removed
+  30 days after their stay ends, whatever the booking's status. The club sets
+  the period, or switches it off, under **Admin → Privacy retention**. A value
+  you type on a stay that ended longer ago than that is cleared again the next
+  night.
 - **Who sees it.** Booking officers with **bookings view** see the card;
   **bookings edit** adds an **Edit** button on each guest. The hut leader
   running the stay sees the values on the lodge kiosk. The member who made the

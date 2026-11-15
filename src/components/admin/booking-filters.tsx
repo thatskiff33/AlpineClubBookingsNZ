@@ -1,5 +1,7 @@
 "use client";
 
+import { BOOKING_STATUSES_IN_LIFECYCLE_ORDER } from "@/lib/booking-status";
+import { adminHref } from "@/lib/admin-hubs";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
 import {
@@ -140,7 +142,7 @@ export function BookingFilters({
   const [additionalOwed, setAdditionalOwed] = useState(searchParams.get("additionalOwed") || "all");
   const [lodgeId, setLodgeId] = useState(searchParams.get("lodgeId") || "all");
   const showLodgeFilter = lodgeOptions.length > 1;
-  const bookingStatuses = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
+  const bookingStatuses = BOOKING_STATUSES_IN_LIFECYCLE_ORDER;
   function statusFilterLabel(value: string) {
     if (value === "all") return "All";
 
@@ -261,7 +263,7 @@ export function BookingFilters({
         if (liveSort.sortBy) params.set("sortBy", liveSort.sortBy);
         if (liveSort.sortDir) params.set("sortDir", liveSort.sortDir);
         const target = params.toString();
-        router.replace(target ? `/admin/bookings?${target}` : "/admin/bookings");
+        router.replace(target ? `${adminHref("bookings")}?${target}` : adminHref("bookings"));
       }
     }, 350);
     return () => {
@@ -316,7 +318,7 @@ export function BookingFilters({
     const params = new URLSearchParams(window.location.search);
     for (const key of BOOKING_RESET_QUERY_KEYS) params.delete(key);
     const target = params.toString();
-    router.replace(target ? `/admin/bookings?${target}` : "/admin/bookings", {
+    router.replace(target ? `${adminHref("bookings")}?${target}` : adminHref("bookings"), {
       scroll: false,
     });
   }

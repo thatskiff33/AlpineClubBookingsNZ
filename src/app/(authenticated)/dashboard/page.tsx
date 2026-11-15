@@ -46,7 +46,7 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import {
-  isDashboardPaymentOwed,
+  loadDashboardPaymentSnapshots,
   summarizeMemberPaymentOwed,
 } from "@/lib/member-dashboard";
 import {
@@ -68,6 +68,12 @@ import {
   PAYMENT_OWED_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { checkCapacity } from "@/lib/capacity";
+import {
+  BOOKING_LIST_LODGE_SELECT,
+  bookingListLodgeLabel,
+  countActiveLodgesForBookingList,
+} from "@/lib/lodges";
+import { BookingListLodgeName } from "@/components/booking/booking-list-lodge-name";
 
 /*
   The three tightest slots on this page — the upcoming-events list (a fixed-width
@@ -246,6 +252,7 @@ export default async function DashboardPage() {
     creditBalanceCents,
     availablePromoCodes,
     lockers,
+    activeLodgeCount,
   ] = await Promise.all([
     prisma.booking.findMany({
       where: {
@@ -271,6 +278,8 @@ export default async function DashboardPage() {
         id: true,
         memberId: true,
         lodgeId: true,
+        // INV-CAP-039: the Next Stay card names this row's own lodge.
+        lodge: BOOKING_LIST_LODGE_SELECT,
         checkIn: true,
         checkOut: true,
         status: true,
@@ -294,6 +303,7 @@ export default async function DashboardPage() {
         status: true,
         finalPriceCents: true,
         createdAt: true,
+        lodge: BOOKING_LIST_LODGE_SELECT,
         _count: { select: { guests: true } },
       },
     }),
@@ -320,6 +330,7 @@ export default async function DashboardPage() {
         // and a CTA, never rendered: the acting admin's identity belongs on the
         // booking detail page's own "Created by …" line, not on a dashboard card.
         createdById: true,
+        lodge: BOOKING_LIST_LODGE_SELECT,
         _count: { select: { guests: true } },
       },
     }),
@@ -342,6 +353,7 @@ export default async function DashboardPage() {
             status: true,
             additionalAmountCents: true,
             additionalPaymentStatus: true,
+            changeFeeCents: true,
           },
         },
       },
@@ -353,6 +365,9 @@ export default async function DashboardPage() {
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     }),
+    // INV-CAP-039: decides, with `bookingListLodgeLabel`, whether the rows
+    // below name their lodge. In this set so it costs no extra round trip.
+    countActiveLodgesForBookingList(prisma),
   ]);
 
   const nextStay = upcomingBookings[0] ?? null;
@@ -386,17 +401,16 @@ export default async function DashboardPage() {
     }
   }
 
-  const paymentOwed = summarizeMemberPaymentOwed(paymentOwedBookings);
-  const paymentOwedBookingIds = paymentOwedBookings
-    .filter(isDashboardPaymentOwed)
-    .map((booking) => booking.id);
+  const paymentOwed = summarizeMemberPaymentOwed(
+    await loadDashboardPaymentSnapshots(paymentOwedBookings),
+  );
   const nextStayHref = nextStay
     ? buildHrefWithReturnTo(`/bookings/${nextStay.id}`, "/dashboard")
     : "/book";
   const paymentOwedHref =
-    paymentOwed.bookingCount === 1 && paymentOwedBookingIds.length === 1
+    paymentOwed.bookingIds.length === 1
       ? buildHrefWithReturnTo(
-          `/bookings/${paymentOwedBookingIds[0]}`,
+          `/bookings/${paymentOwed.bookingIds[0]}`,
           "/dashboard",
         )
       : "/bookings";
@@ -568,6 +582,9 @@ export default async function DashboardPage() {
                   club.format,
                 )}
               </div>
+              <BookingListLodgeName
+                lodgeLabel={bookingListLodgeLabel(activeLodgeCount, nextStay.lodge)}
+              />
               <p className="text-xs text-muted-foreground mt-1">
                 {nextStay._count.guests} guest
                 {nextStay._count.guests !== 1 ? "s" : ""} ·{" "}
@@ -620,7 +637,7 @@ export default async function DashboardPage() {
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {paymentOwed.totalCents > 0
-              ? `${paymentOwed.bookingCount} booking${paymentOwed.bookingCount !== 1 ? "s" : ""} need payment`
+              ? `${paymentOwed.bookingIds.length} ${paymentOwed.bookingIds.length === 1 ? "booking needs" : "bookings need"} payment`
               : "No payment due"}
           </p>
         </SummaryLinkCard>
@@ -853,6 +870,12 @@ export default async function DashboardPage() {
                         {" — "}
                         {formatStayDate(booking.checkOut, club.format)}
                       </p>
+                      <BookingListLodgeName
+                        lodgeLabel={bookingListLodgeLabel(
+                          activeLodgeCount,
+                          booking.lodge,
+                        )}
+                      />
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest
                         {booking._count.guests !== 1 ? "s" : ""} ·{" "}
@@ -943,6 +966,12 @@ export default async function DashboardPage() {
                         {" — "}
                         {formatStayDate(booking.checkOut, club.format)}
                       </p>
+                      <BookingListLodgeName
+                        lodgeLabel={bookingListLodgeLabel(
+                          activeLodgeCount,
+                          booking.lodge,
+                        )}
+                      />
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest
                         {booking._count.guests !== 1 ? "s" : ""} ·{" "}

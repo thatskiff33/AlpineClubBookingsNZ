@@ -208,7 +208,7 @@ export function AdminBookingToolsCard({
     lodgeId,
   });
   const bedAllocationHref = buildHrefWithReturnTo(
-    `/admin/bed-allocation?${bedAllocationParams.toString()}`,
+    `${adminHref("bed-allocation")}?${bedAllocationParams.toString()}`,
     returnTo,
   );
 
@@ -338,7 +338,7 @@ export function AdminBookingToolsCard({
             {memberId ? (
               <Link
                 className="text-muted-foreground underline hover:text-accent-foreground"
-                href={buildHrefWithReturnTo(`/admin/members/${memberId}`, returnTo)}
+                href={buildHrefWithReturnTo(`${adminHref("member-detail", { id: memberId })}`, returnTo)}
               >
                 Member: {memberName}
               </Link>

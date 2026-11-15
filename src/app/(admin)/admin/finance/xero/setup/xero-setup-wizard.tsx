@@ -3,6 +3,11 @@
 import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  XERO_MAPPING_STEP_ID,
+  XERO_SETUP_STEP_PARAM,
+  XERO_WEBHOOKS_STEP_ID,
+} from "@/lib/admin-hubs/xero-setup";
 import { IntegrationWizard } from "@/components/admin/integration-wizard";
 import type { WizardStepConfig } from "@/components/admin/integration-wizard";
 import {
@@ -63,7 +68,7 @@ export function XeroSetupWizard({
         render: (ctx, helpers) => <ConnectStep context={ctx} helpers={helpers} />,
       },
       {
-        id: "webhooks",
+        id: XERO_WEBHOOKS_STEP_ID,
         title: "Webhooks",
         summary: "Real-time updates (optional)",
         // Optional/skippable (epic decision 5): passes when verified OR skipped;
@@ -79,7 +84,7 @@ export function XeroSetupWizard({
         render: (ctx, helpers) => <WebhooksStep context={ctx} helpers={helpers} />,
       },
       {
-        id: "mapping",
+        id: XERO_MAPPING_STEP_ID,
         title: "Account mapping",
         summary: "Map accounts & item codes",
         // Configuration step — sensible defaults apply when left unset, so it
@@ -101,7 +106,7 @@ export function XeroSetupWizard({
   // Deep-link support: a readiness "blocked" link or the modules "Set up" CTA can
   // target a step via ?step=; the shell clamps it to the furthest reachable step.
   const searchParams = useSearchParams();
-  const initialStepId = searchParams.get("step") ?? undefined;
+  const initialStepId = searchParams.get(XERO_SETUP_STEP_PARAM) ?? undefined;
 
   return (
     <IntegrationWizard<XeroWizardContext>

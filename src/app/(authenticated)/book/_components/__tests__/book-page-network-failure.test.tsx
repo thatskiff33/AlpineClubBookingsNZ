@@ -9,7 +9,12 @@
  * member's only way out was to reload and lose everything they had typed.
  */
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GuestData } from "@/components/guest-form";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
@@ -153,10 +158,14 @@ describe("the booking wizard after a dropped connection (#4942)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Continue to Payment" }));
 
     // The message reaches the alert region, so a screen reader announces it.
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      unverifiedWriteMessage(
-        "your booking was created",
-        "Open My Bookings to check before trying again.",
+    // The region is permanently mounted (#4945), so it exists, empty, before
+    // the reply arrives: wait for the text, not for the region.
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        unverifiedWriteMessage(
+          "your booking was created",
+          "Open My Bookings to check before trying again.",
+        ),
       ),
     );
     const create = screen.getByRole("button", { name: "Continue to Payment" });
@@ -173,8 +182,10 @@ describe("the booking wizard after a dropped connection (#4942)", () => {
     await advanceToGuestsStep();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "We could not calculate the price. Check your connection and try again.",
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "We could not calculate the price. Check your connection and try again.",
+      ),
     );
     const next = screen.getByRole("button", { name: "Continue" });
     expect(next).toBeEnabled();
