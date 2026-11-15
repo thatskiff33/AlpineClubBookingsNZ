@@ -2158,8 +2158,6 @@ export async function readUnifiedExceptionQueue(input: {
   page: number;
   pageSize: number;
 }): Promise<{ data: UnifiedExceptionQueueItem[] } & AdminListPage> {
-  // Both sources build their where-clause where the tab's pending badge does
-  // (#4969), so the list, its total and the badge cannot drift apart.
   const newBookingWhere = buildNewBookingExceptionQueueWhere(input.status);
   const modificationWhere = buildModificationExceptionQueueWhere(input.status);
   const direction = adminQueueCreatedOrder(input.status === "REQUESTED");
