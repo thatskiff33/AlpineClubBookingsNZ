@@ -54,7 +54,7 @@ import { withTimeZoneAsync } from "./helpers/timezone";
 // runner. This is the exact instant `main` failed at, not an invented one.
 const BOUNDARY_INSTANT = "2026-08-31T14:30:03.000Z";
 
-// The runner's zone (GitHub `ubuntu-latest`) and the club's, named explicitly.
+// The runner's zone (GitHub-hosted Ubuntu) and the club's, named explicitly.
 // A single-zone check here would pass vacuously on a developer box that already
 // sits in Pacific/Auckland.
 const RUNNER_ZONE = "UTC";
