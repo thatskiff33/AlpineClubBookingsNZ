@@ -1202,6 +1202,14 @@ parse error (`INV-SSOT`). Put the region where the officer is looking, never
 inside a closed form, and prefer `FocusedActionError` so it takes focus and
 scrolls into view. A plain banner above a long list can be off screen. The
 Seasons page still uses one, which is a known gap and not a model to copy.
+A handler that throws a refusal into its own `catch` reads the failed reply with
+`apiRefusalFromResponse` and shows `refusalMessageOr(err, fallback)`: the
+catch also sees a dropped connection and any bug in the success path, and those
+show the screen's own fallback, never the browser's words or a parse error.
+`admin-failed-response-json-census.test.ts` fails on a new bare `.json()` read
+of a failed reply under `src/app/(admin)`. Its per-file ceilings cover only
+files another open lane was still converting; lower an entry when you convert
+its reads.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
