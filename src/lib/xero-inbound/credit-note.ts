@@ -7,7 +7,7 @@ import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
 import { buildCreditNoteAllocationTargets, buildSyntheticAllocationLinkId, buildXeroPaymentDisplayNumber, getCreditNoteAmountCents } from "./amounts";
-import { creditNoteAllocationSnapshotStamp, readStoredCreditNoteSnapshots, retireUnlistedCreditNoteAllocations, writeCurrentCreditNoteAllocation } from "./retire-unlisted-credit-note-allocations";
+import { creditNoteAllocationSnapshotStamp, readStoredCreditNoteSnapshots, retireUnlistedCreditNoteAllocations, writeCurrentCreditNoteAllocations } from "./retire-unlisted-credit-note-allocations";
 import { dedupeResolvedXeroObjectLinks, dedupeXeroObjectLinks, findActiveXeroObjectLinks, findPaymentIdsWithCancelledRefundNoteMirror, getDerivedInboundAllocationRole, isDeletedXeroPaymentStatus, recoverBookingScopedLinksFromOutboundOperations } from "./object-links";
 import { creditNotePaymentsForAbsence, retireDeletedPaymentLinksAbsentFromPayload } from "./deleted-payment-links";
 import { writeXeroInboundAuditLogs } from "./audit";
@@ -345,9 +345,9 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
 
   // #4447: a newer stamp already on the row wins, so an older reading cannot
   // turn a removed allocation back on by listing its invoice again.
-  for (const link of allocationLinks) {
-    await writeCurrentCreditNoteAllocation(link);
-  }
+  // #4449 (`INV-PAY-126`): a modification note's write decides its bank-transfer payment's refunded total under the Payment row.
+  const isModificationNote = resolvedCreditNoteLinks.some((link) => link.role === "MODIFICATION_CREDIT_NOTE");
+  await writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote });
   // #4447: the invoices this reading no longer lists, in the same pass as the
   // writes above and before the recount. A stored snapshot that refuses the
   // reading turns nothing off.
@@ -362,9 +362,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   const resolveCurrentModificationRefunds = () =>
     resolveModificationRefundAmountsByPaymentId({
       creditNoteId: creditNote.creditNoteID!,
-      isModificationNote: resolvedCreditNoteLinks.some(
-        (link) => link.role === "MODIFICATION_CREDIT_NOTE"
-      ),
+      isModificationNote,
       allocationTargets,
     });
   const modificationRefundAmountsByPaymentId = await resolveCurrentModificationRefunds();

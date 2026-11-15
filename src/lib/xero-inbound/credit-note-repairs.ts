@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
-import { buildBookingAppliedCreditDescription, type CreditNoteAllocationCents, getCreditNoteAmountCents, getJsonRecord, getNextRefundedPaymentStatus, getRefundContributionCentsFromCreditNoteMetadata, sumAppliedCentsByCreditNote } from "./amounts";
+import { buildBookingAppliedCreditDescription, getCreditNoteAmountCents, getJsonRecord, getNextRefundedPaymentStatus, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
 import { isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment } from "@/lib/xero-refund-note-status";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -18,11 +18,9 @@ import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-a
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
-import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-credit-modification-notes";
-import { paymentsCountingInvoiceCorrections, uncapturedPrimaryStatus } from "./modification-note-refunds";
+import { uncapturedPrimaryStatus } from "./modification-note-refunds";
+import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
 import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
-import { readRefundRequestPaidBackCentsByPaymentId } from "./refund-request-paid-back";
-import { CLEARING_ALLOCATION_LINK_WHERE, distinctClearingAllocations, NOTE_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
 
 /** #3792: the operator alert, and the audit action, for a refused change. */
 const RESTORED_BOOKING_ALLOCATION_CHANGE_ERROR_TYPE =
@@ -184,167 +182,13 @@ export async function repairRefundedPaymentBusinessState(input: {
   });
   if (payments.length === 0) return { matchedPayments: 0, updatedPayments: 0 };
 
-  // #4215 (`INV-PAY-118`): requests' paid-back cash, read AFTER the payment rows, so one completed in between loses the claim
-  // below. #4288: the note's own refund-note row too; its void may move no Payment column, so `repairOne` re-reads it locked.
-  const [directRefundLinks, modificationAllocationLinks, refundRequestPaidBackCentsByPaymentId, currentNoteRows] = await Promise.all([
-    prisma.xeroObjectLink.findMany({
-      where: {
-        localModel: "Payment",
-        localId: {
-          in: paymentIds,
-        },
-        xeroObjectType: "CREDIT_NOTE",
-        role: {
-          in: ["REFUND_CREDIT_NOTE", "ACCOUNT_CREDIT_NOTE"],
-        },
-        active: true,
-      },
-      select: {
-        localId: true,
-        xeroObjectId: true,
-        metadata: true,
-      },
-    }),
-    // The note's own role only: a payment's role-less links mirror its refund and account notes (#4786).
-    prisma.xeroObjectLink.findMany({
-      where: { localModel: "Payment", localId: { in: paymentIds }, xeroObjectType: "ALLOCATION", role: NOTE_ALLOCATION_ROLE, active: true },
-      select: { localId: true, xeroObjectId: true, role: true, metadata: true, updatedAt: true },
-    }),
-    readRefundRequestPaidBackCentsByPaymentId(paymentIds),
+  // #4449 (`INV-PAY-126`): what each payment's links record, less the note being synced (`decideLinkedRefundedTotalCents`),
+  // read AFTER the payment rows, so a request paid back in between (#4215, `INV-PAY-118`) loses the claim below.
+  // #4288: the note's own refund-note row too; its void may move no Payment column, so `repairOne` re-reads it locked.
+  const [linkedRefundedCentsByPaymentId, currentNoteRows] = await Promise.all([
+    decideLinkedRefundedTotalCents(prisma, payments, { excludeCreditNoteId: input.creditNoteId }),
     input.creditNoteId === null ? new Map<string, { active: boolean; metadata: unknown }>() : readRefundNoteRowsByPayment(input.creditNoteId, paymentIds, prisma),
   ]);
-
-  // #3979 (`INV-PAY-126`): a bank-transfer payment's modification notes are
-  // found by its invoice too. The inbound sync links an edit's note and its
-  // allocation to the edit, not the payment, so a recount triggered by any
-  // later note used to drop every earlier modification note from the total -
-  // overstating the net of a payment whose receipt kept the stored figure.
-  const invoicePaymentIds = new Map(
-    payments.flatMap((payment) =>
-      payment.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId
-        ? [[payment.xeroInvoiceId, payment.id] as const]
-        : [],
-    ),
-  );
-  // #4786: by invoice, also a role-less link an older repair wrote on the note's anchor.
-  const invoiceAllocationLinks =
-    invoicePaymentIds.size === 0
-      ? []
-      : await prisma.xeroObjectLink.findMany({
-          where: {
-            xeroObjectType: "ALLOCATION",
-            active: true,
-            AND: [
-              CLEARING_ALLOCATION_LINK_WHERE,
-              { OR: [...invoicePaymentIds.keys()].map((invoiceId) => ({ metadata: { path: ["invoiceId"], equals: invoiceId } })) },
-            ],
-          },
-          select: { localId: true, xeroObjectId: true, role: true, metadata: true, updatedAt: true },
-        });
-  // #4095 (L1), #4786: each payment's links read as what each note applied to
-  // each invoice, once (`distinctClearingAllocations`): per note and invoice
-  // the newest own-role link with a positive amount, else the newest
-  // role-less one, so the same allocation linked to several local objects, a
-  // role-less link beside the mirror's, or an older amount left active beside
-  // a re-synced one never counts twice.
-  const linksByPaymentId = new Map<string, Array<(typeof modificationAllocationLinks)[number]>>();
-  for (const { paymentId, link } of [
-    ...modificationAllocationLinks.map((link) => ({ paymentId: link.localId, link })),
-    ...invoiceAllocationLinks.flatMap((link) => {
-      const invoiceId = getJsonRecord(link.metadata)?.invoiceId;
-      const paymentId = typeof invoiceId === "string" ? invoicePaymentIds.get(invoiceId) : undefined;
-      return paymentId ? [{ paymentId, link }] : [];
-    }),
-  ]) {
-    linksByPaymentId.set(paymentId, [...(linksByPaymentId.get(paymentId) ?? []), link]);
-  }
-  const existingModificationAllocations = [...linksByPaymentId].flatMap(([paymentId, links]) =>
-    distinctClearingAllocations(links, { requireAmount: true }).map((allocation) => ({ ...allocation, paymentId })),
-  );
-  const existingModificationCreditNoteIds = [
-    ...new Set(existingModificationAllocations.map((allocation) => allocation.creditNoteId).filter((id) => id !== input.creditNoteId)),
-  ];
-  const validModificationCreditNoteIds = new Set<string>();
-  const validCorrectionNoteIds = new Set<string>();
-
-  if (existingModificationCreditNoteIds.length > 0) {
-    const modificationCreditNotes = await prisma.xeroObjectLink.findMany({
-      where: {
-        xeroObjectType: "CREDIT_NOTE",
-        role: "MODIFICATION_CREDIT_NOTE",
-        xeroObjectId: {
-          in: existingModificationCreditNoteIds,
-        },
-        active: true,
-      },
-      select: {
-        xeroObjectId: true,
-        metadata: true,
-      },
-    });
-
-    // #3809 (review M2), #3954: a give-back or billed-offset note moved no cash.
-    // #3979: nor did an invoice correction, but it is counted against a payment
-    // whose bank receipt was recorded at the stored figure.
-    const [noCashNoteIds, correctionNoteIds] = await Promise.all([
-      noCashModificationNoteIds(existingModificationCreditNoteIds),
-      invoiceCorrectionNoteIds(existingModificationCreditNoteIds),
-    ]);
-    for (const link of modificationCreditNotes) {
-      if (!isIncludedRefundCreditNoteStatus(getJsonRecord(link.metadata)?.status)) continue;
-      if (!noCashNoteIds.has(link.xeroObjectId)) {
-        validModificationCreditNoteIds.add(link.xeroObjectId);
-      } else if (correctionNoteIds.has(link.xeroObjectId)) {
-        validCorrectionNoteIds.add(link.xeroObjectId);
-      }
-    }
-  }
-  const paymentsCountingCorrections =
-    validCorrectionNoteIds.size > 0 ? await paymentsCountingInvoiceCorrections(paymentIds) : new Set<string>();
-
-  const directRefundCentsByPaymentId = new Map<string, Map<string, number>>();
-  for (const link of directRefundLinks) {
-    if (link.xeroObjectId === input.creditNoteId) {
-      continue;
-    }
-
-    const contributionCents = getRefundContributionCentsFromCreditNoteMetadata(
-      link.metadata
-    );
-    if (contributionCents === null) {
-      continue;
-    }
-
-    const paymentRefunds =
-      directRefundCentsByPaymentId.get(link.localId) ?? new Map<string, number>();
-    paymentRefunds.set(link.xeroObjectId, contributionCents);
-    directRefundCentsByPaymentId.set(link.localId, paymentRefunds);
-  }
-
-  // #4095 (L1): a note's applications to a payment's invoices (one each, read
-  // above), summed per note by the rule the kept settle applies
-  // (`sumAppliedCentsByCreditNote`).
-  const modificationAllocationsByPaymentId = new Map<string, CreditNoteAllocationCents[]>();
-  for (const { creditNoteId, paymentId, amountCents } of existingModificationAllocations) {
-    if (creditNoteId === input.creditNoteId) continue;
-    if (
-      !validModificationCreditNoteIds.has(creditNoteId) &&
-      !(validCorrectionNoteIds.has(creditNoteId) && paymentsCountingCorrections.has(paymentId))
-    ) {
-      continue;
-    }
-    if (amountCents === null) continue; // `requireAmount` above leaves none
-    modificationAllocationsByPaymentId.set(paymentId, [
-      ...(modificationAllocationsByPaymentId.get(paymentId) ?? []),
-      { creditNoteId, appliedCents: Math.round(amountCents) },
-    ]);
-  }
-  const modificationRefundCentsByPaymentId = new Map(
-    [...modificationAllocationsByPaymentId].map(([paymentId, allocations]) => [
-      paymentId,
-      sumAppliedCentsByCreditNote(allocations),
-    ]),
-  );
 
   // #4288: each payment's current note as its own refund-note row holds it NOW (read above, after the payment rows),
   // never the reading or a remembered verdict: an inactive or VOIDED/DELETED row counts nothing; no row, the reading; no note being synced (#4095), nothing.
@@ -371,13 +215,6 @@ export async function repairRefundedPaymentBusinessState(input: {
 
   type RepairedPayment = (typeof payments)[number];
   const repairOne = async (payment: RepairedPayment): Promise<"updated" | "unchanged" | "lost" | "recount"> => {
-    const directRefundTotalCents = Array.from(
-      directRefundCentsByPaymentId.get(payment.id)?.values() ?? []
-    ).reduce((sum, amountCents) => sum + amountCents, 0);
-    const modificationRefundTotalCents = Array.from(
-      modificationRefundCentsByPaymentId.get(payment.id)?.values() ?? []
-    ).reduce((sum, amountCents) => sum + amountCents, 0);
-
     const currentDirectRefundContributionCents =
       currentDirectRefundPaymentId === payment.id ? currentCreditNoteAmountCents(payment.id) ?? 0 : 0;
     const currentModificationRefundContributionCents =
@@ -386,11 +223,9 @@ export async function repairRefundedPaymentBusinessState(input: {
         : 0;
 
     const rawRefundedTotalCents =
-      directRefundTotalCents +
-      modificationRefundTotalCents +
+      (linkedRefundedCentsByPaymentId.get(payment.id) ?? 0) +
       currentDirectRefundContributionCents +
-      currentModificationRefundContributionCents +
-      (refundRequestPaidBackCentsByPaymentId.get(payment.id) ?? 0);
+      currentModificationRefundContributionCents;
     const nextRefundedTotalCents = Math.min(
       Math.max(rawRefundedTotalCents, 0),
       payment.amountCents

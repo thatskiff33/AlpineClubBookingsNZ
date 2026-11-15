@@ -8,9 +8,9 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import {
   paidInvoiceFacts,
   planInternetBankingCashSettlement,
-  receiptCountsInvoiceCorrections,
   type CashSettlementTransaction,
 } from "@/lib/xero-inbound/settle-from-cash";
+import { receiptCountsInvoiceCorrections } from "@/lib/xero-inbound/ib-receipt-reasons";
 import { readCashSettlementNotice } from "@/lib/xero-inbound/settle-from-cash-notice";
 import { ibSettlementFigureParagraph } from "@/lib/ib-settlement-figure-note";
 import { adminBankTransferSettlementFigureTemplate } from "@/lib/email-templates/admin-bank-transfer-settlement";

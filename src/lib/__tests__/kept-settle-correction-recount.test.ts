@@ -11,11 +11,17 @@ const mocks = vi.hoisted(() => ({
   repair: vi.fn(),
   readModificationNoteCash: vi.fn(),
   loggerError: vi.fn(),
+  decideLinked: vi.fn(),
+  floor: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: { xeroObjectLink: { findFirst: mocks.linkFindFirst, findMany: mocks.linkFindMany } } }));
 vi.mock("@/lib/logger", () => ({ default: { error: mocks.loggerError, warn: vi.fn(), info: vi.fn() } }));
 vi.mock("@/lib/xero-inbound/credit-note-repairs", () => ({ repairRefundedPaymentBusinessState: mocks.repair }));
+// The whole-total decision and its floor are the repair's own, pinned in
+// `xero-credit-note-repairs.test.ts` and driven for real by the realdb suites.
+vi.mock("@/lib/xero-inbound/linked-refunded-total", () => ({ decideLinkedRefundedTotalCents: mocks.decideLinked }));
+vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", () => ({ bankTransferFloorCents: mocks.floor }));
 vi.mock("@/lib/xero-inbound/account-credit-modification-notes", () => ({
   readModificationNoteCash: mocks.readModificationNoteCash,
 }));
@@ -30,6 +36,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   // The repair's own result shape (`RefundedPaymentBusinessStateRepairResult`).
   mocks.repair.mockResolvedValue({ matchedPayments: 1, updatedPayments: 1 });
+  mocks.decideLinked.mockResolvedValue(new Map());
+  mocks.floor.mockImplementation(async (_store: unknown, input: { xeroDerivedCents: number }) => ({ cents: input.xeroDerivedCents, alert: null }));
 });
 
 describe("recountCorrectionsAfterKeptSettle (#4095 items 5 and 12)", () => {
@@ -99,7 +107,7 @@ describe("decideInternetBankingReceiptFigure names the applied corrections (#409
     };
     const decided = await decideInternetBankingReceiptFigure(tx as never, {
       invoiceId: INVOICE_ID,
-      payment: { id: "pay-1", amountCents: 30_000, refundedAmountCents: 0 },
+      payment: { id: "pay-1", bookingId: "booking-1", amountCents: 30_000, refundedAmountCents: 0 },
       cash: { knownCents: 20_000, complete: false },
       matchedPayments: 1,
       secondInstrument: false,
@@ -129,7 +137,7 @@ describe("decideInternetBankingReceiptFigure names the applied corrections (#409
   });
 });
 
-describe("a keep counts an applied correction already synced in its own transaction (#4095 review, item 1)", () => {
+describe("a keep sets the whole refunded total its links decide, in its own transaction (#4449)", () => {
   type Row = { kind: string; source: string; status: string; amountCents: number; refundedAmountCents: number; reason: string | null };
   const pendingReceipt = (overrides: Partial<Row> = {}): Row => ({
     kind: "PRIMARY",
@@ -140,168 +148,96 @@ describe("a keep counts an applied correction already synced in its own transact
     reason: "internet_banking_booking_payment",
     ...overrides,
   });
-  const noteLink = (status: string | null) => ({ xeroObjectId: "cn-correction", metadata: status === null ? {} : { status } });
-  const NOTE_ALLOCATION_ROLE = "MODIFICATION_CREDIT_NOTE_ALLOCATION";
-  const ROLELESS_ALLOCATION_ROLE = "CREDIT_NOTE_ALLOCATION";
-  const allocationLink = {
-    localModel: "BookingModification",
-    role: NOTE_ALLOCATION_ROLE,
-    metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, amountCents: 10_000 },
-    updatedAt: new Date("2026-06-01T00:00:00.000Z"),
-  };
-  // `null`: no amount recorded.
-  const rolelessLink = (amountCents: number | null = 10_000, localModel = "BookingModification") => ({
-    localModel,
-    role: ROLELESS_ALLOCATION_ROLE,
-    metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID, ...(amountCents === null ? {} : { amountCents }) },
-    updatedAt: new Date("2026-06-02T00:00:00.000Z"),
-  });
-  type RoleClause = { role: string; localModel?: { not: string } };
-  type AllocationRow = { localModel: string; role: string };
-  // A link matches a role clause as Postgres would match it.
-  const matchesRoleClause = (link: AllocationRow, clause: RoleClause) =>
-    link.role === clause.role && (clause.localModel === undefined || link.localModel !== clause.localModel.not);
 
   function decide(input: {
     rows?: Row[];
     refundedAmountCents?: number;
-    noteLinks?: unknown[];
-    allocationLinks?: unknown[];
+    linkedCents?: number;
     cash?: { knownCents: number; complete: boolean };
     matchedPayments?: number;
   }) {
     mocks.readModificationNoteCash.mockResolvedValue(new Map([["cn-correction", "correction"]]));
-    // Only the allocation links the query's role clauses match, as Postgres returns them.
-    const linkFindMany = vi.fn(async ({ where }: { where: { role?: string; AND?: Array<{ OR: RoleClause[] }> } }) =>
-      where.role === "MODIFICATION_CREDIT_NOTE"
-        ? (input.noteLinks ?? [noteLink("AUTHORISED")])
-        : ((input.allocationLinks ?? [allocationLink]) as AllocationRow[]).filter((link) =>
-            (where.AND ?? [{ OR: where.role ? [{ role: where.role }] : [] }]).every((group) =>
-              group.OR.some((clause) => matchesRoleClause(link, clause)),
-            ),
-          ),
-    );
+    mocks.decideLinked.mockResolvedValue(new Map([[PAYMENT_ID, input.linkedCents ?? 10_000]]));
     const tx = {
       paymentTransaction: { findMany: vi.fn().mockResolvedValue(input.rows ?? [pendingReceipt()]) },
       memberCredit: { findMany: vi.fn().mockResolvedValue([]) },
-      xeroObjectLink: { findMany: linkFindMany },
     };
-    const decided = decideInternetBankingReceiptFigure(tx as never, {
+    return decideInternetBankingReceiptFigure(tx as never, {
       invoiceId: INVOICE_ID,
-      payment: { id: PAYMENT_ID, amountCents: 30_000, refundedAmountCents: input.refundedAmountCents ?? 0 },
+      payment: { id: PAYMENT_ID, bookingId: "booking-1", amountCents: 30_000, refundedAmountCents: input.refundedAmountCents ?? 0 },
       // Xero's amount paid unquantifiable: the settle keeps the stored $300.
       cash: input.cash ?? { knownCents: 20_000, complete: false },
       matchedPayments: input.matchedPayments ?? 1,
       secondInstrument: false,
       invoice: { totalCents: 30_000, appliedCreditNotes: [{ id: "cn-correction", appliedCents: 10_000 }] },
     });
-    return { decided, linkFindMany };
   }
 
-  it("MUTATION: the $100 correction synced before the transfer is counted with the receipt, so the net is the $200 of cash at the commit", async () => {
-    const { decided, linkFindMany } = decide({});
-    await expect(decided).resolves.toMatchObject({
+  it("MUTATION: the $100 correction synced before the transfer is counted with the receipt as the keep captures it", async () => {
+    await expect(decide({})).resolves.toMatchObject({
       plan: { kind: "keep" },
       receiptCents: 30_000,
       paymentColumns: { amountCents: 30_000, refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED" },
+      floorAlert: null,
     });
-    // Read in the settle's transaction: the note's live link and its allocation to this invoice.
-    expect(linkFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ role: "MODIFICATION_CREDIT_NOTE", active: true, xeroObjectId: { in: ["cn-correction"] } }) }),
-    );
-    expect(linkFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          AND: [{ OR: [{ role: NOTE_ALLOCATION_ROLE }, { role: ROLELESS_ALLOCATION_ROLE, localModel: { not: "Payment" } }] }],
-          active: true,
-          metadata: { path: ["invoiceId"], equals: INVOICE_ID },
-        }),
-      }),
-    );
+    // Decided in the settle's transaction, for this payment by this invoice,
+    // with its bank receipt read as captured - the rows the links count against.
+    expect(mocks.decideLinked).toHaveBeenCalledTimes(1);
+    const [store, payments, options] = mocks.decideLinked.mock.calls[0];
+    expect(store).toHaveProperty("paymentTransaction");
+    expect(payments).toEqual([{ id: PAYMENT_ID, source: "INTERNET_BANKING", xeroInvoiceId: INVOICE_ID }]);
+    expect(options.transactionRowsOverride.get(PAYMENT_ID)).toEqual([pendingReceipt({ status: "SUCCEEDED" })]);
+    expect(options).not.toHaveProperty("excludeCreditNoteId");
   });
 
-  it("a note link with no status recorded counts, as the recount counts it", async () => {
-    await expect(decide({ noteLinks: [noteLink(null)] }).decided).resolves.toMatchObject({
-      paymentColumns: { refundedAmountCents: 10_000 },
+  it("MUTATION: the total is absolute, never an increment on a stored figure that already holds part of it", async () => {
+    // CASE 2 of the realdb race: $50 stored, the links decide $150 - $150, not $200.
+    await expect(decide({ refundedAmountCents: 5_000, linkedCents: 15_000 })).resolves.toMatchObject({
+      paymentColumns: { refundedAmountCents: 15_000, status: "PARTIALLY_REFUNDED" },
     });
   });
 
-  it("MUTATION: never a voided correction", async () => {
-    await expect(decide({ noteLinks: [noteLink("VOIDED")] }).decided).resolves.toMatchObject({ paymentColumns: null });
+  it("a stored total the links already decide writes nothing", async () => {
+    await expect(decide({ refundedAmountCents: 10_000 })).resolves.toMatchObject({ plan: { kind: "keep" }, paymentColumns: null });
   });
 
-  it("MUTATION: never one whose allocation to this invoice is not linked yet - its sync, and the recount after the commit, count it", async () => {
-    await expect(decide({ allocationLinks: [] }).decided).resolves.toMatchObject({ paymentColumns: null });
+  it("a receipt with no bank-transfer PRIMARY row is decided as the keep creates one", async () => {
+    await decide({ rows: [] });
+    const [, , options] = mocks.decideLinked.mock.calls[0];
+    expect(options.transactionRowsOverride.get(PAYMENT_ID)).toEqual([
+      expect.objectContaining({ kind: "PRIMARY", source: "INTERNET_BANKING", status: "SUCCEEDED" }),
+    ]);
   });
 
-  // #4786: an older repair could link the note's allocation role-less
-  // (`CREDIT_NOTE_ALLOCATION`); it shows the allocation linked as the note's
-  // own role does (`distinctClearingAllocations`), and the correction counts
-  // once, at what Xero applied.
-  it("MUTATION (#4786): an allocation linked only role-less counts", async () => {
-    await expect(decide({ allocationLinks: [rolelessLink()] }).decided).resolves.toMatchObject({
-      paymentColumns: { refundedAmountCents: 10_000 },
+  it("never over the payment's amount", async () => {
+    await expect(decide({ linkedCents: 45_000 })).resolves.toMatchObject({
+      paymentColumns: { refundedAmountCents: 30_000, status: "REFUNDED" },
     });
   });
 
-  it("#4786: the inbound mirror's own-role link and the role-less one for the same allocation count the correction once", async () => {
-    await expect(decide({ allocationLinks: [allocationLink, rolelessLink()] }).decided).resolves.toMatchObject({
-      paymentColumns: { refundedAmountCents: 10_000 },
-    });
-  });
-
-  it("#4786: a role-less link for another amount beside the own-role one still counts the correction once, at what Xero applied", async () => {
-    await expect(decide({ allocationLinks: [allocationLink, rolelessLink(4_000)] }).decided).resolves.toMatchObject({
-      paymentColumns: { refundedAmountCents: 10_000 },
-    });
-  });
-
-  it("MUTATION (#4786): a role-less link with no amount recorded shows nothing linked - the recount after the commit decides", async () => {
-    await expect(decide({ allocationLinks: [rolelessLink(null)] }).decided).resolves.toMatchObject({ paymentColumns: null });
-  });
-
-  it("MUTATION (#4786): a role-less link on a payment - its refund or account note's mirror - shows nothing linked", async () => {
-    await expect(decide({ allocationLinks: [rolelessLink(10_000, "Payment")] }).decided).resolves.toMatchObject({ paymentColumns: null });
-  });
-
-  it("MUTATION (#4786): an own-role link with no amount still shows the note linked - the keep reads presence, never an amount", async () => {
-    await expect(
-      decide({ allocationLinks: [{ ...allocationLink, metadata: { creditNoteId: "cn-correction", invoiceId: INVOICE_ID } }] }).decided,
-    ).resolves.toMatchObject({ paymentColumns: { refundedAmountCents: 10_000 } });
-  });
-
-  it("#4786: an allocation link with any other role shows nothing linked", async () => {
-    await expect(
-      decide({ allocationLinks: [{ ...allocationLink, role: "APPLIED_CREDIT_ALLOCATION" }] }).decided,
-    ).resolves.toMatchObject({ paymentColumns: null });
-  });
-
-  it("MUTATION: never over a refunded total its rows do not explain, which may already hold the correction", async () => {
-    const { decided, linkFindMany } = decide({ refundedAmountCents: 10_000 });
-    await expect(decided).resolves.toMatchObject({ plan: { kind: "keep" }, paymentColumns: null });
-    expect(linkFindMany).not.toHaveBeenCalled();
-  });
-
-  it("MUTATION: never against a receipt that would not hold the stored figure", async () => {
-    const { decided, linkFindMany } = decide({ rows: [pendingReceipt({ reason: "xero_part_payment_recognised_at_cancel" })] });
-    await expect(decided).resolves.toMatchObject({ plan: { kind: "keep" }, paymentColumns: null });
-    expect(linkFindMany).not.toHaveBeenCalled();
+  it("MUTATION (INV-ADDPAY-021): the bank-transfer floor applies, and its alert is returned for after the commit", async () => {
+    const alert = { paymentId: PAYMENT_ID, bookingId: "booking-1", creditNoteId: null, creditNoteNumber: null, xeroDerivedCents: 10_000, floorCents: 4_000 };
+    mocks.floor.mockResolvedValueOnce({ cents: 4_000, alert });
+    await expect(decide({})).resolves.toMatchObject({ paymentColumns: { refundedAmountCents: 4_000 }, floorAlert: alert });
+    expect(mocks.floor).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ xeroDerivedCents: 10_000, creditNoteId: null }));
   });
 
   it("MUTATION: never on an invoice matched to several payments, whose share of the correction is unknown; nor is it recounted after", async () => {
-    const { decided, linkFindMany } = decide({ matchedPayments: 2 });
-    await expect(decided).resolves.toMatchObject({ plan: { kind: "keep" }, paymentColumns: null, appliedCorrectionNotes: [] });
-    expect(linkFindMany).not.toHaveBeenCalled();
+    await expect(decide({ matchedPayments: 2 })).resolves.toMatchObject({ plan: { kind: "keep" }, paymentColumns: null, appliedCorrectionNotes: [] });
+    expect(mocks.decideLinked).not.toHaveBeenCalled();
   });
 
   it("never on a replay, whose receipt is already captured", async () => {
-    const { decided, linkFindMany } = decide({ rows: [pendingReceipt({ status: "SUCCEEDED" })] });
-    await expect(decided).resolves.toMatchObject({ plan: { kind: "replay" }, paymentColumns: null });
-    expect(linkFindMany).not.toHaveBeenCalled();
+    await expect(decide({ rows: [pendingReceipt({ status: "SUCCEEDED" })] })).resolves.toMatchObject({ plan: { kind: "replay" }, paymentColumns: null });
+    expect(mocks.decideLinked).not.toHaveBeenCalled();
   });
 
   it("never on a rewrite, whose cash-sized receipt counts no correction", async () => {
-    const { decided } = decide({ cash: { knownCents: 20_000, complete: true } });
-    await expect(decided).resolves.toMatchObject({ plan: { kind: "rewrite" }, paymentColumns: { amountCents: 20_000, refundedAmountCents: 0 } });
+    await expect(decide({ cash: { knownCents: 20_000, complete: true } })).resolves.toMatchObject({
+      plan: { kind: "rewrite" },
+      paymentColumns: { amountCents: 20_000, refundedAmountCents: 0 },
+      floorAlert: null,
+    });
+    expect(mocks.decideLinked).not.toHaveBeenCalled();
   });
 });
