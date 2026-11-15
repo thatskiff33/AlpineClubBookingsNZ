@@ -1,8 +1,11 @@
 // #4284: the one order of a payment's card refund rows and recorded refunds,
 // shared by the owed-figure attribution (`open-card-refund-owed.ts`) and every
-// read that feeds it. Plain module (a type-only Prisma import), so a client
-// page can import the module that reads it.
+// read that feeds it. Plain module (a type-only Prisma import and the shared
+// code-unit comparator, `compareOrdinal`), so a client page can import the
+// module that reads it.
 import type { Prisma } from "@prisma/client";
+
+import { compareOrdinal } from "@/lib/ordinal-order";
 
 /**
  * #4284 (`INV-PAY-121`, `INV-SSOT`): THE ONE ORDER OF A PAYMENT'S CARD REFUND
@@ -47,18 +50,12 @@ interface RecordedCardRefundOrderKey {
   stripeRefundId: string;
 }
 
-/** Code-unit order of two unique strings, the same on every runtime (never `localeCompare`). */
-function compareUniqueKeys(left: string, right: string): number {
-  if (left === right) return 0;
-  return left < right ? -1 : 1;
-}
-
 /** Card refund rows oldest raised first, a `createdAt` tie broken by `id` (#4284). */
 export function compareCardRefundOperations(
   left: CardRefundRowOrderKey,
   right: CardRefundRowOrderKey,
 ): number {
-  return left.createdAt.getTime() - right.createdAt.getTime() || compareUniqueKeys(left.id, right.id);
+  return left.createdAt.getTime() - right.createdAt.getTime() || compareOrdinal(left.id, right.id);
 }
 
 /** Recorded refunds oldest recorded first, a `createdAt` tie broken by `stripeRefundId` (#4284). */
@@ -66,5 +63,5 @@ export function compareRecordedCardRefunds(
   left: RecordedCardRefundOrderKey,
   right: RecordedCardRefundOrderKey,
 ): number {
-  return left.createdAt.getTime() - right.createdAt.getTime() || compareUniqueKeys(left.stripeRefundId, right.stripeRefundId);
+  return left.createdAt.getTime() - right.createdAt.getTime() || compareOrdinal(left.stripeRefundId, right.stripeRefundId);
 }
