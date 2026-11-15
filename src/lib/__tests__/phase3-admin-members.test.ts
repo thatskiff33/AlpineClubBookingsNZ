@@ -136,11 +136,17 @@ const {
     skipped: 0,
   }),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mockIsXeroConnected,
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   syncManagedXeroContactGroupForMember: mockSyncManagedXeroContactGroupForMember,
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: mockUpdateXeroContact,
+}));
+vi.mock("@/lib/xero-entrance-fee-invoices", () => ({
   createXeroEntranceFeeInvoice: mockCreateXeroEntranceFeeInvoice,
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -150,7 +156,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/email", () => ({
   sendMemberSetupInviteEmail: vi.fn(),
 }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
+
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
@@ -1441,7 +1447,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toBe("text/csv; charset=utf-8");
       const disposition = res.headers.get("Content-Disposition")!;
-      expect(disposition).toMatch(/tac-members-\d{4}-\d{2}-\d{2}\.csv/);
+      expect(disposition).toMatch(/filename="emc-members-\d{4}-\d{2}-\d{2}\.csv"/);
 
       const csv = await res.text();
       const lines = csv.split("\r\n");
@@ -2079,6 +2085,7 @@ describe("Phase 3: Admin Member Management", () => {
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           $executeRaw: vi.fn().mockResolvedValue(1),
           member: {
             create: vi.fn().mockResolvedValue({
@@ -2357,6 +2364,7 @@ describe("Phase 3: Admin Member Management", () => {
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           $executeRaw: vi.fn().mockResolvedValue(1),
           member: {
             updateMany,

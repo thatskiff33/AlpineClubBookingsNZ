@@ -55,7 +55,10 @@ type ReviewedWriter = {
 };
 
 /** The only exempt writers allowed an untraced value: local demo data. */
-const UNTRACED_EXEMPT_WRITERS = ["prisma/demo-seed.ts#makeMember", "prisma/demo-seed.ts#main"];
+const UNTRACED_EXEMPT_WRITERS = [
+  "prisma/demo-seed-writers.ts#createDemoMember",
+  "prisma/demo-seed.ts#main",
+];
 
 // A directory whose raw-SQL writers are exempt as a class: every SQL site
 // under it is covered, and a property writer there still needs its own entry.
@@ -68,7 +71,7 @@ const REVIEWED_SQL_WRITER_DIRECTORIES: readonly { prefix: string; reason: string
 ];
 
 const GENERATED_PLACEHOLDER =
-  "Hash of random bytes nobody knows; the person sets their own password later through /reset-password, which screens it.";
+  "Fixed precomputed unusable hash; the person sets their own password later through /reset-password, which screens it.";
 
 const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
   // A person chooses the password: screened before the hash is written.
@@ -113,7 +116,7 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     scope: "GET",
     count: 1,
     classification: "exempt",
-    reason: "First kiosk auto-created with a random password; an officer sets a real one through the screened PUT.",
+    reason: "First kiosk auto-created with a fixed precomputed unusable hash; an officer sets a real one through the screened PUT.",
   },
   {
     file: "src/app/api/admin/deletion-requests/[id]/route.ts",
@@ -132,10 +135,9 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
   {
     file: "src/app/api/admin/members/import/route.ts",
     scope: "POST",
-    count: 2,
+    count: 1,
     classification: "exempt",
-    reason: `CSV import: a random-bytes hash computed per row, then copied into the create. ${GENERATED_PLACEHOLDER}`,
-    valueFrom: "src/app/api/admin/members/import/route.ts#POST",
+    reason: `CSV import. ${GENERATED_PLACEHOLDER}`,
   },
   {
     file: "src/app/api/admin/xero/import-member-contact/route.ts",
@@ -225,13 +227,15 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     valueFrom: "prisma/seed.ts#main",
   },
   {
-    file: "prisma/demo-seed.ts",
-    scope: "makeMember",
+    // Shared by prisma/demo-seed.ts and the load volume seeder (#4940).
+    file: "prisma/demo-seed-writers.ts",
+    scope: "createDemoMember",
     count: 1,
     classification: "exempt",
-    reason: "Local demo data with a published demo password; never a production account.",
+    reason: "Local demo and load-test data with a published demo password; never a production account.",
 
-    untracedValue: "DEMO_SEED_PASSWORD or its published default; the demo seed refuses to run without ALLOW_DEMO_SEED=1.",
+    untracedValue:
+      "demoSeedPasswordHash(): DEMO_SEED_PASSWORD or its published default; both callers refuse to run without ALLOW_DEMO_SEED=1.",
   },
   {
     file: "prisma/demo-seed.ts",
@@ -271,6 +275,17 @@ function group(sites: readonly PasswordHashWriterSite[]) {
   return grouped;
 }
 
+describe("password wrapper value tracing", () => {
+  it("recognises the imported placeholder but refuses a typed password, even under its name", () => {
+    const trace = (source: string) => scanPasswordHashWriters("src/example.ts", source).map((s) => s.source);
+    const imported = 'import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";';
+    expect(trace(`${imported} function a() { save({ passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH }); }`)).toEqual(["placeholder"]);
+    expect(trace(`${imported} function a(body) { save({ passwordHash: await hashPassword(body.password) }); }`)).toEqual(["unknown"]);
+    expect(trace(`${imported} function a(UNUSABLE_PLACEHOLDER_PASSWORD_HASH) { save({ passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH }); }`)).toEqual(["parameter"]);
+    expect(trace(`${imported} function a(body) { const UNUSABLE_PLACEHOLDER_PASSWORD_HASH = body.password; save({ passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH }); }`)).toEqual(["unknown"]);
+  });
+});
+
 describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
   const allSites = scanRepositoryPasswordHashWriters();
   const sites = allSites.filter((site) => !sqlDirectory(site));
@@ -294,6 +309,13 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
       expect(allSites.some((site) => sqlDirectory(site) === dir), `${dir.prefix} is stale`).toBe(true);
       expect(dir.reason.trim().length).toBeGreaterThan(20);
     }
+  });
+
+  it("keeps every runtime bcrypt import inside the password-hashing module (INV-AUTH-013)", () => {
+    const forbidden = passwordHashScanFiles().filter((file) => file !== "src/lib/password-hashing.ts").filter((file) =>
+      /(?:\bfrom\s*|\bimport\s*\(?|\brequire\s*\()\s*["'](?:bcryptjs|bcrypt|@node-rs\/bcrypt)["']/.test(fs.readFileSync(file, "utf8")),
+    );
+    expect(forbidden).toEqual([]);
   });
 
   it("lists each manifest entry once", () => {
@@ -325,7 +347,7 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
         expect(
           site.screenedBefore,
           `${site.file}:${site.line} (${site.scope}) writes passwordHash without first binding an awaited ` +
-            "screenChosenPassword of the same password it hashes (bcrypt.hash's first argument) and " +
+            "screenChosenPassword of the same password it hashes (hashPassword's first argument) and " +
             "returning on !result.ok",
         ).toBe(true);
       }
@@ -343,7 +365,7 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
         failures.push(
           `${site.file}:${site.line} (${site.scope}) is exempt but writes a value traced to "${site.source}". ` +
             "An exempt writer must hash randomBytes/randomUUID output, or write DELETED_ACCOUNT_PASSWORD_HASH " +
-            "or a fixed literal; a password a person chose is screened and classified \"chosen\".",
+            "or the imported UNUSABLE_PLACEHOLDER_PASSWORD_HASH or a fixed literal; a password a person chose is screened and classified \"chosen\".",
         );
       }
     }
@@ -385,22 +407,12 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
     }
   });
 
-  it("ties the members import's copied hash to its random per-row hash", () => {
+  it("stores only the shared placeholder for imported members", () => {
     const file = "src/app/api/admin/members/import/route.ts";
     const source = fs.readFileSync(file, "utf8");
-    const importSites = scanPasswordHashWriters(file, source);
-    const random = importSites.filter((site) => site.source === "random");
-    const copies = importSites.filter((site) => site.source === "copy");
-    expect(random).toHaveLength(1);
-    expect(copies.map((site) => site.copiedFromLines)).toEqual([[random[0].line]]);
-    // The same copy from the request body traces to nothing.
-    expect(source).toContain("passwordHash: row.passwordHash,");
-    const fromBody = scanPasswordHashWriters(
-      file,
-      source.replace("passwordHash: row.passwordHash,", "passwordHash: parsedBody.passwordHash,"),
-    );
-    expect(fromBody.filter((site) => site.source === "copy")).toEqual([]);
-    expect(fromBody.filter((site) => site.source === "unknown")).toHaveLength(1);
+    expect(scanPasswordHashWriters(file, source).map((site) => site.source)).toEqual(["placeholder"]);
+    const fromBody = source.replace("passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH,", "passwordHash: parsedBody.passwordHash,");
+    expect(scanPasswordHashWriters(file, fromBody).map((site) => site.source)).toEqual(["unknown"]);
   });
 
   it("allows an untraced exempt value only for the local demo seed", () => {

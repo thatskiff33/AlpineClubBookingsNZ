@@ -99,8 +99,8 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   if (url.startsWith("/api/admin/subscriptions?")) return failure ? fail() : response({ data: [subscription], total: 60, summary: { total: 17, paid: 13, unpaid: 4, overdue: 2, notInvoiced: 0, notRequired: 0 } });
   if (url === "/api/admin/communications/history") return failure ? fail() : response({ history: [history] });
   if (url === "/api/admin/communications/send") return response({ limit: 10 });
-  // #4964: the count the confirmation step shows before anything is sent.
-  if (url.startsWith("/api/admin/communications/send?")) return response({ eligibleRecipients: 1 });
+  // #4964, #4987: the count beside the form and in the confirmation step.
+  if (url.startsWith("/api/admin/communications/send?")) return response({ totalRecipients: 1, eligibleRecipients: 1, optedOut: 0, neverOptedIn: 0 });
   if (url === "/api/admin/lodges") return response({ lodges: [{ id: "lodge-1", name: "Lodge One" }, { id: "lodge-2", name: "Lodge Two" }] });
   if (url.startsWith("/api/admin/hut-leaders/unassigned-dates?")) return failure && failUnassigned ? fail() : response({ unassignedDates: [{ date: "2026-07-10", bookingCount: 1, guestCount: 3 }] });
   if (url.startsWith("/api/admin/hut-leaders?")) return failure && failAssignments ? fail() : response({ assignments: [assignment] });
@@ -211,6 +211,8 @@ for (const kind of ["server", "network", "bare"] as const) {
       failure = kind;
       fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "New newsletter" } });
       fireEvent.change(screen.getByLabelText("Message Body"), { target: { value: "Club news" } });
+      // #4987: the sender chooses the kind of message before sending.
+      fireEvent.click(screen.getByLabelText(/Club newsletter/));
       fireEvent.click(screen.getByRole("button", { name: /Send to members/i }));
       // #4964: nothing is sent until the officer confirms the audience.
       const dialog = await screen.findByRole("dialog");

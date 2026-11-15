@@ -1475,24 +1475,26 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // on the merged tree (main b7466a631, 27 Oct 2026), never added.
     // 392 -> 393 unpinned (#4359): the card-refund re-send hold, unpinned `payment`.
     // RE-MEASURED with `pnpm run audit:census`.
-    // 393 -> 396 unpinned (#4432): the two sync-now rows and the webhook threshold, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 396 -> 398 unpinned (#4457): the retention settings and member-anonymisation rows.
-    // 398 -> 399 unpinned (#4533): the officer's finished-stay promo correction request.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 399 -> 400 unpinned (#4426): the late refund note's row, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 400 -> 401 unpinned (#4655): the late organiser adjustment note's row, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 401 -> 402 unpinned (#4680): the organiser adjustment run's stand-down row, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 402 -> 403 unpinned (#4686): the lost-claim part-success's row, unpinned `xero`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    // 403 -> 404 unpinned (triyder/AlpineClubBookingsNZ#97): the link dialog's `admin`
+    // 393 -> 396 unpinned (subscription-category-decoupling rework): the three
+    // new Subscription Categories admin-CRUD writers, unpinned `admin`.
+    // 396 -> 399 unpinned (#4432, disjoint from the category rework): the two sync-now rows
+    // and the webhook threshold, unpinned `xero`.
+    // 399 -> 401 unpinned (#4457): the retention settings and member-anonymisation rows.
+    // 401 -> 402 unpinned (#4533): the officer's finished-stay promo correction request.
+    // 402 -> 403 unpinned (#4426): the late refund note's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree (first main-sync, 2 Nov 2026).
+    // 403 -> 404 unpinned (#4655): the late organiser adjustment note's row, unpinned `xero`.
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree (second main-sync, 2 Nov 2026).
+    // 404 -> 406 unpinned (third main-sync, 7 Nov 2026): main's own #4680 and #4686 are
+    // disjoint from the category rework's writers already counted above. #4680 is the
+    // organiser adjustment run's stand-down row, unpinned `xero`. #4686 is the
+    // lost-claim part-success's row, unpinned `xero`.
+    // 406 -> 407 unpinned (triyder/AlpineClubBookingsNZ#97): the link dialog's `admin`
     // row, on a finance-gated route, so outside the lodge-gated keep: unpinned.
     // 404 -> 406 unpinned (#4516): the refused card refund reservation and its OPERATOR release, `payment`.
     // RE-MEASURED with `pnpm run audit:census`.
     // 406 -> 408 unpinned (#4368): a dead card refund's "Nothing left owed" and "Try the card again", `payment`.
+    // 408 -> 410 unpinned (#4915): the member's data download and the Full Admin subject access report, `privacy`.
     // RE-MEASURED with `pnpm run audit:census`.
     // 408 -> 409 unpinned (#4916): the after-stay dietary clear's count row, `privacy`.
     // 409 -> 411 unpinned (#4851): a group organiser's dead card refund paid another way (one site) or tried again, `payment`.
@@ -1500,9 +1502,11 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 412 -> 413 unpinned (#4618): the officer two-factor policy save, `security`.
     // RE-MEASURED with `pnpm run audit:census`.
-    // 413 -> 414 unpinned (#4963): Try again on an exhausted email failure, `communication`.
-    // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 414 });
+    // 413 -> 415 unpinned (#4915): the two subject access writers, `privacy`.
+    // 415 -> 418 unpinned (#4496): the three Subscription Categories admin-CRUD writers, `admin`.
+    // 418 -> 419 unpinned (#4963): Try again on an exhausted email failure, `communication`.
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree.
+    ).toEqual({ pinned: 130, unpinned: 419 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

@@ -94,7 +94,9 @@ beforeEach(() => {
   __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => ({ ok: true, json: async () => ({ membershipTypes: [] }) })),
+    // Subscription-category decoupling: the card also fetches
+    // /api/admin/subscription-categories on mount; one body serves both.
+    vi.fn(async () => ({ ok: true, json: async () => ({ membershipTypes: [], subscriptionCategories: [] }) })),
   );
 });
 
