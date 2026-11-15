@@ -3,14 +3,12 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { isMainModule } from "../lib/is-main-module.mjs";
+import { PLAYWRIGHT_RESULTS_FILE } from "./playwright-results-file.mjs";
 import { workflowCommand } from "./dependency-mitigation.mjs";
 
-/**
- * Where the CI-only JSON reporter writes and this script reads (#4991). It is
- * defined once: playwright.config.ts imports it, and the workflow steps pass no
- * path, so the writer and its readers cannot name different files.
- */
-export const PLAYWRIGHT_RESULTS_FILE = ".artifacts/playwright-results.json";
+// The shared results path lives in its own module so playwright.config.ts can
+// import it without loading this CLI entry and its `import.meta` guard.
+export { PLAYWRIGHT_RESULTS_FILE };
 
 /** Extract flaky outcomes from Playwright's JSON reporter (not attempt statuses). */
 export function collectFlakyTests(report, workspace = process.cwd()) {

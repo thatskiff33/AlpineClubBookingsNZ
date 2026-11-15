@@ -2,7 +2,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { chromiumSpecFiles } from "./e2e-spec-shard.mjs";
-import { PLAYWRIGHT_RESULTS_FILE } from "./summarise-playwright-flaky.mjs";
+import { PLAYWRIGHT_RESULTS_FILE } from "./playwright-results-file.mjs";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 

@@ -597,9 +597,11 @@ run, missing, unreadable or malformed JSON fails the reporting step; absence of
 evidence is not a clean run. A job that failed before Playwright started skips
 the step. The CI-only JSON reporter writes `.artifacts/playwright-results.json`,
 separate from the HTML report and test attachments. That path is one constant,
-`PLAYWRIGHT_RESULTS_FILE` in `scripts/ci/summarise-playwright-flaky.mjs`: the
+`PLAYWRIGHT_RESULTS_FILE` in `scripts/ci/playwright-results-file.mjs`: the
 config writes to it and the summariser reads it by default, so neither workflow
-step names the path. Rollover `--list` probes use only the list reporter and are
+step names the path. Playwright loads the config and its imports as CommonJS,
+which cannot run `import.meta`, so the config never imports a CLI entry such as
+the summariser; `playwright-config-loading.test.ts` checks this. Rollover `--list` probes use only the list reporter and are
 not summarised.
 
 When a test appears, inspect the HTML report and retained retry evidence, then

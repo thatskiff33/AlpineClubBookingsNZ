@@ -10,7 +10,7 @@ import {
   parseE2eShard,
   shardTestMatch,
 } from "./scripts/ci/e2e-spec-shard.mjs";
-import { PLAYWRIGHT_RESULTS_FILE } from "./scripts/ci/summarise-playwright-flaky.mjs";
+import { PLAYWRIGHT_RESULTS_FILE } from "./scripts/ci/playwright-results-file.mjs";
 
 // Browser E2E suite for the Critical journeys in docs/END_TO_END_TEST_MATRIX.md.
 // It drives the staging Docker Compose stack (docker-compose.staging.yml) seeded
