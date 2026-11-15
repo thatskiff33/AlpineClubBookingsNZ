@@ -76,7 +76,10 @@
 /src/app/api/bookings/*/guests/route.ts                   @thatskiff33
 /src/app/api/bookings/*/guests/*/route.ts                 @thatskiff33
 /src/app/api/bookings/*/confirm-modification-payment/route.ts @thatskiff33
-/src/app/api/admin/payments/manual-refund-tasks/**        @thatskiff33
+# #4998: the manual refund task routes are named, not globbed, so their tests are not owned (codeowners-census ceiling).
+/src/app/api/admin/payments/manual-refund-tasks/route.ts     @thatskiff33
+/src/app/api/admin/payments/manual-refund-tasks/*/route.ts   @thatskiff33
+/src/app/api/admin/payments/manual-refund-tasks/*/*/route.ts @thatskiff33
 /src/app/api/admin/refund-requests/*/route.ts             @thatskiff33
 /docs/invariants/money.md                      @thatskiff33
 /docs/invariants/payment-and-settlement.md     @thatskiff33
