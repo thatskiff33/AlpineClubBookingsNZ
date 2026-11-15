@@ -640,7 +640,12 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   reprices a booking below its applied credit, and for the same reason: throwing
   would leave the member unable to pay their own booking. The requested amount,
   the applied amount, the shortfall and its cause are returned by the pay route
-  so the shortfall is always surfaced. `calculateBookingCreditApplication` keeps
+  so the shortfall is always surfaced; the card pay step renders it on every
+  response that carries `creditElection` (fresh, reused, already-paid, and the
+  processing, superseded and below-minimum 409s) through
+  `credit-election-outcome-copy.ts` (#4943). A failure after the election is
+  consumed (customer lookup, intent create) returns no `creditElection` yet.
+  `calculateBookingCreditApplication` keeps
   its throw-on-over-request contract at booking-create, where the wizard
   validated the balance in the same request and an over-request is a bug. The
   reported reason names the bound that ACTUALLY bound — the lower of the two —
@@ -3914,9 +3919,10 @@ _Split from `INV-PAY-057` (#3220)._
   switch, confirm-payment and webhook checks, settle, officer's manual
   payment, a stored credit election's cap, a review share's covered test and
   invoice reduction, and each joiner's group share and invoice; confirmation
-  emails quote worth. Both card intents, the pay-link and booking pages
-  (nothing to pay at or below zero) and emails quoting what is owed
-  (exception-approved, pay-link) read `readBookingAmountOwed` (#4058, #3991).
+  emails quote worth. Both card intents, pay-link and booking pages (nothing
+  due at or below zero), the dashboard's Payment Owed card and
+  exception-approved and pay-link emails read `readBookingAmountOwed` (#4058,
+  #3991, #4944).
   An edit's credit clamp, zero-dollar decision and stale-intent comparison
   read worth; a guest's acceptance nets credit to the price, its return route
   admitting only credit and cash summing to it.

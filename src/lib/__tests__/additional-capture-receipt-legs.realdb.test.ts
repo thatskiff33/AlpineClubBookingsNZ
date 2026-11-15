@@ -143,13 +143,24 @@ function fakeXero(invoices: Invoices, failures: Record<string, "refused" | "lost
   return { providers, createPayment };
 }
 
-/** Both links can share one `createdAt` under the frozen test clock, so callers compare them by id, not position (#4284). */
-function receiptLinks() {
-  return prisma.xeroObjectLink.findMany({
+/**
+ * The capture's payment links in LEG order, the marker production reads
+ * (`readAdditionalCaptureReceiptLinkedInvoiceId`). Never by `createdAt`: a
+ * Retry that adopts one leg and sends the other writes both links in one
+ * transaction, so their creation times tie and PostgreSQL may return either
+ * first (#5162).
+ */
+async function receiptLinks() {
+  const links = await prisma.xeroObjectLink.findMany({
     where: { localId: CAPTURE, role: receipt.ADDITIONAL_CAPTURE_PAYMENT_ROLE, active: true },
-    orderBy: { createdAt: "asc" },
     select: { xeroObjectId: true, metadata: true },
   });
+  const leg = (link: (typeof links)[number]) => {
+    const value = (link.metadata as { leg?: unknown } | null)?.leg;
+    if (typeof value !== "number") throw new Error(`Receipt link ${link.xeroObjectId} carries no leg marker`);
+    return value;
+  };
+  return [...links].sort((a, b) => leg(a) - leg(b));
 }
 
 /** The worker failed the row; the officer's Retry puts it back, and the next run claims it. */
@@ -203,7 +214,7 @@ async function officerRetries(id: string) {
       status: "SUCCEEDED", xeroObjectId: "race-4434-payment-1",
       responsePayload: expect.objectContaining({ paymentIds: ["race-4434-payment-1", "race-4434-payment-2"], unrecordedCents: 0 }),
     });
-    expect((await receiptLinks()).map((link) => link.xeroObjectId).sort()).toEqual(["race-4434-payment-1", "race-4434-payment-2"]);
+    expect((await receiptLinks()).map((link) => link.xeroObjectId)).toEqual(["race-4434-payment-1", "race-4434-payment-2"]);
     expect(await receipt.findAdditionalCaptureReceiptInvoiceId(INTENT)).toBe(CHANGE);
   });
 
@@ -235,7 +246,7 @@ async function officerRetries(id: string) {
     expect(xero.createPayment.mock.calls.map(([call]) => call.invoiceId)).toEqual([CHANGE, PRIMARY]);
     expect(invoices[CHANGE].payments).toHaveLength(1);
     // The adopted first leg is linked before the second leg's create writes its own.
-    expect((await receiptLinks()).map((link) => link.xeroObjectId).sort()).toEqual(["race-4434-payment-1", "race-4434-payment-2"]);
+    expect((await receiptLinks()).map((link) => link.xeroObjectId)).toEqual(["race-4434-payment-1", "race-4434-payment-2"]);
     expect(await receipt.findAdditionalCaptureReceiptInvoiceId(INTENT)).toBe(CHANGE);
   });
 

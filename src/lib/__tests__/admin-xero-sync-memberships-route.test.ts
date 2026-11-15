@@ -18,7 +18,7 @@ vi.mock("@/lib/session-guards", async () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-membership-sync", () => ({
   refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
 }));
 

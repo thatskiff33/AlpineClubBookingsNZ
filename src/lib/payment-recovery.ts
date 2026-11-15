@@ -56,9 +56,8 @@ import { closePrePersistedRefundRow, type DoorCloseArgs } from "@/lib/pre-persis
 import { alertPaymentRecoveryOfficers } from "@/lib/payment-recovery-alert";
 import {
   findWaitingSupplementaryInvoiceOperationForPaymentIntent,
-  // Type-only, so it adds nothing to this module's runtime import graph.
-  type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import type { XeroSupplementaryInvoiceEnqueueOutcome } from "@/lib/xero-supplementary-invoice-statuses";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
 import { followSupersededAskInvoicesSafely } from "@/lib/superseded-ask-invoice-carry";
 import { queueFoldedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
