@@ -768,7 +768,9 @@ export const AUDIT_CENSUS_TOTALS = {
   // 543 -> 545 (#4915): `member.data_exported`, the member's own download, and
   // `member.subject_access_exported`, a Full Admin's report on one person; both
   // `createAuditLog`, both `privacy`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 545,
+  // 545 -> 546 (#4516): `booking-payment.manual-refund-task.reduce-by-lost-dispute`, a disputed card payment's
+  // hand-back reduced by a dispute lost for part of it; `createAuditLog`, `payment`. RE-MEASURED with `pnpm run audit:census`.
+  writeSites: 546,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -996,7 +998,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 174 -> 176 (#4368): the two dead card refund settlements.
     // 176 -> 177 (#4916): the after-stay dietary clear's count row. 177 -> 179 (#4851): the group organiser's close and re-arm.
     // 179 -> 181 (#4915): the two subject access writers.
-    createAuditLog: { total: 181, uncategorised: 0 },
+    // 181 -> 182 (#4516): a disputed card payment's hand-back reduced by a part-lost dispute.
+    createAuditLog: { total: 182, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1216,7 +1219,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 67 -> 69 (#4516): a refused card refund reservation, and its OPERATOR release - read by the same people.
     // 69 -> 71 (#4368): a dead card refund closed with nothing left owed, and one put back to try the card.
     // 71 -> 73 (#4851): a group organiser's dead card refund paid another way (one site, both kinds) or tried again.
-    payment: 73,
+    // 73 -> 74 (#4516): a disputed card payment's hand-back reduced by a part-lost dispute - read by the same people.
+    payment: 74,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
