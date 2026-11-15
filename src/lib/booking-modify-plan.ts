@@ -2070,6 +2070,23 @@ export function resolvePromoBeneficiarySelection({
   return [...selected].sort((a, b) => a - b);
 }
 
+/**
+ * Whether a code an edit names may be applied. Internal promos (work party
+ * events) cannot be entered as codes, and a code renamed between the unlocked
+ * read and the lock is not found. Fork #119: the one exception is the internal
+ * code `officerWorkPartyPromoCodeId` names, the work party an officer's "Add
+ * booking to work party" is adding. That is a service argument the batch
+ * service receives beside `tx`, never a request-body field, so no member route
+ * can set it; every other internal code is still refused as not found.
+ */
+function enteredPromoCodeAdmitted<T extends { id: string; internal: boolean }>(
+  promoCode: T | undefined,
+  officerWorkPartyPromoCodeId: string | null,
+): promoCode is T {
+  if (!promoCode) return false;
+  return !promoCode.internal || promoCode.id === officerWorkPartyPromoCodeId;
+}
+
 export async function applyPromoCodeChanges(
   tx: Prisma.TransactionClient,
   {
@@ -2087,12 +2104,7 @@ export async function applyPromoCodeChanges(
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
-    /**
-     * Fork #119: the ONE internal (work-party) promo an officer's "Add booking
-     * to work party" may apply, by id. A service argument the batch service
-     * receives beside `tx`, never a request-body field, so no member route can
-     * set it; every other internal code is still refused as not found.
-     */
+    /** Fork #119: the one internal code `enteredPromoCodeAdmitted` admits. */
     officerWorkPartyPromoCodeId?: string | null;
     newCheckIn: Date;
     newTotalPriceCents: number;
@@ -2261,13 +2273,8 @@ export async function applyPromoCodeChanges(
     }
     const id = incomingIds.find((row) => row.code === entry.code)?.id;
     const promoCode = incomingRows.find((row) => row.id === id && row.code === entry.code);
-    // Internal promos (work party events) cannot be entered as codes; a code
-    // renamed between the unlocked read and the lock is not found. Fork #119:
-    // the one exception is the work party an officer is adding the booking to.
-    if (
-      !promoCode ||
-      (promoCode.internal && promoCode.id !== officerWorkPartyPromoCodeId)
-    ) {
+    // An internal code, or one renamed since the unlocked read, is not found.
+    if (!enteredPromoCodeAdmitted(promoCode, officerWorkPartyPromoCodeId)) {
       throw new ApiError("Promo code not found", 400);
     }
     applications.push({

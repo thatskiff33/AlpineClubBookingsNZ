@@ -700,8 +700,19 @@ async function resolveOrdinaryXeroLockDateGuard(
 
 /**
  * Fork #119: what `officerWorkPartyCorrection` names — the work party an
- * officer is adding the booking to, and its internal promo. Built only by
- * `work-party-booking-correction.ts` (census in its test).
+ * officer is adding the booking to, and its internal promo, for a work party
+ * the member was entitled to and missed ("Add booking to work party").
+ * Built only by `work-party-booking-correction.ts`, its ONE caller, pinned by
+ * `work-party-booking-correction.test.ts`. A SERVICE argument, like
+ * `waiveChangeFee` and for the same reason: `input` is a parsed request body
+ * on the member routes.
+ *
+ * It does three things and nothing else:
+ *  - admits that one internal promo code (`applyPromoCodeChanges`);
+ *  - charges no change fee — an officer correction, not the member's change;
+ *  - returns the reduction IN FULL (`calculateFullReductionSettlementOptions`,
+ *    as #4533's promo correction does), not cut by the cancellation tier,
+ *    because the member is given what ticking the box would have given them.
  */
 export type OfficerWorkPartyCorrection = {
   readonly workPartyEventId: string;
@@ -888,21 +899,7 @@ export async function modifyBookingBatch({
    * second fee told the member it was waived and charged it anyway.
    */
   waiveChangeFee?: boolean;
-  /**
-   * Fork #119: an officer adding the booking to a work party the member was
-   * entitled to and missed ("Add booking to work party",
-   * `work-party-booking-correction.ts`, its ONE caller, pinned by
-   * `work-party-booking-correction.test.ts`). A SERVICE argument, like
-   * `waiveChangeFee` above and for the same reason: `input` is a parsed request
-   * body on the member routes.
-   *
-   * It does three things and nothing else:
-   *  - admits that one internal promo code (`applyPromoCodeChanges`);
-   *  - charges no change fee — an officer correction, not the member's change;
-   *  - returns the reduction IN FULL (`calculateFullReductionSettlementOptions`,
-   *    as #4533's promo correction does), not cut by the cancellation tier,
-   *    because the member is given what ticking the box would have given them.
-   */
+  /** Fork #119: a SERVICE argument, like `waiveChangeFee`; see its type. */
   officerWorkPartyCorrection?: OfficerWorkPartyCorrection;
   /**
    * The work that has to happen BEFORE the transaction, done by the caller that

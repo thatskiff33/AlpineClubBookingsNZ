@@ -42,6 +42,10 @@ const HAND_ROLLED_WITH_THEIR_OWN_WAY_BACK = [
   "src/app/(admin)/admin/finance/subscriptions/_components/manual-payment-dialog.tsx",
   // Deletion requests are out of #4966's scope; its reject footer has Cancel.
   "src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx",
+  // #5149 (fork #119): two steps sharing one footer slot — "Show the new total"
+  // previews, then the email choice saves exactly the figures shown — with an
+  // outline Cancel first, disabled and dismissal-proof while a request runs.
+  "src/components/admin/booking-work-party-controls.tsx",
 ];
 
 const MIGRATED_SCREENS = [

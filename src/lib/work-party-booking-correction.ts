@@ -46,7 +46,7 @@ import {
   activeLifecycleEditRefusal,
   bookingStayHasStarted,
 } from "@/lib/booking-edit-policy";
-import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
+import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";

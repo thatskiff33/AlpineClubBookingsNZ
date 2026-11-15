@@ -332,8 +332,7 @@ export function AdminBookingToolsCard({
               minCheckIn={copyProps.minCheckIn}
             />
           )}
-          {/* pt-1 and gap-y-2: these links keep 24px of clear space from the controls
-              above and from each other (WCAG 2.5.8, axe target-offset). */}
+          {/* pt-1, gap-y-2: 24px clear of the controls and each other (WCAG 2.5.8). */}
           <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1 text-sm">
             {memberId ? (
               <Link

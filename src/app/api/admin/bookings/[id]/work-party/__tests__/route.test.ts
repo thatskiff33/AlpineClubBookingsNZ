@@ -38,7 +38,7 @@ vi.mock("@/lib/module-settings", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/module-settings")),
   loadEffectiveModuleFlags: vi.fn(async () => h.modules),
 }));
-vi.mock("@/lib/booking-modify-validation", () => ({
+vi.mock("@/lib/booking-modify-quote-priced", () => ({
   isQuotePricedBooking: vi.fn(async () => false),
 }));
 vi.mock("@/lib/promo-redemption-slot", () => ({
