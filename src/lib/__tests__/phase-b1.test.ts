@@ -1248,6 +1248,19 @@ describe("#24: Lodge Access API", () => {
     expect(res.status).toBe(400);
   });
 
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    mockAuth.mockResolvedValue({
+      user: authUser("admin-1", "ADMIN"),
+    });
+
+    const { NextRequest } = await import("next/server");
+    const { GET } = await import("@/app/api/lodge/access/route");
+    const req = new NextRequest("http://localhost/api/lodge/access?date=2026-02-30");
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+    expect(mockPrisma.member.findUnique).not.toHaveBeenCalled();
+  });
+
   // Item 4 (#1587): a kiosk (STAFF) account granted at more than one lodge is
   // denied everywhere data is served (M5). The access route surfaces that up
   // front so the kiosk shows a fix-the-assignment message instead of enabled

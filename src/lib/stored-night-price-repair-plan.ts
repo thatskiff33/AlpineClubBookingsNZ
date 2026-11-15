@@ -10,7 +10,7 @@ import {
 } from "@/lib/edit-financial-review-context";
 import type { EditFinancialReviewStrandRecord } from "@/lib/edit-financial-review-context";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import type { ClubFormat } from "@/lib/club-format";
 import {
   checkStoredNightPriceRepair,
