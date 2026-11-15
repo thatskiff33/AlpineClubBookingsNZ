@@ -861,13 +861,13 @@ Decisions: 20 Sep 2026 on
   importer list, and its fragment builders, which return the plain value, may
   appear only as a spread operand.
 - **Profile audiences:** the subject (profile, onboarding) while ON; their own
-  data export or subject access report, ON or OFF; a DB-verified `membership` admin while ON; a Full
-  Admin merge.
+  export (`INV-PRIV-025`), ON or OFF; a DB-verified `membership` admin while ON;
+  a Full Admin merge.
 - **Booking audiences:** a DB-verified `bookings:view` admin (`bookings:edit` to
   change one row) and the kiosk's `admin` and `hut-leader` tiers, for that
-  lodge's present guests that day, both while ON; the subject's export or
-  report, for their own rows. An admin adding a member as a guest sees their
-  profile value there, audited. Grants never cross profile and booking.
+  lodge's present guests that day, both while ON; the subject's export, for
+  their own rows. An admin adding a member as a guest sees their profile
+  value there, audited. Grants never cross profile and booking.
 - **Everyone else is denied, absent from the payload:** members (own booking,
   linked guests, the #2942 roster), family, other kiosk tiers and preview,
   rosters, the lobby, exports, reports, Xero, Stripe, analytics, notifications,
@@ -943,41 +943,37 @@ same change.
 
 ## INV-PRIV-025
 
-One builder answers every subject access request:
-`buildSubjectAccessExport` in `src/lib/subject-access-export.ts`. The member's
-own download (`/api/member/data-export`) and the Full Admin report
+One builder, `buildSubjectAccessExport` in `src/lib/subject-access-export.ts`,
+answers every subject access request: the member's own download
+(`/api/member/data-export`) and the Full Admin report
 (`/api/admin/members/subject-access`) both call it, so the two files never
 differ. Decided on
 [#4915](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4915).
 
 - **Every personal model is placed.** `SUBJECT_ACCESS_EXPORT_COVERAGE` maps each
   model `PRIVACY_RETENTION_CLASSIFICATION` marks personal to a section, an
-  additional list, or an exclusion with its reason. The file lists the
-  exclusions. Security secrets are always excluded.
-- **Only the subject's own rows.** A guest row is the subject's own row, never
-  the co-guests or the booker's fields. The one exception is `INV-PRIV-018`'s
-  D-12: guests on bookings the subject made keep their names, age tiers and
-  prices. Dietary values follow `INV-PRIV-022`.
+  additional list, or an exclusion with its reason, which the file lists.
+  Security secrets are always excluded.
+- **Only the subject's own rows.** A guest row is the subject's own, never the
+  co-guests' or the booker's fields, except `INV-PRIV-018`'s D-12: guests on
+  bookings the subject made keep their names, age tiers and prices. Dietary
+  values follow `INV-PRIV-022`.
 - **An address is a key only when the subject owns it.** Records filed by email
-  (email log, applications, booking requests) are withheld, and the file says
-  so, when the address belongs to another member record too.
-- **A whole-lodge request shows what "My requests" shows.** Its status is the
-  member-facing word from `toMyWholeLodgeRequestStatus` (#2263), never an
-  officer-side state such as `PRICED`, `QUOTED` or `QUERY_PENDING`, and none
-  of its price fields go out (owner decision,
-  [15 Nov 2026](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4915#issuecomment-6888297799)).
-  Stated assumption, to be confirmed with the club's privacy adviser: these
-  officer-side fields are not personal information the member must be given.
+  are withheld, and the file says so, when another member record shares it.
+- **A whole-lodge request shows what "My requests" shows:** the status from
+  `toMyWholeLodgeRequestStatus` (#2263), never an officer-side state like
+  `PRICED`, and no price field
+  ([owner decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4915#issuecomment-6888297799)).
+  Assumed, to confirm with the club's privacy adviser: those fields are not
+  personal information the member must be given.
 - **Nothing is cut silently.** Every activity entry the subject may see is
-  read, with no ceiling, and `auditLogTotal` states the count.
+  read, and `auditLogTotal` states the count.
 - **The report is Full Admin only**, re-checked against the database, behind
   a fresh sign-in proof (`INV-AUTH-010`), with its own per-officer rate limit
   and a `privacy` audit row naming the officer and the subject.
 - **A lookup never guesses.** An email held by several member records is
-  refused (409). A non-member guest is found by picking their exact guest row,
-  because guest rows hold no email.
-- **The file name** is the club's own slug from `getClubIdentity`, never a
-  hard-coded club.
+  refused (409); a non-member guest is picked by exact guest row.
+- **The file name** is the club's `getClubIdentity` slug.
 - Proof: `subject-access-export-census.test.ts`,
   `subject-access-booking-request.test.ts`,
   `subject-access-export.realdb.test.ts` and the two route tests.
