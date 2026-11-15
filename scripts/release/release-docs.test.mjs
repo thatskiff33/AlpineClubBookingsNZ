@@ -191,6 +191,11 @@ describe("guarding released sections and odd guides (#4983)", () => {
     expect(() => fileUpgradeSteps({ guide: nested, heading: HEADING })).toThrow(/docs\/UPGRADING\.md:\d+ has a "## " line inside a code block/);
     const tilde = FULL.replace("Open Admin → Xero and reconnect.", "~~~md\n## Example heading\n~~~");
     expect(() => fileUpgradeSteps({ guide: tilde, heading: HEADING })).toThrow(/inside a code block/);
+    // A fence of one kind holding the other kind, which a single toggle reads as closed early.
+    for (const [outer, inner] of [["~~~", "```"], ["```", "~~~"]]) {
+      const mixed = FULL.replace("Open Admin → Xero and reconnect.", `${outer}md\n${inner}\n## Example heading\n${inner}\n${outer}`);
+      expect(() => fileUpgradeSteps({ guide: mixed, heading: HEADING })).toThrow(/inside a code block/);
+    }
     // The same text outside a block is a real heading and is not refused here.
     const crlf = FULL.replace(/\n/g, "\r\n");
     expect(fileUpgradeSteps({ guide: crlf, heading: HEADING }).action).toBe("roll");
