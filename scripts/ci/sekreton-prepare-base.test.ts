@@ -5,9 +5,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const script = path.resolve("scripts/ci/sekreton-prepare-base.sh");
-const fixtures = [];
-const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-function repository() {
+const fixtures: string[] = [];
+const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+function repository(): string {
   const cwd = mkdtempSync(path.join(tmpdir(), "sekreton-base-"));
   fixtures.push(cwd);
   git(cwd, "init", "-b", "main");
@@ -16,11 +16,11 @@ function repository() {
   commit(cwd);
   return cwd;
 }
-function commit(cwd, message = "Add fixture commit") {
+function commit(cwd: string, message = "Add fixture commit"): string {
   git(cwd, "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", message);
   return git(cwd, "rev-parse", "HEAD");
 }
-const prepare = (cwd) => spawnSync("bash", [script], { cwd, encoding: "utf8" });
+const prepare = (cwd: string) => spawnSync("bash", [script], { cwd, encoding: "utf8" });
 afterEach(() => { for (const cwd of fixtures.splice(0)) rmSync(cwd, { recursive: true, force: true }); });
 
 describe("Sekreton check baseline", () => {
