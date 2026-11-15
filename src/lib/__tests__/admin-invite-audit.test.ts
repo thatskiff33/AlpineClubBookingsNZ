@@ -88,7 +88,7 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/utils", () => ({
   cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" "),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   getXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
 }));

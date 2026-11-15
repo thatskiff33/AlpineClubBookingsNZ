@@ -126,8 +126,8 @@ const PROVIDERLESS_SURFACES: Record<string, string> = {
     "outside `WebsiteChrome`. It renders `EmbeddedPageContentParts` over " +
     "whatever an admin published at that path, and each embedded part that " +
     "needs a zone brings its own provider — `skifield-whakapapa-embed.tsx`, " +
-    "`booking-requests/booking-request-form-embed.tsx` and " +
-    "`school-bookings/school-booking-form-embed.tsx`, all three of which the " +
+    "`website/booking-request-form-embed.tsx` and " +
+    "`website/school-booking-form-embed.tsx`, all three of which the " +
     "walk below treats as mount boundaries for that reason. The two form " +
     "wrappers were added by CT-4 group E and were NOT foresight: migrating the " +
     "forms onto `useClubTime()` reddened this very row, which is the walk doing " +

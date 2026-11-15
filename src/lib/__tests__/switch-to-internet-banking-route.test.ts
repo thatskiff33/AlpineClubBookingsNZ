@@ -73,7 +73,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   kickQueuedXeroOutboxOperationsIfConnected:
     mocks.kickQueuedXeroOutboxOperationsIfConnected,
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: mocks.isXeroConnected }));
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: mocks.isXeroConnected }));
 vi.mock("@/lib/member-credit", () => ({
   lockMemberCreditLedger: mocks.lockMemberCreditLedger,
   // #2265 — the switch now consumes a stored credit election, which drives the
