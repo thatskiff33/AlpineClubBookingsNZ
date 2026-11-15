@@ -22,7 +22,7 @@ reason: the in-transaction edit card refund reserve and its door wiring
   of this fix.
 
 file: src/lib/payment-recovery.ts
-lines: 3643
+lines: 3642
 reason: the in-transaction edit card refund reserve and its door wiring
   (#4992); those lines sit inside this file, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part
