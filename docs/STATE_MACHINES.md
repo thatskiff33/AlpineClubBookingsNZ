@@ -4012,9 +4012,11 @@ PROVIDED the row still holds a rendered body. It does not for the twenty-six
 `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose logged recipient is
 redacted, because a live sign-in link, a door code or a payment link must not sit
 at rest; and the retry cron selects only rows that still hold one. Such a row is
-therefore written AT `attempts = 3`, which drops it out of the retry query and
-into the operator's email-failure review queue for a manual re-send, and its
-`errorMessage` says exactly that rather than promising it will self-heal.
+therefore written AT the retry ceiling (`attempts = 3`, the one constant
+`EMAIL_RETRY_MAX_ATTEMPTS` in `src/lib/email/retry-selection.ts`), which drops it
+out of the retry query and into the operator's email-failure review queue for a
+manual re-send, and its `errorMessage` says exactly that rather than promising
+it will self-heal.
 A copy that has explicitly declared a capture mailbox transmits into it normally
 and its rows are ordinary `SENT`.
 
