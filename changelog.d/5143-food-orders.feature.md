@@ -31,3 +31,6 @@
   charged, invoiced, posted to the booking ledger or sent to Xero. The five new
   audit writers (order placed, items received, order received, price changed,
   settings saved) are all in the `lodge` category.
+  A member's own food orders and their lines are included in their subject
+  access export (`additionalRecords.FoodOrder` and `FoodOrderItem`); the
+  settings row is club configuration and is listed as excluded.
