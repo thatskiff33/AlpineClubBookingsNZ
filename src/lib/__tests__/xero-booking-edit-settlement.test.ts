@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => mocks);
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: mocks.enqueueXeroSupplementaryInvoiceOperation,
+}));
 
 // #3979: the queue reads whether a bank receipt was captured, only when the
 // aggregate status alone would refuse an invoice correction. Default: one was

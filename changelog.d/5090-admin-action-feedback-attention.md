@@ -1,0 +1,1 @@
+- **Action results are easier to find on Member Applications, Setup and Member merge (#4975).** Failed actions now bring the error into view and move keyboard focus to it, including after an application confirmation dialog closes. Screen readers announce errors and success messages; background refreshes leave focus in place.
