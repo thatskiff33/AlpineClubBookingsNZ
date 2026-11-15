@@ -9,9 +9,8 @@
 // a throwaway local database and do no checking of their own.
 // ---------------------------------------------------------------------------
 import type { AgeTier, Prisma, PrismaClient } from "@prisma/client";
-import bcrypt from "bcryptjs";
 import { bookingFinalPriceCents } from "../src/lib/booking-final-price";
-import { PASSWORD_BCRYPT_COST } from "../src/lib/password-hashing";
+import { hashPassword } from "../src/lib/password-hashing";
 import { DEMO_SEED_DOMAIN } from "../src/lib/demo-seed-guard";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "../src/lib/member-access-role-writes";
 
@@ -24,11 +23,14 @@ export function demoSeedPassword(
   return env.DEMO_SEED_PASSWORD ?? "demo1234";
 }
 
-/** Hash the demo password once per run at the app's real bcrypt cost (never lowered for speed). */
+/**
+ * Hash the demo password once per run through the app's own password hasher
+ * (native bcrypt off the event loop, at the real cost; never lowered for speed, #4934).
+ */
 export function demoSeedPasswordHash(
   env: { DEMO_SEED_PASSWORD?: string } = { DEMO_SEED_PASSWORD: process.env.DEMO_SEED_PASSWORD },
-): string {
-  return bcrypt.hashSync(demoSeedPassword(env), PASSWORD_BCRYPT_COST);
+): Promise<string> {
+  return hashPassword(demoSeedPassword(env));
 }
 
 // Date-only helper (schema uses @db.Date for most date columns).

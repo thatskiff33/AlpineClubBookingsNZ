@@ -101,7 +101,7 @@ import {
 const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
 
 const DEMO_DOMAIN = DEMO_SEED_DOMAIN;
-const PWHASH = demoSeedPasswordHash();
+let PWHASH: string;
 const SEASON_YEAR = 2026;
 
 // Date-only helper (schema uses @db.Date for most date columns).
@@ -273,6 +273,7 @@ async function main() {
   // were taken in the club's currency, and the column has no default (#3567).
   const demoRefundCurrency = stripeChargeCurrency(format);
   await assertDemoSeedSafety();
+  PWHASH = await demoSeedPasswordHash();
   await cleanup();
   console.log("Building demo data...");
 

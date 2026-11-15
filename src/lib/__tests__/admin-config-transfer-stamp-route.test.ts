@@ -18,7 +18,8 @@
   the environment disagrees with is the whole of what makes a green run mean
   "the route read the club's setting" rather than "the two happened to agree".
 */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { APP_VERSION_ENV_VAR, getAppVersion } from "@/lib/app-version";
 
 const mocks = vi.hoisted(() => ({
   requireFullAdminForConfigTransfer: vi.fn(),
@@ -85,6 +86,7 @@ function expectEnvironmentDisagrees() {
 
 describe("config-transfer downloads are stamped with the club's day (CT-4, #2870)", () => {
   beforeEach(() => {
+    vi.stubEnv(APP_VERSION_ENV_VAR, "config-export-build-under-test");
     vi.clearAllMocks();
     mocks.requireFullAdminForConfigTransfer.mockResolvedValue({
       ok: true,
@@ -113,7 +115,9 @@ describe("config-transfer downloads are stamped with the club's day (CT-4, #2870
     });
   });
 
-  it("names an export bundle for the club's calendar day", async () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("names an export bundle for the club's calendar day and stamps its app version", async () => {
     expectEnvironmentDisagrees();
 
     const response = await exportBundle(
@@ -125,6 +129,9 @@ describe("config-transfer downloads are stamped with the club's day (CT-4, #2870
     );
 
     expect(response.status).toBe(200);
+    expect(mocks.buildConfigExport).toHaveBeenCalledWith(
+      expect.objectContaining({ appVersion: getAppVersion() }),
+    );
     // Under the environment's Pacific/Auckland this would be dated 2026-07-01 —
     // a day the club has not reached.
     expect(filenameOf(response)).toBe(

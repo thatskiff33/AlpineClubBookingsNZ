@@ -182,7 +182,7 @@ async function seed(prisma: PrismaClient) {
   // PAID subscription for every season a load run books into, so the default
   // HARD_BLOCK lockout (INV-LOCKOUT) never refuses one. The write scenarios
   // (`load/scenarios/mixed-writes.js`, `payment-path.js`) log in as them.
-  const passwordHash = demoSeedPasswordHash();
+  const passwordHash = await demoSeedPasswordHash();
   const confirmedAt = new Date();
   const memberIds: string[] = [];
   for (const member of plan.members) {
