@@ -138,6 +138,8 @@ describe("census: no date field checks the YYYY-MM-DD shape only (ALP-574)", () 
    * non-day itself, so it is outside this pattern and needs no entry.
    */
   const ALLOWED: Record<string, string> = {
+    // #4930 moved this read schema out of `nomination.ts` into the leaf both
+    // `nomination.ts` and `member-application-mapping.ts` import.
     "src/lib/member-application-fields.ts":
       "the read schema over stored application JSON, deliberately loose so a stored bad value cannot blank the nominating member's page (#3082; application-date-of-birth-refusal.test.ts)",
   };
