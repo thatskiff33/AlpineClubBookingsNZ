@@ -37,7 +37,11 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { formatCents } from "@/lib/pricing";
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import {
+  apiErrorMessageFromResponse,
+  apiRefusalFromResponse,
+  refusalMessageOr,
+} from "@/lib/api-error-message";
 import { useClubFormat } from "@/components/club-format-provider";
 
 interface WorkPartyEventRow {
@@ -214,16 +218,14 @@ export default function AdminWorkPartiesPage() {
       setLoading(false);
       return;
     }
+    const fallback = "Failed to load work party events";
     try {
       const res = await fetch("/api/admin/work-parties");
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
       const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Failed to load work party events");
-        return;
-      }
       setEvents(data.events);
-    } catch {
-      setError("Failed to load work party events");
+    } catch (err) {
+      setError(refusalMessageOr(err, fallback));
     } finally {
       setLoading(false);
     }
@@ -275,6 +277,7 @@ export default function AdminWorkPartiesPage() {
 
     setSaving(true);
     setError("");
+    const fallback = "Failed to save work party event";
     try {
       const payload = {
         name: form.name.trim(),
@@ -297,17 +300,13 @@ export default function AdminWorkPartiesPage() {
         setError(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Failed to save work party event");
-        return;
-      }
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
       setShowForm(false);
       setEditingId(null);
       setForm(emptyForm);
       await fetchEvents();
-    } catch {
-      setError("Failed to save work party event");
+    } catch (err) {
+      setError(refusalMessageOr(err, fallback));
     } finally {
       setSaving(false);
     }
@@ -316,26 +315,28 @@ export default function AdminWorkPartiesPage() {
   async function toggleActive(event: WorkPartyEventRow) {
     if (!lodgeScopeReady) return;
     setError("");
-    const res = await fetch(`/api/admin/work-parties/${event.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: event.name,
-        description: event.description,
-        startDate: event.startDate.slice(0, 10),
-        endDate: event.endDate.slice(0, 10),
-        discountPercent: event.discountPercent,
-        active: !event.active,
-        lodgeId: event.lodgeId,
-      }),
-    });
-    if (res.status === 403) {
-      setError(ADMIN_FORBIDDEN_SAVE_REASON);
-      return;
-    }
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error || "Failed to update work party event");
+    const fallback = "Failed to update work party event";
+    try {
+      const res = await fetch(`/api/admin/work-parties/${event.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: event.name,
+          description: event.description,
+          startDate: event.startDate.slice(0, 10),
+          endDate: event.endDate.slice(0, 10),
+          discountPercent: event.discountPercent,
+          active: !event.active,
+          lodgeId: event.lodgeId,
+        }),
+      });
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
+    } catch (err) {
+      setError(refusalMessageOr(err, fallback));
       return;
     }
     await fetchEvents();
@@ -372,9 +373,13 @@ export default function AdminWorkPartiesPage() {
     }
     setExpandedId(eventId);
     if (!details[eventId]) {
-      const res = await fetch(`/api/admin/work-parties/${eventId}`);
-      const data = await res.json();
-      if (res.ok) {
+      // A failed read used to leave "Loading bookings..." standing for good;
+      // it now says why, in the page's error box.
+      const fallback = "Failed to load attending bookings";
+      try {
+        const res = await fetch(`/api/admin/work-parties/${eventId}`);
+        if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
+        const data = await res.json();
         setDetails((prev) => ({
           ...prev,
           [eventId]: {
@@ -382,6 +387,8 @@ export default function AdminWorkPartiesPage() {
             totalDiscountCents: data.totalDiscountCents,
           },
         }));
+      } catch (err) {
+        setError(refusalMessageOr(err, fallback));
       }
     }
   }

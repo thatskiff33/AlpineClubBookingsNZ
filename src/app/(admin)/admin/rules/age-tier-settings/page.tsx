@@ -8,6 +8,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useActionFailure } from "@/hooks/use-action-failure";
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
@@ -146,6 +147,7 @@ export default function AgeTierSettingsPage() {
       };
     });
 
+    const fallback = "Failed to save";
     try {
       const res = await fetch("/api/admin/age-tier-settings", {
         method: "PUT",
@@ -156,18 +158,15 @@ export default function AgeTierSettingsPage() {
         saveFailure.fail(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
       const data = await res.json();
-      if (!res.ok) {
-        saveFailure.fail(data.error ?? "Failed to save");
-      } else {
-        setSettings(data.settings);
-        setSavedSettings(data.settings);
-        setEditing(false);
-        setSuccess(true);
-        setSavesLanded((count) => count + 1);
-      }
-    } catch {
-      saveFailure.fail("Network error");
+      setSettings(data.settings);
+      setSavedSettings(data.settings);
+      setEditing(false);
+      setSuccess(true);
+      setSavesLanded((count) => count + 1);
+    } catch (err) {
+      saveFailure.fail(refusalMessageOr(err, fallback));
     } finally {
       setSaving(false);
     }

@@ -23,6 +23,7 @@ import {
 } from "@/components/admin/view-only-action"
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 import { FocusedActionError } from "@/components/focused-action-error"
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message"
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 
 interface ChoreTemplate {
@@ -281,6 +282,7 @@ export default function ChoresPage() {
       ...(editingId ? {} : { lodgeId: scopedLodgeId }),
     }
 
+    const fallback = "Failed to save"
     try {
       const url = editingId ? `/api/admin/chores/${editingId}` : "/api/admin/chores"
       const method = editingId ? "PUT" : "POST"
@@ -294,15 +296,14 @@ export default function ChoresPage() {
           failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope)
           return
         }
-        const data = await res.json()
-        throw new Error(data.error || "Failed to save")
+        throw await apiRefusalFromResponse(res, fallback)
       }
       if (activeScopeRef.current !== requestedScope) return
       resetForm()
       setSavesLanded((count) => count + 1)
       fetchChores()
     } catch (err) {
-      failAction(err instanceof Error ? err.message : "Unknown error", requestedScope)
+      failAction(refusalMessageOr(err, fallback), requestedScope)
     } finally {
       setSaving(false)
     }
@@ -313,6 +314,7 @@ export default function ChoresPage() {
     const requestedScope = scopedLodgeId
     if (!confirm("Are you sure you want to delete this chore template?")) return
     setActionError("")
+    const fallback = "Failed to delete"
     try {
       const res = await fetch(`/api/admin/chores/${id}`, { method: "DELETE" })
       if (!res.ok) {
@@ -320,13 +322,12 @@ export default function ChoresPage() {
           failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope)
           return
         }
-        const data = await res.json()
-        throw new Error(data.error || "Failed to delete")
+        throw await apiRefusalFromResponse(res, fallback)
       }
       if (activeScopeRef.current !== requestedScope) return
       fetchChores()
     } catch (err) {
-      failAction(err instanceof Error ? err.message : "Unknown error", requestedScope)
+      failAction(refusalMessageOr(err, fallback), requestedScope)
     }
   }
 
@@ -334,6 +335,7 @@ export default function ChoresPage() {
     if (!lodgeScopeReady) return
     const requestedScope = scopedLodgeId
     setActionError("")
+    const fallback = "Failed to update"
     try {
       const res = await fetch(`/api/admin/chores/${chore.id}`, {
         method: "PUT",
@@ -345,13 +347,12 @@ export default function ChoresPage() {
           failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope)
           return
         }
-        const data = await res.json()
-        throw new Error(data.error || "Failed to update")
+        throw await apiRefusalFromResponse(res, fallback)
       }
       if (activeScopeRef.current !== requestedScope) return
       fetchChores()
     } catch (err) {
-      failAction(err instanceof Error ? err.message : "Unknown error", requestedScope)
+      failAction(refusalMessageOr(err, fallback), requestedScope)
     }
   }
 

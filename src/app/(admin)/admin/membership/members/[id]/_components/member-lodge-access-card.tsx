@@ -9,6 +9,7 @@ import {
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useActionFailure } from "@/hooks/use-action-failure"
 import { FocusedActionError } from "@/components/focused-action-error"
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message"
 import {
   Card,
   CardContent,
@@ -19,6 +20,9 @@ import {
 import { Label } from "@/components/ui/label"
 import { LodgeOptionsUnavailableNotice } from "@/components/admin/lodge-options-status"
 import { useLodgeOptions } from "@/components/lodge-select"
+
+const LOAD_FALLBACK = "Failed to load lodge access"
+const SAVE_FALLBACK = "Failed to save lodge access"
 
 interface LodgeAccessRow {
   id: string
@@ -107,6 +111,8 @@ export function MemberLodgeAccessCard({
     clearSaveFailure()
     try {
       const res = await fetch(`/api/admin/members/${memberId}/lodge-access`)
+      // A stale refusal lands in the catch, which drops it the same way.
+      if (!res.ok) throw await apiRefusalFromResponse(res, LOAD_FALLBACK)
       const body = await res.json()
       if (
         sequence !== loadSequenceRef.current ||
@@ -114,9 +120,6 @@ export function MemberLodgeAccessCard({
         lodgeOptionsKeyRef.current !== lodgeOptionsKey
       ) {
         return
-      }
-      if (!res.ok) {
-        throw new Error(body.error || "Failed to load lodge access")
       }
       const rows = (body.lodgeAccess ?? []) as LodgeAccessRow[]
       setBookingRestrictionLodgeIds(
@@ -135,11 +138,7 @@ export function MemberLodgeAccessCard({
       ) {
         return
       }
-      setLoadError(
-        loadFailure instanceof Error
-          ? loadFailure.message
-          : "Failed to load lodge access",
-      )
+      setLoadError(refusalMessageOr(loadFailure, LOAD_FALLBACK))
     } finally {
       if (
         sequence === loadSequenceRef.current &&
@@ -174,19 +173,12 @@ export function MemberLodgeAccessCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookingRestrictionLodgeIds, staffLodgeIds }),
       })
-      const body = await res.json()
+      if (!res.ok) throw await apiRefusalFromResponse(res, SAVE_FALLBACK)
       if (!ownsCurrentScope()) return
-      if (!res.ok) {
-        throw new Error(body.error || "Failed to save lodge access")
-      }
       setSuccess("Lodge access saved.")
     } catch (saveError) {
       if (!ownsCurrentScope()) return
-      failSave(
-        saveError instanceof Error
-          ? saveError.message
-          : "Failed to save lodge access",
-      )
+      failSave(refusalMessageOr(saveError, SAVE_FALLBACK))
     } finally {
       if (ownsCurrentScope()) setSaving(false)
     }

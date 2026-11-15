@@ -46,6 +46,7 @@ import {
 } from "@/components/admin/view-only-action";
 import { useClubFormat } from "@/components/club-format-provider";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 
 type MemberSummary = {
   id: string;
@@ -172,10 +173,10 @@ export default function LockersPage() {
         `/api/admin/lockers?lodgeId=${encodeURIComponent(scopedLodgeId)}`,
         { signal },
       );
-      const body = await response.json();
       if (!response.ok) {
-        throw new Error(body.error || "Failed to load lockers");
+        throw await apiRefusalFromResponse(response, "Failed to load lockers");
       }
+      const body = await response.json();
 
       setMembers(body.members ?? []);
       setLockers(body.lockers ?? []);
@@ -185,11 +186,7 @@ export default function LockersPage() {
       if (readError instanceof DOMException && readError.name === "AbortError") {
         return;
       }
-      setLoadError(
-        readError instanceof Error
-          ? readError.message
-          : "Failed to load lockers",
-      );
+      setLoadError(refusalMessageOr(readError, "Failed to load lockers"));
     } finally {
       setLoading(false);
     }
@@ -216,6 +213,9 @@ export default function LockersPage() {
     const requestedScope = scopedLodgeId;
     setSaving(true);
     setActionError("");
+    const fallback = editingLockerId
+      ? "Failed to update locker"
+      : "Failed to create locker";
 
     try {
       const payload = {
@@ -237,7 +237,6 @@ export default function LockersPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
-      const body = await response.json();
       if (!response.ok) {
         // Stale-tab / narrowed-permission save surfaces the persistent
         // forbidden-save reason in the action alert (#1940).
@@ -245,13 +244,9 @@ export default function LockersPage() {
           failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope);
           return;
         }
-        throw new Error(
-          body.error ||
-            (editingLockerId
-              ? "Failed to update locker"
-              : "Failed to create locker"),
-        );
+        throw await apiRefusalFromResponse(response, fallback);
       }
+      const body = await response.json();
       if (activeScopeRef.current !== requestedScope) return;
 
       if (editingLockerId) {
@@ -269,14 +264,7 @@ export default function LockersPage() {
       setAllocatedToMemberId("UNALLOCATED");
       setAllocatedToSearch("");
     } catch (submitError) {
-      failAction(
-        submitError instanceof Error
-          ? submitError.message
-          : editingLockerId
-            ? "Failed to update locker"
-            : "Failed to create locker",
-        requestedScope,
-      );
+      failAction(refusalMessageOr(submitError, fallback), requestedScope);
     } finally {
       setSaving(false);
     }
@@ -328,13 +316,12 @@ export default function LockersPage() {
       const response = await fetch(`/api/admin/lockers/${locker.id}`, {
         method: "DELETE",
       });
-      const body = await response.json().catch(() => null);
       if (!response.ok) {
         if (response.status === 403) {
           failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope);
           return;
         }
-        throw new Error(body?.error || "Failed to delete locker");
+        throw await apiRefusalFromResponse(response, "Failed to delete locker");
       }
       if (activeScopeRef.current !== requestedScope) return;
 
@@ -345,12 +332,7 @@ export default function LockersPage() {
         resetForm();
       }
     } catch (deleteError) {
-      failAction(
-        deleteError instanceof Error
-          ? deleteError.message
-          : "Failed to delete locker",
-        requestedScope,
-      );
+      failAction(refusalMessageOr(deleteError, "Failed to delete locker"), requestedScope);
     } finally {
       setDeletingLockerId(null);
     }
@@ -372,24 +354,18 @@ export default function LockersPage() {
           lodgeId: scopedLodgeId,
         }),
       });
-      const body = await response.json();
       if (!response.ok) {
         if (response.status === 403) {
           failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope);
           return;
         }
-        throw new Error(body.error || "Failed to create lockers");
+        throw await apiRefusalFromResponse(response, "Failed to create lockers");
       }
       if (activeScopeRef.current !== requestedScope) return;
       setBulkCount("");
       await loadData();
     } catch (bulkError) {
-      failAction(
-        bulkError instanceof Error
-          ? bulkError.message
-          : "Failed to create lockers",
-        requestedScope,
-      );
+      failAction(refusalMessageOr(bulkError, "Failed to create lockers"), requestedScope);
     } finally {
       setBulkSaving(false);
     }
