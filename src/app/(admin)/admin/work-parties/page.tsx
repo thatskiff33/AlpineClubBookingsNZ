@@ -113,6 +113,20 @@ function formatStoredDate(value: string) {
   return calendarDateOfSerialisedDbDateOrNull(value) ?? value;
 }
 
+const DETAIL_FALLBACK = "Failed to load attending bookings";
+
+/**
+ * One event's attending bookings. A failed read used to leave "Loading
+ * bookings..." standing for good; the refusal is now thrown for the page's
+ * error box to say why.
+ */
+async function fetchEventDetail(eventId: string): Promise<EventDetail> {
+  const res = await fetch(`/api/admin/work-parties/${eventId}`);
+  if (!res.ok) throw await apiRefusalFromResponse(res, DETAIL_FALLBACK);
+  const data = await res.json();
+  return { attendingBookings: data.attendingBookings, totalDiscountCents: data.totalDiscountCents };
+}
+
 /**
  * The attending-bookings table for one expanded event, or the loading state.
  *
@@ -373,22 +387,11 @@ export default function AdminWorkPartiesPage() {
     }
     setExpandedId(eventId);
     if (!details[eventId]) {
-      // A failed read used to leave "Loading bookings..." standing for good;
-      // it now says why, in the page's error box.
-      const fallback = "Failed to load attending bookings";
       try {
-        const res = await fetch(`/api/admin/work-parties/${eventId}`);
-        if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
-        const data = await res.json();
-        setDetails((prev) => ({
-          ...prev,
-          [eventId]: {
-            attendingBookings: data.attendingBookings,
-            totalDiscountCents: data.totalDiscountCents,
-          },
-        }));
+        const detail = await fetchEventDetail(eventId);
+        setDetails((prev) => ({ ...prev, [eventId]: detail }));
       } catch (err) {
-        setError(refusalMessageOr(err, fallback));
+        setError(refusalMessageOr(err, DETAIL_FALLBACK));
       }
     }
   }

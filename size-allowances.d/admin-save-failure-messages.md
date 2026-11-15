@@ -16,6 +16,9 @@ reason: the save handler gains the shared-reader import and a named fallback
   so the refusal and the network failure say the same sentence.
 
 file: src/app/(admin)/admin/work-parties/page.tsx
-lines: 624
+lines: 634
 reason: the delete handler had no network-failure path and parsed before
   checking res.ok; the import, fallback and null-response branch are the fix.
+  The figure also covers ALP-649 (stacked): the active toggle gains the catch
+  it never had, and the attending-bookings read moves to a module-level
+  helper that throws its refusal.
