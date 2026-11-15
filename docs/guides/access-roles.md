@@ -64,6 +64,17 @@ area:
 (`USER`), and Organisation (`ORG`) — are code-defined, shown for reference, and
 can never be edited or deleted here.
 
+**Two-factor** (shown once officer sign-in is switched on, #4620). Each custom
+role has a choice:
+
+| Choice | Meaning |
+| --- | --- |
+| Default | Required when the role can edit Finance or Support & System |
+| Required | Holders must use an authenticator app or a passkey |
+| Not required | This role never makes anyone need one; another role still can |
+
+Full Admin always needs one. See [Login & Security](security.md).
+
 **Areas also decide who is emailed.** Every admin alert belongs to one of these
 areas, and a role is only offered — and only ever sent — the alerts for the
 areas it can **edit**. Giving a role Bookings edit is therefore what makes

@@ -302,7 +302,7 @@ describe("feature route map", () => {
       )
     ).toBe("financeDashboard");
     expect(
-      isFeatureHrefVisible("/admin/xero#xero-section-mappings", {
+      isFeatureHrefVisible("/admin/xero/setup?step=mapping", {
         ...allOn,
         xeroIntegration: false,
       })

@@ -27,6 +27,7 @@ const mockProcessPaymentRecoveryOperations = vi.fn();
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
+const mockEnqueueXeroRefundCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_refund_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
 
@@ -222,10 +223,13 @@ vi.mock("@/lib/member-credit", () => ({
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
-  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
+  enqueueXeroRefundCreditNoteOperation: mockEnqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
+}));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
 }));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -483,6 +487,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
   // pass, not a bypass.
   const fenceBooking = recordingBookingDouble(async () => booking);
   return {
+    $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
     // #1881 — the date/batch service takes the global lock(1) via $executeRaw.
     $executeRaw: vi.fn().mockResolvedValue(undefined),
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
@@ -2433,18 +2438,13 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
     );
 
     await Promise.resolve();
-    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
-      {
-        bookingId: "bk1",
-        refundAmountCents: 5000,
-        bookingModificationId: "mod1",
-        // `INV-PAY-101`: a member's ordinary edit refunds the card.
-        refundMethod: "card",
-      },
-      {
-        createdByMemberId: "m1",
-      }
-    );
+    // #3993: a card refund of a price cut is the payment's refund note, not a
+    // modification note the card-paid invoice cannot take.
+    expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("p1", 5000, {
+      refundMethod: "card",
+      createdByMemberId: "m1",
+    });
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 
   it("warns about CONFIRMED/COMPLETED chore assignments", async () => {

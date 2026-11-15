@@ -1,9 +1,12 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { bashFixturePath, bashGateArgs } from "../src/lib/__tests__/helpers/bash-fixture-path";
 import { TRUSTED_LANE_AUTHORS } from "./lib/lane-reservations.mjs";
 import { BOARD_HEADING, buildBoard, cell, ciState, closedIssues, collectBoard, mergeLabel, renderBoard } from "./status-board.mjs";
 
@@ -324,6 +327,54 @@ describe("edge cases", () => {
 });
 
 describe("the scheduled workflow", () => {
+  const targetScript = workflow.match(/- name: Find the board issue\n\s+id: target\n\s+run: \|\n((?: {10}.*\n|\n)+)/)?.[1];
+  const root = fileURLToPath(new URL("..", import.meta.url));
+
+  // Runs the step's own shell, not a copy of it. The script and every path reach `bash` through
+  // the shared helper (#2886): on a Windows host `bash` is WSL, where `spawnSync`'s `env` option
+  // and a drive-letter path both fail to cross.
+  it.each([
+    ["", 0, "run=false\n"],
+    ["123", 0, "run=true\n"],
+    ["not-an-issue", 1, ""],
+  ])("runs the board-issue step for target %j without calling GitHub", (target, status, output) => {
+    expect(targetScript).toBeDefined();
+    const directory = mkdtempSync(join(tmpdir(), "status-board-target-"));
+    const scriptPath = join(directory, "target.sh");
+    const outputPath = join(directory, "output");
+    const summaryPath = join(directory, "summary");
+    try {
+      writeFileSync(outputPath, "");
+      writeFileSync(summaryPath, "");
+      // Reject an accidental GitHub call while running the workflow's actual shell.
+      writeFileSync(scriptPath, `gh() { echo 'Unexpected GitHub call' >&2; exit 99; }\n${targetScript}`);
+      const result = spawnSync("bash", bashGateArgs(bashFixturePath(scriptPath, root), [], {
+        STATUS_BOARD_ISSUE: target,
+        GITHUB_REPOSITORY: "example-owner/example-repo",
+        GITHUB_OUTPUT: bashFixturePath(outputPath, root),
+        GITHUB_STEP_SUMMARY: bashFixturePath(summaryPath, root),
+      }), { cwd: root, encoding: "utf8", timeout: 15_000 });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(status);
+      expect(result.stderr).toBe("");
+      expect(readFileSync(outputPath, "utf8")).toBe(output);
+      const summary = readFileSync(summaryPath, "utf8");
+      if (target === "") {
+        expect(result.stdout).toContain("::warning title=Status board::");
+        expect(result.stdout).toContain("STATUS_BOARD_ISSUE");
+        expect(result.stdout).toContain("docs/agents/COORDINATION.md");
+        expect(summary).toContain("hosted status board is not live");
+        // The repository comes from the environment, so a fork is pointed at its own board.
+        expect(summary).toContain("`pnpm run status example-owner/example-repo` prints the same board");
+      } else {
+        expect(summary).toBe("");
+        if (status !== 0) expect(result.stdout).toContain("::error title=Status board::");
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("runs on a schedule, where `github.event.repository` is absent, as well as from the default branch on dispatch", () => {
     expect(workflow).toContain(
       "if: github.event_name == 'schedule' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");

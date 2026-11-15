@@ -7,7 +7,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-booking-payment";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { recordedNightPricesSchema } from "@/lib/stored-night-price-repair";
 import {
   planStrandNightPriceReconcile,
