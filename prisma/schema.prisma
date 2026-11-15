@@ -4066,6 +4066,17 @@ model BookingDefaults {
   // refunds it from the finance queue or keeps it.
   // Club-wide, because it is how the club handles money, not a lodge's policy.
   lateCaptureRefundNeedsApproval Boolean @default(false)
+  // #4932 (`INV-CONFIG-001`): three timings a club may set, each defaulting to
+  // the value it had as a constant, and each CHECKed to 1-30 days by the
+  // migration. Club-wide, like the hold above. They must agree with
+  // DEFAULT_BOOKING_DEFAULTS (src/config/club-settings-defaults.ts).
+  // Days before check-in the pre-arrival reminder goes out.
+  preArrivalReminderDays        Int @default(3)
+  // Days after an extra amount is raised before the first reminder to pay it.
+  additionalPaymentReminderDays Int @default(3)
+  // Days a policy-exception request holds its beds. Read only when a request is
+  // raised: its deadline is stamped then and never moves (INV-EXCEPT).
+  policyExceptionHoldDays       Int @default(7)
   // Soft link for the phase-7 singleton-to-per-lodge conversion
   // (docs/multi-lodge/implementation-plan.md); unused by runtime reads today.
   lodgeId                 String?
@@ -5559,6 +5570,14 @@ model ClubModuleSettings {
   // cut-over. Safe to add as a defaulted column because every read narrows to
   // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
   multiPromoCodes         Boolean  @default(false)
+  // Whakapapa (Mt Ruapehu) conditions report (#4932): the /api/skifield-whakapapa
+  // feed, its admin cache and the admin Mountain Conditions page, split out of
+  // skifieldConditions, which keeps only the generic widget. Default OFF so a new
+  // install opts in; migration 20261221010000_add_skifield_whakapapa_module
+  // copies each existing install's skifieldConditions value across. Safe to add
+  // as a defaulted column because every read narrows to
+  // CLUB_MODULE_SETTINGS_COLUMN_SELECT.
+  skifieldWhakapapa       Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -7629,7 +7648,12 @@ model NotificationPreference {
   // regardless of the memberGuests module; default on, personally opt-outable.
   bookingAddedByFamily       Boolean  @default(true)
   choreRoster                Boolean  @default(true)
+  // Club newsletters: opt-in, so a member with no row is never sent one.
   marketingEmails            Boolean  @default(false)
+  // #4987: club-business bulk email (AGM, closures, subscriptions due) from
+  // Communications and emailed Notices. Opt-out, so it starts on; the rule for
+  // both bulk categories lives in src/lib/email/bulk-audience.ts (INV-PRIV-026).
+  clubNotices                Boolean  @default(true)
   adminNewBooking            Boolean  @default(true)
   adminPaymentFailure        Boolean  @default(true)
   adminPendingDeadline       Boolean  @default(true)

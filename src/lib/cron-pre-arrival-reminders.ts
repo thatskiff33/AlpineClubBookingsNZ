@@ -11,8 +11,7 @@ import logger from "@/lib/logger";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
 import { clubFormatValues } from "@/lib/club-format-server";
-
-const PRE_ARRIVAL_REMINDER_DAYS = 3;
+import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
 
 const PRE_ARRIVAL_REMINDER_STATUSES = [
   BookingStatus.CONFIRMED,
@@ -33,10 +32,13 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
   // lock below — never per amount and never inside a transaction.
   const format = await clubFormatValues();
   const now = new Date();
+  // The club's own lead (#4932), read once per run. Shortening it never
+  // re-sends: a reminded booking keeps its `preArrivalReminderSentAt` stamp.
+  const { preArrivalReminderDays } = await getBookingTimingSettings();
   const windowStart = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
   const windowEndExclusive = addDaysDateOnly(
     windowStart,
-    PRE_ARRIVAL_REMINDER_DAYS + 1,
+    preArrivalReminderDays + 1,
   );
 
   const bookings = await prisma.booking.findMany({
@@ -85,7 +87,7 @@ export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResul
   });
 
   const result: PreArrivalReminderResult = {
-    reminderDays: PRE_ARRIVAL_REMINDER_DAYS,
+    reminderDays: preArrivalReminderDays,
     windowStart: formatDateOnly(windowStart),
     windowEndExclusive: formatDateOnly(windowEndExclusive),
     sentBookingIds: [],

@@ -2,13 +2,15 @@
  * N-09: Bulk Member Communication
  * POST /api/admin/communications/send
  * Admin-only. Rate limited to BULK_SENDMAIL_LIMIT sends per hour.
- * Respects marketingEmails notification preference.
+ * Each send declares a category (club notice or newsletter); who receives it
+ * is decided by the shared bulk-email rule (#4987, INV-PRIV-026).
  * Sanitises input to prevent HTML/header injection.
  *
- * GET returns the rate limit and, given `?recipientFilter=`, how many accounts
- * that audience reaches, for the page's confirmation step (#4964). It sends
- * nothing and never touches the hourly quota; it must stay a GET, because the
- * POST spends the quota before it reads its body.
+ * GET returns the rate limit and, given `?recipientFilter=&category=`, how many
+ * accounts that audience reaches and how many the category's preference rule
+ * excludes, for the page's live count and confirmation step (#4964, #4987). It
+ * sends nothing and never touches the hourly quota; it must stay a GET, because
+ * the POST spends the quota before it reads its body.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
@@ -21,8 +23,10 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import {
   BULK_RECIPIENT_FILTERS,
+  bulkCommunicationCounts,
   selectBulkCommunicationRecipients,
 } from "@/lib/bulk-communication-recipients";
+import { BULK_EMAIL_CATEGORIES } from "@/lib/email/bulk-audience";
 import { renderEmailHtml } from "@/lib/email-theme";
 
 const DEFAULT_BULK_SENDMAIL_LIMIT = 1;
@@ -41,6 +45,10 @@ const bulkSendRateLimit: RateLimitConfig = {
   windowSeconds: 60 * 60, // 1 hour
 };
 
+// A request that names no category gets the opt-in newsletter rule, so an older
+// page still open during a deploy can never widen who is emailed.
+const categorySchema = z.enum(BULK_EMAIL_CATEGORIES).default("newsletter");
+
 const sendSchema = z.object({
   subject: z
     .string()
@@ -53,12 +61,14 @@ const sendSchema = z.object({
     .max(10000, "Body must be under 10,000 characters"),
   recipientFilter: z.enum(BULK_RECIPIENT_FILTERS),
   memberIds: z.array(z.string()).optional(),
+  category: categorySchema,
 });
 
 // The page offers only the named audiences; `custom` needs a member list, which
 // a query string is no place for.
 const countQuerySchema = z.object({
   recipientFilter: z.enum(BULK_RECIPIENT_FILTERS).exclude(["custom"]).optional(),
+  category: categorySchema,
 });
 
 export async function GET(request: NextRequest) {
@@ -81,17 +91,20 @@ export async function GET(request: NextRequest) {
     limit: bulkSendRateLimit.limit,
     windowSeconds: bulkSendRateLimit.windowSeconds,
   };
-  const { recipientFilter } = parsed.data;
+  const { recipientFilter, category } = parsed.data;
   if (!recipientFilter) return NextResponse.json(rateLimit);
 
   // Counts only, never addresses: a membership:view admin may call this.
-  const { total, eligible } =
-    await selectBulkCommunicationRecipients(recipientFilter);
+  const selection = await selectBulkCommunicationRecipients(
+    recipientFilter,
+    undefined,
+    category,
+  );
   return NextResponse.json({
     ...rateLimit,
     recipientFilter,
-    totalRecipients: total.length,
-    eligibleRecipients: eligible.length,
+    category,
+    ...bulkCommunicationCounts(selection),
   });
 }
 
@@ -136,6 +149,7 @@ export async function POST(request: Request) {
     body: messageBody,
     recipientFilter,
     memberIds,
+    category,
   } = parsed.data;
 
   if (
@@ -148,8 +162,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const { total: recipients, eligible: eligibleRecipients } =
-    await selectBulkCommunicationRecipients(recipientFilter, memberIds);
+  const selection = await selectBulkCommunicationRecipients(
+    recipientFilter,
+    memberIds,
+    category,
+  );
+  const eligibleRecipients = selection.eligible;
+  const counts = bulkCommunicationCounts(selection);
 
   // Generate the email HTML (using escapeHtml inside the template)
   const html = await renderEmailHtml(() => bulkCommunicationTemplate(subject, messageBody));
@@ -204,17 +223,17 @@ export async function POST(request: Request) {
     details: JSON.stringify({
       subject,
       recipientFilter,
-      totalRecipients: recipients.length,
-      eligibleRecipients: eligibleRecipients.length,
+      category,
+      ...counts,
       queued,
     }),
   });
 
   return NextResponse.json({
     success: true,
-    totalRecipients: recipients.length,
-    eligibleRecipients: eligibleRecipients.length,
+    category,
+    ...counts,
     queued,
-    filteredByPreference: recipients.length - eligibleRecipients.length,
+    filteredByPreference: counts.optedOut + counts.neverOptedIn,
   });
 }

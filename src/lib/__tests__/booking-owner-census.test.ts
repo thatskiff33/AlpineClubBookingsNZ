@@ -798,7 +798,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `booking.findUniqueOrThrow`/`findMany` selects, and Booking declares
   // `organisation`.
   "src/lib/booking-owner-name.ts:12",
-  "src/lib/cron-additional-payment-reminders.ts:439",
+  "src/lib/cron-additional-payment-reminders.ts:444",
   "src/lib/cron-confirm-pending.ts:192",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
