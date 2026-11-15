@@ -99,14 +99,17 @@ describe("Setup support edit access (#4971)", () => {
     fetchMock.mockReturnValueOnce(new Promise((resolve) => { settle = resolve; }));
     renderSetup();
     const banner = screen.getByTestId("admin-view-only-banner");
-    const alert = screen.getByRole("alert");
-    expect(alert).toBeEmptyDOMElement();
+    // The action error (#setup-error) and the load error are both always mounted.
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(2);
+    for (const region of alerts) expect(region).toBeEmptyDOMElement();
+    const alert = alerts.find((region) => region.id !== "setup-error")!;
     expect(banner).toHaveTextContent(ADMIN_VIEW_ONLY_SECTION_HEADING);
     expect(screen.getByText("Loading setup readiness")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Setup Wizard" })).toBeInTheDocument();
     await act(async () => { settle(response(fails ? { error: "Readiness unavailable" } : body, !fails)); });
     expect(screen.getByTestId("admin-view-only-banner")).toBe(banner);
-    expect(screen.getByRole("alert")).toBe(alert);
+    expect(screen.getAllByRole("alert")).toEqual(alerts);
     if (fails) expect(alert).toHaveTextContent("Readiness unavailable");
     else await loaded();
   });

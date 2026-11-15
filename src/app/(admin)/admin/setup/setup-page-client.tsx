@@ -1,7 +1,9 @@
 "use client";
 
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BadgeCheck,
   Bell,
@@ -44,67 +46,15 @@ import {
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { apiErrorMessageFromBody } from "@/lib/api-error-message";
-
-type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
-type ProgressStatus = "open" | "completed" | "skipped";
-type Provider = "stripe" | "smtp" | "sentry" | "xero";
-
-interface SetupStepCheck {
-  id: string;
-  title: string;
-  description: string;
-  status: SetupStatus;
-  required: boolean;
-  message: string;
-  details: string[];
-  href?: string;
-  progress: ProgressStatus;
-  action?: {
-    type: "provider-test";
-    provider: Provider;
-    label: string;
-  };
-}
-
-interface SetupCategory {
-  id: string;
-  title: string;
-  description: string;
-  status: SetupStatus;
-  checks: SetupStepCheck[];
-}
-
-interface SetupReadiness {
-  status: SetupStatus;
-  summary: {
-    total: number;
-    complete: number;
-    warning: number;
-    blocked: number;
-    skipped: number;
-  };
-  categories: SetupCategory[];
-  generatedAt: string;
-}
-
-interface SetupProgressState {
-  completedStepIds: string[];
-  skippedStepIds: string[];
-  completedAt: string | null;
-  completedByMemberId: string | null;
-}
-
-interface SetupResponse {
-  readiness: SetupReadiness;
-  progress: SetupProgressState;
-}
-
-interface ProviderTestResult {
-  ok: boolean;
-  provider: Provider;
-  checkedAt: string;
-  message: string;
-}
+import type {
+  ProgressStatus,
+  Provider,
+  ProviderTestResult,
+  SetupProgressState,
+  SetupReadiness,
+  SetupResponse,
+  SetupStatus,
+} from "./setup-types";
 
 interface SetupHubCard {
   href: string;
@@ -166,6 +116,10 @@ const setupHubCards: SetupHubCard[] = [
     icon: Bell,
   },
 ];
+
+const SETUP_COMPLETE_MESSAGE = "Setup has been marked complete.";
+const SETUP_COMPLETE_BANNER_CLASS =
+  "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11";
 
 function statusVariant(status: SetupStatus): BadgeProps["variant"] {
   if (status === "complete") return "success";
@@ -269,7 +223,22 @@ export function SetupPageClient({
   const [readiness, setReadiness] = useState<SetupReadiness | null>(null);
   const [progress, setProgress] = useState<SetupProgressState | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setErrorMessage] = useState("");
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
+  const [loadError, setLoadError] = useState("");
+  const [finishMessage, setFinishMessage] = useState("");
+  const successRef = useRef<HTMLDivElement>(null);
+  // Only action failures request attention; background loads use loadError.
+  function setError(value: string) {
+    setErrorMessage(value);
+    if (value) setErrorAttentionKey((key) => key + 1);
+  }
+  useActionAttention({
+    error,
+    errorTarget: null, // FocusedActionError owns failure focus.
+    success: finishMessage,
+    successTarget: successRef,
+  });
   const [savingStep, setSavingStep] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [runningProvider, setRunningProvider] = useState<Provider | null>(null);
@@ -277,7 +246,7 @@ export function SetupPageClient({
 
   async function loadSetup() {
     setLoading(true);
-    setError("");
+    setLoadError("");
 
     try {
       const response = await fetch("/api/admin/setup", {
@@ -289,10 +258,13 @@ export function SetupPageClient({
       }
       setReadiness(body.readiness);
       setProgress(body.progress);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
+      // A reload that finds setup reopened retires this session's finish notice.
+      if (!body.progress.completedAt) setFinishMessage("");
+      return body;
+    } catch (loadFailure) {
+      setLoadError(
+        loadFailure instanceof Error
+          ? loadFailure.message
           : "Failed to load setup readiness",
       );
     } finally {
@@ -303,6 +275,13 @@ export function SetupPageClient({
   useEffect(() => {
     void loadSetup();
   }, []);
+
+  // The admin's own Refresh retires the last action's error (it described the
+  // old data); the attention key is untouched, so clearing never takes focus.
+  function refreshSetup() {
+    setErrorMessage("");
+    void loadSetup();
+  }
 
   const allChecks = useMemo(
     () => readiness?.categories.flatMap((category) => category.checks) ?? [],
@@ -328,6 +307,7 @@ export function SetupPageClient({
   ) {
     setSavingStep(stepId);
     setError("");
+    setFinishMessage("");
     try {
       const response = await fetch("/api/admin/setup/progress", {
         method: "PATCH",
@@ -354,6 +334,7 @@ export function SetupPageClient({
   async function finishSetup() {
     setFinishing(true);
     setError("");
+    setFinishMessage("");
     try {
       const response = await fetch("/api/admin/setup/progress", {
         method: "PATCH",
@@ -365,7 +346,10 @@ export function SetupPageClient({
       if (!response.ok) {
         throw new Error(apiErrorMessageFromBody(body, "Failed to finish setup"));
       }
-      await loadSetup();
+      const updated = await loadSetup();
+      if (updated?.progress.completedAt) {
+        setFinishMessage(SETUP_COMPLETE_MESSAGE);
+      }
     } catch (finishError) {
       setError(
         finishError instanceof Error ? finishError.message : "Failed to finish setup",
@@ -394,17 +378,17 @@ export function SetupPageClient({
         [provider]: body,
       }));
       await loadSetup();
+      if (!body.ok) setError(body.message);
     } catch (providerError) {
+      const message = providerError instanceof Error ? providerError.message : "Provider test failed";
+      setError(message);
       setProviderResults((current) => ({
         ...current,
         [provider]: {
           ok: false,
           provider,
           checkedAt: new Date().toISOString(),
-          message:
-            providerError instanceof Error
-              ? providerError.message
-              : "Provider test failed",
+          message,
         },
       }));
     } finally {
@@ -413,17 +397,20 @@ export function SetupPageClient({
   }
 
   return (
-    <div>
-      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Setup Wizard</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Finish first-install readiness for club configuration, booking rules,
             provider connections, and finance mappings.
           </p>
+          {/* The empty wrapper an editor gets costs no layout; the spacing
+              lives on the inner box. */}
+          <AdminViewOnlySectionBanner canEdit={canEdit} className="mt-3 max-w-3xl" />
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={loadSetup} disabled={loading}>
+          <Button variant="outline" onClick={refreshSetup} disabled={loading}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
@@ -445,241 +432,245 @@ export function SetupPageClient({
         </div>
       </div>
 
-      <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-6" />
-      <div role="alert">
-        {error ? (
-          <div className="mb-6 rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
-            {error}
-          </div>
-        ) : null}
+      <FocusedActionError id="setup-error" error={error} attentionKey={errorAttentionKey} />
+      <div
+        role="alert"
+        aria-atomic="true"
+        className={loadError ? "rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11" : "sr-only"}
+      >
+        {loadError}
       </div>
-
+      {/* Saved completion is a plain banner; only an explicit finish is announced. */}
+      {setupCompleted && !finishMessage ? (
+        <div className={SETUP_COMPLETE_BANNER_CLASS}>{SETUP_COMPLETE_MESSAGE}</div>
+      ) : null}
+      <div
+        id="setup-success"
+        ref={successRef}
+        role="status"
+        aria-atomic="true"
+        className={finishMessage ? SETUP_COMPLETE_BANNER_CLASS : "sr-only"}
+      >
+        {finishMessage}
+      </div>
       {loading && !readiness ? (
         <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading setup readiness
         </div>
-      ) : (
-        <div className="space-y-6">
-          {setupCompleted ? (
-            <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
-              Setup has been marked complete.
+      ) : null}
+
+      {readiness ? (
+        <>
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-md border bg-card p-4">
+              <div className="flex items-center gap-2">
+                <StatusIcon status={overallStatus} />
+                <p className="text-sm font-medium text-muted-foreground">Overall</p>
+              </div>
+              <p className="mt-2 text-2xl font-semibold capitalize text-foreground">
+                {overallStatus.replace("_", " ")}
+              </p>
+            </div>
+            <div className="rounded-md border bg-card p-4">
+              <p className="text-sm font-medium text-muted-foreground">Progress</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">
+                {completionPercent}%
+              </p>
+            </div>
+            <div className="rounded-md border bg-card p-4">
+              <p className="text-sm font-medium text-muted-foreground">Blocked</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">
+                {readiness.summary.blocked}
+              </p>
+            </div>
+            <div className="rounded-md border bg-card p-4">
+              <p className="text-sm font-medium text-muted-foreground">Skipped</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">
+                {readiness.summary.skipped}
+              </p>
+            </div>
+          </div>
+
+          {requiredBlockers.length > 0 ? (
+            <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
+              Resolve or explicitly skip required blocked steps before marking setup complete.
             </div>
           ) : null}
 
-          {readiness ? (
-            <>
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="rounded-md border bg-card p-4">
-                  <div className="flex items-center gap-2">
-                    <StatusIcon status={overallStatus} />
-                    <p className="text-sm font-medium text-muted-foreground">Overall</p>
+          <SetupHubCards
+            features={features}
+            permissionMatrix={permissionMatrix}
+          />
+
+          {/* The lodge-capacity card remains on the setup page and keeps the
+              #1548 matrix gate because its backing API is lodge-area while
+              /admin/setup itself is support-area. */}
+          {permissionMatrix.lodge !== "none" ? <LodgeCapacityCard /> : null}
+
+          <section id="setup-checks" className="space-y-6">
+            <div>
+              <h2 className="text-xl font-semibold text-foreground">
+                Readiness checks
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Work through the live checks after choosing the matching setup
+                hub.
+              </p>
+            </div>
+            {readiness.categories.map((category) => (
+              <section key={category.id} className="space-y-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-xl font-semibold text-foreground">
+                      {category.title}
+                    </h2>
+                    <p className="text-sm text-muted-foreground">{category.description}</p>
                   </div>
-                  <p className="mt-2 text-2xl font-semibold capitalize text-foreground">
-                    {overallStatus.replace("_", " ")}
-                  </p>
+                  <Badge variant={statusVariant(category.status)} className="w-fit capitalize">
+                    {category.status.replace("_", " ")}
+                  </Badge>
                 </div>
-                <div className="rounded-md border bg-card p-4">
-                  <p className="text-sm font-medium text-muted-foreground">Progress</p>
-                  <p className="mt-2 text-2xl font-semibold text-foreground">
-                    {completionPercent}%
-                  </p>
-                </div>
-                <div className="rounded-md border bg-card p-4">
-                  <p className="text-sm font-medium text-muted-foreground">Blocked</p>
-                  <p className="mt-2 text-2xl font-semibold text-foreground">
-                    {readiness.summary.blocked}
-                  </p>
-                </div>
-                <div className="rounded-md border bg-card p-4">
-                  <p className="text-sm font-medium text-muted-foreground">Skipped</p>
-                  <p className="mt-2 text-2xl font-semibold text-foreground">
-                    {readiness.summary.skipped}
-                  </p>
-                </div>
-              </div>
 
-              {requiredBlockers.length > 0 ? (
-                <div className="rounded-md border border-warning-6 bg-warning-3 px-4 py-3 text-sm text-warning-11">
-                  Resolve or explicitly skip required blocked steps before marking setup complete.
-                </div>
-              ) : null}
-
-              <SetupHubCards
-                features={features}
-                permissionMatrix={permissionMatrix}
-              />
-
-              {/* The lodge-capacity card remains on the setup page and keeps the
-                  #1548 matrix gate because its backing API is lodge-area while
-                  /admin/setup itself is support-area. */}
-              {permissionMatrix.lodge !== "none" ? <LodgeCapacityCard /> : null}
-
-              <section id="setup-checks" className="space-y-6">
-                <div>
-                  <h2 className="text-xl font-semibold text-foreground">
-                    Readiness checks
-                  </h2>
-                  <p className="text-sm text-muted-foreground">
-                    Work through the live checks after choosing the matching setup
-                    hub.
-                  </p>
-                </div>
-                {readiness.categories.map((category) => (
-                  <section key={category.id} className="space-y-3">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h2 className="text-xl font-semibold text-foreground">
-                          {category.title}
-                        </h2>
-                        <p className="text-sm text-muted-foreground">{category.description}</p>
-                      </div>
-                      <Badge variant={statusVariant(category.status)} className="w-fit capitalize">
-                        {category.status.replace("_", " ")}
-                      </Badge>
-                    </div>
-
-                    <div className="grid gap-3 xl:grid-cols-2">
-                      {category.checks.map((check) => {
-                        const result = check.action
-                          ? providerResults[check.action.provider]
-                          : null;
-                        const progress = progressLabel(check.progress);
-                        const isSaving = savingStep === check.id;
-                        return (
-                          <Card key={check.id}>
-                            <CardHeader className="space-y-3">
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div className="flex gap-3">
-                                  <StatusIcon status={check.status} />
-                                  <div>
-                                    <CardTitle className="text-base">
-                                      {check.title}
-                                    </CardTitle>
-                                    <CardDescription>{check.description}</CardDescription>
-                                  </div>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                  <Badge variant={statusVariant(check.status)} className="capitalize">
-                                    {check.status.replace("_", " ")}
-                                  </Badge>
-                                  {check.required ? (
-                                    <Badge variant="outline">Required</Badge>
-                                  ) : null}
-                                  {progress ? (
-                                    <Badge variant="secondary">{progress}</Badge>
-                                  ) : null}
-                                </div>
+                <div className="grid gap-3 xl:grid-cols-2">
+                  {category.checks.map((check) => {
+                    const result = check.action
+                      ? providerResults[check.action.provider]
+                      : null;
+                    const progress = progressLabel(check.progress);
+                    const isSaving = savingStep === check.id;
+                    return (
+                      <Card key={check.id}>
+                        <CardHeader className="space-y-3">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="flex gap-3">
+                              <StatusIcon status={check.status} />
+                              <div>
+                                <CardTitle className="text-base">
+                                  {check.title}
+                                </CardTitle>
+                                <CardDescription>{check.description}</CardDescription>
                               </div>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                              <p className="text-sm text-muted-foreground">{check.message}</p>
-                              {check.details.length > 0 ? (
-                                <ul className="space-y-1 text-sm text-muted-foreground">
-                                  {check.details.map((detail) => (
-                                    <li key={detail}>{detail}</li>
-                                  ))}
-                                </ul>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Badge variant={statusVariant(check.status)} className="capitalize">
+                                {check.status.replace("_", " ")}
+                              </Badge>
+                              {check.required ? (
+                                <Badge variant="outline">Required</Badge>
                               ) : null}
-
-                              {result ? (
-                                <div
-                                  className={`rounded-md border px-3 py-2 text-sm ${
-                                    result.ok
-                                      ? "border-success-6 bg-success-3 text-success-11"
-                                      : "border-danger-6 bg-danger-3 text-danger-11"
-                                  }`}
-                                >
-                                  {result.message}
-                                </div>
+                              {progress ? (
+                                <Badge variant="secondary">{progress}</Badge>
                               ) : null}
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <p className="text-sm text-muted-foreground">{check.message}</p>
+                          {check.details.length > 0 ? (
+                            <ul className="space-y-1 text-sm text-muted-foreground">
+                              {check.details.map((detail) => (
+                                <li key={detail}>{detail}</li>
+                              ))}
+                            </ul>
+                          ) : null}
 
-                              <div className="flex flex-wrap gap-2">
-                                {check.href && canFollowCheckHref(permissionMatrix, check.href) ? (
-                                  <Button asChild variant="outline" size="sm">
-                                    <a href={check.href}>
-                                      <ExternalLink className="h-4 w-4" />
-                                      Open
-                                    </a>
-                                  </Button>
-                                ) : null}
-                                {check.action ? (
-                                  <ViewOnlyActionButton
-                                    canEdit={canEdit}
-                                    describeReason={false}
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => runProviderTest(check.action!.provider)}
-                                    disabled={runningProvider === check.action.provider}
-                                  >
-                                    {runningProvider === check.action.provider ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <PlayCircle className="h-4 w-4" />
-                                    )}
-                                    {check.action.label}
-                                  </ViewOnlyActionButton>
-                                ) : null}
-                                {check.progress !== "completed" ? (
-                                  <ViewOnlyActionButton
-                                    canEdit={canEdit}
-                                    describeReason={false}
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => updateProgress("complete", check.id)}
-                                    disabled={isSaving}
-                                  >
-                                    {isSaving ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      <CheckCircle2 className="h-4 w-4" />
-                                    )}
-                                    Acknowledge
-                                  </ViewOnlyActionButton>
-                                ) : null}
-                                {check.progress !== "skipped" ? (
-                                  <ViewOnlyActionButton
-                                    canEdit={canEdit}
-                                    describeReason={false}
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => updateProgress("skip", check.id)}
-                                    disabled={isSaving}
-                                  >
-                                    <SkipForward className="h-4 w-4" />
-                                    Skip
-                                  </ViewOnlyActionButton>
-                                ) : null}
-                                {check.progress !== "open" ? (
-                                  <ViewOnlyActionButton
-                                    canEdit={canEdit}
-                                    describeReason={false}
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => updateProgress("reopen", check.id)}
-                                    disabled={isSaving}
-                                  >
-                                    <RotateCcw className="h-4 w-4" />
-                                    Reopen
-                                  </ViewOnlyActionButton>
-                                ) : null}
-                              </div>
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
-                    </div>
-                  </section>
-                ))}
+                          {result ? (
+                            <div
+                              className={`rounded-md border px-3 py-2 text-sm ${
+                                result.ok
+                                  ? "border-success-6 bg-success-3 text-success-11"
+                                  : "border-danger-6 bg-danger-3 text-danger-11"
+                              }`}
+                            >
+                              {result.message}
+                            </div>
+                          ) : null}
+
+                          <div className="flex flex-wrap gap-2">
+                            {check.href && canFollowCheckHref(permissionMatrix, check.href) ? (
+                              <Button asChild variant="outline" size="sm">
+                                <a href={check.href}>
+                                  <ExternalLink className="h-4 w-4" />
+                                  Open
+                                </a>
+                              </Button>
+                            ) : null}
+                            {check.action ? (
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => runProviderTest(check.action!.provider)}
+                                disabled={runningProvider === check.action.provider}
+                              >
+                                {runningProvider === check.action.provider ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <PlayCircle className="h-4 w-4" />
+                                )}
+                                {check.action.label}
+                              </ViewOnlyActionButton>
+                            ) : null}
+                            {check.progress !== "completed" ? (
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => updateProgress("complete", check.id)}
+                                disabled={isSaving}
+                              >
+                                {isSaving ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="h-4 w-4" />
+                                )}
+                                Acknowledge
+                              </ViewOnlyActionButton>
+                            ) : null}
+                            {check.progress !== "skipped" ? (
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => updateProgress("skip", check.id)}
+                                disabled={isSaving}
+                              >
+                                <SkipForward className="h-4 w-4" />
+                                Skip
+                              </ViewOnlyActionButton>
+                            ) : null}
+                            {check.progress !== "open" ? (
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => updateProgress("reopen", check.id)}
+                                disabled={isSaving}
+                              >
+                                <RotateCcw className="h-4 w-4" />
+                                Reopen
+                              </ViewOnlyActionButton>
+                            ) : null}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
               </section>
-            </>
-          ) : null}
-        </div>
-      )}
+            ))}
+          </section>
+        </>
+      ) : null}
     </div>
   );
 }
