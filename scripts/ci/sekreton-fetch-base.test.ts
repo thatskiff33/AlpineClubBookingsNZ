@@ -2,13 +2,15 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-const script = path.join(import.meta.dirname, "sekreton-fetch-base.sh");
-const repos = [];
-const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+const here = path.dirname(fileURLToPath(import.meta.url));
+const script = path.join(here, "sekreton-fetch-base.sh");
+const repos: string[] = [];
+const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 
-function repository() {
+function repository(): string {
   const cwd = mkdtempSync(path.join(tmpdir(), "sekreton-base-"));
   repos.push(cwd);
   git(cwd, "init", "--initial-branch=main");
@@ -18,7 +20,7 @@ function repository() {
   return cwd;
 }
 
-function prepare(cwd) {
+function prepare(cwd: string) {
   return spawnSync("bash", [script], { cwd, encoding: "utf8" });
 }
 
@@ -75,11 +77,12 @@ describe("Sekreton check base", () => {
   });
 
   it("prepares the shared base before both required jobs run their checks", () => {
-    const config = readFileSync(path.join(import.meta.dirname, "../../.sekreton/config.toml"), "utf8");
-    for (const [job, command] of [
+    const config = readFileSync(path.join(here, "../../.sekreton/config.toml"), "utf8");
+    const jobs: Array<[string, string]> = [
       ["fast-censuses", "pnpm run ci:fast-censuses"],
       ["migrations", "bash scripts/ci/sekreton-migration-checks.sh"],
-    ]) {
+    ];
+    for (const [job, command] of jobs) {
       const block = config.split(`[jobs.${job}]`)[1].split("\n[")[0];
       expect(block).toContain(`bash scripts/ci/sekreton-fetch-base.sh && ${command}`);
     }
