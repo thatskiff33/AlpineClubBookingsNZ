@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChangeEvent, ReactNode } from "react";
 
 /**
- * #4960 / INV-OPS-019: the cancellation and archive queues are each capped at
+ * #4960 / INV-OPS-020: the cancellation and archive queues are each capped at
  * 25 rows a page by their routes. Each shows its total, pages on its own,
  * keeps its page in the URL, and the cancellation filter restarts at page 1.
  */
@@ -168,7 +168,7 @@ describe("membership cancellation queue paging (#4960)", () => {
 /*
   The page-2 read of one queue is held while the officer goes back to page 1.
   Its late answer must not put page 2's rows under page 1's pager, and the pager
-  is the same focused button through the load (INV-OPS-019). Each queue has its
+  is the same focused button through the load (INV-OPS-020). Each queue has its
   own guard, so each is proved on its own.
 */
 describe("membership queue paging under a slow read (#4960)", () => {

@@ -768,7 +768,7 @@ describe("AdminBookingsPage", () => {
     });
     const html = renderToStaticMarkup(element);
 
-    // Accessible pagination nav stating the shared range text (INV-OPS-019).
+    // Accessible pagination nav stating the shared range text (INV-OPS-020).
     expect(html).toContain('aria-label="Bookings pagination"');
     expect(html).toContain("Showing 101–101 of 101");
     expect(html).toContain("101 bookings found");

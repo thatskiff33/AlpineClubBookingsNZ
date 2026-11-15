@@ -370,7 +370,7 @@ function MembershipCancellationRequests() {
   const [filter, setFilter] = useState<RequestFilter>(
     isRequestFilter(initialStatus) ? initialStatus : "REQUESTED",
   );
-  // INV-OPS-019: both queues are capped per page by their routes. Each pages
+  // INV-OPS-020: both queues are capped per page by their routes. Each pages
   // on its own, and both pages ride in the URL beside the filter.
   const cancellationPage = useAdminQueuePage({
     filterKey: filter,
@@ -456,7 +456,7 @@ function MembershipCancellationRequests() {
    */
   const loadRequests = useCallback(async (): Promise<string | null> => {
     // A slower read for a page or filter the officer has left never replaces
-    // the list now shown, nor its error or loading end (INV-OPS-019). It has
+    // the list now shown, nor its error or loading end (INV-OPS-020). It has
     // no failure of its own to report: a newer read owns the list.
     const isCurrent = beginLoad();
     setLoading(true);

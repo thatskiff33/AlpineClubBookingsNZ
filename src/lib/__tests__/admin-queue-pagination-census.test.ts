@@ -1,6 +1,6 @@
 /**
  * Every officer queue that reads a row-capped admin route pages through it
- * (INV-OPS-019, #4960).
+ * (INV-OPS-020, #4960).
  *
  * #297 capped these routes at one page; the screens kept reading only the
  * first page with no total, so the oldest requests were silently out of
@@ -124,7 +124,7 @@ function queuePagingGaps(code: string, ownStaleReadGuard = false): string[] {
   return gaps;
 }
 
-describe("row-capped officer queues page through every row (INV-OPS-019)", () => {
+describe("row-capped officer queues page through every row (INV-OPS-020)", () => {
   const readers = queueReaders();
 
   it("finds a reader for every capped route, so an empty walk cannot pass", () => {
@@ -135,8 +135,8 @@ describe("row-capped officer queues page through every row (INV-OPS-019)", () =>
   it("enumerates the queue lists it polices", () => {
     const lists = [...readers.keys()].filter((file) => !(file in NOT_A_QUEUE_LIST)).sort();
     expect(lists).toEqual([
-      "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx",
       "src/app/(admin)/admin/finance/refund-requests/page.tsx",
+      "src/app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx",
       "src/app/(admin)/admin/membership/member-applications/page.tsx",
       "src/app/(admin)/admin/membership/membership-cancellations/page.tsx",
       "src/components/admin/booking-requests/booking-approvals-panel.tsx",
@@ -241,7 +241,7 @@ function unparsedPageReads(code: string): string[] {
     .map((match) => match[0]);
 }
 
-describe("admin lists share the page parser and range text (INV-OPS-019)", () => {
+describe("admin lists share the page parser and range text (INV-OPS-020)", () => {
   // API routes read `page` through their zod schema (`adminListPageQueryFields`).
   const files = sourceFiles(SRC)
     .map(relative)
@@ -266,16 +266,16 @@ describe("admin lists share the page parser and range text (INV-OPS-019)", () =>
   it("enumerates the lists that parse a page key, so an empty walk cannot pass", () => {
     const parsing = files.filter((file) => /\bparseAdminListPageParam\(/.test(code.get(file)!)).sort();
     expect(parsing).toEqual([
+      "src/app/(admin)/admin/booking-desk/waitlist/page.tsx",
       "src/app/(admin)/admin/finance/payments/page.tsx",
       "src/app/(admin)/admin/finance/refund-requests/page.tsx",
       "src/app/(admin)/admin/finance/subscriptions/page.tsx",
       "src/app/(admin)/admin/finance/xero/_components/inbound-events-panel.tsx",
       "src/app/(admin)/admin/finance/xero/_components/operations-panel.tsx",
-      "src/app/(admin)/admin/member-applications/page.tsx",
-      "src/app/(admin)/admin/members/_hooks/use-members-query-state.ts",
-      "src/app/(admin)/admin/membership-cancellations/page.tsx",
+      "src/app/(admin)/admin/membership/member-applications/page.tsx",
+      "src/app/(admin)/admin/membership/members/_hooks/use-members-query-state.ts",
+      "src/app/(admin)/admin/membership/membership-cancellations/page.tsx",
       "src/app/(admin)/admin/system/audit-log/page.tsx",
-      "src/app/(admin)/admin/waitlist/page.tsx",
       "src/components/admin/booking-requests/booking-approvals-panel.tsx",
       "src/components/admin/booking-requests/booking-change-requests-panel.tsx",
       "src/components/admin/booking-requests/public-booking-requests-panel.tsx",

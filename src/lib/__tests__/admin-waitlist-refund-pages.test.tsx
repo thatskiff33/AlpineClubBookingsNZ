@@ -1258,7 +1258,7 @@ describe("an approved appeal whose card refund is still partly owed (#4117)", ()
 });
 
 /*
-  #4960 / INV-OPS-019: refund appeals are capped at 25 a page by their route.
+  #4960 / INV-OPS-020: refund appeals are capped at 25 a page by their route.
   The list asks for a page, shows the total, keeps the page in the URL, and
   goes back to page 1 when the filter changes. Credit approvals stay unbounded.
 */
@@ -1360,7 +1360,7 @@ describe("refund appeal paging (#4960)", () => {
     The page-2 read is held while the officer goes back to page 1. Its late
     answer must not put page 2's rows under page 1's pager or end the loading
     state of the read now shown, and the pager is the same focused button
-    through the load (INV-OPS-019).
+    through the load (INV-OPS-020).
   */
   function serveSlowSecondPage(outcome: "rows" | "failure") {
     const slow: { release?: () => void } = {};

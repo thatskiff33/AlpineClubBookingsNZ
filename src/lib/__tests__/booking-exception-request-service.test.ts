@@ -1653,7 +1653,7 @@ describe("readUnifiedExceptionQueue (merges both sources)", () => {
     const result = await readUnifiedExceptionQueue({ status: "REQUESTED", page: 1, pageSize: 25 });
 
     expect(result.total).toBe(2);
-    // INV-OPS-019: the waiting queue reads oldest first, from each source too,
+    // INV-OPS-020: the waiting queue reads oldest first, from each source too,
     // so the source cap never drops the longest-waiting rows.
     expect(result.data[0]).toMatchObject({ source: "NEW_BOOKING", id: "nb-1", reasonCodes: ["MINIMUM_STAY"] });
     expect(result.data[1]).toMatchObject({ source: "MODIFICATION", id: "bcr-1", summary: "check-out to 2026-07-12" });
@@ -1668,7 +1668,7 @@ describe("readUnifiedExceptionQueue (merges both sources)", () => {
     expect(mocks.nbFindMany.mock.calls[1][0].orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 
-  // INV-OPS-019 (#4960): the total is each source's own row count and every row
+  // INV-OPS-020 (#4960): the total is each source's own row count and every row
   // is reachable. The read used to stop at 500 rows a source, so a club with more
   // decided requests than that saw a total capped at 1000 and could not reach the
   // older ones.

@@ -320,7 +320,7 @@ describe("MemberApplicationsPage", () => {
 });
 
 /*
-  #4960 / INV-OPS-019: the route returns 25 applications a page. The worked
+  #4960 / INV-OPS-020: the route returns 25 applications a page. The worked
   example: 40 pending applications after an open day. The list says so, and
   the next page holds the other 15.
 */
@@ -409,7 +409,7 @@ describe("MemberApplicationsPage paging (#4960)", () => {
 
   /*
     The page-2 read is held while the officer goes back to page 1. Its late
-    answer must not put page 2's rows under page 1's pager (INV-OPS-019), and
+    answer must not put page 2's rows under page 1's pager (INV-OPS-020), and
     the pager is the same focused button through the load.
   */
   it("keeps the pager focused through a load and ignores a slower read for a page left", async () => {

@@ -160,7 +160,7 @@ describe("Pagination — empty states", () => {
   });
 });
 
-describe("Pagination — summary on a single page (INV-OPS-019)", () => {
+describe("Pagination — summary on a single page (INV-OPS-020)", () => {
   it("shows the summary line alone, as text and not as a navigation landmark", () => {
     render(
       <Pagination

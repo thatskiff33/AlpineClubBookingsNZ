@@ -24,7 +24,7 @@ function readNumber(value: unknown): number | null {
 }
 
 /**
- * Client paging for a row-capped officer queue (INV-OPS-019, #4960).
+ * Client paging for a row-capped officer queue (INV-OPS-020, #4960).
  *
  * The page belongs to one filter: when `filterKey` changes the effective page
  * is 1 straight away, so the list's fetch effect runs once with the reset page
@@ -127,7 +127,7 @@ export function useAdminQueuePage({
 
 /**
  * Read one deep-linked record from its queue route when it is not on the page
- * the list loaded, so the panel can pin it above the page (INV-OPS-019). Reads
+ * the list loaded, so the panel can pin it above the page (INV-OPS-020). Reads
  * across every status so a link still lands whatever filter is showing.
  * Answers null when there is no deep link, the record is already on the page,
  * it is gone, or the read fails; the list itself is unaffected.
