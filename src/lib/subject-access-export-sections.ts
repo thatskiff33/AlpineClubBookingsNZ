@@ -88,7 +88,7 @@ export async function buildSubjectAccessSections(key: SubjectAccessKey) {
   const shared = {
     emailKeyedRecords,
     guestAppearances,
-    bookingRequests: bookingRequests.map(toSubjectAccessBookingRequest),
+    bookingRequests: bookingRequests.map((request) => toSubjectAccessBookingRequest(request)),
     applications: applications.map((application) => ({
       ...application,
       applicantDateOfBirth: application.applicantDateOfBirth
