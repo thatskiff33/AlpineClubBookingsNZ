@@ -36,7 +36,8 @@ Bookings hub's areas (`bed-allocation`, `book`, `booking-approvals`,
 `booking-desk/` (C10 #4807), and the Members hub's areas (`committee`,
 `deletion-requests`, `family-groups`, `induction`, `member-applications`,
 `member-fields`, `members`, `membership-cancellations`, `membership-setup`,
-`membership-types`, `subscription-lockout`) in `membership/` (C9 #4806). Member
+`membership-types`, `subscription-categories`, `subscription-lockout`) in
+`membership/` (C9 #4806). Member
 detail, member merge, induction print and induction settings are not areas; they
 live under `members/` and `induction/`. The
 count that used to stand here said 70 and was measured once; it had already
@@ -149,6 +150,7 @@ For what an officer sees and does on each screen, use the
 | `site-style` | content | — | [guide](guides/site-style.md) | 4 |
 | `stripe` | finance | [`guides/integrations.md`](guides/integrations.md) (Stripe Setup), [`guides/payments.md`](guides/payments.md) | [guide](guides/integrations.md) (`stripe/setup` wizard) | — (guided setup epic #2078; postdates #2050) |
 | `stuck-states` | support | `ARCHITECTURE.md` (stuck-state dashboard) | [guide](guides/stuck-states.md) | 4 |
+| `subscription-categories` | membership | `AUTHORITATIVE_FEES.md` (subscription category billing axis) | [guide](guides/subscription-categories.md) | — (subscription-category-decoupling; postdates #2050) |
 | `subscription-lockout` | membership | `ARCHITECTURE.md` (subscription lockout) | [guide](guides/subscription-lockout.md) | 2 |
 | `subscriptions` | finance | `ARCHITECTURE.md` (membership subscription billing) | [guide](guides/subscriptions.md) | 2 |
 | `testing` | overview (allowlisted) | TEST-ONLY: `testing/route-error` is the route-error probe for the #4467 boundary E2E. In a real production runtime it calls `notFound()` before any await and has no loading boundary above it, so the answer is a real 404 status; elsewhere it runs the admin guard itself before reading its cookie (`src/lib/route-error-probe.ts`) | — (not an operator surface) | — |
@@ -159,7 +161,7 @@ For what an officer sees and does on each screen, use the
 
 ## Summary
 
-- **83** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
+- **84** admin route areas, one row each. `src/app/(admin)/admin` holds more directories that aren't areas: `__tests__`; `_lib`, shared server helpers with no route (Next.js treats an `_`-prefixed folder as private); and each hub directory that pages have moved into (`website`, `finance`, `rules`, `system`, `messages`, `booking-desk`, `membership`), which holds areas rather than being one. `src/lib/__tests__/coverage-matrix-areas.test.ts` checks this count, that every area directory has exactly one row, and that each row's permission area matches the route map.
 - **2** areas are already served by a **feature hub** (`display` → lobby-display,
   `lodges` → multi-lodge). #2050 should extend, not duplicate, those hubs.
 - **13** areas have **no reference coverage** beyond their operator guide
@@ -329,9 +331,11 @@ feature-gated surfaces; the guides document the reality:
   screenshot — the [Integrations](guides/integrations.md) guide describes it in
   prose, matching the batch-2 Xero pattern. The page is now a thin hub with a
   single **Xero Setup** card.
-- **`communications` and `mountain-conditions` are gated but ON by default.**
-  Their modules (`communications`, `skifieldConditions`) default **on** in the
-  seed, so both render and are captured. `communications` lives in the **Members**
+- **`communications` and `mountain-conditions` render in the capture.**
+  `communications` defaults **on** in the seed; `mountain-conditions` is gated
+  by `skifieldWhakapapa`, which a fresh install leaves off and the E2E prepare
+  step (`e2e/setup/enable-e2e-modules.ts`) turns on (#4932), so both render and
+  are captured. `communications` lives in the **Members**
   sidebar section (permission area `membership`), not support.
 - **`display` stays a feature hub.** The lobby TV display module (`lobbyDisplay`)
   is **off** by default, so `/admin/display` 404s in the seed; rather than a new
