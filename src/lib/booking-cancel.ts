@@ -9,7 +9,7 @@ import {
   failOutstandingAdditionalAskUnderRowLock,
   hasOutstandingAdditionalPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
-import { isXeroConnected } from "./xero";
+import { isXeroConnected } from "./xero-token-store";
 import { daysUntilDate, getRefundTier, loadCancellationPolicy } from "./cancellation";
 import { sendAdminManualRefundTaskAlert, sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";

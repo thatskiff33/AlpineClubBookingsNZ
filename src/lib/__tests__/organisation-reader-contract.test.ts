@@ -470,6 +470,12 @@ const DECLARED_FILES: Record<string, string> = {
   // #4457: the privacy-retention census classifies every Prisma model by name.
   "src/lib/privacy-retention-classification.ts":
     "names OrganisationContact as a key of the personal-data model inventory; it reads no row and decides nothing about a school",
+  // #4915: the subject access export places every personal model and copies
+  // the subject's own rows into their file.
+  "src/lib/subject-access-export-coverage.ts":
+    "names Organisation and OrganisationContact as keys of the export's coverage map; it reads no row and decides nothing about a school",
+  "src/lib/subject-access-export-additional.ts":
+    "reads the subject's own OrganisationContact rows (when added and the school's name) into their privacy access file; it decides nothing about a school",
 
   // ---- carried forward from stage 1, unchanged -------------------------
   "src/lib/member-merge-relations.ts":

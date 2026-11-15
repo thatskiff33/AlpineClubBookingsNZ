@@ -80,6 +80,12 @@ describe("feature route map", () => {
       "communications",
     ]);
     expect(getRequiredFeaturesForPath("/api/skifield-whakapapa")).toEqual([
+      "skifieldWhakapapa",
+    ]);
+    expect(
+      getRequiredFeaturesForPath("/api/admin/mountain-conditions/refresh"),
+    ).toEqual(["skifieldWhakapapa"]);
+    expect(getRequiredFeaturesForPath("/api/skifield-conditions")).toEqual([
       "skifieldConditions",
     ]);
   });
@@ -302,7 +308,7 @@ describe("feature route map", () => {
       )
     ).toBe("financeDashboard");
     expect(
-      isFeatureHrefVisible("/admin/xero#xero-section-mappings", {
+      isFeatureHrefVisible("/admin/xero/setup?step=mapping", {
         ...allOn,
         xeroIntegration: false,
       })
