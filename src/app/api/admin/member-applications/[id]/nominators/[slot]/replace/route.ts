@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  MembershipApplicationError,
-  type NominatorSlot,
-  replaceMemberApplicationNominator,
-} from "@/lib/nomination";
+import { MembershipApplicationError } from "@/lib/member-application-fields";
+import { type NominatorSlot, replaceMemberApplicationNominator } from "@/lib/nomination";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 

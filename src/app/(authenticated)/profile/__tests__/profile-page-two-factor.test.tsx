@@ -96,7 +96,7 @@ vi.mock("../notification-preferences", () => ({
   NotificationPreferences: () => <section>Notification preferences</section>,
 }));
 
-vi.mock("../family-group-section", () => ({
+vi.mock("@/components/profile/family-group-section", () => ({
   FamilyGroupSection: () => <section>Family group section</section>,
 }));
 
@@ -140,6 +140,7 @@ function moduleFlags(twoFactor: boolean) {
     hutLeaders: false,
     communications: false,
     skifieldConditions: false,
+    skifieldWhakapapa: false,
     twoFactor,
     analytics: false,
   };

@@ -132,11 +132,25 @@ describe("INV-SSOT-001: one home for a booking's final-price relation", () => {
         assignment,
         `src/${rel} no longer assigns newFinalPriceCents (INV-SSOT-001)`,
       ).not.toBeNull();
-      const expression = assignment![0];
+      let expression = assignment![0];
       expect(
         expression.includes("bookingFinalPriceCents("),
         `src/${rel} must compute newFinalPriceCents through bookingFinalPriceCents (INV-SSOT-001)`,
       ).toBe(true);
+      // ALP-573: the ONE stored-figure branch left, and it is not a parked
+      // edit. A price-preserving batch edit (a name fix, a credit election)
+      // moves no money, so it keeps the stored final price exactly as the
+      // preview's echo reports it; re-deriving would settle a damaged row's
+      // drift as that edit's difference. Pinned by its exact guard, so a
+      // stored figure on any other branch still fails below.
+      if (rel === "lib/booking-batch-modification-service.ts") {
+        const preserving = /^newFinalPriceCents\s*=\s*pricePreservingModification\s*\?\s*booking\.finalPriceCents\s*:/;
+        expect(
+          preserving.test(expression),
+          `src/${rel}: only the price-preserving branch may keep the stored final price (ALP-573)`,
+        ).toBe(true);
+        expression = expression.replace(preserving, "");
+      }
       expect(
         expression.includes("booking.finalPriceCents"),
         `src/${rel} writes the booking's STORED finalPriceCents back; no edit parks since #4317 (INV-MOD-028)`,

@@ -29,7 +29,7 @@ function entry(path: string, content: HelpPageContent): HelpPageEntry {
 }
 
 // The four booking-wizard step ids, mirrored from
-// src/app/(authenticated)/book/_components/types.ts (BookingWizardStep). Used as
+// src/components/book/booking-wizard-types.ts (BookingWizardStep). Used as
 // `group` tags on the /book questions so the AI route can scope an answer to the
 // step the member is on.
 const BOOK_STEP_DATES = "dates";
@@ -286,7 +286,7 @@ const profileHelp: HelpPageContent = {
     },
     {
       q: "Which emails can I turn off?",
-      a: "Optional emails like Check-in Reminders, Chore Roster, and Club Communications. Essential booking emails — Booking Confirmations, Booking Updates, and Cancellation Notices — are always sent and cannot be turned off.",
+      a: "Optional emails like Check-in Reminders, Chore Roster, Club notices (AGM notices, closures and subscription reminders, on unless you turn them off) and Club newsletters (off unless you turn them on). Essential booking emails — Booking Confirmations, Booking Updates, and Cancellation Notices — are always sent and cannot be turned off.",
     },
     {
       q: "How do I download my data or delete my account?",
