@@ -12,13 +12,13 @@ entries further down are the same growth measured per component, because the
 size gate now also judges functions over 300 lines (#4927).
 
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
-lines: 984
+lines: 983
 reason: the refund appeal list gains its page state, its page in the URL
   and a pager inside its own section, while the credit approvals list on the
   same screen stays unpaged; moving one list out is a screen split of its own.
 
 file: src/app/(admin)/admin/membership/member-applications/page.tsx
-lines: 856
+lines: 888
 reason: the screen kept its filter only in memory; paging needs the filter
   and page read from and written to the URL, and that wiring belongs beside
   the filter state it mirrors rather than in a second module.
@@ -41,14 +41,14 @@ reason: the public queue gains paging and the pinned deep-linked request
   refactor of its own, well beyond this change.
 
 function: src/app/(admin)/admin/finance/refund-requests/page.tsx#RefundRequestsPage
-lines: 815
+lines: 814
 reason: the officer queue pager, its page state and its URL wiring; those
   lines sit inside the function `RefundRequestsPage`, which was already over
   its limit before this change, and lifting it apart is a refactor of its own,
   not part of this fix.
 
 function: src/app/(admin)/admin/membership/member-applications/page.tsx#MemberApplicationsPage
-lines: 690
+lines: 720
 reason: the officer queue pager, its page state and its URL wiring; those
   lines sit inside the function `MemberApplicationsPage`, which was already
   over its limit before this change, and lifting it apart is a refactor of its

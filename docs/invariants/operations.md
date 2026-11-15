@@ -462,7 +462,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   When an admin route answers one page of a list, every screen that reads it
   for that list shows the total ("Showing 1–25 of 40", even on a single page)
   and a pager that reaches the last row, in the same change that adds the cap.
-  A cap with no pager is silent data loss: #297 hid the longest-waiting requests.
+  A cap with no pager is silent data loss (#297).
 - One shape, one pager. A capped route parses `adminListPageQueryFields` and
   answers through `adminListPage`, both in `src/lib/admin-list-page.ts`; a
   screen pages through `useAdminQueuePage` and renders the shared `Pagination` with
@@ -480,10 +480,10 @@ rules first written here. #2765 extended it with the measured-audience half.
   names this ID: every client file fetching a route in `CAPPED_QUEUE_ROUTES`
   must page through the hook, guard its reads with `beginLoad`, and render
   `Pagination` outside its loading branch, or be exempt in `NOT_A_QUEUE_LIST`;
-  each route must call `adminListPage`. It reads source text, so a new capped
-  route is covered once added to that map. Every other admin list must take its
-  range text from `formatAdminListRange`, read its URL page through
-  `parseAdminListPageParam` and write it through `setAdminListPageParam`.
+  each route must call `adminListPage`. A new capped route needs adding to that
+  map. Every other admin list takes its range text from
+  `formatAdminListRange` and reads and writes its URL page through
+  `parseAdminListPageParam` and `setAdminListPageParam`.
 
 ## INV-OPS-002
 
