@@ -147,6 +147,49 @@ afterEach(() => {
 });
 
 describe("DefaultCancellationPolicySection scope switching (#2142 review)", () => {
+  it("cancels timing edits and saves all three only after a dirty Save (#4932)", async () => {
+    let saved = {
+      rules: CLUB_RULES,
+      preArrivalReminderDays: 3,
+      additionalPaymentReminderDays: 3,
+      policyExceptionHoldDays: 7,
+    };
+    const writes: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body));
+        writes.push(body);
+        saved = { ...saved, ...body };
+      }
+      return jsonResponse(saved);
+    }));
+    await renderClubWide();
+    const arrival = () => screen.getByLabelText("Pre-arrival reminder") as HTMLInputElement;
+    expect(arrival().disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const save = () => screen.getByRole("button", { name: "Save Default Policy" }) as HTMLButtonElement;
+    expect(save().disabled).toBe(true);
+    fireEvent.change(arrival(), { target: { value: "5" } });
+    expect(writes).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(arrival().value).toBe("3");
+    expect(writes).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(arrival(), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("First reminder to pay an extra amount"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Policy-exception hold"), { target: { value: "14" } });
+    fireEvent.click(save());
+    await waitFor(() => expect(arrival().disabled).toBe(true));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      preArrivalReminderDays: 5,
+      additionalPaymentReminderDays: 4,
+      policyExceptionHoldDays: 14,
+    });
+    expect(arrival().value).toBe("5");
+  });
+
   it("shows the club-wide fallback card, not an editor, after a SUCCESSFUL switch to a lodge with no override", async () => {
     stubFetch({ lodgeOne: { rules: [] } });
     await renderClubWide();

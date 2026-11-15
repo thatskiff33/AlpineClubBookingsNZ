@@ -104,7 +104,7 @@ pure workflow logic (`src/lib/booking-exception-requests.ts`):
 
 - **Every held bed is on a deadline, and only a held bed is (#2553).** A
   request that actually reserves beds is stamped at creation with an immutable
-  `holdExpiresAt` — `POLICY_EXCEPTION_HOLD_TTL_DAYS` (7) from creation, capped at
+  `holdExpiresAt` — the saved `policyExceptionHoldDays` (default 7), capped at
   the start of the first night it holds, floored at
   `POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS` (24) so a late request still gets a real
   review window. It is written once and never rewritten, so a member's expiry
@@ -122,7 +122,7 @@ pure workflow logic (`src/lib/booking-exception-requests.ts`):
   **The one stated exception, because the #2553 migration deliberately does not
   backfill:** a row written before that migration (or by a draining old colour) can
   be holding beds *with* `holdExpiresAt` NULL, and the reaper ages that row out from
-  `createdAt` plus its own earliest held night under the identical rule. So NULL is
+  `createdAt` with the legacy seven-day window and earliest held night. So NULL is
   never a safe proxy for "this request holds no capacity" — a scan or predicate that
   tests `holdExpiresAt IS NOT NULL` would silently skip exactly the stranded holds
   this invariant exists to catch. The live `PolicyExceptionReservationNight` rows are
