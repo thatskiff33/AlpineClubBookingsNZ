@@ -8,6 +8,8 @@ const { mockPrisma, mockSendPreArrivalReminderEmail, mockLogger } = vi.hoisted(
         findMany: vi.fn(),
         updateMany: vi.fn(),
       },
+      // #4932: no saved BookingDefaults row unless a test says otherwise.
+      bookingDefaults: { findUnique: vi.fn(async (): Promise<unknown> => null) },
     },
     mockSendPreArrivalReminderEmail: vi.fn(),
     // Every level the cron actually calls. It used to hold `error` alone, and
@@ -127,6 +129,33 @@ describe("sendPreArrivalReminders", () => {
     expect(result.sentBookingIds).toEqual(["booking-1"]);
     expect(result.windowStart).toBe("2026-06-11");
     expect(result.windowEndExclusive).toBe("2026-06-15");
+  });
+
+  // #4932: the lead is the club's own setting. Three days when no row is saved
+  // (the window above); a club that reminds a week out widens it to match.
+  it("reads the club's reminder lead, defaulting to three days", async () => {
+    expect((await sendPreArrivalReminders()).reminderDays).toBe(3);
+
+    mockPrisma.bookingDefaults.findUnique.mockResolvedValueOnce({
+      preArrivalReminderDays: 7,
+      additionalPaymentReminderDays: 3,
+      policyExceptionHoldDays: 7,
+    });
+    const result = await sendPreArrivalReminders();
+
+    expect(result.reminderDays).toBe(7);
+    expect(result.windowStart).toBe("2026-06-11");
+    expect(result.windowEndExclusive).toBe("2026-06-19");
+    expect(mockPrisma.booking.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          checkIn: {
+            gte: new Date("2026-06-11T00:00:00.000Z"),
+            lt: new Date("2026-06-19T00:00:00.000Z"),
+          },
+        }),
+      }),
+    );
   });
 
   // #2350: the pre-arrival note is the last message most members read before
