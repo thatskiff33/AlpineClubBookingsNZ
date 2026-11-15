@@ -20,7 +20,7 @@ description, so you can find the right file without opening more than one.
 
 | File under `docs/invariants/` | Prefixes | Read it when you are changing… |
 | --- | --- | --- |
-| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content and named lodge tokens |
+| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies |
 | [`money.md`](invariants/money.md) | `INV-MONEY` | anything holding cents: fee authorities, whole-lodge pricing, promo caps, subscription charges, or the Xero invoice identity behind them |
 | [`booking-dates-and-capacity.md`](invariants/booking-dates-and-capacity.md) | `INV-DATE`, `INV-CAP`, plus `INV-LIFE-062` | what day it is, who is present, how many beds, which bed, custodian bed holds |
 | [`payment-and-settlement.md`](invariants/payment-and-settlement.md) | `INV-PAY` | taking, clearing, crediting or refunding money |
@@ -78,6 +78,7 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 | `INV-PUB-002` | Public fees use current effective-dated schedules; joining fees resolve from `JoiningFee` only |
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
 | `INV-PUB-004` | `{{data-hosting}}` publishes only the two typed hosting values, escaped, or fallback |
+| `INV-PUB-005` | Galleries serve current, smaller copies made at upload; originals kept |
 
 ## Money
 
@@ -989,6 +990,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-016` | Member journal grants and database guards forbid mutation |
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
+| `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
 
 ## Product Configuration
 
@@ -1030,6 +1032,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
+| `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
 
 ## Authentication
 
@@ -1054,3 +1057,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
 | `INV-AUTH-012` | Officers use an app or passkey after grace |
+| `INV-AUTH-013` | Password work leaves the event loop; placeholders use one unusable hash |
