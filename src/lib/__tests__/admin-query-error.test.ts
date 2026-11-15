@@ -5,6 +5,7 @@ import {
   AMOUNT_FILTER_RANGE_MESSAGE,
   adminPaymentsQuerySchema,
 } from "@/lib/admin-payments-service";
+import { DATE_ONLY_INVALID_MESSAGE } from "@/lib/date-only-schema";
 
 /**
  * #2685 review — the payments screen swallowed its own 400.
@@ -57,6 +58,19 @@ describe("readAdminQueryErrorMessage", () => {
     expect(message).toBe(
       "Amount max must be greater than or equal to amount min",
     );
+  });
+
+  // ALP-574: `from` is a `dateOnlyStringSchema`, so the route's GET handler
+  // (src/app/api/admin/payments/route.ts) refuses a non-existent calendar
+  // day at this same schema — before `listAdminPayments` (and therefore
+  // Prisma) ever runs — and sends this message as the field's refusal.
+  it("quotes the date message for a non-existent day in `from` (ALP-574)", async () => {
+    const message = await readAdminQueryErrorMessage(
+      jsonResponse(refusalBody({ from: "2026-02-30" })),
+      FALLBACK,
+    );
+
+    expect(message).toBe(DATE_ONLY_INVALID_MESSAGE);
   });
 
   it("still explains a well-formed amount that is simply too large", async () => {
