@@ -138,8 +138,8 @@ describe("census: no date field checks the YYYY-MM-DD shape only (ALP-574)", () 
    * non-day itself, so it is outside this pattern and needs no entry.
    */
   const ALLOWED: Record<string, string> = {
-    "src/lib/nomination.ts":
-      "the read schema over stored application JSON, deliberately loose so a stored bad value cannot blank the nominating member's page (#3082; application-date-of-birth-refusal.test.ts)",
+    "src/lib/member-application-fields.ts":
+      "the read schema over stored application JSON, deliberately loose so a stored bad value cannot blank the nominating member's page (#3082; application-date-of-birth-refusal.test.ts); moved verbatim out of nomination.ts by #4930",
   };
 
   const SHAPE_ONLY = /\.regex\(\s*\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//g;
