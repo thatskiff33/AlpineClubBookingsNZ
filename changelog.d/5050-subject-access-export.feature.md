@@ -24,6 +24,8 @@
   manual review, including for a member who can sign in. The file includes the
   person's induction signer assignments, sign-offs and guest chore duties.
   Activity follows the same subject and visibility rules as their own timeline.
+  A whole-lodge booking request shows the same status the member sees on "My
+  requests", and no price.
 
   The starter privacy policy's access section is updated to match. A club whose
   policy still has the original starter text gets the new wording; a policy the

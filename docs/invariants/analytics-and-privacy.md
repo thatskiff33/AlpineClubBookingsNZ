@@ -899,6 +899,13 @@ differ. Decided on
 - **An address is a key only when the subject owns it.** Records filed by email
   (email log, applications, booking requests) are withheld, and the file says
   so, when the address belongs to another member record too.
+- **A whole-lodge request shows what "My requests" shows.** Its status is the
+  member-facing word from `toMyWholeLodgeRequestStatus` (#2263), never an
+  officer-side state such as `PRICED`, `QUOTED` or `QUERY_PENDING`, and none
+  of its price fields go out (owner decision,
+  [15 Nov 2026](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4915#issuecomment-6888297799)).
+  Stated assumption, to be confirmed with the club's privacy adviser: these
+  officer-side fields are not personal information the member must be given.
 - **Nothing is cut silently.** Every activity entry the subject may see is
   read, with no ceiling, and `auditLogTotal` states the count.
 - **The report is Full Admin only**, re-checked against the database, behind
@@ -910,4 +917,5 @@ differ. Decided on
 - **The file name** is the club's own slug from `getClubIdentity`, never a
   hard-coded club.
 - Proof: `subject-access-export-census.test.ts`,
+  `subject-access-booking-request.test.ts`,
   `subject-access-export.realdb.test.ts` and the two route tests.

@@ -45,6 +45,9 @@ const BOOKER_NAME = "Bookerton";
 const BOOKER_DATE_OF_BIRTH = "1961-03-14";
 const BOOKER_DIETARY = "Booker-only gluten note 4915";
 
+/** A whole-lodge request's officer-set prices: never in either file. */
+const WHOLE_LODGE_PRICES = [471_101, 471_202, 471_303] as const;
+
 let prisma: PrismaClient;
 let builder: typeof import("@/lib/subject-access-export");
 let dietary: typeof import("@/lib/member-dietary");
@@ -58,6 +61,7 @@ async function teardown() {
   await prisma.emailLog.deleteMany({ where: { to: { startsWith: P } } });
   await prisma.memberApplication.deleteMany({ where: { applicantEmail: { startsWith: P } } });
   await prisma.bookingRequest.deleteMany({ where: { contactEmail: { startsWith: P } } });
+  await prisma.bookingRequest.deleteMany({ where: { requestedByMemberId: { startsWith: P } } });
   await prisma.memberCredit.deleteMany({ where: { memberId: { startsWith: P } } });
   await prisma.familyGroupMember.deleteMany({ where: { familyGroupId: FAMILY } });
   await prisma.familyGroup.deleteMany({ where: { id: FAMILY } });
@@ -139,6 +143,15 @@ async function teardown() {
       data: { type: "GENERAL", contactFirstName: "Reque", contactLastName: "Ster", contactEmail: REQUESTER_EMAIL,
         checkIn: night(10), checkOut: night(12), guests: [] },
     });
+    // The subject's own whole-lodge request, at an officer-side state with prices
+    // set (owner decision, 15 Nov 2026): the file shows "pending" and no price.
+    await prisma.bookingRequest.create({
+      data: { type: "GENERAL", status: "PRICED", exclusivityRequested: true, requestedByMemberId: SUBJECT,
+        contactFirstName: "Subjecta", contactLastName: "Own", contactEmail: SUBJECT_EMAIL,
+        checkIn: night(20), checkOut: night(22), guests: [],
+        indicativePriceCents: WHOLE_LODGE_PRICES[0], priceCents: WHOLE_LODGE_PRICES[1],
+        acceptedPriceCents: WHOLE_LODGE_PRICES[2] },
+    });
 
     // The booker's booking: the subject (a member) and a non-member co-guest.
     await prisma.booking.create({
@@ -208,6 +221,28 @@ async function teardown() {
     for (const other of [CO_GUEST_NAME, CO_GUEST_DIETARY, BOOKER_EMAIL, BOOKER_DATE_OF_BIRTH, BOOKER_DIETARY]) {
       expect(text).not.toContain(other);
     }
+  });
+
+  it("shows the subject's whole-lodge request with the member-facing status and no price, in both files", async () => {
+    const own = await ownFile();
+    const officer = await officerFile({ memberId: SUBJECT });
+    for (const { file, text } of [own, officer]) {
+      expect(file.bookingRequests).toEqual([
+        expect.objectContaining({ wholeLodge: true, status: "pending", checkIn: "2026-08-20" }),
+      ]);
+      expect(text).not.toContain("PRICED");
+      for (const field of ["indicativePriceCents", "priceCents", "acceptedPriceCents"]) {
+        expect(file.bookingRequests[0]).not.toHaveProperty(field);
+      }
+      for (const price of WHOLE_LODGE_PRICES) expect(text).not.toContain(String(price));
+    }
+  });
+
+  it("gives the member and the Full Admin the same file for the same subject", async () => {
+    const own = await ownFile();
+    const officer = await officerFile({ memberId: SUBJECT });
+    // Only the moment of export may differ between the two runs.
+    expect({ ...officer.file, exportedAt: null }).toEqual({ ...own.file, exportedAt: null });
   });
 
   it("withholds address-filed records from a dependant who shares a parent's address", async () => {
