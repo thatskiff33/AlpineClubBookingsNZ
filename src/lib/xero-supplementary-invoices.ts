@@ -56,6 +56,7 @@ import {
 } from "@/lib/xero-modification-line-items";
 import type { ClubFormat } from "@/lib/club-format";
 import { ownRunningClaim, type XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
+import { recordSupplementaryInvoiceManifest } from "@/lib/member-money/doors";
 
 export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
@@ -598,6 +599,19 @@ export async function createXeroSupplementaryInvoice(params: {
     await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }
+
+  // #4525 (ALP-436): what this invoice bills of the journal, recorded once the
+  // operation has completed. Never throws; nothing about the send changes.
+  await recordSupplementaryInvoiceManifest({
+    bookingId,
+    anchor: shortfallReviewTaskId
+      ? { kind: "SECOND_ASK", modificationId: bookingModificationId, taskId: shortfallReviewTaskId }
+      : { kind: "MODIFICATION", modificationId: bookingModificationId },
+    legacyKey: invoiceIdempotencyKey,
+    lines: lineItems,
+    priceLines: itemised.record,
+    providerInvoiceId: createdInvoiceId,
+  });
 
   // #3924 round 8 (owner, 8 Oct 2026: "Raise a refund note for all";
   // `INV-PAY-122`): this invoice may be the receipt of a late card charge

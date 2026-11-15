@@ -9381,24 +9381,18 @@ model MemberMoneyRefundReservationRelease {
   @@index([applicationId])
 }
 
-/// Privacy disclosure is its own domain singleton: branding saves must not
-/// replace its updater attribution. Club-wide; no hosting facts are inferred.
-model PrivacyHostingSettings {
-  id                String   @id @default("default")
-  hostingProvider   String?  @db.VarChar(120)
-  dataLocation      String?  @db.VarChar(120)
-  updatedByMemberId String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @default(now()) @updatedAt
-
-  @@index([updatedByMemberId])
-}
-
 /// M13 (#4525): the outbound document families whose coverage a manifest records.
 enum MemberMoneyExportDocumentRole {
   PRIMARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): an edit's supplementary invoice, or a review's second ask.
+  SUPPLEMENTARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): a rewrite of an issued primary invoice's descriptions and dates.
+  PRIMARY_BOOKING_INVOICE_UPDATE
+  /// #4525 (ALP-439): a refund credit note, covering the one live R05 refund debt it answers.
   REFUND_NOTE
+  /// #4525 (ALP-439): the cash payment that settles a refund note, covering its R12 or R14 slice.
   REFUND_NOTE_PAYMENT
+  /// #4525 (ALP-439): reserved for the failed-later refund reversal invoice; nothing writes it yet.
   FAILED_LATER_REFUND_REVERSAL
 }
 
@@ -9412,7 +9406,13 @@ enum MemberMoneyExportConflictReason {
   STAY_CENTS
   FEE_CENTS
   COMPONENT_UNUSABLE
+  /// A supplementary invoice nets a price reduction against a fee: no component is billed whole or as a slice.
+  REDUCTION_NETTED
+  /// A primary-invoice update whose total is not its covered primary manifest's.
+  PRIMARY_UNMATCHED
+  /// A refund note whose cents are not its one obligation's.
   CENTS
+  /// The component is already covered by an earlier document of the same role.
   ALREADY_COVERED
 }
 
@@ -9439,17 +9439,33 @@ model MemberMoneyExportManifest {
   @@index([bookingId])
 }
 
-/// One journal component a manifest's document bills whole. A component is billed
-/// by at most one document of each role.
+/// One journal component a manifest's document bills: whole (sliceKey ''), or the
+/// slice one journal event moved (sliceKey: that event's key, supplementary only).
+/// A component is billed whole by at most one document of each role, and each
+/// slice by at most one.
 model MemberMoneyExportCoverage {
   id String @id @default(cuid())
   manifestId String
   documentRole MemberMoneyExportDocumentRole
   account MemberMoneyAccount
   chargeIdentity String
+  sliceKey String @default("")
   coveredCents Int
   taxCode String?
   manifest MemberMoneyExportManifest @relation(fields: [manifestId, documentRole], references: [id, documentRole], onDelete: Restrict, onUpdate: Restrict)
-  @@unique([documentRole, account, chargeIdentity])
+  @@unique([documentRole, account, chargeIdentity, sliceKey])
   @@index([manifestId, documentRole])
+}
+
+/// Privacy disclosure is its own domain singleton: branding saves must not
+/// replace its updater attribution. Club-wide; no hosting facts are inferred.
+model PrivacyHostingSettings {
+  id                String   @id @default("default")
+  hostingProvider   String?  @db.VarChar(120)
+  dataLocation      String?  @db.VarChar(120)
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
 }

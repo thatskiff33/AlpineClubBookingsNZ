@@ -15,7 +15,7 @@ import {
   applyHutFeeLineCodes,
   resolveHutFeeLineItemCode,
 } from "@/lib/xero-hut-fee-line-codes";
-import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
+import { formatDateOnly } from "@/lib/date-only";
 import {
   evenlySplitCents,
   ONE_DAY_MS,
@@ -92,7 +92,7 @@ export function buildInvoiceLineItems(
       // `describeGuestRateMembershipLabel`.
       `(${guest.ageTier}, ${describeGuestRateMembershipLabel(itemCodeResolver, guest)})`,
       `${run.nightCount} night${run.nightCount !== 1 ? "s" : ""}`,
-      `${calendarDateOfDateOnlyInstant(run.startDate)} - ${calendarDateOfDateOnlyInstant(run.endExclusive)}`,
+      `${formatDateOnly(run.startDate)} - ${formatDateOnly(run.endExclusive)}`,
     ].join(" - ");
     // perNightCents * nightCount === totalCents by construction, so the line
     // reconciles to the exact cent total (#1163).
@@ -146,7 +146,7 @@ export function buildInvoiceLineItems(
           // #2543 — same rate-driven label as `runToLineItem`.
           `(${guest.ageTier}, ${describeGuestRateMembershipLabel(itemCodeResolver, guest)})`,
           `${nights} night${nights !== 1 ? "s" : ""}`,
-          `${calendarDateOfDateOnlyInstant(checkIn)} - ${calendarDateOfDateOnlyInstant(checkOut)}`,
+          `${formatDateOnly(checkIn)} - ${formatDateOnly(checkOut)}`,
         ].join(" - ");
         return [applyCodes({
           description,
