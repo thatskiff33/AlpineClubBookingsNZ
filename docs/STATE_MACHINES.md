@@ -2471,8 +2471,9 @@ OPEN -> COMPLETED   (finance:edit; writes the local refund allocation and a
                      REFUNDED BookingEvent — the ONLY moment the ledger says
                      the money went back)
 OPEN -> DISMISSED   (finance:edit; requires a note; moves no money. #4516:
-                     refused (409), task OPEN, for a hand-back the journal
-                     holds as a debt; see below)
+                     refused (409), task OPEN, for a real bank or cash
+                     hand-back the journal holds as a debt; a card
+                     shortfall's part to check still dismisses; see below)
 OPEN -> DISMISSED   (#2700: the Stripe webhook, with NO acting member at all —
                      `completedByMemberId` stays null and no operator note is
                      required. Fires only on a task raised by the deleted-booking
@@ -2694,9 +2695,11 @@ card refund recovery is not SUCCEEDED and, for the part to check, while its
 bank-transfer sibling is OPEN; it settles on the non-card charges first,
 posts its `BANK_REFUND` line on the card payment, which no refund row will
 post, and queues one Xero refund note of its own, keyed on the task. Where the
-payment's ledger has nothing left to allocate, COMPLETED is refused; since
-#4516 the message says to leave it open and take money still owed to the
-treasurer, because DISMISSED is refused too (below). See
+payment's ledger has nothing left to allocate, COMPLETED is refused. For the
+part to check the message names DISMISSED, once the officer has confirmed the
+card refund reached the member; for the bank-transfer part it says to leave it
+open and take money still owed to the treasurer, because its DISMISSED is
+refused (#4516, below). See
 [`INV-PAY-129`](invariants/payment-and-settlement.md#inv-pay-129).
 A capacity race whose card refund plan is short of the charge raises the
 part to check alone, OPEN inside the void's claim and keyed on the race's
@@ -2704,21 +2707,28 @@ intent (#4154); its COMPLETED is refused while any of the race's own card
 refund rows is not SUCCEEDED, and settles only on that intent's own charge.
 Where that charge holds too little, the completion first lowers its refunded
 total to its refund rows when every guard holds (the owner's guarded
-recalculation), else is refused naming the guard (and, since #4516, telling the
-officer to take it to the treasurer). See
+recalculation), else is refused naming the guard (DISMISSED once the card
+refund is confirmed, or the treasurer for money still owed). See
 [`INV-PAY-135`](invariants/payment-and-settlement.md#inv-pay-135).
 
-**#4516 (owner decision, 14 Nov 2026): for now a bank or cash hand-back is
-never dismissed.** A task the member-money journal records as a hand-back debt
-(`isJournalHandBackTask`: a cash cancellation's, a card shortfall's bank part
-or part to check, a capacity race's part to check, an edit's, an approved
-appeal's, an organisation's late cash) refuses OPEN -> DISMISSED with a 409,
+**#4516 (owner decisions, 14 and 15 Nov 2026): for now a real bank or cash
+hand-back is never dismissed.** A task the member-money journal records as a
+hand-back debt (`isJournalHandBackTask`: a cash cancellation's, a card
+shortfall's bank part, an edit's, an approved appeal's, an organisation's late
+cash) refuses OPEN -> DISMISSED with a 409 (`refusesJournalHandBackDismissal`),
 under `lock(1)` and the booking row, before any claim: the task stays OPEN, its
 refund debt (R05) stays open, and nothing is written. It closes only by
 COMPLETED. Wherever this section says such a task is dismissed, that is a row
 dismissed before this change (or by the old colour during a deploy); reopen
 still puts those back OPEN. A four-way dismissal that records why replaces the
 refusal in a later change. Every other kind keeps its dismissal.
+
+**A card shortfall's part to check keeps its dismissal** (a capacity race's
+too), for an officer who has confirmed the card refund reached the member. It
+takes `lock(1)`, the booking row and the Payment row before its claim, and
+after a won claim withdraws its R05 exactly, so raising and dismissing it
+leaves the journal as it was. Reopened, it has no live R05, and Mark paid then
+posts its R14 unapplied, as for a task raised before M4d.
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row

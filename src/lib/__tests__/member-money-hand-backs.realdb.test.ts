@@ -14,10 +14,11 @@ import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { raceSession } from "./support/race-session-double";
 
 /**
- * #4516 (Ledger M4d, owner decision 14 Nov 2026, Q6): a bank or cash hand-back the journal holds as a debt cannot be
- * dismissed until the four-way dismissal ships. Proved on PostgreSQL through the real `resolveManualRefundTask`: the
+ * #4516 (Ledger M4d, owner decision 14 Nov 2026, Q6): a real bank or cash hand-back the journal holds as a debt cannot
+ * be dismissed until the four-way dismissal ships. Proved on PostgreSQL through the real `resolveManualRefundTask`: the
  * refused dismissal leaves the task OPEN and its R05 open, writes no journal batch and no audit row, and a later
- * "Mark paid" posts R14 applied to that same R05.
+ * "Mark paid" posts R14 applied to that same R05. A card shortfall's part to check keeps its dismissal (owner decision,
+ * 15 Nov 2026), which withdraws its R05 exactly, so raising and dismissing it leaves the journal as it was.
  *
  * And (#4516 review A, B) each raise through its real door posts one R05 for the task's cents, which Mark paid then
  * pays: the cash cancellation (`cancelBooking`), a card shortfall's bank part and part to check
@@ -223,6 +224,41 @@ async function cleanup() {
     await markPaid(check.taskId);
     expect(await r14Applied(bank.taskId)).toBe(6_000);
     expect(await r14Applied(check.taskId)).toBe(14_000);
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  it("(owner decision, 15 Nov 2026) a part to check dismisses through the real door and its R05 is withdrawn exactly; its bank part's dismissal is refused and its R05 stays open", async () => {
+    const id = await chargedBooking([["STRIPE", 14_000], ["INTERNET_BANKING", 6_000]]);
+    const receivableBefore = await balance(id, "MEMBER_RECEIVABLE");
+    const payableBefore = await balance(id, "REFUND_PAYABLE");
+    const { raiseCancelCardShortfallHandBack } = await import("@/lib/cancel-card-refund-shortfall");
+    const shortfall = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      return raiseCancelCardShortfallHandBack(tx, { bookingId: id, paymentId: `${id}-payment`, refundAmountCents: 20_000, plannedCardRefundCents: 0, format: CLUB_FORMAT_TEST, journal: context, actorMemberId: names.officerId });
+    });
+    const bank = shortfall!.bank!;
+    const check = shortfall!.check!;
+    const checkR05 = memberMoneyEventKeys.refundObligation("hand-back", check.taskId);
+    const bankR05 = memberMoneyEventKeys.refundObligation("hand-back", bank.taskId);
+    expect((await eventOf(checkR05))?.journal?.reversedBy).toBeNull();
+
+    // MUTATION: putting the part to check back under the refusal fails here with the 409.
+    await resolve(check.taskId, "dismissed");
+
+    expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: check.taskId } })).toMatchObject({ status: "DISMISSED", note: "Member said keep it", completedByMemberId: names.officerId });
+    // MUTATION: deleting `withdrawDismissedCheckPartDebt` fails here: the debt stays live on a closed task.
+    expect((await eventOf(checkR05))?.journal?.reversedBy).not.toBeNull();
+    expect(await family(id, checkR05)).toMatchObject({ paid: 0 });
+    // Raised then dismissed, the part to check leaves the journal as it was: only the bank part's debt remains.
+    expect(await balance(id, "REFUND_PAYABLE")).toBe(payableBefore - 6_000);
+    expect(await balance(id, "MEMBER_RECEIVABLE")).toBe(receivableBefore + 6_000);
+    expect(await db.auditLog.count({ where: { targetId: id, action: "booking-payment.manual-refund-task.dismiss" } })).toBe(1);
+
+    // MUTATION: deleting the refusal fails here: the bank part would be DISMISSED.
+    await expect(resolve(bank.taskId, "dismissed")).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
+    expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: bank.taskId } })).toMatchObject({ status: "OPEN", completedAt: null });
+    expect((await eventOf(bankR05))?.journal?.reversedBy).toBeNull();
+    expect(await db.auditLog.count({ where: { targetId: id, action: "booking-payment.manual-refund-task.dismiss" } })).toBe(1);
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
   });
 

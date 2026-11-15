@@ -417,9 +417,10 @@ export function editRefundHandBackReopenAfterCancelMessage(booking: PayeeBooking
 }
 
 /**
- * #4516 (owner decision, 14 Nov 2026): a bank or cash hand-back the member-money journal records as a refund
- * debt (`isJournalHandBackTask`) is not dismissed until dismissal asks the officer why. The server refuses it
- * and the queue shows this sentence where the Dismiss button would be, in the same words (`INV-SSOT`).
+ * #4516 (owner decisions, 14 and 15 Nov 2026): a real bank or cash hand-back the member-money journal records as a
+ * refund debt (`refusesJournalHandBackDismissal`; never a card shortfall's part to check) is not dismissed until
+ * dismissal asks the officer why. The server refuses it and the queue shows this sentence where the Dismiss button
+ * would be, in the same words (`INV-SSOT`).
  */
 export const JOURNAL_HAND_BACK_DISMISS_REFUSAL =
   "This refund can't be dismissed yet. Mark it paid once the money has gone back, or leave it open. Dismissing with a reason is coming in a later update.";

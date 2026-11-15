@@ -184,9 +184,9 @@ describe("a cancel's card refund shortfall has its own sentence (#4097, `INV-PAY
     });
     const intro = screen.getByTestId("manual-refund-task-card-shortfall-check-intro");
     expect(intro.textContent).toMatch(/Check Stripe and\s+the bank before paying anything, then contact the member with what you found/);
-    // #4516 (owner decision, 14 Nov 2026): a journal hand-back is not dismissed for now, so the sentence never says to.
-    expect(intro.textContent).toMatch(/leave it open for now: it cannot be dismissed yet/);
-    expect(intro.textContent).not.toMatch(/dismiss it with a note/);
+    // #4516 (owner decision, 15 Nov 2026): a part to check keeps Dismiss, used only once the card refund is confirmed.
+    expect(intro.textContent).toMatch(/Dismiss it with a note saying how only once you have confirmed the card refund reached them/);
+    expect(intro.textContent).not.toMatch(/cannot be dismissed/);
     // Paying it is only the answer once the check shows it is owed - and (#4154 review M3) only after the
     // app has accepted the mark: mark first, then pay, on every surface.
     expect(intro.textContent).toMatch(/If it really is owed, mark it\s+paid\s+back first/);
@@ -306,20 +306,28 @@ describe("a group organiser's Internet Banking hand-back has its own sentence (#
   });
 });
 
-describe("a journal hand-back offers no Dismiss for now (#4516, owner decision 14 Nov 2026)", () => {
+describe("a real bank or cash hand-back offers no Dismiss for now (#4516, owner decisions 14 and 15 Nov 2026)", () => {
   it("prints the server's refusal where the Dismiss button would be, and keeps Mark paid back", async () => {
-    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, journalHandBack: true }], viewerCanViewBookings: true });
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, journalHandBackDismissRefused: true }], viewerCanViewBookings: true });
 
     expect(screen.queryByRole("button", { name: /^dismiss$/i })).not.toBeInTheDocument();
     expect(screen.getByTestId("manual-refund-task-dismiss-unavailable").textContent).toBe(JOURNAL_HAND_BACK_DISMISS_REFUSAL);
     expect(screen.getByRole("button", { name: /paid back/i })).toBeInTheDocument();
   });
 
-  it("CONTROL: a row the journal does not hold keeps its Dismiss and prints no refusal", async () => {
+  it("CONTROL: a row whose dismissal is not refused keeps its Dismiss and prints no refusal", async () => {
     await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
 
     expect(screen.getByRole("button", { name: /^dismiss$/i })).toBeInTheDocument();
     expect(screen.queryByTestId("manual-refund-task-dismiss-unavailable")).not.toBeInTheDocument();
+  });
+
+  it("a card shortfall's part to check keeps Dismiss, and its dialog says to dismiss only once the card refund is confirmed", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, cardShortfallCheck: true, journalHandBackDismissRefused: false }], viewerCanViewBookings: true });
+
+    expect(screen.queryByTestId("manual-refund-task-dismiss-unavailable")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^dismiss$/i }));
+    expect(await screen.findByText(/^Only dismiss this once you have confirmed in Stripe that the card refund reached the member\./)).toBeInTheDocument();
   });
 });
 

@@ -112,8 +112,8 @@ interface ManualRefundTask {
   paidToGroupOrganiser?: boolean; // #3949: either of those two, paid back to the group organiser
   /** #4042: an organiser's Internet Banking group cancel, repaid to the organiser. Optional, as above. */
   groupOrganiserHandBack?: boolean;
-  /** #4516: a bank or cash hand-back whose dismissal the server refuses for now. Optional, as above. */
-  journalHandBack?: boolean;
+  /** #4516: a real bank or cash hand-back whose dismissal the server refuses for now (never a part to check). Optional, as above. */
+  journalHandBackDismissRefused?: boolean;
   /** #4097: what a card cancellation's card refund could not carry - by bank transfer, or checked first. Optional, as above. */
   cardShortfallHandBack?: boolean;
   cardShortfallCheck?: boolean;
@@ -684,6 +684,7 @@ function resolutionDescription({
     if (task.paidToGroupOrganiser === true) { // #3949 review
       return "Dismissing closes the task without refunding anything — for a group organiser who declined the refund, or money settled another way. Say which, so the record makes sense later.";
     }
+    if (task.cardShortfallCheck === true) return "Only dismiss this once you have confirmed in Stripe that the card refund reached the member. It closes the task without refunding anything and takes the refund off what the club owes. Say how the member was refunded, so the record makes sense later."; // #4516 (owner decision, 15 Nov 2026)
     return isFinancialReview(task)
       ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
       : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later.";
@@ -1705,7 +1706,7 @@ export function ManualRefundTaskQueue() {
                 its dates filled up during the card payment. The member is told only that the club will be in
                 touch: on their booking page, and for a cancellation by email unless emails were turned off.
                 Check Stripe and the bank before paying anything, then contact the member with what you found.
-                If they were refunded, leave it open for now: it cannot be dismissed yet. If it really is owed, mark it paid
+                Dismiss it with a note saying how only once you have confirmed the card refund reached them. If it really is owed, mark it paid
                 back first, once any bank-transfer part and the card refund are done, and pay it by bank
                 transfer straight after the app accepts; if it refuses, follow what it says.
               </p>
@@ -1988,8 +1989,8 @@ export function ManualRefundTaskQueue() {
                               : "Mark paid back"}
                       </ViewOnlyActionButton>
                       ) : null}
-                      {/* #4042: a group organiser's hand-back is paid, never dismissed. #4516: nor, for now, a journal hand-back; its row says why. */}
-                      {task.groupOrganiserHandBack === true ? null : task.journalHandBack === true ? (
+                      {/* #4042: a group organiser's hand-back is paid, never dismissed. #4516: nor, for now, a real bank or cash hand-back; its row says why. */}
+                      {task.groupOrganiserHandBack === true ? null : task.journalHandBackDismissRefused === true ? (
                         <p className="text-xs text-muted-foreground" data-testid="manual-refund-task-dismiss-unavailable">
                           {JOURNAL_HAND_BACK_DISMISS_REFUSAL}
                         </p>

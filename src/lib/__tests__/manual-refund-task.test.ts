@@ -761,10 +761,12 @@ describe("resolveManualRefundTask", () => {
     expect(vi.mocked(postHandBackPayment)).not.toHaveBeenCalled();
   });
 
-  // #4516 (owner decision, 14 Nov 2026, Q6): until the four-way dismissal ships, a bank or cash hand-back the
-  // journal holds as a debt (`isJournalHandBackTask`) is never dismissed. MUTATION: deleting the refusal in
-  // `resolveManualRefundTask` fails every "refuses" case here, because the claim then writes DISMISSED.
-  describe("#4516: dismissing a journal hand-back is refused, every other kind keeps its dismissal", () => {
+  // #4516 (owner decision, 14 Nov 2026, Q6): until the four-way dismissal ships, a real bank or cash hand-back the
+  // journal holds as a debt (`refusesJournalHandBackDismissal`) is never dismissed. MUTATION: deleting the refusal in
+  // `resolveManualRefundTask` fails every "refuses" case here, because the claim then writes DISMISSED. Owner
+  // decision, 15 Nov 2026: a card shortfall's part to check keeps its dismissal; MUTATION: refusing it again (dropping
+  // `isDismissibleCheckPart` from the guard) fails the "dismisses" cases.
+  describe("#4516: dismissing a real bank or cash hand-back is refused, a part to check and every other kind keep their dismissal", () => {
     const dismissTask = () => resolveManualRefundTask({
       taskId: "task-1", resolution: "dismissed", note: "member said keep it", actingMemberId: "admin-1", recordedNightPrices: null,
     }, CLUB_FORMAT_TEST);
@@ -775,7 +777,6 @@ describe("resolveManualRefundTask", () => {
       ["a cash cancellation's hand-back", { occurrenceKey: null }],
       ["a legacy row with no kind", { kind: null, occurrenceKey: null, reason: "Booking booking-1 cancelled" }],
       ["a card shortfall's bank part", { occurrenceKey: "cancel-card-shortfall:booking-1" }],
-      ["a card shortfall's part to check", { occurrenceKey: "cancel-card-shortfall:booking-1:check" }],
       ["an edit hand-back on a live booking", { occurrenceKey: "edit-refund-hand-back:mod-1", booking: { memberId: "member-1", lodgeId: "lodge-1", status: "PAID", payment: null } }],
       ["a refund request's bank part", { occurrenceKey: "refund-request-hand-back:req-1" }],
     ])("refuses %s with a 409, before the claim, writing nothing", async (_label, facts) => {
@@ -803,6 +804,41 @@ describe("resolveManualRefundTask", () => {
       expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: ManualRefundTaskStatus.DISMISSED }) }),
       );
+      expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["a card shortfall's part to check", { occurrenceKey: "cancel-card-shortfall:booking-1:check" }],
+      ["a capacity race's part to check", { occurrenceKey: "cancel-card-shortfall:booking-1:capacity-race:pi_race:check" }],
+    ])("#4516 (owner decision, 15 Nov 2026): dismisses %s, Payment row before the claim, then withdraws its R05 exactly", async (_label, facts) => {
+      await withFacts(facts);
+
+      await dismissTask();
+
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: ManualRefundTaskStatus.DISMISSED }) }),
+      );
+      // lock(1), then the booking row, then the Payment row, then the claim: completion's order.
+      expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain("pg_advisory_xact_lock(1)");
+      expect((mocks.executeRaw.mock.calls[1]![0] as unknown as string[]).join("?")).toMatch(/FROM "Booking" WHERE "id" = \? FOR NO KEY UPDATE/);
+      expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-1");
+      expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+      // MUTATION: deleting `withdrawDismissedCheckPartDebt` leaves the debt open on a closed task, and fails here.
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledExactlyOnceWith(tx, expect.anything(), expect.objectContaining({
+        bookingId: "booking-1", scope: "hand-back", id: "task-1", actorMemberId: "admin-1",
+      }));
+      expect(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(withdrawRefundObligation).mock.invocationCallOrder[0]!);
+      expect(mocks.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "booking-payment.manual-refund-task.dismiss" }), tx);
+      expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+      expect(vi.mocked(postHandBackPayment)).not.toHaveBeenCalled();
+    });
+
+    it("#4516: a part to check whose claim is lost withdraws nothing", async () => {
+      await withFacts({ occurrenceKey: "cancel-card-shortfall:booking-1:check" });
+      mocks.manualRefundTaskUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/changed while you were closing it/) });
+
       expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
     });
 
@@ -2900,7 +2936,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       ["still being sent", { status: "PENDING", attempts: 0, nextRetryAt: LATER, lastError: null }, /still being refunded; mark this once it settles/],
       // #4154 review (M10): a race's own words - never "close it as Paid another way, then mark this", which its correction refuses.
       ["waiting to retry", { status: "FAILED", attempts: 2, nextRetryAt: LATER, lastError: "Stripe refused" }, /^The card refund for this booking failed and is waiting to retry: wait for its retry to go through, then mark this\. If its retries run out, the app will say what to do then\.$/],
-      ["dead, retries spent", { status: "FAILED", attempts: 5, nextRetryAt: null, lastError: "Stripe refused" }, /^The card refund for this booking has stopped retrying, so the app cannot record this part as paid back\..*Close the card refund as Paid another way on the Stuck States page.*take it to the treasurer before paying anything: the app cannot record it, and this task cannot be dismissed yet\. Then raise its refund credit note in Xero by hand/], // #4516: never "dismiss" a journal hand-back
+      ["dead, retries spent", { status: "FAILED", attempts: 5, nextRetryAt: null, lastError: "Stripe refused" }, /^The card refund for this booking has stopped retrying, so the app cannot record this part as paid back\..*Close the card refund as Paid another way on the Stuck States page.*take it to the treasurer before paying anything: the app cannot record it\. Once you have confirmed a card refund already reached the member for it, dismiss this task with a note saying how\. Then raise its refund credit note in Xero by hand/], // #4516: a part to check keeps its dismissal (owner, 15 Nov 2026)
     ] as const)("MUTATION: a capacity race's part to check is refused while its card refund is %s, and completes once it is made", async (_label, row, message) => {
       shortfallTask("race");
       raceChargeRows();
@@ -3012,7 +3048,7 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
 
     // #4154 review (M1): Stripe is asked before the transaction, and a late or unread one stops the completion before any write.
     it.each([
-      ["unread", { readable: false }, /^The app could not read this card charge's refunds from Stripe.*If it keeps refusing, check the charge in Stripe: if the member is owed, take it to the treasurer before paying anything: the app cannot record it, and this task cannot be dismissed yet/], // #4516
+      ["unread", { readable: false }, /^The app could not read this card charge's refunds from Stripe.*If it keeps refusing, check the charge in Stripe: if the member is owed, take it to the treasurer before paying anything: the app cannot record it\.$/], // #4516
       ["ahead of the refund rows", { readable: true, refundedCents: 1 }, /^Stripe shows \$0\.01 of this card charge refunded, but the app has recorded only \$0\.00/],
     ] as const)("MUTATION: a race whose charge Stripe reads %s is refused (409) before its claim, still OPEN", async (_label, stripe, message) => {
       shortfallTask("race");
@@ -3061,8 +3097,18 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledTimes(1);
     });
 
-    it("MUTATION: where the ledger holds nothing for it, the refusal says to leave it open, never to dismiss it (#4516)", async () => {
+    it("MUTATION: where the ledger holds nothing for a part to check, the refusal says to dismiss it once the card refund is confirmed (#4516, owner 15 Nov 2026)", async () => {
       shortfallTask("check");
+      mocks.applyLocalRefundAllocation.mockRejectedValueOnce(new Error("Refund amount exceeds captured payments"));
+
+      await expect(complete()).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringMatching(/once you have confirmed the card refund reached the member, dismiss this task with a note saying how\. If it really is owed, take it to the treasurer before paying anything: the app cannot record it\.$/),
+      });
+    });
+
+    it("MUTATION: where the ledger holds nothing for the bank-transfer part, the refusal says to leave it open, never to dismiss it (#4516)", async () => {
+      shortfallTask("bank");
       mocks.applyLocalRefundAllocation.mockRejectedValueOnce(new Error("Refund amount exceeds captured payments"));
 
       await expect(complete()).rejects.toMatchObject({

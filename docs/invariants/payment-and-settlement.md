@@ -1471,7 +1471,8 @@ preview).
     lock, naming the next step by its state), and `check` only after `bank`.
     Its `BANK_REFUND` posts on the card payment (`INV-MONEY-035`) and it takes
     ONE Xero note of its own, keyed on the task. Where the ledger holds nothing
-    for it, the refusal says to leave it open (#4516).
+    for it, the refusal names dismissal for the part to check and says to
+    leave the bank part open (#4516).
   - **The booking and payment-link pages name each part and where it stands**,
     from the CANCELLED snapshot and live status.
   - Proven by `booking-cancel.test.ts`, `cancel-card-refund-shortfall.test.ts`,

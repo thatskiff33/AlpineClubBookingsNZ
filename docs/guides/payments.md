@@ -196,8 +196,10 @@ member is told the club will arrange their refund.
    a later update adds a dismissal that asks why and records each answer
    exactly. This applies to every hand-back the club pays by bank transfer or
    in cash: a cash cancellation's, a booking change's, an approved appeal's,
-   and both parts of a card refund shortfall, including a part to check. A
-   task dismissed before this change can still be reopened.
+   and the bank-transfer part of a card refund shortfall. A card refund
+   shortfall's part to check can still be dismissed, once you have confirmed
+   the card refund reached the member (owner decision, 15 Nov 2026; see below).
+   A task dismissed before this change can still be reopened.
 
 **The same task for a booking change (#3827).** When a member or an officer
 changes a booking that was paid by internet banking or in cash, and the change
@@ -365,14 +367,16 @@ by the club", worked out the same way the cancel works them out.
 - **The part to check before paying** is anything beyond that: the payment's
   records show it already refunded, or nothing holds it. The member is told
   only that the club will be in touch. Check Stripe and the bank, then contact
-  the member with what you found. If they have had the money, leave it open for
-  now: it cannot be dismissed yet (see step 3 above). If it really is owed, mark it paid back first - after the
+  the member with what you found. Dismiss it, with a note saying how, only
+  once you have confirmed the card refund reached them. If it really is owed, mark it paid back first - after the
   bank-transfer part, which the app requires, since both are settled on the
   same money. The app first checks it can record it: pay it by bank transfer
   straight after it accepts. Where the payment's records show nothing left to
-  refund, the app refuses and says what to do instead: leave it open, and if the
-  member really is owed, take it to the treasurer before paying anything, since
-  the app cannot record that payment and the task cannot be dismissed yet.
+  refund, the app refuses and says what to do instead: dismiss it once you have
+  confirmed the card refund reached the member, and if the member really is
+  owed, take it to the treasurer before paying anything, since the app cannot
+  record that payment. (The bank-transfer part's refusal says to leave it open,
+  because it cannot be dismissed yet.)
 
 **Neither part can be marked paid back until the card refund itself has gone
 through.** While Stripe is still making it, the app says to mark the part once
@@ -389,9 +393,9 @@ the charge, or nothing, the rest appears here as one part to check, and the
 officers are emailed once. The member's booking page says the club will be in
 touch about it; no email goes to the member about it. Check Stripe and the
 bank first, because the records may be wrong and the money may already have
-gone back. If it has, leave it open for now: it cannot be dismissed yet (see
-step 3 above). A task dismissed before this change shows on the member's page
-as checked and closed by the club. If it really is owed, use
+gone back. Once you have confirmed the card refund reached the member, dismiss
+it with a note saying how, and the member's page then says the club checked it
+and closed it. If it really is owed, use
 **Mark paid back** first, once the card refund has gone through, and pay
 straight after the app accepts. The app first checks it can record it, only on
 that card charge:
@@ -401,8 +405,7 @@ that card charge:
   the app yet), or Stripe cannot be reached, it refuses for now: try again in a
   few minutes, and do not pay until it accepts. If it keeps refusing, check the
   charge in Stripe; if the member is owed, take it to the treasurer before
-  paying anything: the app cannot record it, and the task cannot be dismissed
-  yet.
+  paying anything: the app cannot record it.
 - Where the charge's records read more refunded than its card refunds on
   record, it corrects them itself first, and logs the correction in the audit
   log, but only for a charge made since the app has kept a record of each card
@@ -418,15 +421,15 @@ payment, it refuses and says so, and its message then never asks for a note by
 hand. A booking with no Xero invoice to credit gets no
 note - usual here, since a payment that lost the race is rarely invoiced. If it
 refuses, it says why: if the member is owed, take it to the treasurer before
-paying anything, because the app cannot record that payment and the task cannot
-be dismissed yet. Raise the refund credit note in Xero by hand only where it
-says to (the booking has an invoice and no note covers it yet).
+paying anything, because the app cannot record that payment. Raise the refund
+credit note in Xero by hand only where it says to (the booking has an invoice
+and no note covers it yet).
 
 If the card refund itself stopped retrying, close it as **Paid another way**
 on Stuck States once the member has had that money back, but do not then mark
 this part: that close is another refund task, so the app cannot record this
-one. Take it to the treasurer, as the app says; the task cannot be dismissed
-yet.
+one. Take it to the treasurer, as the app says, or dismiss it once you have
+confirmed a card refund already reached the member for it.
 
 One gap the app cannot close: a refund made in the Stripe dashboard in the
 moments between **Mark paid back** and your bank transfer. When that refund
@@ -1122,7 +1125,7 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Reset | Restore filters, sort, and page | rolling three-month Updated range through today | Disabled while the ledger is already at its defaults |
 | Generate Invoice | Create a Xero invoice for a succeeded payment | — | Needs finance **edit**; only for succeeded, non-Internet-Banking payments with no invoice. Never offered for a manually recorded cash payment — no invoice is expected for one |
 | Record / Reverse manual payment | Record a cash or off-Xero bank-transfer settlement on a booking, or undo one | — | On the booking page, not here. Needs finance **edit**. Never contacts Xero |
-| Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking, for a price cut on a booking paid by internet banking or cash, or for a group's organiser repaid by bank transfer | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger (a group organiser's refund is already there, so it records only that the money went); "Dismiss" needs a note; a group organiser's repayment cannot be dismissed, and for now (#4516) neither can any hand-back paid by bank transfer or in cash |
+| Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking, for a price cut on a booking paid by internet banking or cash, or for a group's organiser repaid by bank transfer | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger (a group organiser's refund is already there, so it records only that the money went); "Dismiss" needs a note; a group organiser's repayment cannot be dismissed, and for now (#4516) neither can any hand-back paid by bank transfer or in cash, except a card refund shortfall's part to check |
 | Refund to card / Close without refunding | Decide a card payment that went through after its booking was cancelled and was held for a treasurer's approval | — | Needs finance **edit**. "Refund to card" refunds the card through Stripe now; "Close without refunding" refunds nothing and needs a note. Only appears on a payment held for approval, which stays held if the club later switches back to automatic refunds |
 | Record the adjustment / No adjustment | Close a booking change the system would not price | — | Needs finance **edit**. "Record the adjustment" is disabled until an amount has been confirmed; "No adjustment" closes the review as looked-at with nothing due, moves no money, and needs a note |
 | Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |

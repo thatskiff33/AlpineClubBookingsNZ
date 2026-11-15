@@ -1725,7 +1725,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // before it reads whether the plan's share is written). #4516 (M4c review F2):
   // and by a late capture's approval or keep (`prepareLateCaptureDecision`) before
   // its task's claim. #4516 (M4d): that resolution holds lock(1) and the booking
-  // row first, so this Payment row is after them. The order a "Paid another way" close takes
+  // row first, so this Payment row is after them; so does a cancellation
+  // hand-back's completion (`lockCancellationHandBackBeforeClaim`) and (owner
+  // decision 15 Nov 2026) a card shortfall part to check's dismissal, whose R05
+  // withdrawal after the claim re-takes it. The order a "Paid another way" close takes
   // the Payment row and that task's row in; #4824: an approval's plan
   // (`planLateCaptureApprovalRefund`) takes it first, before it reads what the
   // capture holds; #4838: so does a #2700 hand-back's still-owed check
