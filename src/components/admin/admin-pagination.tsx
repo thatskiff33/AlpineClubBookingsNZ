@@ -52,7 +52,7 @@ export interface PaginationProps {
   summary?: React.ReactNode
   /**
    * Render the summary even when everything fits on one page, so a capped
-   * list always states its total (INV-OPS-019). The summary is then also a
+   * list always states its total (INV-OPS-020). The summary is then also a
    * polite live region, so a screen-reader user hears the new range when a
    * page changes while focus stays on the pager button.
    */

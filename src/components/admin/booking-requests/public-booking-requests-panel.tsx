@@ -474,7 +474,7 @@ export function PublicBookingRequestsPanel({
     initialPage: parseAdminListPageParam(searchParams.get("page")),
   });
   const { page, setPage, receive, beginLoad } = queuePage;
-  // INV-OPS-019: a deep-linked request that is not on the loaded page is read
+  // INV-OPS-020: a deep-linked request that is not on the loaded page is read
   // by id and pinned above it, so the link always lands on its request.
   const [pinnedRequest, setPinnedRequest] = useState<PublicBookingRequestData | null>(null);
   const shownRequests = useMemo(

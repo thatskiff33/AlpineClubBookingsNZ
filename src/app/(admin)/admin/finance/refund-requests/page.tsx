@@ -181,7 +181,7 @@ export default function RefundRequestsPage() {
   const [filter, setFilter] = useState<ReviewFilter>(
     isReviewFilter(initialFilter) ? initialFilter : "PENDING"
   )
-  // INV-OPS-019: refund appeals are capped per page; credit approvals are not.
+  // INV-OPS-020: refund appeals are capped per page; credit approvals are not.
   const refundPage = useAdminQueuePage({
     filterKey: filter,
     initialPage: parseAdminListPageParam(searchParams.get("page")),
@@ -220,7 +220,7 @@ export default function RefundRequestsPage() {
 
   const fetchRequests = useCallback(async () => {
     // A slower read for a page or filter the officer has left never replaces
-    // the list now shown, nor its error or loading end (INV-OPS-019).
+    // the list now shown, nor its error or loading end (INV-OPS-020).
     const isCurrent = beginLoad()
     setLoading(true)
     setError("")
@@ -497,7 +497,7 @@ export default function RefundRequestsPage() {
 
       {/* One wrapper in every state keeps the appeals pager at the same place
           through a load, so a keyboard user's focus survives a page change
-          (INV-OPS-019). */}
+          (INV-OPS-020). */}
       <div className="space-y-8">
         {loading ? (
           <div className="text-center py-8">Loading...</div>

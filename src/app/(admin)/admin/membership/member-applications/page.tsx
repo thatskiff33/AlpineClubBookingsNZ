@@ -176,7 +176,7 @@ export default function MemberApplicationsPage() {
   const [filter, setFilter] = useState(() =>
     filterFromStatusParam(searchParams.get("status")),
   );
-  // INV-OPS-019: the route caps each read at one page; the page and filter
+  // INV-OPS-020: the route caps each read at one page; the page and filter
   // are mirrored into the URL so a refresh or shared link keeps the place.
   const queuePage = useAdminQueuePage({
     filterKey: filter,
@@ -229,7 +229,7 @@ export default function MemberApplicationsPage() {
 
   async function loadApplications(nextFilter = filter) {
     // A slower read for a page or filter the officer has left must not replace
-    // the list now shown, nor its error or loading end (INV-OPS-019).
+    // the list now shown, nor its error or loading end (INV-OPS-020).
     const isCurrent = beginLoad();
     setLoading(true);
     setLoadError("");

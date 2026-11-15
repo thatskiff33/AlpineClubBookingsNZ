@@ -2148,7 +2148,7 @@ function summaryFromRequestedChanges(value: unknown): string | null {
  * the requested window (offset plus page size, never past its own row count),
  * mapped to a common shape, merge-sorted, and sliced. The total is each
  * source's own `count`, so it is exact and every row is reachable however many
- * decided requests the club holds (INV-OPS-019); the read grows with the page
+ * decided requests the club holds (INV-OPS-020); the read grows with the page
  * asked for, not with a fixed cap. Returns the same `adminListPage` envelope as
  * the other officer queues so the officer UI reads one shape.
  */
