@@ -141,6 +141,13 @@ async function doorJournal(): Promise<MemberMoneyPostingContext> {
 /** Xero's ids, unique across the file as Xero's own are. */
 let documents = 0;
 
+/**
+ * The invoices the fake Xero created, as it answered their create. An edit's
+ * credit note reads its invoice's amount due before creating anything (#3993),
+ * so the fake answers that read with the invoice it holds.
+ */
+const fakeInvoices = new Map<string, { invoiceID: string; status: string; total: number; amountDue: number; amountPaid: number }>();
+
 /** Every document the fake Xero was sent, in order. */
 type Sent = { kind: "invoice" | "credit-note"; document: XeroDocument };
 
@@ -162,7 +169,13 @@ async function withFakeXero<T>(sent: Sent[], run: () => Promise<T>): Promise<T> 
       sent.push({ kind: "invoice", document: invoice });
       const total = documentMoney(invoice).grossCents / 100;
       const id = `${PREFIX}xero-invoice-${++documents}`;
+      fakeInvoices.set(id, { invoiceID: id, status: "AUTHORISED", total, amountDue: total, amountPaid: 0 });
       return { body: { invoices: [{ invoiceID: id, invoiceNumber: `INV-${id}`, status: "AUTHORISED", total, amountDue: total, amountPaid: 0 }] } };
+    },
+    getInvoice: async (_tenant: string, invoiceId: string) => {
+      const invoice = fakeInvoices.get(invoiceId);
+      if (!invoice) throw new Error(`The fake Xero holds no invoice ${invoiceId}`);
+      return { body: { invoices: [invoice] } };
     },
     createPayment: async () => ({ body: { payments: [{ paymentID: `${PREFIX}xero-payment-${++documents}` }] } }),
     createCreditNotes: async (_tenant: string, body: { creditNotes: XeroDocument[] }) => {
