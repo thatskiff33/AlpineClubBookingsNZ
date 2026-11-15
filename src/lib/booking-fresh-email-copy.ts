@@ -14,6 +14,7 @@ import {
 } from "@/lib/booking-payment-state";
 import { bookingPromoEmailFields } from "@/lib/booking-promo-email-options";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
+import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
@@ -528,7 +529,11 @@ async function sendFreshPreArrivalReminder(
   // Inside the daily reminder's window, the member now has the reminder, so the
   // job must not send a second one. Outside it the stamp is left alone: the job
   // still reminds them when the stay comes into range, as it would have.
-  const { windowStart, windowEndExclusive } = preArrivalReminderWindow(clubDay);
+  const { preArrivalReminderDays } = await getBookingTimingSettings();
+  const { windowStart, windowEndExclusive } = preArrivalReminderWindow(
+    clubDay,
+    preArrivalReminderDays,
+  );
   if (
     booking.checkIn.getTime() >= windowStart.getTime() &&
     booking.checkIn.getTime() < windowEndExclusive.getTime()

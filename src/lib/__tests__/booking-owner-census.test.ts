@@ -476,17 +476,17 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-payment/route.ts:90",
   "src/app/api/bookings/[id]/exception-requests/route.ts:137",
   "src/app/api/bookings/[id]/guests/route.ts:347",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:366",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:367",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:273",
   "src/app/api/bookings/[id]/refund-request/route.ts:50",
   "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
-  "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:67",
+  "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:63",
   "src/app/api/payments/create-payment-intent/route.ts:171",
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:127",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1081",
+  "src/lib/booking-batch-modification-service.ts:1079",
   "src/lib/booking-cancel.ts:2548",
   "src/lib/booking-cancel.ts:570",
   "src/lib/booking-date-modification-service.ts:394",
@@ -798,7 +798,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `booking.findUniqueOrThrow`/`findMany` selects, and Booking declares
   // `organisation`.
   "src/lib/booking-owner-name.ts:12",
-  "src/lib/cron-additional-payment-reminders.ts:439",
+  "src/lib/cron-additional-payment-reminders.ts:444",
   "src/lib/cron-confirm-pending.ts:192",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
@@ -821,7 +821,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // hand: written `satisfies Prisma.BookingInclude`, read back through
   // `Prisma.BookingGetPayload`, and passed as `include` to `booking.findMany`
   // and `booking.findUnique`; Booking declares `organisation`.
-  "src/lib/pre-arrival-reminder-email.ts:54",
+  "src/lib/pre-arrival-reminder-email.ts:55",
   "src/lib/stuck-state-dashboard.ts:629",
   "src/lib/xero-booking-repair-types.ts:246",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",

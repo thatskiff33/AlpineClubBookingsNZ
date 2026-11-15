@@ -23,6 +23,7 @@ const {
   mockFindUnarchived,
   mockIssueSplitGuestPaymentLink,
   mockProvisionalSummary,
+  mockGetBookingTimingSettings,
 } = vi.hoisted(() => ({
   mockPrisma: {
     booking: { findUnique: vi.fn(), updateMany: vi.fn() },
@@ -37,6 +38,7 @@ const {
   mockFindUnarchived: vi.fn(),
   mockIssueSplitGuestPaymentLink: vi.fn(),
   mockProvisionalSummary: vi.fn(),
+  mockGetBookingTimingSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -60,6 +62,9 @@ vi.mock("@/lib/payment-link-split-guest", () => ({
 vi.mock("@/lib/booking-split-summary", () => ({
   getProvisionalNonMemberChildSummary: mockProvisionalSummary,
 }));
+vi.mock("@/lib/booking-timing-settings", () => ({
+  getBookingTimingSettings: mockGetBookingTimingSettings,
+}));
 vi.mock("@/lib/club-format-server", async () => {
   const { CLUB_FORMAT_TEST } = await import("./support/club-format-fixture");
   return { clubFormatValues: vi.fn(async () => CLUB_FORMAT_TEST) };
@@ -76,7 +81,8 @@ import {
 import { SPLIT_GUEST_CHILD_WHERE } from "@/lib/split-guest-children";
 
 // The frozen test clock is 2026-07-01T00:00Z, which is 1 July in the club's zone;
-// the daily reminder's window is therefore 1–4 July inclusive.
+// with the default three-day lead the daily reminder's window is therefore
+// 1–4 July inclusive.
 const ACTOR = "officer-1";
 
 function member(overrides: Record<string, unknown> = {}) {
@@ -147,6 +153,7 @@ beforeEach(() => {
   mockFindUnarchived.mockResolvedValue([]);
   mockProvisionalSummary.mockResolvedValue(null);
   mockCreateAuditLog.mockResolvedValue(undefined);
+  mockGetBookingTimingSettings.mockResolvedValue({ preArrivalReminderDays: 3 });
 });
 
 describe("fresh-copy eligibility", () => {
@@ -450,6 +457,30 @@ describe("fresh pre-arrival reminder", () => {
 
     expect(result).toMatchObject({ ok: true });
     expect(mockPrisma.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("reads the window from the club's own reminder lead, as the daily job does", async () => {
+    // A seven-day lead (#4932) reaches 8 July, so a 6 July check-in is inside it.
+    mockGetBookingTimingSettings.mockResolvedValue({ preArrivalReminderDays: 7 });
+    mockPrisma.booking.findUnique.mockResolvedValueOnce(
+      reminderBooking({
+        checkIn: new Date("2026-07-06T00:00:00.000Z"),
+        checkOut: new Date("2026-07-08T00:00:00.000Z"),
+      }),
+    );
+    mockSendPreArrivalReminderEmail.mockResolvedValue({ status: "sent" });
+
+    const result = await sendBookingFreshEmailCopy({
+      bookingId: "booking-1",
+      template: "pre-arrival-reminder",
+      actorMemberId: ACTOR,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(mockPrisma.booking.updateMany).toHaveBeenCalledWith({
+      where: { id: "booking-1", preArrivalReminderSentAt: null },
+      data: { preArrivalReminderSentAt: expect.any(Date) },
+    });
   });
 
   it("writes no stamp and no audit row when the reminder was withheld", async () => {

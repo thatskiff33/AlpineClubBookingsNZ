@@ -149,16 +149,19 @@ export function composeServices(relativePath: string): Map<string, string> {
  * override file — `app_e2e:` — silently excused it. Anything a census does not
  * RECOGNISE as infrastructure has to declare, which is the fail-closed direction.
  *
- * `migrate` runs `prisma migrate deploy` and imports no application code; the
- * other three are Postgres, Caddy and the mailpit SMTP capture. The set is
- * asserted to be exactly these four in `deploy-environment-role-contract.test.ts`,
- * so widening it is a visible edit rather than a quiet one.
+ * `migrate` runs `prisma migrate deploy` and imports no application code;
+ * `stripe-stub` runs only `load/stripe-stub/server.mjs`, which imports nothing
+ * but Node built-ins (#4940); the other three are Postgres, Caddy and the
+ * mailpit SMTP capture. The set is asserted to be exactly these five in
+ * `deploy-environment-role-contract.test.ts`, so widening it is a visible edit
+ * rather than a quiet one.
  */
 export const NON_APP_COMPOSE_SERVICES = new Set([
   "postgres",
   "caddy",
   "mailpit",
   "migrate",
+  "stripe-stub",
 ]);
 
 /**

@@ -20,8 +20,6 @@ import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
  * different outstanding-balance note than the cron would.
  */
 
-export const PRE_ARRIVAL_REMINDER_DAYS = 3;
-
 export const PRE_ARRIVAL_REMINDER_STATUSES = [
   BookingStatus.CONFIRMED,
   BookingStatus.PAID,
@@ -34,17 +32,20 @@ export function isPreArrivalReminderStatus(status: BookingStatus): boolean {
 
 /**
  * The check-in days the cron reminds on a given club day: today through
- * `PRE_ARRIVAL_REMINDER_DAYS` days ahead, as date-only instants for the query.
+ * `reminderDays` days ahead, as date-only instants for the query. The lead is
+ * the club's own setting (`preArrivalReminderDays`, #4932); both callers read
+ * it from `getBookingTimingSettings()` and pass it in.
  */
-export function preArrivalReminderWindow(today: CalendarDate): {
+export function preArrivalReminderWindow(
+  today: CalendarDate,
+  reminderDays: number,
+): {
   windowStart: Date;
   windowEndExclusive: Date;
 } {
   return {
     windowStart: dateOnlyInstantOf(today),
-    windowEndExclusive: dateOnlyInstantOf(
-      addCalendarDays(today, PRE_ARRIVAL_REMINDER_DAYS + 1),
-    ),
+    windowEndExclusive: dateOnlyInstantOf(addCalendarDays(today, reminderDays + 1)),
   };
 }
 

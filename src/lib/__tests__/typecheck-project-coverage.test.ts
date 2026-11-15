@@ -108,7 +108,6 @@ const JAVASCRIPT_VITEST_TESTS = [
   // #3513: the fast-census runner is a bare-node `.mjs` tool; its own suite
   // deliberately remains JavaScript under the same convention.
   "scripts/ci/run-fast-censuses.test.mjs",
-  "scripts/ci/sekreton-prepare-base.test.mjs",
   "scripts/ci/server-only-boundary-selftest.test.mjs",
   "scripts/ci/wait-for-run-artifacts.test.mjs",
   // ALP-4 (#4024): the fragility audit is a set of bare-node `.mjs` tools;
@@ -118,6 +117,11 @@ const JAVASCRIPT_VITEST_TESTS = [
   // #4452: `lanes:stale` is a read-only `.mjs` tool run with bare node; its
   // suite stays JavaScript like the other script suites here.
   "scripts/lanes-stale.test.mjs",
+  // ALP-586: pins that the `.mjs` release tool and the `.mjs` docs link check
+  // share one heading-anchor rule. It imports both bare-node tools, whose export
+  // surfaces (cut-release.mjs alone has 17) other lanes change, so it stays
+  // JavaScript beside their suites rather than needing a declaration for each.
+  "scripts/lib/github-heading-anchor.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
   // #4465: `release:cut` drives the `.mjs` compiler under bare node, so its
   // suite stays JavaScript beside the compiler's.
@@ -151,6 +155,26 @@ const DECLARED_JAVASCRIPT_MODULES = [
     load: () => import("../../../load/lib/contention-invariant.js"),
   },
   {
+    module: "load/lib/stay-window.js",
+    declaration: "load/lib/stay-window.d.ts",
+    load: () => import("../../../load/lib/stay-window.js"),
+  },
+  {
+    module: "load/lib/target-guard.js",
+    declaration: "load/lib/target-guard.d.ts",
+    load: () => import("../../../load/lib/target-guard.js"),
+  },
+  {
+    module: "load/lib/volume-users.js",
+    declaration: "load/lib/volume-users.d.ts",
+    load: () => import("../../../load/lib/volume-users.js"),
+  },
+  {
+    module: "load/stripe-stub/server.mjs",
+    declaration: "load/stripe-stub/server.d.mts",
+    load: () => import("../../../load/stripe-stub/server.mjs"),
+  },
+  {
     module: "scripts/ci/check-allow-builds.mjs",
     declaration: "scripts/ci/check-allow-builds.d.mts",
     load: () => import("../../../scripts/ci/check-allow-builds.mjs"),
@@ -159,6 +183,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     module: "scripts/ci/server-only-boundary-selftest.mjs",
     declaration: "scripts/ci/server-only-boundary-selftest.d.mts",
     load: () => import("../../../scripts/ci/server-only-boundary-selftest.mjs"),
+  },
+  {
+    module: "scripts/lib/budget-base-ref.mjs",
+    declaration: "scripts/lib/budget-base-ref.d.mts",
+    load: () => import("../../../scripts/lib/budget-base-ref.mjs"),
   },
   {
     module: "scripts/sync-user-guide-wiki.mjs",

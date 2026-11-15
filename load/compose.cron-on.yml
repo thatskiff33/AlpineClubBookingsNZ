@@ -1,0 +1,20 @@
+# Load-test overlay (#4940): the cron-on profile.
+#
+# The staging override hard-codes CRON_ENABLED=false, so a load run normally
+# measures the request path with no scheduled work competing for the database.
+# This overlay turns the scheduler on so the same scenarios can be measured
+# with it running. scripts/load-stack.sh only ever stacks it AFTER the Stripe
+# stub overlay, so any Stripe call a job makes lands on the stub:
+#   -f docker-compose.yml -f docker-compose.staging.yml -f load/compose.stripe-stub.yml -f load/compose.cron-on.yml
+#
+# The other providers stay off by construction: mail still goes to mailpit
+# (hard-coded in docker-compose.staging.yml), and the load stack never stores a
+# Xero connection (prisma/load-volume-seed.ts refuses to seed one that has).
+
+services:
+  app:
+    environment:
+      # A copy by construction; hard-coded, never read from an env file
+      # (ENV-SAFETY 1 #3034). See docker-compose.staging.yml.
+      APP_ENVIRONMENT_ROLE: non-production
+      CRON_ENABLED: "true"

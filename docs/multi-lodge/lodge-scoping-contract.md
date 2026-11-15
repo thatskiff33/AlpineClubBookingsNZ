@@ -622,8 +622,8 @@ new ADR:
 - `GroupDiscountSetting` and `BookingDefaults.nonMemberHoldDays` /
   `waitlistCrossLodgeOrder`: booking policy knobs that are club fairness
   decisions, edited club-wide on the booking-policies page.
-- Skifield conditions (`WhakapapaReportCache`, the `skifieldConditions`
-  module): public-website content, not lodge UI. A per-lodge/per-field
+- Skifield conditions (`WhakapapaReportCache`, the `skifieldConditions` and
+  `skifieldWhakapapa` modules): public-website content, not lodge UI. A per-lodge/per-field
   conditions widget would be a future enhancement, not a scoping change.
 - Maintenance-report policy and questions (`MaintenanceReportSettings`
   singleton, `MaintenanceReportQuestion`): the club asks the same bounded
