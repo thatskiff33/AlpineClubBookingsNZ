@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   loggerError: vi.fn(),
   decideLinked: vi.fn(),
   floor: vi.fn(),
+  sendFloorAlert: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: { xeroObjectLink: { findFirst: mocks.linkFindFirst, findMany: mocks.linkFindMany } } }));
@@ -21,12 +22,15 @@ vi.mock("@/lib/xero-inbound/credit-note-repairs", () => ({ repairRefundedPayment
 // The whole-total decision and its floor are the repair's own, pinned in
 // `xero-credit-note-repairs.test.ts` and driven for real by the realdb suites.
 vi.mock("@/lib/xero-inbound/linked-refunded-total", () => ({ decideLinkedRefundedTotalCents: mocks.decideLinked }));
-vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", () => ({ bankTransferFloorCents: mocks.floor }));
+vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", () => ({
+  bankTransferFloorCents: mocks.floor,
+  sendBankTransferFloorAlert: mocks.sendFloorAlert,
+}));
 vi.mock("@/lib/xero-inbound/account-credit-modification-notes", () => ({
   readModificationNoteCash: mocks.readModificationNoteCash,
 }));
 
-import { recountCorrectionsAfterKeptSettle } from "@/lib/xero-inbound/kept-settle-correction-recount";
+import { afterKeptSettleCommits, recountCorrectionsAfterKeptSettle } from "@/lib/xero-inbound/kept-settle-correction-recount";
 import { decideInternetBankingReceiptFigure } from "@/lib/xero-inbound/settle-from-cash";
 
 const INVOICE_ID = "inv-4095";
@@ -84,6 +88,30 @@ describe("recountCorrectionsAfterKeptSettle (#4095 items 5 and 12)", () => {
     await expect(recountCorrectionsAfterKeptSettle(INVOICE_ID, PAYMENT_ID, notes)).resolves.toEqual(["note-1", "note-2"]);
     await expect(recountCorrectionsAfterKeptSettle(INVOICE_ID, PAYMENT_ID, notes)).resolves.toEqual(["note-1", "note-2"]);
     expect(mocks.loggerError).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("afterKeptSettleCommits (#4449)", () => {
+  const format = {} as Parameters<typeof afterKeptSettleCommits>[3];
+
+  it("alerts a floor the keep held, then recounts its corrections", async () => {
+    const floorAlert = { paymentId: PAYMENT_ID } as unknown as NonNullable<Parameters<typeof afterKeptSettleCommits>[2]["floorAlert"]>;
+    const order: string[] = [];
+    mocks.sendFloorAlert.mockImplementation(async () => void order.push("alert"));
+    mocks.repair.mockImplementation(async () => (order.push("recount"), { matchedPayments: 1, updatedPayments: 1 }));
+
+    await expect(
+      afterKeptSettleCommits(INVOICE_ID, PAYMENT_ID, { correctionNotes: [{ id: "note-1", appliedCents: 10_000 }], floorAlert }, format),
+    ).resolves.toEqual([]);
+
+    expect(mocks.sendFloorAlert).toHaveBeenCalledWith(floorAlert, format);
+    expect(order).toEqual(["alert", "recount"]);
+  });
+
+  it("sends no alert and recounts nothing when the keep left neither", async () => {
+    await expect(afterKeptSettleCommits(INVOICE_ID, PAYMENT_ID, { correctionNotes: [], floorAlert: null }, format)).resolves.toEqual([]);
+    expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
+    expect(mocks.repair).not.toHaveBeenCalled();
   });
 });
 

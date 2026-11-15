@@ -234,11 +234,7 @@ async function syncNote(ids: NoteIds, noteCents: number): Promise<void> {
     data: { metadata: { status: "AUTHORISED", total: noteCents / 100 } },
   });
   const allocationTargets = [{ invoiceId: INVOICE_ID, amountCents: noteCents }];
-  await allocations.writeCurrentCreditNoteAllocations([allocationLink(ids, noteCents)], {
-    creditNoteId: ids.noteId,
-    isModificationNote: true,
-    allocationTargets,
-  });
+  await allocations.writeCurrentCreditNoteAllocations([allocationLink(ids, noteCents)], { isModificationNote: true });
   const modificationRefundAmountsByPaymentId = await noteRefunds.resolveModificationRefundAmountsByPaymentId({
     creditNoteId: ids.noteId,
     isModificationNote: true,

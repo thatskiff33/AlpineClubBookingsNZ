@@ -287,7 +287,7 @@ vi.mock("@/lib/xero-error-alert", () => xeroSyncErrorAlert);
 // calls run for real. `kept-settle-correction-recount.test.ts` pins the keep's
 // use of the decision and the realdb suites drive it.
 vi.mock("@/lib/xero-inbound/linked-refunded-total", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-inbound/linked-refunded-total")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-inbound/linked-refunded-total");
   return {
     ...actual,
     decideLinkedRefundedTotalCents: (...args: Parameters<typeof actual.decideLinkedRefundedTotalCents>) =>
@@ -295,7 +295,7 @@ vi.mock("@/lib/xero-inbound/linked-refunded-total", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/xero-inbound/credit-note-bank-transfer-floor")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-inbound/credit-note-bank-transfer-floor");
   return {
     ...actual,
     bankTransferFloorCents: async (
