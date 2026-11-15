@@ -6,7 +6,7 @@ import { createAuditLog } from "@/lib/audit";
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { primaryXeroInvoiceOnOffer, type BookingInvoiceOffer } from "@/lib/booking-invoice-access";
-import { readBookingSupplementaryInvoiceIdentities } from "@/lib/booking-supplementary-invoice-identities";
+import { bookingHasAnySupplementaryInvoiceEvidence } from "@/lib/booking-supplementary-invoice-identities";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -20,16 +20,22 @@ type BookingInvoiceSession = NonNullable<Awaited<ReturnType<typeof auth>>>;
  * Download invoice button and `GET /api/bookings/[id]/invoice`.
  *
  * WHICH INVOICE. Only the booking's primary Xero invoice (`Payment.xeroInvoiceId`),
- * and only when the booking has no further Xero invoice for a change to it. A
- * booking edited upwards can carry supplementary invoices, and there is no one
- * reader in this tree of "every Xero invoice of record for a booking": the
- * page's supplementary reader (`readBookingSupplementaryInvoiceIdentities`)
- * lists bank demands only and leaves card receipts out by design, and
- * `PaymentTransaction.xeroInvoiceId` also carries the primary's id and the
- * organiser's combined invoice. So a booking with any ADDITIONAL ledger row, or
- * any supplementary evidence (an id, or evidence the reader cannot classify), is
- * offered a "please ask the club" line instead of an incomplete record. The
- * route takes no invoice id from the client at all.
+ * and only when nothing says the booking has another invoice the member is
+ * billed by. Two checks say so, and either is enough for a "please ask the
+ * club" line instead of an incomplete record:
+ *
+ * - any ADDITIONAL ledger row on the payment (an extra charge, asked or
+ *   withdrawn), as loaded by the page's own read; and
+ * - any supplementary invoice evidence on the booking's supplementary anchors
+ *   (`bookingHasAnySupplementaryInvoiceEvidence`): bank demand, card receipt,
+ *   unsent or failed create, inactive link, unclassifiable second ask.
+ *
+ * Those anchors (Booking, BookingModification, edit-review ManualRefundTask) are
+ * where every supplementary invoice writer anchors. The booking's other Xero
+ * invoices bill no one on this page: a card-refund reversal invoice bills the
+ * Stripe clearing account (`INV-PAY-151`), and a kept late capture's invoice
+ * exists only on a cancelled booking, which is never offered. The route takes
+ * no invoice id from the client at all.
  *
  * Read-only apart from the audit row: the one provider call runs outside any
  * transaction, through the metered `callXeroApi` with no retries, and never arms
@@ -46,7 +52,7 @@ export type BookingInvoiceDownload =
   | { kind: "AUDIT_FAILED" };
 
 const offerDependencies = {
-  readSupplementary: readBookingSupplementaryInvoiceIdentities,
+  hasAnySupplementaryInvoice: bookingHasAnySupplementaryInvoiceEvidence,
 };
 
 /**
@@ -71,8 +77,7 @@ export async function resolveBookingInvoiceOffer(
   // The page's read loads the payment's ADDITIONAL rows (any status, withdrawn
   // included); one is enough to say a further invoice may exist.
   if ((input.booking.payment?.transactions.length ?? 0) > 0) return { kind: "ASK_CLUB" };
-  const supplementary = await dependencies.readSupplementary(input.booking.id);
-  if (supplementary.invoiceIds.length > 0 || supplementary.incomplete) return { kind: "ASK_CLUB" };
+  if (await dependencies.hasAnySupplementaryInvoice(input.booking.id)) return { kind: "ASK_CLUB" };
   return { kind: "XERO_INVOICE", invoiceNumber: primary.invoiceNumber };
 }
 

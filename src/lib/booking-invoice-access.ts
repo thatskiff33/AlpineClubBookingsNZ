@@ -61,6 +61,7 @@ export function primaryXeroInvoiceOnOffer(input: {
   const { viewer, booking } = input;
   if (!viewer.canSeeOwnerCredit) return null;
   if (!input.xeroModuleOn) return null;
+  // The asks' ended-booking list doubles as "no invoice offered": both ask whether the booking still owes anything.
   if (isAdditionalAskRetiredBookingStatus(booking.status)) return null;
   if (paidByOrganiserInternetBanking(booking)) return null;
   const invoiceId = booking.payment?.xeroInvoiceId ?? null;

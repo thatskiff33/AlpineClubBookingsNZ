@@ -10,7 +10,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/xero-api-client", () => ({ callXeroApi: vi.fn(), getAuthenticatedXeroClient: vi.fn() }));
 vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: vi.fn() }));
 vi.mock("@/lib/booking-supplementary-invoice-identities", () => ({
-  readBookingSupplementaryInvoiceIdentities: vi.fn(),
+  bookingHasAnySupplementaryInvoiceEvidence: vi.fn(),
 }));
 vi.mock("../_lib/load-booking-detail", () => ({ loadBookingDetail: vi.fn() }));
 vi.mock("@/lib/module-settings", () => ({ loadEffectiveModuleFlags: vi.fn() }));
@@ -54,7 +54,7 @@ const session = (id: string, role: string) =>
 const viewerFor = (b: never, id: string, role: string) =>
   resolveBookingDetailViewer({ session: session(id, role), booking: b });
 
-const noSupplementary = { readSupplementary: vi.fn(async () => ({ invoiceIds: [] as string[], incomplete: false, revision: "r" })) };
+const noSupplementary = { hasAnySupplementaryInvoice: vi.fn(async () => false) };
 const XERO_ON = { xeroIntegration: true };
 
 function offer(b: never, id = OWNER_ID, role = "USER", modules = XERO_ON, deps = noSupplementary) {
@@ -73,7 +73,7 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
   it("offers nothing to a linked guest or a stranger (the owner-credit audience)", async () => {
     expect(await offer(booking(), "guest-1", "USER")).toEqual({ kind: "NONE" });
     expect(await offer(booking(), "stranger-1", "USER")).toEqual({ kind: "NONE" });
-    expect(noSupplementary.readSupplementary).not.toHaveBeenCalled();
+    expect(noSupplementary.hasAnySupplementaryInvoice).not.toHaveBeenCalled();
   });
 
   it("offers nothing while the club's Xero module is off", async () => {
@@ -103,15 +103,13 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
   it("asks the member to contact the club when the payment has any additional ask", async () => {
     const asked = booking({}, { transactions: [{ withdrawnAt: new Date("2026-06-30T00:00:00.000Z") }] });
     expect(await offer(asked)).toEqual({ kind: "ASK_CLUB" });
-    expect(noSupplementary.readSupplementary).not.toHaveBeenCalled();
+    expect(noSupplementary.hasAnySupplementaryInvoice).not.toHaveBeenCalled();
   });
 
-  it("asks the member to contact the club when a supplementary invoice exists or cannot be ruled out", async () => {
-    const withId = { readSupplementary: vi.fn(async () => ({ invoiceIds: ["xero-supp"], incomplete: false, revision: "r" })) };
-    const unknown = { readSupplementary: vi.fn(async () => ({ invoiceIds: [], incomplete: true, revision: "r" })) };
-    expect(await offer(booking(), OWNER_ID, "USER", XERO_ON, withId)).toEqual({ kind: "ASK_CLUB" });
-    expect(await offer(booking(), OWNER_ID, "USER", XERO_ON, unknown)).toEqual({ kind: "ASK_CLUB" });
-    expect(withId.readSupplementary).toHaveBeenCalledWith("ckbooking1234567");
+  it("asks the member to contact the club when any supplementary invoice exists — a card receipt with no ADDITIONAL row included", async () => {
+    const receiptOnly = { hasAnySupplementaryInvoice: vi.fn(async () => true) };
+    expect(await offer(booking(), OWNER_ID, "USER", XERO_ON, receiptOnly)).toEqual({ kind: "ASK_CLUB" });
+    expect(receiptOnly.hasAnySupplementaryInvoice).toHaveBeenCalledWith("ckbooking1234567");
   });
 });
 
