@@ -835,8 +835,8 @@ installation.
   `UNTAGGED_DEPLOY_COMMIT_REASON`, printed in the deploy log; the flag alone is
   refused. Staging deploys of `main` and forks that do not tag use it.
 - "Release tag" has one spelling per language, the same pattern as
-  `RELEASE_TAG` in `scripts/release/cut-release.mjs`; a test runs both over the
-  same names.
+  `RELEASE_TAG` in `scripts/release/release-version.mjs` (re-exported by
+  `cut-release.mjs`); a test runs both over the same names.
 - Adopter install steps (`docs/IMPLEMENTATION_GUIDE.md` §1, `DEPLOYMENT.md`
   "First Bootstrap") check out the latest release tag straight after cloning.
 - Why: #4465 made "every production deploy is a tagged release" a written rule

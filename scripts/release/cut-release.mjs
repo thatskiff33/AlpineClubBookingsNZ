@@ -62,6 +62,12 @@ import {
   formatReleaseParts as formatParts,
   parseReleaseTag,
 } from "./release-version.mjs";
+
+// The one definition of a release tag lives in release-version.mjs (#4979).
+// It stays reachable from here because the production deploy's shell copy is
+// checked against it by `deploy-release-tag-guard-script-contract.test.ts`,
+// which asks this module (#4978, INV-OPS-019).
+export { parseReleaseTag };
 import {
   foldUpgradingUnreleased,
   RUNBOOK_PATH,
