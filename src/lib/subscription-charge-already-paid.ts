@@ -250,7 +250,7 @@ export const WITHHELD_ON_APPROVAL_NOTE =
 
 /**
  * The family entry an invoicing warning names, keyed the same way from either
- * side. Delegates to `chargeFamilyAxisKey` (INV-SSOT-007) rather than
+ * side. Delegates to `chargeFamilyAxisKey` (INV-SSOT-009) rather than
  * building its own template literal, so a category-axis warning/entry is
  * keyed identically to how `membership-subscription-billing.ts` keys a
  * category charge — a second, independent key-builder here would have been

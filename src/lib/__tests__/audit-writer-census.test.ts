@@ -1495,8 +1495,15 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 406 -> 408 unpinned (#4368): a dead card refund's "Nothing left owed" and "Try the card again", `payment`.
     // RE-MEASURED with `pnpm run audit:census`.
-    // RE-MEASURED with `pnpm run audit:census` on the merged tree (fourth main-sync, 11 Nov 2026).
-    ).toEqual({ pinned: 130, unpinned: 411 }); // RE-MEASURED with `pnpm run audit:census` on the merged tree (fourth main-sync, 11 Nov 2026).
+    // 408 -> 409 unpinned (#4916): the after-stay dietary clear's count row, `privacy`.
+    // 409 -> 411 unpinned (#4851): a group organiser's dead card refund paid another way (one site) or tried again, `payment`.
+    // 411 -> 412 unpinned (#4918): the privacy hosting disclosure save, unpinned `admin`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 412 -> 413 unpinned (#4618): the officer two-factor policy save, `security`.
+    // RE-MEASURED with `pnpm run audit:census`.
+    // 413 -> 416 unpinned (#4496): the three Subscription Categories admin-CRUD writers, `admin`.
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree.
+    ).toEqual({ pinned: 130, unpinned: 416 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

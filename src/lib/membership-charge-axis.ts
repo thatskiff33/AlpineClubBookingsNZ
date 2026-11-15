@@ -2,10 +2,10 @@
  * The single place allowed to read a `MembershipSubscriptionCharge`'s billing
  * axis columns (`membershipTypeId`/`Key`/`Name` vs
  * `subscriptionCategoryId`/`Key`/`Name`) to build a family-dedup key or a
- * display name (INV-SSOT-007, INV-MONEY-046).
+ * display name (INV-SSOT-009, INV-MONEY-046).
  *
  * Both axes widened/added to nullable across a windowed migration pair
- * (20261215010000/20261215020000) precisely because the currently-deployed
+ * (20261220010000/20261220020000) precisely because the currently-deployed
  * app's own un-null-checked reads of these columns are the hazard this
  * module exists to close: TypeScript does not flag a `null` interpolated
  * into a template literal (`` `${x}` `` typechecks for any `x`), so a raw

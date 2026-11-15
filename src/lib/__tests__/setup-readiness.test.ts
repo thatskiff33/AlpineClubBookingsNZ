@@ -15,6 +15,7 @@ import { decideEnvironmentRole } from "@/lib/environment-role";
 import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import {
   SETUP_STEP_IDS,
+  getSetupRequiredEnvNames,
   buildSetupReadiness,
   normalizeSetupProgress,
   renderSetupCheckReport,
@@ -86,6 +87,7 @@ const baseEnv = {
 };
 
 const completeDatabase: SetupDatabaseSnapshot = {
+  databaseRole: { name: "app_fixture", isSuperuser: false },
   // #4456: stored data checked, and nothing on AUTH_SECRET.
   dataKeyUsage: { credentialRowsByKeyId: {}, totpRowsByKeyId: {}, recoveryCodesByKeyId: {}, ringKeyedDataPresent: false },
   adminCount: 1,
@@ -251,6 +253,36 @@ describe("setup-readiness", () => {
     expect(report).toContain("accounting.reports.balancesheet.read");
     expect(report).toContain("accounting.reports.banksummary.read");
     expect(report).not.toContain("accounting.reports.read");
+  });
+
+  it.each([true, false])("links Xero Mappings to the wizard mapping step (database checked: %s)", (checked) => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: checked ? completeDatabase : undefined,
+      now: new Date("2026-07-01T00:00:00.000Z"),
+    });
+    expect(findStep(readiness, "xero-mappings")?.href).toBe("/admin/xero/setup?step=mapping");
+  });
+
+  it("warns without blocking setup when the connected role is a superuser", () => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, databaseRole: { name: "operator_fixture", isSuperuser: true } },
+    });
+    expect(readiness.categories.flatMap((category) => category.checks)
+      .find((check) => check.id === "database-role")?.status).toBe("warning");
+    expect(readiness.status).toBe("warning");
+    expect(readiness.summary.blocked).toBe(0);
+  });
+
+  it("reminds the wizard about a data key without requiring it to boot", () => {
+    expect(getSetupRequiredEnvNames()).toContain("DATA_ENCRYPTION_KEYS");
+    const env = { ...baseEnv, DATA_ENCRYPTION_KEYS: "" };
+    const readiness = buildSetupReadiness({ env, configDir: makeConfigDir(), database: completeDatabase });
+    expect(readiness.categories.flatMap((category) => category.checks)
+      .find((check) => check.id === "runtime-env")?.status).toBe("complete");
   });
 
   it("names a Xero mapping that is unset and falling back (#2717)", () => {

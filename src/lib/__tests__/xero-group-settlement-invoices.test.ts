@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingStatus, GroupBookingStatus } from "@prisma/client";
 
 const mocks = vi.hoisted(() => {
@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => {
     over it (reset per test).
   */
   const persisted: { current: Record<string, unknown> } = { current: {} };
+  const opResponse: { current: unknown } = { current: null };
   const opCorrelationKey: { current: string | null } = { current: null };
   const createRowKeys: { current: string[] } = { current: [] };
   const tx = {
@@ -55,7 +56,7 @@ const mocks = vi.hoisted(() => {
       attempt the settlement has asked for (the CREATE rows' keys).
     */
     xeroSyncOperation: {
-      findUnique: vi.fn(async () => ({ correlationKey: opCorrelationKey.current })),
+      findUnique: vi.fn(async () => ({ correlationKey: opCorrelationKey.current, responsePayload: opResponse.current })),
       findMany: vi.fn(async () =>
         createRowKeys.current.map((correlationKey) => ({ correlationKey }))
       ),
@@ -71,6 +72,7 @@ const mocks = vi.hoisted(() => {
     tx,
     persisted,
     opCorrelationKey,
+    opResponse,
     createRowKeys,
     alert: vi.fn(),
     txEnvironmentSafetyFindUnique,
@@ -89,6 +91,8 @@ const mocks = vi.hoisted(() => {
     enqueueAbandonVoid: vi.fn(),
     transaction: vi.fn(),
     transactionDepth: 0,
+    // #4919: the owed-email marker written to the RUNNING row.
+    opUpdateMany: vi.fn(),
   };
 });
 
@@ -117,19 +121,26 @@ vi.mock("@/lib/prisma", () => ({
     // #2258: the withheld-send audit row for the organiser's settlement invoice.
     emailLog: { create: mocks.emailLogCreate },
     season: { findFirst: vi.fn().mockResolvedValue(null) },
-    xeroSyncOperation: { update: vi.fn() },
+    xeroSyncOperation: { update: vi.fn(), updateMany: mocks.opUpdateMany },
     // #4042: the organiser's hand-back the blocked VOID alert points at; none by default.
     manualRefundTask: { aggregate: handBackAggregate },
   },
 }));
 
-vi.mock("@/lib/xero-api-client", () => ({
-  getAuthenticatedXeroClient: vi.fn().mockResolvedValue({
-    xero: { accountingApi: mocks.accountingApi },
-    tenantId: "tenant-1",
-  }),
-  callXeroApi: vi.fn(async (callback) => callback()),
-}));
+// #4919: the call runs through the REAL retry wrapper (metering and the write
+// gate aside), so "one HTTP attempt, no sleep inside the lock" is the wrapper's
+// own behaviour under the budget the fence passes, not a mock's.
+vi.mock("@/lib/xero-api-client", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
+  return {
+    ...actual,
+    getAuthenticatedXeroClient: vi.fn().mockResolvedValue({
+      xero: { accountingApi: mocks.accountingApi },
+      tenantId: "tenant-1",
+    }),
+    callXeroApi: vi.fn(async (callback, options) => actual.withXeroRetry(callback, options)),
+  };
+});
 
 vi.mock("@/lib/xero-contacts", () => ({
   findOrCreateXeroContact: vi.fn().mockResolvedValue("contact-1"),
@@ -194,6 +205,9 @@ vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
 import { prisma } from "@/lib/prisma";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import { createXeroInvoiceForGroupSettlement } from "@/lib/xero-group-settlement-invoices";
+import { deferredGroupInvoiceEmailPayload, readDeferredGroupInvoiceEmail } from "@/lib/xero-group-settlement-invoice-outbox";
+import { GroupSettlementInvoiceEmailDeferredError } from "@/lib/xero-applied-credit-operation-serialization";
+import { getAuthenticatedXeroClient, resetXeroRateLimitStateForTests } from "@/lib/xero-api-client";
 import {
   voidXeroInvoiceForAbandonedGroupSettlement,
   voidXeroInvoiceForCancelledGroupSettlement,
@@ -264,7 +278,9 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
     mocks.settlementUpdate.mockResolvedValue({});
     mocks.persisted.current = {};
     mocks.opCorrelationKey.current = null;
+    mocks.opResponse.current = null;
     mocks.createRowKeys.current = [];
+    mocks.accountingApi.emailInvoice.mockResolvedValue({ body: { sent: true } });
     mocks.accountingApi.getInvoice.mockResolvedValue({
       body: { invoices: [{ invoiceID: "inv-existing", status: "AUTHORISED", amountPaid: 0 }] },
     });
@@ -470,6 +486,345 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueVoid).not.toHaveBeenCalled();
+  });
+
+  /*
+    #4919 (`INV-INT-003`, `INV-LOCK-001`): the email fence holds lock(1) across
+    ONE emailInvoice attempt with a 3 s deadline, under explicit transaction
+    options. A slow, rate-limited or failing Xero leaves the email owed — the
+    row marked and handed back to the outbox — never a sleep inside the lock.
+  */
+  describe("the bounded email fence (#4919)", () => {
+    const FENCE_OPTIONS = { maxWait: 10_000, timeout: 10_000 };
+    const EMAIL_KEY = "group-settlement:settle-1:invoice-email:inv-1:v1";
+
+    // The fence is the last transaction a run opens.
+    const fenceOptions = () => mocks.transaction.mock.calls.at(-1)?.[1];
+    const xeroError = (statusCode: number, headers: Record<string, string> = {}) =>
+      Object.assign(new Error(`HTTP ${statusCode}`), { response: { statusCode, headers } });
+
+    beforeEach(() => {
+      resetXeroRateLimitStateForTests();
+      mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
+      mocks.opUpdateMany.mockResolvedValue({ count: 1 });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    function expectOwed() {
+      expect(mocks.completeSync).not.toHaveBeenCalled();
+      expect(mocks.failSync).not.toHaveBeenCalled();
+      expect(mocks.opUpdateMany).toHaveBeenCalledTimes(1);
+      const [update] = mocks.opUpdateMany.mock.calls[0]!;
+      // Only this run's own RUNNING claim is marked (`INV-INT-029`).
+      expect(update.where).toMatchObject({ id: "op-1", status: "RUNNING" });
+      expect(update.data.responsePayload).toMatchObject({
+        deferredInvoiceSend: "INVOICE_EMAIL_DEFERRED",
+        invoice: { invoices: [{ invoiceID: "inv-1" }] },
+      });
+      expect(mocks.transactionDepth).toBe(0);
+    }
+
+    it("sends once under explicit options and records the email as sent", async () => {
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+      expect(mocks.accountingApi.emailInvoice.mock.calls[0]![3]).toBe(EMAIL_KEY);
+      expect(fenceOptions()).toEqual(FENCE_OPTIONS);
+      expect(mocks.completeSync).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          status: "SUCCEEDED",
+          responsePayload: expect.objectContaining({
+            invoiceSendAccepted: true,
+            deferredInvoiceSend: null,
+            invoiceEmailError: null,
+          }),
+        })
+      );
+    });
+
+    it.each([
+      ["a 429 with Retry-After", () => xeroError(429, { "retry-after": "30", "x-rate-limit-problem": "minute" })],
+      ["a transient 503", () => xeroError(503)],
+    ])("leaves the email owed after %s, with one attempt and no sleep in the lock", async (_label, error) => {
+      mocks.accountingApi.emailInvoice.mockRejectedValue(error());
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).rejects.toBeInstanceOf(GroupSettlementInvoiceEmailDeferredError);
+
+      expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+      expect(fenceOptions()).toEqual(FENCE_OPTIONS);
+      expectOwed();
+    });
+
+    it("ends a never-settling email at its 3 s deadline, well inside the transaction timeout", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      mocks.accountingApi.emailInvoice.mockImplementation(() => new Promise(() => {}));
+      const run = createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") });
+      const settled = run.then(
+        () => "resolved",
+        (error: unknown) => error
+      );
+
+      // (The deadline is timed from the call's start, so a little real time has
+      // already gone by the time the timer is set.)
+      await vi.advanceTimersByTimeAsync(2_900);
+      // Still inside the fence, holding the lock, one attempt in flight.
+      expect(mocks.transactionDepth).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+
+      // Ended by the deadline and the fence's own commit, at 3 s of a 10 s timeout.
+      expect(await settled).toBeInstanceOf(GroupSettlementInvoiceEmailDeferredError);
+      expect(mocks.transactionDepth).toBe(0);
+      expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+      expect(fenceOptions()).toEqual(FENCE_OPTIONS);
+      expectOwed();
+    });
+
+    it("does not ask Xero when the lock wait used up the time the deadline needs", async () => {
+      // Every wait for lock(1) takes 6 s: past the 5 s latest-send point of a
+      // 10 s timeout with a 3 s deadline and a 2 s commit margin.
+      let clockMs = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => clockMs);
+      mocks.tx.$executeRaw.mockImplementation(async () => {
+        clockMs += 6_000;
+        return undefined;
+      });
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).rejects.toBeInstanceOf(GroupSettlementInvoiceEmailDeferredError);
+
+      expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      expectOwed();
+    });
+
+    it("records a refused send (not owed) as PARTIAL with its error", async () => {
+      mocks.accountingApi.emailInvoice.mockRejectedValue(xeroError(400));
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+      expect(mocks.opUpdateMany).not.toHaveBeenCalled();
+      const completion = mocks.completeSync.mock.calls.at(-1)?.[1];
+      expect(completion.status).toBe("PARTIAL");
+      expect(completion.responsePayload).toMatchObject({ invoiceSendAccepted: false, deferredInvoiceSend: null });
+      expect(completion.responsePayload.invoiceEmailError).toBeInstanceOf(Error);
+    });
+
+    it("records an accepted email as sent even when the fence's commit then fails", async () => {
+      const ordinary = mocks.transaction.getMockImplementation()!;
+      mocks.transaction.mockImplementation(async (callback, options) => {
+        const result = await ordinary(callback, options);
+        if (options === undefined) return result;
+        throw new Error("commit failed");
+      });
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+      expect(mocks.completeSync).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          status: "SUCCEEDED",
+          responsePayload: expect.objectContaining({ invoiceSendAccepted: true, invoiceEmailError: null }),
+        })
+      );
+    });
+
+    // MUTATION (#5083 review): another lock(1) holder (assignBedRange runs on a
+    // 30 s timeout) or an exhausted pool outlasts the fence's 10 s budget, so
+    // Prisma rejects the fence with P2028 before the start guard can run. That
+    // is the heaviest late start: owed and re-drivable, never a PARTIAL that
+    // an operator cannot retry for this queue type.
+    it.each([
+      ["P2028 (the wait outlasted the transaction timeout)", "P2028"],
+      ["P2034 (a write conflict)", "P2034"],
+    ])("owes the email when the fence is refused with %s", async (_label, code) => {
+      const ordinary = mocks.transaction.getMockImplementation()!;
+      mocks.transaction.mockImplementation(async (callback, options) => {
+        if (options === undefined) return ordinary(callback, options);
+        throw Object.assign(new Error("Transaction API error"), { code });
+      });
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).rejects.toBeInstanceOf(GroupSettlementInvoiceEmailDeferredError);
+
+      expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      expectOwed();
+    });
+
+    it("records any other fence failure before a send as PARTIAL with its error", async () => {
+      const ordinary = mocks.transaction.getMockImplementation()!;
+      mocks.transaction.mockImplementation(async (callback, options) => {
+        if (options === undefined) return ordinary(callback, options);
+        throw new Error("database unavailable");
+      });
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      expect(mocks.opUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.completeSync.mock.calls.at(-1)?.[1]).toMatchObject({
+        status: "PARTIAL",
+        responsePayload: { invoiceSendAccepted: false, deferredInvoiceSend: null },
+      });
+    });
+
+    // A status-less transport failure (no HTTP response) is not classed as
+    // owed: the fence does not guess at Node or axios error codes. It keeps
+    // the pre-#4919 PARTIAL outcome, and the docs name only the owed cases.
+    it("records a status-less transport failure as PARTIAL, not owed", async () => {
+      mocks.accountingApi.emailInvoice.mockRejectedValue(
+        Object.assign(new Error("socket hang up"), { code: "ECONNRESET" })
+      );
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+      expect(mocks.opUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.completeSync.mock.calls.at(-1)?.[1].status).toBe("PARTIAL");
+    });
+
+    // The suite's sanitizeForJson is a pass-through; the stored row is not. A
+    // key with "email" in it is redacted, and a redacted marker is never read.
+    it("keeps the owed-email marker readable through the real payload redactor", async () => {
+      const { sanitizeForJson } = (await vi.importActual("@/lib/xero-sync")) as typeof import("@/lib/xero-sync");
+      const stored = sanitizeForJson(deferredGroupInvoiceEmailPayload({ invoiceID: "inv-1" }, new Error("Xero 429")));
+      expect(readDeferredGroupInvoiceEmail(stored)).toEqual({ invoice: { invoiceID: "inv-1" } });
+      expect(stored).toMatchObject({ deferredReason: "Xero 429" });
+    });
+
+    describe("re-driving an owed email", () => {
+      const storedInvoice = { invoices: [{ invoiceID: "inv-existing", invoiceNumber: "INV-EXISTING" }] };
+      const REDRIVE_KEY = "group-settlement:settle-1:invoice-email:inv-existing:v1";
+
+      beforeEach(() => {
+        mocks.opResponse.current = {
+          invoice: storedInvoice,
+          deferredInvoiceSend: "INVOICE_EMAIL_DEFERRED",
+          deferredReason: "Xero did not answer",
+        };
+        mocks.settlementFindUnique.mockResolvedValue(settlementWithInvoice(GroupBookingStatus.OPEN));
+      });
+
+      it("asks again with the same key, raises nothing and records it sent", async () => {
+        await expect(
+          createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+        ).resolves.toBe("inv-existing");
+
+        expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
+        expect(mocks.tx.groupBookingSettlement.update).not.toHaveBeenCalled();
+        expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+        expect(mocks.accountingApi.emailInvoice.mock.calls[0]![3]).toBe(REDRIVE_KEY);
+        expect(fenceOptions()).toEqual(FENCE_OPTIONS);
+        expect(mocks.completeSync).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            status: "SUCCEEDED",
+            xeroObjectId: "inv-existing",
+            responsePayload: expect.objectContaining({ invoice: storedInvoice, invoiceSendAccepted: true }),
+          })
+        );
+      });
+
+      it("keeps the debt when Xero is still rate-limiting", async () => {
+        mocks.accountingApi.emailInvoice.mockRejectedValue(xeroError(429, { "retry-after": "30" }));
+
+        await expect(
+          createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+        ).rejects.toBeInstanceOf(GroupSettlementInvoiceEmailDeferredError);
+
+        expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+        expect(mocks.failSync).not.toHaveBeenCalled();
+        expect(mocks.opUpdateMany.mock.calls[0]![0].data.responsePayload).toMatchObject({
+          invoice: storedInvoice,
+          deferredInvoiceSend: "INVOICE_EMAIL_DEFERRED",
+        });
+      });
+
+      it("fails with the marker kept, so an operator's Retry comes back to the email", async () => {
+        vi.mocked(getAuthenticatedXeroClient).mockRejectedValueOnce(new Error("Xero connection lost"));
+
+        await expect(
+          createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+        ).rejects.toThrow("Xero connection lost");
+
+        expect(mocks.failSync).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.any(Error),
+          expect.objectContaining({ invoice: storedInvoice, deferredInvoiceSend: "INVOICE_EMAIL_DEFERRED" })
+        );
+      });
+
+      // The first read admits the re-drive; the fence's own read must refuse it.
+      it.each([
+        ["the group was cancelled", { groupBooking: { ...settlementWithInvoice(GroupBookingStatus.CANCELLED).groupBooking } }],
+        ["the invoice is no longer bound", { xeroInvoiceId: "inv-other" }],
+        [
+          "the organiser turned on \"No emails\"",
+          {
+            groupBooking: {
+              ...settlementWithInvoice(GroupBookingStatus.OPEN).groupBooking,
+              organiserBooking: { ...settlementWithInvoice(GroupBookingStatus.OPEN).groupBooking.organiserBooking, noEmails: true },
+            },
+          },
+        ],
+      ])("re-checks inside the lock: no email when %s", async (_label, change) => {
+        mocks.settlementFindUnique
+          .mockResolvedValueOnce(settlementWithInvoice(GroupBookingStatus.OPEN))
+          .mockResolvedValue({ ...settlementWithInvoice(GroupBookingStatus.OPEN), ...change });
+
+        await createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") });
+
+        expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+        expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
+        expect(mocks.opUpdateMany).not.toHaveBeenCalled();
+      });
+
+      it("re-checks the environment on the transaction client before asking again", async () => {
+        mocks.txEnvironmentSafetyFindUnique.mockResolvedValue({
+          forceNonProduction: true,
+          updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+          updatedByMemberId: "member-admin",
+        });
+
+        await createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") });
+
+        expect(mocks.txEnvironmentSafetyFindUnique).toHaveBeenCalled();
+        expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+        expect(mocks.completeSync.mock.calls.at(-1)?.[1].responsePayload).toMatchObject({
+          invoiceEmailWithheldForEnvironment: true,
+          invoiceSendAccepted: false,
+        });
+      });
+
+      it("closes a stalled bound CREATE without the marker as before, sending nothing", async () => {
+        mocks.opResponse.current = null;
+
+        await expect(
+          createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+        ).resolves.toBe("inv-existing");
+
+        expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      });
+    });
   });
 
   /*
@@ -876,6 +1231,7 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     mocks.settlementUpdate.mockResolvedValue({});
     mocks.persisted.current = {};
     mocks.opCorrelationKey.current = null;
+    mocks.opResponse.current = null;
     mocks.createRowKeys.current = [];
     mocks.accountingApi.getInvoice.mockResolvedValue({
       body: { invoices: [{ invoiceID: "inv-old", status: "AUTHORISED", amountPaid: 0 }] },

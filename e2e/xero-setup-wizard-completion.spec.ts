@@ -1,4 +1,5 @@
 import { type BrowserContext, expect, test } from "./helpers/accessibility";
+import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings, type ModuleSettings } from "./helpers/modules";
@@ -97,7 +98,7 @@ test("operator completes the whole Xero wizard including verified webhooks", asy
   await page.getByRole("button", { name: /^Connect Xero$/ }).click();
   // ?connected=true is consumed and stripped by the wizard context (#2394
   // review, F1), so match the page, not the marker.
-  await expect(page).toHaveURL(/\/admin\/xero\/setup/);
+  await expect(page).toHaveURL(adminUrlPattern(adminHref("xero-setup")));
   await expect(
     page.getByText(new RegExp(`Connected to\\s+${MOCK_XERO_ORG_NAME}`, "i")),
   ).toBeVisible({ timeout: 30_000 });

@@ -16,15 +16,8 @@
 import { Invoice, LineAmountTypes } from "xero-node";
 import { GroupBookingStatus, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
-import { bookingOwner } from "@/lib/booking-owner";
-import logger from "@/lib/logger";
-import {
-  recordWithheldBookingEmail,
-  XERO_GROUP_SETTLEMENT_INVOICE_EMAIL_TEMPLATE,
-} from "@/lib/booking-email-suppression";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
-  buildXeroIdempotencyKey,
   completeXeroSyncOperation,
   failXeroSyncOperation,
   sanitizeForJson,
@@ -32,11 +25,7 @@ import {
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
-import {
-  reassertXeroInvoiceEmailPolicy,
-  resolveXeroInvoiceEmailPolicy,
-  sendXeroInvoiceEmail,
-} from "@/lib/xero-invoice-email";
+import { finishGroupSettlementInvoiceEmail } from "./xero-group-settlement-invoice-email";
 import {
   findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
@@ -54,12 +43,15 @@ import {
 } from "@/lib/xero-group-settlement-void-outbox";
 import { isGroupSettlementBoundToInvoice } from "@/lib/group-settlement-invoice-binding";
 import { voidCancelledGroupSettlementInvoice } from "./xero-group-settlement-invoice-voids";
+import { GroupSettlementInvoiceEmailDeferredError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   boundGroupSettlementInvoiceCompletion,
   currentGroupSettlementInvoiceAttempt,
+  deferredGroupInvoiceEmailPayload,
   groupSettlementInvoiceCreateKey,
   groupSettlementInvoiceLink,
   parseGroupSettlementInvoiceAttempt,
+  readDeferredGroupInvoiceEmail,
 } from "@/lib/xero-group-settlement-invoice-outbox";
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -195,7 +187,7 @@ export async function createXeroInvoiceForGroupSettlement(
     const row = options?.syncOperation
       ? await tx.xeroSyncOperation.findUnique({
           where: { id: options.syncOperation.id },
-          select: { correlationKey: true },
+          select: { correlationKey: true, responsePayload: true },
         })
       : null;
     const current = await currentGroupSettlementInvoiceAttempt(tx, settlementId);
@@ -204,6 +196,8 @@ export async function createXeroInvoiceForGroupSettlement(
       current ??
       0;
     return {
+      // #4919: set while this row's email is owed from an earlier run.
+      deferredEmail: readDeferredGroupInvoiceEmail(row?.responsePayload),
       settlement,
       queuedVoidOperationId: queuedVoid?.queueOperationId ?? null,
       attempt,
@@ -254,6 +248,31 @@ export async function createXeroInvoiceForGroupSettlement(
     return null;
   }
 
+  // #4919: raised and bound, but its email is owed. Ask again through the same
+  // fence — every in-lock check re-run, the same idempotency key — and never
+  // raise or re-bind the invoice. A failure keeps the marker, so an operator's
+  // Retry of the FAILED row comes back here rather than closing it unemailed.
+  if (settlement.xeroInvoiceId && initialFence.deferredEmail && options?.syncOperation) {
+    const deferred = initialFence.deferredEmail;
+    const createdInvoice = { invoiceID: settlement.xeroInvoiceId, invoiceNumber: settlement.xeroInvoiceNumber };
+    try {
+      const { xero, tenantId } = await getAuthenticatedXeroClient();
+      return await finishGroupSettlementInvoiceEmail({
+        settlementId,
+        createdInvoice,
+        response: { body: deferred.invoice },
+        xero,
+        tenantId,
+        operationClaim: options.syncOperation,
+        redrivable: true,
+      });
+    } catch (error) {
+      if (!(error instanceof GroupSettlementInvoiceEmailDeferredError)) {
+        await failXeroSyncOperation(options.syncOperation, error, deferredGroupInvoiceEmailPayload(deferred.invoice, error));
+      }
+      throw error;
+    }
+  }
   // Already raised: its link was written beside the pointer under the lock (#3642), and re-writing it here could
   // re-activate a retired invoice's link. #4710: a claimed row closes SUCCEEDED on the bound invoice, never left RUNNING.
   if (settlement.xeroInvoiceId) {
@@ -441,260 +460,20 @@ export async function createXeroInvoiceForGroupSettlement(
       return null;
     }
 
-    // Email the invoice so the organiser can pay it by bank transfer.  This is
-    // the one deliberately provider-spanning lifecycle fence in this workflow:
-    // the single bounded emailInvoice call runs while lock(1) is held.  Without
-    // that serialization, cancellation could commit after the last DB check but
-    // before the provider accepted the email, producing a payable email after a
-    // durable CANCELLED state.  No other DB work or provider call is included.
-    // If cancellation won first, enqueue the replayable VOID in the same tx and
-    // suppress email.  If email won first, cancellation waits and subsequently
-    // commits its own durable VOID debt; email therefore never occurs AFTER a
-    // cancellation commit.
-    let invoiceEmailResponseBody: unknown = null;
-    let invoiceEmailError: unknown = null;
-    // #2258: set when the organiser's "No emails" switch withheld the invoice
-    // email. Recorded on the sync operation so the skip is never silent.
-    let invoiceEmailWithheld = false;
-    const invoiceEmailIdempotencyKey = buildXeroIdempotencyKey(
-      "group-settlement",
+    return await finishGroupSettlementInvoiceEmail({
       settlementId,
-      "invoice-email",
-      createdInvoice.invoiceID,
-      "v1"
-    );
-    // Environment-safety boundary (#3035; INV-CONFIG-004), resolved OUT HERE so a
-    // copy does nothing further and no lock is taken on its behalf. #3071: it is
-    // RE-PROVED inside the lock before the send — `reassertXeroInvoiceEmailPolicy`.
-    const invoiceEmailPolicy = await resolveXeroInvoiceEmailPolicy();
-    // Recorded from what the GATE did, never from the policy alone (#3035
-    // review) — see `resolveXeroInvoiceEmailPolicy` on why two withhold reasons
-    // must never both claim one event.
-    let invoiceEmailWithheldForEnvironment = false;
-    try {
-      const emailGate = await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        const fresh = await tx.groupBookingSettlement.findUnique({
-          where: { id: settlement.id },
-          select: {
-            source: true,
-            status: true,
-            xeroInvoiceId: true,
-            groupBooking: {
-              select: {
-                status: true,
-                organiserBookingId: true,
-                // #2258: the "No emails" switch on the ORGANISER'S booking.
-                organiserBooking: {
-                  select: {
-                    noEmails: true,
-                    member: { select: { email: true } },
-                    // #3369: the owner may be an Organisation; bookingOwner() reads both.
-                    organisation: { select: { name: true, email: true } },
-                  },
-                },
-              },
-            },
-          },
-        });
-        if (!fresh) {
-          throw new Error(`Group settlement not found: ${settlementId}`);
-        }
-        if (fresh.groupBooking.status === GroupBookingStatus.CANCELLED) {
-          await enqueueXeroGroupSettlementInvoiceVoidOperation(settlement.id, {
-            store: tx,
-          });
-          return {
-            cancelled: true,
-            abandoned: false,
-            responseBody: null,
-            withheld: false,
-            environmentPolicy: null,
-            organiserBookingId: null as string | null,
-            organiserEmail: null as string | null,
-          };
-        }
-        // #3642: released meanwhile. The reaper already retired this invoice
-        // (pointer cleared, VOID queued in the same commit): just don't email.
-        if (
-          !isGroupSettlementBoundToInvoice(fresh) ||
-          fresh.xeroInvoiceId !== createdInvoice.invoiceID
-        ) {
-          return {
-            cancelled: false,
-            abandoned: true,
-            responseBody: null,
-            withheld: false,
-            environmentPolicy: null,
-            organiserBookingId: null as string | null,
-            organiserEmail: null as string | null,
-          };
-        }
-        // #2258 (owner decision D10). SEMANTICS, because a settlement invoice is
-        // not attributable to one booking: this ONE combined invoice covers the
-        // organiser plus every joiner, and it is addressed to and paid by the
-        // ORGANISER. It is therefore gated on the organiser's own booking —
-        // `groupBooking.organiserBookingId` — and on nothing else. A joiner who
-        // has "No emails" set on their child booking does NOT suppress the
-        // organiser's invoice (it is not their message, and suppressing it would
-        // stop the organiser being billed); conversely, when the organiser's
-        // booking has it set, the invoice is not emailed to anyone. The joiner's
-        // own group emails (join settled / released / cancelled) are separately
-        // gated on each joiner's child booking.
-        //
-        // The read happens inside this advisory-locked transaction, immediately
-        // before the provider call, so a switch flipped concurrently cannot
-        // interleave. If the read throws, the surrounding try/catch records an
-        // invoiceEmailError and NO email is sent — fail closed by construction.
-        // Only the EMAILING is withheld: the invoice is already raised in Xero.
-        if (fresh.groupBooking.organiserBooking.noEmails) {
-          return {
-            cancelled: false,
-            abandoned: false,
-            responseBody: null,
-            withheld: true,
-            environmentPolicy: null,
-            organiserBookingId: fresh.groupBooking
-              .organiserBookingId as string | null,
-            organiserEmail: bookingOwner(fresh.groupBooking.organiserBooking).member
-              .email as string | null,
-          };
-        }
-        // #3035: the club's own switch above is checked FIRST, so it stays
-        // recorded as the club's decision on a copy. No withheld-email audit row
-        // for this branch — that row asserts an administrator set the switch.
-        const freshPolicy =
-          await reassertXeroInvoiceEmailPolicy(invoiceEmailPolicy, tx);
-        if (freshPolicy.kind !== "allow") {
-          // Record from THIS answer, not the outer one (the helper says why).
-          return {
-            cancelled: false,
-            abandoned: false,
-            responseBody: null,
-            withheld: false,
-            environmentPolicy: freshPolicy,
-            organiserBookingId: null as string | null,
-            organiserEmail: null as string | null,
-          };
-        }
-        const emailResponse = await sendXeroInvoiceEmail({
-          clearance: freshPolicy.clearance,
-          xero,
-          tenantId,
-          invoiceId: createdInvoice.invoiceID!,
-          idempotencyKey: invoiceEmailIdempotencyKey,
-          workflow: "createXeroInvoiceForGroupSettlement",
-          context: `emailInvoice(group settlement ${settlementId})`,
-        });
-        return {
-          cancelled: false,
-          abandoned: false,
-          responseBody: emailResponse.body,
-          withheld: false,
-          environmentPolicy: null,
-          organiserBookingId: null as string | null,
-          organiserEmail: null as string | null,
-        };
-      });
-      invoiceEmailWithheld = emailGate.withheld;
-      // Mutually exclusive by construction, and narrowed to the confirmed-copy
-      // case exactly as the booking path is: an UNKNOWN role is an ERROR below.
-      invoiceEmailWithheldForEnvironment =
-        emailGate.environmentPolicy?.kind === "withhold" &&
-        emailGate.environmentPolicy.suppressedForNonProduction;
-      if (
-        emailGate.withheld &&
-        emailGate.organiserBookingId &&
-        emailGate.organiserEmail
-      ) {
-        // Audit row outside the advisory-locked transaction so the lock is held
-        // for the provider fence only (the same reason the emailInvoice call is
-        // the sole non-DB work inside it).
-        await recordWithheldBookingEmail({
-          bookingId: emailGate.organiserBookingId,
-          templateName: XERO_GROUP_SETTLEMENT_INVOICE_EMAIL_TEMPLATE,
-          subject: `Xero group settlement invoice ${
-            createdInvoice.invoiceNumber ?? createdInvoice.invoiceID ?? "(unnumbered)"
-          } for your group booking`,
-          to: emailGate.organiserEmail,
-          detail:
-            "Withheld: the organiser's booking has the \"No emails\" switch turned on. The combined group settlement invoice exists in Xero but was not emailed.",
-        });
-        logger.warn(
-          {
-            settlementId,
-            invoiceId: createdInvoice.invoiceID,
-            organiserBookingId: emailGate.organiserBookingId,
-          },
-          'Skipped the Xero group settlement invoice email for an organiser booking with "No emails" turned on'
-        );
-      }
-      if (emailGate.environmentPolicy?.kind === "withhold") {
-        const withheld = emailGate.environmentPolicy;
-        const context = { settlementId, invoiceId: createdInvoice.invoiceID };
-        if (withheld.error) {
-          invoiceEmailError = withheld.error;
-          logger.error(context, withheld.logMessage);
-        } else {
-          logger.info(context, withheld.logMessage);
-        }
-      }
-      if (emailGate.abandoned) {
-        // #3642: never emailed. Whoever retired it (the reaper, or a
-        // replacement) queued its VOID and deactivated the link written above.
-        await completeXeroSyncOperation(operationClaim!, {
-          status: "SUCCEEDED",
-          responsePayload: {
-            invoice: response.body,
-            abandonedBeforeInvoiceEmail: true,
-            invoiceEmailSuppressed: true,
-          },
-          xeroObjectType: "INVOICE",
-          xeroObjectId: createdInvoice.invoiceID,
-          xeroObjectNumber: createdInvoice.invoiceNumber ?? null,
-          xeroObjectUrl: buildXeroInvoiceUrl(createdInvoice.invoiceID),
-        });
-        return null;
-      }
-      if (emailGate.cancelled) {
-        await voidCancelledGroupSettlementInvoice({
-          settlementId: settlement.id,
-          invoiceId: createdInvoice.invoiceID,
-          invoiceNumber: createdInvoice.invoiceNumber ?? null,
-          syncOperation: operationClaim!,
-          createResponse: response.body,
-        });
-        return null;
-      }
-      invoiceEmailResponseBody = emailGate.responseBody;
-    } catch (error) {
-      invoiceEmailError = error;
-      logger.warn(
-        { err: error, settlementId, invoiceId: createdInvoice.invoiceID },
-        "Created Xero group settlement invoice but failed to email it to the organiser"
-      );
-    }
-
-    await completeXeroSyncOperation(operationClaim!, {
-      status: invoiceEmailError ? "PARTIAL" : "SUCCEEDED",
-      responsePayload: {
-        invoice: response.body,
-        invoiceEmail: invoiceEmailResponseBody,
-        invoiceEmailError,
-        invoiceEmailWithheldByNoEmails: invoiceEmailWithheld,
-        // #3035: a THIRD, distinct reason nothing was emailed — a confirmed
-        // copy. Never conflated with the switch above or a provider failure.
-        invoiceEmailWithheldForEnvironment,
-      },
-      xeroObjectType: "INVOICE",
-      xeroObjectId: createdInvoice.invoiceID,
-      xeroObjectNumber: createdInvoice.invoiceNumber ?? null,
-      xeroObjectUrl: buildXeroInvoiceUrl(createdInvoice.invoiceID),
+      createdInvoice: { ...createdInvoice, invoiceID: createdInvoice.invoiceID },
+      response,
+      xero,
+      tenantId,
+      operationClaim: operationClaim!,
+      redrivable: Boolean(options?.syncOperation),
     });
-
-    return createdInvoice.invoiceID;
   } catch (error) {
-    await failXeroSyncOperation(operationClaim!, error);
+    // #4919: an owed email is not a failure; the outbox returns the row to PENDING.
+    if (!(error instanceof GroupSettlementInvoiceEmailDeferredError)) {
+      await failXeroSyncOperation(operationClaim!, error);
+    }
     throw error;
   }
 }

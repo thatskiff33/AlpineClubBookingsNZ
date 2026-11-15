@@ -755,8 +755,26 @@ export const AUDIT_CENSUS_TOTALS = {
   // `booking-payment.card-refund.try-card-again`, the treasurer closing a dead card refund
   // a later Stripe refund covers and putting one back to try the card, each awaited on its
   // own transaction (`card-refund-dead-row-actions.ts`), both `payment`. RE-MEASURED with `pnpm run audit:census`.
-  // RE-MEASURED with `pnpm run audit:census` on the merged tree (fourth main-sync, 11 Nov 2026).
-  writeSites: 541, // RE-MEASURED with `pnpm run audit:census` on the merged tree (fourth main-sync, 11 Nov 2026).
+  // 538 -> 539 (#4916): `privacy.retention.booking_dietary_cleared`, the count-only row
+  // each clearing batch of the nightly after-stay dietary clear writes in its own
+  // transaction, an awaited `createAuditLog` with a literal `privacy` category.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 539 -> 541 (#4851): a group organiser's dead card refund, settled from Stuck States -
+  // `booking-payment.card-refund.paid-another-way`, one site for every outcome of a joiner's refund and
+  // a pre-#3653 whole-group refund (`card-refund-group-paid-another-way.ts`), and
+  // `booking-payment.card-refund.try-card-again` for a joiner's (`card-refund-group-try-again.ts`);
+  // all `createAuditLog`, all `payment`. RE-MEASURED with `pnpm run audit:census`.
+  // 541 -> 542 (#4918): `PRIVACY_HOSTING_SETTINGS_UPDATED`, the hosting disclosure
+  // save in `/api/admin/privacy-hosting`, `tx.auditLog.create` inside the upsert's
+  // transaction, `admin` like the sibling club-identity and page-content writers.
+  // RE-MEASURED with `pnpm run audit:census`.
+  // 542 -> 543 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
+  // two-factor policy save, `tx.auditLog.create` in the route's transaction like the
+  // password-policy writer beside it, `security`. RE-MEASURED with `pnpm run audit:census`.
+  // 543 -> 546 (#4496, subscription-category-decoupling): the three Subscription
+  // Categories admin-CRUD writers (create, update, archive), `tx.auditLog.create`, all
+  // `admin`. RE-MEASURED with `pnpm run audit:census` on the merged tree.
+  writeSites: 546,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -981,7 +999,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 170 -> 171 (#4686): the lost-claim part-success's row, above.
     // 171 -> 172 (triyder/AlpineClubBookingsNZ#97): the link dialog's row, above.
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
-    createAuditLog: { total: 176, uncategorised: 0 }, // 174 -> 176 (#4368): the two dead card refund settlements.
+    // 174 -> 176 (#4368): the two dead card refund settlements.
+    // 176 -> 177 (#4916): the after-stay dietary clear's count row. 177 -> 179 (#4851): the group organiser's close and re-arm.
+    createAuditLog: { total: 179, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1019,9 +1039,13 @@ export const AUDIT_CENSUS_TOTALS = {
     // 77 -> 75 (#52): the two removed other-lodges writers above.
     // 75 -> 76 (#58): the Other lodges hide of a row the central server does
     // not list, in the same form as the registry's update.
-    // 76 -> 79 (subscription-category-decoupling rework): the three new
+    // 76 -> 77 (#4918): the privacy hosting disclosure save, same form as the
+    // club-identity writer.
+    // 77 -> 78 (#4618): the officer two-factor policy save, in its route's
+    // transaction, the same form as the password-policy writer.
+    // 78 -> 81 (#4496, subscription-category-decoupling): the three new
     // Subscription Categories admin-CRUD writers, above.
-    "auditLog.create": { total: 79, uncategorised: 0 },
+    "auditLog.create": { total: 81, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1198,7 +1222,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 66 -> 67 (#4359): the re-send hold's row - the payment's figures, read by the same people.
     // 67 -> 69 (#4516): a refused card refund reservation, and its OPERATOR release - read by the same people.
     // 69 -> 71 (#4368): a dead card refund closed with nothing left owed, and one put back to try the card.
-    payment: 71,
+    // 71 -> 73 (#4851): a group organiser's dead card refund paid another way (one site, both kinds) or tried again.
+    payment: 73,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
@@ -1357,18 +1382,18 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 115, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
-    // 110 -> 113 (subscription-category-decoupling rework): the three new
+    admin: 116, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    // 110 -> 111 (#4457): `privacy.retention.settings_updated`. A deliberate +1 to the
+    // support:view-only population: it records only retention settings, never a member.
+    // 111 -> 112 (triyder/AlpineClubBookingsNZ#97): the setup page's link dialog row,
+    // `LODGE_CENTRAL_LINK_UPDATED`, the Central lodge card's twin. RE-MEASURED.
+    // 112 -> 113 (#4918): `PRIVACY_HOSTING_SETTINGS_UPDATED`. A deliberate +1 to the
+    // support:view-only population: it records only the club's two public hosting
+    // disclosure values (before and after), never a member's data. RE-MEASURED.
+    // 113 -> 116 (#4496, subscription-category-decoupling): the three new
     // Subscription Categories admin-CRUD writers, all `admin` — officer-only
     // config, no member data, readable with support:view like every sibling
-    // writer in this category.
-    // 113 -> 114 (#4457, disjoint from the category rework): `privacy.retention.settings_updated`.
-    // A deliberate +1 to the support:view-only population: it records only retention
-    // settings, never a member. RE-MEASURED with `pnpm run audit:census` on the merged tree.
-    // 114 -> 115 (third main-sync, 7 Nov 2026): main's own triyder/AlpineClubBookingsNZ#97,
-    // the setup page's link dialog row, `LODGE_CENTRAL_LINK_UPDATED`, the Central lodge
-    // card's twin, is disjoint from the category rework. RE-MEASURED with
-    // `pnpm run audit:census` on the merged tree.
+    // writer in this category. RE-MEASURED with `pnpm run audit:census` on the merged tree.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -1420,7 +1445,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // through that same one site, so no site is added and the support:view
     // total does not move. Each names the member and carries booleans and, for
     // a retirement, the COUNT of codes retired, never a secret or a code.
-    security: 25,
+    // 25 -> 26 (#4618): the officer two-factor policy save. A club security
+    // setting, so `security`, readable with `support:view` alone like the
+    // password-policy save: the weakest-gate total moves 141 -> 142, a deliberate
+    // widening of one site. The row carries the policy flag and grace days only.
+    security: 26,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
     // three (`admin`, `security`, `system`) readable with support:view alone —
@@ -1522,7 +1551,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // Diagnostics correlation entry, which for `privacy` needs membership too.
     // 20 -> 21 (#3492): the guest promo-code lookup, above.
     // 21 -> 22 (#4457): `privacy.retention.member_anonymised`, readable only with membership:view.
-    privacy: 22,
+    // 22 -> 23 (#4916): `privacy.retention.booking_dietary_cleared`, a count with no value or guest id,
+    // filed with the other retention rows so it needs membership:view too.
+    privacy: 23,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,

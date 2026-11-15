@@ -245,6 +245,17 @@ describe("Xero inbound event admin routes", () => {
     );
   });
 
+  it("refuses a day that does not exist (2026-02-30) before querying", async () => {
+    const response = await listInboundEvents(
+      new NextRequest(
+        "http://localhost/api/admin/xero/inbound-events?createdFrom=2026-02-30",
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPrisma.xeroInboundEvent.findMany).not.toHaveBeenCalled();
+  });
+
   it("replays a stored inbound event and records an audit entry", async () => {
     mockReplayStoredXeroInboundEvent.mockResolvedValue({
       result: {

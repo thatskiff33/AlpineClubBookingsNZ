@@ -1,6 +1,6 @@
 /**
  * A FAMILY-DEDUP KEY FOR A MEMBERSHIP SUBSCRIPTION CHARGE IS BUILT IN ONE
- * PLACE (INV-SSOT-007, INV-MONEY-046).
+ * PLACE (INV-SSOT-009, INV-MONEY-046).
  *
  * `chargeFamilyAxisKey`/`chargeAxisDisplayName` in
  * `src/lib/membership-charge-axis.ts` are the only place allowed to turn a
@@ -106,7 +106,7 @@ describe("a membership-charge family-dedup key is built in one place", () => {
         `outside ${ACCESSOR}. Route it through chargeFamilyAxisKey() instead — ` +
         `a raw template literal silently stringifies a category charge's null ` +
         `membershipTypeId to the literal text "null", collapsing every ` +
-        `category charge for a family onto the same key (INV-SSOT-007).`,
+        `category charge for a family onto the same key (INV-SSOT-009).`,
     ).toEqual([]);
   });
 

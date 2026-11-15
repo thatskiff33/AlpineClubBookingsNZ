@@ -964,7 +964,7 @@ export async function buildSubscriptionBillingPreview(input: {
     // `${null}` stringifies to the literal text "null", silently collapsing
     // every category charge for a family onto one dedup key regardless of
     // which category it actually is. `chargeFamilyAxisKey` is the shared,
-    // census-guarded accessor for this (INV-SSOT-007); this is what lets a
+    // census-guarded accessor for this (INV-SSOT-009); this is what lets a
     // category charge for a family be found as "already billed" exactly like
     // a type charge for the same family, through the SAME #4110 machinery.
     const key = chargeFamilyAxisKey({
@@ -1590,7 +1590,7 @@ export async function buildSubscriptionBillingPreview(input: {
         : { id: member.id, name: memberName, email: member.email };
 
       // The family-shaped case goes through the shared accessor
-      // (INV-SSOT-007) so it lands in the SAME `billedFamilyTypes` map the
+      // (INV-SSOT-009) so it lands in the SAME `billedFamilyTypes` map the
       // type axis populates — see `familyChargesByKey` above. The solo case
       // stays a distinct, member-keyed literal: it was never one of the
       // family-dedup call sites the maintainer review named, and
