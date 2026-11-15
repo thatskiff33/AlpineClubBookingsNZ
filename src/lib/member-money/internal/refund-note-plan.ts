@@ -6,7 +6,7 @@ import { stableDigest } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
 
 /**
- * A REFUND NOTE AND ITS PAYMENT, AS EXPORT PLANS
+ * A REFUND NOTE, ITS PAYMENT AND A FAILED-LATER REFUND'S REVERSAL, AS EXPORT PLANS
  * (#4525, Ledger M13, design section 7). Pure: no database, clock, settings or
  * provider. The sender keeps building and sending its own document; a plan
  * takes what it built and the one journal component that document answers,
@@ -17,7 +17,8 @@ import { formatCentsPlain } from "../../utils";
  * (`CENTS`), as is a component that could not be read (`COMPONENT_UNUSABLE`).
  * A refund document never covers BOOKING_REVENUE or FEE_REVENUE: the note
  * covers the refund debt (REFUND_PAYABLE), and its payment the cash slice (STRIPE_CLEARING or BANK), so a composite note cannot count
- * the price reduction a second time.
+ * the price reduction a second time. The reversal invoice covers the R13 that
+ * put the failed refund's cash back on STRIPE_CLEARING.
  */
 
 /** The one component a refund document answers: its account and identity, and its whole cents. */
@@ -93,24 +94,54 @@ export interface RefundNotePlanInput {
   obligation: RefundExportComponent | RefundExportProblem;
 }
 
+/** A document's lines as a rendering: their hash, codes and inclusive total, under the key they were sent with. */
+function linesRendering(lines: LineItem[], legacyKey: string, source: "BUILT" | "STORED_REQUEST"): RefundExportRendering {
+  return {
+    legacyKey,
+    payloadHash: refundExportPayloadHash(lines),
+    frozenMapping: {
+      source,
+      lineAmountTypes: LineAmountTypes.Inclusive,
+      lineCodes: lines.map((line) => ({
+        accountCode: line.accountCode ?? null,
+        itemCode: line.itemCode ?? null,
+        taxType: line.taxType ?? null,
+      })),
+    },
+    lineTotalCents: invoiceLineItemsTotalCents(lines),
+  };
+}
+
 /** Plan the refund credit note: its lines cover the whole live refund debt, or a conflict. */
 export function planRefundNote(input: RefundNotePlanInput): RefundExportPlan {
   return coverRefundExportComponent({
-    rendering: {
-      legacyKey: input.legacyKey,
-      payloadHash: refundExportPayloadHash(input.lines),
-      frozenMapping: {
-        source: input.source,
-        lineAmountTypes: LineAmountTypes.Inclusive,
-        lineCodes: input.lines.map((line) => ({
-          accountCode: line.accountCode ?? null,
-          itemCode: line.itemCode ?? null,
-          taxType: line.taxType ?? null,
-        })),
-      },
-      lineTotalCents: invoiceLineItemsTotalCents(input.lines),
-    },
+    rendering: linesRendering(input.lines, input.legacyKey, input.source),
     component: input.obligation,
     allowedAccounts: ["REFUND_PAYABLE"],
+  });
+}
+
+/** What `createXeroCardRefundReversalInvoice` sent, and the one R13 it answers. */
+export interface FailedLaterRefundReversalPlanInput {
+  /** The one line it built (`hutFeeRefundLine`), or a replay's stored `invoices[0].lineItems`. */
+  lines: LineItem[];
+  /** `cardRefundReversalInvoiceKey(paymentId, closeTaskId)`. */
+  legacyKey: string;
+  source: "BUILT" | "STORED_REQUEST";
+  /** The R13 that reversed the failed refund's R12 (`reversal:<journalId>`, Dr STRIPE_CLEARING), or why none could be named. */
+  reversal: RefundExportComponent | RefundExportProblem;
+}
+
+/**
+ * Plan the failed-later refund reversal invoice (design section 7). It covers
+ * its R13's Stripe-clearing debit whole, or nothing: an invoice for less than
+ * the failed refund (a close that paid back only part, or found the card note's
+ * excess smaller) is a `CENTS` conflict, never a part cover.
+ */
+export function planFailedLaterRefundReversal(input: FailedLaterRefundReversalPlanInput): RefundExportPlan {
+  return coverRefundExportComponent({
+    rendering: linesRendering(input.lines, input.legacyKey, input.source),
+    component: input.reversal,
+    allowedAccounts: ["STRIPE_CLEARING"],
   });
 }

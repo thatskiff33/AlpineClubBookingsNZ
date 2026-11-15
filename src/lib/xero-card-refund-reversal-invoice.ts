@@ -55,6 +55,7 @@ import {
   XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE,
 } from "@/lib/xero-card-refund-reversal-outbox";
 import { readQueuedOutboxPayload } from "@/lib/xero-operation-outbox-payload";
+import { recordFailedLaterRefundReversalManifest } from "@/lib/member-money/doors";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export {
@@ -256,6 +257,7 @@ export async function createXeroCardRefundReversalInvoice(
     let invoiceId = invoiceLink?.xeroObjectId ?? null;
     let invoiceNumber = invoiceLink?.xeroObjectNumber ?? null;
     let invoiceBody: unknown = null;
+    let sentLines: LineItem[] | null = null;
     const storedDate = asRecord(invoiceLink?.metadata)?.documentDate;
     let dated =
       typeof storedDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(storedDate)
@@ -322,6 +324,7 @@ export async function createXeroCardRefundReversalInvoice(
       invoiceId = created.invoiceID;
       invoiceNumber = created.invoiceNumber ?? null;
       invoiceBody = response.body;
+      sentLines = [line];
       await prisma.xeroSyncOperation.update({
         where: { id: syncOperation.id },
         data: {
@@ -384,6 +387,15 @@ export async function createXeroCardRefundReversalInvoice(
           metadata: { closeTaskId, amountCents, bookingId, documentDate: dated.date },
         },
       ],
+    });
+    // #4525 (M13): the reversal's export manifest, in its own transaction; never throws.
+    await recordFailedLaterRefundReversalManifest({
+      paymentId,
+      bookingId,
+      closeTaskId,
+      invoiceId: invoiceId!,
+      legacyKey: cardRefundReversalInvoiceKey(paymentId, closeTaskId),
+      source: sentLines ? { kind: "BUILT", lines: sentLines } : { kind: "REPLAY", operationId: syncOperation.id },
     });
     return invoiceId;
   } catch (error) {
