@@ -798,6 +798,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-022` | Profile and booking dietary data absent unless one granted module selects it |
 | `INV-PRIV-023` | A stay's dietary value is cleared a club-set period after the stay |
 | `INV-PRIV-024` | Every outside recipient of personal data is in one census-held register |
+| `INV-PRIV-025` | One subject access builder; every personal model placed; own rows only |
 
 ## Membership Lifecycle
 
@@ -1058,3 +1059,4 @@ headings the index keeps verbatim.
 | `INV-AUTH-010` | Listed admin routes require a fresh proof first |
 | `INV-AUTH-011` | Address sign-in limits exempt signout/session; refusals show a network wait |
 | `INV-AUTH-012` | Officers use an app or passkey after grace |
+| `INV-AUTH-013` | Password work leaves the event loop; placeholders use one unusable hash |

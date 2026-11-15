@@ -142,9 +142,7 @@ vi.mock("@/lib/booking-cancel", () => ({
   cancelBooking: vi.fn(),
 }));
 
-vi.mock("bcryptjs", () => ({
-  hash: vi.fn().mockResolvedValue("hashed-placeholder"),
-}));
+
 
 // MG4 (#2309): the two post-commit dispatchers, imported lazily by the pipeline.
 // Stubbed so these tests assert the WIRING — who is told, and in which

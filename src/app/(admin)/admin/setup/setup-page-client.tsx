@@ -27,6 +27,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
@@ -147,6 +152,7 @@ export function SetupPageClient({
   permissionMatrix: AdminPermissionMatrix;
   features: FeatureFlags;
 }) {
+  const canEdit = useAdminAreaEditAccess("support");
   const [readiness, setReadiness] = useState<SetupReadiness | null>(null);
   const [progress, setProgress] = useState<SetupProgressState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -334,13 +340,18 @@ export function SetupPageClient({
             Finish first-install readiness for club configuration, booking rules,
             provider connections, and finance mappings.
           </p>
+          {/* The empty wrapper an editor gets costs no layout; the spacing
+              lives on the inner box. */}
+          <AdminViewOnlySectionBanner canEdit={canEdit} className="mt-3 max-w-3xl" />
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={refreshSetup} disabled={loading}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
             onClick={finishSetup}
             disabled={
               finishing || setupCompleted || requiredBlockers.length > 0 || !readiness
@@ -352,7 +363,7 @@ export function SetupPageClient({
               <CheckCircle2 className="h-4 w-4" />
             )}
             {setupCompleted ? "Setup Complete" : "Mark Setup Complete"}
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </div>
 
@@ -369,6 +380,7 @@ export function SetupPageClient({
         <div className={SETUP_COMPLETE_BANNER_CLASS}>{SETUP_COMPLETE_MESSAGE}</div>
       ) : null}
       <div
+        id="setup-success"
         ref={successRef}
         role="status"
         aria-atomic="true"
@@ -520,7 +532,9 @@ export function SetupPageClient({
                               </Button>
                             ) : null}
                             {check.action ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -533,10 +547,12 @@ export function SetupPageClient({
                                   <PlayCircle className="h-4 w-4" />
                                 )}
                                 {check.action.label}
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                             {check.progress !== "completed" ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -549,10 +565,12 @@ export function SetupPageClient({
                                   <CheckCircle2 className="h-4 w-4" />
                                 )}
                                 Acknowledge
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                             {check.progress !== "skipped" ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -561,10 +579,12 @@ export function SetupPageClient({
                               >
                                 <SkipForward className="h-4 w-4" />
                                 Skip
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                             {check.progress !== "open" ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="ghost"
                                 size="sm"
@@ -573,7 +593,7 @@ export function SetupPageClient({
                               >
                                 <RotateCcw className="h-4 w-4" />
                                 Reopen
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                           </div>
                         </CardContent>
