@@ -80,7 +80,6 @@ function useInstantFormatter() {
     value ? clubTime.instantDateTime(new Date(value)) : null;
 }
 
-
 interface BookingChangeRequestsPanelProps {
   basePath?: string;
   fixedSearchParams?: Record<string, string>;
