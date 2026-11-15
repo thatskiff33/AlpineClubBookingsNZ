@@ -8,7 +8,7 @@ reason: adds destructive-action confirmation wording and dialogs to admin
   of this fix.
 
 file: src/app/(admin)/admin/membership/family-groups/page.tsx
-lines: 923
+lines: 920
 reason: adds destructive-action confirmation wording and dialogs to admin
   pages; those lines sit inside this file, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part
@@ -22,7 +22,7 @@ reason: adds destructive-action confirmation wording and dialogs to admin
   of this fix.
 
 file: src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx
-lines: 1275
+lines: 1282
 reason: adds destructive-action confirmation wording and dialogs to admin
   pages; those lines sit inside this file, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part
@@ -44,7 +44,7 @@ reason: adds destructive-action confirmation wording and dialogs to admin
   refactor of its own, not part of this fix.
 
 function: src/app/(admin)/admin/membership/family-groups/page.tsx#FamilyGroupsTab
-lines: 862
+lines: 858
 reason: adds destructive-action confirmation wording and dialogs to admin
   pages; those lines sit inside the function `FamilyGroupsTab`, which was
   already over its limit before this change, and lifting it apart is a
@@ -58,14 +58,14 @@ reason: adds destructive-action confirmation wording and dialogs to admin
   own, not part of this fix.
 
 function: src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx#HutFeesSection
-lines: 1128
+lines: 1134
 reason: adds destructive-action confirmation wording and dialogs to admin
   pages; those lines sit inside the function `HutFeesSection`, which was
   already over its limit before this change, and lifting it apart is a
   refactor of its own, not part of this fix.
 
 function: src/app/(admin)/admin/rules/seasons/page.tsx#SeasonsPage
-lines: 409
+lines: 416
 reason: adds destructive-action confirmation wording and dialogs to admin
   pages; those lines sit inside the function `SeasonsPage`, which was already
   over its limit before this change, and lifting it apart is a refactor of its
