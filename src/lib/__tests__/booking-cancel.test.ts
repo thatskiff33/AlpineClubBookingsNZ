@@ -234,7 +234,7 @@ vi.mock("@/lib/waitlist", () => ({
   processWaitlistForDates: mocks.processWaitlistForDates,
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mocks.isXeroConnected,
 }));
 

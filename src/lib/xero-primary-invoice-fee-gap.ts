@@ -58,7 +58,7 @@ import {
 } from "@/lib/xero-modification-line-items";
 import { unallocatedAppliedCents } from "@/lib/xero-applied-credit-ledger-state";
 import { isCreditOnlyCardPayment } from "@/lib/credit-only-card-payment";
-import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-operation-outbox";
+import { enqueueXeroSupplementaryInvoiceOperation } from "@/lib/xero-supplementary-invoice-enqueue";
 import {
   attributeGapCash,
   readCapturedStripeCash,
