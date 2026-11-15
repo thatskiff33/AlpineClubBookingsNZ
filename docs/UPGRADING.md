@@ -175,6 +175,22 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Building on your own server: raise `NODE_BUILD_OPTIONS` to 8192 (#5164)
+
+**Only for servers that build the image themselves** (`docker compose build`, or
+the deploy script's `--build-and-push-images`). A server that deploys a
+published image (`APP_IMAGE`) builds nothing and can skip this.
+
+`next build` type-checks the app, and that check now needs about 4.6 GB of Node
+heap. With `NODE_BUILD_OPTIONS` empty, Node's default ceiling applies (about a
+quarter of the machine's memory, up to about 4 GB), and the earlier example of
+`--max-old-space-size=4096` is also too low. Either can stop the build with
+"JavaScript heap out of memory" or "Failed to type check". Set
+`NODE_BUILD_OPTIONS=--max-old-space-size=8192` in `.env` before building, as CI
+now does; it affects the build only, never the running app. With less than
+about 8 GB of memory free for the build, deploy a published image instead
+([`CONFIGURATION.md`](../CONFIGURATION.md)). Nothing changes until you build.
+
 ### Privacy-incident guide and hosting disclosure settings (#4918)
 
 This release adds the [privacy-incident guide](guides/privacy-incidents.md), the
@@ -2724,7 +2740,7 @@ restore-test a fresh backup before you run the drop.
    environment variables are **no longer read**. An install that configured
    backups through them upgrades to an empty store, so the nightly backup reports
    a **loud FAILURE** (never a silent skip) until you re-enter the settings at
-   **Admin → Integrations → Database Backups** (`/admin/backups`). Confirm a
+   **Admin → Monitoring & Support → Database Backups** (`/admin/backups`). Confirm a
    manual **Run backup now** succeeds and the durable (S3) destination is
    configured. Only `BACKUP_CRON_SCHEDULE` (cron-leader timing) stays in the
    environment; remove the other `BACKUP_*` vars once migrated.
