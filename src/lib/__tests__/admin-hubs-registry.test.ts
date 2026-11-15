@@ -2218,7 +2218,7 @@ describe("the registry is inert", () => {
     "src/components/admin/club-posts/club-posts-admin.tsx":
       "C8: the Message Board's tab links and search form address it at its adminHref",
     "src/app/(admin)/admin/membership/subscription-categories/page.tsx":
-      "#4496: added after C8, registered in MEMBERS_HUB; its Fees link is adminHref",
+      "#4496: added after C8, registered in MEMBERS_HUB; its Fees link is adminHref; #4968: its heading is the registry label",
     "src/app/(admin)/admin/finance/xero/_components/contact-sync-panel.tsx":
       "C9: the affected-member link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/erased-member-contacts-panel.tsx":
