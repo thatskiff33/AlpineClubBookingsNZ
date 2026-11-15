@@ -3,18 +3,21 @@
  * preserved, plus the two other forms a scanner in this tree ever needs.
  *
  * THE ONE DEFINITION IN THE TREE, and since #3164 a rule ENFORCES that rather
- * than review doing it: 180 test files, seven test helpers and one CI script import this module, and
+ * than review doing it: test files across the suite, seven test helpers and one CI script import this module, and
  * `ssot/no-local-comment-stripper` in `eslint.config.mjs` reports a second
- * scanner wherever one is written, in the editor. That FIGURE is measured
- * against the tree by `ssot-comment-stripper-guard.test.ts`, which also requires
- * `docs/invariants/single-source-of-truth.md` to state the same number — it had
- * drifted three times before anything compared them (published as 48 against a
- * tree of 53; re-measured at #3180; then published as 56 against a base of 55
- * and incremented to 57 at #3196), and INV-SSOT-004's own point is that two
- * statements of one fact with nothing comparing them IS the defect.
+ * scanner wherever one is written, in the editor. The KINDS of importer are
+ * checked against the tree by `ssot-comment-stripper-guard.test.ts`, which
+ * names every non-test importer and requires
+ * `docs/invariants/single-source-of-truth.md` to carry the same sentence. No
+ * COUNT of test files is published (#5199): it changed with almost every pull
+ * request, so two branches that each added a test made the identical edit,
+ * git merged them without a conflict, and `main` published a wrong number
+ * (20 Sep, 14 Nov and 15 Nov 2026). INV-SSOT-004's point stands: two statements
+ * of one fact with nothing comparing them IS the defect, and a fact that moves
+ * with every change is not written down twice.
  *
- * COUNT BY IMPORT SPECIFIER rather than by path text, which is what the pin
- * does, because a grep for the path over-reports three ways. The module is
+ * The census finds importers BY IMPORT SPECIFIER rather than by path text,
+ * because a grep for the path over-reports three ways. The module is
  * reached through four spellings — `@/lib/__tests__/support/strip-comments`,
  * `./support/strip-comments`, `./strip-comments`, and the CI script's relative
  * path with its `.ts` extension — and two further files NAME that path without
