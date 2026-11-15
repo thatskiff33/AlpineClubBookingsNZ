@@ -49,6 +49,23 @@ export function preArrivalReminderWindow(
   };
 }
 
+/**
+ * Whether the daily job would remind a stay with this check-in on this club
+ * day, given the club's lead. The officer's fresh copy asks this so it stamps
+ * the reminder only where the job would otherwise send a second one.
+ */
+export function isInPreArrivalReminderWindow(
+  checkIn: Date,
+  today: CalendarDate,
+  reminderDays: number,
+): boolean {
+  const { windowStart, windowEndExclusive } = preArrivalReminderWindow(today, reminderDays);
+  return (
+    checkIn.getTime() >= windowStart.getTime() &&
+    checkIn.getTime() < windowEndExclusive.getTime()
+  );
+}
+
 export const PRE_ARRIVAL_REMINDER_BOOKING_INCLUDE = {
   member: true,
   // #3369: the owner may be an Organisation; bookingOwner() reads both.

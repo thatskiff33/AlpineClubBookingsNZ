@@ -30,9 +30,9 @@ import { issueSplitGuestPaymentLink } from "@/lib/payment-link-split-guest";
 import { isSplitGuestChild, SPLIT_GUEST_CHILD_WHERE } from "@/lib/split-guest-children";
 import {
   PRE_ARRIVAL_REMINDER_BOOKING_INCLUDE,
+  isInPreArrivalReminderWindow,
   isPreArrivalReminderStatus,
   preArrivalReminderEmailParams,
-  preArrivalReminderWindow,
 } from "@/lib/pre-arrival-reminder-email";
 import { prisma } from "@/lib/prisma";
 
@@ -530,14 +530,7 @@ async function sendFreshPreArrivalReminder(
   // job must not send a second one. Outside it the stamp is left alone: the job
   // still reminds them when the stay comes into range, as it would have.
   const { preArrivalReminderDays } = await getBookingTimingSettings();
-  const { windowStart, windowEndExclusive } = preArrivalReminderWindow(
-    clubDay,
-    preArrivalReminderDays,
-  );
-  if (
-    booking.checkIn.getTime() >= windowStart.getTime() &&
-    booking.checkIn.getTime() < windowEndExclusive.getTime()
-  ) {
+  if (isInPreArrivalReminderWindow(booking.checkIn, clubDay, preArrivalReminderDays)) {
     await prisma.booking
       .updateMany({
         where: { id: booking.id, preArrivalReminderSentAt: null },
