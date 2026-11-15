@@ -18,12 +18,12 @@ reason: the Food Orders entry in the Lodge Operations section; the sidebar's
   items are one list and an entry cannot live elsewhere.
 
 file: src/lib/admin-permissions.ts
-lines: 953
+lines: 954
 reason: the `/api/admin/food-orders` prefix in the lodge area's route map, which
   is the one place an admin API prefix gets its permission area.
 
 file: src/lib/config-transfer/categories/club-settings.ts
-lines: 1231
+lines: 1262
 reason: the `foodOrders` module flag's travel classification, which every module
   flag must carry in this one list.
 
