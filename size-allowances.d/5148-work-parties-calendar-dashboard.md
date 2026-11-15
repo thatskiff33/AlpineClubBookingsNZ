@@ -17,7 +17,7 @@ reason: the work party card gains an "On calendar" badge, an "Add to calendar"
   out would split one row of buttons across two files.
 
 file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2411
+lines: 2479
 reason: the call to `useWorkPartyPrefill` (the prefill itself lives in its own
   hook) and the few lines that tick the joined work party when the review step
   lists the working bees, and the inputs that tell the prefill when to stand
@@ -26,13 +26,38 @@ reason: the call to `useWorkPartyPrefill` (the prefill itself lives in its own
   stops a stale response from ticking it.
 
 file: src/app/(authenticated)/book/page.tsx
-lines: 713
+lines: 642
 reason: one status line for a Join link that could not be filled in, placed
   with the page's other top-of-page notices.
 
 file: src/app/(authenticated)/dashboard/page.tsx
-lines: 998
+lines: 1027
 reason: the members-only gate and one query for the new Work Parties card (the
   card is its own component), and the Events card query now hides an inactive
   work party's entries. The gate and query sit with the other cards' gates and
   queries in this page, which reads everything once for the whole dashboard.
+
+function: src/app/(admin)/admin/work-parties/page.tsx#AdminWorkPartiesPage
+lines: 495
+reason: the Add to calendar handler, the On calendar badge and the calendar
+  notice sit in the work party card's existing row of buttons and handlers,
+  which this page component keeps inline; the calendar sync itself lives in
+  calendar-work-party-entries.ts.
+
+function: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts#useBookingWizard
+lines: 2275
+reason: the useWorkPartyPrefill call with the wizard state it reads, and the
+  tick inside the existing working-bee response handler, whose sequence guard
+  is what stops a stale response ticking the work party. The prefill logic is
+  its own hook.
+
+function: src/app/(authenticated)/book/page.tsx#BookPage
+lines: 617
+reason: the prefill notice, one status line rendered with the page's other
+  top-of-page notices, and the destructured value it reads.
+
+function: src/app/(authenticated)/dashboard/page.tsx#DashboardPage
+lines: 858
+reason: the members-only gate and one query for the Work Parties card (the card
+  is its own component), and the Events card query now hides an inactive work
+  party's entries; the page reads every card's data once in this body.
