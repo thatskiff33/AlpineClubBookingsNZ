@@ -842,6 +842,5 @@ comment as the value.
   `DEPLOYMENT.md` and runs them on an empty database in the
   `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
   nothing written; a second run must change no seeded value (bar the built-in
-  displays' `updatedAt`, refreshed from code by design), and it never reads
-  the dietary columns (`INV-PRIV-022`). Also enforced by
+  displays' `updatedAt`, refreshed from code by design). Also enforced by
   `first-install-seed-contract.test.ts`.
