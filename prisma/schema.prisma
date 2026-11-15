@@ -1211,7 +1211,7 @@ model MembershipSubscriptionCharge {
   // the independent SubscriptionCategory axis (couple/family-style flat fees
   // decoupled from booking rights). The membershipType* trio widened from
   // required to nullable across a WINDOWED pair of migrations
-  // (20261220010000/20261220020000 — see their headers and
+  // (20261220044900/20261220044910 — see their headers and
   // docs/BLUE_GREEN_MIGRATION_SAFETY.tsv), not an ordinary rolling expand:
   // this repo's own precedent for "a second mutually-exclusive axis takes
   // over a long-required column" (`Booking.memberId`/`organisationId`,
