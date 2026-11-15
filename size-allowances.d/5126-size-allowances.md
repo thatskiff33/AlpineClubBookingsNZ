@@ -1,7 +1,7 @@
 # Size allowances for #5126
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2760
+lines: 2763
 reason: the in-transaction edit card refund reserve and its door wiring
   (#4992); those lines sit inside this file, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part
@@ -29,7 +29,7 @@ reason: the in-transaction edit card refund reserve and its door wiring
   of this fix.
 
 function: src/lib/booking-batch-modification-service.ts#modifyBookingBatch
-lines: 1809
+lines: 1814
 reason: the in-transaction edit card refund reserve and its door wiring
   (#4992); those lines sit inside the function `modifyBookingBatch`, which was
   already over its limit before this change, and lifting it apart is a
