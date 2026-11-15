@@ -185,6 +185,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     load: () => import("../../../scripts/ci/server-only-boundary-selftest.mjs"),
   },
   {
+    module: "scripts/lib/budget-base-ref.mjs",
+    declaration: "scripts/lib/budget-base-ref.d.mts",
+    load: () => import("../../../scripts/lib/budget-base-ref.mjs"),
+  },
+  {
     module: "scripts/sync-user-guide-wiki.mjs",
     declaration: "scripts/sync-user-guide-wiki.d.mts",
     load: () => import("../../../scripts/sync-user-guide-wiki.mjs"),
