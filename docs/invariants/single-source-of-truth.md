@@ -51,8 +51,10 @@ are permanent: never renumbered, never reused.
   separate copies, mutation-verified, come FIRST and pass the convergence
   unchanged (`stable-digest.test.ts`, #3218).
 - Recorded homes: `promo-stored-guest-targets.ts` (#3131), `stable-digest.ts`
-  (#3218), `hasIssuedPrimaryXeroInvoice` (#3200) — no bookings API route
-  decides it from `Payment.xeroInvoiceId` (one display read is allowlisted),
+  (#3218), `hasIssuedPrimaryXeroInvoice` in `booking-payment-state.ts` (#3200:
+  a settled booking status AND a payment carrying the invoice id) — no
+  bookings API route decides it from `Payment.xeroInvoiceId` (one display read
+  is allowlisted),
   the home takes `xeroInvoiceId` as a REQUIRED field, and the set of files
   reaching `applyPaymentAdjustments` is pinned
   (`issued-primary-xero-invoice-one-home.test.ts`).
