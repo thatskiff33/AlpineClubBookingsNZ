@@ -1294,7 +1294,7 @@ export async function POST(
       bookingId,
       // Guest adds never decrease the price, so the shared settlement
       // context's refund side is always zero here.
-      result: { ...result, pendingRefundAmountCents: 0, organiserChildRefund: null },
+      result: { ...result, pendingRefundAmountCents: 0, organiserChildRefund: null, ownCardRefund: null },
       door: "guestAdd",
       failureMessage:
         "Failed to create additional PaymentIntent for guest addition",

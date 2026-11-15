@@ -232,15 +232,13 @@ function layoutFields(
   return result.ok ? { layoutRender: result.render } : { layoutRenderError: true };
 }
 
-// The simulated preview start date (issue #60): strict date-only shape plus a
-// real-calendar validity check. Malformed values fall back to today silently
-// (null → the serialiser starts from today). Preview-only; the caller must
-// never reach this from the device path.
+// The simulated preview start date (issue #60): a real calendar day as
+// YYYY-MM-DD. Anything else, including a right-shaped day that does not exist,
+// falls back to today silently (null → the serialiser starts from today).
+// Preview-only; the caller must never reach this from the device path.
 function parsePreviewDate(req: NextRequest): Date | null {
   const raw = req.nextUrl.searchParams.get("previewDate");
-  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw) || !isDateOnlyString(raw)) {
-    return null;
-  }
+  if (!raw || !isDateOnlyString(raw)) return null;
   return parseDateOnly(raw);
 }
 

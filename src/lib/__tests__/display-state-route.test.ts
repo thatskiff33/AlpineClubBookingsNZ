@@ -328,6 +328,22 @@ describe("GET /api/display/state — admin preview (issue #52)", () => {
     expect(options.windowStart ?? null).toBeNull();
   });
 
+  it("a right-shaped previewDate for a day that does not exist falls back to today (ALP-580)", async () => {
+    loginAs(ADMIN_MEMBER);
+    const { GET } = await import("@/app/api/display/state/route");
+
+    // The first two have the right pattern but no such day, and `parseDateOnly`
+    // would turn them into an Invalid Date the serialiser then uses. The last two
+    // are loose shapes, which were already refused.
+    for (const previewDate of ["2026-02-30", "2026-02-29", "20260801", "2026-8-1"]) {
+      mockBuildDisplayState.mockClear();
+      const res = await GET(await stateRequest(`?preview=1&previewDate=${previewDate}`));
+      expect(res.status, previewDate).toBe(200);
+      const [, options] = mockBuildDisplayState.mock.calls[0];
+      expect(options.windowStart ?? null, previewDate).toBeNull();
+    }
+  });
+
   it("never honours previewDate on a device-token fetch (device path is date-blind)", async () => {
     mockCheckDisplayAuth.mockResolvedValue(DEVICE_AUTH);
     const { GET } = await import("@/app/api/display/state/route");
