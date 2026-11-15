@@ -61,7 +61,7 @@ describe("GET /api/bookings/[id]/invoice", () => {
   });
 
   it("gives the download budgets of its own, distinct from every shared limiter", async () => {
-    const { rateLimiters } = await vi.importActual<typeof import("@/lib/rate-limit")>("@/lib/rate-limit");
+    const { rateLimiters } = (await vi.importActual("@/lib/rate-limit")) as typeof import("@/lib/rate-limit");
     expect(BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT).toEqual({ id: "booking-invoice-download", limit: 10, windowSeconds: 3600 });
     expect(BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT).toEqual({ id: "booking-invoice-download-booking", limit: 20, windowSeconds: 3600 });
     const sharedIds = new Set(Object.values(rateLimiters).map((config) => config.id));
