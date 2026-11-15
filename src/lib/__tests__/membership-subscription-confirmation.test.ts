@@ -633,7 +633,8 @@ describe("membership subscription confirmation", () => {
         familyGroupId: "family-1", subscriptionCategoryId: "cat-1",
       });
       expect(upsert.create.message).toContain("This family's Couple charge");
-      expect(result).toEqual({ chargeIds: [], exceptionCount: 1 });
+      // The approval path reports whether Xero invoicing was off (#4986).
+      expect(result).toEqual({ chargeIds: [], exceptionCount: 1, xeroInvoicingOff: false });
     });
 
     it("mints a charge on the category axis with membershipType* null and subscriptionCategory* populated", async () => {
