@@ -70,7 +70,7 @@ procedure](privacy-incidents.md) for containment, evidence and notification.
 3. In **Email sign-in link**, click **Edit**, confirm the enable toggle is on,
    set the link's expiry (a whole number of minutes between 5 and 60; default
    15), then **Save**. For **Google sign-in**, first set up and verify the
-   credentials in-app at **Admin → Integrations → Google sign-in** (no env vars);
+   credentials in-app at **Admin → Integrations → Google Sign-in Setup** (no env vars);
    the enable toggle on this card stays locked until a real Google OAuth round-trip
    verifies. Once verified, click **Edit**, turn it on, then **Save**.
 
@@ -83,7 +83,7 @@ procedure](privacy-incidents.md) for containment, evidence and notification.
 | Sign members out after (hours) | The most time a signed-in session lasts from sign-in, however active | Default 168 hours (7 days), 8 to 720; nothing extends it; the lodge kiosk keeps its own 30 days ([details](../SECURITY.md#maximum-session-age-4611)) |
 | Email sign-in link (magic link) | Passwordless single-use email sign-in | Requires the `magicLink` module and configured transactional email; additive to password login, never a replacement, for existing verified members only |
 | Magic-link expiry | How long a sign-in link stays valid | Default 15 minutes |
-| Google sign-in | Sign in with a linked Google account | Requires the `googleLogin` module **and** Google OAuth credentials entered + verified in-app (Admin → Integrations → Google — encrypted at rest, no env vars); the module can't be enabled until verification passes; a member links their own Google account from their profile; no account is ever created from Google |
+| Google sign-in | Sign in with a linked Google account | Requires the `googleLogin` module **and** Google OAuth credentials entered + verified in-app (Admin → Integrations → Google Sign-in Setup — encrypted at rest, no env vars); the module can't be enabled until verification passes; a member links their own Google account from their profile; no account is ever created from Google |
 
 Two-factor authentication is a related sign-in control, but it is switched on as
 the `twoFactor` module on [Modules](modules.md).
@@ -93,7 +93,7 @@ the `twoFactor` module on [Modules](modules.md).
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | The email sign-in card is inert | The `magicLink` module is off, or email delivery isn't configured | Enable it on [Modules](modules.md); configure transactional email in [`CONFIGURATION.md`](../../CONFIGURATION.md) |
-| No Google button appears for members | The `googleLogin` module is off, or the credentials aren't set up / verified | Set up and verify Google at Admin → Integrations → Google sign-in, then enable the module on Login & Security |
+| No Google button appears for members | The `googleLogin` module is off, or the credentials aren't set up / verified | Set up and verify Google at Admin → Integrations → Google Sign-in Setup, then enable the module on Login & Security |
 | Can't turn on Google sign-in (toggle locked) | Google hasn't been verified yet, or a credential was replaced (re-locks) | Run the Verify step in the Google sign-in setup wizard |
 | Stored Google credentials stopped working after an `AUTH_SECRET` rotation, or a data-encryption key was removed or unset | Encrypted credentials can no longer be decrypted (see [`DEPLOYMENT.md`](../../DEPLOYMENT.md#adding-a-data-encryption-key-4456)) | Re-enter and re-verify them in the Google sign-in setup wizard |
 | A member can't sign in with Google | Their Google account isn't linked | They link it from their own profile while signed in; unlinked accounts are refused |

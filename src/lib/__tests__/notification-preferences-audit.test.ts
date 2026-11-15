@@ -105,4 +105,42 @@ describe("member notification preferences audit", () => {
       }),
     });
   });
+
+  // #4987: Club notices start on, so a member with no saved row turning them
+  // off is a true -> false change, audited like every other preference.
+  it("saves and audits a club-notices opt-out from a member with no saved preferences", async () => {
+    vi.mocked(prisma.notificationPreference.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.notificationPreference.upsert).mockResolvedValue({
+      memberId: "member-1",
+      bookingConfirmation: true,
+      bookingReminder: true,
+      bookingBumped: true,
+      bookingCancelled: true,
+      bookingAddedByFamily: true,
+      choreRoster: true,
+      clubNotices: false,
+      marketingEmails: false,
+    } as never);
+
+    const res = await PUT(makeRequest({ clubNotices: false }));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      clubNotices: false,
+      marketingEmails: false,
+    });
+    expect(prisma.notificationPreference.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { clubNotices: false } }),
+    );
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        category: "account",
+        severity: "important",
+        metadata: {
+          changedPreferenceKeys: ["clubNotices"],
+          changes: [{ key: "clubNotices", before: true, after: false }],
+        },
+      }),
+    });
+  });
 });

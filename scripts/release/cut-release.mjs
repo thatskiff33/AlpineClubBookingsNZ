@@ -45,6 +45,7 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 
 import { ALLOWANCE_DIR } from "../lib/allowance-dir.mjs";
+import { githubHeadingAnchor } from "../lib/github-heading-anchor.mjs";
 import {
   classifyUnreleased,
   compileChangelog,
