@@ -127,7 +127,7 @@ rules — see
 
    - **Hold requested capacity while it waits** means an exception request
      reserves the affected beds while the club decides — but not forever. The
-     hold ends when the request is decided or when its deadline passes: 7 days
+     hold ends when the request is decided or when its deadline passes: the configured policy-exception hold length (7 days by default)
      after the request is raised, never past the start of the first night held,
      and never less than 24 hours. Once the deadline passes, the beds go back to
      the pool automatically and the request is marked **Expired**, so a request
@@ -459,7 +459,10 @@ into every lodge.
 | Apply to nights added after booking | Group Discount | Whether a later edit (extra nights, extra guests) earns the discount on the nights it adds | on | Nights already booked keep their booked price in either state; a club with the discount off is unaffected |
 | Minimum nights | Minimum Stay | Nights required when a trigger day is included | 2 | Minimum 2 |
 | Trigger days | Minimum Stay | Which weekdays activate the rule | Sat | At least one day |
-| Exception capacity handling | Minimum Stay | Whether a future exception request holds the affected capacity while it waits | Existing rows: Hold | Required on create; Hold wins when several eligible rules apply; a hold ends when the request is decided or its deadline passes (7 days, never past the first night held, never under 24 hours) |
+| Pre-arrival reminder | Cancellation → club-wide defaults | Days before check-in to send arrival details | 3 days | 1–30; a booking already reminded is not reminded again |
+| First reminder to pay an extra amount | Cancellation → club-wide defaults | Delay after an additional amount is raised | 3 days | 1–30; immediate reminders for released credit keep their existing rule |
+| Policy-exception hold | Cancellation → club-wide defaults | Review window for a new held request | 7 days | 1–30; capped at the first held night, with a 24-hour floor. Existing requests keep their stamped deadline |
+| Exception capacity handling | Minimum Stay | Whether a future exception request holds the affected capacity while it waits | Existing rows: Hold | Required on create; Hold wins when several eligible rules apply; a hold ends when the request is decided or its deadline passes (the configured hold length, 7 days by default, never past the first night held, never under 24 hours) |
 | Non-member guests without adult member cover | Adult Member Hosting | Allowed; allowed but sent to a Booking Officer; or stopped unless corrected or an exception is approved | Allowed (club); Use the club-wide setting (lodge) | The club-wide scope cannot inherit; no upgrade selects "stopped" |
 | Adult members who count | Adult Member Hosting | Either or both of: on the same booking; on another booking on the same account | Inherit (lodge and club) — the built-in default is "on the same booking" | At least one must be ticked when you set your own; there are two options and no others |
 | Exception capacity handling | Adult Member Hosting | Whether a future exception request holds the affected capacity while it waits | None — you must choose | Required on every save; the same hold deadline applies |

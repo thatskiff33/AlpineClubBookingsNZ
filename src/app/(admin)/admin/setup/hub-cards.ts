@@ -23,7 +23,7 @@ import { xeroMappingHref } from "@/lib/admin-hubs/xero-setup";
 
 /**
  * The cards on the Setup page and its two drill-downs. A card that opens a
- * registry page is titled with its label (INV-SSOT-009). The Setup page is the
+ * registry page is titled with its label (INV-SSOT-010). The Setup page is the
  * checklist, so no card on a drill-down links back to it; each drill-down's
  * back link does (#4968).
  */

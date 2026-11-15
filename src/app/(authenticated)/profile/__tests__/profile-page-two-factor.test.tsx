@@ -140,6 +140,7 @@ function moduleFlags(twoFactor: boolean) {
     hutLeaders: false,
     communications: false,
     skifieldConditions: false,
+    skifieldWhakapapa: false,
     twoFactor,
     analytics: false,
   };

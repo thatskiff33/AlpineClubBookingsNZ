@@ -231,6 +231,10 @@ Journey: Follow the redirect into the Changes tab of Booking Requests.
 
 Screen: `/admin/booking-policies`.
 
+The Cancellation section includes club-wide reminder and policy-exception hold
+timings. Choose Edit, adjust days, then Save or Cancel; existing requests keep
+their stamped hold deadlines.
+
 Shows: Booking rules and cancellation-policy settings.
 
 Journey: Review booking rules and cancellation policies before staging a change.
@@ -327,7 +331,7 @@ Screen: `/admin/communications`.
 
 Shows: Member communication composition and audience selection.
 
-Journey: Choose recipients (the help line says who each reaches) and compose a message; Send to Members opens a confirmation naming the recipient count, audience and subject, with Cancel focused; confirm to send. The result is announced in a status region.
+Journey: Choose recipients (the help line says who each reaches), choose the kind of message (club notice or club newsletter, nothing preselected; a live count shows who it reaches and who is left out) and compose a message; Send to Members opens a confirmation naming the recipient count, audience, kind and subject, with Cancel focused; confirm to send. The result is announced in a status region.
 
 [Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -455,6 +459,16 @@ Journey: Inspect a type, its eligibility and subscription settings before saving
 
 [Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Subscription Categories — subscription-categories
+
+Screen: `/admin/subscription-categories`.
+
+Shows: Subscription categories and their fee, the second billing axis alongside membership type.
+
+Journey: Create or edit a category and its flat fee, then assign members from their profile.
+
+[Guide](guides/subscription-categories.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
 ### Subscription Lockout — subscription-lockout
 
 Screen: `/admin/subscription-lockout`.
@@ -493,7 +507,7 @@ Screen: `/admin/display`.
 
 Shows: The lobby-display hub, device management, templates, layouts and previews.
 
-Journey: Open Devices, Visual builder, Layouts, Templates or Reference from the display hub.
+Journey: Open Display Devices, Display Builder, Display Layouts, Display Templates or Display Reference from the display hub.
 
 [Guide](guides/display.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

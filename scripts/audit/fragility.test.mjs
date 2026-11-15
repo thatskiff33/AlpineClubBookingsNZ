@@ -1,5 +1,10 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import { collectAnchors } from "../check-doc-links.mjs";
 import {
   blameCommitCounts,
   changedOldRanges,
@@ -535,6 +540,28 @@ describe("ranking by confirmed repeats", () => {
     const filled = withTitles(entry, new Map([[12, "fix(xero): retry the outbox"], [40, "Outbox stuck again"]]));
     expect(describeSide(filled.earlier)).toContain("fix(xero): retry the outbox");
     expect(filled.later.title).toBe("06-01");
+  });
+
+  // The table links to each area's heading with the shared GitHub anchor rule
+  // (INV-SSOT), so a name with an underscore or inline code still resolves in
+  // `docs:linkcheck`, which reads headings with that same rule.
+  it("links each ranked area to an anchor docs:linkcheck finds in the same block", () => {
+    const row = (name) => ({ id: name, name, confirmed: [], sinceAudit: 0, chains: [] });
+    const rows = [row("Cron_jobs and `pnpm` scripts"), row("Booking edits (dates, party)"), row("Auth, security and the audit log")];
+    const block = renderRanking(rows, { reviewed: 0, rejected: 0, screenedOut: 0, total: 0 });
+
+    const dir = mkdtempSync(path.join(tmpdir(), "fragility-anchor-"));
+    try {
+      const file = path.join(dir, "ranking.md");
+      writeFileSync(file, block);
+      const anchors = collectAnchors(file);
+      const linked = [...block.matchAll(/\]\(#([^)]+)\)/g)].map((match) => match[1]);
+      expect(linked).toHaveLength(rows.length);
+      for (const anchor of linked) expect(anchors).toContain(anchor);
+      expect(linked[0]).toBe("1-cron_jobs-and-pnpm-scripts--0-confirmed-0-since-8-aug");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("rewrites only the generated block of the ranking doc", () => {
