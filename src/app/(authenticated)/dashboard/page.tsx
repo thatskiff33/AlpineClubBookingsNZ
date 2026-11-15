@@ -46,7 +46,7 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import {
-  isDashboardPaymentOwed,
+  loadDashboardPaymentSnapshots,
   summarizeMemberPaymentOwed,
 } from "@/lib/member-dashboard";
 import {
@@ -353,6 +353,7 @@ export default async function DashboardPage() {
             status: true,
             additionalAmountCents: true,
             additionalPaymentStatus: true,
+            changeFeeCents: true,
           },
         },
       },
@@ -400,17 +401,16 @@ export default async function DashboardPage() {
     }
   }
 
-  const paymentOwed = summarizeMemberPaymentOwed(paymentOwedBookings);
-  const paymentOwedBookingIds = paymentOwedBookings
-    .filter(isDashboardPaymentOwed)
-    .map((booking) => booking.id);
+  const paymentOwed = summarizeMemberPaymentOwed(
+    await loadDashboardPaymentSnapshots(paymentOwedBookings),
+  );
   const nextStayHref = nextStay
     ? buildHrefWithReturnTo(`/bookings/${nextStay.id}`, "/dashboard")
     : "/book";
   const paymentOwedHref =
-    paymentOwed.bookingCount === 1 && paymentOwedBookingIds.length === 1
+    paymentOwed.bookingIds.length === 1
       ? buildHrefWithReturnTo(
-          `/bookings/${paymentOwedBookingIds[0]}`,
+          `/bookings/${paymentOwed.bookingIds[0]}`,
           "/dashboard",
         )
       : "/bookings";
@@ -637,7 +637,7 @@ export default async function DashboardPage() {
           </div>
           <p className="text-xs text-muted-foreground mt-1">
             {paymentOwed.totalCents > 0
-              ? `${paymentOwed.bookingCount} booking${paymentOwed.bookingCount !== 1 ? "s" : ""} need payment`
+              ? `${paymentOwed.bookingIds.length} ${paymentOwed.bookingIds.length === 1 ? "booking needs" : "bookings need"} payment`
               : "No payment due"}
           </p>
         </SummaryLinkCard>

@@ -39,7 +39,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/nomination", () => ({
+vi.mock("@/lib/member-application-fields", () => ({
   parseApplicationAddress: mocks.parseApplicationAddress,
   parseApplicationFamilyMembers: mocks.parseApplicationFamilyMembers,
 }));
@@ -90,10 +90,11 @@ describe("GET /api/admin/member-applications", () => {
       page: 1,
       pageSize: 25,
       total: 0,
+      totalPages: 0,
     });
     expect(mocks.requireActiveSessionUser).toHaveBeenCalledWith("admin-1");
     expect(mocks.memberApplicationFindMany).toHaveBeenCalledWith({
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       where: undefined,
       take: 25,
       skip: 0,

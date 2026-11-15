@@ -130,7 +130,7 @@ jobs:
   # merge, are for that.
   censuses:
     name: Fast censuses on each composed main + epic tree
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -280,7 +280,7 @@ jobs:
 
   sync:
     name: Open a main -> epic sync pull request per epic branch
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: censuses
     # Runs even when `censuses` crashed, so pull requests are still opened and
     # refreshed; every branch without a result is then left unarmed. This job is
