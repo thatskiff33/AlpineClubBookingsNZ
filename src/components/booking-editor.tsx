@@ -186,6 +186,12 @@ export interface BookingEditorData {
    * the RSC wire.
    */
   otherLodgeRateEligibleGuestIds?: string[];
+  /**
+   * #5066: the page's `resolveBookingInvoiceOffer` answer — the route's own
+   * rule. Absent (a conditional spread) when nothing is offered, so a club with
+   * Xero off ships the payload it did before.
+   */
+  invoiceOffer?: BookingInvoiceOffer;
 }
 
 
@@ -230,15 +236,12 @@ export function BookingEditor({
   booking,
   canModify,
   canAdminOverride = false,
-  invoiceOffer = { kind: "NONE" },
 }: {
   booking: BookingEditorData;
   canModify: boolean;
   // Issue #1668: admin override lets an admin open the editor even for a
   // fully-past booking that renders no self-service editor at all.
   canAdminOverride?: boolean;
-  // #5066: the page's `resolveBookingInvoiceOffer` answer, the route's own rule.
-  invoiceOffer?: BookingInvoiceOffer;
 }) {
   const format = useClubFormat();
   // #3828: one row per code, or the one combined row — the email's own answer.
@@ -323,7 +326,7 @@ export function BookingEditor({
                   Edit Booking
                 </Button>
               )}
-              <BookingInvoiceControl bookingId={booking.id} offer={invoiceOffer} />
+              <BookingInvoiceControl bookingId={booking.id} offer={booking.invoiceOffer ?? { kind: "NONE" }} />
             </div>
             <Badge variant="secondary" className={bookingStatusClass(booking.status)}>
               {bookingStatusLabel(booking.status)}

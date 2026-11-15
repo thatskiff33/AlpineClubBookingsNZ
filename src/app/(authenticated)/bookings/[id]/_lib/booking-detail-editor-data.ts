@@ -26,6 +26,27 @@ import type { BookingDetailRecord } from "./load-booking-detail";
 import type { BookingDetailViewer } from "./booking-detail-viewer";
 import type { BookingDetailConsent } from "./booking-detail-consent";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { resolveBookingInvoiceOffer } from "./booking-invoice-download";
+
+/**
+ * The edit panel's payload plus the booking's invoice offer (#5066), which rides
+ * on it so the page hands the editor one object. The offer is the same answer
+ * `GET /api/bookings/[id]/invoice` serves; the module flags are the render's
+ * memoised read (`loadEffectiveModuleFlags` is `cache()`d), so this costs no
+ * second settings query.
+ */
+export async function buildBookingDetailEditorData(
+  input: Parameters<typeof buildBookingDetailEditorPayload>[0],
+): Promise<BookingEditorData> {
+  const [editorData, invoiceOffer] = await Promise.all([
+    buildBookingDetailEditorPayload(input),
+    loadEffectiveModuleFlags().then((modules) =>
+      resolveBookingInvoiceOffer({ booking: input.booking, viewer: input.viewer, modules }),
+    ),
+  ]);
+  return invoiceOffer.kind === "NONE" ? editorData : { ...editorData, invoiceOffer };
+}
 
 /**
  * WHAT THE EDIT PANEL IS HANDED (#2958): the `BookingEditorData` payload — the
@@ -38,7 +59,7 @@ import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
  *
  * Moved verbatim from `page.tsx`, comments included.
  */
-export async function buildBookingDetailEditorData({
+async function buildBookingDetailEditorPayload({
   session,
   booking,
   club,

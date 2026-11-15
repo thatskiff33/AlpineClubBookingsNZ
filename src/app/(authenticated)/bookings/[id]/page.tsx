@@ -6,7 +6,6 @@ import { notFound, redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { BookingEditor } from "@/components/booking-editor";
-import { resolveBookingInvoiceOffer } from "./_lib/booking-invoice-download";
 import { ScrollToHash } from "@/components/scroll-to-hash";
 import { SectionNav, type SectionNavItem } from "@/components/section-nav";
 import { BookingHelpExtras } from "./_components/booking-help-extras";
@@ -350,8 +349,8 @@ export default async function BookingDetailPage({
       <section id="details" className="scroll-mt-20">
         <BookingEditor
           booking={editorData}
-          canModify={canModify} canAdminOverride={canAdminOverride}
-          invoiceOffer={await resolveBookingInvoiceOffer({ booking, viewer, modules })}
+          canModify={canModify}
+          canAdminOverride={canAdminOverride}
         />
       </section>
 
