@@ -33,8 +33,8 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
-// SiteStyleWizard calls useRouter().refresh() after a save; the render-only
-// cases here never save, so a stub router is enough.
+// SiteStyleWizard and the Modules page call useRouter().refresh() after a save;
+// the render-only cases here never save, so a stub router is enough.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
   useParams: () => ({ id: "lodge-1" }),

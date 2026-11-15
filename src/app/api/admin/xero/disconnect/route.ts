@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
-import { disconnectXero } from "@/lib/xero";
+import { disconnectXero } from "@/lib/xero-oauth";
 import { getAuditRequestContext } from "@/lib/audit";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 

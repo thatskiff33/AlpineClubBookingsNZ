@@ -49,12 +49,12 @@ vi.mock("@/lib/age-tier", () => ({
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
   getAgeTierSettings: vi.fn().mockResolvedValue([]),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   getXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/email", () => ({ sendMemberSetupInviteEmail: vi.fn() }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn() }));
+
 
 import { prisma } from "@/lib/prisma";
 import {

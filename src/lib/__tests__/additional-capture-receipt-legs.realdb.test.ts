@@ -143,12 +143,24 @@ function fakeXero(invoices: Invoices, failures: Record<string, "refused" | "lost
   return { providers, createPayment };
 }
 
-function receiptLinks() {
-  return prisma.xeroObjectLink.findMany({
+/**
+ * The capture's payment links in LEG order, the marker production reads
+ * (`readAdditionalCaptureReceiptLinkedInvoiceId`). Never by `createdAt`: a
+ * Retry that adopts one leg and sends the other writes both links in one
+ * transaction, so their creation times tie and PostgreSQL may return either
+ * first (#5162).
+ */
+async function receiptLinks() {
+  const links = await prisma.xeroObjectLink.findMany({
     where: { localId: CAPTURE, role: receipt.ADDITIONAL_CAPTURE_PAYMENT_ROLE, active: true },
-    orderBy: { createdAt: "asc" },
     select: { xeroObjectId: true, metadata: true },
   });
+  const leg = (link: (typeof links)[number]) => {
+    const value = (link.metadata as { leg?: unknown } | null)?.leg;
+    if (typeof value !== "number") throw new Error(`Receipt link ${link.xeroObjectId} carries no leg marker`);
+    return value;
+  };
+  return [...links].sort((a, b) => leg(a) - leg(b));
 }
 
 /** The worker failed the row; the officer's Retry puts it back, and the next run claims it. */
