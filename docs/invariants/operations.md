@@ -844,7 +844,7 @@ installation.
 - Enforced by `deploy-release-tag-guard-script-contract.test.ts`, which runs
   the guard against a scratch origin.
 
-## INV-OPS-020
+## INV-OPS-021
 
 A Docker-only install can create its first admin with Docker alone, and the
 commands that do it are the ones CI runs. `DEPLOYMENT.md` "First Bootstrap"

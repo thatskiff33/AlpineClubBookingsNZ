@@ -950,7 +950,7 @@ and [Adding a data-encryption key](#adding-a-data-encryption-key-4456).
    on the first install only: upgrades never run it (see "Config Self-Heal On
    Boot"), and `docker compose up` never starts it. CI runs steps 3 to 7 as
    written here, on an empty database (`scripts/ci/first-install-smoke.mjs`,
-   `INV-OPS-020`), so keep each command in its own fenced block.
+   `INV-OPS-021`), so keep each command in its own fenced block.
 
 8. **Start the web slots, Caddy and cron leader**:
 
