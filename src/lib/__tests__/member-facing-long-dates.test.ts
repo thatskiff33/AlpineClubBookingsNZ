@@ -114,7 +114,7 @@ const MEMBER_FACING_LONG_DATE_SITES: ReadonlyArray<{
       // The other half of the same pair, pinned in the same row because the two
       // are only correct together: the day in the saved filename must come from
       // that one instant, not from a second `club.today()`.
-      "pdf.save(`tac-report-${club.calendarDateOf(generatedAt)}.pdf`)",
+      "`report-${club.calendarDateOf(generatedAt)}`",
     ],
   },
 ];

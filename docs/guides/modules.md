@@ -37,8 +37,9 @@ environment side.
 2. Tick or untick the modules you want to change. A module that needs extra
    setup shows **Needs setup** with its dependencies listed (e.g. Xero
    credentials, an API key).
-3. Click **Save**. Changes take effect across the site immediately. **Refresh**
-   reloads the saved state.
+3. Click **Save**. When the save finishes, the admin sidebar, top menu and Search
+   update to show the saved modules. **Refresh** reloads both the saved settings
+   and these menus.
 
 ## Settings reference
 
@@ -65,7 +66,8 @@ deploy-time setup default **off**; general-purpose modules default **on**):
 | Communications (`communications`) | Admin bulk email to members. Transactional notifications (booking, payment and membership emails) are unaffected | On |
 | Member notices (`memberNotices`) | Committee news notices targeted to member audiences, shown on the dashboard with read/acknowledge tracking | On |
 | Events calendar (`eventsCalendar`) | Club events calendar, recurring events, and the dashboard Events card | On |
-| Ski-field conditions (`skifieldConditions`) | Mountain/road status panel and the Mountain Conditions page, the public conditions API routes, and the admin cache controls | On |
+| Ski-field conditions (`skifieldConditions`) | Snow.nz condition widgets for any New Zealand ski field, placed on a public page with the `{{skifield-conditions:<id>}}` token, and their public API route | On |
+| Whakapapa (Mt Ruapehu) conditions report (`skifieldWhakapapa`) | **Whakapapa (Mt Ruapehu) only.** The live mountain and road status panel from the `{{skifield-whakapapa}}` token, its public feed, and the admin [Mountain Conditions](mountain-conditions.md) cache page. Off on a new install; an install upgraded from before #4932 keeps the value its `skifieldConditions` switch had | Off |
 | Two-factor authentication (`twoFactor`) | Second-factor after password login | Off |
 | Email sign-in link (`magicLink`) | Single-use email sign-in links | Off |
 | Google sign-in (`googleLogin`) | Sign in with a linked Google account. Credentials are entered in-app at **Admin › Integrations › Google sign-in**; see [Integrations](integrations.md) | Off |
@@ -88,7 +90,7 @@ module is on but a dependency — credentials, an API key, inventory — is miss
 | --- | --- | --- |
 | The toggles are read-only | Your role has support **view**, not **edit** | Ask a full admin for support edit access |
 | A module shows "Needs setup" | It's on but a dependency isn't configured | Add the named credential/API key/inventory; see [`CONFIGURATION.md`](../../CONFIGURATION.md) |
-| A page still 404s after enabling | You didn't **Save**, or you're looking at a cached tab | Save, then reload the target page |
+| A page still 404s after enabling | The change was not saved, or the target page is open in another tab | Check that Save succeeded; use **Refresh** to reload settings and menus here, and reload the target tab if it was already open |
 | Enabling Internet Banking payments does nothing | It depends on Xero integration | Enable Xero integration first |
 
 ## Related links

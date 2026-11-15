@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Fakes below model a correctly locked caller: the caller-held lock checks
+// (#4929) are proven against PostgreSQL in bed-allocation-lock-held.realdb.test.ts.
+vi.mock("@/lib/global-lock-held", () => ({ assertGlobalLockHeld: vi.fn() }));
+vi.mock("@/lib/lodge-capacity-lock", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity-lock")),
+  assertLodgeCapacityLockHeld: vi.fn(),
+}));
 import { NextRequest } from "next/server";
 
 // Mock prisma
@@ -79,8 +87,10 @@ vi.mock("@/lib/email", () => ({
   sendAdminNewBookingAlert: vi.fn().mockResolvedValue(undefined),
   sendWaitlistConfirmationEmail: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-booking-invoices", () => ({
   createXeroInvoiceForBooking: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({

@@ -178,34 +178,9 @@ describe("N-09: Bulk communication validation", () => {
   });
 });
 
-// ============================================================================
-// N-09: Bulk Communication - Preference Filtering
-// ============================================================================
-
-describe("N-09: Bulk communication preference filtering", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
-    mockPrisma.emailLog.update.mockResolvedValue({});
-  });
-
-  it("filters out members with marketingEmails=false", async () => {
-    // Simulate what the API does: filter recipients by preference
-    const recipients = [
-      { id: "m1", email: "a@test.com", notificationPreference: { marketingEmails: true } },
-      { id: "m2", email: "b@test.com", notificationPreference: { marketingEmails: false } },
-      { id: "m3", email: "c@test.com", notificationPreference: null }, // No pref = default false
-    ];
-
-    const eligible = recipients.filter(
-      (r) => r.notificationPreference?.marketingEmails === true
-    );
-
-    expect(eligible).toHaveLength(1);
-    expect(eligible[0].email).toBe("a@test.com");
-  });
-});
+// N-09 bulk-communication preference filtering is covered against the real
+// rule in src/lib/email/__tests__/bulk-audience.test.ts and the send route in
+// communications-send-category.test.ts (#4987).
 
 // ============================================================================
 // N-12: Feedback flow removal
