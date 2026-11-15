@@ -4,16 +4,16 @@ import path from "node:path";
 import { afterEach, expect, it } from "vitest";
 
 const script = path.resolve("scripts/ci/sekreton-prepare-base.sh");
-const repos = [];
-const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-function repo() {
+const repos: string[] = [];
+const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+function repo(): string {
   const cwd = mkdtempSync(path.resolve(".sekreton-base-test-"));
   repos.push(cwd);
   git(cwd, "init", "-b", "main");
   git(cwd, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "base");
   return cwd;
 }
-function prepare(cwd) {
+function prepare(cwd: string) {
   return spawnSync("bash", [script], { cwd, encoding: "utf8" });
 }
 afterEach(() => {
