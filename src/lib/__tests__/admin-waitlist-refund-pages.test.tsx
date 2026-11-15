@@ -39,6 +39,14 @@ vi.mock("next-auth/react", () => ({
   }),
 }));
 
+// The "retrying (n/max)" label must follow the shared email retry ceiling, not a
+// number of its own. Raising the mocked ceiling above the real one (3) lets the
+// test tell a label that reads the constant from one that prints a literal.
+vi.mock("@/lib/email/retry-selection", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/email/retry-selection")),
+  EMAIL_RETRY_MAX_ATTEMPTS: 5,
+}));
+
 vi.mock("next/link", () => ({
   default: ({
     href,
@@ -165,6 +173,37 @@ describe("Admin waitlist page", () => {
       name: /Review email recovery/i,
     });
     expect(recoveryLink.getAttribute("href")).toBe("/admin/email-deliverability");
+  });
+
+  it("prints the shared email retry ceiling in a retrying offer email label", async () => {
+    mocks.currentSearch = "";
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [
+          {
+            ...waitlistEntry(),
+            offerEmailDelivery: {
+              status: "FAILED",
+              emailLogId: "email-log-1",
+              attempts: 2,
+              lastAttemptAt: "2026-06-01T09:30:00.000Z",
+              errorMessage: "SMTP timeout",
+              retryState: "retrying",
+              needsOperatorAction: false,
+            },
+          },
+        ],
+        page: 1,
+        pageSize: 25,
+        total: 1,
+      }),
+    });
+
+    render(<AdminWaitlistPage />);
+
+    // 5 is the mocked ceiling above; a hard-coded "/3" would read "(2/3)".
+    await screen.findByText("Offer email retrying (2/5)");
   });
 
   it("sends a suppressed live offer to the real booking page (#3635)", async () => {

@@ -1,9 +1,9 @@
 import { EmailLogStatus, BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import { prisma } from "@/lib/prisma";
 
 const WAITLIST_OFFER_TEMPLATE_NAME = "waitlist-offer";
-const EMAIL_RETRY_MAX_ATTEMPTS = 3;
 const WAITLIST_EMAIL_LOOKBACK_MS = 2 * 60 * 1000;
 
 type WaitlistOfferEmailRetryState =
