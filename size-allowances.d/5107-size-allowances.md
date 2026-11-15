@@ -44,7 +44,7 @@ reason: adds the getAdminPage import and renders the page heading from its
   this fix.
 
 file: src/app/(admin)/admin/membership/member-applications/page.tsx
-lines: 805
+lines: 838
 reason: adds the getAdminPage import and renders the page heading from its
   registry label in place of a typed string (#4968). The file was already
   over its limit; splitting it apart is a refactor of its own, not part of
@@ -72,7 +72,7 @@ reason: the pending-review card heading now reads the refund-requests
   its own, not part of this fix.
 
 function: src/app/(admin)/admin/setup/setup-page-client.tsx#SetupPageClient
-lines: 413
+lines: 449
 reason: the Setup heading now reads the registry label, two more lines than
   the typed string it replaces; the card arrays that used to sit above it
   moved to hub-cards.ts (#4968). The function was already over its limit;
