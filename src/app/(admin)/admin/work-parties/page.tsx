@@ -117,8 +117,8 @@ const DETAIL_FALLBACK = "Failed to load attending bookings";
 
 /**
  * One event's attending bookings. A failed read used to leave "Loading
- * bookings..." standing for good; the refusal is now thrown for the page's
- * error box to say why.
+ * bookings..." standing for good; the refusal is now thrown, and the caller
+ * collapses the row and puts the reason in the page's error box.
  */
 async function fetchEventDetail(eventId: string): Promise<EventDetail> {
   const res = await fetch(`/api/admin/work-parties/${eventId}`);
@@ -391,6 +391,7 @@ export default function AdminWorkPartiesPage() {
         const detail = await fetchEventDetail(eventId);
         setDetails((prev) => ({ ...prev, [eventId]: detail }));
       } catch (err) {
+        setExpandedId((current) => (current === eventId ? null : current));
         setError(refusalMessageOr(err, DETAIL_FALLBACK));
       }
     }

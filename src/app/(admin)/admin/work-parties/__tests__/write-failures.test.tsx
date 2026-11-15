@@ -17,7 +17,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
+import { htmlErrorPage, itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 
 vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
@@ -157,6 +157,13 @@ describe("Work parties: a refused active toggle says why", () => {
 
 describe("Work parties: a failed attending-bookings read says why", () => {
   itShowsEveryRefusal({ submit: showBookings, fallback: "Failed to load attending bookings" });
+
+  it("collapses the row instead of leaving it loading", async () => {
+    await showBookings(() => htmlErrorPage(502));
+    expect(await screen.findByText("Failed to load attending bookings")).toBeInTheDocument();
+    expect(screen.queryByText("Loading bookings...")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show bookings" })).toBeInTheDocument();
+  });
 
   it("shows the bookings table when the read succeeds", async () => {
     await showBookings(() => Response.json({ attendingBookings: [], totalDiscountCents: 0 }));
