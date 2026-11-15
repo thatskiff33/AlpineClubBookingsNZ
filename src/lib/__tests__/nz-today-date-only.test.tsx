@@ -66,8 +66,8 @@ vi.mock("@/lib/finance-legacy-dashboard-export", () => ({
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
-import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
-import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/school-booking-form";
+import { BookingRequestForm } from "@/components/website/booking-request-form";
+import { SchoolBookingForm } from "@/components/website/school-booking-form";
 
 /*
   CT-4 (#2870) MOVED WHERE THESE TWO FORMS GET THE CLUB'S DAY FROM, and this
@@ -282,8 +282,8 @@ describe("#2682 no surface derives today from UTC any more", () => {
     for (const page of [
       // The booking date pickers live in the extracted form components, now under
       // the (website) group (both are real website pages).
-      "src/app/(website-dynamic)/booking-requests/booking-request-form.tsx",
-      "src/app/(website-dynamic)/school-bookings/school-booking-form.tsx",
+      "src/components/website/booking-request-form.tsx",
+      "src/components/website/school-booking-form.tsx",
     ]) {
       const source = fs.readFileSync(path.resolve(process.cwd(), page), "utf8");
       // The byte-identical private `todayDateOnly()` in both files is what made

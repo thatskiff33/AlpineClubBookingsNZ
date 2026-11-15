@@ -45,6 +45,8 @@ import {
   type BedAllocationDb,
 } from "@/lib/bed-allocation-admin-contract";
 import { overlapsDateRange } from "@/lib/bed-allocation-date-range";
+import { assertGlobalLockHeld } from "@/lib/global-lock-held";
+import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
 export async function assertGuestAndBedForAllocation(input: {
   bookingGuestId: string;
@@ -332,6 +334,10 @@ export async function allocateBedNightWithLocksHeld(input: {
   stayDate: Date;
   db: BedAllocationDb;
 }): Promise<{ allocation: BedAllocation; promotedPartner: BedAllocation | null }> {
+  await assertGlobalLockHeld(input.db, "allocateBedNightWithLocksHeld");
+  const lockKey = await input.db.lodgeRoom.findUnique({ where: { id: input.bed.roomId }, select: { lodgeId: true } });
+  if (lockKey) await assertLodgeCapacityLockHeld(input.db, lockKey.lodgeId, "allocateBedNightWithLocksHeld");
+
   const { guest, bed, stayDate, db } = input;
 
   // Custodian occupancy (#2286), THE manual-placement chokepoint. Every manual
