@@ -244,3 +244,70 @@ export function restatableSupplementaryInvoiceOperationsWhere({
     },
   };
 }
+
+/**
+ * DOES THIS EDIT'S ACCOUNTING ASK NOW BILL WHAT THE CALLER ASKED FOR? (#3170 fix
+ * round, F2.)
+ *
+ * The `message` beside this is prose for an operator's repair report and has
+ * always been read by a person; nothing could branch on it. The edit-review
+ * settlement needs to branch on it, because the difference between "the invoice
+ * now bills the combined total" and "the invoice had already left the queue and
+ * bills the earlier figure" is the difference between a settled share that is
+ * billed and one the club has to collect by hand. Deciding that HERE, where the
+ * link check, the queued check and the restate all happen under one lock, is the
+ * only place it can be decided at all - the caller can no longer tell afterwards,
+ * because `createXeroSupplementaryInvoice` replaces THIS anchor's payload with
+ * the Xero invoice body at dispatch. (A second ask's payload survives, but that
+ * is a different row on a different anchor, never the one read here.)
+ *
+ *   * `covers-total` - the ask bills at least the requested net, because this
+ *     call queued it, raised it, or found it already asking for that much.
+ *   * `short-sent` - an invoice for this anchor HAS BEEN CREATED: the anchor
+ *     carries an active `SUPPLEMENTARY_INVOICE` link. What that invoice bills is
+ *     fixed forever, and this share is not in it.
+ *   * `short-in-flight` - an operation for this anchor exists and could not be
+ *     restated, because the outbox has claimed it (RUNNING). Nothing has reached
+ *     Xero yet, and that row may still come back.
+ *   * `none` - no supplementary invoice is involved at all: nothing positive to
+ *     bill, or the booking has no primary Xero invoice to supplement. Not a
+ *     shortfall, and not a success either.
+ *
+ * WHY THE TWO SHORTFALLS ARE SEPARATE VALUES rather than one called `short`
+ * (#3193 fix round, the double-bill). They were one value, and that one name was
+ * two different facts: an invoice that EXISTS, and a row that is merely being
+ * executed. Only the first is durable evidence that a share went out without.
+ *
+ * A RUNNING row can return to PENDING WITHOUT EVER REACHING XERO, by exactly ONE
+ * route (#3193 fix round, second pass - the first version of this list named
+ * three and two of them were wrong, and a list written to be audited is worse
+ * incorrect than incomplete). A process-global Xero cooldown - the transient
+ * outage breaker or the daily-limit gate - refuses the operation before any HTTP
+ * call, and `processXeroOutbox` un-claims it, matching RUNNING or the FAILED a
+ * self-failing handler left. That one route is enough for everything below.
+ *
+ * The two that are NOT routes, so nobody re-derives them: an operator Requeue
+ * (and the repair pass's `REQUEUE_XERO_OPERATION`, which calls the same helper)
+ * leaves the original row FAILED and creates a SEPARATE `REQUEUE` row that
+ * replays inline; and the stale-RUNNING reset writes FAILED, not PENDING.
+ *
+ * Once it is restatable again, the NEXT settlement of this edit raises it to the
+ * COMBINED total. So a caller that reacted to the earlier refusal by billing its
+ * share on a SEPARATE invoice has then billed that share twice: once on its own
+ * invoice, and once inside the total the returned row was raised to. Three
+ * shares of $200, $30 and $50 bill $310 for a $280 edit - worse than the
+ * shortfall being fixed, because before the second ask existed that sequence
+ * produced one correct $280 invoice.
+ *
+ * The change-anchored restate cannot cap itself against the separate invoice,
+ * because that invoice is anchored elsewhere BY DESIGN - the invisibility that
+ * makes a second ask idempotent is the same invisibility that hides it from the
+ * raise. So the distinction is made where it is actually true instead: a SENT
+ * invoice is a fact and can be safely supplemented; an in-flight row is not yet
+ * a fact and must not be. `INV-PAY-051`.
+ */
+export type XeroSupplementaryInvoiceEnqueueOutcome =
+  | "covers-total"
+  | "short-sent"
+  | "short-in-flight"
+  | "none";

@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@/lib/__tests__/support/club-time-rend
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GuestData } from "@/components/guest-form";
 import { DEPENDANT_IDENTITY_UNRESOLVED_MESSAGE } from "@/lib/booking-dependant-identity";
-import type { FamilyMember } from "@/app/(authenticated)/book/_components/types";
+import type { FamilyMember } from "@/components/book/booking-wizard-types";
 
 /*
   #2721 — the wizard must stop an own recorded dependant BEFORE the guest split

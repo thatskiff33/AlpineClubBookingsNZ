@@ -5,7 +5,7 @@ import type { GuestData } from "@/components/guest-form";
 import type { PromoResult } from "@/components/promo-code-input";
 import { promoCodeListEntries, validatePromoCodeList } from "@/components/promo-code-list-client";
 import { promoPreviewGuestBody } from "@/components/promo-preview-guest";
-import type { PriceQuote } from "../_components/types";
+import type { PriceQuote } from "@/components/book/booking-wizard-types";
 
 /**
  * The booking wizard's working-bee discount preview, split out of

@@ -85,7 +85,8 @@ vi.mock("@/lib/age-tier", () => ({
 
 vi.mock("@/lib/email", () => emailMock);
 
-vi.mock("@/lib/xero", () => xeroMock);
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: xeroMock.isXeroConnected }));
+vi.mock("@/lib/xero-contacts", () => ({ findOrCreateXeroContact: xeroMock.findOrCreateXeroContact }));
 
 vi.mock("@/lib/xero-operation-outbox", () => xeroOutboxMock);
 vi.mock("@/lib/membership-subscription-billing", () => subscriptionBillingMock);
@@ -104,9 +105,7 @@ vi.mock("@/lib/induction", () => ({
 
 vi.mock("server-only", () => ({}));
 
-vi.mock("bcryptjs", () => ({
-  hash: vi.fn().mockResolvedValue("hashed-secret"),
-}));
+
 
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -129,9 +128,7 @@ import {
   sendMembershipApplicationRejectedEmail,
   sendNominationRequestEmail,
 } from "@/lib/email";
-import {
-  findOrCreateXeroContact,
-} from "@/lib/xero";
+import { findOrCreateXeroContact } from "@/lib/xero-contacts";
 import {
   enqueueXeroEntranceFeeInvoiceOperation,
 } from "@/lib/xero-operation-outbox";

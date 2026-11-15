@@ -8,7 +8,7 @@ import { GuestsStep } from "@/app/(authenticated)/book/_components/guests-step";
 import type {
   FamilyMember,
   PriceQuote,
-} from "@/app/(authenticated)/book/_components/types";
+} from "@/components/book/booking-wizard-types";
 import type { GuestData } from "@/components/guest-form";
 
 vi.mock("@/components/guest-form", () => ({
