@@ -1,6 +1,6 @@
 - **A club moving in from another system can now load its people and its
-  members' credit in one checked pass.** The member CSV import takes two new
-  optional columns: **Membership Type**, which gives each new member that type
+  members' credit in one checked pass (#4988).** The member CSV import takes
+  two new optional columns: **Membership Type**, which gives each new member that type
   for the current season, and **Family Key**, which puts new members who share a
   key into one family group. On **Refunds & Credits**, a new **Opening credits**
   card imports a CSV of the credit members held in the old system. It shows
@@ -12,6 +12,3 @@
   way to carry over stays that are already paid, and the totals to check
   against the old records. Importing future bookings is coming separately
   (#5005).
-
-- Refuse opening-credit reversal after a later deduction even when its database
-  transaction began before the batch posted.
