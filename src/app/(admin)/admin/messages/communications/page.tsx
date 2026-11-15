@@ -27,8 +27,20 @@ import {
 } from "@/components/ui/select";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import type { BulkRecipientFilter } from "@/lib/bulk-communication-recipients";
+import {
+  BULK_EMAIL_CATEGORY_LABELS,
+  type BulkEmailCategory,
+} from "@/lib/email/bulk-audience";
+import { MessageKindFieldset } from "./_components/message-kind-fieldset";
 import { SendHistoryCard } from "./_components/send-history-card";
 import { useCommunicationsData } from "./_hooks/use-communications-data";
+import {
+  describeExcluded,
+  excludedSuffix,
+  fetchRecipientCounts,
+  peopleCount,
+  useRecipientPreview,
+} from "./_hooks/use-recipient-counts";
 
 type OfferedAudience = Exclude<BulkRecipientFilter, "custom">;
 
@@ -63,29 +75,6 @@ const AUDIENCES: Record<
 
 const OFFERED_AUDIENCES = Object.keys(AUDIENCES) as OfferedAudience[];
 
-function peopleCount(count: number) {
-  return `${count} ${count === 1 ? "person" : "people"}`;
-}
-
-// How many opted-in accounts the audience reaches, from the same query the
-// send uses. A GET: it sends nothing and spends none of the hourly quota.
-async function fetchEligibleCount(
-  audience: OfferedAudience,
-): Promise<number | null> {
-  try {
-    const res = await fetch(
-      `/api/admin/communications/send?recipientFilter=${encodeURIComponent(audience)}`,
-    );
-    if (!res.ok) return null;
-    const data = (await res.json()) as { eligibleRecipients?: unknown };
-    return typeof data.eligibleRecipients === "number"
-      ? data.eligibleRecipients
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 export default function CommunicationsPage() {
   // Bulk send writes the communications route, which the route-area matrix maps
   // to the membership area; a view-only membership admin cannot send (#1997).
@@ -95,6 +84,10 @@ export default function CommunicationsPage() {
   const [body, setBody] = useState("");
   const [recipientFilter, setRecipientFilter] =
     useState<OfferedAudience>("all");
+  // #4987: no default. The sender chooses club notice or newsletter for every
+  // message, because the two reach different members.
+  const [category, setCategory] = useState<BulkEmailCategory | null>(null);
+  const preview = useRecipientPreview(recipientFilter, category);
   // A send runs checking (the recipient count) → confirming (the dialog) →
   // sending (the POST); the form takes no second submit until it settles.
   const [sendPhase, setSendPhase] = useState<
@@ -129,21 +122,25 @@ export default function CommunicationsPage() {
   // confirmation step; nothing is sent until the officer confirms (#4964).
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!canEdit || sendPhase !== "idle") return;
+    if (!canEdit || !category || sendPhase !== "idle") return;
     // The control the officer used: the button, or Subject for Enter.
     const opener =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
     // Send exactly what was confirmed, whatever happens to the form meanwhile.
-    const message = { subject, body, recipientFilter };
+    const message = { subject, body, recipientFilter, category };
     const audience = AUDIENCES[message.recipientFilter];
+    const kind = BULK_EMAIL_CATEGORY_LABELS[message.category];
     setSendPhase("checking");
     setResult(null);
 
     try {
-      const eligible = await fetchEligibleCount(message.recipientFilter);
-      if (eligible === null) {
+      const counts = await fetchRecipientCounts(
+        message.recipientFilter,
+        message.category,
+      );
+      if (counts === null) {
         setResult({
           success: false,
           message:
@@ -151,18 +148,20 @@ export default function CommunicationsPage() {
         });
         return;
       }
+      const eligible = counts.eligibleRecipients;
       if (eligible === 0) {
         setResult({
           success: false,
-          message: `Nobody in "${audience.label}" has opted in to marketing email, so nobody would receive this. Nothing was sent.`,
+          message: `Nobody in "${audience.label}" would receive this ${kind.label.toLowerCase()}${excludedSuffix(counts)}. Nothing was sent.`,
         });
         return;
       }
 
       setSendPhase("confirming");
+      const excluded = describeExcluded(counts);
       const confirmed = await confirm({
         title: `Send this email to ${peopleCount(eligible)}?`,
-        description: `Audience: ${audience.label}. ${audience.description} Subject: "${message.subject}". Only people who opted in to marketing email are counted. Sending cannot be undone. The club can send ${bulkSendLimit} bulk email${bulkSendLimit === 1 ? "" : "s"} per hour, shared by all admins.`,
+        description: `Audience: ${audience.label}. ${audience.description} Kind of message: ${kind.label}. ${kind.description}${excluded ? ` Not sent to: ${excluded}.` : ""} Subject: "${message.subject}". Sending cannot be undone. The club can send ${bulkSendLimit} bulk email${bulkSendLimit === 1 ? "" : "s"} per hour, shared by all admins.`,
         confirmLabel: `Send to ${peopleCount(eligible)}`,
       });
       if (!confirmed) {
@@ -181,10 +180,12 @@ export default function CommunicationsPage() {
         const data = await res.json();
         setResult({
           success: true,
-          message: `Sent to ${data.eligibleRecipients} recipients (${data.filteredByPreference} opted out).`,
+          message: `Sent to ${data.eligibleRecipients} recipients${excludedSuffix(data)}.`,
         });
         setSubject("");
         setBody("");
+        // The next message needs its own choice of kind (#4987).
+        setCategory(null);
         refreshHistory();
       } else {
         setResult({
@@ -226,7 +227,8 @@ export default function CommunicationsPage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Communications</h1>
         <p className="text-sm text-muted-foreground">
-          Send bulk emails to club members. Respects notification preferences.
+          Send club notices or newsletters to members. Respects each
+          member&apos;s notification preferences.
         </p>
       </div>
 
@@ -235,8 +237,8 @@ export default function CommunicationsPage() {
         <CardHeader>
           <CardTitle>Compose Message</CardTitle>
           <CardDescription>
-            Only members who have opted in to marketing emails will receive this
-            message. Rate limited to {bulkSendLimit} send
+            Choose whether this is a club notice or a newsletter: each reaches
+            different members. Rate limited to {bulkSendLimit} send
             {bulkSendLimit === 1 ? "" : "s"} per hour.
           </CardDescription>
         </CardHeader>
@@ -283,10 +285,15 @@ export default function CommunicationsPage() {
                 id="recipientFilter-help"
                 className="text-xs text-muted-foreground mt-1"
               >
-                {AUDIENCES[recipientFilter].description} Only those who opted
-                in to marketing email receive it.
+                {AUDIENCES[recipientFilter].description}
               </p>
             </div>
+
+            <MessageKindFieldset
+              category={category}
+              onChange={setCategory}
+              preview={preview}
+            />
 
             <div>
               <Label htmlFor="body">Message Body</Label>
@@ -309,7 +316,7 @@ export default function CommunicationsPage() {
               canEdit={canEdit}
               describeReason={false}
               type="submit"
-              disabled={sendPhase !== "idle" || !subject || !body}
+              disabled={sendPhase !== "idle" || !subject || !body || !category}
             >
               {sendPhase === "checking"
                 ? "Checking recipients..."
