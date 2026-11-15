@@ -629,6 +629,30 @@ lists every one; these are in that class:
   the migration role, then start R2. It restores the table, the functions, the
   trigger and one non-secret row, but not token ciphertext; the backup taken
   before this migrate is the only recovery of those columns.
+- `20261220044900_add_subscription_category_and_widen_charge_type_shape` and
+  `20261220044910_route_category_charges_and_enforce_axis_exclusivity` (#4496) —
+  one window, never applied apart. The first only changes the shape: three new
+  subscription-category tables, additive columns, and the charge table's
+  membership-type columns made nullable beside a parallel category group. It is
+  nearly compatible on its own and is windowed by its pairing: before the second
+  runs, a new writer could insert a category-only charge whose null type column
+  the previous release's reads (a family-charge dedup key built from it) would
+  silently mis-group rather than fail. The second adds the check and the partial
+  unique index that make every charge bill on exactly one axis. Stop the old web
+  colour **and every old worker, scheduler and queue consumer** before
+  migrating, take and verify one backup for the whole window, and in the shell
+  that runs the deploy set `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1`, a non-empty
+  `BLUE_GREEN_MIGRATION_OVERRIDE_REASON` naming both migrations, and
+  `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1` only once everything old has
+  stopped. The locks are brief: the column changes are catalogue-only, and the
+  check scans the cold charge table once. A production database that already ran
+  this feature's earlier two migrations needs
+  [its reconciliation first](guides/subscription-category-redesign-production-reconciliation.md).
+  **Rollback:** run `20261220044910`'s `rollback.sql` first, then
+  `20261220044900`'s. Each refuses, before it changes anything, when run in the
+  wrong order or while a category charge, fee or assignment exists. After
+  traffic has run against this shape it is not a release rollback: the backup
+  taken before the window is the recovery.
 
 **If several are pending, they share ONE window.** `prisma migrate deploy` applies
 them in the same command — you do not stop and start the application repeatedly. Work
