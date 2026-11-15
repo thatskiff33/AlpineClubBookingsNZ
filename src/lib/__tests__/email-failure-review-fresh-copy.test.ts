@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockPrisma, mockCreateAuditLog } = vi.hoisted(() => ({
   mockPrisma: {
-    emailLog: { findMany: vi.fn() },
+    emailLog: { findMany: vi.fn(), findUnique: vi.fn() },
     auditLog: { findMany: vi.fn() },
   },
   mockCreateAuditLog: vi.fn(),
@@ -22,6 +22,7 @@ vi.mock("@/lib/audit", () => ({ createAuditLog: mockCreateAuditLog }));
 import {
   archiveSupersededEmailFailures,
   getExhaustedEmailFailureReviewQueue,
+  markExhaustedEmailFailureReviewed,
 } from "@/lib/email-failure-review";
 
 function failure(overrides: Record<string, unknown> = {}) {
@@ -102,7 +103,8 @@ describe("archiveSupersededEmailFailures", () => {
       }),
     );
     // History is kept: the archive is an audit row, never an EmailLog write.
-    expect(Object.keys(mockPrisma.emailLog)).toEqual(["findMany"]);
+    expect(Object.keys(mockPrisma.emailLog)).toEqual(["findMany", "findUnique"]);
+    expect(mockPrisma.emailLog.findUnique).not.toHaveBeenCalled();
   });
 
   it("writes nothing when there is nothing to archive", async () => {
@@ -117,5 +119,43 @@ describe("archiveSupersededEmailFailures", () => {
 
     expect(archived).toEqual([]);
     expect(mockCreateAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+describe("one email.failure.reviewed row (INV-SSOT)", () => {
+  it("writes the same row as the Archive button, apart from the note, wording and booking", async () => {
+    mockPrisma.emailLog.findUnique.mockResolvedValue({ ...failure(), status: "FAILED" });
+    await markExhaustedEmailFailureReviewed("log-1", {
+      reviewedByMemberId: "officer-1",
+      reason: "Handled by phone.",
+    });
+    mockPrisma.emailLog.findMany.mockResolvedValue([failure()]);
+    await archiveSupersededEmailFailures({
+      bookingId: "booking-1",
+      templateName: "booking-confirmed",
+      createdBefore: new Date("2026-07-01T00:00:00.000Z"),
+      reviewedByMemberId: "officer-1",
+    });
+
+    expect(mockCreateAuditLog).toHaveBeenCalledTimes(2);
+    const [button, superseded] = mockCreateAuditLog.mock.calls.map(([row]) => row);
+    const { details: buttonDetails, metadata: buttonMetadata, ...buttonRest } = button;
+    const { details: supersededDetails, metadata: supersededMetadata, ...supersededRest } = superseded;
+    expect(supersededRest).toEqual(buttonRest);
+    expect(buttonMetadata).toEqual({
+      reason: "Handled by phone.",
+      templateName: "booking-confirmed",
+      attempts: 3,
+      lastError: "SMTP timeout",
+    });
+    expect(supersededMetadata).toEqual({
+      ...buttonMetadata,
+      reason: "Superseded by a fresh copy sent from the booking.",
+      bookingId: "booking-1",
+    });
+    expect(buttonDetails).toBe("Archived exhausted booking-confirmed email failure for owner@example.org.");
+    expect(supersededDetails).toBe(
+      "Archived exhausted booking-confirmed email failure for owner@example.org after a fresh copy was sent from the booking.",
+    );
   });
 });

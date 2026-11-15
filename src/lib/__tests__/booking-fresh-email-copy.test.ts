@@ -73,6 +73,7 @@ import {
   loadBookingFreshCopyOptions,
   sendBookingFreshEmailCopy,
 } from "@/lib/booking-fresh-email-copy";
+import { SPLIT_GUEST_CHILD_WHERE } from "@/lib/split-guest-children";
 
 // The frozen test clock is 2026-07-01T00:00Z, which is 1 July in the club's zone;
 // the daily reminder's window is therefore 1–4 July inclusive.
@@ -524,6 +525,11 @@ describe("fresh split guest payment link", () => {
     // No owner re-read after delivery: a later ownership change must not
     // change the recipient recorded for the email that already went out.
     expect(mockPrisma.booking.findUnique).toHaveBeenCalledTimes(2);
+    // INV-SSOT: the member route's split-child rule, plus "not deleted".
+    expect(mockPrisma.booking.findUnique.mock.calls[1][0].select.linkedBookings.where).toEqual({
+      ...SPLIT_GUEST_CHILD_WHERE,
+      deletedAt: null,
+    });
     expect(mockIssueSplitGuestPaymentLink).toHaveBeenCalledWith("child-1", expect.anything());
     expect(mockArchiveSuperseded).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "child-1", templateName: "split-guest-payment-link" }),
@@ -536,6 +542,46 @@ describe("fresh split guest payment link", () => {
         metadata: expect.objectContaining({ emailLogId: "new-link", recipientMemberId: "member-1" }),
       }),
     );
+  });
+
+  it("promises nothing about which link is live when the workflow throws", async () => {
+    mockPrisma.booking.findUnique
+      .mockResolvedValueOnce({ deletedAt: null })
+      .mockResolvedValueOnce(parentWithChildren(["child-1"]));
+    mockIssueSplitGuestPaymentLink.mockRejectedValue(new Error("lock timeout"));
+
+    const result = await sendBookingFreshEmailCopy({
+      bookingId: "booking-1",
+      template: "split-guest-payment-link",
+      actorMemberId: ACTOR,
+    });
+
+    expect(result).toMatchObject({ ok: false, status: 502 });
+    const error = (result as { error: string }).error;
+    expect(error).toContain("any link sent before may still work");
+    expect(error).not.toContain("revoked");
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("targets the booking itself when it is the split guest child", async () => {
+    mockPrisma.booking.findUnique
+      .mockResolvedValueOnce({ deletedAt: null })
+      .mockResolvedValueOnce({
+        ...parentWithChildren([]),
+        id: "child-1",
+        status: "PENDING",
+        parentBookingId: "parent-1",
+        hasNonMembers: true,
+      });
+    mockIssueSplitGuestPaymentLink.mockResolvedValue({ outcome: "just_sent" });
+
+    await sendBookingFreshEmailCopy({
+      bookingId: "child-1",
+      template: "split-guest-payment-link",
+      actorMemberId: ACTOR,
+    });
+
+    expect(mockIssueSplitGuestPaymentLink).toHaveBeenCalledWith("child-1", expect.anything());
   });
 
   it("reports the workflow's refusal and audits nothing when no link went out", async () => {

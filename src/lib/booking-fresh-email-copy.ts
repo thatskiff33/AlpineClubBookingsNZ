@@ -26,6 +26,7 @@ import {
 } from "@/lib/email-failure-review";
 import logger from "@/lib/logger";
 import { issueSplitGuestPaymentLink } from "@/lib/payment-link-split-guest";
+import { isSplitGuestChild, SPLIT_GUEST_CHILD_WHERE } from "@/lib/split-guest-children";
 import {
   PRE_ARRIVAL_REMINDER_BOOKING_INCLUDE,
   isPreArrivalReminderStatus,
@@ -97,6 +98,9 @@ const CONFIRMATION_STATUSES: readonly BookingStatus[] = [
   BookingStatus.PAID,
 ];
 
+const NO_EMAILS_SWITCH_ON =
+  'This booking has the "No emails" switch turned on, so nothing was sent. Turn it off first if the member should hear from us.';
+
 const NOT_SENT_FIX_AND_RETRY =
   "Nothing was sent, and this email is never retried automatically because it carries a door code or payment link. Fix the cause, then send a fresh copy again.";
 
@@ -110,26 +114,17 @@ async function splitGuestTargets(bookingId: string): Promise<Array<{ id: string 
       parentBookingId: true,
       hasNonMembers: true,
       groupBookingJoin: { select: { id: true } },
-      // The same selection as the member's own "send guest payment link" route.
+      // The member route's selection (SPLIT_GUEST_CHILD_WHERE), minus deleted
+      // children so the panel never offers a link the issuer would refuse.
       linkedBookings: {
-        where: {
-          status: BookingStatus.PENDING,
-          hasNonMembers: true,
-          deletedAt: null,
-          groupBookingJoin: { is: null },
-        },
+        where: { ...SPLIT_GUEST_CHILD_WHERE, deletedAt: null },
         select: { id: true },
         orderBy: { createdAt: "asc" },
       },
     },
   });
   if (!booking) return [];
-  if (
-    booking.parentBookingId &&
-    booking.status === BookingStatus.PENDING &&
-    booking.hasNonMembers &&
-    !booking.groupBookingJoin
-  ) {
+  if (isSplitGuestChild(booking)) {
     return [{ id: booking.id }];
   }
   return booking.linkedBookings;
@@ -228,7 +223,7 @@ async function refuseUnlessEmailsAllowed(
       ok: false,
       status: 409,
       error:
-        'This booking has the "No emails" switch turned on, so nothing was sent. Turn it off first if the member should hear from us.',
+        NO_EMAILS_SWITCH_ON,
     };
   }
   return null;
@@ -267,7 +262,7 @@ export function describeUntransmittedFreshCopy(outcome: EmailSendOutcome): {
         ? {
             status: 409,
             error:
-              'This booking has the "No emails" switch turned on, so nothing was sent. Turn it off first if the member should hear from us.',
+              NO_EMAILS_SWITCH_ON,
           }
         : {
             status: 503,
@@ -603,7 +598,11 @@ async function sendFreshSplitGuestPaymentLink(
       issued = await issueSplitGuestPaymentLink(target.id, format);
     } catch (err) {
       logger.error({ err, bookingId: target.id }, "Fresh split guest payment link failed to send");
-      failures.push("The email could not be sent and the new link was revoked. Please try again.");
+      // A throw can come before anything is minted, or from a revoke that
+      // failed, so promise nothing about which link is live.
+      failures.push(
+        "The payment link could not be sent. Please try again; any link sent before may still work until a new one goes out."
+      );
       worstStatus = Math.max(worstStatus, 502);
       continue;
     }

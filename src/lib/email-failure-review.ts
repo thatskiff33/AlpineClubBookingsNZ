@@ -150,6 +150,48 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
   };
 }
 
+/**
+ * The one `email.failure.reviewed` row. The review queue decides "archived"
+ * from these rows and reads the note from `metadata.reason`, so the officer's
+ * Archive button and a fresh copy's supersede archive share this writer and
+ * cannot drift apart in action, category, severity or metadata keys.
+ */
+async function writeEmailFailureReviewAudit(input: {
+  emailLog: {
+    id: string;
+    to: string;
+    templateName: string;
+    attempts: number;
+    errorMessage: string | null;
+  };
+  reviewedByMemberId: string;
+  reason: string | null;
+  detailsSuffix?: string;
+  extraMetadata?: { bookingId: string };
+}) {
+  const { emailLog } = input;
+  await createAuditLog({
+    action: EMAIL_FAILURE_REVIEW_ACTION,
+    memberId: input.reviewedByMemberId,
+    actorMemberId: input.reviewedByMemberId,
+    targetId: emailLog.id,
+    entityType: "EmailLog",
+    entityId: emailLog.id,
+    category: "communication",
+    severity: "important",
+    outcome: "success",
+    summary: "Exhausted email failure reviewed",
+    details: `Archived exhausted ${emailLog.templateName} email failure for ${emailLog.to}${input.detailsSuffix ?? ""}.`,
+    metadata: {
+      reason: input.reason,
+      templateName: emailLog.templateName,
+      attempts: emailLog.attempts,
+      lastError: emailLog.errorMessage,
+      ...input.extraMetadata,
+    },
+  });
+}
+
 export async function markExhaustedEmailFailureReviewed(
   emailLogId: string,
   input: {
@@ -187,24 +229,10 @@ export async function markExhaustedEmailFailureReviewed(
   }
 
   const reason = trimReviewReason(input.reason);
-  await createAuditLog({
-    action: EMAIL_FAILURE_REVIEW_ACTION,
-    memberId: input.reviewedByMemberId,
-    actorMemberId: input.reviewedByMemberId,
-    targetId: emailLog.id,
-    entityType: "EmailLog",
-    entityId: emailLog.id,
-    category: "communication",
-    severity: "important",
-    outcome: "success",
-    summary: "Exhausted email failure reviewed",
-    details: `Archived exhausted ${emailLog.templateName} email failure for ${emailLog.to}.`,
-    metadata: {
-      reason,
-      templateName: emailLog.templateName,
-      attempts: emailLog.attempts,
-      lastError: emailLog.errorMessage,
-    },
+  await writeEmailFailureReviewAudit({
+    emailLog,
+    reviewedByMemberId: input.reviewedByMemberId,
+    reason,
   });
 
   return {
@@ -285,25 +313,12 @@ export async function archiveSupersededEmailFailures(input: {
     createdBefore: input.createdBefore,
   });
   for (const failure of failures) {
-    await createAuditLog({
-      action: EMAIL_FAILURE_REVIEW_ACTION,
-      memberId: input.reviewedByMemberId,
-      actorMemberId: input.reviewedByMemberId,
-      targetId: failure.id,
-      entityType: "EmailLog",
-      entityId: failure.id,
-      category: "communication",
-      severity: "important",
-      outcome: "success",
-      summary: "Exhausted email failure reviewed",
-      details: `Archived exhausted ${failure.templateName} email failure for ${failure.to} after a fresh copy was sent from the booking.`,
-      metadata: {
-        reason: "Superseded by a fresh copy sent from the booking.",
-        templateName: failure.templateName,
-        attempts: failure.attempts,
-        lastError: failure.errorMessage,
-        bookingId: input.bookingId,
-      },
+    await writeEmailFailureReviewAudit({
+      emailLog: failure,
+      reviewedByMemberId: input.reviewedByMemberId,
+      reason: "Superseded by a fresh copy sent from the booking.",
+      detailsSuffix: " after a fresh copy was sent from the booking",
+      extraMetadata: { bookingId: input.bookingId },
     });
   }
   return failures.map((failure) => failure.id);

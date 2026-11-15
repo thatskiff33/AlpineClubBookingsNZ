@@ -768,11 +768,13 @@ export const AUDIT_CENSUS_TOTALS = {
   // 543 -> 545 (#4915): `member.data_exported`, the member's own download, and
   // `member.subject_access_exported`, a Full Admin's report on one person; both
   // `createAuditLog`, both `privacy`. RE-MEASURED with `pnpm run audit:census`.
-  // 545 -> 547 (ALP-588): a booking's fresh email copy - `booking.email.freshCopySent`
-  // after an actual send (`booking-fresh-email-copy.ts`), and the archive record for each
-  // exhausted failure it supersedes (`email-failure-review.ts`); both `createAuditLog`,
-  // both `communication`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 547,
+  // 545 -> 546 (ALP-588): a booking's fresh email copy - `booking.email.freshCopySent`
+  // after an actual send (`booking-fresh-email-copy.ts`), `createAuditLog`,
+  // `communication`. The archive of each exhausted failure it supersedes goes through
+  // the Archive button's own writer, which moved into one helper
+  // (`writeEmailFailureReviewAudit`), so it adds no site. RE-MEASURED with
+  // `pnpm run audit:census`.
+  writeSites: 546,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1000,8 +1002,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 174 -> 176 (#4368): the two dead card refund settlements.
     // 176 -> 177 (#4916): the after-stay dietary clear's count row. 177 -> 179 (#4851): the group organiser's close and re-arm.
     // 179 -> 181 (#4915): the two subject access writers.
-    // 181 -> 183 (ALP-588): the booking fresh-copy send and its superseded-failure archive.
-    createAuditLog: { total: 183, uncategorised: 0 },
+    // 181 -> 182 (ALP-588): the booking fresh-copy send; its superseded-failure archive reuses the Archive button's writer.
+    createAuditLog: { total: 182, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1528,10 +1530,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // 20 -> 21 (epic #2992 federation): club_post_image.upload. Still a
     // membership+support read; it records only who uploaded and how many
     // bytes, never what the picture was of.
-    // 21 -> 23 (ALP-588): booking.email.freshCopySent and the superseded
-    // exhausted-failure archive. Still a membership+support read; neither
+    // 21 -> 22 (ALP-588): booking.email.freshCopySent. The superseded
+    // exhausted-failure archive reuses the existing email.failure.reviewed
+    // writer, so adds no site. Still a membership+support read; neither
     // records a message body, token or link.
-    communication: 23,
+    communication: 22,
     // 14 -> 15 (#2627): `member.deletion_approval_claim_released`. Still a
     // membership+support read, like every other deletion-decision row beside it,
     // so this widens nobody's access.

@@ -1502,9 +1502,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // 412 -> 413 unpinned (#4618): the officer two-factor policy save, `security`.
     // RE-MEASURED with `pnpm run audit:census`.
     // 413 -> 415 unpinned (#4915): the two subject access writers, `privacy`.
-    // 415 -> 417 unpinned (ALP-588): a booking's fresh email copy and its superseded-failure archive, `communication`.
+    // 415 -> 416 unpinned (ALP-588): a booking's fresh email copy, `communication`; its superseded-failure archive reuses the Archive button's writer.
     // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 417 });
+    ).toEqual({ pinned: 130, unpinned: 416 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {
