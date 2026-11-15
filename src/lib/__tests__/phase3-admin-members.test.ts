@@ -136,11 +136,17 @@ const {
     skipped: 0,
   }),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mockIsXeroConnected,
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   syncManagedXeroContactGroupForMember: mockSyncManagedXeroContactGroupForMember,
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: mockUpdateXeroContact,
+}));
+vi.mock("@/lib/xero-entrance-fee-invoices", () => ({
   createXeroEntranceFeeInvoice: mockCreateXeroEntranceFeeInvoice,
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -2079,6 +2085,7 @@ describe("Phase 3: Admin Member Management", () => {
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           $executeRaw: vi.fn().mockResolvedValue(1),
           member: {
             create: vi.fn().mockResolvedValue({
@@ -2357,6 +2364,7 @@ describe("Phase 3: Admin Member Management", () => {
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           $executeRaw: vi.fn().mockResolvedValue(1),
           member: {
             updateMany,

@@ -990,6 +990,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-016` | Member journal grants and database guards forbid mutation |
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
+| `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
 
 ## Product Configuration
 
@@ -1031,6 +1032,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-005` | Who owns a booking is answered by `bookingOwner()` and nowhere else |
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
+| `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
 
 ## Authentication
 

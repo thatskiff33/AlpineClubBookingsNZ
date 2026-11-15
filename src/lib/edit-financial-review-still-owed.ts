@@ -13,7 +13,7 @@ import type { ClubTimeZone } from "@/lib/club-time";
 import { capturedShareOwedAfterCancellation } from "@/lib/edit-financial-review-cancel-netting";
 import { chooseEditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { MANUAL_REFUND_TASK_RESOLUTION_SELECT } from "@/lib/manual-refund-task-resolution-select";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { prisma } from "@/lib/prisma";
 
 /**

@@ -168,7 +168,7 @@ export type ParentLinkWithGroups = Omit<ParentLinkSummary, "parentLinkType"> & {
  * is a child, which is the same disclosure this issue exists to stop. No
  * member-facing client reads any of the three: the family page renders a parent
  * as name plus the notifications marker
- * (`src/app/(authenticated)/profile/family-group-section.tsx`), and the
+ * (`src/components/profile/family-group-section.tsx`), and the
  * onboarding wizard does not read parent links at all. So an out-of-group
  * parent yields exactly `id`, `firstName`, `lastName`, `parentLinkType` and
  * `inheritEmailFromId` — the last stays because the notifications marker is

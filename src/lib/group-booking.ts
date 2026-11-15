@@ -112,7 +112,7 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
-import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
+import { resolveRequestBookingHoldUntil } from "@/lib/booking-request-hold";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
