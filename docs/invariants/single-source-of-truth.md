@@ -345,29 +345,26 @@ are permanent: never renumbered, never reused.
   `INV-OPS` fact is the real risk, because the eleventh nobody tightened is the one
   that connects to something real. This change converged its own caller only.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 177 test files, seven test
+  `stripComments`, and since #3164 a lint rule enforces it.** Test files across the suite, seven test
   helpers and one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
-  twelve minutes later in CI. **Use it; do not write a second.** The figure was
-  published as 48 while the module's own docblock said 53 and the tree said 53,
-  which is this ID applied to its own entry: two statements of one fact, and
-  nothing comparing them. It was re-measured at #3180; at #3196 it was
-  INCREMENTED rather than measured — one added for the single file that lane
-  converged, on top of a figure that was itself one high; and #3191 then added
-  two importers of its own. **Something compares them now**:
-  `ssot-comment-stripper-guard.test.ts` counts the importers in the tree and
-  requires both this sentence and the module's own docblock to state that
-  number, so the next drift fails a test instead of waiting for a reviewer.
-- **Count that figure by IMPORT SPECIFIER, not by path text**, which is what the
-  pin does — the two statements of it can only agree if they are measured the
-  same way, which is this ID applied to itself again. The module is reached
+  twelve minutes later in CI. **Use it; do not write a second.** A count of
+  those test files used to be published here and in the module's docblock,
+  and it is this ID applied to its own entry: it drifted three times with
+  nothing comparing the two, and once a test compared them it turned `main`
+  red three times, because two branches that each added a test made the
+  identical edit and git merged them cleanly. **No count is published now
+  (#5199)**: `ssot-comment-stripper-guard.test.ts` names every non-test
+  importer, requires this sentence in both places, and fails if either states
+  a count again.
+- **The census finds importers by IMPORT SPECIFIER, not by path text.** The
+  module is reached
   through four spellings (`@/lib/__tests__/support/strip-comments`,
   `./support/strip-comments`, `./strip-comments`, and the CI script's relative
   path with its `.ts` extension), and two further files name that path as DATA
   rather than importing it: `eslint.config.mjs` inside the rule's own message
   and `ssot-comment-stripper-guard.test.ts` as the lint target it feeds ESLint.
   A grep for the path text counts both, and the module's own docblock as well.
-  **Measure it; never increment it.**
 - **A population measured by NAME is not the population**, and the count above
   is the evidence. #3132 converged the copies spelled `stripComments` and closed;
   seven more were alive that day under the name `withoutComments`, and #3164
@@ -624,3 +621,30 @@ all three. #4930.
   walked. A loop through a package, or through `require()`, is not seen. Test
   files get one text scan: none may name the facade in a quoted specifier, so
   a `vi.mock` of it cannot pass vacuously.
+
+## INV-SSOT-009
+
+A `MembershipSubscriptionCharge`'s family-dedup key and display name are built
+by `chargeFamilyAxisKey()` / `chargeAxisDisplayName()` in
+`src/lib/membership-charge-axis.ts`, nowhere else. `INV-MONEY-046`.
+
+- **Why one accessor.** The charge is billed on exactly one of two mutually
+  exclusive axes — `membershipTypeId` or `subscriptionCategoryId` — per the
+  `MembershipCharge_type_xor_category` CHECK. A raw template literal built off
+  only the type column (`` `${charge.membershipTypeId}:family:${id}` ``)
+  typechecks for a category charge too, since `membershipTypeId` is nullable,
+  but stringifies to the literal text `"null"` — collapsing every category
+  charge for a family onto one dedup key regardless of which category it
+  actually is, with no compiler error anywhere in the chain.
+- **A census keeps it one.** `membership-charge-axis-census.test.ts` reads
+  the billing engine, `subscription-charge-already-paid.ts`, the Xero invoice
+  builder and the billing panel from disk (via `stripComments`,
+  `INV-SSOT-004`). It fails the build on a hand-built family key or a raw
+  axis-column read with no fallback, and fixture tests prove each pattern
+  fires.
+- **The same accessor pair serves both the closed-family reversal engine
+  (#4110) and display.** Folding category charges into the existing
+  `billedFamilyTypes`/`resolveClosedFamilyDecision` machinery (rather than a
+  second, category-only decision path) depends on both axes producing keys in
+  the one shared format — the accessor is what makes that fold possible rather
+  than two parallel systems that can't see each other.

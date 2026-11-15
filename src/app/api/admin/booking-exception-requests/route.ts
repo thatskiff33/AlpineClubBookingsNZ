@@ -3,6 +3,9 @@ import { z } from "zod";
 
 import { requireAdmin } from "@/lib/session-guards";
 import { readUnifiedExceptionQueue } from "@/lib/booking-exception-request-service";
+import {
+  adminListPageQueryFields,
+} from "@/lib/admin-list-page";
 
 const querySchema = z.object({
   status: z
@@ -21,14 +24,13 @@ const querySchema = z.object({
     ])
     .optional()
     .default("REQUESTED"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 });
 
 /**
  * The unified Booking Officer queue: every policy-exception request, merged from
  * the new-booking table and the POLICY_EXCEPTION BookingChangeRequest rows into
- * one age-ordered `{ data, page, pageSize, total }` view. Same guard and
+ * one age-ordered `{ data, page, pageSize, total, totalPages }` view. Same guard and
  * envelope as the existing booking-change-request queue.
  */
 export async function GET(req: NextRequest) {
