@@ -1,6 +1,6 @@
 /**
  * Every officer queue that reads a row-capped admin route pages through it
- * (INV-OPS-017, #4960).
+ * (INV-OPS-019, #4960).
  *
  * #297 capped these routes at one page; the screens kept reading only the
  * first page with no total, so the oldest requests were silently out of
@@ -14,6 +14,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 import { stripComments } from "./support/strip-comments";
 
@@ -38,8 +40,17 @@ const CAPPED_QUEUE_ROUTES: Record<string, readonly string[]> = {
 
 /** Client files that read a capped queue route without listing its rows. */
 const NOT_A_QUEUE_LIST: Record<string, string> = {
-  "src/app/(admin)/admin/booking-requests/page.tsx":
+  "src/app/(admin)/admin/booking-desk/booking-requests/page.tsx":
     "reads `total` with pageSize=1 for the tab badges; the panels list the rows",
+};
+
+/**
+ * Queue lists that guard against a slower read themselves rather than through
+ * the hook's `beginLoad`, with how.
+ */
+const OWN_STALE_READ_GUARD: Record<string, string> = {
+  "src/components/admin/booking-requests/policy-exception-requests-panel.tsx":
+    "numbers each read (loadRequestIdRef) and checks the filter, for page changes too",
 };
 
 const SHARED_HOOK = "@/components/admin/use-admin-queue-page";
@@ -70,7 +81,7 @@ function isClientFile(source: string): boolean {
 /** The capped routes a file names as a fetch target (the collection, not a record). */
 function cappedRoutesRead(code: string): string[] {
   return Object.keys(CAPPED_QUEUE_ROUTES).filter((route) =>
-    new RegExp(`${route.replace(/[/-]/g, "\\$&")}(?=[?"'\`])`).test(code),
+    new RegExp(`${escapeRegExp(route)}(?=[?"'\`])`).test(code),
   );
 }
 
@@ -85,8 +96,15 @@ function queueReaders(): Map<string, string[]> {
   return readers;
 }
 
-/** What a queue list must do to reach every row; empty when it does. */
-function queuePagingGaps(code: string): string[] {
+/**
+ * What a queue list must do to reach every row; empty when it does. Besides
+ * paging and rendering the pager, a list must not let a slower read for a page
+ * or filter the officer has left replace the one now shown (it calls the hook's
+ * `beginLoad`, unless it is named in `OWN_STALE_READ_GUARD`), and must not
+ * unmount its pager while a read is in flight, which drops a keyboard user's
+ * focus to the page body on every page change.
+ */
+function queuePagingGaps(code: string, ownStaleReadGuard = false): string[] {
   const gaps: string[] = [];
   if (!code.includes(`"${SHARED_HOOK}"`) || !/\buseAdminQueuePage\s*\(/.test(code)) {
     gaps.push("pages through useAdminQueuePage");
@@ -94,10 +112,19 @@ function queuePagingGaps(code: string): string[] {
   if (!code.includes(`"${SHARED_PAGER}"`) || !/<Pagination\b/.test(code)) {
     gaps.push("renders the shared Pagination");
   }
+  // One `beginLoad()` call per hook, so a screen paging two queues guards both.
+  const hookCalls = (code.match(/\buseAdminQueuePage\s*\(/g) ?? []).length;
+  const guardCalls = (code.match(/\bbegin\w*Load\s*\(\s*\)/g) ?? []).length;
+  if (!ownStaleReadGuard && guardCalls < hookCalls) {
+    gaps.push("guards a list read with beginLoad");
+  }
+  if (/!\s*\w*[lL]oading\s*&&\s*[\w.]*[pP]agination\b/.test(code)) {
+    gaps.push("keeps the pager mounted through a read");
+  }
   return gaps;
 }
 
-describe("row-capped officer queues page through every row (INV-OPS-017)", () => {
+describe("row-capped officer queues page through every row (INV-OPS-019)", () => {
   const readers = queueReaders();
 
   it("finds a reader for every capped route, so an empty walk cannot pass", () => {
@@ -110,8 +137,8 @@ describe("row-capped officer queues page through every row (INV-OPS-017)", () =>
     expect(lists).toEqual([
       "src/app/(admin)/admin/deletion-requests/deletion-requests-client.tsx",
       "src/app/(admin)/admin/finance/refund-requests/page.tsx",
-      "src/app/(admin)/admin/member-applications/page.tsx",
-      "src/app/(admin)/admin/membership-cancellations/page.tsx",
+      "src/app/(admin)/admin/membership/member-applications/page.tsx",
+      "src/app/(admin)/admin/membership/membership-cancellations/page.tsx",
       "src/components/admin/booking-requests/booking-approvals-panel.tsx",
       "src/components/admin/booking-requests/booking-change-requests-panel.tsx",
       "src/components/admin/booking-requests/policy-exception-requests-panel.tsx",
@@ -124,9 +151,18 @@ describe("row-capped officer queues page through every row (INV-OPS-017)", () =>
       .filter((file) => !(file in NOT_A_QUEUE_LIST))
       .flatMap((file) => {
         const code = stripComments(readFileSync(path.join(ROOT, file), "utf8"));
-        return queuePagingGaps(code).map((gap) => `${file}: ${gap}`);
+        return queuePagingGaps(code, file in OWN_STALE_READ_GUARD).map((gap) => `${file}: ${gap}`);
       });
     expect(failures).toEqual([]);
+  });
+
+  it("each own-guard exemption is a queue list that really numbers its reads", () => {
+    for (const [file, how] of Object.entries(OWN_STALE_READ_GUARD)) {
+      expect(readers.has(file) && !(file in NOT_A_QUEUE_LIST), `${file} is not a queue list`).toBe(true);
+      const code = stripComments(readFileSync(path.join(ROOT, file), "utf8"));
+      expect(code, `${file} no longer numbers its reads; drop its exemption`).toMatch(/loadRequestIdRef/);
+      expect(how.trim().length).toBeGreaterThan(0);
+    }
   });
 
   it("each exemption still reads a capped route and gives a reason", () => {
@@ -161,6 +197,22 @@ describe("row-capped officer queues page through every row (INV-OPS-017)", () =>
     expect(queuePagingGaps(panel.replace(/\buseAdminQueuePage\s*\(/g, "useState("))).toEqual([
       "pages through useAdminQueuePage",
     ]);
+  });
+
+  it("the gap check fails a list that lets a stale read land or unmounts its pager (mutation canary)", () => {
+    const panel = stripComments(
+      readFileSync(
+        path.join(SRC, "components/admin/booking-requests/booking-approvals-panel.tsx"),
+        "utf8",
+      ),
+    );
+    expect(queuePagingGaps(panel)).toEqual([]);
+    expect(queuePagingGaps(panel.replace(/\bbeginLoad\s*\(/g, "begunLoad("))).toEqual([
+      "guards a list read with beginLoad",
+    ]);
+    expect(
+      queuePagingGaps(panel.replace("{queuePage.pagination ? (", "{!loading && queuePage.pagination ? (")),
+    ).toEqual(["keeps the pager mounted through a read"]);
   });
 });
 

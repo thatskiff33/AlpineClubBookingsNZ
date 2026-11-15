@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
   const { status, page, pageSize, requestId } = parsed.data;
   const statusWhere = buildBookingRequestListWhere(status);
   const where = requestId ? { ...statusWhere, id: requestId } : statusWhere;
-  // The officer queue reads oldest first (INV-OPS-017).
+  // The officer queue reads oldest first (INV-OPS-019).
   const direction = adminQueueCreatedOrder(status === "QUEUE");
 
   const [requests, total] = await Promise.all([

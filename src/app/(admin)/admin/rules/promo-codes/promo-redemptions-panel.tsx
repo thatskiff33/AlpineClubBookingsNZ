@@ -33,6 +33,7 @@ import { formatCents } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { buildPromoRedemptionsCsvContent } from "@/lib/promo-redemptions-csv";
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
+import { adminHref } from "@/lib/admin-hubs";
 import { adminListPage, formatAdminListRange } from "@/lib/admin-list-page";
 
 /**
@@ -678,7 +679,7 @@ export function PromoRedemptionsPanel({
                       <TableCell>
                         {row.member.id ? (
                           <Link
-                            href={`/admin/members/${row.member.id}`}
+                            href={`${adminHref("member-detail", { id: row.member.id })}`}
                             className="hover:underline"
                           >
                             <div className="font-medium text-primary">

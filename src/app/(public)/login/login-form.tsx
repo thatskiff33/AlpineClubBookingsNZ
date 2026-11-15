@@ -15,7 +15,7 @@ import {
   appendFamilyInviteReturnParam,
   buildFamilyInviteLoginPath,
 } from "@/lib/family-invite-return-address";
-import { LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
+import { ADDRESS_THROTTLED_CODE, ADDRESS_THROTTLED_MESSAGE, LOGIN_THROTTLED_CODE } from "@/lib/login-throttle-policy";
 import { MagicLinkRequestForm } from "./magic-link-request-form";
 
 // The login query params (verified / verifyError / emailChanged / callbackUrl)
@@ -29,6 +29,8 @@ import { MagicLinkRequestForm } from "./magic-link-request-form";
 // signIn callback (#2035). Unlisted values fall through to the generic branch.
 function oauthErrorMessage(error: string): string {
   switch (error) {
+    case ADDRESS_THROTTLED_CODE:
+      return ADDRESS_THROTTLED_MESSAGE;
     case "google_unlinked":
       return "That Google account isn't linked to a member here. Sign in with your password first, then connect Google from your profile.";
     case "google_password_change":
@@ -183,6 +185,8 @@ export function LoginForm({
         // NextAuth v5 sets result.code from CredentialsSignin subclass code
         if (result.code === "EMAIL_NOT_VERIFIED" || result.error === "EMAIL_NOT_VERIFIED") {
           setEmailNotVerified(true);
+        } else if (result.code === ADDRESS_THROTTLED_CODE) {
+          setError(ADDRESS_THROTTLED_MESSAGE);
         } else if (result.code === LOGIN_THROTTLED_CODE) {
           // #4609: the same words for every account, real or not.
           setError(

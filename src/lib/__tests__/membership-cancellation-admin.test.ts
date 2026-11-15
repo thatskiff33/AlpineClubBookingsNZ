@@ -1460,7 +1460,7 @@ describe("membership cancellation admin review", () => {
       ]);
     }
 
-    it("reads the pending queue oldest first and ALL newest first (INV-OPS-017)", async () => {
+    it("reads the pending queue oldest first and ALL newest first (INV-OPS-019)", async () => {
       seedQueue(adminRequest());
 
       const pending = await getAdminMembershipCancellationRequests({

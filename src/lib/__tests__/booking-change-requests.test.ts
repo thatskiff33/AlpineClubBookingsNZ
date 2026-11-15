@@ -408,7 +408,7 @@ describe("booking change requests", () => {
         // #2524: the legacy locked-period queue now also filters kind, so
         // POLICY_EXCEPTION rows (decided via #2525) never appear here.
         where: { kind: "LOCKED_PERIOD", status: "REQUESTED" },
-        // INV-OPS-017: the pending queue reads oldest first.
+        // INV-OPS-019: the pending queue reads oldest first.
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         take: 25,
       })
@@ -416,7 +416,7 @@ describe("booking change requests", () => {
     expect(body).toMatchObject({ page: 1, pageSize: 25, totalPages: 1 });
   });
 
-  it("reads one focused request inside the locked-period scope, newest first on ALL (INV-OPS-017)", async () => {
+  it("reads one focused request inside the locked-period scope, newest first on ALL (INV-OPS-019)", async () => {
     mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mocks.bookingChangeRequestFindMany.mockResolvedValue([]);
     mocks.bookingChangeRequestCount.mockResolvedValue(0);

@@ -24,7 +24,7 @@ function readNumber(value: unknown): number | null {
 }
 
 /**
- * Client paging for a row-capped officer queue (INV-OPS-017, #4960).
+ * Client paging for a row-capped officer queue (INV-OPS-019, #4960).
  *
  * The page belongs to one filter: when `filterKey` changes the effective page
  * is 1 straight away, so the list's fetch effect runs once with the reset page
@@ -33,8 +33,13 @@ function readNumber(value: unknown): number | null {
  * `receive` records the total from the route's `adminListPage` keys and steps
  * back a page when a decision emptied the last one. `beginLoad` marks a list
  * read and answers whether it is still the newest, so a slower response for a
- * page or filter the officer has left never replaces the one now shown. `pagination` is the props for the shared `Pagination`, with
- * the total line shown even on a single page.
+ * page or filter the officer has left never replaces the one now shown: every
+ * screen that pages through this hook, bar the policy exceptions panel (which
+ * guards its own reads by request id), calls it at the top of its list read and
+ * checks it before each state write, error and loading end. `pagination` is the
+ * props for the shared `Pagination`, with the total line shown even on a single
+ * page. A screen renders it outside its loading branch, so the pager is the
+ * same element, with focus, through a page change.
  */
 export function useAdminQueuePage({
   filterKey,
@@ -122,7 +127,7 @@ export function useAdminQueuePage({
 
 /**
  * Read one deep-linked record from its queue route when it is not on the page
- * the list loaded, so the panel can pin it above the page (INV-OPS-017). Reads
+ * the list loaded, so the panel can pin it above the page (INV-OPS-019). Reads
  * across every status so a link still lands whatever filter is showing.
  * Answers null when there is no deep link, the record is already on the page,
  * it is gone, or the read fails; the list itself is unaffected.

@@ -149,7 +149,7 @@ describe("admin dataset reset state", () => {
     },
   )
 
-  it("keeps a later queue page in the URL and drops page 1 (INV-OPS-017)", () => {
+  it("keeps a later queue page in the URL and drops page 1 (INV-OPS-019)", () => {
     const build = (page: number) =>
       buildBookingRequestDatasetPath({
         basePath: "/admin/booking-requests",

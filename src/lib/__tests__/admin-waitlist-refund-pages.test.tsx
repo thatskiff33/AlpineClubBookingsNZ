@@ -4,7 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import AdminWaitlistPage from "@/app/(admin)/admin/waitlist/page";
+import AdminWaitlistPage from "@/app/(admin)/admin/booking-desk/waitlist/page";
 import RefundRequestsPage from "@/app/(admin)/admin/finance/refund-requests/page";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { refundAppealCeilingParts } from "@/lib/manual-refund-task-settlement-rules";
@@ -1192,11 +1192,73 @@ describe("an approved appeal whose card refund is still partly owed (#4117)", ()
 
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(toast));
   });
+
+  // #4966: the email-choice dialog is the last step before the money moves.
+  describe("the approve dialog", () => {
+    const refundPuts = () =>
+      fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PUT");
+
+    async function openApproveDialog(amount: string) {
+      render(<RefundRequestsPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /Refund Amount/i }), {
+        target: { value: amount },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Approve & Refund" }));
+      return screen.findByRole("dialog");
+    }
+
+    it("repeats the amount typed, as money, and refunds exactly that many cents", async () => {
+      mocks.currentSearch = "";
+      serve("PENDING", [appeal({})], {
+        ...appeal({ status: "APPROVED", approvedAmountCents: 1250 }),
+        cardRefundOwedCents: 0,
+        cardRefundQueued: true,
+      });
+
+      const dialog = await openApproveDialog("12.5");
+
+      expect(within(dialog).getByTestId("refund-appeal-confirm-amount")).toHaveTextContent(
+        "Refund amount: $12.50",
+      );
+      fireEvent.click(within(dialog).getByRole("button", { name: "Approve without emailing" }));
+
+      await waitFor(() => expect(refundPuts()).toHaveLength(1));
+      const body = JSON.parse(String((refundPuts()[0]![1] as RequestInit).body));
+      expect(body.approvedAmountCents).toBe(1250);
+      expect(body.notifyMember).toBe(false);
+    });
+
+    it("Go back closes it with no request and keeps the typed amount", async () => {
+      mocks.currentSearch = "";
+      serve("PENDING", [appeal({})]);
+
+      const dialog = await openApproveDialog("50.00");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Go back" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(refundPuts()).toHaveLength(0);
+      expect(
+        (screen.getByRole("textbox", { name: /Refund Amount/i }) as HTMLInputElement).value,
+      ).toBe("50.00");
+    });
+
+    it("shows no amount when rejecting", async () => {
+      mocks.currentSearch = "";
+      serve("PENDING", [appeal({})]);
+
+      render(<RefundRequestsPage />);
+      fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+      fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).queryByTestId("refund-appeal-confirm-amount")).toBeNull();
+    });
+  });
 });
 
-
 /*
-  #4960 / INV-OPS-017: refund appeals are capped at 25 a page by their route.
+  #4960 / INV-OPS-019: refund appeals are capped at 25 a page by their route.
   The list asks for a page, shows the total, keeps the page in the URL, and
   goes back to page 1 when the filter changes. Credit approvals stay unbounded.
 */
@@ -1292,5 +1354,69 @@ describe("refund appeal paging (#4960)", () => {
     render(<RefundRequestsPage />);
     expect(await screen.findByText("Showing 26–40 of 40")).toBeInTheDocument();
     expect(refundUrls[0].searchParams.get("page")).toBe("2");
+  });
+
+  /*
+    The page-2 read is held while the officer goes back to page 1. Its late
+    answer must not put page 2's rows under page 1's pager or end the loading
+    state of the read now shown, and the pager is the same focused button
+    through the load (INV-OPS-019).
+  */
+  function serveSlowSecondPage(outcome: "rows" | "failure") {
+    const slow: { release?: () => void } = {};
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.pathname === "/api/admin/credit-approvals") {
+        return { ok: true, json: async () => [] };
+      }
+      const page = Number(url.searchParams.get("page"));
+      if (page === 2) {
+        await new Promise<void>((resolve) => {
+          slow.release = resolve;
+        });
+        if (outcome === "failure") return { ok: false, json: async () => ({}) };
+      }
+      const row = { ...appeal, id: `refund-${page}`, member: { ...appeal.member, firstName: `Page${page}` } };
+      return { ok: true, json: async () => ({ data: [row], page, pageSize: 25, total: 100, totalPages: 4 }) };
+    });
+    return slow;
+  }
+
+  it("keeps the pager focused through a load and ignores a slower read for a page left", async () => {
+    const slow = serveSlowSecondPage("rows");
+    render(<RefundRequestsPage />);
+    expect(await screen.findByText("Showing 1–25 of 100")).toBeInTheDocument();
+
+    const next = screen.getByRole("button", { name: "Next page" });
+    next.focus();
+    fireEvent.click(next);
+    await waitFor(() => expect(slow.release).toBeDefined());
+    expect(screen.getByRole("button", { name: "Next page" })).toBe(next);
+    expect(document.activeElement).toBe(next);
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText(/Page1 Doe/)).toBeInTheDocument();
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText(/Page2 Doe/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Page1 Doe/)).toBeInTheDocument();
+    expect(screen.getByText("Showing 1–25 of 100")).toBeInTheDocument();
+  });
+
+  it("never lets a slower failed read for a page left show its error", async () => {
+    const slow = serveSlowSecondPage("failure");
+    render(<RefundRequestsPage />);
+    await screen.findByText("Showing 1–25 of 100");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(slow.release).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText(/Page1 Doe/)).toBeInTheDocument();
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Failed to load review queue")).not.toBeInTheDocument();
+    expect(screen.getByText(/Page1 Doe/)).toBeInTheDocument();
   });
 });

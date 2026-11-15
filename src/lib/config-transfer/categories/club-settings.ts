@@ -1,3 +1,4 @@
+import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_REFUSAL } from "@/lib/privacy-hosting";
 import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
 
@@ -578,6 +579,27 @@ export const SINGLETONS: SingletonSpec[] = [
     defaults: () => ({}),
   },
   {
+    entity: "privacy-hosting-settings",
+    delegate: "privacyHostingSettings",
+    fields: ["hostingProvider", "dataLocation"],
+    defaults: () => ({ ...PRIVACY_HOSTING_DEFAULTS }),
+    // Each field is checked and normalised by its own admin-route schema.
+    constraints: Object.fromEntries(Object.entries(privacyHostingSchema.shape).map(([field, schema]) => [field, {
+      validate: (value: unknown) => schema.safeParse(value).success ? null : PRIVACY_HOSTING_TEXT_REFUSAL,
+    }])),
+    // Trim and blank-to-null like the admin save; a value that fails is left as
+    // found so the constraint above refuses it.
+    reconcile: incoming => {
+      const normalized = { ...incoming };
+      for (const [field, schema] of Object.entries(privacyHostingSchema.shape)) {
+        if (!(field in incoming)) continue;
+        const parsed = schema.safeParse(incoming[field]);
+        if (parsed.success) normalized[field] = parsed.data;
+      }
+      return normalized;
+    },
+  },
+  {
     entity: "email-message-setting",
     delegate: "emailMessageSetting",
     // lodgeName / lodgeTravelNote / doorCode were all dropped upstream (fork
@@ -781,6 +803,17 @@ export const SINGLETONS: SingletonSpec[] = [
       magicLinkTtlMinutes: { required: true },
       breachedPasswordCheck: { required: true },
       sessionMaxAgeHours: { required: true },
+    },
+    // #4618: the officer two-factor rule does not travel. Turning it off or
+    // lengthening grace weakens who must prove themselves, so it changes only on
+    // its own Full Admin card, with its own audit row, never inside an import.
+    excluded: {
+      officerTwoFactorPolicy:
+        "officer two-factor switch (INV-AUTH-012); a Full Admin changes it on " +
+        "Login & Security only, so an import cannot turn the requirement off",
+      officerTwoFactorGraceDays:
+        "officer two-factor grace length (INV-AUTH-012); changed beside the " +
+        "switch on Login & Security only, never by an import",
     },
     defaults: () => ({ ...DEFAULT_LOGIN_SECURITY_POLICY }),
   },

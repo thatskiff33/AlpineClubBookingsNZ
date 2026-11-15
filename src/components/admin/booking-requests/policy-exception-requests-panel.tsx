@@ -4,6 +4,7 @@ import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { adminHref } from "@/lib/admin-hubs";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -190,7 +191,7 @@ export interface PolicyExceptionRequestsPanelProps {
 }
 
 export function PolicyExceptionRequestsPanel({
-  basePath = "/admin/booking-requests?tab=exceptions",
+  basePath = `${adminHref("booking-requests")}?tab=exceptions`,
   showHeading = false,
   canEdit = true,
 }: PolicyExceptionRequestsPanelProps) {
@@ -204,7 +205,7 @@ export function PolicyExceptionRequestsPanel({
   const [items, setItems] = useState<QueueItem[]>([]);
   const [filter, setFilter] = useState<StatusFilter>("REQUESTED");
   const [loadedFilter, setLoadedFilter] = useState<StatusFilter | null>(null);
-  // INV-OPS-017: the shared pager replaces the old fixed 100-row read. Like the
+  // INV-OPS-019: the shared pager replaces the old fixed 100-row read. Like the
   // status filter, the page lives in this panel's state, not the URL.
   const queuePage = useAdminQueuePage({ filterKey: filter });
   const { page, receive } = queuePage;
@@ -789,7 +790,7 @@ export function PolicyExceptionRequestsPanel({
                       {item.requestedBy ? (
                         <Link
                           href={buildHrefWithReturnTo(
-                            `/admin/members/${item.requestedBy.id}`,
+                            `${adminHref("member-detail", { id: item.requestedBy.id })}`,
                             basePath,
                           )}
                           className="text-info-11 hover:underline"
@@ -1017,7 +1018,7 @@ export function PolicyExceptionRequestsPanel({
             })}
           </div>
         )}
-        {!loading && !loadFailed && loadedFilter === filter && queuePage.pagination ? (
+        {!loadFailed && loadedFilter === filter && queuePage.pagination ? (
           <Pagination {...queuePage.pagination} aria-label="Policy exception request pages" />
         ) : null}
       </div>

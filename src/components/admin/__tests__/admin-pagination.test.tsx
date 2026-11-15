@@ -159,3 +159,46 @@ describe("Pagination — empty states", () => {
     expect(container.firstChild).toBeNull();
   });
 });
+
+describe("Pagination — summary on a single page (INV-OPS-019)", () => {
+  it("shows the summary line alone, as text and not as a navigation landmark", () => {
+    render(
+      <Pagination
+        page={1}
+        totalPages={1}
+        onPageChange={vi.fn()}
+        summary="Showing 1–3 of 3"
+        showSummaryOnSinglePage
+        aria-label="Application pages"
+      />,
+    );
+    expect(screen.getByText("Showing 1–3 of 3")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("announces a changed summary politely, only where the summary is asked for on a single page", () => {
+    const { rerender } = render(
+      <Pagination page={1} totalPages={3} onPageChange={vi.fn()} summary="Showing 1–25 of 60" showSummaryOnSinglePage />,
+    );
+    expect(screen.getByText("Showing 1–25 of 60")).toHaveAttribute("aria-live", "polite");
+
+    rerender(<Pagination page={1} totalPages={3} onPageChange={vi.fn()} summary="Page 1 of 3" />);
+    expect(screen.getByText("Page 1 of 3")).not.toHaveAttribute("aria-live");
+  });
+
+  it("is still the labelled navigation landmark once there is more than one page", () => {
+    render(
+      <Pagination
+        page={1}
+        totalPages={2}
+        onPageChange={vi.fn()}
+        summary="Showing 1–25 of 40"
+        showSummaryOnSinglePage
+        aria-label="Application pages"
+      />,
+    );
+    expect(screen.getByRole("navigation", { name: "Application pages" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeInTheDocument();
+  });
+});

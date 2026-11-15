@@ -30,7 +30,7 @@ counts waiting policy exceptions alongside the other queues.
 
 Every tab's list shows 25 requests a page, with a total line such as "Showing
 1–25 of 40" under it (shown even when everything fits on one page) and
-**Previous** / **Next** buttons when there is more. On **Approvals**,
+previous and next arrows with page numbers when there is more. On **Approvals**,
 **Changes**, **Public Requests** and **Policy Exceptions** the waiting filter
 lists the oldest request first, so the one that has waited longest is at the top; decided and **All**
 filters list the newest first, and **All** on Approvals keeps every pending

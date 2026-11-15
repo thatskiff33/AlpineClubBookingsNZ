@@ -1,7 +1,7 @@
 // Member-facing labels for membership cancellation participant and request
 // statuses. Admin views use their own copy with operator-oriented wording
 // (e.g. "Ready for review" instead of "Included"); see
-// src/app/(admin)/admin/membership-cancellations/page.tsx.
+// src/app/(admin)/admin/membership/membership-cancellations/page.tsx.
 
 export function participantStatusLabel(status: string): string {
   switch (status) {

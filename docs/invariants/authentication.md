@@ -84,8 +84,9 @@ This file holds only the rules.
   budget** (#4640). Change-password uses the authenticated member's stored
   email after session validation; a refused claim answers HTTP 429 with
   `LOGIN_THROTTLED` without comparing the password. Emailed sign-in links, Google, two-factor code
-  entry and lodge PIN sign-in are unaffected, and the per-address limiter is
-  unchanged.
+  entry and lodge PIN sign-in are unaffected by this per-account count.
+  Emailed sign-in links and Google share the Auth.js address limit
+  (`INV-AUTH-011`); two-factor code entry and lodge PIN sign-in have their own.
 - **A store failure never becomes a sign-in outage.** The claim falls back to a
   bounded per-process count at the budget divided as the auth-sensitive
   limiters divide theirs (#1142).
@@ -212,9 +213,8 @@ This file holds only the rules.
   is stored, or the session already says enrolled.
 - **An officer's second factor is an authenticator app or a passkey.**
   `satisfiesOfficerSecondFactor` is true for a stored passkey, or for the flag
-  on with method `TOTP`. Email never qualifies. Nothing enforces that rule yet
-  (#4618). Removing the last such factor calls `assertLastFactorRemovable`,
-  which allows the removal until that issue replaces it.
+  on with method `TOTP`. Email never qualifies. Who must enrol, and the refusal
+  to remove their last such factor, are `INV-AUTH-012`.
 - **The relying party comes from `NEXTAUTH_URL`.** The id is its hostname and
   the expected origin is its origin. A missing or unparseable URL throws. No
   host is hardcoded (`INV-CONFIG-001`).
@@ -240,3 +240,49 @@ This file holds only the rules.
   #4620 sets it true. While it is false the check does not read the session.
   While it is true a missing stamp fails closed. Refreshing a Xero token
   (`saveXeroTokens`) is not a listed operation. Typed confirmations stay.
+
+## INV-AUTH-011
+
+- **The Auth.js per-address sign-in limiter exempts only exact `signout` and
+  `session` POST actions.** Neither action consumes its counter or is refused
+  by it. Match the full parsed path after `/api/auth/`, never a query, header or
+  body field. Credential callbacks, magic-link callbacks, provider sign-in
+  starts and unknown POST actions count by default. GETs remain uncounted.
+- **The budget is `rateLimiters.login` in `rate-limit.ts`: 30 per 15 minutes.**
+  Keep counter id `login`, the shared store and its reduced per-process
+  fallback. The per-account password throttle remains a separate control.
+- **A refusal is a wait, never a bad-password or invalid-link claim.** Return
+  HTTP 429 with the standard retry/rate-limit headers and a next-auth-readable
+  `url`, carrying `ADDRESS_THROTTLED` as both error and code. The code and
+  message live in `login-throttle-policy.ts` (`INV-SSOT`), distinct from
+  `LOGIN_THROTTLED`. The message is identical for every account. A refused
+  magic-link attempt never reaches token consumption and offers a deliberate
+  retry with the token retained only in memory after URL scrubbing.
+
+## INV-AUTH-012
+
+- **The officer requirement is recomputed on every session refresh.**
+  `isOfficerTwoFactorRequired` is the only "must enrol" check. It is true only
+  when `OFFICER_SIGN_IN_ENFORCED` is on, the club policy is on, the member is not the
+  lodge kiosk, they can still sign in, and they are a Full Admin or hold a role
+  that requires it. Full Admin stays required whatever a role definition says.
+  Not required drops only that role. `twoFactorRequired` stays the club-wide
+  module and is not this rule.
+- **Only an authenticator app or a passkey satisfies it.** That check is
+  `satisfiesOfficerSecondFactor` (`INV-AUTH-009`). An emailed code does not.
+- **Grace starts once, on first exposure, and a reset does not start another.**
+  Resetting a required officer closes their grace. A member reset before the
+  rule reached them still gets their first grace period. The deadline is a
+  club civil date (`INV-DATE`). After it, only the enrolment pages, the
+  profile security card, and sign-out stay open. While the release
+  constant is off, nobody is required and nothing is stamped. #4620 is the edit
+  that turns the constant on.
+- **A required officer's app or passkey is owed at a password sign-in.** That
+  password does not write the recent-proof stamp (`INV-AUTH-008`).
+- **A required officer cannot remove their last satisfying factor.**
+  `assertLastFactorRemovable` refuses that delete. A member the rule does not
+  require can still remove a passkey.
+- **A lost factor has a way back.** Any other Full Admin may reset it after
+  their own step-up, never themselves. The officer is emailed and their
+  sessions end. The operator command is the way back when that Full Admin is
+  the only one.

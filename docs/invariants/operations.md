@@ -24,7 +24,7 @@ the meaning of a stored value (an audit `category`, a status string) so that the
 rows already written no longer match the code, deploying to production,
 choosing credentials or data for CI and local validation, mocking a money
 seam in a test that asserts money, or capping the rows an admin list route
-returns (`INV-OPS-017`).
+returns (`INV-OPS-019`).
 
 A Prisma `startsWith` is SQL `LIKE` too, and Prisma does not escape it: a
 prefix carrying an id or typed text goes through `exactPrefix`
@@ -239,6 +239,20 @@ rules first written here. #2765 extended it with the measured-audience half.
   inside a client-taking helper to pass that client on - so a new
   in-transaction call site is a CI failure rather than the next audit's finding.
 
+## INV-LOCK-005
+
+- **Advisory-lock transactions use READ COMMITTED (#4920).** Do not set
+  `Serializable` or `RepeatableRead` on a transaction that takes an advisory
+  lock, directly or through a helper. Lock, re-read, claim depends on each
+  statement seeing commits made while the transaction waited. Snapshot isolation
+  fixes the view at the first statement, so a post-lock read can miss a newly
+  committed credit, refund or family link. Serializable checks do not rescue
+  readers racing READ COMMITTED writers in other tables.
+- Keep blocker reads after every applicable lock and retain status-guarded claims.
+  The source census `advisory-lock-isolation-census.test.ts` derives lock helpers
+  from the shared advisory-lock inventory matcher; its explicit exception list
+  is empty. Transactions without advisory locks are outside this restriction.
+
 ## INV-OPS-014
 
 - **The statement handed to a raw `Unsafe` call is visibly static at the call
@@ -442,33 +456,33 @@ rules first written here. #2765 extended it with the measured-audience half.
   the CLI census's 38 roots reach `server-only`, and every published way of
   running each of them carries the condition.
 
-## INV-OPS-017
+## INV-OPS-019
 
 - **A row-capped admin list shows its total and reaches every row (#4960).**
   When an admin route answers one page of a list, every screen that reads it
   for that list shows the total ("Showing 1–25 of 40", even on a single page)
   and a pager that reaches the last row, in the same change that adds the cap.
-  A cap with no pager is silent data loss: #297 capped the officer queues at 25
-  rows and the screens kept showing only the newest 25, so the requests that
-  had waited longest were the ones hidden.
+  A cap with no pager is silent data loss: #297 hid the longest-waiting requests.
 - One shape, one pager. A capped route parses `adminListPageQueryFields` and
-  answers through `adminListPage`, both in `src/lib/admin-list-page.ts`
-  (`total`, `page`, `pageSize`, `totalPages`, beside its old keys); a screen
-  pages through `useAdminQueuePage` and renders the shared `Pagination` with
-  `formatAdminListRange` as its summary. A filter
-  change returns to page 1, a page left empty by a decision steps back one, and
-  the page is kept in the URL wherever the screen keeps its filter there.
+  answers through `adminListPage`, both in `src/lib/admin-list-page.ts`; a
+  screen pages through `useAdminQueuePage` and renders the shared `Pagination` with
+  `formatAdminListRange` as its summary. A filter change returns to page 1, a
+  page left empty by a decision steps back one, and the page is kept in the URL
+  wherever the screen keeps its filter there. A slower read for a page or
+  filter the officer has left never replaces the list now shown, and the pager
+  stays mounted through a read so keyboard focus survives a page change.
 - A work queue's pending filter reads oldest first (`adminQueueCreatedOrder`).
-  A focused deep link (`bookingId=`, `requestId=`) whose record is off the
-  current page shows it pinned above the list (`fetchOffPageQueueRecord`,
-  `PinnedQueueRecordNote`).
+  A deep link (`bookingId=`, `requestId=`) whose record is off the current page
+  shows it pinned above the list (`fetchOffPageQueueRecord`). The
+  policy-exception queue merges two tables, so it counts each and reads each
+  only to the end of the page asked for: its total is exact.
 - Enforced by `src/lib/__tests__/admin-queue-pagination-census.test.ts`, which
   names this ID: every client file fetching a route in `CAPPED_QUEUE_ROUTES`
-  must import the hook and render `Pagination`, or be exempt in
-  `NOT_A_QUEUE_LIST` with its reason, and each route must call
-  `adminListPage`. It reads source text, so a new capped route is covered only
-  once it is added to that map. Every other admin list must take its range
-  text from `formatAdminListRange`, read its URL page through
+  must page through the hook, guard its reads with `beginLoad`, and render
+  `Pagination` outside its loading branch, or be exempt in `NOT_A_QUEUE_LIST`;
+  each route must call `adminListPage`. It reads source text, so a new capped
+  route is covered once added to that map. Every other admin list must take its
+  range text from `formatAdminListRange`, read its URL page through
   `parseAdminListPageParam` and write it through `setAdminListPageParam`.
 
 ## INV-OPS-002
@@ -543,7 +557,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
   A GENERAL "did a reclassification ship without a backfill" check is
-  **not available**: the audit-writer census pins only 130 of its 538 write sites
+  **not available**: the audit-writer census pins only 130 of its 542 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
@@ -772,3 +786,33 @@ grant check is not applicable; the check that no grantee but the owner, PUBLIC
 included, holds a right that changes a row always runs. It does not prove
 historical parity, writer-cohort coverage or accounting policy; those activate
 in later milestones.
+
+## INV-OPS-017
+
+Third-party container images run by deployment scripts or workflows carry a
+full `@sha256:` digest. A floating tag alone is insufficient. First-party
+images built locally or tagged by commit SHA are explicit exceptions.
+
+`scripts/ci/check-image-pins.mjs` enforces workflow service and job containers,
+image environment values, and Docker runs in workflows, the production deploy,
+the backup drill and CI shell scripts. Unsupported checked shapes fail closed.
+Variable references are checked at their definitions; computed sources must be
+explicitly recognised. The deploy's Caddy helpers read the Compose service image
+and refuse an unresolved or unpinned reference. CI PostgreSQL copies are tied
+to Compose by `deployment-image-contracts.test.ts`.
+
+Workflow and shell image digests need manual refresh where Dependabot cannot
+update them; see [the refresh procedure](../MAINTENANCE.md#refreshing-container-image-digests).
+
+## INV-OPS-018
+
+First Bootstrap sets `DATA_ENCRYPTION_KEYS` before the app first starts. It runs
+the first migrations as the operator, provisions least-privilege database roles,
+then sets the application user, migration user and audit-retention URL together
+before starting web slots and the cron leader. No credential is saved before
+these steps. Existing deployments retain their compatibility defaults and use
+the separate switch-over and key-rollout runbooks in
+[`DEPLOYMENT.md`](../../DEPLOYMENT.md#first-bootstrap). The database-role readiness
+check reads server privileges, including superuser membership and a superuser
+login narrowed by `SET ROLE`, and only warns; it never blocks an existing
+installation.

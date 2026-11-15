@@ -622,7 +622,7 @@ export async function getAdminMembershipCancellationRequests({
       : {
           status,
         };
-  // The pending queue reads oldest first (INV-OPS-017).
+  // The pending queue reads oldest first (INV-OPS-019).
   const direction = adminQueueCreatedOrder(status === MembershipCancellationRequestStatus.REQUESTED);
 
   const [requests, total, pendingCount] = await Promise.all([

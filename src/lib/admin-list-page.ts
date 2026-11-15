@@ -1,5 +1,5 @@
 /**
- * The one shape and wording for a row-capped admin list (INV-OPS-017, #4960).
+ * The one shape and wording for a row-capped admin list (INV-OPS-019, #4960).
  *
  * Every officer queue route caps a read at `pageSize` rows (25 by default,
  * 100 at most). The route spreads `adminListPage(...)` into its JSON so each
