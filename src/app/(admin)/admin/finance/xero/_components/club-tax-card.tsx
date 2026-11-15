@@ -1,14 +1,10 @@
 "use client"
 
-import { useEffect, useId, useState } from "react"
+import { useEffect, useState } from "react"
 
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   AdminForbiddenSaveNotice,
   AdminViewOnlySectionBanner,
@@ -19,6 +15,14 @@ import {
   useFullAdminEditAccess,
 } from "@/hooks/use-admin-area-edit-access"
 import { formatBasisPoints, usableXeroTaxRates, type XeroTaxRateOption } from "@/lib/xero-tax-rate-options"
+
+import {
+  ClubTaxCardHeader,
+  ClubTaxCardLoading,
+  ClubTaxChangeAcknowledgement,
+  ClubTaxEffectiveDateField,
+  ClubTaxTreatmentFields,
+} from "./club-tax-card-fields"
 
 /**
  * The "GST / tax treatment" card on the Xero page (#4632; `INV-CONFIG-007`),
@@ -95,12 +99,6 @@ export function ClubTaxCard() {
   const [forbiddenSave, setForbiddenSave] = useState(false)
   const { confirm, confirmDialog } = useConfirm()
 
-  const registeredId = useId()
-  const rateId = useId()
-  const codeId = useId()
-  const dateId = useId()
-  const acknowledgeId = useId()
-
   // Tri-state: `undefined` while the session resolves keeps the buttons disabled.
   const canEdit = useFullAdminEditAccess()
 
@@ -150,37 +148,14 @@ export function ClubTaxCard() {
     }
   }, [editing, validDate, effectiveFrom])
 
-  const header = (
-    <CardHeader>
-      <CardTitle>GST / tax treatment</CardTitle>
-      <CardDescription>
-        How the club&apos;s prices are taxed on Xero documents and in the member-money journal. Prices
-        members pay never change; only how much of each price is GST does.
-      </CardDescription>
-    </CardHeader>
-  )
-
   if (loadFailed || !state) {
     return (
-      <div>
-        {viewOnlyBanner}
-        <Card className="mb-6">
-          {header}
-          <CardContent className="space-y-3">
-            {loadFailed ? (
-              <>
-                <p className="text-sm text-danger">Could not load the club&apos;s tax treatment.</p>
-                <Button variant="outline" onClick={load}>
-                  Retry
-                </Button>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">Loading the club&apos;s tax treatment…</p>
-            )}
-          </CardContent>
-        </Card>
-        {confirmDialog}
-      </div>
+      <ClubTaxCardLoading
+        viewOnlyBanner={viewOnlyBanner}
+        confirmDialog={confirmDialog}
+        loadFailed={loadFailed}
+        onRetry={load}
+      />
     )
   }
 
@@ -272,7 +247,7 @@ export function ClubTaxCard() {
     <div>
       {viewOnlyBanner}
       <Card className="mb-6" data-testid="club-tax-card">
-        {header}
+        <ClubTaxCardHeader />
         <CardContent className="space-y-6">
           <ul className="space-y-2" aria-label="Tax treatment periods">
             {state.periods.map((period) => (
@@ -328,95 +303,30 @@ export function ClubTaxCard() {
             </>
           ) : (
             <div className="space-y-4 border-t pt-4">
-              <div className="flex items-center gap-2">
-                <Checkbox id={registeredId} checked={registered} onCheckedChange={(checked) => setRegistered(checked)} />
-                <Label htmlFor={registeredId}>The club is GST-registered</Label>
-              </div>
+              <ClubTaxTreatmentFields
+                registered={registered}
+                onRegisteredChange={setRegistered}
+                rateText={rateText}
+                onRateTextChange={setRateText}
+                rateValid={rateValid}
+                rateBasisPoints={rateBasisPoints}
+                taxType={taxType}
+                onTaxTypeChange={setTaxType}
+                codeOptions={codeOptions}
+              />
 
-              {registered ? (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor={rateId}>GST rate, in basis points</Label>
-                    <Input
-                      id={rateId}
-                      inputMode="numeric"
-                      value={rateText}
-                      onChange={(event) => {
-                        setRateText(event.target.value)
-                        setTaxType("")
-                      }}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Hundredths of a percent: 1500 is 15%.
-                      {rateValid && rateText.trim() !== "" ? ` This is ${formatBasisPoints(rateBasisPoints)}.` : null}
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor={codeId}>Xero tax code</Label>
-                    <Select value={taxType} onValueChange={setTaxType}>
-                      <SelectTrigger id={codeId}>
-                        <SelectValue placeholder="Choose a code" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {/* The chosen code is always offered, so the select never shows a code the form is not on. */}
-                        {taxType !== "" && !codeOptions.some((option) => option.taxType === taxType) ? (
-                          <SelectItem value={taxType}>{`${taxType} — not usable at this rate in Xero`}</SelectItem>
-                        ) : null}
-                        {codeOptions.map((option) => (
-                          <SelectItem key={option.taxType} value={option.taxType}>
-                            {`${option.taxType} — ${option.name}`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Only Xero&apos;s active rates that can be used on income at the rate above are offered.
-                      {codeOptions.length === 0 ? " Xero has none at this rate." : null}
-                    </p>
-                  </div>
-                </>
-              ) : null}
+              <ClubTaxEffectiveDateField
+                earliestChangeDate={state.earliestChangeDate}
+                effectiveFrom={effectiveFrom}
+                onEffectiveFromChange={setEffectiveFrom}
+              />
 
-              <div className="space-y-2">
-                <Label htmlFor={dateId}>Takes effect from</Label>
-                <Input
-                  id={dateId}
-                  type="date"
-                  min={state.earliestChangeDate}
-                  value={effectiveFrom}
-                  onChange={(event) => setEffectiveFrom(event.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {`${state.earliestChangeDate} at the earliest. A date that has started cannot change.`}
-                </p>
-              </div>
-
-              <div className="space-y-3 rounded-md border border-warning-6 bg-warning-2 p-4">
-                <p className="text-sm font-semibold">What this changes, and what it does not</p>
-                <ul className="list-disc space-y-1 pl-5 text-sm">
-                  <li>
-                    Bookings, subscriptions and entrance fees made on or after the date go to Xero and the
-                    journal as: {describeTreatment(chosen)}.
-                  </li>
-                  <li data-testid="club-tax-keeping-count">
-                    {keepingCount === null
-                      ? "Bookings already made keep the treatment they were made under for their whole life, including later edits, credit notes and refunds."
-                      : `${keepingCount} booking${keepingCount === 1 ? "" : "s"} already made ha${keepingCount === 1 ? "s" : "ve"} a night on or after this date. They keep the current treatment for their whole life, including later edits, credit notes and refunds; adjust them in Xero by hand if needed.`}
-                  </li>
-                  <li>Nothing already sent to Xero or posted in the journal changes, and no price changes.</li>
-                </ul>
-                <div className="flex items-start gap-2">
-                  <Checkbox
-                    id={acknowledgeId}
-                    checked={acknowledged}
-                    onCheckedChange={(checked) => setAcknowledged(checked)}
-                  />
-                  <Label htmlFor={acknowledgeId} className="text-sm font-normal">
-                    I understand that this changes the GST on every new Xero document and journal entry from
-                    this date, and that bookings already made keep their current treatment.
-                  </Label>
-                </div>
-              </div>
+              <ClubTaxChangeAcknowledgement
+                chosenTreatment={describeTreatment(chosen)}
+                keepingCount={keepingCount}
+                acknowledged={acknowledged}
+                onAcknowledgedChange={setAcknowledged}
+              />
 
               {unchanged ? (
                 <p className="text-sm text-muted-foreground">
