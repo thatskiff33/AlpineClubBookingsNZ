@@ -52,7 +52,6 @@ vi.mock("@/lib/booking-email-suppression", () => ({
 vi.mock("@/lib/audit", () => ({ createAuditLog: mockCreateAuditLog }));
 vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 vi.mock("@/lib/email-failure-review", () => ({
-  EMAIL_FAILURE_MAX_ATTEMPTS: 3,
   archiveSupersededEmailFailures: mockArchiveSuperseded,
   findUnarchivedExhaustedBookingEmailFailures: mockFindUnarchived,
 }));

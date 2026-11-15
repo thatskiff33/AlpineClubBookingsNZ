@@ -20,8 +20,8 @@ import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { sendBookingConfirmedEmail, sendPreArrivalReminderEmail } from "@/lib/email";
 import type { EmailSendOutcome } from "@/lib/email/core";
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import {
-  EMAIL_FAILURE_MAX_ATTEMPTS,
   archiveSupersededEmailFailures,
   findUnarchivedExhaustedBookingEmailFailures,
 } from "@/lib/email-failure-review";
@@ -345,7 +345,7 @@ async function recordSentCopy(params: {
         recipientMemberId: params.recipientMemberId,
         emailLogId: params.emailLogId,
         archivedEmailFailureIds,
-        maxAttempts: EMAIL_FAILURE_MAX_ATTEMPTS,
+        maxAttempts: EMAIL_RETRY_MAX_ATTEMPTS,
       },
       requestId: params.auditRequest?.id,
       ipAddress: params.auditRequest?.ipAddress,
