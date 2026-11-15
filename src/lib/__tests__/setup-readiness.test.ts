@@ -108,6 +108,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     hutLeaders: true,
     communications: true,
     skifieldConditions: true,
+    skifieldWhakapapa: true,
     twoFactor: false,
     magicLink: false,
     googleLogin: false,
@@ -253,6 +254,16 @@ describe("setup-readiness", () => {
     expect(report).toContain("accounting.reports.balancesheet.read");
     expect(report).toContain("accounting.reports.banksummary.read");
     expect(report).not.toContain("accounting.reports.read");
+  });
+
+  it.each([true, false])("links Xero Mappings to the wizard mapping step (database checked: %s)", (checked) => {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: checked ? completeDatabase : undefined,
+      now: new Date("2026-07-01T00:00:00.000Z"),
+    });
+    expect(findStep(readiness, "xero-mappings")?.href).toBe("/admin/xero/setup?step=mapping");
   });
 
   it("warns without blocking setup when the connected role is a superuser", () => {

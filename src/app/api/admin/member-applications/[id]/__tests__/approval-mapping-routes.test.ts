@@ -18,13 +18,6 @@ vi.mock("@/lib/member-application-mapping", () => ({
 vi.mock("@/lib/nomination", () => ({
   approveMemberApplication: h.approveMemberApplication,
   rejectMemberApplication: h.rejectMemberApplication,
-  MembershipApplicationError: class extends Error {
-    status: number;
-    constructor(message: string, status: number) {
-      super(message);
-      this.status = status;
-    }
-  },
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },

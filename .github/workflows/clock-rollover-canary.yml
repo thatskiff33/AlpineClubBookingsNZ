@@ -52,7 +52,7 @@ concurrency:
 jobs:
   wound-forward-suite:
     name: Unit suite with the real clock ${{ matrix.label }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       # Different horizons expose different fixtures; report all three, never

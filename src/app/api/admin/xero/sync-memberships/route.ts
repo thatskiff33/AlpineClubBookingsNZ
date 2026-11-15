@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
-import { refreshAllMembershipStatuses } from "@/lib/xero";
+import { refreshAllMembershipStatuses } from "@/lib/xero-membership-sync";
 import logger from "@/lib/logger";
 import { z } from "zod";
 

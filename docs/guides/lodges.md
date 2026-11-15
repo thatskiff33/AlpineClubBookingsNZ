@@ -206,7 +206,7 @@ each stored one as its lodge is next downloaded.
 - *"Which lodge is yours is set on the central server…"* — the central server
   has not yet told this site which lodge is its own. That is so until the site
   is connected and has downloaded at least once: open **Integrations → Alpine
-  Central Server**, connect, and press **Download**. (A club that never
+  Central Server Setup**, connect, and press **Download**. (A club that never
   connects can no longer change its Other lodges list at all.) It is also what
   an older central server, which does not send the list, leaves you with.
 - *"The central server has no lodge assigned to this site…"* — the server has
@@ -284,18 +284,18 @@ list can be hidden by hand (see Troubleshooting).
 | Everything is read-only ("… can view the lodge properties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | Deactivate warns about dependencies | The lodge still has future bookings, waitlist, hut-leader, or kiosk ties | Review the list; confirm to deactivate anyway (they stay in place) or resolve them first |
 | "At least one lodge must stay active" | You tried to deactivate the only active lodge | Keep one active, or activate another first |
-| Your lodge has no **Edit** button | Your lodge is not yet linked to the central server by its id | Press **Download** under Integrations → Alpine Central Server; the button appears once it is linked |
+| Your lodge has no **Edit** button | Your lodge is not yet linked to the central server by its id | Press **Download** under Integrations → Alpine Central Server Setup; the button appears once it is linked |
 | A lodge shows **Not found on the Alpine Central Server** | The central server did not list it in the last full download: usually a duplicate left by an earlier rename, or a lodge deleted there before it told clubs about deletions | Check the bookings and requests it shows, then **Hide** takes it off this list and every drop-down (after a confirmation). Those bookings and requests keep it |
 | **Hide** says "Only a lodge marked “Not found on the Alpine Central Server” can be hidden here" | A download matched the lodge to the central server since the page loaded | The list reloads: the lodge is listed again, and nothing was hidden |
 | The Download message says a lodge was "Deleted on the central server, so hidden here" | The central server's administrator deleted it | Nothing to do: it is hidden from lists and drop-downs and kept on the bookings and requests that name it |
 | Member screens don't show a lodge picker | The club has only one active lodge | Expected — pickers appear once a second active lodge exists |
 | Door code/travel note isn't in an email | The lodge's field is blank, or the email template omits the token | Fill the field here; check the [Booking Messages](booking-messages.md)/email template |
-| The Other lodges panel has no **Edit my Lodge** button and says which lodge is yours is set on the central server | The site has not yet downloaded from a central server that names its lodge (not connected, never downloaded, or an older server) | Connect on **Integrations → Alpine Central Server** and press **Download**; the button appears for the lodge the server names |
+| The Other lodges panel has no **Edit my Lodge** button and says which lodge is yours is set on the central server | The site has not yet downloaded from a central server that names its lodge (not connected, never downloaded, or an older server) | Connect on **Integrations → Alpine Central Server Setup** and press **Download**; the button appears for the lodge the server names |
 | The Other lodges panel says no lodge is assigned to this site | The central server's operator has not mapped a lodge to your site's connection | Ask them to assign your lodge |
 | Saving your lodge is refused with "Only this site's own lodge can be changed here" | The central server's list changed since the page loaded, or a download that ran while you were editing recorded a list that no longer names it | Reload the page; only the lodge(s) the server names for your site can be saved |
 | The panel went read-only after a download, although the server names your lodge | Rare: a sync cut off by a restart overlapped the next one more than 15 minutes later, and the one that finished last carried an older list (the nightly job and the buttons otherwise never run at once) | Nothing to fix: the next download records the current list again |
 | Upload or Download says "Another sync with the Alpine Central Server is running" | The nightly sync, or a press in another window, is running now; after a restart mid-sync the claim clears within 15 minutes | Wait a minute and press again; nothing was sent and nothing is lost |
-| The panel says syncing with the Alpine Central Server is paused and the list may be out of date | The central server is on a different software version from this site, so nothing is sent or received until the two match (an edit you save here stays local until then) | Open **Integrations → Alpine Central Server**, which shows both numbers, and upgrade whichever side is behind; syncing resumes on its own |
+| The panel says syncing with the Alpine Central Server is paused and the list may be out of date | The central server is on a different software version from this site, so nothing is sent or received until the two match (an edit you save here stays local until then) | Open **Integrations → Alpine Central Server Setup**, which shows both numbers, and upgrade whichever side is behind; syncing resumes on its own |
 
 ## Related links
 

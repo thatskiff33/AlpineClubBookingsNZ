@@ -35,7 +35,7 @@ concurrency:
 jobs:
   mutation:
     name: Stryker on the money modules
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       AUTH_SECRET: ci-auth-secret
