@@ -58,11 +58,11 @@ vi.mock("@/lib/page-content-embeds", () => ({
   buildEmbeddedBody: mocks.buildEmbeddedBody,
 }));
 
-vi.mock("@/app/(website)/contact/contact-page-client", () => ({
+vi.mock("@/components/website/contact-page-client", () => ({
   ContactPageClient: () => <div>Contact form rendered</div>,
 }));
 
-vi.mock("@/app/(website)/join/apply/join-apply-page-client", () => ({
+vi.mock("@/components/website/join-apply-page-client", () => ({
   JoinApplyPageClient: () => <div>Membership form rendered</div>,
 }));
 

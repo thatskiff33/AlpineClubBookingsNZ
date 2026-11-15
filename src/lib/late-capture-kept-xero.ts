@@ -2,12 +2,10 @@ import type { Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { asRecord } from "@/lib/xero-json";
+import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
+import { lockSupplementaryInvoiceAnchor } from "@/lib/xero-supplementary-invoice-enqueue";
+import { RETIRED_CODES_ANSWERING_CAPTURE } from "@/lib/xero-supplementary-invoice-capture-rules";
 import {
-  kickQueuedXeroOutboxOperationsIfConnected,
-  lockSupplementaryInvoiceAnchor,
-} from "@/lib/xero-operation-outbox";
-import {
-  RETIRED_CODES_ANSWERING_CAPTURE,
   releaseXeroSupplementaryInvoiceForCapturedPaymentIntent,
   reviveRetiredChangeInvoiceForKeptCapture,
 } from "@/lib/xero-supplementary-invoice-late-capture";

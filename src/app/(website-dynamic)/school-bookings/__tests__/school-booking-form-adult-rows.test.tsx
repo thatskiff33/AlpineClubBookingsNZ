@@ -12,7 +12,7 @@ import {
   within,
 } from "@/lib/__tests__/support/club-time-render";
 import type { ClubIdentity } from "@/config/club-identity-types";
-import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/school-booking-form";
+import { SchoolBookingForm } from "@/components/website/school-booking-form";
 
 /**
  * THE SCHOOL FORM'S ADULT ROWS ARE NAMED FOR ASSISTIVE TECHNOLOGY (#4957).

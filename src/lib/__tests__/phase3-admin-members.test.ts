@@ -136,11 +136,17 @@ const {
     skipped: 0,
   }),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: mockIsXeroConnected,
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   syncManagedXeroContactGroupForMember: mockSyncManagedXeroContactGroupForMember,
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: mockUpdateXeroContact,
+}));
+vi.mock("@/lib/xero-entrance-fee-invoices", () => ({
   createXeroEntranceFeeInvoice: mockCreateXeroEntranceFeeInvoice,
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -167,6 +173,7 @@ import { GET as exportMembers } from "@/app/api/admin/members/export/route";
 import { POST as importMembers } from "@/app/api/admin/members/import/route";
 import { POST as bulkUpdate } from "@/app/api/admin/members/bulk-update/route";
 import { GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
+import { DATE_ONLY_INVALID_MESSAGE } from "@/lib/date-only-schema";
 import {
   googleSubCollisionError,
   loginEmailCollisionError,
@@ -2078,6 +2085,7 @@ describe("Phase 3: Admin Member Management", () => {
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           $executeRaw: vi.fn().mockResolvedValue(1),
           member: {
             create: vi.fn().mockResolvedValue({
@@ -2356,6 +2364,7 @@ describe("Phase 3: Admin Member Management", () => {
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
           $executeRaw: vi.fn().mockResolvedValue(1),
           member: {
             updateMany,
@@ -2842,6 +2851,33 @@ describe("Phase 3: Admin Member Management", () => {
           "Could not create this member: one of their details is already used by another record",
       });
     });
+
+    // ALP-574: each of these date-only create fields now goes through
+    // `dateOnlyStringSchema`, so a non-existent day is refused at the schema
+    // — before the pre-check even looks for a duplicate email.
+    it.each(["dateOfBirth", "joinedDate", "lifeMemberDate"] as const)(
+      "rejects a non-existent day for %s",
+      async (field) => {
+        mockedAuth.mockResolvedValue(adminSession);
+
+        const req = new NextRequest("http://localhost/api/admin/members", {
+          method: "POST",
+          body: JSON.stringify({
+            firstName: "Test",
+            lastName: "User",
+            email: "test@test.com",
+            [field]: "2026-02-30",
+          }),
+          headers: { "Content-Type": "application/json" },
+        });
+        const res = await createMember(req);
+        expect(res.status).toBe(422);
+        const body = await res.json();
+        expect(body.details[field]).toEqual([DATE_ONLY_INVALID_MESSAGE]);
+        expect(prisma.member.findFirst).not.toHaveBeenCalled();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      },
+    );
 
     it("allows shared email when creating a non-login member", async () => {
       mockedAuth.mockResolvedValue(adminSession);

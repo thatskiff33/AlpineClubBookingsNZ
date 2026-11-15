@@ -36,7 +36,7 @@ vi.mock("@/lib/prisma", () => ({
     },
   },
 }));
-vi.mock("@/lib/xero-operation-outbox", () => ({ enqueueXeroSupplementaryInvoiceOperation: h.enqueue }));
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({ enqueueXeroSupplementaryInvoiceOperation: h.enqueue }));
 vi.mock("@/lib/xero-supplementary-invoice-late-capture", () => ({
   attachRecoveredIntentToWaitingSupplementaryInvoice: (...args: unknown[]) => h.attach(...args),
 }));

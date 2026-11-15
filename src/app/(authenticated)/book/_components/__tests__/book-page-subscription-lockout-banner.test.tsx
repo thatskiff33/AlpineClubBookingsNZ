@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readSubscriptionLockoutView } from "@/app/(authenticated)/book/_components/types";
+import { readSubscriptionLockoutView } from "@/components/book/booking-wizard-types";
 
 // #2543, owner-side finding 19. The booking wizard's unpaid-subscription banner
 // used to tell every member to "pay it before booking". That is only TRUE under

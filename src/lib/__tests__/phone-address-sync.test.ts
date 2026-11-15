@@ -52,9 +52,13 @@ vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-contact-groups", () => ({
   syncManagedXeroContactGroupForMember: vi.fn(),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
 }));
@@ -75,14 +79,13 @@ vi.mock("bcryptjs", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import {
-  isXeroConnected,
-  syncManagedXeroContactGroupForMember,
-  updateXeroContact,
-} from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
+import { syncManagedXeroContactGroupForMember } from "@/lib/xero-contact-groups";
+import { updateXeroContact } from "@/lib/xero-contacts";
 import { PUT as updateProfile } from "@/app/api/profile/route";
 import { PUT as updateMember } from "@/app/api/admin/members/[id]/route";
 import { POST as register } from "@/app/api/auth/register/route";
+import { DATE_OF_BIRTH_INVALID_MESSAGE } from "@/lib/date-only-schema";
 
 const adminSession = { user: { id: "admin1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
 const memberSession = { user: { id: "m1", role: "USER", accessRoles: [{ role: "USER" }] } } as any;
@@ -499,6 +502,21 @@ describe("Profile API: structured phone and address fields", () => {
         error: "Date of birth cannot be in the future",
       })
     );
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-existent day of birth before touching the database (ALP-574)", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+
+    const res = await updateProfile(makeProfilePut({
+      ...validProfileBody,
+      dateOfBirth: "2026-02-30",
+    }));
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      details: { dateOfBirth: [DATE_OF_BIRTH_INVALID_MESSAGE] },
+    });
     expect(prisma.member.update).not.toHaveBeenCalled();
   });
 
