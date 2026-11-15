@@ -30,7 +30,8 @@ export function ManualRefundTaskDisputeReduction({
   onReduced,
 }: {
   task: { id: string; amountCents: number | null; disputeReduction?: { reducedByCents: number; stillOwedCents: number } | null };
-  canEdit: boolean;
+  /** The finance area's edit access, as `ViewOnlyActionButton` takes it (unknown while it loads). */
+  canEdit: boolean | undefined;
   onReduced: () => Promise<void> | void;
 }) {
   const format = useClubFormat();
@@ -39,6 +40,7 @@ export function ManualRefundTaskDisputeReduction({
   const reduction = task.disputeReduction;
   if (!reduction || task.amountCents === null) return null;
   const wasCents = task.amountCents;
+  const reducedByCents = reduction.reducedByCents;
   const summary = disputedHandBackReductionSummary({ wasCents, ...reduction }, format);
 
   async function reduce() {
@@ -47,7 +49,7 @@ export function ManualRefundTaskDisputeReduction({
       const response = await fetchWithRecentAuth(`/api/admin/payments/manual-refund-tasks/${task.id}/reduce-by-lost-dispute`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmed: true, expectedAmountCents: wasCents, expectedReducedByCents: reduction.reducedByCents }),
+        body: JSON.stringify({ confirmed: true, expectedAmountCents: wasCents, expectedReducedByCents: reducedByCents }),
       });
       const data = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
       if (!response.ok) {
