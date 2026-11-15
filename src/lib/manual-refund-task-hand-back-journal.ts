@@ -117,7 +117,8 @@ export async function lockCancellationHandBackBeforeClaim(tx: Prisma.Transaction
 
 /**
  * A part to check, dismissed: the officer has confirmed the member already has that money, so the debt its raise
- * posted is withdrawn exactly (the 14 Nov answer to Q2: a refund already recorded elsewhere is cancelled exactly).
+ * posted is withdrawn exactly, as the 14 Nov 2026 decisions treat a refund debt raised for money that already went
+ * back another way ("raised in error or a duplicate": cancelled exactly).
  * Raised then dismissed, the journal is left as it was before the raise. With the claim, so a lost claim leaves the
  * debt; a journal refusal rolls the dismissal back. Every other kind's dismissal posts nothing.
  */
