@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAppVersion } from "@/lib/app-version";
 import { getPublicHealthReport } from "@/lib/health-check";
 import logger from "@/lib/logger";
 
@@ -16,7 +17,7 @@ export async function GET() {
     return NextResponse.json(
       {
         status: "unhealthy",
-        version: process.env.npm_package_version || "0.1.0",
+        version: getAppVersion(),
         uptime: 0,
         checks: {},
       },
