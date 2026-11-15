@@ -12,7 +12,7 @@ entries further down are the same growth measured per component, because the
 size gate now also judges functions over 300 lines (#4927).
 
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
-lines: 983
+lines: 984
 reason: the refund appeal list gains its page state, its page in the URL
   and a pager inside its own section, while the credit approvals list on the
   same screen stays unpaged; moving one list out is a screen split of its own.
@@ -41,7 +41,7 @@ reason: the public queue gains paging and the pinned deep-linked request
   refactor of its own, well beyond this change.
 
 function: src/app/(admin)/admin/finance/refund-requests/page.tsx#RefundRequestsPage
-lines: 814
+lines: 815
 reason: the officer queue pager, its page state and its URL wiring; those
   lines sit inside the function `RefundRequestsPage`, which was already over
   its limit before this change, and lifting it apart is a refactor of its own,
