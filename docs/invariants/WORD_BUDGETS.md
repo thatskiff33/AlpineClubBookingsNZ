@@ -81,11 +81,11 @@ The waves that empty it are owned by #4990, which carries the wave plan. Wave 1
 compacted the ten largest rows to rule, pin and link; none reached 300 without
 semantic damage. By owner decision on #4990 (15 Nov 2026) each stays here at its
 new, lower count, and later waves take them off. After wave 1 the table holds 88
-rows and 56,849 words (70,452 before it).
+rows and 56,847 words (70,452 before it).
 
 | ID | Words |
 | --- | ---: |
-| `INV-MOD-025` | 1722 |
+| `INV-MOD-025` | 1717 |
 | `INV-ADDPAY-037` | 1417 |
 | `INV-SSOT-004` | 472 |
 | `INV-HOST-050` | 899 |
@@ -94,7 +94,7 @@ rows and 56,849 words (70,452 before it).
 | `INV-HOST-046` | 764 |
 | `INV-HOST-045` | 727 |
 | `INV-ADDPAY-039` | 931 |
-| `INV-SSOT-001` | 424 |
+| `INV-SSOT-001` | 427 |
 | `INV-PRIV-016` | 1512 |
 | `INV-HOST-051` | 1443 |
 | `INV-HOST-053` | 1434 |

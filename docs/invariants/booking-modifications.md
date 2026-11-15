@@ -956,7 +956,7 @@ what `BookingGuestNight.priceCents` receives. The amounts, plus any money
 INV-MOD-028 leaves unattached (a negative stored total, D11), sum to the guest's
 total exactly in integer cents, so Xero's invoice lines multiply back out
 (INV-MONEY-001, INV-MONEY-003). A guest left holding no nights — removed before
-their stay began — is credited their stored total and lands on zero.
+their stay began — is valued under INV-MOD-028.
 
 **Money direction.** For exactly priced rows, against the pre-#2743 answer
 nothing moves up (other row shapes are valued under INV-MOD-028): every
