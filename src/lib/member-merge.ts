@@ -36,6 +36,7 @@ import {
   withMemberMergeParticipantRows,
   type HostingCoverageQueueParticipantProof,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { lockCapturedLoserOwnedBookings, MemberMergeBookingOwnershipDriftError } from "@/lib/member-merge-booking-lock";
 import {
   acquireMemberMergePartnerSharedLodgeLocks,
   lockPartnerShareLodgesAppearedSincePrefix,
@@ -138,6 +139,16 @@ export class MemberMergeError extends Error {
     super(message);
     this.name = "MemberMergeError";
   }
+}
+
+/** The booking-ownership 409. The count check and a spent booking wait both use it (#4860). */
+function bookingOwnershipDrift(): MemberMergeError {
+  return new MemberMergeError(
+    "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
+    409,
+    "merge_drift_in_transaction",
+    { driftFields: ["Booking.member"] },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1868,9 +1879,10 @@ export async function executeMemberMerge(params: {
     // #4876: nulls, collision resolvers, relation moves, the booking-owner
     // check and the hosting plan run in the same savepoint as the participant
     // lock (`withMemberMergeParticipantRows`). They only write through `tx`.
-    // If a Member row is busy the savepoint rolls back, so merge waits for that
-    // row holding none of the rows it just wrote, then tries the whole attempt
-    // again. Counts and the plan below are the successful attempt's only.
+    // If a Member row is busy, or one of the captured bookings is (#4860), the
+    // savepoint rolls back, so merge waits for that one row holding none of the
+    // rows it just wrote, then tries the whole attempt again. Counts and the
+    // plan below are the successful attempt's only.
     // 1) Null self-relation cycles value-conditionally (#2437). 2) Resolve
     // collisions. 3) Moves, self-relations bounded to the token's ids (#2437)
     // and never the master's own row (#2445). The plan's owners join the lock.
@@ -1916,12 +1928,7 @@ export async function executeMemberMerge(params: {
         );
         const bookingOwnerMove = moves.find((move) => move.model === "Booking.member");
         if ((bookingOwnerMove?.count ?? 0) !== loserOwnedBookingIds.length) {
-          throw new MemberMergeError(
-            "Booking ownership changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
-            409,
-            "merge_drift_in_transaction",
-            { driftFields: ["Booking.member"] },
-          );
+          throw bookingOwnershipDrift();
         }
         const plan = await buildMemberMergeHostingCoveragePlan(
           {
@@ -1968,6 +1975,9 @@ export async function executeMemberMerge(params: {
         refreshedSources: refreshedHostingPlan.sources,
       });
     } catch (error) {
+      if (error instanceof MemberMergeBookingOwnershipDriftError) {
+        throw bookingOwnershipDrift();
+      }
       if (error instanceof HostingCoverageParticipantRetryError) {
         throw new MemberMergeError(
           "Hosting coverage participants changed while the merge was running. Nothing was saved. Re-run the preview and try again.",
@@ -2398,7 +2408,7 @@ export async function executeMemberMerge(params: {
     // advisory lock serialises concurrent lifecycle writers, so a long window
     // is safe here.
     //
-    // Do NOT add an `isolationLevel` here. The step-5 fresh read depends on READ
+    // INV-LOCK-005: Do NOT add an `isolationLevel` here. The step-5 fresh read depends on READ
     // COMMITTED's per-statement snapshots to see a writer that committed after
     // this transaction opened; under REPEATABLE READ it would re-read the same
     // stale values and the #2243 fix would silently stop working (#2243).
@@ -2688,6 +2698,14 @@ async function applyMoves(
     //    any residual divergence on the two locked rows is refused by the
     //    step-5 differ (`diffSelfRelationLinkState`), so neither a self-cycle
     //    nor a silent null can reach the commit.
+    // #4860: the captured bookings, all at once or not at all, immediately
+    // before this arm's update. Earlier moves in this function have already
+    // run; later Booking column sweeps see the set held entirely, or not held
+    // at all. A shortfall throws and the attempt wrapper waits for that one
+    // booking while holding no rows.
+    if (s.key === "Booking.member") {
+      await lockCapturedLoserOwnedBookings(tx, loserOwnedBookingIds);
+    }
     const res = await delegate.updateMany({
       where: s.selfRelation
         ? {

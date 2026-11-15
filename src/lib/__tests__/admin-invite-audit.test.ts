@@ -88,7 +88,7 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/utils", () => ({
   cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" "),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   getXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
 }));
@@ -103,7 +103,7 @@ import { logAudit } from "@/lib/audit";
 import { POST as sendSetupInvite } from "@/app/api/admin/members/send-setup-invite/route";
 import { GET as getMembers } from "@/app/api/admin/members/route";
 import { GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
-import { formatMemberAuditLogSummary } from "@/app/(admin)/admin/members/[id]/page";
+import { formatMemberAuditLogSummary } from "@/app/(admin)/admin/membership/members/[id]/page";
 
 const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } } as any;
 const activeSessionMember = {

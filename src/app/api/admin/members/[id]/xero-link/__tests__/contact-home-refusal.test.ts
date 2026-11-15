@@ -49,12 +49,16 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/xero-contact-home", () => ({
   findXeroContactLinkConflict: mocks.findXeroContactLinkConflict,
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-api-client", () => ({
   callXeroApi: mocks.callXeroApi,
-  flushMemberSubscriptionHistory: vi.fn(),
   getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
-  refreshXeroContactCachesFromContact: vi.fn(),
+}));
+vi.mock("@/lib/xero-membership-sync", () => ({
+  flushMemberSubscriptionHistory: vi.fn(),
   syncMemberSubscriptionHistoryForLinkedContact: vi.fn(),
+}));
+vi.mock("@/lib/xero-contact-cache", () => ({
+  refreshXeroContactCachesFromContact: vi.fn(),
 }));
 vi.mock("@/lib/xero-manual-contact-link", () => ({
   commitManualXeroContactLink: mocks.commitManualXeroContactLink,

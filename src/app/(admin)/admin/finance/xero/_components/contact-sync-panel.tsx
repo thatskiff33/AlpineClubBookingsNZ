@@ -19,6 +19,7 @@ import {
   type XeroPartialSuccessRecovery,
 } from "@/lib/xero-partial-success"
 
+import { adminHref } from "@/lib/admin-hubs";
 type ForceSyncType = "CONTACT" | "INVOICE" | "MEMBERSHIP"
 
 export function ContactSyncPanel({
@@ -370,7 +371,7 @@ export function ContactSyncPanel({
             <Button asChild variant="outline" size="sm">
               <Link
                 href={buildHrefWithReturnTo(
-                  `/admin/members/${encodeURIComponent(recoveryMember.id)}`,
+                  `${adminHref("member-detail", { id: recoveryMember.id })}`,
                   currentXeroPath,
                 )}
                 aria-label={`Open affected member: ${recoveryMember.name}`}

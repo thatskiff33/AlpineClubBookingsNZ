@@ -41,6 +41,7 @@ const PAGE = join(
   "app",
   "(admin)",
   "admin",
+  "membership",
   "members",
   "[id]",
   "page.tsx",

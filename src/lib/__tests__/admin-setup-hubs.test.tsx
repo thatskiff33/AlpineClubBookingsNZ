@@ -47,7 +47,7 @@ import { IntegrationReadinessSection } from "@/app/(admin)/admin/system/health/_
 import { AdminHubSectionCards } from "@/components/admin-hub-page";
 import { BedDouble, Coins, MessageSquareText } from "lucide-react";
 import IntegrationsHubPage from "@/app/(admin)/admin/integrations/page";
-import MembershipSetupHubPage from "@/app/(admin)/admin/membership-setup/page";
+import MembershipSetupHubPage from "@/app/(admin)/admin/membership/membership-setup/page";
 import { loadAdminSetupPermissionMatrix } from "@/app/(admin)/admin/setup/permission-matrix";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
@@ -317,6 +317,9 @@ describe("admin setup hub pages", () => {
 
     expect(html).toContain("Finance Dashboard");
     expect(html).toContain("Xero Mappings");
+    // The card opens Xero Setup at its Account mapping step, not an anchor
+    // Xero Sync never renders (#4972).
+    expect(html).toContain('href="/admin/xero/setup?step=mapping"');
     expect(html).toContain("Finance Report Mappings");
     expect(html).toContain("aria-expanded=\"false\"");
     expect(html).not.toContain("Finance mappings editor");

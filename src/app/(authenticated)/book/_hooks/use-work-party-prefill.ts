@@ -37,8 +37,9 @@ export const WORK_PARTY_PREFILL_LODGE_NOTICE =
  *    to load decides nothing; the wizard's own "Try again" reloads it.
  * 3. Once that lodge is the settled scope, the wizard is on the dates step and
  *    the subscription check has answered, select the stay — unless bookings
- *    are blocked (an unpaid subscription), where the dates step's own message
- *    stands and nothing is filled in.
+ *    are blocked (an unpaid subscription under the HARD_BLOCK lockout mode,
+ *    #4941), where the dates step's own message stands and nothing is filled
+ *    in.
  *
  * A member who has already picked dates or moved past the dates step before
  * the work party arrives keeps their own choice: the prefill is dropped.
@@ -66,7 +67,7 @@ export function useWorkPartyPrefill({
   onDatesStep: boolean;
   /** The member has picked dates or left the dates step. */
   memberStarted: boolean;
-  /** Bookings are blocked (unpaid subscription); null while still checking. */
+  /** Bookings are blocked (unpaid subscription under HARD_BLOCK, #4941); null while still checking. */
   bookingBlocked: boolean | null;
   selectLodge: (lodgeId: string) => void;
   selectDates: (checkIn: string, checkOut: string) => void;

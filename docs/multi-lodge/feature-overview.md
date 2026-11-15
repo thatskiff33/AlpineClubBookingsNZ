@@ -49,13 +49,17 @@ not to a lodge.
 
 ### Clubs with one lodge
 
-Nothing changes for the member. Multi-lodge is core (ADR-005 — no module
-flag), but with a single lodge no lodge dimension appears in the
-member-facing UI: no selector, no lodge names in emails or screens. The
-Lodges admin page exists (a one-item list with **Add lodge**), but until a
-second active lodge exists members see exactly what a single-lodge club
-always saw. This is the permanent default for upstream and every
-single-lodge fork, not a transition state.
+Almost nothing changes for the member. Multi-lodge is core (ADR-005 — no
+module flag), but with a single lodge no lodge dimension appears in the
+member-facing UI: no selector, and no lodge names in emails or booking
+lists. There is one exception: the screens where a member checks or pays
+for one booking — the booking wizard's review step, the booking page (its
+Stay Details card and arrival card) and the payment link. They always name
+the lodge (#2701, `INV-CAP-039`), so a member can see it is the right one.
+The Lodges admin page exists (a one-item list with **Add lodge**), but
+until a second active lodge exists every other member screen shows exactly
+what a single-lodge club always saw. This is the permanent default for
+upstream and every single-lodge fork, not a transition state.
 
 ### Members (once a second lodge exists)
 
@@ -73,6 +77,12 @@ single-lodge fork, not a transition state.
   the booking flow's payment choices and the group screens alike — all
   name the lodge that booking is actually at rather than the club's
   default one.
+- Before paying, the booking page's Stay Details card and the payment
+  link's card name the booking's lodge, and the arrival card is titled
+  with it. My Bookings and the dashboard's Next Stay, draft and Recent
+  Bookings rows show the lodge under each booking's dates
+  (`INV-CAP-039`); a booking still at an archived lodge is labelled even
+  after the club is back to one active lodge.
 - If the committee restricts a lodge (for example, one lodge is
   reserved for a section of the club), ineligible members simply do not
   see it offered. By default every member can book every lodge.
@@ -170,8 +180,11 @@ locker, and access scoping above, the feature also includes:
   default lodge.
 
 Every one of these follows the single-lodge presentation rule (ADR-002):
-with fewer than two active lodges, no lodge selectors, columns, or names
-appear, and behaviour is identical to today's single-lodge club.
+with fewer than two active lodges, no lodge selectors, columns, or list
+names appear, and behaviour is identical to today's single-lodge club. The
+one exception is the screens where a member checks or pays for one booking
+(the booking wizard's review step, the booking page and the payment link),
+which always name the lodge (#2701, `INV-CAP-039`).
 
 ## Boundaries and Non-Goals
 

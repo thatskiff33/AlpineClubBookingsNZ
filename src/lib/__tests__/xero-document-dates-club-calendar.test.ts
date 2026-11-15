@@ -87,6 +87,7 @@ const mocks = vi.hoisted(() => ({
   notifyXeroSyncError: vi.fn(),
   accountingApi: {
     createInvoices: vi.fn(),
+    getInvoice: vi.fn(),
     getInvoices: vi.fn(),
     createPayments: vi.fn(),
     createCreditNoteAllocation: vi.fn(),
@@ -203,7 +204,9 @@ vi.mock("@/lib/member-credit", () => ({
   },
 }));
 
-vi.mock("@/lib/xero-applied-credit-operation-serialization", () => ({
+vi.mock("@/lib/xero-applied-credit-operation-serialization", async (importOriginal) => ({
+  // #4919: the group invoice worker checks for its own deferred-email error.
+  ...((await importOriginal()) as typeof import("@/lib/xero-applied-credit-operation-serialization")),
   assertNoAppliedCreditDeallocationFence: mocks.assertNoAppliedCreditDeallocationFence,
   // #3809: an edit's note waits on a deallocation; none is on its way here.
   findUnconvergedAppliedCreditDeallocation: async () => null,
@@ -389,6 +392,10 @@ beforeEach(() => {
   });
   mocks.accountingApi.createCreditNoteAllocation.mockResolvedValue({ body: {} });
   mocks.accountingApi.getInvoices.mockResolvedValue({ body: { invoices: [] } });
+  // #3993: an edit's note first reads what its invoice still owes; it can take these.
+  mocks.accountingApi.getInvoice.mockResolvedValue({
+    body: { invoices: [{ invoiceID: "inv_1", status: "AUTHORISED", amountDue: 100 }] },
+  });
   mocks.accountingApi.createInvoices.mockResolvedValue({
     body: { invoices: [{ invoiceID: "inv_new", invoiceNumber: "INV-9" }] },
   });

@@ -51,7 +51,7 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   getXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
 }));
@@ -76,8 +76,8 @@ vi.mock("next/link", () => ({
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { GET as getMembers } from "@/app/api/admin/members/route";
-import { MemberTable } from "@/app/(admin)/admin/members/_components/member-table";
-import type { Member } from "@/app/(admin)/admin/members/_types";
+import { MemberTable } from "@/app/(admin)/admin/membership/members/_components/member-table";
+import type { Member } from "@/app/(admin)/admin/membership/members/_types";
 
 const adminSession = {
   user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },

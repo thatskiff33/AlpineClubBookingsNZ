@@ -84,6 +84,7 @@ const { prismaMock, txMock, globalClientReads, recordingWindow } = vi.hoisted(
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 
+import { APP_VERSION_ENV_VAR, getAppVersion } from "@/lib/app-version";
 import {
   getDiagnosticsReadiness,
   readDiagnosticsModuleFlag,
@@ -379,7 +380,12 @@ describe("AID-6A readiness evidence (#2375)", () => {
 });
 
 describe("AID-6A deployment evidence (#2375)", () => {
-  const ENV_KEYS = ["RELEASE_ID", "GIT_COMMIT_SHA", "APP_RUNTIME_ROLE"] as const;
+  const ENV_KEYS = [
+    "RELEASE_ID",
+    "GIT_COMMIT_SHA",
+    "APP_RUNTIME_ROLE",
+    APP_VERSION_ENV_VAR,
+  ] as const;
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
@@ -426,6 +432,19 @@ describe("AID-6A deployment evidence (#2375)", () => {
     projected = entry(DIAGNOSTICS_DEPLOYMENT_TOOL_ID).project(rows[0]);
     expect(projected.releaseId).toBeNull();
     expect(projected.releaseIdSource).toBe("unset");
+  });
+
+  it("reports the build's app version, and `unknown` outside a stamped build (#4985)", async () => {
+    process.env[APP_VERSION_ENV_VAR] = "deployment-build-under-test";
+    let rows = await readDiagnosticsDeploymentEvidence(NOW);
+    let projected = entry(DIAGNOSTICS_DEPLOYMENT_TOOL_ID).project(rows[0]);
+    expect(projected.appVersion).toBe(getAppVersion());
+    expect(projected.appVersion).toBe("deployment-build-under-test");
+
+    delete process.env[APP_VERSION_ENV_VAR];
+    rows = await readDiagnosticsDeploymentEvidence(NOW);
+    projected = entry(DIAGNOSTICS_DEPLOYMENT_TOOL_ID).project(rows[0]);
+    expect(projected.appVersion).toBe("unknown");
   });
 
   it("reports a missing knowledge bundle as a stable code, with no loader detail", async () => {

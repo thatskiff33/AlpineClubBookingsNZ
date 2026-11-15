@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { focusAndKeepInView } from "@/hooks/use-scroll-to-feedback";
 import { usePasswordPolicyHints } from "@/hooks/use-password-policy-hints";
 
 function ResetPasswordForm() {
@@ -21,6 +23,14 @@ function ResetPasswordForm() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+  // #4949: after a failed check, focus moves to the first failing field once its
+  // error is committed, so its description reads the error before the
+  // requirements. A fresh object each time re-runs the move on a repeat failure.
+  const [invalidField, setInvalidField] = useState<{ id: string } | null>(null);
+
+  useEffect(() => {
+    if (invalidField) focusAndKeepInView(document.getElementById(invalidField.id));
+  }, [invalidField]);
 
   if (!token) {
     return (
@@ -65,24 +75,27 @@ function ResetPasswordForm() {
     setPasswordError("");
     setConfirmError("");
 
-    let valid = true;
+    let firstInvalid: string | null = null;
 
     if (password.length < policy.minPasswordLength) {
       setPasswordError(
         `Password must be at least ${policy.minPasswordLength} characters`,
       );
-      valid = false;
+      firstInvalid = "password";
     }
 
     if (!confirmPassword) {
       setConfirmError("Please confirm your new password");
-      valid = false;
+      firstInvalid ??= "confirmPassword";
     } else if (password !== confirmPassword) {
       setConfirmError("Passwords do not match");
-      valid = false;
+      firstInvalid ??= "confirmPassword";
     }
 
-    if (!valid) return;
+    if (firstInvalid) {
+      setInvalidField({ id: firstInvalid });
+      return;
+    }
 
     setLoading(true);
 
@@ -119,19 +132,20 @@ function ResetPasswordForm() {
 
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-4">
-          {error && (
-            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
-              {error}{" "}
-              {(error.includes("expired") || error.includes("already been used")) && (
+          <FocusedActionError
+            id="reset-password-error"
+            error={error}
+            action={
+              error.includes("expired") || error.includes("already been used") ? (
                 <Link
                   href="/forgot-password"
                   className="font-medium underline underline-offset-4"
                 >
                   Request a new link
                 </Link>
-              )}
-            </div>
-          )}
+              ) : undefined
+            }
+          />
 
           <div className="space-y-2">
             <Label htmlFor="password">New password</Label>
@@ -148,7 +162,12 @@ function ResetPasswordForm() {
               maxLength={policy.maxPasswordLength}
               autoComplete="new-password"
               required
-              aria-describedby="password-requirements"
+              aria-invalid={passwordError ? true : undefined}
+              aria-describedby={
+                passwordError
+                  ? "password-error password-requirements"
+                  : "password-requirements"
+              }
             />
             <ul
               id="password-requirements"
@@ -159,7 +178,9 @@ function ResetPasswordForm() {
               ))}
             </ul>
             {passwordError && (
-              <p className="text-xs text-destructive">{passwordError}</p>
+              <p id="password-error" className="text-xs text-destructive">
+                {passwordError}
+              </p>
             )}
           </div>
 
@@ -176,9 +197,13 @@ function ResetPasswordForm() {
               }}
               autoComplete="new-password"
               required
+              aria-invalid={confirmError ? true : undefined}
+              aria-describedby={confirmError ? "confirm-password-error" : undefined}
             />
             {confirmError && (
-              <p className="text-xs text-destructive">{confirmError}</p>
+              <p id="confirm-password-error" className="text-xs text-destructive">
+                {confirmError}
+              </p>
             )}
           </div>
         </CardContent>

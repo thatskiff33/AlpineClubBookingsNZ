@@ -15,6 +15,7 @@
  * that is delivered at runtime from the store, never inlined at build time.
  */
 
+import type { IntegrationCredentialNamespace } from "@/lib/integration-credential-namespaces";
 import { prisma } from "@/lib/prisma";
 import {
   deleteIntegrationCredential,
@@ -28,7 +29,7 @@ import type {
   CredentialRequestContext,
 } from "@/lib/integration-credential-actor";
 
-export const STRIPE_PROVIDER = "stripe";
+export const STRIPE_PROVIDER = "stripe" satisfies IntegrationCredentialNamespace;
 
 export const STRIPE_CREDENTIAL_KEYS = {
   secretKey: "secret_key",
