@@ -1,6 +1,6 @@
 "use client";
 
-import { adminHref } from "@/lib/admin-hubs";
+import { xeroWebhooksHref } from "@/lib/admin-hubs/xero-setup";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -100,7 +100,7 @@ export function WebhookAmberBadge({ connected }: { connected: boolean }) {
         Webhooks not configured — payment updates rely on scheduled sync. Finish
         setup on the{" "}
         <Link
-          href={`${adminHref("xero-setup")}?step=webhooks`}
+          href={xeroWebhooksHref()}
           className="font-medium text-warning-11 underline underline-offset-2"
         >
           Xero Setup

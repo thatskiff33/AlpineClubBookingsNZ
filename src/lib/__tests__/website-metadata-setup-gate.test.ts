@@ -69,10 +69,10 @@ vi.mock("@/lib/lodges", () => ({ getDefaultLodgeId: mocks.defaultLodgeId }));
 vi.mock("@/components/website/embedded-page-content-parts", () => ({
   EmbeddedPageContentParts: () => null,
 }));
-vi.mock("@/app/(website)/contact/contact-page-client", () => ({
+vi.mock("@/components/website/contact-page-client", () => ({
   ContactPageClient: () => null,
 }));
-vi.mock("@/app/(website)/join/apply/join-apply-page-client", () => ({
+vi.mock("@/components/website/join-apply-page-client", () => ({
   JoinApplyPageClient: () => null,
 }));
 

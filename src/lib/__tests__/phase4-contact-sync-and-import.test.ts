@@ -173,9 +173,7 @@ vi.mock("@/lib/xero-sync", () => ({
   startXeroSyncOperation: mocks.startXeroSyncOperation,
   upsertXeroObjectLink: mocks.upsertXeroObjectLink,
 }));
-vi.mock("bcryptjs", () => ({
-  hash: vi.fn().mockResolvedValue("placeholder-hash"),
-}));
+
 vi.mock("xero-node", () => ({
   XeroClient: class {
     accountingApi = mocks.accountingApi;
@@ -216,13 +214,11 @@ vi.mock("@/lib/xero-config", async (importOriginal) => {
   };
 });
 
-import {
-  findPotentialXeroContactsForMember,
-  importMembersFromXeroGroups,
-  refreshXeroContactGroupCache,
-  syncContactsFromXero,
-  updateXeroContact,
-} from "@/lib/xero";
+import { findPotentialXeroContactsForMember } from "@/lib/xero-duplicate-contacts";
+import { importMembersFromXeroGroups } from "@/lib/xero-member-import";
+import { refreshXeroContactGroupCache } from "@/lib/xero-contact-groups";
+import { syncContactsFromXero } from "@/lib/xero-bulk-contact-sync";
+import { updateXeroContact } from "@/lib/xero-contacts";
 import {
   CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
   CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE,
