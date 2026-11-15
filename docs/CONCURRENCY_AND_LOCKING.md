@@ -7304,9 +7304,13 @@ it, so it closes no cycle. Under both, nothing that writes those figures can
 commit between the reads: this writer and every other refunded-total writer
 hold the Payment row. A cancellation hand-back's completion holds `lock(1)`,
 then the booking row, then the Payment row (#4516 M4d), so its cash posts
-against the owner. A card shortfall part to check's dismissal takes the same
-three before its claim, then withdraws its R05 (owner decision, 15 Nov 2026);
-a lost claim withdraws nothing. Every other hand-back writer and the late-cash mint hold
+against the owner. A card shortfall part to check's dismissal, and a disputed
+card payment's hand-back's, take the same three before the claim, then withdraw
+the R05 (owner decisions, 15 Nov 2026); a lost claim withdraws nothing. The
+disputed one re-reads its booking's disputes after the Payment row: the dispute
+writer takes none of these locks, but LOST is final (a closed dispute never
+reopens), so a lost read cannot be undone before the claim, and an open or won
+read refuses, writing nothing. Every other hand-back writer and the late-cash mint hold
 `lock(1)`. An organisation's late-cash hand-back (`invoice-paid-effects.ts`)
 posts its R05 after the delivery's Payment row, so it reads the owner plainly
 rather than taking the booking row: no Payment -> booking edge, and no member

@@ -10,9 +10,9 @@
  *
  * DB only: no Stripe import, so `stripe.ts` can read it without a cycle.
  */
-import { StripeDisputeStatus, type Prisma } from "@prisma/client";
+import type { Prisma, StripeDisputeStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { HOLDING_DISPUTE_STATUSES, namedDisputes } from "@/lib/stripe-dispute-note";
+import { disputeIsLost, HOLDING_DISPUTE_STATUSES, namedDisputes } from "@/lib/stripe-dispute-note";
 
 type DisputeReader = Pick<Prisma.TransactionClient, "stripeDispute">;
 
@@ -90,7 +90,7 @@ export class DisputedCaptureRefundRefusedError extends Error {
 
   /** True when any dispute is LOST: waiting will not release the refund. */
   get lost(): boolean {
-    return this.disputes.some((dispute) => dispute.status === StripeDisputeStatus.LOST);
+    return this.disputes.some((dispute) => disputeIsLost(dispute.status));
   }
 }
 

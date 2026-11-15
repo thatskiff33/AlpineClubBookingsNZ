@@ -263,7 +263,8 @@ async function cleanup() {
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
   });
 
-  it("(#5061 reconciled) a paid cancel of a disputed card booking posts the hand-back's R05 once and no card R05; its Dismiss is refused like any bank hand-back", async () => {
+  /** A card booking settled for real, its capture disputed (`status`), cancelled by a member asking for a card refund (#5061). */
+  async function disputedCancel(status: "OPEN" | "LOST") {
     const id = `${PREFIX}${++sequence}`;
     const intent = `pi_${id}`;
     await createHistoryBooking(db, names, id, { payment: { amountCents: 20_000, source: "STRIPE", intent } });
@@ -272,9 +273,8 @@ async function cleanup() {
     const capture = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId: `${id}-payment`, stripePaymentIntentId: intent }, select: { id: true } });
     const opened = new Date("2026-06-20T00:00:00.000Z");
     await db.stripeDispute.create({ data: { stripeDisputeId: `dp_${id}`, stripeChargeId: `ch_${id}`, stripePaymentIntentId: intent, paymentTransactionId: capture.id,
-      paymentId: `${id}-payment`, bookingId: id, amountCents: 20_000, currency: "nzd", reason: "fraudulent", status: "LOST", stripeStatus: "lost",
+      paymentId: `${id}-payment`, bookingId: id, amountCents: 20_000, currency: "nzd", reason: "fraudulent", status, stripeStatus: status.toLowerCase(),
       stripeCreatedAt: opened, lastEventCreatedAt: opened, stripeEventId: `evt_${id}` } });
-
     // INV-PAY-154: the member asked for a card refund; the dispute hands the whole refund due to the treasurer instead.
     const { cancelBooking } = await import("@/lib/booking-cancel");
     expect((await cancelBooking(id, names.officerId, "ADMIN", "127.0.0.1", CLUB_FORMAT_TEST, "card")).status).toBe(200);
@@ -283,15 +283,72 @@ async function cleanup() {
     const task = tasks[0]!;
     expect(task.reason).toContain(`dp_${id}`);
     expect(task.amountCents).toBeGreaterThan(0);
+    return { id, task, disputeId: `dp_${id}`, r05: memberMoneyEventKeys.refundObligation("hand-back", task.id) };
+  }
+  /** What the officers' queue (the real GET route) says about one task: the same rule the server asks. */
+  async function queuePreview(taskId: string) {
+    raceSession.current = { user: { id: ADMIN, role: "ADMIN" } };
+    try {
+      const { GET } = await import("@/app/api/admin/payments/manual-refund-tasks/route");
+      const body = await (await GET()).json() as { tasks: Array<{ id: string; journalHandBackDismissRefusal: string | null; disputedHandBackLost: boolean }> };
+      return body.tasks.find((t) => t.id === taskId);
+    } finally {
+      raceSession.current = null;
+    }
+  }
+
+  it("(#5061 reconciled; owner decision, 15 Nov 2026) a disputed card cancel posts the hand-back's R05 once and no card R05; once the dispute is lost it dismisses and the R05 is withdrawn exactly", async () => {
+    const { id, task, r05 } = await disputedCancel("LOST");
     // One refund debt for the one refund: the hand-back's, for its cents. No card refund was planned, so no card R05.
-    expect(await handBackDebts(task.id)).toEqual([{ obligationKey: memberMoneyEventKeys.refundObligation("hand-back", task.id), faceCents: task.amountCents }]);
+    expect(await handBackDebts(task.id)).toEqual([{ obligationKey: r05, faceCents: task.amountCents }]);
     expect(await db.memberMoneyObligation.count({ where: { obligationKey: { startsWith: memberMoneyEventKeys.refundObligation("cancellation", id) } } })).toBe(0);
     expect(await db.memberMoneyObligation.count({ where: { kind: "REFUND", lines: { some: { bookingId: id } } } })).toBe(1);
     expect(await db.paymentRecoveryOperation.count({ where: { bookingId: id } })).toBe(0);
+    expect(await queuePreview(task.id)).toMatchObject({ journalHandBackDismissRefusal: null, disputedHandBackLost: true });
 
-    // A real bank hand-back (owner decision, 14 Nov 2026, Q6): its dismissal is refused, its debt stays open.
-    await expect(resolve(task.id, "dismissed")).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
-    expect((await eventOf(memberMoneyEventKeys.refundObligation("hand-back", task.id)))?.journal?.reversedBy).toBeNull();
+    // MUTATION: refusing it again (dropping the lost exemption) fails here with the 409.
+    await resolve(task.id, "dismissed");
+
+    expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "DISMISSED", completedByMemberId: names.officerId });
+    // MUTATION: dropping the withdrawal fails here: the debt would stay live on a closed task.
+    expect((await eventOf(r05))?.journal?.reversedBy).not.toBeNull();
+    expect(await family(id, r05)).toMatchObject({ paid: 0 });
+    expect(await balance(id, "REFUND_PAYABLE")).toBe(0);
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  it("(owner decision, 15 Nov 2026) while the dispute is open its Dismiss is refused, saying so; the queue says the same; recorded lost between that preview and the dismissal, it dismisses", async () => {
+    const { id, task, disputeId, r05 } = await disputedCancel("OPEN");
+    const { disputedHandBackDismissRefusal } = await import("@/lib/manual-refund-task-copy");
+    const openRefusal = disputedHandBackDismissRefusal("OPEN");
+
+    // MUTATION: dropping the lost requirement fails here: the open dispute's task would be DISMISSED.
+    await expect(resolve(task.id, "dismissed")).rejects.toMatchObject({ status: 409, message: openRefusal });
+    expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "OPEN", completedAt: null });
+    expect((await eventOf(r05))?.journal?.reversedBy).toBeNull();
+    expect(await queuePreview(task.id)).toMatchObject({ journalHandBackDismissRefusal: openRefusal, disputedHandBackLost: false });
+
+    // The race: Stripe records the dispute lost after the officer's preview and before the dismissal. The door
+    // re-reads the disputes under its locks, so it answers the dispute as it now stands.
+    await db.stripeDispute.update({ where: { stripeDisputeId: disputeId }, data: { status: "LOST", stripeStatus: "lost" } });
+    await resolve(task.id, "dismissed");
+
+    expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "DISMISSED" });
+    expect((await eventOf(r05))?.journal?.reversedBy).not.toBeNull();
+    expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  it("(owner decision, 15 Nov 2026) a dispute won between the queue's preview and the dismissal: refused, saying the club still owes it, and its debt stays open", async () => {
+    const { id, task, disputeId, r05 } = await disputedCancel("OPEN");
+    const { disputedHandBackDismissRefusal } = await import("@/lib/manual-refund-task-copy");
+    expect(await queuePreview(task.id)).toMatchObject({ journalHandBackDismissRefusal: disputedHandBackDismissRefusal("OPEN") });
+
+    await db.stripeDispute.update({ where: { stripeDisputeId: disputeId }, data: { status: "WON", stripeStatus: "won" } });
+
+    await expect(resolve(task.id, "dismissed")).rejects.toMatchObject({ status: 409, message: disputedHandBackDismissRefusal("WON") });
+    expect(await db.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "OPEN", completedAt: null });
+    expect((await eventOf(r05))?.journal?.reversedBy).toBeNull();
+    expect(await queuePreview(task.id)).toMatchObject({ journalHandBackDismissRefusal: disputedHandBackDismissRefusal("WON"), disputedHandBackLost: false });
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
   });
 

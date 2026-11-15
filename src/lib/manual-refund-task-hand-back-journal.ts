@@ -1,4 +1,4 @@
-import { ManualRefundTaskKind, type Prisma } from "@prisma/client";
+import { ManualRefundTaskKind, type Prisma, type StripeDisputeStatus } from "@prisma/client";
 import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import type { EditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
@@ -13,14 +13,17 @@ import {
 import { lockMemberCreditLedger, requireMemberCreditRecipient } from "@/lib/member-credit";
 import { postHandBackPayment, postRefundObligation, withdrawRefundObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import { lockPaymentForRefundedTotal } from "@/lib/payment-transactions";
-import { JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
+import { disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
+import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
+import { disputeIsLost } from "@/lib/stripe-dispute-note";
 
 /**
  * #4516 (Ledger M4d): WHICH MANUAL REFUND TASKS THE MEMBER-MONEY JOURNAL RECORDS AS A HAND-BACK DEBT, and the
  * journal steps `resolveManualRefundTask` takes for them. The raise posts the debt (R05, scope `hand-back`); a
  * completion pays it (R14). Dismissing a real bank or cash hand-back is refused for now (owner decision, 14 Nov
- * 2026), so its debt stays open until the task is paid. A card shortfall's part to check keeps its dismissal (owner
- * decision, 15 Nov 2026), which withdraws its debt exactly. Split out of `manual-refund-task-resolution.ts` and
+ * 2026), so its debt stays open until the task is paid. A card shortfall's part to check keeps its dismissal, and a
+ * disputed card payment's hand-back is dismissed once its dispute is lost (owner decisions, 15 Nov 2026); either
+ * dismissal withdraws its debt exactly. Split out of `manual-refund-task-resolution.ts` and
  * `manual-refund-task-settlement-rules.ts` so neither crosses its size budget; the lock order is unchanged.
  */
 
@@ -69,21 +72,53 @@ export function isDismissibleCheckPart(task: HandBackFacts): boolean {
   return isJournalHandBackTask(task) && cancelCardShortfallPart(task) === "check";
 }
 
+/** The card disputes recorded on the task's booking (#5061, `readDisputesByBookingId`): only their statuses count here. */
+export type HandBackDisputes = readonly { status: StripeDisputeStatus }[];
+
 /**
- * Whether this task's dismissal is refused: a journal hand-back that is not a part to check. Owner decisions, 14 and
- * 15 Nov 2026 (#4516, Q6 and the split): a real bank or cash hand-back is not dismissed until the four-way dismissal
- * ships, so its debt stays open until it is paid. The door and the queue payload both ask this (`INV-SSOT`).
+ * A cancellation's own hand-back on a booking with a card dispute recorded: the task a paid cancel of a disputed card
+ * payment raises (#5061, `INV-PAY-154`). Not a card shortfall part, nor an edit's or an appeal's hand-back.
  */
-export function refusesJournalHandBackDismissal(task: HandBackFacts): boolean {
-  return isJournalHandBackTask(task) && !isDismissibleCheckPart(task);
+export function isDisputedCancellationHandBack(task: HandBackFacts, disputes: HandBackDisputes): boolean {
+  return disputes.length > 0 && isJournalHandBackTask(task) && !isNonCancellationHandBackTask(task) && cancelCardShortfallPart(task) === null;
+}
+
+/** What a dismissal of this task does: refused (with the sentence shown), or allowed and withdrawing its debt. */
+export type JournalHandBackDismissal = { refusal: string | null; withdraws: boolean; disputeLost: boolean };
+
+/**
+ * THE dismissal rule for a journal hand-back (`INV-SSOT`): the server's door and the queue payload both ask it.
+ * - A card shortfall's part to check keeps its dismissal (owner decision, 15 Nov 2026).
+ * - A disputed card payment's hand-back is dismissed only once every dispute on its booking is lost; while one is
+ *   open, won or closed with no funds taken, the club may still owe it (owner decision, 15 Nov 2026).
+ * - Every other journal hand-back is refused until the four-way dismissal ships (owner decision, 14 Nov 2026, Q6).
+ * An allowed dismissal withdraws the task's refund debt exactly. Any other task is not this rule's.
+ */
+export function journalHandBackDismissal(task: HandBackFacts, disputes: HandBackDisputes): JournalHandBackDismissal {
+  if (!isJournalHandBackTask(task)) return { refusal: null, withdraws: false, disputeLost: false };
+  if (isDismissibleCheckPart(task)) return { refusal: null, withdraws: true, disputeLost: false };
+  if (isDisputedCancellationHandBack(task, disputes)) {
+    const notLost = disputes.find((dispute) => !disputeIsLost(dispute.status));
+    return notLost ? { refusal: disputedHandBackDismissRefusal(notLost.status), withdraws: false, disputeLost: false }
+      : { refusal: null, withdraws: true, disputeLost: true };
+  }
+  return { refusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, withdraws: false, disputeLost: false };
 }
 
 /**
- * Why this dismissal is refused, or null. The completion door asks this under `lock(1)` and the booking row, before
- * its claim, so a refusal writes nothing.
+ * The rule, asked by the door under the claim's locks. `lock(1)` and the booking row are held; a cancellation's own
+ * hand-back then takes its Payment row (completion's order; the withdrawal re-takes it, waiting on nothing) and only
+ * then re-reads its booking's disputes, never trusting a read made before the locks. LOST is final (a closed dispute
+ * never reopens, `INV-PAY-154`), so no later write can undo a lost read; one that reads open or won refuses, writing
+ * nothing. An edit's or an appeal's hand-back reads no disputes.
  */
-export function journalHandBackDismissRefusal(task: HandBackFacts, resolution: "completed" | "dismissed"): string | null {
-  return resolution === "dismissed" && refusesJournalHandBackDismissal(task) ? JOURNAL_HAND_BACK_DISMISS_REFUSAL : null;
+export async function decideJournalHandBackDismissal(tx: Prisma.TransactionClient, task: HandBackFacts & { bookingId: string; paymentId: string | null },
+  resolution: "completed" | "dismissed"): Promise<JournalHandBackDismissal> {
+  if (resolution !== "dismissed" || !isJournalHandBackTask(task)) return { refusal: null, withdraws: false, disputeLost: false };
+  if (isNonCancellationHandBackTask(task)) return journalHandBackDismissal(task, []);
+  if (task.paymentId !== null) await lockPaymentForRefundedTotal(tx, task.paymentId);
+  const disputes = cancelCardShortfallPart(task) === null ? (await readDisputesByBookingId(tx, [task.bookingId])).get(task.bookingId) ?? [] : [];
+  return journalHandBackDismissal(task, disputes);
 }
 
 /** Whether the completion takes `lock(1)` and the booking row first: a late-capture approval or a journal hand-back. */
@@ -92,22 +127,16 @@ export function takesHandBackJournalLocksFirst(head: HandBackFacts & { lateCaptu
 }
 
 /**
- * A cancellation hand-back's Payment row before the claim, after `lock(1)`, the booking row and its member-credit
- * lock: a completion's, and a part to check's dismissal (whose withdrawal then re-takes it, waiting on nothing). An
- * edit or appeal hand-back already holds `lock(1)` and the booking row; its Payment row stays with the allocation
- * after the claim.
+ * A cancellation hand-back's completion takes its Payment row before the claim, after `lock(1)`, the booking row and
+ * its member-credit lock. (Its dismissal took the same row in `decideJournalHandBackDismissal`.) An edit or appeal
+ * hand-back already holds `lock(1)` and the booking row; its Payment row stays with the allocation after the claim.
  */
 export async function lockCancellationHandBackBeforeClaim(tx: Prisma.TransactionClient, input: {
   task: HandBackFacts & { paymentId: string | null };
-  resolution: "completed" | "dismissed";
   route: EditReviewSettlementRoute | null;
   ownerMemberId: () => string | null;
 }): Promise<void> {
   const { task, route } = input;
-  if (input.resolution === "dismissed") {
-    if (isDismissibleCheckPart(task) && task.paymentId !== null) await lockPaymentForRefundedTotal(tx, task.paymentId);
-    return;
-  }
   if (route?.kind !== "local-allocation" || !isJournalHandBackTask(task) || isNonCancellationHandBackTask(task)) return;
   if ("creditBackCents" in route && route.creditBackCents > 0) {
     await lockMemberCreditLedger(requireMemberCreditRecipient(input.ownerMemberId()), tx);
@@ -116,22 +145,25 @@ export async function lockCancellationHandBackBeforeClaim(tx: Prisma.Transaction
 }
 
 /**
- * A part to check, dismissed: the officer has confirmed the member already has that money, so the debt its raise
- * posted is withdrawn exactly, as the 14 Nov 2026 decisions treat a refund debt raised for money that already went
- * back another way ("raised in error or a duplicate": cancelled exactly).
- * Raised then dismissed, the journal is left as it was before the raise. With the claim, so a lost claim leaves the
- * debt; a journal refusal rolls the dismissal back. Every other kind's dismissal posts nothing.
+ * An allowed dismissal of a journal hand-back (a part to check, or a disputed card payment's once its dispute is
+ * lost): the member already has that money another way, so the debt the raise posted is withdrawn exactly, as the
+ * 14 Nov 2026 decisions treat a refund debt raised for money that already went back ("raised in error or a
+ * duplicate": cancelled exactly). Raised then dismissed, the journal is left as it was before the raise. With the
+ * claim, so a lost claim leaves the debt; a journal refusal rolls the dismissal back. Every other dismissal posts
+ * nothing.
  */
-export async function withdrawDismissedCheckPartDebt(tx: Prisma.TransactionClient, journal: BookingJournalContext, input: {
-  task: HandBackFacts & { id: string; bookingId: string };
-  resolution: "completed" | "dismissed";
+export async function withdrawDismissedHandBackDebt(tx: Prisma.TransactionClient, journal: BookingJournalContext, input: {
+  task: { id: string; bookingId: string };
+  dismissal: JournalHandBackDismissal;
   actingMemberId: string;
 }): Promise<void> {
   const { task } = input;
-  if (input.resolution !== "dismissed" || !isDismissibleCheckPart(task)) return;
+  if (!input.dismissal.withdraws) return;
   await withdrawRefundObligation(tx, journal, {
     bookingId: task.bookingId, scope: "hand-back", id: task.id, actorMemberId: input.actingMemberId,
-    reason: "Card refund shortfall part to check dismissed: the officer confirmed the member already has it",
+    reason: input.dismissal.disputeLost
+      ? "Disputed card payment's hand-back dismissed: the dispute was lost, so the cardholder already has the money"
+      : "Card refund shortfall part to check dismissed: the officer confirmed the member already has it",
     senderKeyPrefix: `hand-back-dismiss:${task.id}`,
   });
 }

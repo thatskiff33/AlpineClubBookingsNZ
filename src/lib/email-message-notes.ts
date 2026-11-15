@@ -283,7 +283,7 @@ export function internetBankingHoldKeptParagraph(
  * #4097 (`INV-PAY-129`): a card cancel whose card refund plan carried less
  * than the refund due, whose remainder the club pays by bank transfer.
  */
-export type ManualRefundTaskAlertSituation = "cash-cancellation" | "group-organiser-internet-banking" | "card-refund-shortfall" | "joiner-cancel-organiser"; // #3949: a joiner's own cancel
+export type ManualRefundTaskAlertSituation = "cash-cancellation" | "group-organiser-internet-banking" | "card-refund-shortfall" | "joiner-cancel-organiser" | "disputed-card-cancellation"; // #3949: a joiner's own cancel; #4911: a disputed card payment's
 
 /** Each situation's subject phrase, text heading, amount row label and recipient row label: the cash ones exactly as they always read. */
 const ALERT_WORDS: Record<ManualRefundTaskAlertSituation, { label: string; heading: string; amountLabel: string; recipientLabel: string }> = {
@@ -291,6 +291,7 @@ const ALERT_WORDS: Record<ManualRefundTaskAlertSituation, { label: string; headi
   "group-organiser-internet-banking": { label: "Internet Banking group cancelled", heading: "Manual Refund Needed - Internet Banking Group Cancelled", amountLabel: "Owed when this alert was sent", recipientLabel: "Organiser" },
   "card-refund-shortfall": { label: "card refund short on a cancelled booking", heading: "Manual Refund Needed - Card Refund Short on a Cancelled Booking", amountLabel: "Amount the card refund could not carry", recipientLabel: "Member" },
   "joiner-cancel-organiser": { label: "group joiner cancelled, refund to the organiser", heading: "Manual Refund Needed - Group Joiner Cancelled, Refund to the Organiser", amountLabel: "Amount to refund to the organiser", recipientLabel: "Organiser" },
+  "disputed-card-cancellation": { label: "disputed card booking cancelled", heading: "Manual Refund Needed - Disputed Card Booking Cancelled", amountLabel: "Refund due under the policy", recipientLabel: "Member" },
 };
 
 /** The subject phrase (`{{handBackLabel}}`). */
@@ -310,6 +311,14 @@ export const GROUP_HAND_BACK_ALERT_LEAD =
 export const GROUP_HAND_BACK_ALERT_BODY =
   "Each joiner's refund has been recorded in the app's ledger as made, but no money has moved. The hand-back task on the payments board holds the total owed: it grows as each joiner's place is cancelled, and its reason lists each joiner's share. Pay the organiser the total the task shows, then mark it paid back - that records only that the money went, because the refunds are already in the ledger. It cannot be dismissed: if the club decides not to repay the organiser, take it to the treasurer.";
 
+/** #4911, #4516 (owner decision, 15 Nov 2026): a disputed card payment's cancel, the HTML's warning box and the note's lead. */
+export const DISPUTED_CANCELLATION_ALERT_LEAD =
+  "A booking whose card payment the cardholder is disputing has been cancelled. No card refund or account credit was issued - the refund is with the treasurer.";
+
+/** Its paragraph after the lead, shared by the HTML and the note: when to pay it, and when it may be dismissed. */
+export const DISPUTED_CANCELLATION_ALERT_BODY =
+  "While the dispute is open, or if the club wins it, the club may still owe this refund: once the dispute is decided for the club, pay it by bank transfer and mark the task paid back. If the dispute is lost, the cardholder already has the money back through their bank: dismiss the task with a note. It cannot be dismissed before the dispute is recorded as lost.";
+
 /**
  * The cash situation's next step, shared by the HTML and the note. #4516 (owner decision, 14 Nov 2026): the task
  * is a bank or cash hand-back whose dismissal is refused for now, in the refusal's own words (`INV-SSOT`).
@@ -319,7 +328,7 @@ export const CASH_HAND_BACK_ALERT_NEXT_STEP =
 
 /** A non-cash situation's lead and paragraph: the HTML's warning box and paragraph, and the note's (#4042, #4097, #3949). */
 export const manualRefundTaskAlertLeadAndBody = (situation: ManualRefundTaskAlertSituation): readonly [string, string] | null =>
-  situation === "group-organiser-internet-banking" ? [GROUP_HAND_BACK_ALERT_LEAD, GROUP_HAND_BACK_ALERT_BODY] : situation === "card-refund-shortfall" ? [CARD_REFUND_SHORTFALL_ALERT_LEAD, CARD_REFUND_SHORTFALL_ALERT_BODY] : situation === "joiner-cancel-organiser" ? [JOINER_CANCEL_ORGANISER_ALERT_LEAD, JOINER_CANCEL_ORGANISER_ALERT_BODY] : null;
+  situation === "group-organiser-internet-banking" ? [GROUP_HAND_BACK_ALERT_LEAD, GROUP_HAND_BACK_ALERT_BODY] : situation === "card-refund-shortfall" ? [CARD_REFUND_SHORTFALL_ALERT_LEAD, CARD_REFUND_SHORTFALL_ALERT_BODY] : situation === "joiner-cancel-organiser" ? [JOINER_CANCEL_ORGANISER_ALERT_LEAD, JOINER_CANCEL_ORGANISER_ALERT_BODY] : situation === "disputed-card-cancellation" ? [DISPUTED_CANCELLATION_ALERT_LEAD, DISPUTED_CANCELLATION_ALERT_BODY] : null;
 
 /** The text body's explaining paragraphs (`{{handBackNote}}`). */
 export function manualRefundTaskAlertNote(situation: ManualRefundTaskAlertSituation): string {

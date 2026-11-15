@@ -2742,7 +2742,7 @@ hand-back is never dismissed.** A task the member-money journal records as a
 hand-back debt, other than a card shortfall's part to check
 (`refusesJournalHandBackDismissal`: a cash cancellation's, a card shortfall's
 bank part, an edit's, an approved appeal's, an organisation's late cash),
-refuses OPEN -> DISMISSED with a 409,
+refuses OPEN -> DISMISSED with a 409 (bar a disputed card payment's, below),
 under `lock(1)` and the booking row, before any claim: the task stays OPEN, its
 refund debt (R05) stays open, and nothing is written. It closes only by
 COMPLETED. Wherever this section says such a task is dismissed, that is a row
@@ -2751,10 +2751,16 @@ still puts those back OPEN. A four-way dismissal that records why replaces the
 refusal in a later change. Every other kind keeps its dismissal.
 
 **A card shortfall's part to check keeps its dismissal** (a capacity race's
-too), for an officer who has confirmed the card refund reached the member. It
-takes `lock(1)`, the booking row and the Payment row before its claim, and
-after a won claim withdraws its R05 exactly, so raising and dismissing it
-leaves the journal as it was. Reopened, it has no live R05, and Mark paid then
+too), for an officer who has confirmed the card refund reached the member. **So
+does a disputed card payment's hand-back (#5061) once every dispute on its
+booking is LOST** (owner decision, 15 Nov 2026): the cardholder already has the
+money back through their bank. While a dispute is open, won or closed with no
+funds taken, OPEN -> DISMISSED is refused with a 409 naming it, writing
+nothing. Either dismissal takes `lock(1)`, the booking row and the Payment row
+before its claim (a disputed hand-back re-reads its disputes only then; LOST is
+final), and after a won claim withdraws its R05 exactly, so raising and
+dismissing it leaves the journal as it was. The queue asks the same rule
+(`journalHandBackDismissal`) with the same dispute read. Reopened, it has no live R05, and Mark paid then
 posts its R14 unapplied, as for a task raised before M4d.
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED

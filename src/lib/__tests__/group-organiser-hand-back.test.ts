@@ -434,6 +434,7 @@ describe("a growing claim keeps the alert's record", () => {
 describe("the finance queue payload marks it for the card's own sentence", () => {
   it("true for the group key only", async () => {
     const { toOpenManualRefundTaskPayload } = await import("@/lib/manual-refund-task-queue-payload");
+    const { JOURNAL_HAND_BACK_DISMISS_REFUSAL, disputedHandBackDismissRefusal } = await import("@/lib/manual-refund-task-copy");
     const row = {
       id: "task-1",
       bookingId: "org-booking",
@@ -469,10 +470,16 @@ describe("the finance queue payload marks it for the card's own sentence", () =>
     // #4516 (owner decisions, 14 and 15 Nov 2026): the queue hides Dismiss on a real bank or cash hand-back. An
     // organiser's is not one (M6, it has its own refusal); a cash cancellation's hand-back on the same row is; a card
     // shortfall's part to check keeps Dismiss and its bank-transfer part does not.
-    expect(payload.journalHandBackDismissRefused).toBe(false);
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).journalHandBackDismissRefused).toBe(true);
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "cancel-card-shortfall:booking-1:check" }, null, []).journalHandBackDismissRefused).toBe(false);
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "cancel-card-shortfall:booking-1" }, null, []).journalHandBackDismissRefused).toBe(true);
+    expect(payload.journalHandBackDismissRefusal).toBeNull();
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).journalHandBackDismissRefusal).toBe(JOURNAL_HAND_BACK_DISMISS_REFUSAL);
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "cancel-card-shortfall:booking-1:check" }, null, []).journalHandBackDismissRefusal).toBeNull();
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: "cancel-card-shortfall:booking-1" }, null, []).journalHandBackDismissRefusal).toBe(JOURNAL_HAND_BACK_DISMISS_REFUSAL);
+    // #4516 (owner decision, 15 Nov 2026): a disputed card payment's hand-back, by the same rule the server asks.
+    const cash = { ...row, occurrenceKey: null };
+    expect(toOpenManualRefundTaskPayload(cash, null, [], [{ status: "OPEN" }]).journalHandBackDismissRefusal).toBe(disputedHandBackDismissRefusal("OPEN"));
+    expect(toOpenManualRefundTaskPayload(cash, null, [], [{ status: "WON" }]).journalHandBackDismissRefusal).toBe(disputedHandBackDismissRefusal("WON"));
+    expect(toOpenManualRefundTaskPayload(cash, null, [], [{ status: "LOST" }])).toMatchObject({ journalHandBackDismissRefusal: null, disputedHandBackLost: true });
+    expect(toOpenManualRefundTaskPayload(cash, null, [])).toMatchObject({ disputedHandBackLost: false });
     // Its shares are kept in reviewContext: never read as unreadable review evidence.
     const withShares = toOpenManualRefundTaskPayload({ ...row, reviewContext: { groupOrganiserHandBack: { settlementId: "settle-1", shares: [] } } }, null, []);
     expect(withShares).toMatchObject({ reviewEvidence: null, reviewEvidenceUnreadable: false });

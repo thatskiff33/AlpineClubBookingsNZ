@@ -8,6 +8,7 @@ import {
   REOPENABLE_DISMISSAL_WINDOW_DAYS,
 } from "@/lib/manual-refund-task-reopen-bounds";
 import type { DismissedManualRefundTaskRow } from "@/lib/manual-refund-task-queue-payload";
+import { readDisputesByBookingId, type DisputeMarker } from "@/lib/stripe-dispute-hold";
 
 /**
  * The finance settlement queue's SECONDARY reads, and the rule that neither of
@@ -47,6 +48,25 @@ export function readOrDegrade<T>(
       return { rows: [], unavailable: true };
     },
   );
+}
+
+/**
+ * #4516 (owner decision, 15 Nov 2026): the card disputes on the open tasks'
+ * bookings, keyed by booking, through #5061's one read (`readDisputesByBookingId`),
+ * for the dismissal rule the server asks too (`journalHandBackDismissal`). It
+ * degrades like the cards beside it, and failing closed: with no disputes read,
+ * a disputed card payment's hand-back offers no Dismiss, and the server, which
+ * re-reads them under its locks, still decides.
+ */
+export async function readOpenTaskDisputes(
+  db: Parameters<typeof readDisputesByBookingId>[0],
+  tasks: readonly { bookingId: string }[],
+): Promise<Map<string, DisputeMarker[]>> {
+  const read = await readOrDegrade(
+    readDisputesByBookingId(db, tasks.map((task) => task.bookingId)).then((byBooking) => [...byBooking]),
+    "card disputes on the open tasks' bookings",
+  );
+  return new Map(read.rows);
 }
 
 /**

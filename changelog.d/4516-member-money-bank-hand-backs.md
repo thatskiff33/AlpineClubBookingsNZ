@@ -4,6 +4,8 @@
   once the money has gone back, or leave it open. Dismissing with a reason
   comes in a later update. A card refund shortfall's part to check can still
   be dismissed once the officer has confirmed the card refund reached the
-  member. A late card payment the treasurer keeps is recorded as
+  member, and the refund a cancellation handed to the treasurer because the
+  cardholder disputed the card payment can be dismissed once the dispute is
+  lost. Officers are emailed a dispute-specific alert for that refund. A late card payment the treasurer keeps is recorded as
   already billed where an invoice covers it, and as extra booking revenue only
   for the rest.

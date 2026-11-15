@@ -78,6 +78,8 @@ const mocks = vi.hoisted(() => ({
   paymentRefundFindMany: vi.fn().mockResolvedValue([]),
   // #4097: the card refund shortfall's preflight - the Payment row, and the cancel's card refund row.
   lockPaymentForRefundedTotal: vi.fn().mockResolvedValue(undefined),
+  // #4516 (owner decision, 15 Nov 2026): the card disputes on a hand-back's booking, read under the dismissal's locks.
+  stripeDisputeFindMany: vi.fn<(...args: unknown[]) => Promise<{ bookingId: string; stripeDisputeId: string; status: string; amountCents: number }[]>>(async () => []),
   readSupersededCaptureHeldBack: vi.fn<(...args: unknown[]) => Promise<{ byTransaction: Map<string, number>; totalCents: number }>>(async () => ({ byTransaction: new Map(), totalCents: 0 })),
   paymentRecoveryOperationFindUnique: vi.fn().mockResolvedValue(null),
   // #4104 review (MM3): the payment's card refunds Stripe failed later, owed by rows of their own.
@@ -338,6 +340,7 @@ const tx = {
     count: (...a: unknown[]) => mocks.paymentTransactionCount(...(a as [])),
   },
   paymentRefund: { findMany: (...a: unknown[]) => mocks.paymentRefundFindMany(...a) },
+  stripeDispute: { findMany: (...a: unknown[]) => mocks.stripeDisputeFindMany(...a) },
   manualRefundTask: {
     findUnique: (...a: unknown[]) => mocks.manualRefundTaskFindUnique(...a),
     updateMany: (...a: unknown[]) => mocks.manualRefundTaskUpdateMany(...a),
@@ -593,6 +596,7 @@ beforeEach(() => {
     booking: { memberId: "member-1", lodgeId: "lodge-1", status: "CANCELLED", payment: null },
   });
   mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.stripeDisputeFindMany.mockResolvedValue([]); // #4516: no card dispute unless a case records one
   // The anchor is free unless a test says otherwise.
   mocks.memberCreditFindUnique.mockResolvedValue(null);
   mocks.memberCreditFindMany.mockResolvedValue([]);
@@ -840,6 +844,56 @@ describe("resolveManualRefundTask", () => {
       await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/changed while you were closing it/) });
 
       expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
+    });
+
+    // #4516 (owner decision, 15 Nov 2026): a disputed card payment's hand-back (#5061) is dismissed only once every
+    // dispute on its booking is lost. MUTATIONS: dropping the lost requirement fails the open, won and mixed cases;
+    // refusing it again fails the lost case; reading the disputes before the Payment row fails the order assertion.
+    const dispute = (status: string, id = "dp_1") => ({ bookingId: "booking-1", stripeDisputeId: id, status, amountCents: 9000 });
+
+    it("#4516: dismisses a disputed card payment's hand-back once its dispute is lost: Payment row, then the disputes re-read, then the claim, then its R05 withdrawn", async () => {
+      mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST")]);
+
+      await dismissTask();
+
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: ManualRefundTaskStatus.DISMISSED }) }),
+      );
+      expect(mocks.stripeDisputeFindMany).toHaveBeenCalledTimes(1);
+      expect(mocks.stripeDisputeFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { bookingId: { in: ["booking-1"] } } }));
+      expect(String((mocks.executeRaw.mock.calls[0]![0] as TemplateStringsArray).join(""))).toContain("pg_advisory_xact_lock(1)");
+      expect(mocks.executeRaw.mock.invocationCallOrder[1]).toBeLessThan(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]!);
+      expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.stripeDisputeFindMany.mock.invocationCallOrder[0]!);
+      expect(mocks.stripeDisputeFindMany.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledExactlyOnceWith(tx, expect.anything(), expect.objectContaining({
+        bookingId: "booking-1", scope: "hand-back", id: "task-1", actorMemberId: "admin-1",
+      }));
+      expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["open", [dispute("OPEN")], /while the card payment's dispute is open: the club may still owe it/],
+      ["won", [dispute("WON")], /the card payment's dispute was won, so the club still owes it/],
+      ["closed with no funds taken", [dispute("CLOSED_OTHER")], /the card payment's dispute was closed with no funds taken, so the club still owes it/],
+      ["lost on one charge, open on another", [dispute("LOST", "dp_1"), dispute("OPEN", "dp_2")], /while the card payment's dispute is open/],
+    ])("#4516: refuses a disputed card payment's hand-back while its dispute is %s, before the claim, writing nothing", async (_label, disputes, message) => {
+      mocks.stripeDisputeFindMany.mockResolvedValue(disputes);
+
+      await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: expect.stringMatching(message) });
+
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+      expect(mocks.createAuditLog).not.toHaveBeenCalled();
+      expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
+    });
+
+    it("#4516: an edit's hand-back on a booking with a lost dispute is still refused, and reads no disputes", async () => {
+      await withFacts({ occurrenceKey: "edit-refund-hand-back:mod-1", booking: { memberId: "member-1", lodgeId: "lodge-1", status: "PAID", payment: null } });
+      mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST")]);
+
+      await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
+
+      expect(mocks.stripeDisputeFindMany).not.toHaveBeenCalled();
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     });
 
     it("CONTROL: a completion of the same hand-back is not refused", async () => {

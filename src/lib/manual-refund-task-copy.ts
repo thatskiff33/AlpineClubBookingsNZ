@@ -36,7 +36,7 @@ import {
   EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
   manualRefundTaskKindAllowsSettlement,
 } from "@/lib/manual-refund-task-settlement-rules";
-import { namedDisputes } from "@/lib/stripe-dispute-note";
+import { namedDisputes, STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
 import { formatCents } from "@/lib/utils";
 import type { EditReviewStillOwedPreview } from "@/lib/edit-financial-review-still-owed";
 
@@ -419,12 +419,27 @@ export function editRefundHandBackReopenAfterCancelMessage(booking: PayeeBooking
 
 /**
  * #4516 (owner decisions, 14 and 15 Nov 2026): a real bank or cash hand-back the member-money journal records as a
- * refund debt (`refusesJournalHandBackDismissal`; never a card shortfall's part to check) is not dismissed until
+ * refund debt (`journalHandBackDismissal`; never a card shortfall's part to check) is not dismissed until
  * dismissal asks the officer why. The server refuses it and the queue shows this sentence where the Dismiss button
  * would be, in the same words (`INV-SSOT`).
  */
 export const JOURNAL_HAND_BACK_DISMISS_REFUSAL =
   "This refund can't be dismissed yet. Mark it paid once the money has gone back, or leave it open. Dismissing with a reason is coming in a later update.";
+
+/**
+ * #4516 (owner decision, 15 Nov 2026): the hand-back a paid cancel of a disputed card payment raises (#5061) is
+ * dismissed only once the dispute is recorded as lost. Before then the server refuses, and the queue prints the
+ * same words where the Dismiss button would be. Named by the dispute that is not yet lost.
+ */
+export function disputedHandBackDismissRefusal(status: StripeDisputeStatus): string {
+  return status === "OPEN"
+    ? "This refund can't be dismissed while the card payment's dispute is open: the club may still owe it. Once Stripe records the dispute as lost, the cardholder already has the money back and this task can be dismissed."
+    : `This refund can't be dismissed: the card payment's dispute was ${STRIPE_DISPUTE_STATUS_LABEL[status]}, so the club still owes it. Mark it paid once the money has gone back.`;
+}
+
+/** The dismiss dialog's sentence for that hand-back once its dispute is lost (#4516, owner decision 15 Nov 2026). */
+export const DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION =
+  "The card payment's dispute was lost, so the cardholder already has this money back through their bank. Dismissing closes the task without refunding anything and takes the refund off what the club owes. Say so in the note.";
 
 /**
  * B5 (#2262), #3949 (owner decision, 22 Oct 2026): THE REASON LINE of a paid
@@ -457,5 +472,5 @@ export function disputedCancellationHandBackReason({ bookingId, refundPercentage
   refundPercentage: number;
   disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
 }): string {
-  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time.`;
+  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time. If the dispute is lost, the cardholder already has the money: dismiss this task.`;
 }

@@ -1739,8 +1739,10 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // its task's claim. #4516 (M4d): that resolution holds lock(1) and the booking
   // row first, so this Payment row is after them; so does a cancellation
   // hand-back's completion (`lockCancellationHandBackBeforeClaim`) and (owner
-  // decision 15 Nov 2026) a card shortfall part to check's dismissal, whose R05
-  // withdrawal after the claim re-takes it. The order a "Paid another way" close takes
+  // decisions 15 Nov 2026) the dismissal of a card shortfall's part to check or
+  // a disputed card payment's hand-back (`decideJournalHandBackDismissal`, which
+  // then re-reads the booking's disputes), whose R05 withdrawal after the claim
+  // re-takes it. The order a "Paid another way" close takes
   // the Payment row and that task's row in; #4824: an approval's plan
   // (`planLateCaptureApprovalRefund`) takes it first, before it reads what the
   // capture holds; #4838: so does a #2700 hand-back's still-owed check

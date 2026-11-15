@@ -501,7 +501,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:275",
   "src/lib/kiosk-access.ts:230",
-  "src/lib/manual-refund-task-queue-payload.ts:373",
+  "src/lib/manual-refund-task-queue-payload.ts:393",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:344",
   "src/lib/waitlist-cross-lodge.ts:532",
@@ -779,7 +779,7 @@ describe("#3369: an `organisation` selection names a relation that exists", () =
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
-  "src/app/api/admin/payments/manual-refund-tasks/route.ts:81",
+  "src/app/api/admin/payments/manual-refund-tasks/route.ts:82",
   "src/lib/bed-allocation-removal.ts:144",
   // #3750: the change-request decision route's `includeRequestDetail`, moved
   // out of the route file to keep it in budget. Verified by hand: it is passed

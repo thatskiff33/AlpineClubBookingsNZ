@@ -550,7 +550,7 @@ export function adminManualRefundTaskTemplate(data: {
 ): string {
   const [situation, leadAndBody] = [data.situation ?? "cash-cancellation", manualRefundTaskAlertLeadAndBody(data.situation ?? "cash-cancellation")]; // #4042, #4097, #3949
   return layout(`
-    ${heading(situation === "group-organiser-internet-banking" ? "Manual Refund Needed — Internet Banking Group Cancelled" : situation === "card-refund-shortfall" ? "Manual Refund Needed — Card Refund Short on a Cancelled Booking" : situation === "joiner-cancel-organiser" ? "Manual Refund Needed — Group Joiner Cancelled, Refund to the Organiser" : "Manual Refund Needed — Cash Booking Cancelled")}
+    ${heading(situation === "group-organiser-internet-banking" ? "Manual Refund Needed — Internet Banking Group Cancelled" : situation === "card-refund-shortfall" ? "Manual Refund Needed — Card Refund Short on a Cancelled Booking" : situation === "joiner-cancel-organiser" ? "Manual Refund Needed — Group Joiner Cancelled, Refund to the Organiser" : situation === "disputed-card-cancellation" ? "Manual Refund Needed — Disputed Card Booking Cancelled" : "Manual Refund Needed — Cash Booking Cancelled")}
     ${leadAndBody ? `${alertBox(leadAndBody[0], "warning")}${paragraph(leadAndBody[1])}` : `${alertBox(
       "A booking settled in cash (or by an off-Xero bank transfer) has been cancelled. The refund has to be paid back by hand — nothing was refunded automatically.",
       "warning"

@@ -37,7 +37,7 @@ import {
   type ClubDateFormat,
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
-import { JOURNAL_HAND_BACK_DISMISS_REFUSAL, reviewGuestRemovedSinceRaisedWarning, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, reviewGuestRemovedSinceRaisedWarning, zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 // #3213: whether a row may be closed as money that moved is decided ONCE, in a
 // client-safe home, and the completion door throws on the same answer
 // (`manual-refund-task-resolution.ts`, `INV-SSOT`). Deciding it again here is
@@ -112,8 +112,10 @@ interface ManualRefundTask {
   paidToGroupOrganiser?: boolean; // #3949: either of those two, paid back to the group organiser
   /** #4042: an organiser's Internet Banking group cancel, repaid to the organiser. Optional, as above. */
   groupOrganiserHandBack?: boolean;
-  /** #4516: a real bank or cash hand-back whose dismissal the server refuses for now (never a part to check). Optional, as above. */
-  journalHandBackDismissRefused?: boolean;
+  /** #4516: why the server refuses this hand-back's dismissal, in its words, or null (`journalHandBackDismissal`). Optional, as above. */
+  journalHandBackDismissRefusal?: string | null;
+  /** #4516: a disputed card payment's hand-back whose dispute is lost, so it may be dismissed. Optional, as above. */
+  disputedHandBackLost?: boolean;
   /** #4097: what a card cancellation's card refund could not carry - by bank transfer, or checked first. Optional, as above. */
   cardShortfallHandBack?: boolean;
   cardShortfallCheck?: boolean;
@@ -684,6 +686,7 @@ function resolutionDescription({
     if (task.paidToGroupOrganiser === true) { // #3949 review
       return "Dismissing closes the task without refunding anything — for a group organiser who declined the refund, or money settled another way. Say which, so the record makes sense later.";
     }
+    if (task.disputedHandBackLost === true) return DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION; // #4516 (owner decision, 15 Nov 2026)
     if (task.cardShortfallCheck === true) return "Only dismiss this once you have confirmed in Stripe that the card refund reached the member. It closes the task without refunding anything and takes the refund off what the club owes. Say how the member was refunded, so the record makes sense later."; // #4516 (owner decision, 15 Nov 2026)
     return isFinancialReview(task)
       ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
@@ -1990,9 +1993,9 @@ export function ManualRefundTaskQueue() {
                       </ViewOnlyActionButton>
                       ) : null}
                       {/* #4042: a group organiser's hand-back is paid, never dismissed. #4516: nor, for now, a real bank or cash hand-back; its row says why. */}
-                      {task.groupOrganiserHandBack === true ? null : task.journalHandBackDismissRefused === true ? (
+                      {task.groupOrganiserHandBack === true ? null : task.journalHandBackDismissRefusal ? (
                         <p className="text-xs text-muted-foreground" data-testid="manual-refund-task-dismiss-unavailable">
-                          {JOURNAL_HAND_BACK_DISMISS_REFUSAL}
+                          {task.journalHandBackDismissRefusal}
                         </p>
                       ) : (
                       <ViewOnlyActionButton

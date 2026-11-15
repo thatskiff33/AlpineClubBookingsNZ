@@ -932,8 +932,9 @@ journal, so its payment posts unapplied (Dr receivable, Cr bank or cash).
 Dismissing a real bank or cash hand-back, whenever it was raised, is refused
 for now, so its debt stays open until it is paid (owner decision, 14 Nov 2026,
 #4516); a four-way dismissal that records why follows in its own change. A card
-shortfall's part to check keeps its dismissal (owner decision, 15 Nov 2026),
-which withdraws its debt exactly. An
+shortfall's part to check keeps its dismissal, and a disputed card payment's
+hand-back is dismissed once its dispute is lost (owner decisions, 15 Nov 2026);
+each withdraws its debt exactly. An
 approved appeal's bank part posts its concession against goodwill first, as
 its card part does, so once paid the member owes nothing. A late capture the treasurer keeps closes the capture-return debt,
 then records the keep: collected against the booking for the cents an invoice

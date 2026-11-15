@@ -2210,7 +2210,7 @@ async function performBookingCancellation(
         : disputed
           ? `Booking cancelled ${days} day(s) before check-in while its card payment is disputed by the cardholder (Stripe dispute ${disputeIds.join(", ")}). No card refund or account credit was issued: check the dispute in Stripe before refunding any of the ${refundPercentage}% due.`
           : `Cash/manual settlement cancelled ${days} day(s) before check-in (${refundPercentage}% under the policy in effect at the time).`,
-      ...(toOrganiser ? { situation: "joiner-cancel-organiser" as const } : {}),
+      ...(toOrganiser ? { situation: "joiner-cancel-organiser" as const } : disputed ? { situation: "disputed-card-cancellation" as const } : {}),
     }, format).catch((err) =>
       logger.error(
         { err, bookingId, manualRefundTaskId },
