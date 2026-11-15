@@ -11,7 +11,7 @@ lines: 767
 reason: a released approval withdraws its bank hand-back's debt beside the release, under the same Payment row.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2759
+lines: 2762
 reason: one argument passes the edit's journal context to the hand-back raise it already calls.
 
 file: src/lib/booking-cancel.ts
@@ -47,7 +47,7 @@ lines: 1328
 reason: the row prints why a bank or cash hand-back cannot be dismissed (owner decision, 14 Nov 2026) where the Dismiss button renders, beside the group organiser's rule it follows.
 
 function: src/lib/booking-batch-modification-service.ts#modifyBookingBatch
-lines: 1808
+lines: 1813
 reason: one argument passes the edit's actor to the hand-back raise it already calls.
 
 function: src/lib/booking-cancel.ts#performBookingCancellation
