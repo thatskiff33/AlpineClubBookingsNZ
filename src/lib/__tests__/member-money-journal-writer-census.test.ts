@@ -26,6 +26,7 @@ const ALLOWED: Record<string, string> = {
   "src/lib/database-roles.ts": "least-privilege provisioning (INSERT/SELECT grants, no rows)",
   "src/lib/member-merge-snapshot-columns.ts": "member-merge classification strings",
   "src/lib/privacy-retention-classification.ts": "privacy schedule classification strings; no journal access",
+  "src/lib/subject-access-export-coverage.ts": "#4915: the access export's coverage map keys; no journal access",
   "scripts/verify-member-money-journal.ts": "operator verifier in a READ ONLY transaction",
   "src/lib/booking-ledger-capture-kinds.ts": "#4516: the one capture-kind map names each kind's receipt cash account and origin; no row read or written",
 };
@@ -70,6 +71,15 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
   },
   "src/lib/booking-ledger-projection-census-journal.ts": {
     reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines",
+    importOnly: false,
+  },
+  // #4915: the subject access export copies the subject's own journal lines and obligations into their file.
+  "src/lib/subject-access-export-sections.ts": {
+    reason: "the subject's own journal lines for their privacy access file (read-only)",
+    importOnly: false,
+  },
+  "src/lib/subject-access-export-additional.ts": {
+    reason: "the face value of the subject's own obligations for their privacy access file (read-only)",
     importOnly: false,
   },
 };

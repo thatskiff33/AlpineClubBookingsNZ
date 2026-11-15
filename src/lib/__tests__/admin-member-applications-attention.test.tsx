@@ -16,6 +16,13 @@ import {
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({
   useAdminAreaEditAccess: () => true,
 }));
+// The page mirrors its filter and page into the URL (#4960); a stable router
+// keeps that sync inert here.
+const router = { replace: vi.fn(), push: vi.fn() };
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+  useSearchParams: () => new URLSearchParams(),
+}));
 // Exercise the parent's callback contract without fetching the mapping editor's own data.
 vi.mock(
   "@/app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel",
