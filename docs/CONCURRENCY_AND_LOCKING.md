@@ -44,11 +44,16 @@ rule and this section is the defect.
 ### Tier 1 — per-lodge capacity claims
 
 `acquireLodgeCapacityLock(tx, lodgeId)` (`lodge-capacity-lock.ts`, re-exported by
-`capacity.ts`) serialises **bed/capacity claims for ONE lodge**. Bookings at different lodges never contend, so two
-members booking different lodges proceed in parallel. Every path that reads
-occupancy and then claims a bed (create, confirm-from-draft, settle-to-CONFIRMED,
+`capacity.ts`) serialises **bed/capacity claims for ONE lodge**. Capacity claims
+at different lodges never contend on this key. Every path that reads occupancy
+and then claims a bed (create, confirm-from-draft, settle-to-CONFIRMED,
 date/guest modification, waitlist confirm, the Internet-Banking capacity gate)
-takes this lock keyed on the booking's own lodge.
+takes this lock keyed on the booking's own lodge. Some of them take the Tier 2
+key first (below): a draft or confirmed create (`createDraftBooking`,
+`createConfirmedBooking`), a cancel, a settlement, a date change and a refund
+queue behind it whichever lodge they touch, so two members booking different
+lodges still queue behind one another. A waitlist create
+(`createWaitlistedBooking`) takes this lodge key alone.
 
 ### Tier 2 — global booking-status / money serialisation
 

@@ -248,20 +248,23 @@ contracts, and records the relevant PR numbers in the PR lock-impact section.
 
 ## Sekreton sandbox checks
 
-Sekreton's [`.sekreton/config.toml`](../../.sekreton/config.toml) sets up Node
-from `.nvmrc`, pnpm from `package.json`, frozen dependencies and Prisma with a
-placeholder database URL. Node download failure stops setup. The provider puts
-`SETUP_TOOL_DIR/bin` on `PATH`; the fallback archive targets Linux x86-64.
+The isolated Sekreton sandbox uses [`.sekreton/config.toml`](../../.sekreton/config.toml)
+for setup and its pre-ship checks. Setup reads the Node version from
+`.nvmrc` and pnpm spec from `package.json`, installs frozen dependencies, and
+generates Prisma with a placeholder database URL. A failed Node download stops
+setup before extraction. The provider must put `SETUP_TOOL_DIR/bin` on `PATH`;
+the fallback archive targets Linux x86-64.
 
-The orchestrator owns local validation under `AGENTS.md`; PR CI owns the full
-unit suite, build, migration and E2E gates.
-[`COORDINATION.md`](COORDINATION.md#lanes-and-assignments) defines Sekreton's
-GitHub responsibilities (#4392).
+These quick checks fit the task sandbox. The orchestrator remains responsible
+for the local validation in `AGENTS.md`; PR CI owns the full unit suite, build,
+migration and E2E gates before merge. What a Sekreton lane owns on GitHub, from
+its claim to the merge, is in
+[`COORDINATION.md`](COORDINATION.md#lanes-and-assignments) (#4392).
 
-PostgreSQL checks use the declared `postgresql` package and a disposable,
-loopback-only cluster managed by `scripts/ci/disposable-postgres.sh` (see its
-header for root and tool discovery). Missing binaries fail explicitly.
-`kept-change-realdb` runs
+The PostgreSQL checks use the declared `postgresql` package and a fresh,
+loopback-only cluster that `scripts/ci/disposable-postgres.sh` starts and stops
+(its header covers root and tool discovery). A missing binary fails explicitly;
+unit-shard success is not database evidence. `kept-change-realdb` runs
 `bash scripts/ci/kept-change-realdb.sh`: the kept-change, superseded-invoice
 carry, change-receipt, primary-invoice race and unpaid-edit change-fee (#4661)
 suites, serially, then `unexercisedRealdbFiles` on the Vitest report: every
@@ -271,12 +274,11 @@ always, then, when the change can move CI's migration jobs, drift and the
 data-migration suites with the same no-skip check (its header has the rule).
 `typecheck` runs `scripts/ci/sekreton-typecheck.sh` (production project only,
 skipped under 6 GiB); PR CI keeps the rest.
-`fast-censuses` runs `pnpm run ci:fast-censuses` against `origin/main`.
-Both it and `migrations` first run `scripts/ci/sekreton-prepare-base.sh`:
-fetch main into that ref when `origin` exists, or use the sandbox's supplied
-local `main` when no remote is configured. A failed fetch, missing local main
-or unrelated local history stops the job; neither check uses HEAD as its base.
-GitHub's advisory `realdb-all` result must be cited before PR readiness.
+`fast-censuses` (`pnpm run ci:fast-censuses`) and `migrations` first run
+`sekreton-prepare-base.sh`: fetch `origin` (failure fails), or without one use
+local `main`.
+The `realdb-all` job on GitHub remains advisory, so cite its actual result
+separately before making the PR ready.
 
 ## Checking `main` after a merge
 

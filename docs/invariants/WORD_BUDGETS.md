@@ -81,7 +81,7 @@ stays for the agent-doc ceilings below.
 | --- | ---: |
 | `INV-MOD-025` | 4579 |
 | `INV-ADDPAY-037` | 2705 |
-| `INV-SSOT-004` | 2653 |
+| `INV-SSOT-004` | 2596 |
 | `INV-HOST-050` | 2220 |
 | `INV-PRIV-012` | 2086 |
 | `INV-CONFIG-005` | 1742 |

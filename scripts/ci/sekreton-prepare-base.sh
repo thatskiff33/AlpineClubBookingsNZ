@@ -1,20 +1,38 @@
 #!/usr/bin/env bash
-# Run from the checkout root before checks that compare against origin/main.
-# Sekreton can supply a local main branch without any configured remote.
+# Point refs/remotes/origin/main at the base the Sekreton gate compares
+# against, for the `fast-censuses` and `migrations` jobs (ALP-651).
+#
+# Those jobs judge the change against origin/main (docs:indexcheck, the
+# file-size ratchet, migration drift). A checkout with an `origin` remote
+# fetches it. Sekreton's verify sandbox has no `origin`, only a local `main`
+# snapshot, so there the snapshot becomes origin/main. It may be older than
+# GitHub's main; PR CI remains the authority.
+#
+# Local main is NOT required to be an ancestor of HEAD: a branch behind main is
+# normal and must still be checked against it. HEAD is never used as the base.
+#
+# Run from the checkout root.
 set -euo pipefail
 
+TARGET=refs/remotes/origin/main
+
+fail() {
+  echo "sekreton-prepare-base: $*" >&2
+  exit 1
+}
+
+# The `+` lets the ref move to whatever the source says main is now, even when
+# a stale origin/main from an earlier snapshot is not its ancestor.
 if git remote get-url origin >/dev/null 2>&1; then
-  # An explicit destination also works with narrow or absent fetch refspecs.
-  # A broken configured remote must fail, never fall back to a stale baseline.
-  git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+  git fetch --no-tags origin "+refs/heads/main:$TARGET" \
+    || fail "could not fetch main from the origin remote"
+elif git rev-parse --verify --quiet 'refs/heads/main^{commit}' >/dev/null; then
+  echo "sekreton-prepare-base: no origin remote; using the sandbox's local main snapshot as origin/main"
+  git fetch --no-tags . "+refs/heads/main:$TARGET" \
+    || fail "could not copy local refs/heads/main to $TARGET"
 else
-  base_sha=$(git rev-parse --verify 'refs/heads/main^{commit}') || {
-    echo "Cannot prepare the check baseline: neither origin nor a local main branch exists." >&2
-    exit 1
-  }
-  git merge-base HEAD "$base_sha" >/dev/null
-  git update-ref refs/remotes/origin/main "$base_sha"
-  echo "No origin remote; using the supplied local main ($base_sha) as origin/main."
+  fail "no base to compare against: there is no 'origin' remote and no local 'refs/heads/main' commit"
 fi
 
-git rev-parse --verify 'refs/remotes/origin/main^{commit}' >/dev/null
+git rev-parse --verify "$TARGET^{commit}" \
+  || fail "$TARGET does not point at a commit after preparing the base"

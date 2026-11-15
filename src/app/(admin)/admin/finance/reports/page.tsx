@@ -8,6 +8,7 @@ import type { BookingMoneyReconciliationSummary } from "@/lib/booking-money-reco
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import { clubDownloadFilename } from "@/lib/club-download-filename";
 import { useLodgeOptions } from "@/components/lodge-select";
 import {
   CalendarRange,
@@ -435,7 +436,7 @@ export default function ReportsPage() {
     const anchor = document.createElement("a");
     const dateStr = clubTime.today();
     anchor.href = url;
-    anchor.download = `tac-report-${dateStr}.csv`;
+    anchor.download = clubDownloadFilename(club.shortName, `report-${dateStr}`, "csv");
     anchor.click();
     URL.revokeObjectURL(url);
   }
@@ -450,6 +451,7 @@ export default function ReportsPage() {
       // (#3123); this component already holds the binding.
       await generateReportPDF(reportRef.current, { from, to }, clubTime, {
         title: `${club.name} — Reports`,
+        clubShortName: club.shortName,
       });
     } catch (err) {
       console.error("PDF generation failed:", err);
