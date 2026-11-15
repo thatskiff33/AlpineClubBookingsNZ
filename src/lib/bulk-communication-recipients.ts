@@ -9,7 +9,7 @@
  * so the number the officer confirms is the number the send selects
  * (`INV-SSOT`). Never copy the `where` clause or the preference rule into a
  * caller: who each category reaches is decided only by `partitionBulkAudience`
- * (INV-PRIV-025).
+ * (INV-PRIV-026).
  */
 import "server-only";
 import { prisma } from "@/lib/prisma";

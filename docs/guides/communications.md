@@ -116,5 +116,5 @@ after preference filtering).
   [Email Deliverability](email-deliverability.md).
 - Reference: member records and email preferences in [Members](members.md); the
   module toggle in [Modules](modules.md); the rule itself is
-  [`INV-PRIV-025`](../invariants/analytics-and-privacy.md#inv-priv-025).
+  [`INV-PRIV-026`](../invariants/analytics-and-privacy.md#inv-priv-025).
 - A notice emailed on publish is a club notice: [Member Notices](member-notices.md).

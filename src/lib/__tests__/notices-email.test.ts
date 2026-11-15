@@ -59,7 +59,7 @@ it("does nothing for a notice that is not published", async () => {
 });
 
 // #4987: a notice is club business, sent under the opt-out Club notices
-// preference (INV-PRIV-025) — never the newsletter (marketingEmails) opt-in.
+// preference (INV-PRIV-026) — never the newsletter (marketingEmails) opt-in.
 it("emails every audience member except those who turned club notices off", async () => {
   mocks.resolveAudience.mockResolvedValue([
     { memberId: "m1", name: "A", email: "a@x.test", audienceVia: "All members", viaExplicitMember: false },

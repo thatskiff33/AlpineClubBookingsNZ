@@ -7492,7 +7492,7 @@ model NotificationPreference {
   marketingEmails            Boolean  @default(false)
   // #4987: club-business bulk email (AGM, closures, subscriptions due) from
   // Communications and emailed Notices. Opt-out, so it starts on; the rule for
-  // both bulk categories lives in src/lib/email/bulk-audience.ts (INV-PRIV-025).
+  // both bulk categories lives in src/lib/email/bulk-audience.ts (INV-PRIV-026).
   clubNotices                Boolean  @default(true)
   adminNewBooking            Boolean  @default(true)
   adminPaymentFailure        Boolean  @default(true)

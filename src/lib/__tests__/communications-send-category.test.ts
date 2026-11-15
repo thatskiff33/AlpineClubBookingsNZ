@@ -4,7 +4,7 @@ vi.mock("server-only", () => ({}));
 
 // #4987: the Communications send route and its pre-send count (the GET on the
 // same route) resolve the same audience through the shared bulk-email rule
-// (INV-PRIV-025).
+// (INV-PRIV-026).
 const mocks = vi.hoisted(() => ({
   memberFindMany: vi.fn(),
   sendEmail: vi.fn(),

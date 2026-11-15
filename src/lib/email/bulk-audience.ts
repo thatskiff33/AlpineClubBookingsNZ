@@ -1,5 +1,5 @@
 /**
- * Who a bulk email may reach (#4987, INV-PRIV-025).
+ * Who a bulk email may reach (#4987, INV-PRIV-026).
  *
  * Every bulk send — Admin → Messages → Communications and a Notice's "Also
  * email this notice to the audience" — declares one category, and each

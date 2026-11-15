@@ -3,7 +3,7 @@
  * POST /api/admin/communications/send
  * Admin-only. Rate limited to BULK_SENDMAIL_LIMIT sends per hour.
  * Each send declares a category (club notice or newsletter); who receives it
- * is decided by the shared bulk-email rule (#4987, INV-PRIV-025).
+ * is decided by the shared bulk-email rule (#4987, INV-PRIV-026).
  * Sanitises input to prevent HTML/header injection.
  *
  * GET returns the rate limit and, given `?recipientFilter=&category=`, how many

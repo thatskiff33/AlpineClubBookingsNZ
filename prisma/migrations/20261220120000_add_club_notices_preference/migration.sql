@@ -1,6 +1,6 @@
 -- #4987: a member's "Club notices" preference - club-business bulk email from
 -- Communications and emailed Notices, which members receive unless they turn
--- it off (INV-PRIV-025). Newsletters keep the opt-in "marketingEmails" column,
+-- it off (INV-PRIV-026). Newsletters keep the opt-in "marketingEmails" column,
 -- whose default this migration does not touch.
 --
 -- PURELY ADDITIVE EXPAND. One constant-defaulted column; nothing renamed,

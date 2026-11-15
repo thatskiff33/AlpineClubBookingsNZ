@@ -67,7 +67,7 @@ Delivery rules govern automated emails. Bulk email that an admin sends —
 [Communications](communications.md) and a notice's
 [email on publish](member-notices.md#email-on-publish-optional) — is governed by
 the member's own preferences instead, according to its category (#4987,
-[`INV-PRIV-025`](../invariants/analytics-and-privacy.md#inv-priv-025)):
+[`INV-PRIV-026`](../invariants/analytics-and-privacy.md#inv-priv-025)):
 
 | Category | Member preference | A member who never saved preferences |
 | --- | --- | --- |
