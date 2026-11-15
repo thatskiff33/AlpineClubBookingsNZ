@@ -33,7 +33,7 @@ import { config as proxyConfig } from "@/proxy";
  * suite.
  */
 
-const MIGRATION = "20261211030000_add_food_orders";
+const MIGRATION = "20261219080000_add_food_orders";
 
 function flags(foodOrders: boolean): FeatureFlags {
   return { ...getEffectiveModuleFlags(DEFAULT_MODULE_SETTINGS), foodOrders };
