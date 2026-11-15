@@ -6,7 +6,7 @@ the Xero settlement. The decision itself lives in
 `booking-modify-settlement-options.ts` and `booking-modify-settlement.ts`.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 2762
+lines: 2765
 reason: holds a disputed edit reduction for the treasurer; those lines sit
   inside this file, which was already over its limit before this change, and
   lifting it apart is a refactor of its own, not part of this fix.
@@ -31,7 +31,7 @@ reason: holds a disputed edit reduction for the treasurer; those lines sit
   of this fix.
 
 function: src/lib/booking-batch-modification-service.ts#modifyBookingBatch
-lines: 1810
+lines: 1815
 reason: holds a disputed edit reduction for the treasurer; those lines sit
   inside the function `modifyBookingBatch`, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part
