@@ -15,7 +15,13 @@ const ROOT = process.cwd();
 const RENDERER = "src/lib/xero-tax-rendering.ts";
 const NAMES_TAX = /["'`]OUTPUT2["'`]|\bLineAmountTypes\s*\.\s*[A-Z]/;
 
-const files = productionSourceFiles(ROOT).filter((file) => file.startsWith("src/") || file.startsWith("scripts/"));
+// `src/test/` holds the provider test doubles (#4908): the fake Xero's server
+// side, which must name a line-amount basis to total a document as Xero would.
+// It is test code that production may never import (its own
+// `production-import-census.test.ts`), so it sits with the tests outside the scan.
+const files = productionSourceFiles(ROOT).filter(
+  (file) => (file.startsWith("src/") || file.startsWith("scripts/")) && !file.startsWith("src/test/"),
+);
 
 describe("one Xero tax renderer (#4632)", () => {
   it("names a Xero tax type or line-amount basis only in the renderer", () => {
