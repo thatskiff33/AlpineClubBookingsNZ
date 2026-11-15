@@ -180,7 +180,7 @@ function SubscriptionCategoryCard({
   onDelete,
 }: {
   category: SubscriptionCategory;
-  canEdit: boolean;
+  canEdit: ReturnType<typeof useAdminAreaEditAccess>;
   saving: boolean;
   deleting: boolean;
   onEdit: () => void;
@@ -282,7 +282,7 @@ function SubscriptionCategoryEditorDialog({
   isNew: boolean;
   editingCategory: SubscriptionCategory | null;
   draft: DraftSubscriptionCategory | null;
-  canEdit: boolean;
+  canEdit: ReturnType<typeof useAdminAreaEditAccess>;
   saving: boolean;
   onDraftChange: (next: DraftSubscriptionCategory) => void;
   onClose: () => void;
