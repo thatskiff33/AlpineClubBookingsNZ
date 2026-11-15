@@ -34,7 +34,7 @@ reason: the only growth is the import of `notifyAdminQueueChanged` and the
   piece of work.
 
 file: src/app/(admin)/admin/membership/member-applications/page.tsx
-lines: 806
+lines: 839
 reason: the only growth is the import of `notifyAdminQueueChanged` and the
   call at each decision that changes this queue, so the Needs Attention badge
   refetches after the officer acts (#4962). The call has to sit at the
@@ -111,7 +111,7 @@ reason: the only growth is the `notifyAdminQueueChanged` call at each
   this component is its own piece of work.
 
 function: src/app/(admin)/admin/membership/member-applications/page.tsx#MemberApplicationsPage
-lines: 655
+lines: 686
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
