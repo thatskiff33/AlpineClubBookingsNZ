@@ -20,7 +20,6 @@ import {
   ReleaseCutError,
 } from "./cut-release.mjs";
 import { releaseSection } from "./compile-changelog.mjs";
-import { RELEASE_NOTES_UNFINISHED_MARKER } from "./release-notes.mjs";
 import {
   NO_UPGRADE_STEPS,
   RUNBOOK_RELEASE_AGNOSTIC_MARKER,
@@ -30,6 +29,7 @@ import {
   UPGRADE_CHECKLIST_HEADING,
   UPGRADING_GUIDE_HEADINGS,
 } from "./upgrade-docs.mjs";
+import { RELEASE_NOTES_UNFINISHED_MARKER } from "./release-notes.mjs";
 
 // Every test runs against a throwaway fixture: a bare "origin" and a clone of
 // it. The clone's origin URL is a GitHub URL that git's `insteadOf` rewrites to
