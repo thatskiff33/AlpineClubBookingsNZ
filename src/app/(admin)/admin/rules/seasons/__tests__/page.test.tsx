@@ -21,7 +21,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -296,5 +296,75 @@ describe("Seasons page: navigable without seeing it", () => {
     expect(
       screen.queryByRole("button", { name: /Delete Winter 2026/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+/*
+  #4976 follow-up: a refused save showed whatever `await res.json()` threw. An
+  HTML 502 from the proxy in front of the app reached the officer as
+  "Unexpected token < in JSON". The failure is now read through
+  `apiErrorMessageFromResponse`, so the route's own sentence or this screen's
+  fallback is what an officer sees.
+*/
+describe("Seasons page: a refused window save says why", () => {
+  function mockSave(answer: () => Response | Promise<Response>) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/admin/seasons/") && init?.method === "PUT") return answer();
+      if (url.startsWith("/api/admin/seasons")) return Response.json([season()]);
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  async function saveWindow() {
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Edit window of Winter 2026" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Update Season" }));
+  }
+
+  it("shows the route's own sentence from a JSON refusal", async () => {
+    mockSave(() => Response.json({ error: "Season not found" }, { status: 404 }));
+    await saveWindow();
+
+    expect(await screen.findByText("Season not found")).toBeInTheDocument();
+  });
+
+  it.each([500, 502])("shows the fallback, not a parse error, for an HTML %i", async (status) => {
+    mockSave(
+      () =>
+        new Response("<html><body>Bad Gateway</body></html>", {
+          status,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    await saveWindow();
+
+    expect(await screen.findByText("Failed to save season")).toBeInTheDocument();
+    expect(screen.queryByText(/JSON/)).not.toBeInTheDocument();
+  });
+
+  it("shows the fallback when the request never gets an answer", async () => {
+    mockSave(() => Promise.reject(new TypeError("Failed to fetch")));
+    await saveWindow();
+
+    expect(await screen.findByText("Failed to save season")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
+  });
+
+  it("closes the form and reloads the schedule on success", async () => {
+    const fetchMock = mockSave(() => Response.json(season()));
+    await saveWindow();
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Update Season" })).not.toBeInTheDocument(),
+    );
+    const listReads = fetchMock.mock.calls.filter(
+      ([input, init]) => String(input).startsWith("/api/admin/seasons") && init?.method !== "PUT",
+    );
+    expect(listReads.length).toBeGreaterThanOrEqual(2);
   });
 });
