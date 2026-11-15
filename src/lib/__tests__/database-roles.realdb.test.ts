@@ -495,7 +495,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
           DELETE FROM "_prisma_migrations" WHERE migration_name IN (
             '20261127010000_member_money_journal', '20261210080000_member_money_applications',
             '20261211010000_stripe_balance_evidence',
-            '20261213010000_member_money_export_supplementary', '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
+            '20261222010000_member_money_export_supplementary', '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
         expect(deployGrantsCheck(database)).toBe("");
         // Applied as prisma migrate deploy applies them: each file, as the migration role.
         await withClient(urlFor(database, "migrator"), async (client) => {
@@ -503,7 +503,7 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261210080000_member_money_applications/migration.sql"), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261211010000_stripe_balance_evidence/migration.sql"), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"));
-          await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261213010000_member_money_export_supplementary/migration.sql"), "utf8"));
+          await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261222010000_member_money_export_supplementary/migration.sql"), "utf8"));
         });
         expect(deployGrantsCheck(database)).toBe("");
         const insertOnly = [...MEMBER_MONEY_RELATIONS, "StripeBalanceTransactionEvidence"];
