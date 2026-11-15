@@ -62,6 +62,7 @@ const mockValidateMinimumStay = vi.fn();
 
 // Shared tx mock used by booking route
 const mockTx = {
+  $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
   $executeRaw: mockExecuteRaw,
   // #2364: the hosting review is reconciled inside the booking write, so
   // every prisma/tx double a booking path runs against needs this client.
