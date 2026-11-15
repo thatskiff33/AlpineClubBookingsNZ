@@ -3,16 +3,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireFinanceViewerApiAccess } from "@/lib/finance-api-auth";
 import { clubToday } from "@/lib/club-time";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { getLegacyDashboardBookingExport } from "@/lib/finance-legacy-dashboard-export";
 import logger from "@/lib/logger";
 
 const DEFAULT_HISTORY_START_DATE = "2020-04-01";
-const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+// A real calendar day: a shape-only `2026-02-30` used to pass here and 500 in
+// the export's own date parser.
 const exportQuerySchema = z.object({
-  historyStartDate: z.string().regex(ISO_DATE_PATTERN).optional(),
-  asOfDate: z.string().regex(ISO_DATE_PATTERN).optional(),
+  historyStartDate: dateOnlyStringSchema.optional(),
+  asOfDate: dateOnlyStringSchema.optional(),
 });
 
 function readLegacyDashboardExportToken() {

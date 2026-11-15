@@ -82,6 +82,45 @@ detail — the deleted-booking refund tasks below are the longest example — it
 expanding that entry and must agree with it; if the two ever diverge, the entry
 is what CI enforces and this page is the defect.
 
+### The lock(1) transaction budget (#4933)
+
+The wait for `pg_advisory_xact_lock(1)` happens inside an interactive
+transaction's callback, so it counts against its `timeout` (default 5 s).
+`maxWait` (default 2 s) limits only how long the transaction waits to start, for
+a pooled connection. A Tier-2 writer that keeps the defaults loses to any
+legitimate holder that runs longer: bed-range assignment and group settlement
+are each allowed 30 s. The loser rolls back cleanly, but before #4933 booking
+create then answered a member with a 400 "Failed to create booking", which reads
+as "your request was wrong".
+
+The rule (`INV-LOCK-006`): a transaction that waits for lock(1) passes
+`LOCK1_HOLDER_TRANSACTION_BUDGET` (`src/lib/db-transaction.ts`, `maxWait` 10 s /
+`timeout` 30 s) - the one definition, so a writer can outlast the longest holder
+it queues behind - and its route maps P2028 / P2034 through
+`isTransactionContention` to a retryable 503. `withOptionalTransaction` takes the
+budget as an optional third argument and applies it only to the transaction it
+opens; a caller-supplied `tx` keeps its opener's budget, and in tx-mode the
+service takes neither lock(1) nor options. On the constant today:
+`createDraftBooking`, `createConfirmedBooking` (own transaction),
+`LINKED_MOVE_TRANSACTION_BUDGET`, `assignBedRange` and the group-settlement
+settle. `POST /api/bookings` answers contention on its draft, confirmed and
+waitlisted paths with 503, `Retry-After: 2` and "The booking system is busy right
+now. Nothing was saved, so please try again in a moment." The booking wizard and
+the admin booking page already show the server's message. Lock order inside
+both create transactions is unchanged: global, then `acquireLodgeCapacityLock`,
+then the member keys.
+
+**The pool trade-off.** A waiter holds its pooled connection for as long as it
+waits, so a wider budget swaps opaque failures for pool pressure: a burst of
+creates queued behind a 30 s holder can occupy every one of a web slot's 10
+connections (`DEPLOYMENT.md` -> "Connection pool sizing") for longer than it did
+on the defaults, and other pages on that container wait for `pool_timeout`
+(10 s) meanwhile. That is accepted deliberately - the requests that wait now
+mostly succeed instead of failing - and `connection_limit` is unchanged. If load
+shows the pool starving, the remedies are shrinking the lock(1) hold (moving
+read-only preflight before the lock) or reserving pool headroom for lock(1)
+writers, not shortening the budget back below the longest holder.
+
 ### A writer that does BOTH takes BOTH — global first
 
 Many writers do both tiers at once: a Stripe capture claims capacity **and**
@@ -7069,23 +7108,31 @@ Stripe call:
   own `processingStartedAt` - the reaper's fence. A lost fence moves nothing; the
   next attempt reads the same refusal back and moves it then.
 - **A pre-persisted door's re-plan** (`keepRefusedPrePersistedRefundOwed`:
-  the cancellation, and since #4103 the edit financial review, the
-  late-capture approval, the duplicate capture and the capacity race) writes
+  the cancellation, since #4103 the edit financial review, the
+  late-capture approval, the duplicate capture and the capacity race, and
+  since #4992 a booking edit's own-card refund) writes
   only while its row is `PENDING` with `attempts` 0, so it never races a worker
   that has claimed the row; that worker reads the refusal and moves it itself.
   It reads the row's plan and writes compare-and-set on it, skipping a slice
   already moved, so two deliveries of one refusal move it, and alert, once.
-- **The edit refund door** (`executeBookingModificationRefund`, #3984,
-  `INV-PAY-146`) freezes its plan before Stripe. Since #4872 that freeze takes
-  the Payment row (`lockPaymentForRefundedTotal`), reads the superseded-capture
-  hold-back, and commits before Stripe is asked. No provider call runs inside
-  it. A plan-less card-refund recovery derives its missing plan the same way
-  after provider preflight (`processBookingModificationRefundOperation`). A
-  manual hand-back reads the hold-back after its claim and after any credit
+- **The edit refund door** (`executeBookingModificationRefund`, #3984, #4992,
+  `INV-PAY-146`) freezes its plan and writes its row inside the edit
+  transaction (`reserveModificationRefundDebts`), under the locks each door
+  already holds - global `pg_advisory_xact_lock(1)` and the lodge capacity key
+  - so no new key or order. Since #4872 the freeze takes the Payment row
+  (`lockPaymentForRefundedTotal`) and reads the superseded-capture hold-back
+  there. R05 usually took that row already; where it posted nothing (no
+  booking journal or charge yet) this is the edit's first take of it, the
+  documented booking row -> Payment edge under `lock(1)`, which every edit
+  door holds. No provider call runs inside it. A
+  plan-less card-refund recovery derives its missing plan the same way after
+  provider preflight (`processBookingModificationRefundOperation`). A manual
+  hand-back reads the hold-back after its claim and after any credit
   give-back, so a member-ledger lock still comes before the Payment row.
-  After success or throw the edit queues the whole read plan if any slice is unmade:
-  made slices marked, refusals moved, unanswered slices on their original key.
-  The lockless `charge.refunded` recorder may update the ledger before recovery;
+  After commit the edit sends that plan, closes the row on that plan once
+  every slice is made, and otherwise leaves it owed: refusals moved, made
+  slices marked, unanswered slices on their original key. The
+  lockless `charge.refunded` recorder may update the ledger before recovery;
   the worker still sends the original slices and keys. Recording keeps the
   canonical Payment row lock; no advisory key, lock order, guarded transition
   or outbox participant changes (`INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`).
@@ -7096,8 +7143,9 @@ Stripe call:
   plan it read (#4103).
 - **A pre-persisted door's happy-path close** (`closePrePersistedRefundRow`,
   `pre-persisted-refund-close.ts`, #4144) is a compare-and-set on the plan the
-  door sent. The cancellation, the edit financial review, the duplicate
-  capture and the capacity race close a row that is open and still on that
+  door sent. The cancellation, a booking edit's own-card refund (#4992), the
+  edit financial review, the duplicate capture and the capacity race close a
+  row that is open and still on that
   plan (`sentPlanRowWhere`). A row the runner holds on the same plan is
   closed: its replay of the same keys is answered with the door's refunds, and
   only the close that moved the row writes a record - the duplicate capture's
