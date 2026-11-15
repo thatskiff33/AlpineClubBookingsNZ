@@ -119,6 +119,7 @@ File: [`invariants/money.md`](invariants/money.md). Prefix `INV-MONEY`.
 | `INV-MONEY-012` | Club `familyBillingMode` decides whether family billing exists; stale schedules raise exceptions |
 | `INV-MONEY-013` | A multi-family member's per-family fee bills only via their admin-chosen billing family |
 | `INV-MONEY-014` | One family/type/membership-year tuple carries at most one durable charge |
+| `INV-MONEY-046` | Subscription category is a second billing axis, independent of membership type |
 | `INV-MONEY-015` | Approval stands when billing setup is incomplete; billing records a visible exception |
 | `INV-MONEY-016` | Membership type governs liability, including archived role defaults; role grants no exemption |
 | `INV-MONEY-017` | Paid-up: NOT_REQUIRED type, PAID current-season row, exempt tier; nomination honours first |
@@ -799,6 +800,7 @@ Prefix `INV-PRIV`.
 | `INV-PRIV-023` | A stay's dietary value is cleared a club-set period after the stay |
 | `INV-PRIV-024` | Every outside recipient of personal data is in one census-held register |
 | `INV-PRIV-025` | One subject access builder; every personal model placed; own rows only |
+| `INV-PRIV-026` | Bulk email declares a category: club notices opt-out, newsletters opt-in |
 
 ## Membership Lifecycle
 
@@ -821,6 +823,7 @@ is now `INV-OPS-005` to `INV-OPS-011` in
 | `INV-LIFE-003` | One cancellation at most credits a subscription invoice: durable first-writer claim |
 | `INV-LIFE-004` | Unpaid-invoice approval blocker excuses an invoice only while it awaits crediting |
 | `INV-LIFE-005` | Role, membership type, age tier, Xero group, committee: separate axes |
+| `INV-LIFE-094` | Subscription category is a fourth billing axis, independent of booking rights |
 | `INV-LIFE-089` | Last active Full Admin can never be deactivated, de-logined or archived |
 | `INV-LIFE-006` | Cancellation eligibility is an account-holder question, refusing exactly two record classes |
 | `INV-LIFE-007` | Member-raised route: active and can-log-in only; family candidates unfiltered by role |
@@ -1036,6 +1039,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-006` | Id- or input-carrying Prisma `startsWith` prefixes go through `exactPrefix` |
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
 | `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
+| `INV-SSOT-009` | A charge's dedup key and display name share one builder only |
 
 ## Authentication
 

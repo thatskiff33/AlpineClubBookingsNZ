@@ -2740,7 +2740,7 @@ restore-test a fresh backup before you run the drop.
    environment variables are **no longer read**. An install that configured
    backups through them upgrades to an empty store, so the nightly backup reports
    a **loud FAILURE** (never a silent skip) until you re-enter the settings at
-   **Admin → Integrations → Database Backups** (`/admin/backups`). Confirm a
+   **Admin → Monitoring & Support → Database Backups** (`/admin/backups`). Confirm a
    manual **Run backup now** succeeds and the durable (S3) destination is
    configured. Only `BACKUP_CRON_SCHEDULE` (cron-leader timing) stays in the
    environment; remove the other `BACKUP_*` vars once migrated.
