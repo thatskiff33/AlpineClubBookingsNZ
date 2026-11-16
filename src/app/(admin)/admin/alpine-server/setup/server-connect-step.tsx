@@ -10,6 +10,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import {
   Select,
   SelectContent,
@@ -29,7 +31,7 @@ import type { LodgeLinkStep, LodgeLinkStepResult } from "@/lib/servernz-lodge-li
 
 export type KeySaveRegistration = PushRegistrationOutcome | typeof SERVER_VERSION_MISMATCH_CODE;
 
-type StatusMessage = { kind: "ok" | "warn" | "err"; text: string };
+type StatusMessage = { kind: "ok" | "warn"; text: string };
 
 /** The registration outcome in words, and whether the lodge step can follow. */
 export function registrationMessage(outcome: KeySaveRegistration | undefined): StatusMessage & { linkLodges: boolean } {
@@ -77,9 +79,13 @@ const NOT_LINKED = "__not_linked__";
  */
 export function useLodgeLinkStep() {
   const [status, setStatus] = useState<StatusMessage | null>(null);
+  // A failed download takes focus, again when it fails the same way twice
+  // (#4975); the outcomes above stay in the passive status line.
+  const failure = useActionFailure();
   const [choose, setChoose] = useState<Choose | null>(null);
 
   async function run() {
+    failure.clear();
     setStatus({ kind: "ok", text: "Downloading this club's lodges from the central server…" });
     try {
       const res = await fetch("/api/admin/alpine-server/lodge-links", { method: "POST" });
@@ -108,19 +114,25 @@ export function useLodgeLinkStep() {
           break;
       }
     } catch (e) {
-      setStatus({ kind: "err", text: e instanceof Error ? e.message : "Could not download this club's lodges." });
+      setStatus(null);
+      failure.fail(e instanceof Error ? e.message : "Could not download this club's lodges.");
     }
   }
 
-  const statusLine = status ? (
-    <p
-      className={`text-sm ${status.kind === "ok" ? "text-success-11" : status.kind === "warn" ? "text-warning-11" : "text-destructive"}`}
-      role="status"
-      data-testid="lodge-link-status"
-    >
-      {status.text}
-    </p>
-  ) : null;
+  const statusLine = (
+    <>
+      <FocusedActionError id="lodge-link-error" error={failure.error} attentionKey={failure.attentionKey} />
+      {status ? (
+        <p
+          className={`text-sm ${status.kind === "ok" ? "text-success-11" : "text-warning-11"}`}
+          role="status"
+          data-testid="lodge-link-status"
+        >
+          {status.text}
+        </p>
+      ) : null}
+    </>
+  );
 
   const dialog = choose ? (
     <LodgeLinkDialog

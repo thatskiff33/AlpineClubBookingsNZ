@@ -1,5 +1,6 @@
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { ApiError } from "@/lib/api-error";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import {
   prepareBatchModificationForCallerTransaction,
   type BatchModificationPreTransaction,
@@ -100,29 +101,15 @@ export async function prepareLinkedMovePreTransaction(
  * and the arm is right for it too.
  */
 /**
- * The interactive-transaction budget, WIDENED because this transaction is roughly
- * two of them (`INV-LOCK-001`, `INV-LOCK-002`).
- *
- * Prisma's defaults are `maxWait: 2s / timeout: 5s`, and the wait for
- * `pg_advisory_xact_lock(1)` counts against them. Inside this one transaction:
- * that blocking global wait, the per-lodge capacity key, TWO full
- * `modifyBookingBatch` bodies (each a re-read, an eligibility pass, a pricing run,
- * a capacity check, a guest-row rewrite and a settlement), the envelope flush and
- * three supervision reconciles. On the defaults an ordinary cancel or a bed
- * assignment legitimately holding `lock(1)` would abort it — and it is the same
- * numbers `assignBedRange`, the longest-lived holder of that key in the tree,
- * already runs on, so a linked move contending with one no longer loses by
- * construction. `deleted-booking-modification-payment.ts` states the same
- * reasoning for the same reason; that caller takes a TIGHTER budget only because a
- * Stripe delivery timeout is its ceiling, and a member's save has no such ceiling.
- *
- * NOTHING IS COMMITTED WHEN IT DOES EXPIRE, which is why the caller can answer
- * "try again in a moment" honestly — see `LinkedDateMoveContendedError`.
+ * The interactive-transaction budget: the shared lock(1) budget
+ * (`LOCK1_HOLDER_TRANSACTION_BUDGET`, `INV-LOCK-006`). This transaction is roughly
+ * two of them - the global wait, the per-lodge key and two full
+ * `modifyBookingBatch` bodies - so on Prisma's defaults an ordinary cancel or bed
+ * assignment holding `lock(1)` would abort it. NOTHING IS COMMITTED WHEN IT DOES
+ * EXPIRE, which is why the caller can answer "try again in a moment" honestly -
+ * see `LinkedDateMoveContendedError`.
  */
-export const LINKED_MOVE_TRANSACTION_BUDGET = {
-  maxWait: 10_000,
-  timeout: 30_000,
-} as const;
+export const LINKED_MOVE_TRANSACTION_BUDGET = LOCK1_HOLDER_TRANSACTION_BUDGET;
 
 /**
  * Refused because the transaction could not take its locks in time, or lost a

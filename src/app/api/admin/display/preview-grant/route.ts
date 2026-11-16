@@ -15,6 +15,7 @@ import {
 } from "@/lib/lodge-display/authoring-validation";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { parseDateOnly } from "@/lib/date-only";
+import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import {
   storeDraftPreview,
   DRAFT_PREVIEW_TTL_SECONDS,
@@ -33,8 +34,6 @@ import { clubFormatValues } from "@/lib/club-format-server";
 // (nothing persisted; the signature is the whole authority) and single-purpose:
 // it authorises the state route's preview path and nothing else (§5), so a
 // leaked grant can at worst re-render a five-minute, privacy-reduced board.
-
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 // An UNSAVED builder draft to preview (ADR-004 §7). The HTML/CSS fields are
 // strings; `areas` / `slotContent` are untyped JSON the save contract validates
@@ -61,8 +60,9 @@ const bodyField = z
     // Templates are lodge-agnostic, so the lodge is explicit; omitted → the
     // club default lodge (resolveOptionalActiveLodgeId).
     previewLodge: z.string().min(1),
-    // Optional simulated window start (LTV-017).
-    previewDate: z.string().regex(DATE_ONLY).nullish(),
+    // Optional simulated window start (LTV-017). A real calendar day: a
+    // shape-only `2026-02-30` used to reach `parseDateOnly` as an Invalid Date.
+    previewDate: dateOnlyStringSchema.nullish(),
   })
   .strict();
 
