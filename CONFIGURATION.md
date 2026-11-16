@@ -1921,13 +1921,13 @@ action; scoped admins cannot merge.
 | `LOCALE`                           | **A first-start seed only, since #3563**, on exactly the same terms as `CURRENCY` above and edited on the same screen. `NEXT_PUBLIC_LOCALE` is no longer read at all (#3567); the first start warns if only it is set. It decides how numbers and dates are WRITTEN — whether a date reads 14/03/2026 or 3/14/2026 — and is not the language the site is in. Store a BCP 47 language tag (`en-NZ`, `de-CH`): a language subtag of two or three letters, then the country. `en-NZ` is the generic default. Not the same thing as `LANG` / `LC_ALL` below, which are the container's own POSIX locale. |
 | `LANG`, `LC_ALL`                   | **Pinned in the image to `en_US.UTF-8`, beside `TZ` (#3252).** These are the container's own POSIX locale, which Node's bundled ICU reads to choose the default collation and number/date formats for `localeCompare`, `toLocaleString` and friends when a call names no locale. Before #3252 nothing pinned them, so the resolved locale was whatever the base image happened to provide; `en_US` matches what the unpinned image resolved, so pinning it changes no displayed order or format. Every stored identity (proposal fingerprints, confirm tokens, lock-key order) is locale-proof regardless, through `compareOrdinal` (`INV-EXCEPT-036`), so this pin is defence in depth for display only. Override in `docker-compose.yml`'s `environment:` if a club wants a different display collation; set both, because `LC_ALL` wins over `LANG`. Not the club's time zone (`TZ` above) and not the in-app `LOCALE` formatting setting. |
 | ~~`NEXT_PUBLIC_GA_MEASUREMENT_ID`~~ | **Removed as configuration (#2573).** The GA4 measurement id, the consent-banner mode and the banner wording now live **only** in the database, entered in-app at Admin → Integrations → Google Analytics. Nothing in the app reads the environment variable, there is no fallback to it, and its value is **not** imported automatically — so after deploying this release Google Analytics stays inactive until an authorised admin saves a valid measurement id in-app. Remove the variable from your environment. See the Google Analytics section below. |
-| ~~`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`~~ | **Removed as configuration (#2087).** Google OAuth credentials now live **only** in the encrypted `IntegrationCredential` store, entered and verified in-app (Admin → Integrations → Google sign-in). Any legacy `GOOGLE_CLIENT_*` env vars are **detected, warned about, and ignored** — re-enter the credentials in the wizard, then remove the env vars. This reverses the earlier #2035 "bootstrap-class secret, never in the DB" posture by owner decision (epic #2078). See the Google sign-in section below. |
+| ~~`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`~~ | **Removed as configuration (#2087).** Google OAuth credentials now live **only** in the encrypted `IntegrationCredential` store, entered and verified in-app (Admin → Integrations → Google Sign-in Setup). Any legacy `GOOGLE_CLIENT_*` env vars are **detected, warned about, and ignored** — re-enter the credentials in the wizard, then remove the env vars. This reverses the earlier #2035 "bootstrap-class secret, never in the DB" posture by owner decision (epic #2078). See the Google sign-in section below. |
 | `LOG_LEVEL`                        | Pino log level such as `debug`, `info`, `warn`, `error`, or `fatal`.                                 |
 | `APP_ENVIRONMENT_ROLE`             | **Required, and the only authority for whether this installation is the club's live site.** Exactly `production` or `non-production`. See "Environment Role" below — and note it is **not** `APP_RUNTIME_ROLE` on the next line. |
 | `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose (`web-blue`, `web-green`, `cron-leader`, `staging`). Names which container **slot** this is. **Never read to decide whether this installation is production** — that is `APP_ENVIRONMENT_ROLE` above (`INV-CONFIG-003`). |
 | `NODE_ENV`                         | Runtime mode set by Node/Next.                                                                       |
 | `NEXT_RUNTIME`                     | Runtime marker set by Next.js instrumentation.                                                       |
-| `npm_package_version`              | Package version exposed by npm scripts.                                                              |
+| `APP_VERSION`                      | **Not a runtime variable; do not set it (#4985).** The app's version is stamped at build time from `package.json` by `next.config.ts`, so changing it means building a new image. Health checks, **System Health**, config-transfer exports, support-evidence packs and server Sentry events all report it. It replaces the version variable npm and pnpm set only when they launch a script, which the production image (`node server.js`) never had, so health checks and server Sentry events reported "0.1.0" and exports and evidence packs reported "unknown". |
 
 ## Environment Role
 
@@ -2016,15 +2016,20 @@ resolve `UNKNOWN`. Four things stop that becoming a silent outage:
    checklist's **Production Or Non-Production** step reports `blocked` with the
    repair. A boot that resolves non-production says that too, at info level, and
    names which source decided it.
-4. **Confirm the answer after the deploy, from the message rather than the
-   tick.** On `/admin/setup` the **Production Or Non-Production** step must read
-   *production*. A non-production installation shows a green tick there too, since
-   both are validly configured states and the checklist cannot know which one this
-   installation is meant to be — so the tick means "answered", and the message
-   means "which answer".
+4. **Confirm the answer after the deploy.** On `/admin/setup` the **Production
+   Or Non-Production** step must read *production*, with a green tick. A
+   deployment that declares non-production shows an amber warning there instead
+   (#4980) — "If this is the club's live site, members are getting no email and
+   Xero contact addresses are being replaced." — until an administrator
+   acknowledges it as a real copy. A copy forced by the safer override alone stays
+   complete, because an administrator chose it inside the app.
 
 For a deployment brought up by hand rather than through the deploy script, set
-`APP_ENVIRONMENT_ROLE` in the Compose `.env` before starting the app. The base
+`APP_ENVIRONMENT_ROLE` in the Compose `.env` before starting the app. For the
+club's live site, `DEPLOYMENT.md` → "First Bootstrap" runs
+`bash scripts/check-environment-role.sh` before the first `docker compose up`; it
+sources the same `scripts/lib/environment-role-check.sh` the deploy runs at step
+3, and refuses anything but exactly `production` (#4980). The base
 `docker-compose.yml` passes it through with **no default** on purpose: a default
 would be exactly the silent inference this design removes.
 `docker-compose.staging.yml` hard-codes `non-production`, so a staging or E2E
@@ -2796,7 +2801,7 @@ rate-limited, or temporarily unavailable.
 | `GROUP_CANCEL_RESUME_GRACE_MINUTES`   | Grace before the group-settlement-reaper resumes a crash-interrupted organiser-cancel cleanup (#1236); defaults to 15 minutes. |
 | `WAITLIST_TRANSACTION_RETRY_ATTEMPTS` | Optional waitlist transaction retry count.                                  |
 | `WAITLIST_TRANSACTION_RETRY_DELAY_MS` | Optional waitlist transaction retry delay.                                  |
-| `NODE_BUILD_OPTIONS`                  | Optional Node flags for `docker compose build` only, applied to `next build` as `NODE_OPTIONS` inside the builder stage, for both the `app` and the `migrate` image builds (#3824). Empty by default. Typically `--max-old-space-size=4096` where a small server's build is OOM-killed. Does NOT affect the running container. |
+| `NODE_BUILD_OPTIONS`                  | Optional Node flags for `docker compose build` only, applied to `next build` as `NODE_OPTIONS` inside the builder stage, for both the `app` and the `migrate` image builds (#3824). Empty by default, which leaves Node's default heap ceiling (about a quarter of the machine's memory, up to about 4 GB). The build's type check needs about 4.6 GB (#5164), so unset or `--max-old-space-size=4096` can fail with "JavaScript heap out of memory" or "Failed to type check". Use `--max-old-space-size=8192`, the value CI builds with, on a machine with at least 8 GB free for the build; with less, deploy a published image instead (`APP_IMAGE`). Does NOT affect the running container. |
 | `BACKUP_CRON_SCHEDULE`                | Cron expression for the nightly backup schedule (cron-leader timing).       |
 | `BACKUP_LOCAL_HOST_DIR`               | Host directory bind-mounted into the app container for local database backups. Used only by `docker-compose.yml`; empty uses the `backup_data` named volume instead. Must be owned by uid 1001. |
 | `BACKUP_LOCAL_DIR`                    | Path **inside the container** that mount lands on (default `/backups`). What the app writes to, and the value `/admin/backups` pre-fills. A path saved on that page overrides it. |
@@ -2809,9 +2814,9 @@ rate-limited, or temporarily unavailable.
 > **Backups are configured in-app, not by environment (#2095).** The S3 bucket,
 > region, access key/secret, retention window, restore-validation shadow
 > database URL, and the enabled switch all live in the encrypted
-> `IntegrationCredential` store and are managed at **Admin → Integrations →
-> Database Backups**. First-time setup uses the guided wizard
-> (`/admin/backups/setup` — S3 credentials → destination → nightly schedule → a
+> `IntegrationCredential` store and are managed at **Admin →
+> Monitoring & Support → Database Backups**. First-time setup uses the guided
+> wizard (**Admin → Integrations → Backup Setup**, `/admin/backups/setup` — S3 credentials → destination → nightly schedule → a
 > real verification run); the flat page (`/admin/backups`) is the post-setup
 > editing surface. The legacy `BACKUP_ENABLED`,
 > `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY_ID`,
@@ -2871,6 +2876,9 @@ straight after one.
 | `DOMAIN`                               | Public domain used by Caddy.                                          |
 | `CADDY_TLS_MODE`                       | How Caddy obtains certificates: `acme` (default; Caddy is the public edge and uses Let's Encrypt) or `local` (Caddy sits behind a proxy that terminates TLS, such as Nginx Proxy Manager, so it issues certificates from its own internal CA and the proxy must accept a non-public certificate). Selects `deploy/caddy/tls-<mode>.caddy` in the Caddyfile's global options. |
 | `CADDY_TRUSTED_PROXIES`                | **Required** when `CADDY_TLS_MODE=local`, with no usable default (unset, Compose hands Caddy a placeholder it rejects): the IP address or CIDR of the proxy in front, space-separated if more than one, for example `10.0.0.2/32`. Caddy believes the client address in `X-Forwarded-For` only from these peers, reading the header from the right (`trusted_proxies_strict`), so the app sees the visitor's IP rather than the proxy's; the per-IP rate limits and audit-log IPs depend on it. The deploy refuses local mode without it, and refuses `private_ranges` (the setting exists to name the proxy, not every private address), any `/0` range, and anything that is not an IP address or CIDR. The proxy must append the connecting address to `X-Forwarded-For` or overwrite the header. Unused in `acme` mode. |
+| `CADDY_WWW_REDIRECT`                   | `on` (default) or `off`. On, Caddy serves `www.<DOMAIN>` as a permanent redirect to `<DOMAIN>`, which needs its own DNS record; off drops that site, for a club with no `www` record. Selects `deploy/caddy/www-redirect-<mode>.caddy`. The deploy refuses any other value. See `DEPLOYMENT.md` → "Hostnames and DNS records". |
+| `CADDY_LEGACY_ROUTES`                  | `off` (default) or `on`, for an installation that still runs its own legacy finance dashboard. On adds the `/finance-legacy*` route on `<DOMAIN>` (app-checked, then proxied to `CADDY_FINANCE_LEGACY_UPSTREAM`) and the `bookings.<DOMAIN>` and `dashboard.<DOMAIN>` redirect hosts, each needing a DNS record. Selects `deploy/caddy/legacy-routes-<mode>.caddy` and `legacy-hosts-<mode>.caddy`. The deploy refuses any other value. |
+| `CADDY_FINANCE_LEGACY_UPSTREAM`        | **Required** when `CADDY_LEGACY_ROUTES=on`, with no usable default (unset, Compose hands Caddy a placeholder it rejects): the legacy dashboard's `host:port` as the Caddy container reaches it, for example `10.0.0.5:8501`. The deploy refuses `on` without it and refuses anything that is not one `host:port` (a hostname or IPv4 address, then a port; an IPv6 literal is refused, so use a hostname for an IPv6-only dashboard). Unused when off. |
 | `KEEP_ALIVE_TIMEOUT`                   | How long the Next.js server holds an idle keep-alive connection open, in milliseconds. Default `65000`, set on every app service in `docker-compose.yml`. **It must stay above the proxy's idle-connection timeout** — Caddy's is `30s`, set as `transport http { keepalive }` in `deploy/caddy/tacbookings-active.caddy` and `Caddyfile.staging`. Left unset it falls back to Node's ~5s, which is *below* Caddy's 2-minute default pool, so the proxy reuses connections the app has already closed and every `POST`/`PUT` that lands on the boundary fails with a bare `502` (#3293). See `DEPLOYMENT.md` → "Keep-alive windows must stay ordered". |
 | `COMPOSE_PROJECT_NAME`                 | Docker Compose project name; defaults vary by script.                 |
 | `APP_IMAGE`                            | Prebuilt app image override for blue/green deployment.                |
@@ -2884,6 +2892,8 @@ straight after one.
 | `DEPLOY_WORKSPACE_ROOT`                | Parent directory for clean deploy workspaces.                         |
 | `ALLOW_UNPUBLISHED_DEPLOY_COMMIT`      | Lets the wrapper deploy a commit that exists on no remote branch (#3539). Default `0`, which refuses. `1`, `true`, `yes`, and `on` enable it, and it is refused anyway unless `UNPUBLISHED_DEPLOY_COMMIT_REASON` is also set. Production running code only the deploy host holds cannot be rebuilt or reviewed, and it silently invalidates the next release's pending-migration list. |
 | `UNPUBLISHED_DEPLOY_COMMIT_REASON`     | The written justification required when `ALLOW_UNPUBLISHED_DEPLOY_COMMIT` is on. Default empty. Printed in the deploy log. |
+| `ALLOW_UNTAGGED_DEPLOY_COMMIT`         | Lets the wrapper deploy, or build images for, a commit that is not a published release (#4978): one no annotated `vX.Y.Z` tag on `origin` points at. Default `0`, which refuses. `1`, `true`, `yes`, and `on` enable it, and it is refused anyway unless `UNTAGGED_DEPLOY_COMMIT_REASON` is also set. Also needed when `origin` cannot be reached, because a tag on the host alone does not count. Staging deploys of `main` and forks that do not tag their own releases set it. Shell only, not `.env`; `sudo` strips it. |
+| `UNTAGGED_DEPLOY_COMMIT_REASON`        | The written justification required when `ALLOW_UNTAGGED_DEPLOY_COMMIT` is on. Default empty. Printed in the deploy log on the host. |
 | `DEPLOY_FAILURE_RECORD_DIR`            | Where the deploy engine writes its record when a deploy fails at or after the migrate step (#3539). Default `$HOME/tacbookings-deploy-failures`. The record names the migrations that *started*, the step the deploy died on, the commit and images attempted, and whether traffic had moved. |
 | `DEPLOY_COMMIT_SHA`                    | The commit the deploy engine stamps into a locally-built image, for the case where it cannot read one. A deploy workspace is made with `git archive` and has no `.git`, so the engine's local-build path cannot derive the commit itself; the wrapper exports this. Set it by hand only if you invoke `--internal-blue-green-deploy` yourself from a directory that is not a Git checkout. |
 | `DEPLOY_COMMIT_OBSERVED_AT`            | The committer date (ISO 8601) that goes with `DEPLOY_COMMIT_SHA`, used to stamp the deployed-code knowledge bundle. Optional; empty is accepted. |

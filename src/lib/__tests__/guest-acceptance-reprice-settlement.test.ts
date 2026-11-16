@@ -29,27 +29,27 @@ const h = vi.hoisted(() => ({
   // #4057: the organiser child refund's debt, looked up and re-read after commit.
   recoveryFindUnique: vi.fn(),
   runPaymentRecoveryOperationNow: vi.fn(),
-  // #4070: the member's own-card refund, and the recovery it queues when Stripe could not make it.
+  // #4070: the member's own-card refund; #4992: the recovery row the re-price
+  // writes before it commits, its close, and its re-plan after a refusal.
   refundPaymentTransactions: vi.fn(),
   enqueueBookingModificationRefundRecovery: vi.fn(),
+  markBookingModificationRefundRecoverySucceeded: vi.fn(),
+  recoveryUpdateMany: vi.fn(),
   realExecuteBookingModificationRefund: undefined as unknown as (typeof import("@/lib/booking-modification-settlement"))["executeBookingModificationRefund"],
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    paymentRecoveryOperation: { findUnique: h.recoveryFindUnique },
-    // #4872: the refund's plan is frozen under the Payment row, beside the superseded-capture
-    // hold-back read (no superseded rows here, so nothing is held back).
-    $transaction: async (cb: (tx: unknown) => unknown) => cb({
-      $executeRaw: async () => 1,
-      paymentRecoveryOperation: { findMany: async () => [] },
-    }),
-  },
+vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { findUnique: h.recoveryFindUnique, updateMany: h.recoveryUpdateMany } } }));
+// #4872: the re-price's reserve freezes its plan under the Payment row, beside the
+// superseded-capture hold-back read (no superseded rows here, so nothing is held back).
+vi.mock("@/lib/superseded-capture-hold-back", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/superseded-capture-hold-back")),
+  readSupersededCaptureHeldBack: async () => ({ byTransaction: new Map<string, number>(), totalCents: 0 }),
 }));
 vi.mock("@/lib/payment-recovery", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-recovery")),
   runPaymentRecoveryOperationNow: h.runPaymentRecoveryOperationNow,
   enqueueBookingModificationRefundRecovery: h.enqueueBookingModificationRefundRecovery,
+  markBookingModificationRefundRecoverySucceeded: h.markBookingModificationRefundRecoverySucceeded,
 }));
 vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
@@ -130,7 +130,7 @@ import { memberMoneyTestContext } from "./support/member-money-fixtures";
 /** #4627: a posting context; the ledger sync that would use it is mocked here. */
 const JOURNAL = memberMoneyTestContext();
 import { ORGANISER_REFUND_DEBT_STATES, primeOrganiserRefundDebt } from "./support/organiser-refund-debt-reread";
-import { expectQueuedOnce, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
+import { expectPrePersistedEditRefund, ownCardRefundPlan, OWN_CARD_REFUND_STATES, primeOwnCardRefund } from "./support/own-card-refund-outcome";
 
 const TODAY = requireCalendarDate("2026-07-01");
 const N1 = new Date("2026-08-01T00:00:00.000Z");
@@ -176,6 +176,8 @@ function booking(overrides: Record<string, unknown> = {}) {
 
 function tx(loaded: ReturnType<typeof booking>) {
   return {
+    // #4872: the reserve takes the Payment row (`lockPaymentForRefundedTotal`).
+    $executeRaw: vi.fn(async () => 1),
     booking: {
       findUnique: vi.fn(async () => loaded),
       update: vi.fn(async () => loaded),
@@ -448,19 +450,30 @@ describe("after commit: the card refund, the Xero correction, the email and the 
   });
 
   // #4070: the real refund helper; the email says the member's own-card refund
-  // was made only when Stripe made it, and one it could not make is queued.
-  it.each(OWN_CARD_REFUND_STATES)("the email's refund destination: $label -> $destination (#4070)", async ({ answer, queued, destination }) => {
+  // was made only when Stripe made it, and one it could not make stays owed on
+  // the row the re-price wrote before it committed (#4992).
+  it.each(OWN_CARD_REFUND_STATES)("the email's refund destination: $label -> $destination (#4070)", async ({ answer, destination }) => {
+    h.enqueueBookingModificationRefundRecovery.mockResolvedValue({ id: "op-refund" });
+    h.markBookingModificationRefundRecoverySucceeded.mockResolvedValue({ count: 1 });
+    h.recoveryFindUnique.mockResolvedValue(null);
+    h.recoveryUpdateMany.mockResolvedValue({ count: 1 });
+    primeOwnCardRefund(h.refundPaymentTransactions, answer, mockPlanStripeRefundAllocation);
     const reprice = await accept(booking());
     if (!reprice.repriced) throw new Error("expected a re-price");
     h.executeBookingModificationRefund.mockImplementation(h.realExecuteBookingModificationRefund);
-    h.enqueueBookingModificationRefundRecovery.mockResolvedValue({ id: "op-refund" });
-    primeOwnCardRefund(h.refundPaymentTransactions, answer, mockPlanStripeRefundAllocation);
     h.sendBookingModifiedEmail.mockResolvedValue(undefined);
 
     await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
 
     expect(h.refundPaymentTransactions).toHaveBeenCalledWith(expect.objectContaining({ paymentId: "pay-1", amountCents: 6000 }));
-    expectQueuedOnce(h.enqueueBookingModificationRefundRecovery, queued, 6000, answer);
+    expectPrePersistedEditRefund(
+      {
+        refund: h.refundPaymentTransactions,
+        enqueue: h.enqueueBookingModificationRefundRecovery,
+        close: h.markBookingModificationRefundRecoverySucceeded,
+      },
+      { answer, destination, pendingCents: 6000, bookingModificationId: "mod-1", reservedInTransaction: true },
+    );
     expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refundAmountCents: 6000, refundDestination: destination, refundByBankTransfer: null }),
       CLUB_FORMAT_TEST,

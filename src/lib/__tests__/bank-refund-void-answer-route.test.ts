@@ -24,6 +24,8 @@ vi.mock("@/lib/bank-refund-void-answer", async (importOriginal) => ({
 vi.mock("@/lib/manual-refund-task-resolution", () => ({
   resolveManualRefundTask: mocks.resolveManualRefundTask,
   MANUAL_PAYMENT_NOTE_MAX: 500,
+}));
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     status: number;
     constructor(message: string, status = 400) {
@@ -34,7 +36,7 @@ vi.mock("@/lib/manual-refund-task-resolution", () => ({
 }));
 
 import { POST } from "@/app/api/admin/payments/manual-refund-tasks/[id]/route";
-import { ManualBookingPaymentError } from "@/lib/manual-refund-task-resolution";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 
 function request(body: unknown) {
   return new Request("http://localhost/api/admin/payments/manual-refund-tasks/t1", { method: "POST", body: JSON.stringify(body) }) as never;

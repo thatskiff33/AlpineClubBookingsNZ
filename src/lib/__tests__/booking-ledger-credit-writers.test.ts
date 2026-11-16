@@ -72,6 +72,10 @@ const ADMIN_ADJUSTMENT_ONLY = /\btype\s*:\s*CreditType\s*\.\s*ADMIN_ADJUSTMENT\b
  */
 const NOT_PRODUCTION = new Map<string, string>([
   ["prisma/demo-seed.ts", "demo data; posted by the #3583 back-post like any historical row"],
+  [
+    "prisma/demo-seed-writers.ts",
+    "the demo seed's row writers, split out of demo-seed.ts (#4940); same demo rows, posted by the same back-post",
+  ],
 ]);
 
 /**

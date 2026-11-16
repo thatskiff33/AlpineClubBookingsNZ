@@ -45,6 +45,7 @@ import {
 import { readStripeCaptureDocumentDate } from "@/lib/stripe-capture-date";
 import { queueWaitingPaidAnotherWayNote } from "@/lib/paid-another-way-receipt-note";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { isCalendarDate } from "@/lib/club-time";
 import {
   xeroDocumentDateForClubToday,
   xeroDocumentDateFromInstant,
@@ -403,7 +404,7 @@ export async function createXeroSupplementaryInvoice(params: {
   if (organiserBilling && localModel === "BookingModification") {
     const claim = operationClaim!;
     const waived = await prisma.$transaction(async (tx) => {
-      const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+      const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
       await lockSupplementaryInvoiceAnchor(tx, localId);
       if (!(await organiserExtraWaivedBeforeRaised(tx, localId))) return false;
       await tx.xeroSyncOperation.updateMany({
@@ -638,7 +639,9 @@ async function readKeptLateCaptureChargeDate(
   queuedRequestPayload: Record<string, unknown> | null,
 ): Promise<string | null> {
   const stored = queuedRequestPayload?.keptLateCaptureDay;
-  if (typeof stored === "string" && /^\d{4}-\d{2}-\d{2}$/.test(stored)) return stored;
+  // Strict on purpose: a stored non-day is corruption, and falling through
+  // re-reads the real day from Stripe instead of sending it to Xero.
+  if (typeof stored === "string" && isCalendarDate(stored)) return stored;
   const paymentIntentId = queuedRequestPayload?.paymentIntentId;
   if (typeof paymentIntentId !== "string" || !paymentIntentId) return null;
   const task = await prisma.manualRefundTask.findUnique({

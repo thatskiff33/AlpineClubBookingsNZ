@@ -26,6 +26,10 @@ Then work through these in order:
 2. [`../IMPLEMENTATION_GUIDE.md`](../IMPLEMENTATION_GUIDE.md) — the practical
    path from clone to a configured club: club identity, environment, database,
    providers in test mode, and validation before you share it with anyone.
+   Install the **latest release**, listed on the repository's GitHub
+   [Releases page](https://github.com/thatskiff33/AlpineClubBookingsNZ/releases),
+   not `main`: `main` is the development branch, and the production deploy
+   refuses a commit that is not a release.
 3. [`../../CONFIGURATION.md`](../../CONFIGURATION.md) — the reference for every
    environment variable and the `config/club.json` schema.
 4. [`../../DEPLOYMENT.md`](../../DEPLOYMENT.md) — read before any shared or
@@ -240,6 +244,10 @@ procedure.
   operating the Xero member-grouping cutover.
 - [Privacy incidents](../guides/privacy-incidents.md) — first-hour containment,
   evidence preservation, credential replacement and notification.
+- [Subscription Category Redesign Reconciliation](../guides/subscription-category-redesign-production-reconciliation.md)
+  — the one-off, out-of-band script and runbook for a production database that
+  already ran the original subscription-category migrations before the
+  redesigned pair replaced them.
 - [Backups](../guides/backups.md) — S3-backed PostgreSQL backups, configured
   in-app, run on demand or nightly, with a scripted restore drill.
 - [Club Time Zone](../guides/club-time.md) — the one time zone the club runs on,

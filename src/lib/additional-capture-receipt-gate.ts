@@ -63,7 +63,7 @@ export async function passPlanningGate(operationId: string, bookingId: string): 
     throw waitFor(`The booking's Xero invoice is still being raised (operation ${runningCreate.id}); this card payment is recorded once it is done`);
   }
   // Imported here: the outbox dispatches to this worker.
-  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
   const otherId = await prisma.$transaction(async (tx) => {
     await lockSupplementaryInvoiceAnchor(tx, bookingId);
     const other = await tx.xeroSyncOperation.findFirst({
@@ -126,7 +126,7 @@ export async function switchUnsentRecorderUnpaid(
   if (!row?.localModel || !row.localId) return false;
   const { localModel, localId } = row;
   // Imported here: the outbox dispatches to the receipt's worker.
-  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
   return prisma.$transaction(async (tx) => {
     await lockSupplementaryInvoiceAnchor(tx, localId);
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -180,7 +180,7 @@ export async function supplementaryReplayMayRecordPayment(input: {
   bookingId: string;
   bookingModificationId: string;
 }): Promise<{ recordPayment: boolean; raisedUnpaid: boolean }> {
-  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-operation-outbox");
+  const { lockSupplementaryInvoiceAnchor } = await import("@/lib/xero-supplementary-invoice-enqueue");
   const { anchorCaptureHasReceipt } = await import("@/lib/additional-capture-receipt-link");
   const decided = await prisma.$transaction(async (tx) => {
     await lockSupplementaryInvoiceAnchor(tx, input.bookingModificationId);

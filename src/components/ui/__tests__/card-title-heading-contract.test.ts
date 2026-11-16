@@ -1,6 +1,12 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  CARD_TITLE_OPEN,
+  filesUnder,
+  headingClassification,
+  lineOf,
+  read,
+  SOURCE_FILES,
+} from "./support/card-title-source";
 
 /**
  * #2796 — the guard that stops "a card title has no heading semantics" being
@@ -27,40 +33,11 @@ import { describe, expect, it } from "vitest";
  * a new file is covered the day it lands.
  */
 
-const repoRoot = process.cwd();
-
-function read(path: string) {
-  return readFileSync(join(repoRoot, path), "utf8");
-}
-
-function filesUnder(dir: string, match: RegExp, skipTests: boolean): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(join(repoRoot, dir))) {
-    const rel = `${dir}/${entry}`;
-    if (statSync(join(repoRoot, rel)).isDirectory()) {
-      if (skipTests && entry === "__tests__") continue;
-      if (entry === "node_modules") continue;
-      out.push(...filesUnder(rel, match, skipTests));
-    } else if (match.test(entry)) {
-      out.push(rel);
-    }
-  }
-  return out;
-}
-
-const SOURCE_FILES = filesUnder("src", /\.tsx$/, true);
 const E2E_FILES = filesUnder("e2e", /\.ts$/, false);
-
-function lineOf(source: string, index: number) {
-  return source.slice(0, index).split("\n").length;
-}
 
 // ---------------------------------------------------------------------------
 // Guard one: one mechanism, not three
 // ---------------------------------------------------------------------------
-
-/** Opening `<CardTitle …>` tags, with their attribute text. */
-const CARD_TITLE_OPEN = /<CardTitle\b([^>]*?)(\/?)>/g;
 
 describe("CardTitle heading semantics have exactly one spelling (#2796)", () => {
   it("no call site hand-writes role=\"heading\" / aria-level on a CardTitle", () => {
@@ -89,8 +66,9 @@ describe("CardTitle heading semantics have exactly one spelling (#2796)", () => 
     const card = read("src/components/ui/card.tsx");
     expect(card).toContain("headingLevel?: CardTitleHeadingLevel");
     // No default level: `headingLevel` must be destructured bare. A default
-    // would silently give 167 call sites a level nobody chose, which is the
-    // decision #2796 leaves with the repository owner.
+    // would silently give hundreds of call sites a level nobody chose; the
+    // owner ruled it out as D1 on #2796 (docs/ARCHITECTURE.md, "Card titles and
+    // heading semantics").
     expect(card).toMatch(/\{\s*className,\s*headingLevel,\s*\.\.\.props\s*\}/);
     expect(card).toContain('role: "heading"');
   });
@@ -179,7 +157,7 @@ function realHeadingTexts(): Set<string> {
     }
   }
   for (const block of cardTitleBlocks()) {
-    if (/\bheadingLevel\s*=/.test(block.attrs)) texts.add(block.text);
+    if (headingClassification(block.attrs) === "heading") texts.add(block.text);
   }
   texts.delete("");
   return texts;
@@ -196,7 +174,7 @@ describe("e2e heading assertions target real headings (#2796)", () => {
   it("no getByRole(\"heading\") name is rendered only by a plain CardTitle", () => {
     const headingTexts = realHeadingTexts();
     const plainTitles = cardTitleBlocks().filter(
-      (block) => !/\bheadingLevel\s*=/.test(block.attrs)
+      (block) => headingClassification(block.attrs) !== "heading"
     );
 
     const findings: string[] = [];
@@ -212,7 +190,7 @@ describe("e2e heading assertions target real headings (#2796)", () => {
         findings.push(
           `${file}:${lineOf(source, call.index)} asserts heading "${name}", ` +
             `but the only thing rendering that text is a CardTitle with no ` +
-            `headingLevel: ${culprits
+            `heading level: ${culprits
               .map((block) => `${block.file}:${block.line}`)
               .join(", ")}`
         );

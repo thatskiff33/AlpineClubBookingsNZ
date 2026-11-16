@@ -24,6 +24,10 @@ it("shows a network wait and lets the member retry the unconsumed token from mem
     .mockResolvedValueOnce({ error: "CredentialsSignin", code: "PASSWORD_CHANGE_REQUIRED" });
   render(<StrictMode><MagicLinkPage /></StrictMode>);
   expect(await screen.findByText(ADDRESS_THROTTLED_MESSAGE)).toBeTruthy();
+  // #4951: the paused screen is a single card, so its title is the page's one h1.
+  expect(
+    screen.getAllByRole("heading", { level: 1 }).map((heading) => heading.textContent)
+  ).toEqual(["Sign-in temporarily paused"]);
   expect(screen.queryByText(/expired|invalid|didn't work/i)).toBeNull();
   expect(window.location.search).toBe("");
   expect(signIn).toHaveBeenCalledTimes(1);

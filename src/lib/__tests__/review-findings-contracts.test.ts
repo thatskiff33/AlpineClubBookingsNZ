@@ -1265,6 +1265,17 @@ describe("review finding source/schema contracts", () => {
         "MUTATION: while merge holds the captured bookings, a child row's foreign key to one commits without waiting, and a sibling writer's row lock is still refused (#5004)",
       ],
     },
+    {
+      issue: "#4929",
+      suite: "bed-allocation caller-held lock",
+      stepName: "Test bed-allocation caller-held lock checks against dedicated PostgreSQL",
+      file: "src/lib/__tests__/bed-allocation-lock-held.realdb.test.ts",
+      cases: [
+        "recognises signed bigint lodge keys, the right backend and transaction lifetime",
+        "does not accept a shared lodge lock as writer exclusion",
+        "refuses reconciliation without global or lodge, and accepts both",
+      ],
+    },
   ])("runs the $suite race suite against the same dedicated PostgreSQL ($issue)", ({ issue, stepName, file, cases }) => {
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const migrateStep = workflow.indexOf(
@@ -1363,9 +1374,10 @@ describe("review finding source/schema contracts", () => {
   it("proves the least-privilege database roles against a real PostgreSQL in a required job (#4453)", () => {
     // The roles' guarantees — no UPDATE or DELETE of a ledger line or audit row
     // by any route, migrations still run, pg_dump still works — are claims about
-    // PostgreSQL's privilege checks. The advisory realdb-all job alone cannot
-    // block a merge (#4453 review, O-F7), so the proof has its own step in the
-    // required migration-drift job, after the race database exists.
+    // PostgreSQL's privilege checks. The realdb-all job could not block a merge
+    // when this was written (#4453 review, O-F7; #4907 later gated it through
+    // `verify`), so the proof has its own step in the required migration-drift
+    // job, after the race database exists.
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const proofStep = workflow.indexOf(
       "name: Prove the least-privilege database roles against dedicated PostgreSQL"
@@ -1398,9 +1410,10 @@ describe("review finding source/schema contracts", () => {
 
   it("proves the member-money journal's enforcement against a real PostgreSQL in a required job (#4513)", () => {
     // The verifier's pins are the catalog's deparsed text and the journal's
-    // refusals are PostgreSQL's own; the advisory realdb-all job alone cannot
-    // block a merge, so the proof has its own step in the required
-    // migration-drift job, after the race database exists.
+    // refusals are PostgreSQL's own; the realdb-all job could not block a merge
+    // when this was written (#4907 later gated it through `verify`), so the
+    // proof has its own step in the required migration-drift job, after the
+    // race database exists.
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const proofStep = workflow.indexOf(
       "name: Prove the member-money journal's enforcement against dedicated PostgreSQL"
@@ -1439,8 +1452,9 @@ describe("review finding source/schema contracts", () => {
 
   it("proves the member-money posting command against a real PostgreSQL in a required job (#4626)", () => {
     // Whether a built batch commits is decided by the journal's deferred
-    // checks at COMMIT, as the application role; the advisory realdb-all job
-    // cannot block a merge, so the proof has its own required step.
+    // checks at COMMIT, as the application role; the realdb-all job could not
+    // block a merge when this was written (#4907 later gated it through
+    // `verify`), so the proof has its own required step.
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const proofStep = workflow.indexOf("name: Prove the member-money posting command against dedicated PostgreSQL");
     expect(proofStep).toBeGreaterThan(-1);

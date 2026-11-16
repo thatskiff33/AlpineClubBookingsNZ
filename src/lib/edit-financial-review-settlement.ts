@@ -31,7 +31,7 @@ import {
 } from "@/lib/edit-financial-review-refund-refusals";
 import { assertByHandReviewRefundWithinUnpromisedCash } from "@/lib/edit-refund-hand-back";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { executeEditReviewCardRefund } from "@/lib/edit-financial-review-card-refund";
 import { lockPaymentForRefundedTotal, planStripeRefundAllocation, type RefundAllocationSlice } from "@/lib/payment-transactions";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";

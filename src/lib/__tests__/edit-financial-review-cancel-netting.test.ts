@@ -22,7 +22,7 @@ vi.mock("@/lib/cancellation", async (importOriginal) => ({
 }));
 // What the booking's applied rows hold now; the frozen figure unless a case moves it.
 vi.mock("@/lib/member-credit", () => ({ deriveBookingAppliedCreditCents: async () => h.appliedNowCents ?? 0 }));
-vi.mock("@/lib/payment-reconciliation", () => ({
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     constructor(message: string, readonly status = 400) {
       super(message);

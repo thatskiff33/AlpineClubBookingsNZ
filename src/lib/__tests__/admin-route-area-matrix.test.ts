@@ -200,6 +200,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/copy": "bookings",
   "/api/admin/bookings/[id]/eligible-family": "bookings",
   "/api/admin/bookings/[id]/exclusive-hold": "bookings",
+  "/api/admin/bookings/[id]/fresh-email-copy": "bookings",
   "/api/admin/bookings/[id]/force-confirm": "bookings",
   // #3029: one guest's dietary/allergy note for this stay, bookings:edit.
   "/api/admin/bookings/[id]/guest-dietary": "bookings",
@@ -413,6 +414,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/members/import": "membership",
   "/api/admin/members/send-password-reset": "membership",
   "/api/admin/members/send-setup-invite": "membership",
+  "/api/admin/members/subject-access": "membership",
+  "/api/admin/members/subject-access/guests": "membership",
   "/api/admin/membership-cancellation-requests": "membership",
   "/api/admin/membership-cancellation-requests/[requestId]/participants/[participantId]":
     "membership",
@@ -496,6 +499,8 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/subscriptions": "finance",
   "/api/admin/subscriptions/[id]/manual-payment": "finance",
   "/api/admin/subscription-billing": "finance",
+  "/api/admin/subscription-categories": "membership",
+  "/api/admin/subscription-categories/[id]": "membership",
   "/api/admin/waitlist": "bookings",
   "/api/admin/work-parties": "lodge",
   "/api/admin/work-parties/[id]": "lodge",
@@ -731,6 +736,7 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/site-style": "content",
   "/admin/stripe/setup": "finance",
   "/admin/stuck-states": "support",
+  "/admin/subscription-categories": "membership",
   "/admin/subscription-lockout": "membership",
   "/admin/subscriptions": "finance",
   "/admin/testing/route-error": "overview",

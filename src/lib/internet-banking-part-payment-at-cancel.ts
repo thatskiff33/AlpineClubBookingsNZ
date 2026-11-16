@@ -40,7 +40,7 @@ import {
   enqueueXeroModificationCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
-import { isXeroConnected } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import logger from "@/lib/logger";
 import type { ClubFormat } from "@/lib/club-format";
 import { alertExpiredHold, type ExpiredHoldView } from "@/lib/internet-banking-hold-kept";
