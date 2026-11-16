@@ -2510,7 +2510,7 @@ and are folded in the same way.
   archived. Archiving a lodge stops new bookings but does not cancel the ones it
   already had, so those guests still arrive and still need a leader; hiding the
   night would have left it invisible everywhere. The two ways to clear one are in
-  the [Hut Leaders guide](../docs/guides/hut-leaders.md).
+  the [Hut Leaders guide](docs/guides/hut-leaders.md).
 
   A club with a single lodge sees no change at all: the same dates, the same
   counts and the same wording as before, with no lodge name added. The Hut
@@ -4016,7 +4016,7 @@ and are folded in the same way.
   imports as it did. An admin who can only view lodges can now step through the
   setup wizard instead of being stuck on its first step. The
   booking rules are unchanged, and a lodge with a capacity behaves exactly as
-  before. See the [Lodges guide](../docs/guides/lodges.md).
+  before. See the [Lodges guide](docs/guides/lodges.md).
 - **Adding or renaming a guest on Edit Booking now asks when the name matches
   one of your own dependants (#3451).** Edit Booking asks the same question the
   booking wizard already asks - **This is my dependant - book them as a
@@ -4044,7 +4044,7 @@ and are folded in the same way.
   full one by comparing the calendar with the roster's head count, so the
   roster now says it outright, as it already does for custodians. Clubs that
   do not run the roster are unchanged. See
-  [Who's at the lodge](../docs/user-guide/whos-at-the-lodge.md).
+  [Who's at the lodge](docs/user-guide/whos-at-the-lodge.md).
 - **A school booking no longer trips the hosting rule's safety fence, so
   recording a teacher's membership payment or standing works again (#3480).**
   Since schools became bookings owned by the school itself rather than by an
@@ -4289,7 +4289,7 @@ and are folded in the same way.
   automatic assignment also now works through today and the nights ahead in the
   club's own calendar, where before, in a container running New Zealand time, it
   started from yesterday. See the
-  [Hut Leaders guide](../docs/guides/hut-leaders.md#what-counts-as-a-covered-night).
+  [Hut Leaders guide](docs/guides/hut-leaders.md#what-counts-as-a-covered-night).
 - **Custodians now appear on the lodge lobby screen and the member "Who's at
   the lodge" list whenever they are ticked as living on site, with or without a
   bed.** Before, only a custodian holding a bed was shown. A custodian who
@@ -7155,7 +7155,7 @@ and are folded in the same way.
   clears its overpayment and prepayment count once Xero lists none, and the
   settled-cash audit says when an invoice was last synced before that count was
   recorded. The triage of all thirteen items is in
-  [`docs/reviews/2026-10-26-4095-triage.md`](../docs/reviews/2026-10-26-4095-triage.md).
+  [`docs/reviews/2026-10-26-4095-triage.md`](docs/reviews/2026-10-26-4095-triage.md).
 - **A card refund the card provider refuses on a booking change or a
   cancellation is no longer lost (#4083, #4096).** When a booking change
   lowered the price of a booking paid by card, or a cancellation refunded the
@@ -7981,7 +7981,7 @@ and are folded in the same way.
   naming the amount, when it was paid, what was bought, and the Stripe payment
   and Payment Link, with a link to it in Stripe. It cannot be muted. The
   treasurer then records the money in Xero by hand against the Stripe clearing
-  account; the [Payments guide](../docs/guides/payments.md#a-stripe-payment-the-app-did-not-create)
+  account; the [Payments guide](docs/guides/payments.md#a-stripe-payment-the-app-did-not-create)
   says how. Payments the app makes itself are unchanged.
 - **The member-money ledger gains its posting command and a GST setting, with
   nothing posting yet (#4626).** This is the first of three steps that will
@@ -8047,7 +8047,7 @@ and are folded in the same way.
   email per payment, "Booking card payment the app could not match - check it",
   naming the amount, the booking, what the app found and the Stripe payment,
   with a link to it in Stripe. It cannot be muted. The booking is not changed;
-  the [Payments guide](../docs/guides/payments.md#a-booking-card-payment-the-app-could-not-match)
+  the [Payments guide](docs/guides/payments.md#a-booking-card-payment-the-app-could-not-match)
   says what to do.
 - **A card request the background retry set up just as a later booking change
   cancelled it is now withdrawn from Stripe (#4631).** When an extra card
@@ -17274,7 +17274,7 @@ and are folded in the same way.
   you save, including when the lodge has no saved capacity yet and any figure
   you type would remove spots. Nothing is shown when raising, when unchanged, or when the lodge has
   no shareable double beds; the save is never blocked. See the
-  [capacity model](../docs/CAPACITY_MODEL.md).
+  [capacity model](docs/CAPACITY_MODEL.md).
 - **A failed save on an admin screen now always says why (#3445).** About two
   dozen admin screens each carried their own copy of the code that turns a
   refused request into the sentence an officer sees, and the copies had drifted:
@@ -17903,7 +17903,7 @@ and are folded in the same way.
   **Operators:** photos uploaded before this release have no copies until you
   run `pnpm run images:backfill-sizes --root <images folder> --apply` once. It
   is safe to repeat; see "Website-sized copies" in the
-  [Image Manager guide](../docs/guides/image-manager.md#website-sized-copies).
+  [Image Manager guide](docs/guides/image-manager.md#website-sized-copies).
 - **Every date typed into a form or filter must now be a real day.** About 45 date fields, across the lodge kiosk, admin reports, hut leaders, Xero activity filters, the audit log, membership changes, bed allocation, the bookings and payments lists, admin member records, family requests and the member profile, used to check only the `YYYY-MM-DD` shape, so a day that does not exist, such as 30 February, got through and later caused a server error or a search that silently matched nothing. These fields now refuse it straight away with a clear message; a date of birth says "Date of birth must be a real date as YYYY-MM-DD". (ALP-574)
 - **Action results are easier to find on Member Applications, Setup and Member merge (#4975).** Failed actions now bring the error into view and move keyboard focus to it, including after an application confirmation dialog closes. Screen readers announce errors and success messages; background refreshes leave focus in place.
 - **Module changes update the admin menus after saving (#4974).** The sidebar,
@@ -17987,7 +17987,7 @@ and are folded in the same way.
   look (card lift, accent keyline, heading treatment, table polish) is applied
   and tweaked from **Admin → Setup & Configuration → Site Appearance & Content →
   Raw CSS**, without a deploy. The ready-to-paste house skin and its `wcx-*` hooks
-  are documented in the [Mountain Conditions guide](../docs/guides/mountain-conditions.md).
+  are documented in the [Mountain Conditions guide](docs/guides/mountain-conditions.md).
   The underlying report data and its section visibility toggles are unchanged.
 
 ### Other lodges and the Alpine Central Server
@@ -19185,7 +19185,7 @@ and are folded in the same way.
   response is now `Cache-Control: no-store`, so a cached answer cannot survive a
   lock. A hut leader signed in with their own account on their own device is
   unaffected by any of it. Operator detail in the [Lodge Kiosk
-  guide](../docs/guides/lodge.md#when-a-hut-leader-unlocks-the-kiosk-with-their-pin).
+  guide](docs/guides/lodge.md#when-a-hut-leader-unlocks-the-kiosk-with-their-pin).
 - **The database now prevents contradictory parent and partner records
   (#3292).** The application already refuses to make the same two members both
   direct parent/dependant and partners. A PostgreSQL backstop now applies the
@@ -19419,7 +19419,7 @@ and are folded in the same way.
   app's Prisma and build dependency graphs now use the patched fast-uri 3.1.8.
 - The old Xero token table is gone. Tokens stay in the credential store.
   Deploying this release needs the maintenance window in
-  [UPGRADING.md](../docs/UPGRADING.md). A mistake while the previous release is
+  [UPGRADING.md](docs/UPGRADING.md). A mistake while the previous release is
   still refreshing leaves Xero on a dead token, and the fix is an administrator
   reconnect.
 - **`NODE_BUILD_OPTIONS` now reaches the migration image build too (#3824).**
@@ -21732,7 +21732,7 @@ Members and administrators see no change.
   are carried over from npm's lockfile; pnpm only merged two nested `lru-cache`
   patch copies onto the one already in the tree. The Docker image, CI and the dependency audit use pnpm
   too; a club deploying with `docker compose build` needs no change. See
-  "Package manager: pnpm" in [CONTRIBUTING.md](../CONTRIBUTING.md).
+  "Package manager: pnpm" in [CONTRIBUTING.md](CONTRIBUTING.md).
 - **The dependency audit can pass a reviewed, patched advisory as "MITIGATED",
   never as clean (#3843).** A high-severity advisory against `braces@3.0.3`, a
   file-matching library with no fixed release, had turned the required
