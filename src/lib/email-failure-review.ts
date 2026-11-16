@@ -196,13 +196,19 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
           bookingIds.length > 0
             ? prisma.booking.findMany({
                 where: { id: { in: bookingIds } },
-                select: { id: true },
+                select: { id: true, deletedAt: true },
               })
             : Promise.resolve([]),
         ])
       : [[], [], []];
   const replayableIds = new Set(replayable.map((row) => row.id));
   const existingBookingIds = new Set(existingBookings.map((booking) => booking.id));
+  // A soft-deleted booking still has a row, but its page refuses every fresh
+  // copy ("This booking has been deleted"), so the queue must not send the
+  // officer there.
+  const liveBookingIds = new Set(
+    existingBookings.filter((booking) => booking.deletedAt === null).map((booking) => booking.id),
+  );
   // The newest of Archive and Try again decides the row: a row requeued and
   // then exhausted again is active, even though an older archive exists. An
   // archive also counts only if it is no older than the row's last attempt:
@@ -225,7 +231,7 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
       replayableIds.has(failure.id) &&
       (failure.bookingId === null || bookingExists);
     const freshCopyHref =
-      failure.bookingId && bookingExists && isBookingFreshCopyTemplate(failure.templateName)
+      failure.bookingId && liveBookingIds.has(failure.bookingId) && isBookingFreshCopyTemplate(failure.templateName)
         ? bookingFreshCopyHref(failure.bookingId)
         : null;
     const latest = latestActionByEmailLogId.get(failure.id);

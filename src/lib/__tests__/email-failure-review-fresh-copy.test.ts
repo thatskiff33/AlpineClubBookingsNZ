@@ -20,6 +20,8 @@ const { mockPrisma, mockCreateAuditLog } = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mockCreateAuditLog }));
 
+import { BOOKING_FRESH_COPY_TEMPLATES } from "@/lib/booking-fresh-email-copy-templates";
+import { SENSITIVE_EMAIL_LOG_TEMPLATES } from "@/lib/email/internal";
 import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import {
   archiveSupersededEmailFailures,
@@ -55,11 +57,16 @@ describe("exhausted failure queue fresh-copy link", () => {
       failure({ id: "log-3", templateName: "member-welcome" }),
       failure({ id: "log-4", templateName: "pre-arrival-reminder", bookingId: null }),
       failure({ id: "log-5", templateName: "booking-confirmed", bookingId: "deleted-booking" }),
+      failure({ id: "log-6", templateName: "booking-confirmed", bookingId: "soft-deleted" }),
     ];
     // The window scan, then the requeueable-body filter: these emails keep no body.
     mockPrisma.emailLog.findMany.mockResolvedValueOnce(rows).mockResolvedValueOnce([]);
     mockPrisma.emailLog.count.mockResolvedValue(rows.length);
-    mockPrisma.booking.findMany.mockResolvedValue([{ id: "booking-1" }, { id: "child 1" }]);
+    mockPrisma.booking.findMany.mockResolvedValue([
+      { id: "booking-1", deletedAt: null },
+      { id: "child 1", deletedAt: null },
+      { id: "soft-deleted", deletedAt: new Date("2026-06-30T00:00:00.000Z") },
+    ]);
 
     const queue = await getExhaustedEmailFailureReviewQueue();
 
@@ -70,7 +77,19 @@ describe("exhausted failure queue fresh-copy link", () => {
       ["log-4", null, "sensitive"],
       // A deleted booking has no page to send from (#4963's dangling bookingId).
       ["log-5", null, "sensitive"],
+      // A soft-deleted booking still has a row, but its page refuses a fresh copy.
+      ["log-6", null, "sensitive"],
     ]);
+  });
+
+  // Try again is safe for these emails only because they keep no body. That
+  // rests on each one being on the sensitive list: drop one from it and its
+  // body would be kept, the row would read as retryable, and Try again would
+  // replay a door code or a payment link.
+  it("every fresh-copy email is one whose body is never kept", () => {
+    for (const template of BOOKING_FRESH_COPY_TEMPLATES) {
+      expect(SENSITIVE_EMAIL_LOG_TEMPLATES.has(template), template).toBe(true);
+    }
   });
 });
 
