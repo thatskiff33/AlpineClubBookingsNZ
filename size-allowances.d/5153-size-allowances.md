@@ -43,7 +43,7 @@ reason: routes Xero tax through the club tax schedule; those lines sit inside
   not part of this fix.
 
 function: src/lib/xero-subscription-invoices.ts#createXeroMembershipSubscriptionInvoice
-lines: 411
+lines: 417
 reason: routes Xero tax through the club tax schedule; those lines sit inside
   the function `createXeroMembershipSubscriptionInvoice`, which was already
   over its limit before this change, and lifting it apart is a refactor of its

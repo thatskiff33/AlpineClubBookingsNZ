@@ -8,7 +8,7 @@ built. Moving the resolution elsewhere would separate a document from the
 treatment it carries, which is the drift the one renderer exists to stop.
 
 file: src/lib/admin-permissions.ts
-lines: 954
+lines: 955
 reason: registers `/api/admin/club-tax` under the finance area beside the
   other finance API prefixes; the route-area map is one list by design.
 
