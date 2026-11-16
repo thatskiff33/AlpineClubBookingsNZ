@@ -73,11 +73,26 @@ import {
   apiErrorMessageFromResponse,
   readApiObjectOrEmpty,
 } from "@/lib/api-error-message";
-import {
-  monthBounds,
-  type HutLeaderAssignment,
-  type UnassignedDate,
-} from "./_components/hut-leaders-page-model";
+import type {
+  HutLeaderAssignment,
+  UnassignedDate,
+} from "./_components/hut-leaders-page-types";
+
+// Compute the last inclusive day of a "YYYY-MM" month.
+function monthBounds(monthKey: string) {
+  const start = parseDateOnly(`${monthKey}-01`);
+  // Sliced at the fixed `YYYY-MM` offsets rather than split: the two halves
+  // read as `number` where a destructured split hands back lookups the
+  // compiler must treat as possibly absent (#2801).
+  const year = Number(monthKey.slice(0, 4));
+  const month = Number(monthKey.slice(5, 7));
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const endExclusive = parseDateOnly(
+    `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`,
+  );
+  return { start, end: addDaysDateOnly(endExclusive, -1) };
+}
 
 export default function HutLeadersPage() {
   const { hutLeaderLabel } = useClubIdentity();
