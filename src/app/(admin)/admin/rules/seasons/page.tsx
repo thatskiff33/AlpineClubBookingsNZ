@@ -205,6 +205,7 @@ export default function SeasonsPage() {
     // season's existing rates untouched (see the route's `if (membershipTypeRates)`
     // guard). Rates are edited in Fees → Hut Fees.
     const payload = { name, type, startDate, endDate, active }
+    const fallback = "Failed to save season"
 
     try {
       const res = await fetch(`/api/admin/seasons/${editingId}`, {
@@ -213,17 +214,20 @@ export default function SeasonsPage() {
         body: JSON.stringify(payload),
       })
       if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || "Failed to save season")
+        const message = await apiErrorMessageFromResponse(res, fallback)
+        // A refusal from a lodge the admin has since left must not take focus.
+        if (activeScopeRef.current !== requestedScope) return
+        actionFailure.fail(message)
+        return
       }
       if (activeScopeRef.current !== requestedScope) return
       resetForm()
       setTransitionsLanded((count) => count + 1)
       fetchSeasons()
-    } catch (err) {
-      // A failure from a lodge the admin has since left must not take focus.
+    } catch {
+      // The request never arrived: see handleDelete.
       if (activeScopeRef.current !== requestedScope) return
-      actionFailure.fail(err instanceof Error ? err.message : "Unknown error")
+      actionFailure.fail(fallback)
     } finally {
       setSaving(false)
     }

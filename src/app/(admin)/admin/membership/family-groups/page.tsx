@@ -94,7 +94,7 @@ function FamilyGroupsTab() {
   // A refused create or edit is an action, so it is focused and re-announced (#4975).
   const saveFailure = useActionFailure();
   const clearSaveFailure = saveFailure.clear;
-  // A refused delete, shown above the list: `error` sits inside the form, which is hidden then.
+  // A refused delete, shown above the list: `saveFailure` sits inside the form, which is hidden then.
   const [listError, setListError] = useState("");
   // #2256: the create/edit form renders in the anchor below the filter card and
   // the two queue cards (pending changes, outstanding partner invites), while
@@ -340,6 +340,7 @@ function FamilyGroupsTab() {
       return;
     }
     setSubmitting(true);
+    const fallback = "Failed to save";
 
     try {
       const payload = {
@@ -360,13 +361,14 @@ function FamilyGroupsTab() {
           });
 
       if (!res.ok) {
-        const data = await res.json();
-        saveFailure.fail(data.error || "Failed to save");
+        saveFailure.fail(await apiErrorMessageFromResponse(res, fallback));
         return;
       }
 
       closeForm();
       fetchData();
+    } catch {
+      saveFailure.fail(fallback);
     } finally {
       setSubmitting(false);
     }

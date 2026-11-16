@@ -494,9 +494,9 @@ rules first written here. #2765 extended it with the measured-audience half.
 
 - **A row-capped admin list shows its total and reaches every row (#4960).**
   When an admin route answers one page of a list, every screen that reads it
-  for that list shows the total ("Showing 1–25 of 40", even on a single page)
-  and a pager that reaches the last row, in the same change that adds the cap.
-  A cap with no pager is silent data loss: #297 hid the longest-waiting requests.
+  for that list has a pager that reaches the last row, and an officer queue
+  shows the total even on a single page, in the same change that adds the cap.
+  A cap with no pager is silent data loss (#297).
 - One shape, one pager. A capped route parses `adminListPageQueryFields` and
   answers through `adminListPage`, both in `src/lib/admin-list-page.ts`; a
   screen pages through `useAdminQueuePage` and renders the shared `Pagination` with
@@ -511,12 +511,13 @@ rules first written here. #2765 extended it with the measured-audience half.
   policy-exception queue merges two tables, so it counts each and reads each
   only to the end of the page asked for: its total is exact.
 - Enforced by `src/lib/__tests__/admin-queue-pagination-census.test.ts`, which
-  names this ID: every client file fetching a route in `CAPPED_QUEUE_ROUTES`
-  must page through the hook, guard its reads with `beginLoad`, and render
-  `Pagination` outside its loading branch, or be exempt in `NOT_A_QUEUE_LIST`;
-  each route must call `adminListPage`. It reads source text, so a new capped
-  route is covered once added to that map; other admin lists keep their own
-  page fields until next changed.
+  names this ID: a client file fetching a route in `CAPPED_QUEUE_ROUTES` (new
+  capped routes go there) must page through the hook, guard its reads with
+  `beginLoad` and render `Pagination` outside its loading branch, or be exempt
+  in `NOT_A_QUEUE_LIST`; each route must call `adminListPage` and spread
+  `adminListPageQueryFields`. Other lists it walks take range text and URL
+  page from `formatAdminListRange`, `parseAdminListPageParam` and
+  `setAdminListPageParam`; one outside it keeps its own pager.
 
 ## INV-OPS-002
 

@@ -1,7 +1,7 @@
 import type { MemberMoneySide, Prisma } from "@prisma/client";
 import { bookingOwnerProviderMetadata } from "../../booking-owner";
 import { BINDING_CHARGE_SOURCE_VERSION, type BookingChargeAccount } from "./booking-charges";
-import { componentKey, liveComponentGross } from "./components";
+import { componentKey, liveComponentGross, type PostedRevenueLeg } from "./components";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import type { MemberMoneyDebtor } from "./plan";
 
@@ -46,7 +46,7 @@ const LEG_SELECT = {
 type ChargeLeg = Prisma.MemberMoneyLineGetPayload<{ select: typeof LEG_SELECT }>;
 
 /** Each charge component the legs post, with the gross it still carries: the one rule for the doors and the census. */
-function liveChargeComponents(legs: readonly ChargeLeg[]): LiveChargeComponent[] {
+function liveChargeComponents(legs: readonly PostedRevenueLeg[]): LiveChargeComponent[] {
   const gross = liveComponentGross(legs);
   return [...new Map(legs.map((leg) => [componentKey(leg.account, leg.chargeIdentity!), leg])).entries()]
     .map(([key, leg]) => ({
@@ -60,12 +60,20 @@ const chargeLegsOf = (bookingIds: readonly string[]) => ({
   bookingId: { in: [...bookingIds] }, account: { in: [...CHARGE_ACCOUNTS] }, chargeIdentity: { not: null },
 });
 
+/** One booking's posted charge legs (booking and fee revenue), oldest first: what its components are computed from. */
+export async function readBookingChargeLegs(
+  db: Pick<Prisma.TransactionClient, "memberMoneyLine">,
+  bookingId: string,
+): Promise<PostedRevenueLeg[]> {
+  return db.memberMoneyLine.findMany({ where: chargeLegsOf([bookingId]), orderBy: { id: "asc" }, select: LEG_SELECT });
+}
+
 /** One booking's live charge components, read inside a door's transaction under `lock(1)`. */
 export async function readBookingLiveComponents(
   db: Pick<Prisma.TransactionClient, "memberMoneyLine">,
   bookingId: string,
 ): Promise<LiveChargeComponent[]> {
-  return liveChargeComponents(await db.memberMoneyLine.findMany({ where: chargeLegsOf([bookingId]), orderBy: { id: "asc" }, select: LEG_SELECT }));
+  return liveChargeComponents(await readBookingChargeLegs(db, bookingId));
 }
 
 /** The booking's live charge: the sum C2 caps collection by, for the receipts, the engine and the census alike. */

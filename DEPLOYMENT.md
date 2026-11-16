@@ -1050,12 +1050,18 @@ full order, its refusals and its recovery messages are in
 "Public Reference Release Checklist":
 
 1. `pnpm run release:cut prepare --execute` on a clean checkout of
-   `origin/main` builds the `release/v<version>` commit; push it and merge it
-   as the release-prep pull request.
+   `origin/main` builds the `release/v<version>` commit. It rolls the
+   changelog, files the upgrade guide's `## Unreleased` steps under
+   `## v<previous> → v<version>`, and writes a `docs/releases/v<version>.md`
+   stub listed in the release index (#4983). Write the notes page, then push
+   the branch and merge it as the release-prep pull request.
 2. `pnpm run release:cut publish --execute` tags the merged commit, pushes the
    tag and publishes the GitHub release. It first asks GitHub whether that
    commit's CI run published its images, and refuses if not, so the deploy
-   below can pull them.
+   below can pull them. It also refuses while the upgrade guide lacks the
+   version's section, still has steps under `## Unreleased` or has a step in a
+   section an earlier release already shipped, and while the notes page is
+   missing or unfinished.
 3. Deploy that tag from the host's source checkout:
 
    ```bash
