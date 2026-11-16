@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { adminListPageField } from "@/lib/admin-list-page";
 import {
   buildAuditCategoryWhere,
   buildMemberVisibleAuditLogWhere,
@@ -18,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 const querySchema = z.object({
   category: z.string().optional().default("all"),
-  page: z.coerce.number().int().min(1).optional().default(1),
+  page: adminListPageField,
   pageSize: z.coerce.number().int().min(1).max(50).optional().default(10),
 });
 

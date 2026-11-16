@@ -1784,12 +1784,21 @@ payment is going back (`previousPaymentRefunding`), and `confirm-payment`
 answers 409 `SUPERSEDED_CARD_PAYMENT_REFUNDING`, also for a captured intent of
 the booking its pointer has moved past. Neither reuse arm hands out an intent
 a superseded row still names; one being paid answers `PAYMENT_PROCESSING` in
-its own words. After a card success the `/pay` link asks the server what it
-did and never shows the pay buttons again, whether the confirmation resolved in
-the page or a redirect method returned the payer to the link with
-`payment_intent` and `redirect_status` in the address (#4955). The door's 410
-for a booking already paid carries `BOOKING_ALREADY_PAID`, which the link reads
-as paid (the webhook settled first); its other 410s stay unconfirmed.
+its own words. After a redirect method returns the payer with `payment_intent`
+and `redirect_status` in the address, or an in-page confirmation resolves
+`processing`, every card surface asks the server what it did and never shows
+the pay buttons again (#4955). An in-page `succeeded` is asked about too on the
+`/pay` link, booking page and pay step; the additional payment and group settle
+cards take Stripe.js's word there, backed by the webhook. The server checks
+are: the `/pay` link its `checkCardSuccess`, the booking page and pay step `confirm-payment` (a
+`processing` intent, or a returned success it cannot vouch for, asks
+`create-payment-intent`, which settles a succeeded intent or hands it back),
+the additional payment `confirm-modification-payment` then its secret door,
+and the group settle its settle route. Each return URL names its surface
+(`stripe_return`), so a surface never checks another's intent. The `/pay`
+door's 410 for a booking already paid carries `BOOKING_ALREADY_PAID`, which
+the link reads as paid (the webhook settled first); its other 410s stay
+unconfirmed.
 
 Saved-card provenance (#3269, `INV-PAY-053`). Two writers put a
 `stripePaymentMethodId` on a `Payment` row and only one of them saves a card:
@@ -4030,6 +4039,22 @@ revoked authority or stale mailbox -> detail CTA removed, bearer/page action pre
 unknown legacy authority -> retired for manual review
 application rollback -> old worker cannot select quarantined new-version booking body
 exhausted or suppressed -> admin-visible failure/suppression
+```
+
+An exhausted failure of `booking-confirmed`, `pre-arrival-reminder` or
+`split-guest-payment-link` is never replayed. An officer with bookings edit access
+sends a fresh copy from the booking page instead (ALP-588): rendered again from
+the booking's current owner and data through its normal sender and `sendEmail`,
+with the payment link re-issued by the existing revoke-and-remint workflow. Only
+an outcome of `sent` archives that booking's earlier exhausted failures of the
+same email (an `email.failure.reviewed` audit row each) and writes
+`booking.email.freshCopySent`; the old `FAILED` rows stay as history. A
+pre-arrival copy sent inside the daily window also stamps
+`preArrivalReminderSentAt`, so the cron does not send a second.
+
+```text
+exhausted sensitive booking email -> fresh copy sent -> earlier failures archived + audit row
+exhausted sensitive booking email -> fresh copy withheld or failed -> nothing archived, nothing recorded
 ```
 
 The organiser's extra-invoice notice (#4299) starts as a durable `FAILED` row
