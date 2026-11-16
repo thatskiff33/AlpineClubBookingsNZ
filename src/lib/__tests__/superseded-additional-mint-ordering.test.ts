@@ -94,7 +94,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 const CONTEXT = {
   ownCardRefund: null,
   pendingRefundAmountCents: 0,
-  organiserChildRefund: null,
+  organiserChildRefund: null, refundHeldForDispute: false,
   paymentId: "payment_1",
   // #3371: the minter takes the ask as ONE value carrying what minting it will
   // absorb, so the fixture builds it the way a door does - through the one home

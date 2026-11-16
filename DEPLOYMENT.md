@@ -2210,13 +2210,16 @@ release acknowledges an event it does not know and drops it. With them the app
 keeps one record per cardholder dispute (chargeback), emails Finance when a
 dispute opens and when it closes, shows "Disputed by cardholder" on the
 booking and on **Finance → Payments**, and, while a dispute is open or lost,
-issues no card refund or account credit for that payment: a cancel is handed to
-the treasurer instead (`INV-PAY-154`). Disputes opened before the upgrade are
+issues no card refund or account credit for that payment: a cancel, or an edit
+that lowers the price, is handed to the treasurer instead (`INV-PAY-154`). Disputes opened before the upgrade are
 not back-filled, so check Stripe's **Disputes** page once after adding the
 events and handle any open dispute by hand.
 
 **Recording a lost dispute in Xero (treasurer, by hand).** The app posts
-nothing to Xero for a dispute. When the Finance alert says a dispute was lost:
+nothing to Xero for a dispute, nor a credit note for a cancel's or edit's
+refund it handed to the treasurer because of one. If you pay such a refund
+while the dispute is open, record the refund in Xero by hand as you would any
+bank-transfer refund. When the Finance alert says a dispute was lost:
 
 1. In Stripe, open the dispute and note the disputed amount, Stripe's dispute
    fee and the payout that carried the withdrawal.
@@ -2227,11 +2230,26 @@ nothing to Xero for a dispute. When the Finance alert says a dispute was lost:
    coded to bank fees.
 3. Reconcile both against the Stripe payout that carried them.
 4. Do not refund or credit the member: the bank has already returned their
-   money. Resolve the cancellation's treasurer task, if one was raised, by
-   dismissing it with the dispute id as the reason.
+   money. Resolve the cancellation's or edit's treasurer task, if one was
+   raised, by dismissing it with the dispute id as the reason.
 
 A won dispute needs no Xero entry unless the withdrawal was recorded by hand
 before the win; then record its reversal the same way.
+
+**A lost dispute later won (treasurer, by hand).** Stripe can reverse a lost
+dispute, for example after an appeal. The app then sends Finance one more
+alert, "Lost card payment dispute now won". If you recorded the loss in Xero:
+
+1. In Stripe, note the payout that carried the returned amount and whether the
+   dispute fee came back with it.
+2. In Xero, record a receive money transaction into the Stripe clearing account
+   for the returned amount, coded to the same account as the loss and
+   referencing the booking and the Stripe dispute id, and a second for the fee
+   if Stripe returned it.
+3. Reconcile both against that payout.
+4. A treasurer task the app raised while the dispute held stays open. If you
+   already dismissed it, the member's refund or credit is now owed again: pay
+   it as the task would have.
 
 If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or the
 signing secret stored under **Admin > Integrations > Stripe** was wrong (it is

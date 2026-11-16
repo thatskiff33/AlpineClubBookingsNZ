@@ -34,6 +34,23 @@ function shouldSuppressFeedbackEvent(
   return nextEventCount >= TRANSIENT_BOUNCE_SUPPRESSION_THRESHOLD;
 }
 
+/**
+ * True when the address's last recorded event is this same SES feedback: one
+ * SES message's bounce (or complaint) for one recipient is one event, however
+ * often SNS delivers it. Without an SES message id the event cannot be told
+ * apart from a new one, so it is counted.
+ */
+function isSameFeedbackEvent(
+  existing: { lastSesMessageId: string | null; lastEventType: string | null },
+  event: SesEmailFeedbackEvent
+) {
+  return (
+    Boolean(event.sesMessageId) &&
+    existing.lastSesMessageId === event.sesMessageId &&
+    existing.lastEventType === event.eventType
+  );
+}
+
 export async function getActiveEmailSuppression(email: string) {
   const normalizedEmail = normalizeEmailAddress(email);
   if (!normalizedEmail) {
@@ -67,6 +84,16 @@ export async function recordSesEmailFeedback(events: SesEmailFeedbackEvent[]) {
     const existing = await prisma.emailSuppression.findUnique({
       where: { email: event.email },
     });
+    if (existing && isSameFeedbackEvent(existing, event)) {
+      // A replay of feedback already recorded (`INV-INT-039`: SNS redelivers a
+      // notification whose attempt died after writing but before its claim was
+      // completed). Counting it again would turn one transient bounce into the
+      // two that suppress the address.
+      if (existing.suppressedAt && !existing.clearedAt) {
+        suppressed++;
+      }
+      continue;
+    }
     const nextEventCount = (existing?.eventCount ?? 0) + 1;
     const suppressNow = shouldSuppressFeedbackEvent(event, nextEventCount);
     const suppressedAt = suppressNow
