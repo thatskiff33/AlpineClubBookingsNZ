@@ -190,6 +190,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/booking-requests/[id]/resolve-pending-adults": "bookings",
   "/api/admin/booking-requests/[id]/school-record": "bookings",
   "/api/admin/booking-requests/[id]/send-quote": "bookings",
+  // #4969: the four queue counts that badge the Booking Requests page tabs.
+  // Bookings view, like the lists it counts, rather than the overview-area
+  // sidebar aggregate, so a bookings-only role still gets its badges.
+  "/api/admin/booking-requests/pending-counts": "bookings",
   "/api/admin/booking-requests/settings": "bookings",
   "/api/admin/booking-reviews": "bookings",
   "/api/admin/bookings": "bookings",
