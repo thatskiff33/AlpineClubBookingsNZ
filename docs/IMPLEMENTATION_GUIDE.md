@@ -31,6 +31,12 @@ which is expected: you are on a release, not on a branch. For a production host,
 keeps the host checkout on a branch called `main` held at the release, because
 the deploy script expects that. To work on the code itself, `git switch main`.
 
+The copied `.env` declares `APP_ENVIRONMENT_ROLE=non-production`, which is right
+for a local checkout. The club's live site sets `APP_ENVIRONMENT_ROLE=production`
+instead; [`DEPLOYMENT.md` → "First Bootstrap"](../DEPLOYMENT.md#first-bootstrap)
+checks it before anything starts, and
+[`guides/environment-role.md`](guides/environment-role.md) explains why.
+
 Use Node.js 24 LTS and pnpm 11 (the version pinned in `package.json`
 `packageManager`; see
 [`CONTRIBUTING.md` → "Package manager: pnpm"](../CONTRIBUTING.md#package-manager-pnpm)

@@ -459,8 +459,8 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:236",
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
-  "src/app/(authenticated)/bookings/[id]/page.tsx:205",
-  "src/app/(authenticated)/bookings/page.tsx:196",
+  "src/app/(authenticated)/bookings/[id]/page.tsx:210",
+  "src/app/(authenticated)/bookings/page.tsx:201",
   "src/app/api/bookings/[id]/additional-payment-secret/route.ts:83",
   "src/app/api/bookings/[id]/arrival-time/route.ts:140",
   "src/app/api/bookings/[id]/arrival-time/route.ts:248",
@@ -493,8 +493,8 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
   "src/lib/booking-email-authority.ts:115",
-  "src/lib/booking-guest-removal-service.ts:426",
-  "src/lib/booking-guest-removal-service.ts:653",
+  "src/lib/booking-guest-removal-service.ts:427",
+  "src/lib/booking-guest-removal-service.ts:654",
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:624",
@@ -523,8 +523,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1355",
-  "src/lib/payment-recovery.ts:2767",
-  "src/lib/payment-recovery.ts:2819",
+  "src/lib/payment-recovery.ts:2776",
+  "src/lib/payment-recovery.ts:2828",
   "src/lib/xero-admin-health.ts:423",
 ];
 

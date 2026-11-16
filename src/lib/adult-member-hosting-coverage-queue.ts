@@ -7,6 +7,7 @@ import {
   assertHostingCoverageQueueParticipantsLocked,
   type HostingCoverageQueueParticipantProof,
 } from "@/lib/adult-member-hosting-queue-participants";
+import { isCalendarDate } from "@/lib/club-time";
 
 /**
  * The durable queue of BOUNDED same-owner re-evaluation work (#2576 §8).
@@ -410,13 +411,15 @@ export async function failHostingCoverageReevaluation(
  * The column is JSON, so a hand-edited or partially-written value is possible. A
  * value that is not an array of date-only strings yields NO nights, which makes
  * the item a no-op rather than letting a malformed row widen a bounded
- * re-evaluation into something unbounded.
+ * re-evaluation into something unbounded. Strict about real days on purpose:
+ * this code writes every list from real lodge nights, so a `2026-02-30` can
+ * only be corruption, and it would reach `parseDateOnly` as an Invalid Date.
  */
 function parseNights(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const nights = value.filter(
     (entry): entry is string =>
-      typeof entry === "string" && /^\d{4}-\d{2}-\d{2}$/.test(entry),
+      typeof entry === "string" && isCalendarDate(entry),
   );
   return [...new Set(nights)].sort();
 }
