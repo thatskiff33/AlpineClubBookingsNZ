@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import type { AgeTier } from "@prisma/client";
-import { z } from "zod";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
@@ -10,7 +9,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { ROLE_VALUES } from "@/lib/member-roles";
+import { bulkUpdateSchema } from "./schema";
 import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
@@ -62,19 +61,6 @@ import {
   isDeletedAccountRecord,
 } from "@/lib/deleted-account";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
-
-const bulkUpdateSchema = z.object({
-  ids: z.array(z.string()).min(1, "At least one member ID is required").max(100),
-  action: z.enum(["deactivate", "reactivate", "set-role"]),
-  role: z.enum(ROLE_VALUES).optional(),
-  accessRoles: z.array(z.string().trim().min(1).max(120)).optional(),
-}).refine(
-  (data) =>
-    data.action !== "set-role" ||
-    data.role !== undefined ||
-    data.accessRoles !== undefined,
-  { message: "Role is required for set-role action", path: ["role"] }
-);
 
 /**
  * POST /api/admin/members/bulk-update
