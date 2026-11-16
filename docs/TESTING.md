@@ -1707,7 +1707,19 @@ So:
 The audit-writer and view-only censuses work this way. A new audit write site
 regenerates `scripts/audit/audit-write-sites.ts` with
 `pnpm run audit:census --write`, which adds that site's line; review it,
-because the line states the category the row is filed under. A new
+because the line states the category the row is filed under. Each line also
+carries the site's action and the reviewed records that name it, and the census
+compares per function by action, so its failure says NEW, REMOVED,
+RENUMBERED (ordinals shifted by an earlier addition; nobody's readership
+changed), RECLASSIFIED, SINK MOVED or REVIEW RECORD CHANGED. Two sites in one
+function sharing an action are told apart only by order. The ledger is
+`merge=union`: two lanes whose lines sort together merge cleanly, and the cases
+union cannot get right fail loudly rather than silently. Two lanes appending to
+the SAME function both write `<fn>#1`; with different actions union keeps both
+lines, a duplicate key that fails the typecheck and the census, and with the
+identical action and category git merges the identical line and the census
+fails on the missing `#2`. Either way, regenerate on the merged tree, which is
+why the census must run on the composed tree before merging. A new
 `ViewOnlyActionButton` under a section banner needs no entry; one that keeps its
 own per-button reason adds or updates its file's line in `KEEPS_OWN_REASON` in
 `view-only-banner-contract.test.ts`. Neither census has a total to re-measure,

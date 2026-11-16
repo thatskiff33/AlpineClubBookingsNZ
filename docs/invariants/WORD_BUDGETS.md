@@ -100,7 +100,7 @@ rows and 56,846 words (70,395 before it).
 | `INV-HOST-053` | 1434 |
 | `INV-OPS-013` | 1354 |
 | `INV-CONFIG-004` | 1304 |
-| `INV-OPS-012` | 1176 |
+| `INV-OPS-012` | 1211 |
 | `INV-PAY-047` | 1164 |
 | `INV-MOD-055` | 1002 |
 | `INV-ADDPAY-036` | 1137 |

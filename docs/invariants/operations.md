@@ -591,9 +591,11 @@ rules first written here. #2765 extended it with the measured-audience half.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
   Since #5211 every write site has a per-site baseline: the generated ledger
-  `scripts/audit/audit-write-sites.ts` records each site's category, one line per
-  site, so a reclassification anywhere fails `audit-writer-census.test.ts` by
-  name. A GENERAL "did it ship WITH a backfill" check is still **not
+  `scripts/audit/audit-write-sites.ts` records each site's category and action,
+  one line per site, so a reclassification anywhere fails
+  `audit-writer-census.test.ts` by name. Sites are matched within their function
+  by action, so a site added earlier in the function is not mistaken for one;
+  two sites in one function sharing an action are matched by order. A GENERAL "did it ship WITH a backfill" check is still **not
   available**: the ledger sees the move, not the migration or issue that answers
   for it, and the two `verify` gates that can read a pull request parse its BODY,
   not its diff. So outside #2751's population this is a rule a reviewer applies,
