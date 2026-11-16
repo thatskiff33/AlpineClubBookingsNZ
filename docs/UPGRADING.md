@@ -31,6 +31,13 @@ It complements the two documents next to it and does not repeat them:
    releases (`pnpm run release:cut` works in a fork) or sets the override on
    every deploy. See
    [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
+
+   Each release's steps sit under its own `## v<previous> → v<release>`
+   heading below. **`## Unreleased` holds steps for changes no release
+   contains yet**: a change that needs an upgrade step adds it there, and the
+   release tool files them under the version when the release is cut
+   (`docs/MAINTENANCE.md`, "Public Reference Release Checklist"). If you
+   deploy a released tag, you can skip `## Unreleased`.
 2. **Always back up the database before migrating.** A backup you have never
    restored is a hope, not a backup — see the Quarterly Backup Restore Drill in
    `docs/MAINTENANCE.md`. Take a fresh `pg_dump` immediately before every
@@ -3284,7 +3291,8 @@ changelog section before starting.
      onto `MembershipTypeSeasonRate` (#2129 step 1) and narrowed the remaining
      writes on the two column-carrying models (#2130 STEP 1.5), and Release B
      dropped `SeasonRate`, `XeroItemCodeMapping.isMember` and the
-     `AgeTierSetting.xeroContactGroup*` columns — see the Unreleased section.)*
+     `AgeTierSetting.xeroContactGroup*` columns — see
+     [Release B](#release-b-the-two-contract-migrations).)*
 3. **The two additive migrations need no special handling.**
    `20260719150000_add_post_login_landing` adds a `PostLoginLanding` enum plus a
    nullable `Member.postLoginLanding` column with no default (metadata-only
