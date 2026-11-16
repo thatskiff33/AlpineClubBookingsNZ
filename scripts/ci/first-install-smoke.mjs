@@ -2,7 +2,7 @@
 /**
  * Runs the Docker-only first install exactly as `DEPLOYMENT.md` "First
  * Bootstrap" writes it, against an empty database, and proves it leaves a club
- * somebody can sign in to (#4977, INV-OPS-021).
+ * somebody can sign in to (#4977, INV-OPS-022).
  *
  * ## Why
  *
@@ -67,6 +67,10 @@ export const SMOKE_PROJECT = "tacbookings-first-install-smoke";
  */
 const STEPS = [
   { name: "copy", pattern: /^cp \.env\.example \.env$/, apply: "require" },
+  // Step 2's live-site declaration (#4980). The smoke writes it over the
+  // template's own line, as the doc says, because step 3's role check refuses
+  // a second line.
+  { name: "role", pattern: /^APP_ENVIRONMENT_ROLE=\S+$/, apply: "require" },
   { name: "postgres", pattern: /^docker compose up -d (?:--build )?postgres$/, apply: "run" },
   {
     name: "migrate",
@@ -371,6 +375,14 @@ function main() {
   // value of a repeated key, so the overrides go at the end.
   fs.copyFileSync(".env.example", ".env");
   fs.chmodSync(".env", 0o600);
+  // Step 2 changes the template's APP_ENVIRONMENT_ROLE line rather than adding
+  // a second one, which step 3's `check-environment-role.sh` refuses (#4980).
+  const roleLine = /^APP_ENVIRONMENT_ROLE=.*$/m;
+  const template = fs.readFileSync(".env", "utf8");
+  if (!roleLine.test(template)) {
+    throw new Error(".env.example has no APP_ENVIRONMENT_ROLE line for step 2 to change.");
+  }
+  fs.writeFileSync(".env", template.replace(roleLine, steps.role.line));
   fs.appendFileSync(
     ".env",
     [
@@ -379,7 +391,6 @@ function main() {
       ...Object.entries(values).map(([name, value]) => `${name}=${value}`),
       `AUTH_SECRET=${secret()}`,
       `DATA_ENCRYPTION_KEYS=k2026:${randomBytes(32).toString("base64")}`,
-      "APP_ENVIRONMENT_ROLE=non-production",
       `NEXTAUTH_URL=https://${clubHost}`,
       `SEED_ADMIN_EMAIL=${adminEmail}`,
       `SEED_ADMIN_PASSWORD=${adminPassword}`,

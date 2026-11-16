@@ -236,7 +236,10 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
     return (
       <Card className="w-full max-w-2xl">
         <CardHeader>
-          <CardTitle>Request Sent</CardTitle>
+          {/* Embeddable both as /booking-requests' body AND via the
+              {{booking-requests}} token on any published CMS page, so this
+              card's position in the outline varies by caller. */}
+          <CardTitle headingLevel="none">Request Sent</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-2 text-success-11">
@@ -259,7 +262,8 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
   return (
     <Card id="bookingRequestForm" className="w-full max-w-2xl">
       <CardHeader>
-        <CardTitle>{formTitle}</CardTitle>
+        {/* Same embed-anywhere reasoning as "Request Sent" above. */}
+        <CardTitle headingLevel="none">{formTitle}</CardTitle>
         <CardDescription>
           Request a stay at {club.lodgeName} without creating an account. We&apos;ll email you to
           confirm your address, then review and price your request.

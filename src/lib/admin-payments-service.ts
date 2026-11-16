@@ -38,6 +38,7 @@ import {
   startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { adminListPageQueryFields } from "@/lib/admin-list-page";
 
 /**
  * An amount filter typed into the payments search box, in integer cents.
@@ -121,8 +122,7 @@ export const adminPaymentsQuerySchema = z.object({
   amountMax: amountSchema.optional(),
   sortBy: sortBySchema,
   sortDir: z.enum(["asc", "desc"]).optional().default("desc"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 }).superRefine((value, ctx) => {
   if (
     value.amountExact === undefined &&
@@ -482,7 +482,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         },
         // #3372 (7 Oct 2026): card refunds not yet paid, and the refunds that net them.
         recoveryOperations: netCollectedCardRefundSelect.recoveryOperations,
-        refunds: { select: { updatedAt: true, ...netCollectedCardRefundSelect.refunds.select } },
+        refunds: { orderBy: netCollectedCardRefundSelect.refunds.orderBy, select: { updatedAt: true, ...netCollectedCardRefundSelect.refunds.select } },
         booking: {
           select: {
             id: true,

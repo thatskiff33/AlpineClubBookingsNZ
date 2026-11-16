@@ -10,7 +10,10 @@
  *     From a clean checkout of a freshly fetched `origin/main`: works out the
  *     next version from origin's tags, creates `release/v<version>`, bumps
  *     `package.json`, folds `changelog.d/` into `CHANGELOG.md` with
- *     `compile-changelog.mjs`, and commits. It never pushes.
+ *     `compile-changelog.mjs`, folds `docs/UPGRADING.md`'s `## Unreleased`
+ *     steps into `## v<previous> → v<version>` (#4979), and commits. It never
+ *     pushes. It refuses while the upgrade documents break the rules in
+ *     `upgrade-docs.mjs`.
  *
  *   pnpm run release:cut prepare --amend [--execute]
  *     When fragments merged while the release-prep pull request was open: from
@@ -19,9 +22,11 @@
  *
  *   pnpm run release:cut publish [--commit <sha>] [--carry-late-fragments] [--execute]
  *     After the pull request merges: tags the merged commit (default
- *     `origin/main`, always one CI built an image for), pushes the tag, and
- *     publishes the GitHub release on the repository `origin` names. A re-run
- *     after a partial failure resumes where it stopped.
+ *     `origin/main`), pushes the tag, and publishes the GitHub release on the
+ *     repository `origin` names. The commit must be on `main`'s first-parent
+ *     chain AND its `ci.yml` push run must have published its images (the
+ *     `Publish GHCR images` job succeeded) — GitHub is asked, not git history
+ *     (#4989). A re-run after a partial failure resumes where it stopped.
  *
  * Both phases print the whole plan and change nothing unless `--execute` is
  * given. With `--execute`, local steps run first and remote ones (tag push,
@@ -54,6 +59,27 @@ import {
   releaseDateToday,
 } from "./compile-changelog.mjs";
 import { isMainModule } from "../lib/is-main-module.mjs";
+import {
+  compareReleaseParts as compareParts,
+  formatReleaseParts as formatParts,
+  parseReleaseTag,
+} from "./release-version.mjs";
+
+// The one definition of a release tag lives in release-version.mjs (#4979).
+// It stays reachable from here because the production deploy's shell copy is
+// checked against it by `deploy-release-tag-guard-script-contract.test.ts`,
+// which asks this module (#4978, INV-OPS-019).
+export { parseReleaseTag };
+import {
+  foldUpgradingUnreleased,
+  RUNBOOK_PATH,
+  UNRELEASED_HEADING,
+  unreleasedBlock,
+  UPGRADE_CHECKLIST_HEADING,
+  upgradeDocsProblems,
+  UPGRADING_PATH,
+  upgradingReleaseHeading,
+} from "./upgrade-docs.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, "..", ".."));
 
@@ -67,7 +93,22 @@ export const FEATURE_FRAGMENT_SUFFIX = ".feature.md";
  */
 export const MAX_RELEASE_NOTES_CHARS = 120_000;
 
-const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+/** The workflow whose `main` push runs publish the GHCR images a release tag deploys. */
+export const CI_WORKFLOW_FILE = "ci.yml";
+
+/** That workflow's publishing job, by the display name GitHub's jobs API reports. */
+export const PUBLISH_IMAGES_JOB_NAME = "Publish GHCR images";
+
+/** The most runs or jobs one API page holds. */
+const API_PAGE = 100;
+
+/**
+ * The most pages read for one answer. A run's jobs list counts every attempt's
+ * jobs (`filter=all`), so a run re-run several times outgrows one page; past
+ * this many pages the check refuses rather than reading on.
+ */
+const API_MAX_PAGES = 10;
+
 const BUMPS = ["patch", "minor", "major"];
 const [REMOTE, MAIN_BRANCH] = MAIN_REF.split("/");
 const MAIN_TRACKING_REF = `refs/remotes/${MAIN_REF}`;
@@ -79,21 +120,6 @@ export class ReleaseCutError extends Error {
     this.name = "ReleaseCutError";
     this.recovery = recovery;
   }
-}
-
-/** `{ major, minor, patch }` for a strict `vX.Y.Z` tag, or `null`. */
-export function parseReleaseTag(tag) {
-  const match = RELEASE_TAG.exec(String(tag).trim());
-  if (!match) return null;
-  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
-}
-
-function compareParts(a, b) {
-  return a.major - b.major || a.minor - b.minor || a.patch - b.patch;
-}
-
-function formatParts({ major, minor, patch }) {
-  return `${major}.${minor}.${patch}`;
 }
 
 /** The highest strict `vX.Y.Z` tag in `tags` by version (not by date), or `null`. */
@@ -390,6 +416,58 @@ function requireFreshMainCheckout(cmd) {
   return main;
 }
 
+/** A repository file's text, or `null` when the file does not exist. */
+function readOptional(repoRoot, relative) {
+  const file = path.join(repoRoot, relative);
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+}
+
+/**
+ * Refuse while the upgrade documents are not ready for a release (#4979): the
+ * guide's layout is broken, or the runbook names a release older than
+ * `releaseVersion`, the release being cut. The rules are `upgrade-docs.mjs`'s,
+ * shared with the census.
+ */
+function refuseUnreadyUpgradeDocs(upgradeDocs, releaseVersion) {
+  const problems = upgradeDocsProblems({ ...upgradeDocs, releaseVersion });
+  if (problems.length > 0) {
+    throw new ReleaseCutError(
+      `The upgrade documents are not ready for a release:\n${problems.map((problem) => `  - ${problem}`).join("\n")}`,
+      `Fix them in a pull request to ${MAIN_BRANCH} (docs/MAINTENANCE.md, "Public Reference Release Checklist"), then re-run.`,
+    );
+  }
+}
+
+/** The guide folded for the release, or a refusal when its heading already exists. */
+function foldUpgradingInto(text, fromVersion, toVersion) {
+  try {
+    return foldUpgradingUnreleased(text, { fromVersion, toVersion });
+  } catch (error) {
+    throw new ReleaseCutError(
+      `Cannot fold ${UPGRADING_PATH}: ${error.message} Its "${UNRELEASED_HEADING}" steps would have nowhere to go.`,
+      `Move the steps under "${UNRELEASED_HEADING}" into "${upgradingReleaseHeading(fromVersion, toVersion)}" in a pull request to ${MAIN_BRANCH}, then re-run.`,
+    );
+  }
+}
+
+/** The by-hand upgrade-document steps that follow the release-prep commit (#4979). */
+function upgradeDocsSteps({ unreleasedUpgrade, foldUpgrading, upgradingHeading, previousTag, plan }) {
+  if (foldUpgrading) {
+    return [
+      `Check "${upgradingHeading}" in ${UPGRADING_PATH} opens with "${UPGRADE_CHECKLIST_HEADING}"` +
+        (unreleasedUpgrade.opensWithChecklist ? "" : " (it does NOT yet: write one)") +
+        ` and that its in-window steps reach every windowed ledger row added since ${previousTag}.`,
+    ];
+  }
+  if (unreleasedUpgrade?.hasSteps) {
+    return [
+      `${UPGRADING_PATH} has steps under "${UNRELEASED_HEADING}" this phase does not fold; ` +
+        `move the ones that belong to ${plan.tag} into its section by hand and commit.`,
+    ];
+  }
+  return [];
+}
+
 /**
  * Phase 1: build the release-prep commit locally (or, with `amend`, the
  * late-fragment fold into a prepared, untagged release).
@@ -413,6 +491,11 @@ export function prepareRelease({
   const packageText = fs.readFileSync(packagePath, "utf8");
   const packageVersion = JSON.parse(packageText).version;
   const changelogText = fs.readFileSync(path.join(repoRoot, "CHANGELOG.md"), "utf8");
+  const upgradeDocs = {
+    upgradingText: readOptional(repoRoot, UPGRADING_PATH),
+    runbookText: readOptional(repoRoot, RUNBOOK_PATH),
+  };
+  const unreleasedUpgrade = upgradeDocs.upgradingText === null ? null : unreleasedBlock(upgradeDocs.upgradingText);
   const latest = latestReleaseTag(remoteTags);
   const packageParts = parseReleaseTag(`v${packageVersion}`);
   // A release prepared and merged but not yet tagged: package.json is ahead of
@@ -483,6 +566,18 @@ export function prepareRelease({
       log(`  Note: package.json says ${packageVersion}, not the latest tag's ${plan.previousTag.slice(1)}.`);
     }
   }
+  // The runbook must not predate the release being cut: package.json carries
+  // that version once the release-prep pull request is open, which is what the
+  // census (`upgrade-docs-scope.test.ts`) compares against.
+  refuseUnreadyUpgradeDocs(upgradeDocs, plan.version);
+  // A fresh prepare folds the guide's "## Unreleased" steps into the release's
+  // own heading, as the compiler folds the changelog. Late steps on --amend, or
+  // a first release with no previous tag to name, are folded by hand.
+  const upgradingHeading = latest === null ? null : upgradingReleaseHeading(latest.version, plan.version);
+  const foldUpgrading = !amend && upgradingHeading !== null && unreleasedUpgrade?.hasSteps === true;
+  const nextUpgradingText = foldUpgrading
+    ? foldUpgradingInto(upgradeDocs.upgradingText, latest.version, plan.version)
+    : null;
   if (localTagCommit(cmd, plan.tag) !== null) {
     throw new ReleaseCutError(
       `This clone has a tag ${plan.tag} that ${REMOTE} does not; it would collide with the release.`,
@@ -502,9 +597,13 @@ export function prepareRelease({
   }
 
   // Stage deletions too: the compiler removes consumed fragments and spent allowances.
-  const stagePaths = ["CHANGELOG.md", "package.json", FRAGMENTS_DIRNAME, ALLOWANCE_DIR].filter((relative) =>
-    fs.existsSync(path.join(repoRoot, relative)),
-  );
+  const stagePaths = [
+    "CHANGELOG.md",
+    "package.json",
+    FRAGMENTS_DIRNAME,
+    ALLOWANCE_DIR,
+    ...(foldUpgrading ? [UPGRADING_PATH] : []),
+  ].filter((relative) => fs.existsSync(path.join(repoRoot, relative)));
   const message = amend ? `release: fold late fragments into ${plan.tag}` : `release: cut ${plan.tag}`;
   const steps = [
     `git switch -c ${plan.branch}`,
@@ -512,6 +611,7 @@ export function prepareRelease({
     amend
       ? `node scripts/release/compile-changelog.mjs ${plan.version} --append`
       : `node scripts/release/compile-changelog.mjs ${plan.version} ${date}`,
+    ...(foldUpgrading ? [`fold ${UPGRADING_PATH} "${UNRELEASED_HEADING}" into "${upgradingHeading}", leaving an empty "${UNRELEASED_HEADING}"`] : []),
     `git add --all -- ${stagePaths.join(" ")}`,
     `git commit -m "${message}"`,
   ];
@@ -519,6 +619,7 @@ export function prepareRelease({
   steps.forEach((step, index) => log(`  ${index + 1}. ${step}`));
   const next = [
     `Read "${plan.heading}" end to end; edit it for order and duplication and commit.`,
+    ...upgradeDocsSteps({ unreleasedUpgrade, foldUpgrading, upgradingHeading, previousTag: latest?.tag ?? null, plan }),
     `git push -u ${REMOTE} ${plan.branch}, then open its pull request (body checked with pnpm run pr:check).`,
     `After it merges: pnpm run release:cut publish (dry run), then pnpm run release:cut publish --execute.`,
   ];
@@ -539,6 +640,7 @@ export function prepareRelease({
   try {
     if (nextPackageText !== null) fs.writeFileSync(packagePath, nextPackageText);
     compile({ repoRoot, version: plan.version, date, dryRun: false, append: amend, log });
+    if (nextUpgradingText !== null) fs.writeFileSync(path.join(repoRoot, UPGRADING_PATH), nextUpgradingText);
   } catch (error) {
     throw new ReleaseCutError(`Release prep failed: ${error.message}`, recovery);
   }
@@ -550,9 +652,10 @@ export function prepareRelease({
 }
 
 /**
- * `sha` when it is on main's first-parent chain. Only a commit CI pushed to
- * main has GHCR images, so only its tag can be deployed; a release-prep
- * branch commit inside a merge is on main but never was main's tip.
+ * `sha` when it is on main's first-parent chain. Only a commit pushed to main
+ * gets a CI run that can publish GHCR images; a release-prep branch commit
+ * inside a merge is on main but never was main's tip. Being on the chain is
+ * necessary, not sufficient: `requirePublishedImages` checks the run itself.
  */
 function requireFirstParent(firstParent, sha) {
   if (!firstParent.includes(sha)) {
@@ -563,6 +666,78 @@ function requireFirstParent(firstParent, sha) {
     );
   }
   return sha;
+}
+
+/**
+ * The `main` push run of `CI_WORKFLOW_FILE` for `sha` whose
+ * `PUBLISH_IMAGES_JOB_NAME` job succeeded: the only evidence that the images a
+ * deploy of its tag pulls exist (INV-OPS-021). A cancelled, failed or
+ * unfinished run published nothing, so this asks GitHub rather than trusting
+ * the first-parent chain. Any answer it cannot read refuses, never passes.
+ */
+function requirePublishedImages(cmd, repo, sha) {
+  const short = sha.slice(0, 12);
+  // One page of `endpoint`: its items and the total GitHub says the answer holds.
+  const page = (endpoint, number) => {
+    const args = ["api", "--hostname", repo.host, `repos/${repo.owner}/${repo.name}/${endpoint}${number > 1 ? `&page=${number}` : ""}`];
+    const text = cmd.gh(
+      args,
+      `Nothing was created. GitHub could not say whether CI published images for ${short}; gh's login needs read access to ${repo.slug}'s ` +
+        `Actions (a fine-grained token: "Actions: Read"). Fix it, then re-run.`,
+    );
+    const unexpected = () =>
+      new ReleaseCutError(
+        `\`${display("gh", args)}\` answered in a shape this script does not read, so it cannot tell whether CI published images for ${short}.`,
+        "Nothing was created. Re-run; if it persists, GitHub's API has changed and this check needs updating.",
+      );
+    let answer;
+    try {
+      answer = JSON.parse(text);
+    } catch {
+      throw unexpected();
+    }
+    const list = answer?.[endpoint.startsWith("actions/workflows/") ? "workflow_runs" : "jobs"];
+    if (!Array.isArray(list) || !Number.isInteger(answer.total_count)) throw unexpected();
+    if (list.some((item) => !Number.isInteger(item?.id) || typeof item.status !== "string")) throw unexpected();
+    return { list, total: answer.total_count, unexpected };
+  };
+  // Every page of `endpoint`. A page shorter than a full one while GitHub
+  // promises more is an answer this cannot read, and refuses.
+  const api = (endpoint) => {
+    const items = [];
+    for (let number = 1; number <= API_MAX_PAGES; number += 1) {
+      const { list, total, unexpected } = page(endpoint, number);
+      items.push(...list);
+      if (items.length >= total) return items;
+      if (list.length < API_PAGE) throw unexpected();
+    }
+    throw new ReleaseCutError(
+      `GitHub's answer to repos/${repo.owner}/${repo.name}/${endpoint} holds more than ${API_MAX_PAGES} pages of ${API_PAGE}, ` +
+        `more than this script reads, so it cannot tell whether CI published images for ${short}.`,
+      `Nothing was created. A run re-run this many times is unusual: check the run on GitHub, and if its "${PUBLISH_IMAGES_JOB_NAME}" job succeeded, raise API_MAX_PAGES in scripts/release/cut-release.mjs.`,
+    );
+  };
+
+  const runs = api(`actions/workflows/${CI_WORKFLOW_FILE}/runs?head_sha=${sha}&event=push&branch=${MAIN_BRANCH}&per_page=${API_PAGE}`);
+  const found = [];
+  for (const ciRun of runs) {
+    // Every attempt: a re-run of a run that already published must not hide
+    // the images an earlier attempt pushed. Otherwise report the latest one.
+    const attempts = api(`actions/runs/${ciRun.id}/jobs?filter=all&per_page=${API_PAGE}`).filter((job) => job.name === PUBLISH_IMAGES_JOB_NAME);
+    if (attempts.some((job) => job.conclusion === "success")) return { runId: ciRun.id, conclusion: "success" };
+    const publish = attempts.reduce((latest, job) => (latest && (latest.run_attempt ?? 0) >= (job.run_attempt ?? 0) ? latest : job), null);
+    const outcome = publish ? (publish.conclusion ?? publish.status) : "never ran";
+    found.push(`run ${ciRun.id} (${ciRun.conclusion ?? ciRun.status}): "${PUBLISH_IMAGES_JOB_NAME}" ${outcome}`);
+  }
+  throw new ReleaseCutError(
+    `${short} has no ${CI_WORKFLOW_FILE} push run on ${MAIN_BRANCH} whose "${PUBLISH_IMAGES_JOB_NAME}" job succeeded, ` +
+      `so no images were published for it and a deploy of its tag could not pull them. ` +
+      (found.length > 0 ? `Found: ${found.join("; ")}.` : "GitHub has no such run for it."),
+    found.length > 0
+      ? `Nothing was created. Wait for the run to finish, or re-run it if it was cancelled or failed: ` +
+          `gh run rerun ${runs[0].id} --repo ${repo.slug}. Publish once "${PUBLISH_IMAGES_JOB_NAME}" has succeeded.`
+      : `Nothing was created. Tag a ${MAIN_BRANCH} commit whose ${CI_WORKFLOW_FILE} run published its images.`,
+  );
 }
 
 /** Recovery for fragments that reached the target after the release-prep commit. */
@@ -654,6 +829,9 @@ export function publishRelease({
       `Delete it and re-run, and publish creates the annotated tag: git tag -d ${tag} && pnpm run release:cut publish --execute --commit ${target}`,
     );
   }
+  // After every resume decision and tag refusal, so it judges the commit that
+  // would be tagged — and before anything is created, in the dry run too.
+  const published = requirePublishedImages(cmd, repo, target);
 
   const changelog = cmd.git(["show", `${target}:CHANGELOG.md`]);
   const section = releaseSection(changelog, version);
@@ -702,6 +880,7 @@ export function publishRelease({
 
   log(`Publish ${tag} (${execute ? "EXECUTE" : "dry run — nothing is changed"})`);
   log(`  Commit: ${target} (on ${MAIN_REF}'s first-parent chain); latest release tag on ${REMOTE}: ${previous?.tag ?? "none"}`);
+  log(`  CI: ${CI_WORKFLOW_FILE} run ${published.runId} published its images ("${PUBLISH_IMAGES_JOB_NAME}": ${published.conclusion}).`);
   log(`  Repository: ${repo.slug} (from ${REMOTE})`);
   log(
     body.kind === "full"

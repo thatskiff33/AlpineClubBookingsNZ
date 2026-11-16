@@ -81,7 +81,7 @@ export const CHANGE_SCOPES = {
       // seed imports, the .env.example it copies for Compose to parse, the
       // DEPLOYMENT.md "First Bootstrap" it reads its commands from, and the
       // role-provisioning script that doc's step 5 runs. A doc-only change can
-      // break the first install, so it must run the smoke (INV-OPS-021).
+      // break the first install, so it must run the smoke (INV-OPS-022).
       /^scripts\/ci\/first-install-smoke\.mjs$/,
       /^prisma\/(?:seed|seed-data|starter-page-content|starter-site-content)\.ts$/,
       /^\.env\.example$/,

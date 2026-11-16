@@ -7,6 +7,11 @@ import { buildLoginPath } from "@/lib/auth-redirect";
 import { getMembershipCancellationConfirmationDetails } from "@/lib/membership-cancellation-requests";
 import { participantStatusLabel } from "@/lib/membership-cancellation-status-labels";
 import { clubTime } from "@/lib/club-time/server";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Membership cancellation request",
+};
 
 const statusLabel = participantStatusLabel;
 
@@ -35,7 +40,7 @@ export default async function MembershipCancellationConfirmationPage({
   return (
     <Card className="w-full max-w-2xl">
       <CardHeader>
-        <CardTitle>Membership Cancellation Request</CardTitle>
+        <CardTitle headingLevel={1}>Membership Cancellation Request</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         {details.request ? (

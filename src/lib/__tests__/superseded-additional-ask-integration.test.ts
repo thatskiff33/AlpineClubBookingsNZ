@@ -325,6 +325,7 @@ async function editUp(modificationId: string, priceDiffCents: number, changeFeeC
     },
   });
   const context: BookingModificationPaymentContext = {
+    ownCardRefund: null,
     pendingRefundAmountCents: 0,
     organiserChildRefund: null,
     paymentId: PAYMENT_ID,

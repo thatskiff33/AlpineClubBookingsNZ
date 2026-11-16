@@ -749,6 +749,7 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
       bookingId: "booking_3954",
       result: {
         ...result,
+        ownCardRefund: null, // #4992: the minter never reads the edit's card-refund reservation
         paymentId: "payment_1",
         paymentCustomerId: "cus_1",
         memberEmail: "member@example.invalid",
@@ -1752,6 +1753,7 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       bookingId: "booking_3954",
       result: {
         ...result,
+        ownCardRefund: null, // #4992: the minter never reads the edit's card-refund reservation
         paymentId: "payment_1",
         paymentCustomerId: "cus_1",
         memberEmail: "member@example.invalid",
