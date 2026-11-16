@@ -73,7 +73,7 @@ export default function ClubIdentityAdminPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{PRIVACY_HOSTING_TITLE}</CardTitle>
+          <CardTitle headingLevel={2}>{PRIVACY_HOSTING_TITLE}</CardTitle>
           <CardDescription>
             The company that hosts your club&apos;s system and where members&apos;
             information is held, for your privacy policy.

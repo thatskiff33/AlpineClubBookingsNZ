@@ -5,6 +5,7 @@
  * nothing of the outbox - so the outbox's payload parser and the worker
  * (`additional-capture-xero-receipt.ts`) read one shape (`INV-SSOT`).
  */
+import { isCalendarDate } from "@/lib/club-time";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 
 export const XERO_OUTBOX_ADDITIONAL_CAPTURE_RECEIPT_TYPE = "ADDITIONAL_CAPTURE_RECEIPT";
@@ -58,8 +59,6 @@ export interface QueuedAdditionalCaptureReceiptOutboxPayload {
   plan?: AdditionalCaptureReceiptPlan;
 }
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 function readTarget(value: unknown): AdditionalCaptureReceiptTarget | null {
   return value === "GAP_INVOICE" || value === "CHANGE_INVOICE" || value === "PRIMARY_INVOICE" ? value : null;
 }
@@ -98,7 +97,10 @@ function readPlan(value: unknown): AdditionalCaptureReceiptPlan | null {
     !Number.isInteger(capturedCents) ||
     capturedCents < amountCents ||
     !date ||
-    !DATE_PATTERN.test(date)
+    // Strict, unlike `nomination.ts`'s loose read of stored applications: this
+    // code writes the plan's date from a real day, a non-day can only be
+    // corruption, and Xero would refuse it as an invoice payment date.
+    !isCalendarDate(date)
   ) {
     return null;
   }

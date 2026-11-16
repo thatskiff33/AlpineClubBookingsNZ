@@ -312,158 +312,73 @@ home for that explanation and is not repeated here.
 ## INV-CONFIG-005
 
 - **Every application-managed Xero contact write asks `INV-CONFIG-003`'s
-  canonical role before it puts an email address on a contact.** The one place
-  that answers is `resolveXeroContactEmailPolicy()` in
-  [`xero-contact-containment.ts`](../../src/lib/xero-contact-containment.ts), and
-  its verdict is carried by an unforgeable policy token: the two contact payload
-  builders in `xero-contacts.ts` require one, so a builder cannot be written
-  without the question being asked, and the token is re-checked at runtime so a
-  cast past the type fails closed.
-- **It reads the ROLE and never `INV-CONFIG-004`'s delivery policy, and that is
-  not a stylistic choice.** The delivery policy exempts a confirmed copy that has
-  declared a local capture mailbox, because a capture intercepts everything this
-  application sends. Xero emails an invoice from its OWN servers to the address
-  stored on the contact, so a capture container never sees it. A non-production
-  installation therefore needs full containment **regardless of its transport
-  mode**, which includes every stack the browser suite runs on.
-- **Containment must precede the INVOICE, not merely the invoice email.** Every
-  invoice is raised `AUTHORISED` and stays that way, deliberately, so settlement
-  behaviour remains testable on a copy — and Xero's own invoice reminders email the
-  contact's stored address for outstanding authorised invoices with no API call
-  from this application at all. So an invoice raised against an uncontained contact
-  can reach a real member even though `INV-CONFIG-004` already gates
-  `emailInvoice`.
-- **Confirmed PRODUCTION is byte-identical.** `applyXeroContactEmailPolicy` is the
-  identity function there, so every payload, every stored request payload and every
-  idempotency key on the club's live site is what it was before this rule, and no
-  containment record is ever written.
-- **A confirmed NON_PRODUCTION installation replaces every address with one
-  deterministic, idempotent, deliberately non-deliverable form.** The same real
-  address always maps to the same contained address — otherwise a restored copy
-  could not tell whether a contact it is looking at is already contained, and
-  nothing could be reconciled afterwards. It is a SHA-256 of the normalised
-  address on a reserved `.invalid` domain (RFC 2606), so it identifies the source
-  without carrying it and an operator surface can report containment without
-  exposing a member's email. Containing an already-contained address returns it
-  unchanged: nothing may double-wrap.
-- **The contained domain is NEVER one of the placeholder domains, and the two
-  predicates stay disjoint.** `isPlaceholderContactEmail()` means "this person
-  cannot be reached" to the mailer, the reminder crons, email inheritance, the
-  non-member-contact service, deleted accounts and three Xero modules. A contained
-  member can be reached — on the live site, by the club — so adding the contained
-  domain to that list would make every contained member in a copy read as
-  unreachable, silently changing booking flows, reminder crons and admin surfaces
-  so the copy stops behaving like production. An address the placeholder predicate
-  accepts is not transformed, and a contained address is not a placeholder.
-- **Nor may a contained address travel INBOUND onto a `Member`.** Two admin paths
-  create a member from a Xero contact's stored address; both refuse a contained
-  one, because a member minted from it would read as reachable — the placeholder
-  predicate deliberately says nothing about this domain — while being able to
-  receive nothing.
-- **Existing and restored links are in scope, and that is the whole point.** A
-  copy restored from the club's live database arrives with every member already
-  linked, so `findOrCreateXeroContact` returns from its steady-state fast path
-  with no provider write and no look at what the contact holds. Before that id
-  reaches anything that can raise a document, durable evidence must show the
-  contact is contained, or containment must be established; if it cannot be, the
-  call fails with a distinct named error and no document is raised.
-- **The evidence is a claim about what this application has SEEN, and it is
-  narrow enough to be true.** One `XeroSandboxContactContainment` row per Xero
-  contact, carrying the contained address derived from the member's current stored
-  address. The fast path requires that to match what the application would write
-  today, so a change to the member's address invalidates the proof rather than
-  leaving a stale claim, and every row is written only after reading Xero's stored
-  value back — never from "we believe we sent that".
-- **AND THE PROOF EXPIRES, because only Xero can invalidate a claim about Xero.**
-  The fingerprint above notices a change on the LOCAL side. Nothing notices a
-  change on the provider side — somebody editing the contact in Xero, or the live
-  site pushing the member's real address back onto it — and the provider side is
-  what the proof is about. So the fast path additionally requires the proof to be
-  younger than a bounded freshness window (24 hours, sized against Xero's daily
-  call ceiling: one provider read per contact per window), and re-reads the
-  contact from Xero past it. **The residual is the window itself and it is
-  disclosed rather than hidden:** a provider-side change made inside the window is
-  not noticed until it expires. The operator guide says so, and says to finish a
-  repair by moving the copy off the real Xero organisation rather than leaving it
-  pointed there.
-- **A recorded overwrite is never retracted.** `rewroteAddress` answers "did this
-  installation overwrite a deliverable address on this contact", which is a fact
-  about the past. A re-verification necessarily finds the contained address
-  already in place, so recomputing and writing the flag erased the record of a
-  real overwrite — and the operator surface then positively asserted that nothing
-  had been overwritten. The column is monotone: false to true, never back.
-- **Steady state is zero provider calls.** The fast path is one indexed read per
-  contact, so a batch or subscription run over hundreds of members touches Xero
-  not at all; a provider read and at most one provider write happen once per
-  contact, on first containment, with an idempotency key derived from the contact
-  id and the address being written so a retry cannot duplicate either.
-- **UNKNOWN WRITES NOTHING TO XERO, and that is enforced at a chokepoint rather
-  than asserted about a list of writers.** UNKNOWN is not evidence of being a
-  copy, so writing a contained address over the club's real accounting on a guess
-  is exactly as wrong as emailing real members on one. Every Xero provider
-  MUTATION is refused inside `callXeroApi` — the single wrapper every provider
-  call in this subsystem goes through — before the retry ladder and before any
-  usage row is recorded, because nothing was attempted. The classification is
-  fail-closed: an operation whose name does not begin with `get` is a mutation, so
-  a writer added later is refused without being enumerated anywhere. The
-  entry-point refusals still come first, so an undeclared installation refuses
-  before reserving an operation or taking a lock and nothing is left half-written;
-  the chokepoint is the backstop underneath them.
-
-  This replaced a narrower claim that was **false**. Contact resolution alone
-  refused, and the writers that do not go through it carried on: the
-  membership-cancellation credit note, contact-group membership, archiving a
-  contact, voiding an invoice, recording a payment, deallocating applied credit
-  and re-pricing a booking invoice. Seven operator-facing surfaces asserted that
-  nothing was reaching Xero while all of that was.
-- **Reads are deliberately allowed while the role is UNKNOWN.** A read marks
-  nothing in the club's books and cannot make Xero email anybody, and an operator
-  diagnosing "why has this installation stopped writing to Xero" needs the Xero
-  screens to keep loading. Every surface therefore says "written", never
-  "reached".
-- **Containment must precede an operation that can leave an invoice OUTSTANDING
-  against a contact, or that raises a new document against one — not merely every
-  Xero write.** That boundary is an argument, not an accident: Xero's reminders go
-  to the contact of an outstanding `AUTHORISED` invoice, so those are the
-  operations that can end with a real member being chased on a copy. Three writers
-  qualify and none of them goes through the contact funnel — the
-  membership-cancellation credit note, a booking-invoice re-price, and
-  applied-credit deallocation — and all three prove containment at their entry
-  point. Recording a payment, allocating a credit note and voiding an invoice only
-  reduce what is outstanding; archiving a contact and changing contact-group
-  membership carry no document and no address. Those take the role gate and not
-  the proof.
-- **The operator surface distinguishes the three states without exposing an
-  address, and it is addressable.** `/admin/environment` reports production,
-  confirmed non-production containment (how many contacts are contained, how many
-  of those were holding a deliverable address this installation overwrote, when
-  the first containment was, when the last check was, and when a deliverable
-  address was last actually replaced) and environment-unknown blocking, and it
-  reports "unavailable" rather than a zero when a figure cannot be read. It also
-  LISTS the rewritten contacts — the member's name, a link to that contact in
-  Xero, and when — because the repair is per contact and a count is not something
-  anybody can act on. No email address of any kind travels to that payload.
-- **The repair is manual, and every surface says so and says why.** No shipped
-  route can push a member's stored address onto a Xero contact that already holds
-  something: the admin force-sync links a contact rather than pushing to it, the
-  Xero push refuses an already-linked member, and the ordinary contact update
-  fires only on a local field change. Nor could either side do it unaided — a copy
-  is forbidden from writing a real address to a contact, which is the whole rule,
-  and the live site holds no record of what a copy changed, because the containment
-  rows live in the copy's own database. So the instruction is to correct each
-  contact in Xero, reading the address from the member's page on the live site. An
-  earlier draft told operators to "re-sync those members from the live site",
-  which no route performs and which would have silently disarmed the proof if it
-  had.
-- **The safer override STARTS containment; it does not stop it.** The override
-  forces NON_PRODUCTION, and NON_PRODUCTION is the only role in which containment
-  runs. So on an installation resolving PRODUCTION or UNKNOWN and connected to the
-  club's real Xero organisation, switching it on begins rewriting real contacts.
-  It stops member email (`INV-CONFIG-004`). Stopping Xero work means
-  disconnecting Xero on that installation or pointing it at another organisation.
-- Decided on #3036 (ENV-SAFETY 3) under epic #2986, consuming #3034's resolver.
-  That issue holds the narrative and the rejected alternatives; this entry holds
-  only the rule. Operator guide:
+  canonical role, never `INV-CONFIG-004`'s delivery policy, before it puts an
+  email address on a contact.** A non-production installation is contained
+  whatever its transport mode, every browser-suite stack included.
+  `resolveXeroContactEmailPolicy()` in
+  [`xero-contact-containment.ts`](../../src/lib/xero-contact-containment.ts)
+  answers; the two payload builders in `xero-contacts.ts` require its unforgeable
+  policy token, re-checked at runtime so a cast fails closed.
+- **Containment precedes the invoice, not merely its email:** every invoice is
+  raised `AUTHORISED` and stays so, copies included.
+- **Confirmed PRODUCTION is byte-identical:** `applyXeroContactEmailPolicy` is
+  the identity, so payloads, stored request payloads and idempotency keys are
+  unchanged and no containment record is written.
+- **Confirmed NON_PRODUCTION replaces every address** (`toXeroSandboxContactEmail`)
+  with a SHA-256 of the normalised address on a reserved `.invalid` domain
+  (RFC 2606): deterministic, non-deliverable, never double-wrapped. The contained
+  domain is never a placeholder domain: a contained address is not
+  `isPlaceholderContactEmail()`, and an address that predicate accepts is not
+  transformed. A contained address never travels inbound onto a `Member`: both
+  admin paths creating one from a Xero contact's address refuse it.
+- **Existing and restored links are in scope.** Before a contact id, a
+  `findOrCreateXeroContact` fast-path return included, reaches anything that can
+  raise a document, `ensureXeroContactContained` finds proof or establishes
+  containment, else throws (`XeroContactContainmentError`, or the provider's own
+  daily-limit, outage or reconnect error, never relabelled) and nothing is raised.
+- **Proof** is one `XeroSandboxContactContainment` row per contact, written only
+  after reading Xero's stored value back. The fast path needs its address to
+  match what the member's current address yields and the row to be younger than
+  `XERO_CONTAINMENT_PROOF_MAX_AGE_MS` (24 hours), else it re-reads Xero. A
+  provider-side change inside that window goes unnoticed until it expires; the
+  operator guide says so, and to finish a repair by moving the copy off the real
+  Xero organisation. `rewroteAddress` (this installation overwrote a deliverable
+  address on the contact) is monotone: false to true, never back.
+- **Steady state is zero provider calls:** one indexed read per contact; first
+  containment costs one provider read and at most one write, keyed on contact id
+  and written address so a retry cannot duplicate.
+- **UNKNOWN writes nothing to Xero.** `assertXeroProviderWriteAllowed`, inside
+  `callXeroApi`, refuses every mutation (any operation not named `get…`)
+  before the retry ladder and any usage row. It is the backstop: entry points
+  refuse first, before reserving an operation or taking a lock. Reads stay
+  allowed, so every surface says "written", never "reached".
+- **Proof is required where an operation can leave an invoice outstanding
+  against a contact or raise a document against one, not on every write.**
+  Outside the contact funnel: the membership-cancellation credit note,
+  booking-invoice re-pricing and applied-credit deallocation, each proving at
+  entry (`requireContainedXeroContactForInvoiceOperation`). Recording a payment,
+  allocating a credit note and voiding an invoice only reduce what is
+  outstanding; archiving a contact and contact-group membership carry no
+  document or address. Those take the role gate only.
+- **`/admin/environment`** reports production, contained non-production and
+  environment-unknown blocking with no email address in its payload: on a copy,
+  contacts contained, how many held an overwritten deliverable address, first
+  containment, last check, last actual replacement, and the rewritten contacts
+  (member name, Xero link, when); "unavailable", never zero, for an unreadable
+  figure.
+- **Repair is manual, and every surface says so and why:** no shipped route
+  pushes a member's address onto a contact already holding one (force-sync links,
+  the Xero push refuses a linked member, contact update fires only on a local
+  field change), a copy may not write a real address, and the live site has no
+  record of a copy's changes. Correct each contact in Xero from the member's page
+  on the live site.
+- **The safer override starts containment:** it forces NON_PRODUCTION, the only
+  role containment runs in, so on an installation resolving PRODUCTION or UNKNOWN
+  and connected to the club's real Xero organisation it begins rewriting real
+  contacts; it stops member email (`INV-CONFIG-004`). Stopping Xero work means
+  disconnecting Xero or pointing it at another organisation.
+- History, measurements and rejected alternatives: #3036 (ENV-SAFETY 3,
+  epic #2986, consuming #3034's resolver). Operator guide:
   [`environment-role.md`](../guides/environment-role.md); Xero topology:
   [`xero/ARCHITECTURE.md`](../xero/ARCHITECTURE.md).
 
