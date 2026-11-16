@@ -1,1 +1,0 @@
-- **Hand-run deployments validate the image Compose actually selects (#4393).** Local image checks now follow Compose's project-name normalization and `.env` settings. An unavailable image reference stops the engine instead of falling back to a guessed tag that could name an older image.
