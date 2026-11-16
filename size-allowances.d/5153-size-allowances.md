@@ -50,7 +50,7 @@ reason: routes Xero tax through the club tax schedule; those lines sit inside
   own, not part of this fix.
 
 function: src/lib/xero-supplementary-invoices.ts#createXeroSupplementaryInvoice
-lines: 570
+lines: 567
 reason: routes Xero tax through the club tax schedule; those lines sit inside
   the function `createXeroSupplementaryInvoice`, which was already over its
   limit before this change, and lifting it apart is a refactor of its own, not
