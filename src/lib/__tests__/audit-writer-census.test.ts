@@ -46,10 +46,12 @@ import {
   isAuditCategory,
 } from "@/lib/audit-categories";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import { liveDocSurfaces } from "@/lib/__tests__/support/live-doc-surfaces";
 
 import {
-  auditWriteSiteLedgerValue,
+  auditWriteSiteLedgerEntry,
   describeCategory,
+  type AuditWriteSiteLedgerEntry,
   scanAuditWriterCensus,
   type AuditWriteSite,
 } from "../../../scripts/audit/audit-writer-census";
@@ -73,6 +75,7 @@ import {
   MEMBER_RECORD_ADMIN_SURFACES_2755,
   OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755,
   REVIEWED_ADMIN_CATEGORIES_2730,
+  REVIEWED_SITE_RECORDS,
   UNCATEGORISED_AUDIT_WRITERS,
 } from "../../../scripts/audit/audit-writer-census-manifest";
 
@@ -98,23 +101,9 @@ type CurrentCensusClaim = {
 
 function currentAuditCensusClaims(): CurrentCensusClaim[] {
   const repoRoot = process.cwd();
-  const sourceFiles: string[] = [];
-  const walk = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!["__tests__", "generated", "node_modules"].includes(entry.name)) walk(path);
-      } else if (/\.(?:md|ts|tsx|mjs)$/.test(entry.name)) {
-        sourceFiles.push(path);
-      }
-    }
-  };
-  // #5211 widened this from `docs/` and the diagnostics packs to every source
-  // tree, because the question is no longer "does each copy agree" but "is there
-  // a copy at all", and a copy can be written anywhere.
-  walk(resolve(repoRoot, "docs"));
-  walk(resolve(repoRoot, "src"));
-  walk(resolve(repoRoot, "scripts"));
+  // #5211: the same live surfaces the view-only census scans, and no history
+  // (`CHANGELOG.md`, `docs/releases/`). See `liveDocSurfaces`.
+  const sourceFiles = liveDocSurfaces(repoRoot).map((rel) => join(repoRoot, rel));
 
   const patterns: readonly { pattern: RegExp }[] = [
     {
@@ -202,45 +191,118 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
   it("records every production audit write site in the per-site ledger, and nothing else (#5211)", () => {
     /*
       The gate that replaced the pinned site count, per-sink split and category
-      distribution. Each entry is one site's category and sink, so:
+      distribution. Each entry is one site's category, sink, action and the
+      reviewed per-site records that name it, so:
 
-        - a NEW writer fails until its line is added (the old count did this too,
-          but only as a number nobody could tell apart from any other addition);
+        - a NEW writer fails until its line is added;
         - a REMOVED or MOVED writer fails until its line goes;
-        - a writer whose category or sink CHANGES fails with its id named. The
-          distribution and per-sink pins only saw that when it did not cancel
-          out; a swap between two sites, or one sink losing a site while another
-          gained one, passed them.
+        - a RECLASSIFIED writer (same function, same action, different
+          category) is named as such: that is a readership change;
+        - a SINK move at any site is named;
+        - deleting a site from a reviewed record (`REVIEWED_SITE_RECORDS`)
+          changes its `reviewed` tags and is named.
+
+      THE `#n` ORDINAL IS POSITIONAL. A site added earlier in a function shifts
+      the ordinals after it, so comparing id by id would report every later site
+      as changed. So the comparison is per function (`file::symbol`), pairing
+      measured and recorded sites by sink and action: a shifted site matches its
+      old entry and is not reported. The remaining limit: two sites in ONE
+      function with the same sink and action are told apart only by order.
 
       Regenerate with `pnpm run audit:census --write` and review the diff of
-      `scripts/audit/audit-write-sites.ts`: each changed line is a site whose
-      readership (category) or boundary (sink) is new.
+      `scripts/audit/audit-write-sites.ts`.
     */
     const measured = Object.fromEntries(
-      census().sites.map((site) => [site.id, auditWriteSiteLedgerValue(site)]),
+      census().sites.map((site) => [site.id, auditWriteSiteLedgerEntry(site)]),
     );
-    const problems = [
-      ...Object.keys(measured)
-        .filter((id) => !(id in AUDIT_WRITE_SITES))
-        .map((id) => `NEW, not in the ledger: ${id} (${measured[id]})`),
-      ...Object.keys(AUDIT_WRITE_SITES)
-        .filter((id) => !(id in measured))
-        .map((id) => `in the ledger, not in the tree: ${id}`),
-      ...Object.keys(measured)
-        .filter((id) => id in AUDIT_WRITE_SITES && AUDIT_WRITE_SITES[id] !== measured[id])
-        .map(
-          (id) =>
-            `CHANGED: ${id} was "${AUDIT_WRITE_SITES[id]}", now "${measured[id]}"`,
-        ),
-    ].sort();
+    const recorded: Readonly<Record<string, AuditWriteSiteLedgerEntry>> = AUDIT_WRITE_SITES;
+    const same = (a: AuditWriteSiteLedgerEntry, b: AuditWriteSiteLedgerEntry) =>
+      JSON.stringify(a) === JSON.stringify(b);
+    const show = (entry: AuditWriteSiteLedgerEntry) =>
+      `${entry.action} (${entry.category}, ${entry.sink}${entry.reviewed ? `, reviewed: ${entry.reviewed.join(" ")}` : ""})`;
+
+    const functionOf = (id: string) => id.replace(/#\d+$/, "");
+    const byFunction = new Map<
+      string,
+      { measured: AuditWriteSiteLedgerEntry[]; recorded: AuditWriteSiteLedgerEntry[]; renumbered: boolean }
+    >();
+    const slot = (id: string) => {
+      const key = functionOf(id);
+      let group = byFunction.get(key);
+      if (!group) {
+        group = { measured: [], recorded: [], renumbered: false };
+        byFunction.set(key, group);
+      }
+      return group;
+    };
+    for (const [id, entry] of Object.entries(measured)) {
+      const group = slot(id);
+      group.measured.push(entry);
+      if (!recorded[id] || !same(recorded[id], entry)) group.renumbered = true;
+    }
+    for (const [id, entry] of Object.entries(recorded)) {
+      const group = slot(id);
+      group.recorded.push(entry);
+      if (!measured[id] || !same(measured[id], entry)) group.renumbered = true;
+    }
+
+    const problems: string[] = [];
+    for (const [fn, group] of byFunction) {
+      if (!group.renumbered) continue;
+      const reportedBefore = problems.length;
+      // Take out entries present on both sides (they may only have moved ordinal).
+      const added = [...group.measured];
+      const removed: AuditWriteSiteLedgerEntry[] = [];
+      for (const entry of group.recorded) {
+        const at = added.findIndex((candidate) => same(candidate, entry));
+        if (at >= 0) added.splice(at, 1);
+        else removed.push(entry);
+      }
+      // Pair what is left by sink and action: the same site, changed.
+      for (const before of [...removed]) {
+        const at = added.findIndex(
+          (after) => after.sink === before.sink && after.action === before.action,
+        );
+        if (at < 0) continue;
+        const after = added.splice(at, 1)[0];
+        removed.splice(removed.indexOf(before), 1);
+        if (after.category !== before.category) {
+          problems.push(
+            `RECLASSIFIED in ${fn}: ${before.action} was ${before.category}, now ${after.category}. ` +
+              "This changes WHO CAN READ the row (INV-PRIV-012) and needs INV-OPS-012's backfill answer.",
+          );
+        }
+        if (JSON.stringify(after.reviewed ?? []) !== JSON.stringify(before.reviewed ?? [])) {
+          problems.push(
+            `REVIEW RECORD CHANGED in ${fn}: ${before.action} was reviewed by [${(before.reviewed ?? []).join(" ")}], ` +
+              `now [${(after.reviewed ?? []).join(" ")}]. Removing a reviewed classification is a decision to state.`,
+          );
+        }
+      }
+      for (const entry of removed) {
+        const sinkMove = added.findIndex((after) => after.action === entry.action);
+        if (sinkMove >= 0) {
+          const after = added.splice(sinkMove, 1)[0];
+          problems.push(`SINK MOVED in ${fn}: ${entry.action} was ${entry.sink}, now ${after.sink}.`);
+          continue;
+        }
+        problems.push(`REMOVED from ${fn}: ${show(entry)}`);
+      }
+      for (const entry of added) problems.push(`NEW in ${fn}: ${show(entry)}`);
+      if (problems.length === reportedBefore) {
+        problems.push(`RENUMBERED in ${fn}: the same sites, at different #n ordinals; nothing changed class.`);
+      }
+    }
     expect(
-      problems,
+      problems.sort(),
       "The audit write sites in the tree and scripts/audit/audit-write-sites.ts " +
-        "disagree. Run `pnpm run audit:census --write` and commit the result. " +
-        "Check each changed line before you do: a new site must record a " +
-        "canonical category through an approved sink, and a changed category is " +
-        "a change to WHO CAN READ the row (INV-PRIV-012), which needs the " +
-        "backfill answer INV-OPS-012 asks for.",
+        "disagree. Run `pnpm run audit:census --write` and commit the result, after " +
+        "checking each line above. NEW and REMOVED are writers added or deleted; " +
+        "RENUMBERED is ordinals shifting because a site was added or removed earlier " +
+        "in the same function, which changes nobody's readership. RECLASSIFIED and " +
+        "SINK MOVED are real changes at an existing site (paired by function and " +
+        "action; two sites in one function sharing an action are paired by order). " +
+        "A new site must record a canonical category through an approved sink.",
     ).toEqual([]);
   });
 
@@ -1247,8 +1309,18 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         const entry = AUDIT_WRITE_SITES[id];
         if (entry === undefined) {
           disagreements.push(`${name}: ${id} is not a write site in the ledger`);
-        } else if (entry.split(" ")[0] !== category) {
-          disagreements.push(`${name}: ${id} says ${category}, the ledger says ${entry}`);
+        } else if (entry.category !== category) {
+          disagreements.push(`${name}: ${id} says ${category}, the ledger says ${entry.category}`);
+        }
+      }
+    }
+    // Every reviewed per-site record, not only the category maps, must name
+    // real sites. A deletion from any of them changes the site's `reviewed`
+    // tags in the ledger, which the ledger test names (#5211 review).
+    for (const [tag, ids] of REVIEWED_SITE_RECORDS) {
+      for (const id of ids) {
+        if (!(id in AUDIT_WRITE_SITES)) {
+          disagreements.push(`${tag}: ${id} is not a write site in the ledger`);
         }
       }
     }
@@ -1715,7 +1787,7 @@ describe("canonical audit taxonomy (#2581)", () => {
       .sort();
     expect(supportOnly).toEqual(
       Object.keys(AUDIT_WRITE_SITES)
-        .filter((id) => supportOnlyCategories.includes(AUDIT_WRITE_SITES[id].split(" ")[0]))
+        .filter((id) => supportOnlyCategories.includes(AUDIT_WRITE_SITES[id].category))
         .sort(),
     );
   });

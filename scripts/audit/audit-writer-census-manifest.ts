@@ -1950,3 +1950,29 @@ export const APPROVED_FORWARDED_CATEGORY_SITES: Readonly<Record<string, string>>
   "src/lib/google-oauth.ts::auditGoogleLink#0":
     "Forwards a caller-supplied StructuredAuditEvent, whose `category` is required and closed; all five callers pass `security`.",
 };
+
+/**
+ * Every reviewed per-site record above, by a short tag (#5211). The generated
+ * ledger (`audit-write-sites.ts`) writes, on each site's line, the tags of the
+ * records that name it. Deleting a site from any of these records therefore
+ * changes that site's ledger line, and the contract test names it, rather than
+ * the deletion passing because the record's own checks only measure the sites
+ * it still lists. Add a new per-site record here when you create one.
+ */
+export const REVIEWED_SITE_RECORDS: readonly (readonly [
+  tag: string,
+  ids: readonly string[],
+])[] = [
+  ["2581-applied", Object.keys(APPLIED_AUDIT_CATEGORIES)],
+  ["2581-uncategorised", Object.keys(UNCATEGORISED_AUDIT_WRITERS)],
+  ["2581-no-entity-id", Object.keys(AUDIT_WRITERS_WITHOUT_ENTITY_IDENTIFIER)],
+  ["2581-wrapper", Object.keys(AUDIT_WRITER_WRAPPERS)],
+  ["2581-forwarded-category", Object.keys(APPROVED_FORWARDED_CATEGORY_SITES)],
+  ["2695-member-facing", Object.keys(MEMBER_FACING_AUDIT_WRITERS_2695)],
+  ["2695-forwarded-disclosure", Object.keys(APPROVED_FORWARDED_MEMBER_DISCLOSURE_SITES_2695)],
+  ["2730-moved", Object.keys(REVIEWED_ADMIN_CATEGORIES_2730)],
+  ["2755-member-record", Object.keys(MEMBER_RECORD_ADMIN_CATEGORIES_2755)],
+  ["2755-officer-visible", Object.keys(OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755)],
+  ["2765-lodge-keep", Object.keys(LODGE_GATED_ADMIN_CATEGORIES_2765)],
+  ["2765-locker", MEMBERSHIP_GATED_LOCKER_SITES_2765],
+];

@@ -19,6 +19,7 @@ import { describe, expect, it, vi } from "vitest";
 // shared scanner matches backticks rather than lexing tokens, so it does not have
 // that failure; measured on that exact file it agrees with the TypeScript parser
 // on every count this test makes (#3132).
+import { liveDocSurfaces } from "@/lib/__tests__/support/live-doc-surfaces";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /*
@@ -1183,24 +1184,16 @@ describe("view-only section banner coverage (#2160)", () => {
         .replace(/[*`]/g, "")
         .replace(/\s+/g, " ");
 
-    const markdownUnder = (dir: string): string[] =>
-      readdirSync(join(process.cwd(), dir), { withFileTypes: true }).flatMap(
-        (entry) => {
-          const rel = `${dir}/${entry.name}`;
-          if (entry.isDirectory()) return markdownUnder(rel);
-          return entry.name.endsWith(".md") ? [rel] : [];
-        },
-      );
-    // `CHANGELOG.md` is the release compiler's historical ledger and is not
-    // scanned: a figure in a released entry was true when it shipped.
-    const scanned = [
-      "AGENTS.md",
-      "src/components/admin/view-only-action.tsx",
-      ...markdownUnder("docs"),
-      ...markdownUnder("changelog.d"),
-    ];
+    // #5211: the same live surfaces the audit census scans, and no history
+    // (`CHANGELOG.md`, `docs/releases/`). See `liveDocSurfaces`.
+    const scanned = liveDocSurfaces();
     // A moved publisher must fail here rather than drop out of the scan.
-    for (const rel of ["docs/ARCHITECTURE.md", "docs/STYLE_GUIDE.md"]) {
+    for (const rel of [
+      "AGENTS.md",
+      "docs/ARCHITECTURE.md",
+      "docs/STYLE_GUIDE.md",
+      "src/components/admin/view-only-action.tsx",
+    ]) {
       expect(scanned, `${rel} moved; point this test at its new path`).toContain(
         rel,
       );
@@ -1223,6 +1216,31 @@ describe("view-only section banner coverage (#2160)", () => {
         "banner, so every such pull request would edit the same sentence and " +
         "conflict with every other. Describe the shapes without the number; " +
         "this test and the coverage tests are the measurement.",
+    ).toEqual([]);
+  });
+
+  it("renders no banner that covers nothing (#5211 review)", () => {
+    /*
+      The old `bannerComponents` total moved when a stray banner appeared, so a
+      reviewer at least saw a number change. With no total, this is the check: a
+      file that renders `AdminViewOnlySectionBanner` must also render a
+      `ViewOnlyActionButton` for it to head, or vouch for a child at a JSX render
+      site. The wizard shell is the one other shape: it vouches through
+      `WizardStepHelpers`, which the #2324 test below verifies.
+    */
+    const stray = astFiles
+      .filter((f) => (bannersByFile.get(f.file) ?? []).length > 0)
+      .filter((f) => jsxTags(f.ast, "ViewOnlyActionButton").length === 0)
+      .filter((f) => !jsxTags(f.ast).some((tag) => attr(tag, VOUCH_PROP)))
+      .filter((f) => f.rel !== WIZARD_SHELL_REL)
+      .map((f) => f.rel);
+    expect(
+      stray,
+      "These files render a view-only section banner but gate no control under " +
+        "it and vouch for no child, so the banner tells a view-only admin about " +
+        "controls that are not there. Gate the section's controls with " +
+        "ViewOnlyActionButton, pass the vouch to the child that has them, or drop " +
+        "the banner.",
     ).toEqual([]);
   });
 
