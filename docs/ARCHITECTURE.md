@@ -1141,7 +1141,14 @@ same permission `/api/admin/members` requires); the count and the card-level
 link stay for every support admin (#2823). Both callers (the page and
 `/api/admin/stuck-states`) resolve that flag from the acting admin's permission
 matrix and default it to `false`, so a caller that omits it fails closed to no
-names.
+names. Since #4959 the *Bookings with unnamed guests* card names its bookings
+under the same flag, and the payment signals (cancelled refunds unrecorded,
+the three recovery-operation signals, the two stale group settlements and
+undelivered bank transfer amount alerts) name theirs only when the caller also
+passes `viewerCanViewFinance`. Each row set is read with the count's own
+`where` and capped at `STUCK_STATE_DETAIL_ROW_CAP`; the page says how many more
+there are (`INV-PAY-156`). The payment counts, their row reads and the shared
+row shape live in `src/lib/stuck-state-payment-signals.ts`.
 The page also lists the card refunds Stripe gave up on (#3372), each with its
 "Paid another way" close: the list names bookings and money still owed, so the
 page loads it only for `{ area: "finance", level: "view" }`, and the close
@@ -1222,6 +1229,20 @@ parse error (`INV-SSOT`). Put the region where the officer is looking, never
 inside a closed form, and prefer `FocusedActionError` so it takes focus and
 scrolls into view. A plain banner above a long list can be off screen. The
 Seasons page still uses one, which is a known gap and not a model to copy.
+A handler that throws a refusal into its own `catch` reads the failed reply with
+`apiRefusalFromResponse` and shows `refusalMessageOr(err, fallback)`: the
+catch also sees a dropped connection and any bug in the success path, and those
+show the screen's own fallback, never the browser's words or a parse error.
+When one body decides between success and failure, parse it once with
+`readApiObjectOrEmpty` (or `readApiObjectOrNull` when a missing body must be
+told apart) and hand the result to `apiErrorMessageFromBody`; do not spell the
+"unreadable counts as empty" rule again.
+`admin-failed-response-json-census.test.ts` fails on a new bare
+`await res.json()` read of a failed reply under `src/app/(admin)`. It does not
+see a `.then((r) => r.json())` chain or an `err.message` shown from a catch, so
+review those by eye. Its per-file ceilings cover only files an open lane was
+still converting, each naming that lane; lower an entry when you convert its
+reads.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).

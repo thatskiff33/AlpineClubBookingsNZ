@@ -10,9 +10,9 @@
  * is an unknown outcome, not a refusal: the caller says so with
  * `unverifiedWriteMessage` rather than reading it as "nothing happened".
  */
-import { jsonObjectOrNull, readApiErrorBody } from "@/lib/api-error-message";
+import { readApiObjectOrNull } from "@/lib/api-error-message";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the routes' bodies are read field by field, exactly as `res.json()` was
 export async function readJsonOrNull(res: Response): Promise<Record<string, any> | null> {
-  return jsonObjectOrNull(await readApiErrorBody(res));
+  return readApiObjectOrNull(res);
 }

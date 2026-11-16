@@ -43,7 +43,7 @@ import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { ApiRefusalError, apiErrorMessageFromBody, readApiObjectOrNull, refusalMessageOr } from "@/lib/api-error-message";
 import { useClubFormat } from "@/components/club-format-provider";
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 import { adminHref } from "@/lib/admin-hubs";
@@ -374,7 +374,7 @@ export default function AdminWaitlistPage() {
 
       if (!res.ok) {
         failure = diagnosticsPageErrorCodeForStatus(res.status);
-        throw new Error(apiErrorMessageFromBody(data, "Failed to load waitlist"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(data, "Failed to load waitlist"));
       }
 
       const nextEntries = Array.isArray(data.entries)
@@ -398,7 +398,7 @@ export default function AdminWaitlistPage() {
         total: 0,
       });
       failure = failure ?? DIAGNOSTICS_PAGE_NETWORK_ERROR_CODE;
-      setError(err instanceof Error ? err.message : "Failed to load waitlist");
+      setError(refusalMessageOr(err, "Failed to load waitlist"));
       setErrorAttention((value) => value + 1);
     } finally {
       setLoadErrorCode(failure);
@@ -507,7 +507,14 @@ export default function AdminWaitlistPage() {
           ...(notifyMember !== undefined ? { notifyMember } : {}),
         }),
       });
-      const data = (await res.json()) as Record<string, unknown>;
+      const data = res.ok
+        ? ((await res.json()) as Record<string, unknown>)
+        : await readApiObjectOrNull(res);
+      // A refusal with no readable body (an HTML page from the proxy) says
+      // nothing about whether this capacity write landed, so it takes the
+      // unverified-outcome copy below, like a request that got no answer
+      // (#2668, ALP-589).
+      if (!data) throw new Error("Unreadable force-confirm refusal");
 
       if (res.ok && data.success) {
         setOverbookDialog(null);
@@ -538,7 +545,7 @@ export default function AdminWaitlistPage() {
         });
       } else {
         setForceConfirmReport(null);
-        setError(readString(data.error) || "Failed to force-confirm booking");
+        setError(apiErrorMessageFromBody(data, "Failed to force-confirm booking"));
         setErrorAttention((value) => value + 1);
       }
     } catch {

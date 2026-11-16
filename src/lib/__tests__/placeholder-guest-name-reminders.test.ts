@@ -41,6 +41,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   countBookingsWithUnnamedPlaceholderGuests,
+  listBookingsWithUnnamedPlaceholderGuests,
   PLACEHOLDER_NAME_FINAL_ESCALATION_DAYS,
   sendPlaceholderGuestNameReminders,
 } from "@/lib/placeholder-guest-name-reminders";
@@ -389,6 +390,19 @@ describe("countBookingsWithUnnamedPlaceholderGuests (#2550)", () => {
       0,
     );
     expect(mocks.bookingFindMany).not.toHaveBeenCalled();
+  });
+
+  it("#4959: lists the very bookings it counts, each with its unnamed-guest total", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      { id: "booking-school", checkIn: dateOnly(3), guests: [placeholderGuest(1), placeholderGuest(2)] },
+      { id: "booking-real-guest", checkIn: dateOnly(4), guests: [namedGuest("g-9", "Guest", "Fisher")] },
+    ]);
+
+    const listed = await listBookingsWithUnnamedPlaceholderGuests(NOW);
+    expect(listed).toEqual([{ id: "booking-school", checkIn: dateOnly(3), unnamedGuestCount: 2 }]);
+    await expect(countBookingsWithUnnamedPlaceholderGuests(NOW)).resolves.toBe(listed.length);
+    const [args] = mocks.bookingFindMany.mock.calls[0] as [{ orderBy: unknown }];
+    expect(args.orderBy).toEqual([{ checkIn: "asc" }, { id: "asc" }]);
   });
 });
 

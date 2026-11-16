@@ -16,9 +16,9 @@ import { prisma } from "../src/lib/prisma";
 import {
   buildSetupReadiness,
   getSetupRequiredEnvNames,
-  renderSetupCheckReport,
   type SetupDatabaseSnapshot,
 } from "../src/lib/setup-readiness";
+import { renderSetupCheckReport } from "../src/lib/setup-readiness-report";
 import { getSetupDatabaseSnapshot } from "../src/lib/setup-readiness-db";
 import {
   applyWizardConfigToDatabase,
