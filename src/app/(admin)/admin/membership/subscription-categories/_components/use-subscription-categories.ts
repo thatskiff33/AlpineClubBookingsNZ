@@ -3,7 +3,13 @@
 import { useEffect, useState } from "react";
 import { useConfirm } from "@/components/confirm-dialog";
 import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromBody,
+  readApiErrorBody,
+  refusalMessageOr,
+  readApiObjectOrEmpty,
+} from "@/lib/api-error-message";
 import {
   createEmptyDraft,
   draftFromCategory,
@@ -43,14 +49,16 @@ export function useSubscriptionCategories() {
       const response = await fetch("/api/admin/subscription-categories", {
         credentials: "same-origin",
       });
-      const body = (await response.json()) as SubscriptionCategoriesResponse | { error?: string };
+      const body = (await readApiObjectOrEmpty(response)) as
+        | SubscriptionCategoriesResponse
+        | { error?: string };
       if (!response.ok || !("subscriptionCategories" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to load subscription categories"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to load subscription categories"));
       }
       setSubscriptionCategories(body.subscriptionCategories);
       setDrafts(Object.fromEntries(body.subscriptionCategories.map((category) => [category.id, draftFromCategory(category)])));
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load subscription categories");
+      setError(refusalMessageOr(loadError, "Failed to load subscription categories"));
     } finally {
       setLoading(false);
     }
@@ -77,7 +85,8 @@ export function useSubscriptionCategories() {
     try {
       const validationError = validateDraft(newDraft);
       if (validationError) {
-        throw new Error(validationError);
+        setError(validationError);
+        return;
       }
       const response = await fetch("/api/admin/subscription-categories", {
         method: "POST",
@@ -85,7 +94,7 @@ export function useSubscriptionCategories() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draftPayload(newDraft)),
       });
-      const body = (await response.json()) as
+      const body = (await readApiObjectOrEmpty(response)) as
         | { subscriptionCategory: SubscriptionCategory }
         | { error?: string };
       if (!response.ok || !("subscriptionCategory" in body)) {
@@ -93,7 +102,7 @@ export function useSubscriptionCategories() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(apiErrorMessageFromBody(body, "Failed to create subscription category"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to create subscription category"));
       }
       setSubscriptionCategories((current) => [...current, body.subscriptionCategory]);
       setDrafts((current) => ({ ...current, [body.subscriptionCategory.id]: draftFromCategory(body.subscriptionCategory) }));
@@ -101,7 +110,7 @@ export function useSubscriptionCategories() {
       setEditorTarget(null);
       setSavedMessage("Subscription category created.");
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Failed to create subscription category");
+      setError(refusalMessageOr(createError, "Failed to create subscription category"));
     } finally {
       setCreating(false);
     }
@@ -117,7 +126,8 @@ export function useSubscriptionCategories() {
     try {
       const validationError = validateDraft(draft);
       if (validationError) {
-        throw new Error(validationError);
+        setError(validationError);
+        return false;
       }
       const response = await fetch(`/api/admin/subscription-categories/${category.id}`, {
         method: "PATCH",
@@ -125,7 +135,7 @@ export function useSubscriptionCategories() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draftPayload(draft)),
       });
-      const body = (await response.json()) as
+      const body = (await readApiObjectOrEmpty(response)) as
         | { subscriptionCategory: SubscriptionCategory }
         | { error?: string };
       if (!response.ok || !("subscriptionCategory" in body)) {
@@ -133,7 +143,7 @@ export function useSubscriptionCategories() {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return false;
         }
-        throw new Error(apiErrorMessageFromBody(body, "Failed to save subscription category"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to save subscription category"));
       }
       setSubscriptionCategories((current) =>
         current.map((item) => (item.id === body.subscriptionCategory.id ? body.subscriptionCategory : item)));
@@ -141,7 +151,7 @@ export function useSubscriptionCategories() {
       setSavedMessage("Subscription category saved.");
       return true;
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save subscription category");
+      setError(refusalMessageOr(saveError, "Failed to save subscription category"));
       return false;
     } finally {
       setSavingId(null);
@@ -164,13 +174,13 @@ export function useSubscriptionCategories() {
         method: "DELETE",
         credentials: "same-origin",
       });
-      const body = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      const body = (await readApiErrorBody(response)) as { ok?: boolean; error?: string } | null;
       if (!response.ok || !body?.ok) {
         if (response.status === 403) {
           setError(ADMIN_FORBIDDEN_SAVE_REASON);
           return;
         }
-        throw new Error(apiErrorMessageFromBody(body, "Failed to delete subscription category"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to delete subscription category"));
       }
       setSubscriptionCategories((current) => current.filter((item) => item.id !== category.id));
       setDrafts((current) => {
@@ -180,7 +190,7 @@ export function useSubscriptionCategories() {
       });
       setSavedMessage(`Deleted ${category.name}.`);
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Failed to delete subscription category");
+      setError(refusalMessageOr(deleteError, "Failed to delete subscription category"));
     } finally {
       setDeletingId(null);
     }

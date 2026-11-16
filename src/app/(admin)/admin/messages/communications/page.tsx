@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import type { BulkRecipientFilter } from "@/lib/bulk-communication-recipients";
 import {
   BULK_EMAIL_CATEGORY_LABELS,
@@ -175,9 +176,8 @@ export default function CommunicationsPage() {
         body: JSON.stringify(message),
       });
 
-      const data = await res.json();
-
       if (res.ok) {
+        const data = await res.json();
         setResult({
           success: true,
           message: `Sent to ${data.eligibleRecipients} recipients${excludedSuffix(data)}.`,
@@ -188,7 +188,10 @@ export default function CommunicationsPage() {
         setCategory(null);
         refreshHistory();
       } else {
-        setResult({ success: false, message: data.error });
+        setResult({
+          success: false,
+          message: await apiErrorMessageFromResponse(res, "Failed to send. Please try again."),
+        });
       }
     } catch {
       setResult({
