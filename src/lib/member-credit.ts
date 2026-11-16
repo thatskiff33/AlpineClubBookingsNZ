@@ -814,6 +814,70 @@ async function validateNegativeAdjustmentBalance(
   }
 }
 
+/**
+ * Opening-credit rows (#4988, `INV-PAY-156`), kept here so this module stays
+ * the one place that creates `MemberCredit` rows. The caller is the batch
+ * transaction in `opening-credit-batch.ts`: it holds every member's
+ * `lockMemberCreditLedger`, sorted (`INV-LOCK-002`), and has claimed the batch.
+ * Neither writer queues a Xero note, sends an email or needs a second approver:
+ * the batch total is the one approval.
+ */
+export type OpeningCreditRowInput = { memberId: string; amountCents: number; description: string };
+
+/** What a member sees on a reversal row; the officer's reason stays on the batch. */
+export const OPENING_CREDIT_REVERSED_DESCRIPTION = "Opening credit reversed";
+
+export async function postOpeningCreditRows(
+  tx: Prisma.TransactionClient,
+  input: { batchId: string; approvedById: string; credits: readonly OpeningCreditRowInput[] },
+) {
+  for (const credit of input.credits) {
+    if (!Number.isSafeInteger(credit.amountCents) || credit.amountCents <= 0) {
+      throw new MemberCreditValidationError("An opening credit must be a positive whole number of cents");
+    }
+  }
+  await tx.memberCredit.createMany({
+    data: input.credits.map((credit) => ({
+      memberId: credit.memberId,
+      amountCents: credit.amountCents,
+      type: CreditType.ADMIN_ADJUSTMENT,
+      description: credit.description,
+      approvedById: input.approvedById,
+      openingCreditBatchId: input.batchId,
+    })),
+  });
+}
+
+/**
+ * One negative row per credit of a reversed batch. Every deduction must pass the
+ * same balance rule as an approved negative adjustment before any row is
+ * written; one that does not throws `MemberCreditValidationError` and writes
+ * nothing, and the caller's transaction rolls back its claim.
+ */
+export async function reverseOpeningCreditRows(
+  tx: Prisma.TransactionClient,
+  input: {
+    batchId: string;
+    approvedById: string;
+    credits: readonly { memberId: string; amountCents: number }[];
+    format: ClubFormat;
+  },
+) {
+  for (const credit of input.credits) {
+    await validateNegativeAdjustmentBalance(credit.memberId, -credit.amountCents, input.format, tx);
+  }
+  await tx.memberCredit.createMany({
+    data: input.credits.map((credit) => ({
+      memberId: credit.memberId,
+      amountCents: -credit.amountCents,
+      type: CreditType.ADMIN_ADJUSTMENT,
+      description: OPENING_CREDIT_REVERSED_DESCRIPTION,
+      approvedById: input.approvedById,
+      openingCreditBatchId: input.batchId,
+    })),
+  });
+}
+
 async function findAdminAdjustmentRequestByIdempotencyKey(
   requestedById: string,
   idempotencyKey: string

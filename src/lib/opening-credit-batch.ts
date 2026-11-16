@@ -8,7 +8,10 @@
  *  - **One confirmation posts the whole file atomically**: one
  *    `OpeningCreditBatch` row, one `ADMIN_ADJUSTMENT` credit per member taken
  *    under that member's `lockMemberCreditLedger` (sorted ids,
- *    `INV-LOCK-002`), and one audit row carrying the total.
+ *    `INV-LOCK-002`), and one audit row carrying the total. The credit rows,
+ *    and a reversal's negative rows, are written by `member-credit.ts`
+ *    (`postOpeningCreditRows`, `reverseOpeningCreditRows`), the one module
+ *    that creates `MemberCredit` rows.
  *  - **The same file posts once.** The batch key is a hash of what the file
  *    posts; its unique index is the claim, so a second confirm — concurrent or
  *    later — is refused and no balance moves.
@@ -20,14 +23,14 @@
  *    rows are insert-only, `INV-MONEY-035`) and stamps the batch reversed.
  */
 
-import { CreditType, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
 import { createAuditLog, type StructuredAuditEvent } from "@/lib/audit";
 import { assertDeductionLeavesNotedCreditUntouched } from "@/lib/admin-grant-credit-note";
 import { clubFormatValues } from "@/lib/club-format-server";
 import logger from "@/lib/logger";
-import { getMemberCreditBalance, lockMemberCreditLedger } from "@/lib/member-credit";
+import { lockMemberCreditLedger, postOpeningCreditRows, reverseOpeningCreditRows } from "@/lib/member-credit";
 import { memberName } from "@/lib/member-serialization";
 import { OPENING_CREDIT_REVERSAL_REASON_MAX_LENGTH, parseOpeningCreditCsv } from "@/lib/opening-credit-csv";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
@@ -321,16 +324,7 @@ export async function postOpeningCreditBatch(input: {
           409,
         );
       }
-      await tx.memberCredit.createMany({
-        data: credits.map((credit) => ({
-          memberId: credit.memberId,
-          amountCents: credit.amountCents,
-          type: CreditType.ADMIN_ADJUSTMENT,
-          description: credit.description,
-          approvedById: input.adminId,
-          openingCreditBatchId: created.id,
-        })),
-      });
+      await postOpeningCreditRows(tx, { batchId: created.id, approvedById: input.adminId, credits });
       await createAuditLog(
         {
           action: "member.credit.opening_batch.post",
@@ -431,12 +425,9 @@ export async function reverseOpeningCreditBatch(input: {
     for (const credit of batch.credits) {
       const name = memberName(credit.member);
       const lot = lots.get(credit.memberId)?.lots.find((free) => free.memberCreditId === credit.id);
-      const balance = await getMemberCreditBalance(credit.memberId, tx);
-      if (
-        !lot ||
-        lot.remainingCents !== credit.amountCents ||
-        balance < credit.amountCents
-      ) {
+      // The balance rule is `reverseOpeningCreditRows`', shared with every
+      // approved negative adjustment; this checks the lot itself.
+      if (!lot || lot.remainingCents !== credit.amountCents) {
         spent.push(`${name}: some of the ${formatCents(credit.amountCents, format)} has been used`);
         continue;
       }
@@ -456,18 +447,13 @@ export async function reverseOpeningCreditBatch(input: {
     });
     if (claimed.count !== 1) throw new ApiError("This opening-credit batch has already been reversed", 409);
 
-    await tx.memberCredit.createMany({
-      data: batch.credits.map((credit) => ({
-        memberId: credit.memberId,
-        amountCents: -credit.amountCents,
-        type: CreditType.ADMIN_ADJUSTMENT,
-        // Members see this description in their credit history; the officer's
-        // reason stays on the batch and its audit row.
-        description: "Opening credit reversed",
-        approvedById: input.adminId,
-        openingCreditBatchId: batch.id,
-      })),
-    });
+    try {
+      await reverseOpeningCreditRows(tx, { batchId: batch.id, approvedById: input.adminId, credits: batch.credits, format });
+    } catch (error) {
+      // Thrown before any row is written; the transaction rolls back the claim.
+      if (!(error instanceof MemberCreditValidationError)) throw error;
+      throw new ApiError(`This batch cannot be reversed because some credit is no longer unspent. ${error.message}`, 409);
+    }
     await createAuditLog(
       {
         action: "member.credit.opening_batch.reverse",

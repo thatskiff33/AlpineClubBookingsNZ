@@ -5,20 +5,30 @@
 import { CreditType } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const ledger = vi.hoisted(() => ({ locked: [] as string[], balance: vi.fn() }));
 const db = vi.hoisted(() => ({
   member: { findMany: vi.fn() },
   openingCreditBatch: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
-  memberCredit: { createMany: vi.fn(), findMany: vi.fn(), count: vi.fn() },
+  memberCredit: {
+    createMany: vi.fn(),
+    findMany: vi.fn(),
+    count: vi.fn(),
+    // The member's balance, as `member-credit.ts`'s shared balance rule reads it.
+    aggregate: vi.fn(async ({ where }: { where: { memberId: string } }) => ({
+      _sum: { amountCents: await ledger.balance(where.memberId) },
+    })),
+  },
   $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
 
-const ledger = vi.hoisted(() => ({ locked: [] as string[], balance: vi.fn() }));
-vi.mock("@/lib/member-credit", () => ({
+// The real row writers (`postOpeningCreditRows`, `reverseOpeningCreditRows`) and
+// their shared balance rule run; only the advisory lock is recorded instead.
+vi.mock("@/lib/member-credit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/member-credit")>()),
   lockMemberCreditLedger: vi.fn(async (memberId: string) => {
     ledger.locked.push(memberId);
   }),
-  getMemberCreditBalance: (...args: unknown[]) => ledger.balance(...args),
 }));
 const audit = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/audit", () => ({ createAuditLog: audit }));
@@ -30,6 +40,7 @@ vi.mock("@/lib/xero-applied-credit-lots", () => ({ loadFreeCreditLots: lots }));
 const notedGuard = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/admin-grant-credit-note", () => ({ assertDeductionLeavesNotedCreditUntouched: notedGuard }));
 
+import { postOpeningCreditRows, reverseOpeningCreditRows } from "@/lib/member-credit";
 import { MemberCreditValidationError } from "@/lib/policies/member-credit";
 import {
   buildOpeningCreditPreview,
@@ -368,8 +379,14 @@ describe("reverseOpeningCreditBatch (#4988)", () => {
 
   it("refuses when the member's balance no longer covers the credit", async () => {
     ledger.balance.mockResolvedValue(100);
-    await expect(reverseOpeningCreditBatch({ batchId: "batch-1", reason: "r", adminId: "o" })).rejects.toMatchObject({ status: 409 });
+    // The refusal is member-credit.ts's negative-adjustment balance rule, not a
+    // copy of it, and it writes no row and no audit entry.
+    await expect(reverseOpeningCreditBatch({ batchId: "batch-1", reason: "r", adminId: "o" })).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("Cannot deduct $12.50: only $1.00 available"),
+    });
     expect(db.memberCredit.createMany).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
   });
 
   it("refuses when the deduction would consume a Xero-noted credit", async () => {
@@ -392,5 +409,39 @@ describe("reverseOpeningCreditBatch (#4988)", () => {
     await expect(reverseOpeningCreditBatch({ batchId: "batch-1", reason: "  ", adminId: "o" })).rejects.toMatchObject({ status: 400 });
     db.openingCreditBatch.findUnique.mockResolvedValueOnce(null);
     await expect(reverseOpeningCreditBatch({ batchId: "nope", reason: "r", adminId: "o" })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("the opening-credit row writers live in member-credit.ts (#4988)", () => {
+  const tx = () => ({ memberCredit: db.memberCredit }) as unknown as Parameters<typeof postOpeningCreditRows>[0];
+
+  it("posts positive ADMIN_ADJUSTMENT rows tagged with the batch, and refuses any other amount", async () => {
+    await postOpeningCreditRows(tx(), {
+      batchId: "batch-1",
+      approvedById: "o",
+      credits: [{ memberId: "m-a", amountCents: 1250, description: "Carried over" }],
+    });
+    expect(db.memberCredit.createMany.mock.calls[0]?.[0].data).toEqual([
+      { memberId: "m-a", amountCents: 1250, type: CreditType.ADMIN_ADJUSTMENT, description: "Carried over", approvedById: "o", openingCreditBatchId: "batch-1" },
+    ]);
+    for (const amountCents of [0, -1, 12.5]) {
+      await expect(
+        postOpeningCreditRows(tx(), { batchId: "b", approvedById: "o", credits: [{ memberId: "m-a", amountCents, description: "x" }] }),
+      ).rejects.toBeInstanceOf(MemberCreditValidationError);
+    }
+    expect(db.memberCredit.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks every reversal row against the balance before writing any", async () => {
+    ledger.balance.mockImplementation(async (memberId: string) => (memberId === "m-b" ? 0 : 5000));
+    await expect(
+      reverseOpeningCreditRows(tx(), {
+        batchId: "b",
+        approvedById: "o",
+        credits: [{ memberId: "m-a", amountCents: 1000 }, { memberId: "m-b", amountCents: 1000 }],
+        format: {} as Parameters<typeof reverseOpeningCreditRows>[1]["format"],
+      }),
+    ).rejects.toBeInstanceOf(MemberCreditValidationError);
+    expect(db.memberCredit.createMany).not.toHaveBeenCalled();
   });
 });
