@@ -350,7 +350,7 @@ const REPLAY_CLAUSE: Record<DeliveryReplayability, string> = {
   "replayed-automatically":
     " The message is queued and goes out by itself once that is done.",
   "needs-a-manual-resend":
-    " This message then has to be re-sent BY HAND: its contents are deliberately not stored — it carries something like a sign-in link, a door code or a payment link — so nothing can replay it automatically. It is listed under Admin -> Email for review.",
+    " This message then has to be re-sent BY HAND: its contents are deliberately not stored — it carries something like a sign-in link, a door code or a payment link — so nothing can replay it automatically. It is listed for review under Exhausted Email Failures on Admin -> Monitoring & Support -> Email Deliverability.",
 };
 
 /**

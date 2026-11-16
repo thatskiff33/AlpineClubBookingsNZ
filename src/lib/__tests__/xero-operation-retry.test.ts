@@ -3641,7 +3641,7 @@ describe("retryXeroSyncOperation", () => {
       expect(mocks.createXeroEntranceFeeInvoice).not.toHaveBeenCalled();
     });
 
-    // #4986 (INV-INT-039): the outbox worker skips every task while the module
+    // #4986 (INV-INT-040): the outbox worker skips every task while the module
     // is off, so a retry then would sit PENDING and go out unchecked later.
     it("refuses with Xero off, before reading the charge or writing the row (#4986)", async () => {
       mocks.findUniqueOperation.mockResolvedValue(failedSubscriptionInvoice());

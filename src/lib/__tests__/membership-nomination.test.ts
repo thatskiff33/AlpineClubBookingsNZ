@@ -1113,7 +1113,7 @@ describe("membership nomination workflow", () => {
     expect(xeroOutboxMock.processQueuedXeroOutboxOperations).toHaveBeenCalledTimes(1);
   });
 
-  // #4986 (INV-INT-039): with the xeroIntegration module off, the outbox worker
+  // #4986 (INV-INT-040): with the xeroIntegration module off, the outbox worker
   // never runs, so approval must not write invoice work that would wait and go
   // out unchecked the day Xero comes back. The approval itself still succeeds.
   it("with Xero off, approves without writing a joining-fee outbox row or subscription charge, and says so (#4986)", async () => {

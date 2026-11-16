@@ -1294,7 +1294,7 @@ export async function approveMemberApplication(
   // double-charged) unless the admin explicitly supplied a decision; the SKIP is
   // resolved here so the in-tx enqueue is simply never made.
   //
-  // #4986 (`INV-INT-039`): with Xero off the joining-fee row would wait in the
+  // #4986 (`INV-INT-040`): with Xero off the joining-fee row would wait in the
   // outbox and be invoiced unchecked the day Xero is switched back on, so the
   // module is read here, outside the transaction, and a CREATE becomes a
   // recorded SKIP with the plain warning below. The approval itself proceeds.

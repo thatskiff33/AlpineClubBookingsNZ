@@ -849,6 +849,11 @@ import "./stripe-dispute-cancel.realdb.test";
 // racing takeovers or a racing Mark failed, and the abandoned attempt's late
 // outcome refused. It owns and cleans its own `race-alp546-` fixtures.
 import "./xero-inbound-abandoned-operation.realdb.test";
+// INV-INT-039 (#4921) reuses it to prove the automatic worker takes over a
+// stored Xero inbound event a dead worker left PROCESSING past the webhook
+// lease, clearing its dedup row, and that racing workers apply it exactly once.
+// It owns and cleans its own `race-alp642-` fixtures.
+import "./xero-inbound-stale-event-takeover.realdb.test";
 // #4851 reuses it to prove Stuck States' settlement of a dead refund out of the
 // group organiser's card: a refund Stripe already holds is recorded and nobody is
 // paid again, a bank close raises the mirror and its no-Xero-note hand-back, a
@@ -857,6 +862,10 @@ import "./xero-inbound-abandoned-operation.realdb.test";
 // whole-group row flips and mirrors. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4851-` fixtures.
 import "./card-refund-group-settle.realdb.test";
+// The #5061 follow-up proves the same for an edit that lowers the price (date
+// change, guest removal, batch edit): one treasurer task, no money moved. It
+// owns and cleans its own `race-5061e-` fixtures.
+import "./stripe-dispute-edit.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

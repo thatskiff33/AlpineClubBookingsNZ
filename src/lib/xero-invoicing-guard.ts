@@ -2,7 +2,7 @@ import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { XeroInvoicingOffError } from "@/lib/xero-invoicing-off";
 
 /**
- * #4986 (`INV-INT-039`): the one module guard for every writer that hands
+ * #4986 (`INV-INT-040`): the one module guard for every writer that hands
  * subscription or joining-fee invoice work to the Xero outbox. Invoices reach
  * members only through Xero, and the outbox worker skips every task while the
  * module is off, so work written then would wait and go out unchecked the day

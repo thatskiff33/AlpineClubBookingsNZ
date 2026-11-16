@@ -1,6 +1,6 @@
 # File-size allowances for #4986
 
-One already-over-budget file grows. The `INV-INT-039` check sits inside the
+One already-over-budget file grows. The `INV-INT-040` check sits inside the
 writer it guards, and the shared logic itself went into new, small modules
 (`xero-invoicing-guard.ts`, `xero-invoicing-off.ts`), so nothing here is a copy of it.
 

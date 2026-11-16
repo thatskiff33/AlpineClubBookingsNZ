@@ -1437,7 +1437,7 @@ export async function retryXeroSyncOperation(
   const subscriptionInvoicePayload = subscriptionInvoiceRequeuePayload(operation);
   const subscriptionChargeId = subscriptionInvoiceChargeId(operation);
   if (subscriptionInvoicePayload && subscriptionChargeId && operation.status === "FAILED") {
-    // #4986 (`INV-INT-039`): the route gate already hides Xero Operations while
+    // #4986 (`INV-INT-040`): the route gate already hides Xero Operations while
     // the module is off; this refuses the requeue itself, in the same words.
     if (!(await isXeroInvoicingEnabled())) {
       throw new XeroOperationRetryError(SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE, 409);

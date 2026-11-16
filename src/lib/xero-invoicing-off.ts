@@ -2,7 +2,7 @@
  * #4986: the plain-English refusals for invoicing while the `xeroIntegration`
  * module is off. Client safe (no imports): the Subscriptions panel shows the
  * same words the server refuses with. The guard that decides is
- * `xero-invoicing-guard.ts` (`INV-INT-039`).
+ * `xero-invoicing-guard.ts` (`INV-INT-040`).
  */
 
 /**

@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 import {
   Card,
   CardContent,
@@ -49,6 +50,7 @@ import {
   type WhakapapaSourceConfig,
 } from "@/lib/whakapapa-report";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import { useClubTime } from "@/components/club-time-provider";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import {
@@ -145,7 +147,10 @@ export function MountainConditionsPanel() {
   const [previewJson, setPreviewJson] = useState<string | null>(null);
   const [exportingConfig, setExportingConfig] = useState(false);
   const [importingConfig, setImportingConfig] = useState(false);
-  const [error, setError] = useState<string>("");
+  // The background load stays a passive box; a failed save, refresh, export,
+  // import or preview is an action, so it is focused and re-announced (#4975).
+  const [loadError, setLoadError] = useState("");
+  const actionFailure = useActionFailure();
   const importInputRef = useRef<HTMLInputElement>(null);
   // Sampled whenever the record is (re)loaded so the frozen check below can
   // stay pure during render (Date.now() must not run mid-render).
@@ -153,7 +158,7 @@ export function MountainConditionsPanel() {
 
   const loadRecord = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setLoadError("");
     try {
       const response = await fetch("/api/admin/mountain-conditions");
       const body = (await response.json()) as ApiResponse;
@@ -171,7 +176,7 @@ export function MountainConditionsPanel() {
       const form = configToForm(nextRecord?.config);
       setSourceUrl(form.sourceUrl);
       setSelectorOverrides(form.overrides);
-    } catch (loadError) {
+    } catch (loadFailure) {
       setRecord(null);
       setRecordSyncedAt(Date.now());
       setRawJson(prettyJson(emptyWhakapapaCurlData()));
@@ -179,9 +184,9 @@ export function MountainConditionsPanel() {
       const form = configToForm(undefined);
       setSourceUrl(form.sourceUrl);
       setSelectorOverrides(form.overrides);
-      setError(
-        loadError instanceof Error
-          ? loadError.message
+      setLoadError(
+        loadFailure instanceof Error
+          ? loadFailure.message
           : "Failed to load mountain conditions",
       );
     } finally {
@@ -193,9 +198,15 @@ export function MountainConditionsPanel() {
     loadRecord();
   }, [loadRecord]);
 
+  /** Every action replaces whatever the last load or action reported. */
+  function clearMessages() {
+    setLoadError("");
+    actionFailure.clear();
+  }
+
   async function saveRecord() {
     setSaving(true);
-    setError("");
+    clearMessages();
     setForbidden(false);
     try {
       const response = await fetch("/api/admin/mountain-conditions", {
@@ -217,7 +228,7 @@ export function MountainConditionsPanel() {
       );
       toast.success(body.message || "Mountain conditions saved");
     } catch (saveError) {
-      setError(
+      actionFailure.fail(
         saveError instanceof Error
           ? saveError.message
           : "Failed to save mountain conditions",
@@ -230,7 +241,7 @@ export function MountainConditionsPanel() {
 
   async function refreshFromUpstream() {
     setRefreshing(true);
-    setError("");
+    clearMessages();
     setForbidden(false);
     try {
       const response = await fetch("/api/admin/mountain-conditions", {
@@ -250,7 +261,7 @@ export function MountainConditionsPanel() {
       );
       toast.success(body.message || "Mountain conditions refreshed");
     } catch (refreshError) {
-      setError(
+      actionFailure.fail(
         refreshError instanceof Error
           ? refreshError.message
           : "Failed to refresh mountain conditions",
@@ -263,7 +274,7 @@ export function MountainConditionsPanel() {
 
   async function saveVisibility() {
     setSavingVisibility(true);
-    setError("");
+    clearMessages();
     setForbidden(false);
     try {
       const response = await fetch("/api/admin/mountain-conditions", {
@@ -285,7 +296,7 @@ export function MountainConditionsPanel() {
       );
       toast.success(body.message || "Section visibility saved");
     } catch (visibilityError) {
-      setError(
+      actionFailure.fail(
         visibilityError instanceof Error
           ? visibilityError.message
           : "Failed to save section visibility",
@@ -309,7 +320,7 @@ export function MountainConditionsPanel() {
 
   async function exportConfig() {
     setExportingConfig(true);
-    setError("");
+    clearMessages();
     try {
       // Read the current config straight from the database so the export
       // reflects what is stored, not any unsaved edits in the form.
@@ -344,7 +355,7 @@ export function MountainConditionsPanel() {
       URL.revokeObjectURL(url);
       toast.success("Selector configuration exported from the database.");
     } catch (exportError) {
-      setError(
+      actionFailure.fail(
         exportError instanceof Error
           ? exportError.message
           : "Failed to export configuration",
@@ -357,7 +368,7 @@ export function MountainConditionsPanel() {
 
   async function importConfigFromFile(file: File) {
     setImportingConfig(true);
-    setError("");
+    clearMessages();
     setForbidden(false);
     try {
       const parsed = JSON.parse(await file.text());
@@ -398,7 +409,7 @@ export function MountainConditionsPanel() {
       if (importError instanceof SyntaxError) {
         toast.error("Could not import selectors: the file is not valid JSON.");
       } else {
-        setError(
+        actionFailure.fail(
           importError instanceof Error
             ? importError.message
             : "Failed to import selectors",
@@ -443,13 +454,13 @@ export function MountainConditionsPanel() {
 
   async function saveConfig() {
     setSavingConfig(true);
-    setError("");
+    clearMessages();
     setForbidden(false);
     try {
       const message = await persistConfig(buildConfigPayload());
       toast.success(message);
     } catch (configError) {
-      setError(
+      actionFailure.fail(
         configError instanceof Error
           ? configError.message
           : "Failed to save source configuration",
@@ -462,7 +473,7 @@ export function MountainConditionsPanel() {
 
   async function previewConfig() {
     setPreviewing(true);
-    setError("");
+    clearMessages();
     setForbidden(false);
     setPreviewJson(null);
     try {
@@ -480,7 +491,7 @@ export function MountainConditionsPanel() {
       setPreviewJson(body.preview ? prettyJson(body.preview) : "");
       toast.success(body.message || "Preview generated");
     } catch (previewError) {
-      setError(
+      actionFailure.fail(
         previewError instanceof Error ? previewError.message : "Preview failed",
       );
       toast.error("Preview failed");
@@ -553,11 +564,17 @@ export function MountainConditionsPanel() {
         </ViewOnlyActionButton>
       </div>
 
-      {error ? (
+      {loadError ? (
         <div className="mb-4 rounded-md border border-danger-6 bg-danger-3 px-3 py-2 text-sm text-danger-11">
-          {error}
+          {loadError}
         </div>
       ) : null}
+      <FocusedActionError
+        id="mountain-conditions-action-error"
+        error={actionFailure.error}
+        attentionKey={actionFailure.attentionKey}
+        className="mb-4"
+      />
 
       <Card className="mb-4">
         <CardHeader>

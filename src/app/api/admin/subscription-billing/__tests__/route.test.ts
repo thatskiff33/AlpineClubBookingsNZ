@@ -412,7 +412,7 @@ describe("admin subscription billing route", () => {
   });
 });
 
-// #4986 (INV-INT-039): with the xeroIntegration module off, nothing can reach
+// #4986 (INV-INT-040): with the xeroIntegration module off, nothing can reach
 // the Xero outbox from this screen — the worker would not run it, so it would
 // wait and go out unchecked the day Xero comes back.
 describe("subscription billing with Xero off (#4986)", () => {

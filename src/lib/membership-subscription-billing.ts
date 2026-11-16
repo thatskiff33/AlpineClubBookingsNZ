@@ -318,7 +318,7 @@ export async function buildSubscriptionBillingPreview(input: {
   yearEndMonth?: number;
   /**
    * #4986: the Subscriptions page's read-only view while Xero is off. Nothing
-   * can be confirmed then (`INV-INT-039`), so the account-mapping check is
+   * can be confirmed then (`INV-INT-040`), so the account-mapping check is
    * skipped and the officer sees what is owed rather than an empty preview.
    * Never passed on a confirm path.
    */
@@ -2551,7 +2551,7 @@ export async function queueApprovedMembershipSubscriptionCharges(input: {
   // behind it, which took a self-consistent Denver deployment from right to
   // wrong. The club's day is minted here and decoded as an encoding, in UTC, by
   // `seasonYearOfStoredDate`.
-  // #4986 (`INV-INT-039`): with Xero off no charge is frozen and nothing is
+  // #4986 (`INV-INT-040`): with Xero off no charge is frozen and nothing is
   // queued, because the invoice would wait out the pause and go out unchecked.
   // The approval still succeeds and turns this into its plain warning. The
   // seam M7 (#4519) replaces when charges can post locally without Xero.
