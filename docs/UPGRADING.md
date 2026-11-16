@@ -3207,8 +3207,8 @@ add one there to keep the link visible. See
 
 ### Re-run Xero repair sweeps whose check-in dates mattered (#2868)
 
-In `v0.13.2` the Xero booking repair tool was run as
-`npx tsx scripts/xero-booking-repair.ts`; it is now `pnpm run xero:booking-repair`.
+In `v0.13.2` the Xero booking repair tool had no package script and was run
+through `npx` from its file under `scripts/`; it is now `pnpm run xero:booking-repair`.
 Run with `--from` and `--to`, it used to search check-in dates one day early. The two dates
 you type are now the two days searched. Re-run any sweep whose check-in dates
 mattered.
