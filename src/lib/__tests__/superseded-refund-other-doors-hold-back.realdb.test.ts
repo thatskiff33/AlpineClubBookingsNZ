@@ -54,7 +54,7 @@ let reconcilePaymentAggregates: (typeof import("@/lib/payment-transactions"))["r
 let lockPaymentForRefundedTotal: (typeof import("@/lib/payment-transactions"))["lockPaymentForRefundedTotal"];
 let resolveManualRefundTask: (typeof import("@/lib/manual-refund-task-resolution"))["resolveManualRefundTask"];
 let closeCardRefundPaidAnotherWay: (typeof import("@/lib/card-refund-paid-another-way"))["closeCardRefundPaidAnotherWay"];
-let REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE: string;
+let SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE: string;
 let keys: typeof import("@/lib/payment-recovery-keys");
 let recoveryAlert: typeof import("@/lib/payment-recovery-alert");
 let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixture"))["CLUB_FORMAT_TEST"];
@@ -268,7 +268,7 @@ let harnessRole: { restore: () => void } | undefined;
       ({ reconcilePaymentAggregates, lockPaymentForRefundedTotal } = await import("@/lib/payment-transactions"));
       ({ resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution"));
       ({ closeCardRefundPaidAnotherWay } = await import("@/lib/card-refund-paid-another-way"));
-      ({ REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE } = await import("@/lib/edit-financial-review-refund-refusals"));
+      ({ SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE } = await import("@/lib/manual-refund-task-settlement-refusal"));
       keys = await import("@/lib/payment-recovery-keys");
       recoveryAlert = await import("@/lib/payment-recovery-alert");
       ({ CLUB_FORMAT_TEST } = await import("@/lib/__tests__/support/club-format-fixture"));
@@ -336,7 +336,8 @@ let harnessRole: { restore: () => void } | undefined;
       it("is refused, the task left open, when only the superseded charge could make up the amount", async () => {
         const supersededRefund = await seed();
         const review = await completeReview(PRIMARY_CENTS + SLICE_CENTS);
-        await expect(review.settle()).rejects.toMatchObject({ message: REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE });
+        // #5171 review: named as the hand-back door names it, since only the hold-back stands in the way.
+        await expect(review.settle()).rejects.toMatchObject({ message: SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE });
         expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: review.taskId }, select: { status: true } })).toEqual({ status: "OPEN" });
         expect(made).toEqual([]);
         await returnCapture(supersededRefund);

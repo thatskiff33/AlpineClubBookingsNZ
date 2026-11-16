@@ -35,6 +35,8 @@ import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { executeEditReviewCardRefund } from "@/lib/edit-financial-review-card-refund";
 import { lockPaymentForRefundedTotal, planStripeRefundAllocation, type RefundAllocationSlice } from "@/lib/payment-transactions";
 import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
+import { lockMemberCreditLedger } from "@/lib/member-credit";
+import { SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE } from "@/lib/manual-refund-task-settlement-refusal";
 import { dispatchEditReviewXeroSettlement, type EditReviewHandBackXeroFacts } from "@/lib/edit-financial-review-xero-leg";
 import {
   finishEditReviewAccountCredit,
@@ -268,6 +270,7 @@ export async function chooseEditReviewSettlementRoute({
   store,
   actingMemberId,
   capacityRace,
+  readOnlyPreview = false,
 }: {
   task: EditReviewSettlementTask;
   /**
@@ -308,6 +311,8 @@ export async function chooseEditReviewSettlementRoute({
   actingMemberId?: string;
   /** #4154 review (M1, M4): a capacity race's Stripe read, made before the transaction, and whether its note has an invoice. */
   capacityRace?: { stripe: CapacityRaceStripeRefunded | null; invoiced: boolean };
+  /** #5171 review: the still-owed preview's rolled-back read, which holds no lock(1) and so takes no row or member lock. */
+  readOnlyPreview?: boolean;
 }): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
     if (direction === ManualRefundTaskDirection.CHARGE_TO_MEMBER) {
@@ -436,14 +441,24 @@ export async function chooseEditReviewSettlementRoute({
     // the transactions the cap totalled.
     // #4879 (`INV-PAY-150`): a live superseded capture's charge is left to its own refund,
     // read under the Payment row (after lock(1) and the booking row); a review needing it is refused.
-    await lockPaymentForRefundedTotal(store, settlementPayment.id);
+    // #5171 review: the owner's member-credit key FIRST (`INV-LOCK-002`: member credit before the
+    // Payment row), since the completion's give-back and re-price take it after the claim. The read-only
+    // preview takes neither: it holds no lock(1), and the completion re-derives this under both.
+    if (!readOnlyPreview) {
+      const creditLedgerMemberId = bookingOwner(task.booking).memberId;
+      if (creditLedgerMemberId) await lockMemberCreditLedger(creditLedgerMemberId, store);
+      await lockPaymentForRefundedTotal(store, settlementPayment.id);
+    }
+    const heldBack = await readSupersededCaptureHeldBack(store, settlementPayment.id);
     const { slices, totalRefundableCents } = await planStripeRefundAllocation({
       paymentId: settlementPayment.id,
       amountCents: refundCents,
       store,
-      heldBackByTransaction: (await readSupersededCaptureHeldBack(store, settlementPayment.id)).byTransaction,
+      heldBackByTransaction: heldBack.byTransaction,
     });
     if (refundCents > totalRefundableCents) {
+      // #5171 review (`INV-SSOT`): named as the hand-back door names it when only the hold-back stands in the way.
+      if (refundCents <= totalRefundableCents + heldBack.totalCents) throw new ManualBookingPaymentError(SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE, 409);
       throw new ManualBookingPaymentError(REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE, 400);
     }
     // #3835: and less the card refunds already promised and not yet made.
