@@ -1,6 +1,6 @@
 {
   "name": "alpine-club-bookings-nz",
-  "version": "0.13.2",
+  "version": "0.14.0",
   "description": "Open-source club booking, membership, payment, and finance platform.",
   "private": true,
   "license": "MIT",
