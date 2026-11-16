@@ -366,10 +366,12 @@ describe("the officer-only internal-code admission (census)", () => {
 
   it("still refuses every other internal code in applyPromoCodeChanges", () => {
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
-    // The admission is the one helper, used at the one refusal.
-    expect(plan).toContain(
-      "return !promoCode.internal || promoCode.id === officerWorkPartyPromoCodeId;",
+    const rules = readFileSync(path.join(root, "lib", "promo-code-list-rules.ts"), "utf8");
+    // The admission is the one helper (in the promo-list leaf, #5149), used at the one refusal.
+    expect(rules).toContain(
+      "return !promoCode.internal || promoCode.id === admittedInternalPromoCodeId;",
     );
+    expect(plan).toContain('import { enteredPromoCodeAdmitted, promoCodeListRefusal } from "@/lib/promo-code-list-rules";');
     expect(plan).toContain(
       "if (!enteredPromoCodeAdmitted(promoCode, officerWorkPartyPromoCodeId)) {",
     );
