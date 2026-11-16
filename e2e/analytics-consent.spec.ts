@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext, type Page } from "./helpers/acces
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings } from "./helpers/modules";
+import { adminWriteVisiblePoll } from "./helpers/public-cache";
 
 /*
   Google Analytics consent, end to end (#2573, docs/E2E_PLAYWRIGHT.md).
@@ -41,6 +42,8 @@ const GOOGLE_ANALYTICS_HOSTS = [
 const SETTINGS_ENDPOINT = "/api/admin/integrations/analytics";
 
 let admin: APIRequestContext;
+/** Signed out, like the visitors this spec is about. Only reads the public site. */
+let visitor: APIRequestContext;
 let previousModules: Record<string, boolean>;
 
 /**
@@ -72,6 +75,50 @@ async function saveAnalyticsSettings(
 ): Promise<void> {
   const res = await request.put(SETTINGS_ENDPOINT, { data });
   expect(res.ok(), `PUT ${SETTINGS_ENDPOINT} (${res.status()})`).toBeTruthy();
+  await expectPublicSiteServes(data);
+}
+
+/**
+ * The analytics configuration the public home page is being SERVED with, read
+ * from the document itself: the layout hands it to the consent component as a
+ * prop, so it is in the page's serialised component payload. The quotes there
+ * are backslash-escaped, hence the optional backslashes.
+ */
+async function servedAnalyticsState(): Promise<string> {
+  const html = await (await visitor.get("/")).text();
+  const measurementId =
+    /measurementId\\?":\\?"([^"\\]*)/.exec(html)?.[1] ?? "";
+  if (measurementId === "") return "off";
+  const bannerEnabled =
+    /consentBannerEnabled\\?":(true|false)/.exec(html)?.[1] ?? "unknown";
+  return `${measurementId} banner=${bannerEnabled}`;
+}
+
+/**
+ * Wait until the public site is rendered with the settings just saved (#5205).
+ *
+ * The settings route clears the public caches as its response finishes, so the
+ * very next page load can still be the old configuration, and every test below
+ * would then be asserting about the state the test before it left behind. This
+ * waits for the write to land BEFORE the test's own page is opened, so the
+ * recorded Google requests are never those of a stale render.
+ */
+async function expectPublicSiteServes(data: {
+  measurementId: string;
+  consentBannerEnabled: boolean;
+}): Promise<void> {
+  const expected =
+    data.measurementId === ""
+      ? "off"
+      : `${data.measurementId} banner=${data.consentBannerEnabled}`;
+  await expect
+    .poll(
+      servedAnalyticsState,
+      adminWriteVisiblePoll(
+        "the public home page must be served with the analytics settings just saved",
+      ),
+    )
+    .toBe(expected);
 }
 
 const BANNER_MESSAGE = "E2E: analytics runs only after you select Accept.";
@@ -83,6 +130,10 @@ test.beforeAll(async ({ playwright, baseURL }) => {
   admin = await playwright.request.newContext({
     baseURL,
     storageState: storageStatePath(E2E_ADMIN.email),
+  });
+  visitor = await playwright.request.newContext({
+    baseURL,
+    storageState: { cookies: [], origins: [] },
   });
   previousModules = await overrideModules(admin, { analytics: true });
 });
@@ -98,6 +149,7 @@ test.afterAll(async () => {
   if (previousModules) {
     await setModuleSettings(admin, previousModules).catch(() => {});
   }
+  await visitor.dispose();
   await admin.dispose();
 });
 

@@ -8,6 +8,7 @@ import {
   writeClubRawCss,
   type AdminClubTheme,
 } from "./helpers/site-style";
+import { adminWriteVisiblePoll } from "./helpers/public-cache";
 
 /*
   The kiosk PIN must not be readable by administrator Raw CSS (#2981).
@@ -157,18 +158,25 @@ test.describe("kiosk PIN entry under administrator Raw CSS", () => {
     // `?a=` only has to be PRESENT for the PIN form to render — the reference is
     // checked by the API, not by the client — so this spec needs no live
     // assignment and cannot be broken by seed drift.
-    await page.goto("/hut-leader-instructions?a=e2e-2981-assignment");
-
     const field = page.locator("input#hut-leader-pin");
-    await expect(field).toBeVisible();
+
+    // Positive control FIRST. If Raw CSS were not reaching this page, every
+    // assertion after it would be meaningless. The page is re-opened until it
+    // does, within a bound far below the cache lifetimes: the theme route clears
+    // the public caches as its response finishes, so the first load after
+    // `beforeAll` saved the probe rules can still be the old stylesheet (#5205).
+    await expect(async () => {
+      await page.goto("/hut-leader-instructions?a=e2e-2981-assignment");
+      await expect(field).toBeVisible();
+      expect((await observe(page)).outlineColor).toBe(CONTROL_OUTLINE);
+    }).toPass(
+      adminWriteVisiblePoll("the saved Raw CSS must reach the kiosk page"),
+    );
 
     // Masked by default (#3460): rendered glyphs are a channel a font could
     // measure, so the field is a password field until the visitor asks.
     await expect(field).toHaveAttribute("type", "password");
 
-    // Positive control FIRST. If Raw CSS were not reaching this page, every
-    // assertion after it would be meaningless.
-    expect((await observe(page)).outlineColor).toBe(CONTROL_OUTLINE);
     await expectNoSelectableSecret(page, "");
 
     // Keystroke by keystroke.
