@@ -8,13 +8,11 @@ import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
 import {
   type AgeTier,
-  type Booking,
-  type BookingGuest,
-  type Payment,
   PaymentSource,
   PaymentStatus,
   type Role,
 } from "@prisma/client";
+import type { ModifiedBooking } from "@/lib/booking-modification-modified-booking";
 
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { repriceBookingPromotions } from "@/lib/booking-promotions";
@@ -183,11 +181,6 @@ export type ModifyBookingDatesInput = {
   // Owner decision (#1668 review): the admin chooses per override edit whether
   // the member receives the change-notification email. Absent = notify.
   notifyMember?: boolean;
-};
-
-type ModifiedBooking = Booking & {
-  guests: BookingGuest[];
-  payment: Payment | null;
 };
 
 type DateModificationTransactionResult =

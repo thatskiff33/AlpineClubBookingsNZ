@@ -118,7 +118,7 @@ import {
 import type { ClubFormat } from "@/lib/club-format";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 import { cancelRefundDisposition } from "@/lib/cancel-refund-method";
-import { disputedRefundSentence, ownCardRefundWithShortfallSentence, type OrganiserRefundMethod, type OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
+import { disputedRefundSentence, ownCardRefundWithShortfallSentence } from "@/lib/booking-modified-email-copy";
 import { alertCancelCardShortfall, cancelRaisesCardShortfall, raiseCancelCardShortfallHandBack, type CancelCardShortfall } from "@/lib/cancel-card-refund-shortfall";
 import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -131,6 +131,7 @@ import {
   readPartPaymentAtCancel,
   recordPartPaymentInClaim,
 } from "@/lib/internet-banking-part-payment-at-cancel";
+import type { CancelBookingResult } from "@/lib/booking-cancel-result";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
@@ -143,28 +144,6 @@ const NO_PAYMENT_CANCELLABLE_STATUSES: readonly string[] = [
   "WAITLIST_OFFERED",
   "AWAITING_REVIEW",
 ];
-
-interface CancelBookingResult {
-  success: boolean;
-  refundAmountCents: number;
-  refundPercentage: number;
-  // B5 (#2262): "manual" — the booking was settled in cash / by an off-Xero
-  // bank transfer, so no card refund was planned and no account credit was
-  // minted; a durable hand-back task was raised instead and its id is returned.
-  refundMethod: "card" | "credit" | "manual";
-  creditAmountCents?: number;
-  creditRestoredCents?: number;
-  stripeRefundId?: string;
-  manualRefundTaskId?: string;
-  /** #4911 (`INV-PAY-154`): a "manual" refund handed to the treasurer because the card payment is disputed. */
-  refundDisputed?: true;
-  /** #3973: a refund that is the group organiser's (`refundMethod` stays "card"), as its email words it, for the confirmation screen. */
-  organiserRefund?: { method: OrganiserRefundMethod; amountCents: number };
-  /** #4084: a refund to the member's own card, made or not yet (`refundMethod` stays "card"), for the confirmation screen.
-   * #4097: `amountCents` is what the card refund carries; of the rest, `byHandCents` the club refunds by bank transfer and `toCheckCents` it checks first. */
-  ownCardRefund?: { method: OwnCardRefundMethod; amountCents: number; byHandCents?: number; toCheckCents?: number };
-  message: string;
-}
 
 async function reconcileCancelledBookingBedAllocations(
   booking: { id: string; checkIn: Date; checkOut: Date },

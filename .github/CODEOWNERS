@@ -39,6 +39,7 @@
 /src/lib/xero-*settlement*.ts                  @thatskiff33
 /src/lib/xero-inbound/payment.ts               @thatskiff33
 /src/lib/xero-inbound/invoice-paid-effects.ts  @thatskiff33
+/src/lib/xero-inbound/invoice-cash-evidence.ts @thatskiff33
 /src/lib/xero-inbound/credit-note*.ts          @thatskiff33
 /src/lib/stripe-webhook-service.ts             @thatskiff33
 /src/lib/internet-banking-payment-cron.ts      @thatskiff33

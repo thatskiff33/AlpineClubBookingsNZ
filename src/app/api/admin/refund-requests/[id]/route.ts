@@ -3,7 +3,6 @@ import { PaymentSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
@@ -47,20 +46,10 @@ import {
   runOrganiserChildAppealRefundNow,
 } from "@/lib/organiser-child-appeal-refund";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { reviewSchema } from "@/lib/refund-request-review-schema";
 
 /** #3827 (`INV-PAY-118`): thrown inside the approval to roll its claim back. */
 class RefundRequestHandBackNotRaisedError extends Error {}
-
-const reviewSchema = z.object({
-  status: z.enum(["APPROVED", "REJECTED"]),
-  adminNotes: z.string().max(2000).optional(),
-  approvedAmountCents: z.number().int().min(0).optional(),
-  // #1792: admin per-action email choice. Absent/undefined = notify (default);
-  // false = suppress the member outcome email. A non-boolean is rejected 400 by
-  // this parse. Only affects the outcome notice — refund execution, ledger math,
-  // and Stripe/Xero are unchanged.
-  notifyMember: z.boolean().optional(),
-});
 
 export async function PUT(
   req: NextRequest,
