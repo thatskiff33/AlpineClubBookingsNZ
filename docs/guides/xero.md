@@ -360,14 +360,19 @@ never change; only how much of each price is GST does.
 3. Bookings, subscriptions and entrance fees made on or after the date use the
    new treatment. A booking already made keeps the treatment in force when it
    was made for its whole life, including later edits, credit notes and
-   refunds; the card counts how many have nights after the date. Nothing
-   already in Xero or the journal changes.
+   refunds; the card counts how many have nights after the date. A place in a
+   group booking takes the organiser's booking's treatment, as the group's
+   combined invoice does. Nothing already in Xero or the journal changes.
 4. A scheduled change can be cancelled before it starts. Saving and cancelling
    are both in the audit log.
 
 The Xero health check warns if the tax code in force is missing or inactive in
 Xero, its rate differs, or Xero's GST registration disagrees with the card. How
 it works: [Tax treatment](../xero/ARCHITECTURE.md#tax-treatment).
+It checks only today's treatment. Bookings made under an earlier treatment
+still use that treatment's tax code on their later edits, credit notes and
+refunds, so keep an earlier code active in Xero while such bookings remain:
+archiving it makes those documents fail in Xero.
 
 ## Settings reference
 

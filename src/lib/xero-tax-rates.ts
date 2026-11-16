@@ -21,6 +21,14 @@ import type { XeroTaxRateOption } from "@/lib/xero-tax-rate-options";
 
 const CACHE_TTL_MS = 15 * 60 * 1000;
 let cached: { rates: XeroTaxRateOption[]; fetchedAt: number } | null = null;
+/**
+ * The degrading reader's last failure. For a minute after one it answers null
+ * without asking Xero again, so a health poll during an outage (or under the
+ * mock harness, which serves no rates) neither adds API calls nor a warning per
+ * poll. The writer's fresh read never consults it.
+ */
+const FAILURE_TTL_MS = 60 * 1000;
+let failedAt: number | null = null;
 
 function rateOf(rate: TaxRate): XeroTaxRateOption | null {
   if (!rate.taxType) return null;
@@ -64,9 +72,13 @@ export async function readXeroTaxRates(options: { fresh?: boolean } = {}): Promi
 
 /** The same read, or null with the failure logged: for a screen or a health check that degrades. */
 export async function readXeroTaxRatesOrNull(): Promise<XeroTaxRateOption[] | null> {
+  if (failedAt !== null && Date.now() - failedAt < FAILURE_TTL_MS) return null;
   try {
-    return await readXeroTaxRates();
+    const rates = await readXeroTaxRates();
+    failedAt = null;
+    return rates;
   } catch (error) {
+    failedAt = Date.now();
     logger.warn({ err: error }, "Could not read the Xero organisation's tax rates (#4632)");
     return null;
   }
@@ -74,4 +86,5 @@ export async function readXeroTaxRatesOrNull(): Promise<XeroTaxRateOption[] | nu
 
 export function resetXeroTaxRatesCacheForTests(): void {
   cached = null;
+  failedAt = null;
 }

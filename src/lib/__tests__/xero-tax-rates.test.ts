@@ -55,4 +55,16 @@ describe("readXeroTaxRates (#4632)", () => {
     await expect(readXeroTaxRates()).rejects.toThrow("429");
     await expect(readXeroTaxRatesOrNull()).resolves.toBeNull();
   });
+
+  it("does not ask Xero again for a minute after the degrading reader failed", async () => {
+    live.getTaxRates.mockRejectedValue(new Error("503"));
+    await expect(readXeroTaxRatesOrNull()).resolves.toBeNull();
+    await expect(readXeroTaxRatesOrNull()).resolves.toBeNull();
+    expect(live.getTaxRates).toHaveBeenCalledTimes(1);
+
+    serve([{ taxType: "OUTPUT2", effectiveRate: 15, status: TaxRate.StatusEnum.ACTIVE, canApplyToRevenue: true }]);
+    vi.setSystemTime(new Date(Date.now() + 61_000));
+    await expect(readXeroTaxRatesOrNull()).resolves.toEqual([expect.objectContaining({ taxType: "OUTPUT2" })]);
+    expect(live.getTaxRates).toHaveBeenCalledTimes(2);
+  });
 });
