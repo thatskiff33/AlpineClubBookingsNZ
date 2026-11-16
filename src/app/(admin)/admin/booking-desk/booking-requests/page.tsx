@@ -21,6 +21,7 @@ import {
   BOOKING_REQUESTS_TABS,
   type BookingRequestsTab,
 } from "@/lib/admin-booking-requests-path";
+import { setAdminListPageParam } from "@/lib/admin-list-page";
 
 const APPROVALS_SEARCH_PARAMS = { tab: "approvals" } satisfies Record<
   string,
@@ -114,6 +115,9 @@ export default function BookingRequestsPage() {
     const params = new URLSearchParams(searchParams.toString());
 
     params.set("tab", nextTab);
+    // Each tab's queue pages on its own (INV-OPS-020); a page from one tab
+    // means nothing on another.
+    setAdminListPageParam(params, 1);
 
     if (nextTab === "approvals") {
       params.delete("requestId");
@@ -162,7 +166,7 @@ export default function BookingRequestsPage() {
       ) : null}
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="grid w-full grid-cols-2 sm:w-auto sm:grid-cols-4">
+        <TabsList className="grid h-auto w-full grid-cols-2 sm:w-auto sm:grid-cols-4">
           <TabsTrigger value="approvals">Approvals</TabsTrigger>
           <TabsTrigger value="changes">Changes</TabsTrigger>
           <TabsTrigger value="exceptions" className="gap-2">

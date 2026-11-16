@@ -81,15 +81,20 @@ describe("cleaned-literal registry stays byte-exact with the migrations (#2511)"
     expect(entries.map((e) => [e.entity, e.key, e.field])).toEqual([
       ["page-content", "privacy", "contentHtml"],
       ["page-content", "privacy", "contentHtml"],
+      ["page-content", "privacy", "contentHtml"],
     ]);
     const sql = migrationSql(entries[0]!.migration);
     expect(entries[1]!.migration).toBe(entries[0]!.migration);
-    // `$previous$` is #4914's body, `$older$` is #4031's; each is the whole
-    // first `$cms$` block its own migration wrote.
-    expect(sql).toContain(`AND "contentHtml" IN ($previous$${entries[0]!.literal}$previous$, $older$${entries[1]!.literal}$older$)`);
+    expect(entries[2]!.migration).toBe(entries[0]!.migration);
+    // `$previous$` is #4915's body, `$older$` is #4914's and `$oldest$` is
+    // #4031's; each is the whole first `$cms$` block its own migration wrote.
+    expect(sql).toContain(
+      `AND "contentHtml" IN ($previous$${entries[0]!.literal}$previous$, $older$${entries[1]!.literal}$older$, $oldest$${entries[2]!.literal}$oldest$)`,
+    );
     const writtenBy = (name: string) => migrationSql(name).match(/\$cms\$([\s\S]*?)\$cms\$/)?.[1];
-    expect(entries[0]!.literal).toBe(writtenBy("20261214010000_correct_starter_privacy_retention_and_hosting"));
-    expect(entries[1]!.literal).toBe(writtenBy("20261119010000_correct_starter_privacy_audit_retention"));
+    expect(entries[0]!.literal).toBe(writtenBy("20261220010000_correct_starter_privacy_subject_access"));
+    expect(entries[1]!.literal).toBe(writtenBy("20261214010000_correct_starter_privacy_retention_and_hosting"));
+    expect(entries[2]!.literal).toBe(writtenBy("20261119010000_correct_starter_privacy_audit_retention"));
   });
 });
 
@@ -555,19 +560,21 @@ describe("value-scoped content cleanups stay tied to the registry (#2511)", () =
     // its first HTML entity. Each rewrote one starter version to the next and
     // pins the version it replaced. None of those bodies is registered: they
     // are earlier starter wording, not another club's text, and #5007 registers
-    // only the two privacy bodies its own migration rewrites (#4914's and
-    // #4031's). Older privacy bodies still carry the Sydney hosting claim, so
-    // a bundle exported before October 2026 can still restore it; registering
-    // those is outside #5007.
+    // only the three privacy bodies its own migration rewrites (#4915's,
+    // #4914's and #4031's). Older privacy bodies still carry the Sydney hosting
+    // claim, so a bundle exported before October 2026 can still restore it;
+    // registering those is outside #5007.
     "20260702120000_update_starter_faq_accordion",
     "20260702144000_update_privacy_for_analytics_consent",
     "20260705130000_add_non_member_hold_enabled",
     "20260717180000_genericise_starter_lodge_copy",
     "20261119010000_correct_starter_privacy_audit_retention",
     "20261218070000_summarise_starter_faq_personal_data",
-    // #4914 pins the #4031 privacy body, which is registered above under the
-    // migration that last rewrites it (20261222030000, #5007).
+    // #4914 pins the #4031 privacy body and #4915 pins the #4914 body. Both are
+    // registered above under the migration that last rewrites them
+    // (20261222030000, #5007).
     "20261214010000_correct_starter_privacy_retention_and_hosting",
+    "20261220010000_correct_starter_privacy_subject_access",
   ]);
 
   /** Does any UPDATE statement's WHERE clause pin a guarded column's byte value? */

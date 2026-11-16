@@ -102,8 +102,16 @@ describe("privacy recipient register census", () => {
     // The host scan skips this file, so it must never grow code that could call out.
     const path = join(root, "src", "lib", "config-transfer", "starter-privacy-cleaned-bodies.ts");
     const file = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
-    const initialisers = file.statements.flatMap((statement) =>
-      ts.isVariableStatement(statement) ? statement.declarationList.declarations.map((d) => d.initializer) : [statement]);
+    // A variable's initialiser, or the statement itself when it is anything else
+    // (an import, a function, a call), which the check below then rejects.
+    const initialisers: Array<ts.Node | undefined> = [];
+    for (const statement of file.statements) {
+      if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) initialisers.push(declaration.initializer);
+      } else {
+        initialisers.push(statement);
+      }
+    }
     expect(initialisers.length).toBeGreaterThan(0);
     for (const initialiser of initialisers) expect(initialiser && ts.isStringLiteral(initialiser)).toBe(true);
   });

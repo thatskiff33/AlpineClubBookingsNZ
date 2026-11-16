@@ -1,1 +1,1 @@
-export const DEFAULT_BASE_REF: string;
+export declare const DEFAULT_BASE_REF: string;

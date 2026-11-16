@@ -6,21 +6,29 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   bumpPackageJson,
   bumpVersion,
+  CI_WORKFLOW_FILE,
   computeRelease,
   FEATURE_FRAGMENT_SUFFIX,
   fragmentBump,
-  githubHeadingAnchor,
   latestReleaseTag,
   main,
   MAX_RELEASE_NOTES_CHARS,
   parseArgs,
   parseGitHubRemote,
   prepareRelease,
+  PUBLISH_IMAGES_JOB_NAME,
   publishRelease,
   releaseBody,
   ReleaseCutError,
 } from "./cut-release.mjs";
 import { releaseSection } from "./compile-changelog.mjs";
+import { parseWorkflowYaml } from "../ci/check-workflow-suite-checkout-depth.mjs";
+import {
+  RUNBOOK_RELEASE_AGNOSTIC_MARKER,
+  UNRELEASED_HEADING,
+  UPGRADE_CHECKLIST_HEADING,
+  UPGRADING_GUIDE_HEADINGS,
+} from "./upgrade-docs.mjs";
 
 // Every test runs against a throwaway fixture: a bare "origin" and a clone of
 // it. The clone's origin URL is a GitHub URL that git's `insteadOf` rewrites to
@@ -76,11 +84,38 @@ function configure(cwd) {
   git(cwd, "config", "core.hooksPath", path.join(cwd, ".no-hooks"));
 }
 
+// The two upgrade documents prepare checks (#4979), cut down to what it reads.
+// Their headings and marker come from upgrade-docs.mjs, so a rename there moves
+// this fixture with it instead of leaving two files that disagree about the shape.
+const GUIDE_TOP = ["# Upgrading", "", ...UPGRADING_GUIDE_HEADINGS.flatMap((heading) => [heading, ""])].join("\n");
+const UPGRADING_READY = [
+  GUIDE_TOP,
+  UNRELEASED_HEADING,
+  "",
+  UPGRADE_CHECKLIST_HEADING,
+  "",
+  "1. Rehearse.",
+  "",
+  "---",
+  "",
+  "## v0.13.1 → v0.13.2",
+  "",
+  "Older steps.",
+  "",
+].join("\n");
+const RUNBOOK_AGNOSTIC = `# Production Upgrade Runbook\n\n${RUNBOOK_RELEASE_AGNOSTIC_MARKER}.\n\n## 0. Scope\n`;
+const READY_DOCS = { "docs/UPGRADING.md": UPGRADING_READY, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": RUNBOOK_AGNOSTIC };
+
 /**
  * A bare origin holding one release-tagged commit plus pending fragments, and a
  * clean clone of it. Returns `{ origin, repo }`.
  */
-function makeFixture({ fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" }, tags = ["v0.13.2"], changelog = CHANGELOG } = {}) {
+function makeFixture({
+  fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body.\n" },
+  tags = ["v0.13.2"],
+  changelog = CHANGELOG,
+  docs = {},
+} = {}) {
   const origin = path.join(tempDir("release-cut-origin-"), "origin.git");
   execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
   const seed = tempDir("release-cut-seed-");
@@ -93,6 +128,10 @@ function makeFixture({ fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body
   fs.mkdirSync(path.join(seed, "size-allowances.d"));
   fs.writeFileSync(path.join(seed, "size-allowances.d", "README.md"), "# Allowances\n");
   fs.writeFileSync(path.join(seed, "size-allowances.d", "4300-spent.md"), "lines: 900\n");
+  for (const [relative, body] of Object.entries(docs)) {
+    fs.mkdirSync(path.dirname(path.join(seed, relative)), { recursive: true });
+    fs.writeFileSync(path.join(seed, relative), body);
+  }
   git(seed, "add", "--all");
   git(seed, "commit", "-qm", "released base");
   for (const tag of tags) git(seed, "tag", "-a", tag, "-m", tag);
@@ -112,15 +151,30 @@ function makeFixture({ fragments = { "4400-a-fix.md": "- **A fix (#4400).** Body
   return { origin, repo };
 }
 
+const GH_API = "gh api --hostname github.com repos/fixture-owner/fixture-repo/actions";
+const GH_RUNS = `${GH_API}/workflows/`;
+const GH_JOBS = `${GH_API}/runs/`;
+
+const json = (value) => ({ status: 0, stdout: `${JSON.stringify(value)}\n`, stderr: "" });
+const ciRuns = (...runs) => json({ total_count: runs.length, workflow_runs: runs });
+const ciJobs = (...jobs) => json({ total_count: jobs.length, jobs });
+const ciRun = (id, conclusion = "success") => ({ id, status: conclusion === null ? "in_progress" : "completed", conclusion });
+const ciJob = (id, name, conclusion = "success") => ({ id, name, status: conclusion === null ? "queued" : "completed", conclusion });
+/** A run whose publish job succeeded: what every main commit's CI run leaves when it completes. */
+const PUBLISHED_JOBS = ciJobs(ciJob(1, "Verify"), ciJob(2, PUBLISH_IMAGES_JOB_NAME));
+
 /** What `gh` answers when a test does not say otherwise. */
 const GH_DEFAULTS = {
   "gh repo view": { status: 0, stdout: "fixture-owner/fixture-repo\n", stderr: "" },
   "gh release view": { status: 1, stdout: "", stderr: "release not found" },
+  [GH_RUNS]: ciRuns(ciRun(101)),
+  [GH_JOBS]: PUBLISHED_JOBS,
 };
 
 /**
  * Real git in the fixture, except that `git push` and every `gh` call are
- * recorded and answered from `stubs`, then `GH_DEFAULTS`, then success.
+ * recorded and answered from `stubs`, then `GH_DEFAULTS`, then success. An
+ * answer may be a function of the whole command line.
  * `calls` holds every command in the order it ran.
  */
 function fixtureRunner(cwd, stubs = {}) {
@@ -131,7 +185,8 @@ function fixtureRunner(cwd, stubs = {}) {
     calls.push(line);
     if (command === "gh" || (command === "git" && args[0] === "push")) {
       const key = Object.keys(answers).find((prefix) => line.startsWith(prefix));
-      return key ? answers[key] : { status: 0, stdout: "", stderr: "" };
+      if (!key) return { status: 0, stdout: "", stderr: "" };
+      return typeof answers[key] === "function" ? answers[key](line) : answers[key];
     }
     const result = spawnSync(command, args, { cwd, encoding: "utf8", env: GIT_ENV });
     return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
@@ -303,11 +358,6 @@ describe("package.json, remote and release-body helpers", () => {
     expect(parseGitHubRemote("")).toBeNull();
   });
 
-  it("computes the anchor GitHub gives a release heading", () => {
-    expect(githubHeadingAnchor("## 0.13.3 - 2026-10-31")).toBe("0133---2026-10-31");
-    expect(githubHeadingAnchor("## Unreleased")).toBe("unreleased");
-  });
-
   it("publishes the section as-is up to the limit and a short linked body beyond it", () => {
     const repo = { host: "github.com", owner: "o", name: "r" };
     const heading = "## 0.13.3 - 2026-10-31";
@@ -457,6 +507,95 @@ describe("release:cut prepare on a fixture repository", () => {
     expect(error.recovery).toContain("git tag -d v0.13.3");
   });
 
+  it("folds the upgrade guide's Unreleased steps into the release's heading (#4979)", () => {
+    const { repo } = makeFixture({ docs: READY_DOCS });
+    const dryLog = silentLog();
+    prepareRelease({ repoRoot: repo, date: "2026-10-31", run: fixtureRunner(repo), log: dryLog });
+    expect(dryLog.text()).toContain(
+      `4. fold docs/UPGRADING.md "${UNRELEASED_HEADING}" into "## v0.13.2 → v0.13.3", leaving an empty "${UNRELEASED_HEADING}"`,
+    );
+    expect(dryLog.text()).toContain("git add --all -- CHANGELOG.md package.json changelog.d size-allowances.d docs/UPGRADING.md");
+    expect(dryLog.text()).not.toContain("it does NOT yet");
+
+    prepareRelease({ repoRoot: repo, execute: true, date: "2026-10-31", run: fixtureRunner(repo), log: silentLog() });
+
+    const folded = fs.readFileSync(path.join(repo, "docs", "UPGRADING.md"), "utf8");
+    expect(folded).toContain(
+      [UNRELEASED_HEADING, "", "---", "", "## v0.13.2 → v0.13.3", "", UPGRADE_CHECKLIST_HEADING].join("\n"),
+    );
+    expect(folded.split("\n").filter((line) => line === UNRELEASED_HEADING)).toHaveLength(1);
+    expect(git(repo, "show", "--name-status", "--format=", "HEAD").split("\n")).toContain("M\tdocs/UPGRADING.md");
+    expect(git(repo, "status", "--porcelain", "--untracked-files=all")).toBe("");
+  });
+
+  it("does not fold an empty Unreleased block, and warns when the checklist is missing", () => {
+    const empty = makeFixture({
+      docs: { ...READY_DOCS, "docs/UPGRADING.md": `${GUIDE_TOP}${UNRELEASED_HEADING}\n\n---\n\n## v0.13.1 → v0.13.2\n` },
+    });
+    const emptyLog = silentLog();
+    prepareRelease({ repoRoot: empty.repo, date: "2026-10-31", run: fixtureRunner(empty.repo), log: emptyLog });
+    expect(emptyLog.text()).not.toContain("fold docs/UPGRADING.md");
+
+    const bare = makeFixture({
+      docs: { ...READY_DOCS, "docs/UPGRADING.md": `${GUIDE_TOP}${UNRELEASED_HEADING}\n\n### A step (#4500)\n\nDo it.\n` },
+    });
+    const bareLog = silentLog();
+    prepareRelease({ repoRoot: bare.repo, date: "2026-10-31", run: fixtureRunner(bare.repo), log: bareLog });
+    expect(bareLog.text()).toContain("(it does NOT yet: write one)");
+  });
+
+  it("refuses a release-specific section above the guide's Unreleased block, dry run included", () => {
+    const misplaced = UPGRADING_READY.replace(UNRELEASED_HEADING, `### Review this first (#4457)\n\n${UNRELEASED_HEADING}`);
+    const { repo } = makeFixture({ docs: { ...READY_DOCS, "docs/UPGRADING.md": misplaced } });
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /upgrade documents are not ready[\s\S]*"### Review this first \(#4457\)"/,
+    );
+    expect(error.recovery).toContain("Public Reference Release Checklist");
+    expect(snapshot(repo)).toEqual(before);
+  });
+
+  it("refuses a runbook still scoped to a release older than the one being cut", () => {
+    const stale = "# Production Upgrade Runbook\n\nFrom `v0.9.0` up to `v0.10.0`.\n\n## 0. Scope\n";
+    const { repo } = makeFixture({ docs: { ...READY_DOCS, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": stale } });
+    expectRefusal(
+      () => prepareRelease({ repoRoot: repo, execute: true, run: fixtureRunner(repo), log: silentLog() }),
+      /scopes it to v0\.10\.0, older than v0\.13\.3/,
+    );
+    expect(git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
+  });
+
+  it("holds the runbook to the release being cut, the census's threshold, not origin's latest tag", () => {
+    // v0.13.2 is origin's latest tag and passes a check against it, but the
+    // release being cut is v0.13.3, and package.json carries that once the
+    // release-prep pull request is open, where the census would then fail.
+    const scopedToPrevious = "# Production Upgrade Runbook\n\nFrom `v0.13.1` up to `v0.13.2`.\n\n## 0. Scope\n";
+    const previous = makeFixture({ docs: { ...READY_DOCS, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": scopedToPrevious } });
+    expectRefusal(
+      () => prepareRelease({ repoRoot: previous.repo, run: fixtureRunner(previous.repo), log: silentLog() }),
+      /scopes it to v0\.13\.2, older than v0\.13\.3/,
+    );
+
+    const scopedToNew = "# Production Upgrade Runbook\n\nFrom `v0.13.2` up to `v0.13.3`.\n\n## 0. Scope\n";
+    const current = makeFixture({ docs: { ...READY_DOCS, "docs/PRODUCTION_UPGRADE_RUNBOOK.md": scopedToNew } });
+    expect(prepareRelease({ repoRoot: current.repo, run: fixtureRunner(current.repo), log: silentLog() })).toMatchObject({
+      version: "0.13.3",
+    });
+  });
+
+  it("explains a refusal to fold into a release heading that already exists, and changes nothing", () => {
+    const taken = UPGRADING_READY.replace("## v0.13.1 → v0.13.2", "## v0.13.2 → v0.13.3\n\nSteps already placed by hand.\n\n## v0.13.1 → v0.13.2");
+    const { repo } = makeFixture({ docs: { ...READY_DOCS, "docs/UPGRADING.md": taken } });
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, run: fixtureRunner(repo), log: silentLog() }),
+      /Cannot fold docs\/UPGRADING\.md: .*already has "## v0\.13\.2 → v0\.13\.3"\. Its "## Unreleased" steps would have nowhere to go\./,
+    );
+    expect(error.recovery).toContain('into "## v0.13.2 → v0.13.3" in a pull request to main, then re-run.');
+    expect(snapshot(repo)).toEqual(before);
+  });
+
   it("refuses when there is nothing to release", () => {
     const { repo } = makeFixture({ fragments: {} });
     expectRefusal(
@@ -498,8 +637,8 @@ function mergedReleaseFixture(options) {
  * release-prep PR is open, then the prep PR merges with a merge commit.
  * Returns the prep commit (never main's tip) and the merge commit.
  */
-function lateFragmentFixture({ lateName = "4500-late.md", bump = null } = {}) {
-  const fixture = makeFixture();
+function lateFragmentFixture({ lateName = "4500-late.md", bump = null, docs = {} } = {}) {
+  const fixture = makeFixture({ docs });
   const plan = prepareRelease({ repoRoot: fixture.repo, execute: true, bump, date: "2026-10-31", run: fixtureRunner(fixture.repo), log: silentLog() });
   const prep = git(fixture.repo, "rev-parse", "HEAD");
   git(fixture.repo, "switch", "-q", "--detach", "origin/main");
@@ -559,6 +698,31 @@ describe("late fragments: release:cut prepare --amend and publish --carry-late-f
     const published = publishRelease({ repoRoot: repo, execute: true, run: fixtureRunner(repo), writeNotes, log: silentLog() });
     expect(published).toMatchObject({ executed: true, tag: "v0.13.3", state: "fresh" });
     expect(fs.readFileSync(writeNotes.file, "utf8")).toBe("- **A fix (#4400).** Body.\n- **Late (#4500).**\n");
+  });
+
+  it("does not fold the upgrade guide on --amend: it prints the late steps to move by hand (#4979)", () => {
+    const { repo } = lateFragmentFixture({ docs: READY_DOCS });
+    // A late pull request adds a step under the fresh, empty "## Unreleased" the first prepare left.
+    const guide = path.join(repo, "docs", "UPGRADING.md");
+    fs.writeFileSync(
+      guide,
+      fs.readFileSync(guide, "utf8").replace(`${UNRELEASED_HEADING}\n\n---`, `${UNRELEASED_HEADING}\n\n### A late step (#4500)\n\nDo it.\n\n---`),
+    );
+    git(repo, "commit", "-qam", "Merge pull request #4502");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+    const lateGuide = fs.readFileSync(guide, "utf8");
+
+    const dry = silentLog();
+    prepareRelease({ repoRoot: repo, amend: true, run: fixtureRunner(repo), log: dry });
+    expect(dry.text()).toContain(
+      `docs/UPGRADING.md has steps under "${UNRELEASED_HEADING}" this phase does not fold; move the ones that belong to v0.13.3 into its section by hand and commit.`,
+    );
+    expect(dry.text()).not.toContain("fold docs/UPGRADING.md");
+    expect(dry.text()).not.toContain("git add --all -- CHANGELOG.md package.json changelog.d size-allowances.d docs/UPGRADING.md");
+
+    prepareRelease({ repoRoot: repo, amend: true, execute: true, date: "2026-11-02", run: fixtureRunner(repo), log: silentLog() });
+    expect(git(repo, "show", "--name-status", "--format=", "HEAD").split("\n")).not.toContain("M\tdocs/UPGRADING.md");
+    expect(fs.readFileSync(guide, "utf8")).toBe(lateGuide);
   });
 
   it("publishes anyway with --carry-late-fragments and names what is carried", () => {
@@ -670,7 +834,10 @@ describe("release:cut publish on a fixture repository", () => {
     expect(text).toContain("4. git push origin refs/tags/v0.13.3");
     expect(text).toContain("5. gh release create v0.13.3 --repo fixture-owner/fixture-repo --verify-tag --title v0.13.3 --notes-file <body>");
     expect(text).toContain("DEPLOY_REF=v0.13.3 ./scripts/run-production-blue-green-deploy.sh");
+    expect(text).toContain('CI: ci.yml run 101 published its images ("Publish GHCR images": success).');
     expect(run.calls.filter((call) => call.startsWith("gh "))).toEqual([
+      `${GH_RUNS}ci.yml/runs?head_sha=${merged}&event=push&branch=main&per_page=100`,
+      `${GH_JOBS}101/jobs?filter=all&per_page=100`,
       "gh auth status --hostname github.com",
       "gh repo view fixture-owner/fixture-repo --json nameWithOwner --jq .nameWithOwner",
     ]);
@@ -691,6 +858,8 @@ describe("release:cut publish on a fixture repository", () => {
 
     const ordered = run.calls.filter((call) => call === "write notes" || /^(git (tag -a|push)|gh )/.test(call));
     expect(ordered).toEqual([
+      `${GH_RUNS}ci.yml/runs?head_sha=${merged}&event=push&branch=main&per_page=100`,
+      `${GH_JOBS}101/jobs?filter=all&per_page=100`,
       "gh auth status --hostname github.com",
       "gh repo view fixture-owner/fixture-repo --json nameWithOwner --jq .nameWithOwner",
       "write notes",
@@ -1035,5 +1204,169 @@ describe("release:cut publish on a fixture repository", () => {
     expect(error.message).toBe(`origin's URL is not a GitHub repository URL: ${redacted}`);
     expect(`${error.message}\n${error.recovery}`).not.toContain("SECRET-TOKEN");
     expect(`${error.message}\n${error.recovery}`).not.toContain("release-bot");
+  });
+});
+
+describe("release:cut publish asks GitHub whether CI published the commit's images (INV-OPS-021)", () => {
+  it("names a workflow file and a job that exist, and the job publishes only from main pushes", () => {
+    const workflow = parseWorkflowYaml(fs.readFileSync(path.join(import.meta.dirname, "..", "..", ".github", "workflows", CI_WORKFLOW_FILE), "utf8"));
+    const publishing = Object.values(workflow.jobs).filter((job) => job.name === PUBLISH_IMAGES_JOB_NAME);
+    expect(publishing).toHaveLength(1);
+    expect(publishing[0].if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'");
+  });
+
+  const refusals = [
+    ["the run was cancelled before publishing", { [GH_RUNS]: ciRuns(ciRun(101, "cancelled")), [GH_JOBS]: ciJobs(ciJob(2, PUBLISH_IMAGES_JOB_NAME, "cancelled")) }, /Found: run 101 \(cancelled\): "Publish GHCR images" cancelled\./],
+    ["the run failed and publishing was skipped", { [GH_RUNS]: ciRuns(ciRun(101, "failure")), [GH_JOBS]: ciJobs(ciJob(1, "Verify", "failure"), ciJob(2, PUBLISH_IMAGES_JOB_NAME, "skipped")) }, /run 101 \(failure\): "Publish GHCR images" skipped/],
+    ["the publish job itself failed", { [GH_JOBS]: ciJobs(ciJob(2, PUBLISH_IMAGES_JOB_NAME, "failure")) }, /run 101 \(success\): "Publish GHCR images" failure/],
+    ["the run is still going", { [GH_RUNS]: ciRuns(ciRun(101, null)), [GH_JOBS]: ciJobs(ciJob(2, PUBLISH_IMAGES_JOB_NAME, null)) }, /run 101 \(in_progress\): "Publish GHCR images" queued/],
+    ["the run has no publish job", { [GH_JOBS]: ciJobs(ciJob(1, "Verify")) }, /run 101 \(success\): "Publish GHCR images" never ran/],
+    ["GitHub has no run for the commit", { [GH_RUNS]: ciRuns() }, /GitHub has no such run for it\./],
+  ];
+  for (const [label, stubs, pattern] of refusals) {
+    it(`refuses before any tag or release when ${label}, in the dry run and with --execute`, () => {
+      const { repo, merged } = mergedReleaseFixture();
+      for (const execute of [false, true]) {
+        const run = fixtureRunner(repo, stubs);
+        const error = expectRefusal(
+          () => publishRelease({ repoRoot: repo, execute, run, writeNotes: notesWriter(), log: silentLog() }),
+          new RegExp(`^${merged.slice(0, 12)} has no ci\\.yml push run on main whose "Publish GHCR images" job succeeded`),
+        );
+        expect(error.message).toMatch(pattern);
+        expect(error.recovery).toMatch(/^Nothing was created\./);
+        expect(run.sideEffects()).toEqual([]);
+        expect(git(repo, "tag", "--list", "v0.13.3")).toBe("");
+      }
+    });
+  }
+
+  it("gives the re-run command when a run exists, and a different remedy when none does", () => {
+    const { repo } = mergedReleaseFixture();
+    const cancelled = expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo, { [GH_RUNS]: ciRuns(ciRun(4242, "cancelled")), [GH_JOBS]: ciJobs() }), log: silentLog() }),
+      /run 4242/,
+    );
+    expect(cancelled.recovery).toContain("gh run rerun 4242 --repo fixture-owner/fixture-repo");
+    const absent = expectRefusal(() => publishRelease({ repoRoot: repo, run: fixtureRunner(repo, { [GH_RUNS]: ciRuns() }), log: silentLog() }), /no such run/);
+    expect(absent.recovery).toBe("Nothing was created. Tag a main commit whose ci.yml run published its images.");
+  });
+
+  it("accepts images an earlier attempt published, and reports the latest attempt when none did", () => {
+    const { repo } = mergedReleaseFixture();
+    const rerunFailed = ciJobs({ ...ciJob(3, PUBLISH_IMAGES_JOB_NAME, "failure"), run_attempt: 2 }, { ...ciJob(2, PUBLISH_IMAGES_JOB_NAME), run_attempt: 1 });
+    const log = silentLog();
+    publishRelease({ repoRoot: repo, run: fixtureRunner(repo, { [GH_RUNS]: ciRuns(ciRun(101, "failure")), [GH_JOBS]: rerunFailed }), log });
+    expect(log.text()).toContain("CI: ci.yml run 101 published its images");
+
+    const neither = ciJobs({ ...ciJob(3, PUBLISH_IMAGES_JOB_NAME, "failure"), run_attempt: 2 }, { ...ciJob(2, PUBLISH_IMAGES_JOB_NAME, "cancelled"), run_attempt: 1 });
+    expectRefusal(
+      () => publishRelease({ repoRoot: repo, run: fixtureRunner(repo, { [GH_RUNS]: ciRuns(ciRun(101, "failure")), [GH_JOBS]: neither }), log: silentLog() }),
+      /run 101 \(failure\): "Publish GHCR images" failure\./,
+    );
+  });
+
+  it("publishes when a later run for the commit published, even if an earlier one did not", () => {
+    const { repo } = mergedReleaseFixture();
+    const run = fixtureRunner(repo, {
+      [GH_RUNS]: ciRuns(ciRun(101, "cancelled"), ciRun(102)),
+      [GH_JOBS]: (line) => (line.includes("/runs/102/") ? PUBLISHED_JOBS : ciJobs(ciJob(2, PUBLISH_IMAGES_JOB_NAME, "cancelled"))),
+    });
+    const log = silentLog();
+    expect(publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log }).executed).toBe(true);
+    expect(log.text()).toContain("CI: ci.yml run 102 published its images");
+  });
+
+  const unreadable = [
+    ["the API call fails", { [GH_RUNS]: { status: 1, stdout: "", stderr: "HTTP 403: Resource not accessible" } }, /failed:\nHTTP 403/],
+    ["the answer is not JSON", { [GH_RUNS]: { status: 0, stdout: "<html>", stderr: "" } }, /answered in a shape this script does not read/],
+    ["the runs list is missing", { [GH_RUNS]: json({ total_count: 0 }) }, /answered in a shape/],
+    ["a run has no id", { [GH_RUNS]: json({ total_count: 1, workflow_runs: [{ status: "completed", conclusion: "success" }] }) }, /answered in a shape/],
+    ["a jobs page is shorter than GitHub says the answer holds", { [GH_JOBS]: json({ total_count: 150, jobs: [ciJob(2, PUBLISH_IMAGES_JOB_NAME)] }) }, /answered in a shape/],
+    ["the jobs call fails", { [GH_JOBS]: { status: 1, stdout: "", stderr: "HTTP 502" } }, /failed:\nHTTP 502/],
+  ];
+  for (const [label, stubs, pattern] of unreadable) {
+    it(`fails closed when ${label}`, () => {
+      const { repo } = mergedReleaseFixture();
+      const run = fixtureRunner(repo, stubs);
+      const error = expectRefusal(() => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }), pattern);
+      expect(error.recovery).toMatch(/^Nothing was created\./);
+      expect(run.sideEffects()).toEqual([]);
+      expect(git(repo, "tag", "--list", "v0.13.3")).toBe("");
+    });
+  }
+
+  /** A full page of jobs that are not the publish job: what a run re-run several times fills the first pages with. */
+  const fullPage = (first) => Array.from({ length: 100 }, (_, index) => ({ ...ciJob(first + index, "Verify"), run_attempt: 1 }));
+
+  it("reads every page of a run's jobs, so a run re-run several times still counts", () => {
+    const { repo } = mergedReleaseFixture();
+    const published = { ...ciJob(9001, PUBLISH_IMAGES_JOB_NAME), run_attempt: 6 };
+    const run = fixtureRunner(repo, {
+      [GH_JOBS]: (line) => json({ total_count: 101, jobs: line.endsWith("&page=2") ? [published] : fullPage(1) }),
+    });
+    const log = silentLog();
+    publishRelease({ repoRoot: repo, run, log });
+    expect(log.text()).toContain("CI: ci.yml run 101 published its images");
+    expect(run.calls.filter((call) => call.startsWith(GH_JOBS))).toEqual([
+      `${GH_JOBS}101/jobs?filter=all&per_page=100`,
+      `${GH_JOBS}101/jobs?filter=all&per_page=100&page=2`,
+    ]);
+  });
+
+  it("refuses with its own message, not an API-change one, when an answer outgrows the pages it reads", () => {
+    const { repo } = mergedReleaseFixture();
+    const run = fixtureRunner(repo, { [GH_JOBS]: (line) => json({ total_count: 5000, jobs: fullPage(Number(/&page=(\d+)$/.exec(line)?.[1] ?? 1) * 100) }) });
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      /runs\/101\/jobs\?filter=all&per_page=100 holds more than 10 pages of 100, more than this script reads/,
+    );
+    expect(error.recovery).toMatch(/^Nothing was created\. A run re-run this many times is unusual/);
+    expect(error.recovery).not.toContain("API has changed");
+    expect(run.calls.filter((call) => call.startsWith(GH_JOBS))).toHaveLength(10);
+    expect(run.sideEffects()).toEqual([]);
+    expect(git(repo, "tag", "--list", "v0.13.3")).toBe("");
+  });
+
+  /** Origin holds v0.13.3 on the merged commit with no release, and main has moved to a commit CI has not published. */
+  function resumeFixture() {
+    const fixture = mergedReleaseFixture();
+    git(fixture.repo, "tag", "-a", "v0.13.3", "-m", "v0.13.3", fixture.merged);
+    git(fixture.repo, "push", "-q", "origin", "refs/tags/v0.13.3");
+    git(fixture.repo, "commit", "-q", "--allow-empty", "-m", "Merge pull request #4600 (docs)");
+    git(fixture.repo, "push", "-q", "origin", "HEAD:main");
+    return { ...fixture, moved: git(fixture.repo, "rev-parse", "HEAD") };
+  }
+
+  it("on a resume, judges the tagged commit, not main's newer tip", () => {
+    const { repo, merged, moved } = resumeFixture();
+    const run = fixtureRunner(repo, { [GH_RUNS]: (line) => (line.includes(`head_sha=${merged}&`) ? ciRuns(ciRun(101)) : ciRuns()) });
+    const result = publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() });
+    expect(result).toMatchObject({ state: "pushed", commit: merged, executed: true });
+    expect(run.calls.filter((call) => call.startsWith(GH_RUNS))).toEqual([expect.stringContaining(`head_sha=${merged}&`)]);
+    expect(run.calls.some((call) => call.startsWith("gh ") && call.includes(moved))).toBe(false);
+  });
+
+  it("points a local-only tag at --commit before judging main's unpublished tip", () => {
+    const { repo, merged } = mergedReleaseFixture();
+    git(repo, "tag", "-a", "v0.13.3", "-m", "v0.13.3", merged);
+    git(repo, "commit", "-q", "--allow-empty", "-m", "Merge pull request #4600 (docs)");
+    git(repo, "push", "-q", "origin", "HEAD:main");
+    const run = fixtureRunner(repo, { [GH_RUNS]: (line) => (line.includes(`head_sha=${merged}&`) ? ciRuns(ciRun(101)) : ciRuns()) });
+    const error = expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      /This clone's tag v0\.13\.3 is on [0-9a-f]{12}, not [0-9a-f]{12}, and origin has no v0\.13\.3/,
+    );
+    expect(error.recovery).toBe(`Resume against the tagged commit: pnpm run release:cut publish --execute --commit ${merged}`);
+    expect(run.sideEffects()).toEqual([]);
+  });
+
+  it("on a resume, refuses the tagged commit when its run did not publish", () => {
+    const { repo, merged } = resumeFixture();
+    const run = fixtureRunner(repo, { [GH_RUNS]: (line) => (line.includes(`head_sha=${merged}&`) ? ciRuns(ciRun(101, "cancelled")) : ciRuns(ciRun(202))), [GH_JOBS]: ciJobs() });
+    expectRefusal(
+      () => publishRelease({ repoRoot: repo, execute: true, run, writeNotes: notesWriter(), log: silentLog() }),
+      new RegExp(`^${merged.slice(0, 12)} has no ci\\.yml push run`),
+    );
+    expect(run.sideEffects()).toEqual([]);
   });
 });

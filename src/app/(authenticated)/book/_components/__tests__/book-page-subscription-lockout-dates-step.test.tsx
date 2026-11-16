@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isBookingBlockedBySubscription,
   readSubscriptionLockoutView,
-} from "@/app/(authenticated)/book/_components/types";
+} from "@/components/book/booking-wizard-types";
 
 // #4941. Under NON_MEMBER_PRICING the banner told an unpaid member they could
 // book at non-member rates, while the Select Your Dates card below it still said

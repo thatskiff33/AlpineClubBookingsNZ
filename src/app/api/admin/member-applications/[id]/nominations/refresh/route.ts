@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import {
-  MembershipApplicationError,
-  refreshMemberApplicationNominations,
-} from "@/lib/nomination";
+import { MembershipApplicationError } from "@/lib/member-application-fields";
+import { refreshMemberApplicationNominations } from "@/lib/nomination";
 import { requireAdmin } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 

@@ -41,6 +41,7 @@
 import {
   STARTER_PRIVACY_BODY_4031,
   STARTER_PRIVACY_BODY_4914,
+  STARTER_PRIVACY_BODY_4915,
 } from "./starter-privacy-cleaned-bodies";
 
 /** One planted value that a cleanup migration removed. */
@@ -158,7 +159,20 @@ export const CLEANED_LITERALS: readonly CleanedLiteral[] = [
     // #5007 — 20261222030000_rewrite_starter_privacy_recipients rewrote an
     // unedited starter privacy policy so section 5 lists every member-facing
     // recipient in the register and names the host through {{data-hosting}}.
-    // This is the body #4914 wrote, which the migration guards as `$previous$`.
+    // This is the body #4915 wrote, which the migration guards as `$previous$`:
+    // the text an unedited page holds when the migration runs.
+    entity: "page-content",
+    key: "privacy",
+    field: "contentHtml",
+    literal: STARTER_PRIVACY_BODY_4915,
+    migration: "20261222030000_rewrite_starter_privacy_recipients",
+    issue: "#5007",
+    describe:
+      "the starter privacy policy from before its recipients and hosting were listed",
+  },
+  {
+    // #5007 — the same migration also rewrites the body #4914 wrote (guarded as
+    // `$older$`), which a stale editor save or an old bundle can restore.
     entity: "page-content",
     key: "privacy",
     field: "contentHtml",
@@ -166,11 +180,11 @@ export const CLEANED_LITERALS: readonly CleanedLiteral[] = [
     migration: "20261222030000_rewrite_starter_privacy_recipients",
     issue: "#5007",
     describe:
-      "the starter privacy policy from before its recipients and hosting were listed",
+      "the starter privacy policy from before its recipients and hosting were listed, as it read before the access download was described",
   },
   {
     // #5007 — the same migration also rewrites the body #4031 wrote (guarded
-    // as `$older$`), which still says members' data is held in Sydney and that
+    // as `$oldest$`), which still says members' data is held in Sydney and that
     // backups are encrypted.
     entity: "page-content",
     key: "privacy",

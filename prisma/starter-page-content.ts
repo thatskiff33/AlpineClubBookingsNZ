@@ -18,8 +18,9 @@
 //
 // The privacy page is now written by
 // 20261222030000_rewrite_starter_privacy_recipients (#5007), which guards on the
-// bodies #4914's 20261214010000_correct_starter_privacy_retention_and_hosting
-// and #4031's 20261119010000_correct_starter_privacy_audit_retention wrote.
+// bodies #4915's 20261220010000_correct_starter_privacy_subject_access,
+// #4914's 20261214010000_correct_starter_privacy_retention_and_hosting and
+// #4031's 20261119010000_correct_starter_privacy_audit_retention wrote.
 import type { PRIVACY_RECIPIENTS } from "../src/lib/privacy-recipient-classification";
 
 export type StarterPageContent = {
@@ -37,8 +38,9 @@ const POLICY_DATE_LINE =
   "Effective 1 April 2026 &mdash; Last updated 1 April 2026";
 
 // #5007: sections 5 and 6 follow the recipient register and the club's hosting
-// settings; section 10 promises a date bump. Terms is unchanged and keeps the
-// shared line.
+// settings, on top of #4914's retention and hosting corrections and #4915's
+// section 8 (what the access download holds). Section 10 promises a date bump.
+// Terms is unchanged and keeps the shared line.
 const PRIVACY_POLICY_DATE_LINE =
   "Effective 1 April 2026 &mdash; Last updated 15 November 2026";
 
@@ -89,7 +91,7 @@ const privacyPolicyContentHtml = [
   privacySharingSectionHtml,
   privacyStorageSectionHtml,
   `<div><h2>7. How Long We Keep Your Information</h2><ul><li><strong>Active member accounts:</strong> Retained for as long as you remain a member or have an active account.</li><li><strong>Booking and payment records:</strong> Retained for 7 years as required by New Zealand tax law (Income Tax Act 2007).</li><li><strong>Email logs:</strong> {{email-log-retention}}.</li><li><strong>System audit logs</strong> (a record of who did what in the booking system, including the IP address and browser of the person acting). How long an entry is normally kept depends on its kind:<ul><li>Routine diagnostic entries: deleted after 90 days.</li><li>Records of access to sensitive information: kept for 2 years, or up to 7 years if the club keeps an audit archive.</li><li>Records of changes to accounts, bookings and payments, security events, and routine system records: kept for 7 years.</li></ul>Two rules apply to every kind: IP address and browser details are removed from entries after 90 days, and an entry kept as evidence of an incident is kept, with its IP address and browser details, for at least 10 years.</li><li><strong>Password reset and verification tokens:</strong> Automatically deleted after use or expiry (1&ndash;24 hours).</li></ul><p>We do not keep personal information for longer than is necessary for the purpose for which it was collected (IPP 9 &mdash; Retention of personal information).</p></div>`,
-  `<div><h2>8. Your Rights</h2><p>Under the Privacy Act 2020, you have the right to:</p><ul><li><strong>Access your information (IPP 6):</strong> Request a copy of the personal information we hold about you. You can download your data from your <a href="/profile">Profile page</a>.</li><li><strong>Correct your information (IPP 7):</strong> Request that inaccurate information be corrected. You can update your profile details directly, or contact us for assistance.</li><li><strong>Request deletion:</strong> Request deletion of your account and personal data from your Profile page. Note that some financial records must be retained for legal compliance.</li><li><strong>Complain:</strong> If you believe we have breached the Privacy Act 2020, you may complain to us first, or directly to the <a href="https://www.privacy.org.nz/" target="_blank" rel="noopener noreferrer">Office of the Privacy Commissioner</a>.</li></ul></div>`,
+  `<div><h2>8. Your Rights</h2><p>Under the Privacy Act 2020, you have the right to:</p><ul><li><strong>Access your information (IPP 6):</strong> Request a copy of the personal information we hold about you. Download your profile, bookings, credits and other personal records as JSON from your <a href="/profile">Profile page</a>. The file lists exclusions. Contact our Privacy Officer for anything else, for a dependant’s record, or if you do not have an account.</li><li><strong>Correct your information (IPP 7):</strong> Request that inaccurate information be corrected. You can update your profile details directly, or contact us for assistance.</li><li><strong>Request deletion:</strong> Request deletion of your account and personal data from your Profile page. Note that some financial records must be retained for legal compliance.</li><li><strong>Complain:</strong> If you believe we have breached the Privacy Act 2020, you may complain to us first, or directly to the <a href="https://www.privacy.org.nz/" target="_blank" rel="noopener noreferrer">Office of the Privacy Commissioner</a>.</li></ul></div>`,
   `<div><h2>9. Cookies and Tracking</h2><p>This System uses a session cookie to keep you logged in. This cookie contains an encrypted session token and no personal information. If the club enables Google Analytics, we ask for your consent before loading GA4 analytics cookies. Consent Mode starts with analytics storage denied; GA4 loads only after you accept and is used for aggregate site-use reporting, not advertising. You can decline and keep using the System. The session cookie expires after 8 hours of inactivity or when you sign out.</p><p><strong>Admin note:</strong> Review this section before enabling the Analytics module for your club.</p></div>`,
   `<div><h2>10. Changes to This Policy</h2><p>We may update this Privacy Policy from time to time. When we do, we will update the &ldquo;Last updated&rdquo; date at the top of this page. Continued use of the System after any changes constitutes acceptance of the updated policy.</p></div>`,
   `<div><h2>11. Contact Our Privacy Officer</h2><p>For any questions or concerns about this Privacy Policy, or to exercise your privacy rights, please contact our Privacy Officer:</p><div class="website-legal-callout"><p><strong>Privacy Officer</strong></p><p>{{club-name}} Incorporated</p><p>Please use our <a href="/contact">contact form</a>.</p></div></div>`,

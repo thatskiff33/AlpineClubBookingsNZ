@@ -142,6 +142,13 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingReceipts: receiptDoors.postBookingReceipts,
 }));
+// #4370: the failed-later recount reads in one read-only snapshot; here it
+// runs on the mocked client, and against a real database in
+// xero-recount-failed-later-refund.realdb.test.ts.
+vi.mock("@/lib/read-only-snapshot", () => ({
+  withReadOnlySnapshot: (client: unknown, run: (tx: unknown) => Promise<unknown>) => run(client),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroInboundEvent: {
@@ -211,7 +218,9 @@ vi.mock("@/lib/prisma", () => ({
           roles.includes("MODIFICATION_CREDIT_NOTE_ALLOCATION") &&
           roles.includes("CREDIT_NOTE_ALLOCATION") &&
           where.metadata != null;
-        if (snapshotRead || unlistedAllocationRead) return Promise.resolve([]);
+        // #4370: the recount's bulk read of each payment's card refund reversals.
+        const reversalRead = where.role === "CARD_REFUND_REVERSAL_INVOICE" && typeof where.localId === "object";
+        if (snapshotRead || unlistedAllocationRead || reversalRead) return Promise.resolve([]);
         return mocks.linkFindMany(args);
       },
       // #3642: the group-settlement arm looks up an abandoned invoice's link.
@@ -255,6 +264,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     // #4215: the refunded-total recount reads refund requests paid back; none here.
     manualRefundTask: {
+      findMany: () => Promise.resolve([]),
+    },
+    // #4370: the recount reads card refunds Stripe failed later; none here.
+    paymentRecoveryOperation: {
       findMany: () => Promise.resolve([]),
     },
     $transaction: mocks.transaction,
@@ -369,33 +382,10 @@ vi.mock("@/lib/xero-links", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/xero", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/xero");
-
-  return {
-    ...actual,
-    checkMembershipStatus: mocks.checkMembershipStatus,
-    getAccountMapping: mocks.getAccountMapping,
-    getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
-    refreshXeroContactCachesFromContact: mocks.refreshXeroContactCachesFromContact,
-    syncContactsFromXero: mocks.syncContactsFromXero,
-    refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
-    withXeroRetry: mocks.withXeroRetry,
-    findSubscriptionInvoice: (
-      invoices: Array<{ lineItems?: Array<{ accountCode?: string }>; reference?: string }>
-    ) =>
-      invoices.find(
-        (invoice) =>
-          invoice.lineItems?.some((lineItem) => lineItem.accountCode === "203") ||
-          (invoice.reference ?? "").toLowerCase().includes("annual member subscription")
-      ) ?? null,
-  };
-});
-
-// #1208: xero-inbound-reconciliation now imports these from the source domain
-// modules directly (not the @/lib/xero facade), so the doubles are attached to
-// those modules. The (now-inert) facade mock above is left as-is; real
-// callXeroApi / XeroDailyLimitError from xero-api-client are preserved.
+// #1208: xero-inbound-reconciliation imports these from the source domain
+// modules directly, so the doubles are attached to those modules (the
+// `@/lib/xero` facade is gone, #4930); real callXeroApi / XeroDailyLimitError
+// from xero-api-client are preserved.
 vi.mock("@/lib/xero-api-client", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-api-client");
 

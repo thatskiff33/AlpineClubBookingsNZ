@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { isHttpUrl } from "@/lib/http-url";
-import { adminAnchorHref, adminHref, adminTabHref, getAdminPage } from "@/lib/admin-hubs";
+import { adminHref, adminTabHref, getAdminPage } from "@/lib/admin-hubs";
+import { xeroMappingHref } from "@/lib/admin-hubs/xero-setup";
 import {
   CLUB_TIME_ZONE_FALLBACK,
   CLUB_TIME_ZONE_MAX_LENGTH,
@@ -40,10 +41,7 @@ import {
   type AdminModuleSettingsSnapshot,
 } from "./admin-modules";
 import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
-import {
-  XERO_REQUIRED_REPORT_OAUTH_SCOPES,
-  detectLegacyProviderEnv,
-} from "@/lib/xero-config";
+import { XERO_REQUIRED_REPORT_OAUTH_SCOPES, detectLegacyProviderEnv } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
 import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/data-encryption-key-material";
 import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
@@ -1057,9 +1055,9 @@ const ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL =
  * 3. **PRODUCTION** — complete, and the message SAYS production, because an
  *    operator who has just stood up a copy needs to see at a glance that they
  *    are looking at the live club and not at their copy.
- * 4. **NON_PRODUCTION** — complete, naming which source decided it. A declared
- *    non-production and an administrator-forced one are both fine and are
- *    different facts, so the message distinguishes them.
+ * 4. **NON_PRODUCTION** — declared by the deployment: a WARNING until acknowledged
+ *    (#4980), because a live site copied from `.env.example` lands here too. Forced
+ *    by the safer override alone: complete, since an administrator chose it here.
  * 5. **UNKNOWN** — blocked, naming both sources, the repair, and the
  *    APP_RUNTIME_ROLE trap. Two quite different situations land here — nothing
  *    declared, and a declaration this app refuses to interpret — so the
@@ -1161,14 +1159,14 @@ function buildEnvironmentRoleCheck(
 
   // 4. Confirmed non-production.
   if (resolution.role === "NON_PRODUCTION") {
+    const forcedByAdministrator = resolution.decidedBy === "database-safer-override";
     return applyProgress(
       {
         ...base,
-        status: "complete",
-        message:
-          resolution.decidedBy === "database-safer-override"
-            ? "This installation is treated as NON-PRODUCTION because an administrator has switched the safer override on."
-            : "This installation is declared NON-PRODUCTION — a copy, a staging site or a developer's checkout.",
+        status: forcedByAdministrator ? "complete" : "warning",
+        message: forcedByAdministrator
+          ? "This installation is treated as NON-PRODUCTION because an administrator has switched the safer override on."
+          : `This installation is declared NON-PRODUCTION — a copy, a staging site or a developer's checkout. If this is the club's live site, members are getting no email and Xero contact addresses are being replaced. Set APP_ENVIRONMENT_ROLE=production and restart. If it really is a copy, acknowledge this step.`,
         /*
           THE WITHHELD COUNT GOES FIRST. It answers the question an operator
           meeting an unexpected non-production installation actually has — "is
@@ -2077,8 +2075,8 @@ function buildXeroMappingCheck(
         status: "warning",
         required: false,
         message: "Xero mapping database state was not checked.",
-        details: [`Review mappings on ${getAdminPage("xero").label} after connecting Xero.`],
-        href: adminAnchorHref("xero", "xero-section-mappings"),
+        details: [`Review mappings in ${getAdminPage("xero-setup").label} after connecting Xero.`],
+        href: xeroMappingHref(),
       },
       progress,
     );
@@ -2133,7 +2131,7 @@ function buildXeroMappingCheck(
         `Hut fee item mappings: ${hutFeeMappings}`,
         `Joining fee mappings: ${entranceFeeMappings}`,
       ],
-      href: adminAnchorHref("xero", "xero-section-mappings"),
+      href: xeroMappingHref(),
     },
     progress,
   );

@@ -2609,7 +2609,7 @@ let webhookClient: PrismaClient;
       // invoice on it, which the reaper later retires as unpayable.
       const { isMintedAskStillLive } = await import("@/lib/reissued-ask-invoice");
       expect(await isMintedAskStillLive(ASK_INTENT)).toBe(false);
-      const { enqueueXeroSupplementaryInvoiceOperation } = await import("@/lib/xero-operation-outbox");
+      const { enqueueXeroSupplementaryInvoiceOperation } = await import("@/lib/xero-supplementary-invoice-enqueue");
       const parked = await enqueueXeroSupplementaryInvoiceOperation(
         { bookingId: BOOKING_ID, priceDiffCents: 5_000, changeFeeCents: 0, bookingModificationId: INCREASE_MOD_ID },
         { paymentIntentId: ASK_INTENT, waitForConfirmedAdditionalPayment: true, recordPayment: true },
@@ -2709,6 +2709,7 @@ let webhookClient: PrismaClient;
       return createModificationAdditionalPaymentIntent({
         format: CLUB_FORMAT_TEST, bookingId: BOOKING_ID,
         result: {
+          ownCardRefund: null,
           pendingRefundAmountCents: 0, organiserChildRefund: null, paymentId: PAYMENT_ID,
           additionalAsk: increase.adjusted.additionalAsk, retiredAdditionalAsks: [], hasSucceededPayment: true,
           hasIssuedXeroInvoice: false, paymentCustomerId: "cus_race_3954", memberEmail: "race-3954@example.invalid",

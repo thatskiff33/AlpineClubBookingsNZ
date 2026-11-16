@@ -13,6 +13,11 @@ import {
   FAMILY_INVITE_RETURN_NONCE_HEADER,
 } from "@/lib/family-invite-return-address";
 import { SignOutAndReturnButton } from "./sign-out-and-return-button";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Family group invitation",
+};
 
 export const dynamic = "force-dynamic";
 
@@ -86,7 +91,7 @@ function Shell({
     <div className="mx-auto w-full max-w-2xl px-4 py-10">
       <Card>
         <CardHeader>
-          <CardTitle>{title}</CardTitle>
+          <CardTitle headingLevel={1}>{title}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 text-sm text-muted-foreground">
           {children}
