@@ -1461,7 +1461,11 @@ describe("#4449: the extracted refunded-total decision gives the recount's answe
     );
     aboveCash.read.mockResolvedValue(8000);
   }
-  const ibPayment = payment({ source: PaymentSource.INTERNET_BANKING, xeroInvoiceId: "inv-1", refundedAmountCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED });
+  const ibPayment = {
+    ...payment({ refundedAmountCents: 3000, status: PaymentStatus.PARTIALLY_REFUNDED }),
+    source: PaymentSource.INTERNET_BANKING,
+    xeroInvoiceId: "inv-1" as string | null,
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
