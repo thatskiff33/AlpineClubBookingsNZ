@@ -19,6 +19,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionFailure } from "@/hooks/use-action-failure";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { buildCopiedSeasonPayload } from "@/lib/season-rate-editor";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -134,7 +136,9 @@ export default function LodgeSetupWizardPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [step, setStep] = useState<StepKey>("identity");
-  const [error, setError] = useState("");
+  // Every save, seed and copy failure; the load failure above stays passive.
+  const failure = useActionFailure();
+  const { fail: failAction, clear: clearError } = failure;
   const [saving, setSaving] = useState(false);
 
   // Step 1 — identity
@@ -226,32 +230,32 @@ export default function LodgeSetupWizardPage() {
   const stepIndex = steps.findIndex((s) => s.key === step);
 
   const goNext = useCallback(() => {
-    setError("");
+    clearError();
     const next = steps[stepIndex + 1];
     if (next) setStep(next.key);
-  }, [steps, stepIndex]);
+  }, [clearError, steps, stepIndex]);
 
   const goBack = useCallback(() => {
-    setError("");
+    clearError();
     const previous = steps[stepIndex - 1];
     if (previous) setStep(previous.key);
-  }, [steps, stepIndex]);
+  }, [clearError, steps, stepIndex]);
 
   const capacity = useWizardCapacity({
     lodgeId,
     onFinishStep: step === "finish",
-    setError,
+    failure,
     setSaving,
     goNext,
   });
 
   async function saveIdentity() {
     if (!name.trim()) {
-      setError("Lodge name is required");
+      failAction("Lodge name is required");
       return;
     }
     setSaving(true);
-    setError("");
+    clearError();
     try {
       const res = await fetch(`/api/admin/lodges/${encodeURIComponent(lodgeId)}`, {
         method: "PATCH",
@@ -263,7 +267,7 @@ export default function LodgeSetupWizardPage() {
         }),
       });
       if (res.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        failAction(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
       if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Failed to save lodge"));
@@ -271,7 +275,7 @@ export default function LodgeSetupWizardPage() {
       setLodge(data.lodge);
       goNext();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save lodge");
+      failAction(err instanceof Error ? err.message : "Failed to save lodge");
     } finally {
       setSaving(false);
     }
@@ -279,7 +283,7 @@ export default function LodgeSetupWizardPage() {
 
   async function seedRooms() {
     setSaving(true);
-    setError("");
+    clearError();
     try {
       const res = await fetch("/api/admin/bed-allocation/rooms/bulk", {
         method: "POST",
@@ -292,7 +296,7 @@ export default function LodgeSetupWizardPage() {
         }),
       });
       if (res.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        failAction(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
       if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Failed to create rooms"));
@@ -301,7 +305,7 @@ export default function LodgeSetupWizardPage() {
         `Created ${data.createdRoomCount} rooms with ${data.createdBedCount} beds.`,
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create rooms");
+      failAction(err instanceof Error ? err.message : "Failed to create rooms");
     } finally {
       setSaving(false);
     }
@@ -309,7 +313,7 @@ export default function LodgeSetupWizardPage() {
 
   async function seedLockers() {
     setSaving(true);
-    setError("");
+    clearError();
     try {
       const res = await fetch("/api/admin/lockers/bulk", {
         method: "POST",
@@ -323,14 +327,14 @@ export default function LodgeSetupWizardPage() {
         }),
       });
       if (res.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        failAction(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
       if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Failed to create lockers"));
       const data = await res.json();
       setLockersSeeded(`Created ${data.createdCount} lockers.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create lockers");
+      failAction(err instanceof Error ? err.message : "Failed to create lockers");
     } finally {
       setSaving(false);
     }
@@ -339,7 +343,7 @@ export default function LodgeSetupWizardPage() {
   async function copySeasons() {
     if (!seasonSourceLodgeId) return;
     setSaving(true);
-    setError("");
+    clearError();
     setSeasonCopy({ status: "copying" });
     try {
       const res = await fetch(
@@ -349,7 +353,7 @@ export default function LodgeSetupWizardPage() {
       const sourceSeasons: SeasonRecord[] = await res.json();
       if (sourceSeasons.length === 0) {
         setSeasonCopy({ status: "idle" });
-        setError("The selected lodge has no seasons to copy.");
+        failAction("The selected lodge has no seasons to copy.");
         return;
       }
       let copied = 0;
@@ -366,7 +370,7 @@ export default function LodgeSetupWizardPage() {
           body: JSON.stringify(buildCopiedSeasonPayload(season, lodgeId)),
         });
         if (createRes.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON);
           setSeasonCopy({ status: "idle" });
           return;
         }
@@ -381,7 +385,7 @@ export default function LodgeSetupWizardPage() {
       setSeasonCopy({ status: "done", copied, failed });
     } catch (err) {
       setSeasonCopy({ status: "idle" });
-      setError(err instanceof Error ? err.message : "Failed to copy seasons");
+      failAction(err instanceof Error ? err.message : "Failed to copy seasons");
     } finally {
       setSaving(false);
     }
@@ -390,7 +394,7 @@ export default function LodgeSetupWizardPage() {
   async function copyChores() {
     if (!choreSourceLodgeId) return;
     setSaving(true);
-    setError("");
+    clearError();
     setChoreCopy({ status: "copying" });
     try {
       const res = await fetch(
@@ -400,7 +404,7 @@ export default function LodgeSetupWizardPage() {
       const sourceChores: ChoreRecord[] = await res.json();
       if (sourceChores.length === 0) {
         setChoreCopy({ status: "idle" });
-        setError("The selected lodge has no chores to copy.");
+        failAction("The selected lodge has no chores to copy.");
         return;
       }
       let copied = 0;
@@ -428,7 +432,7 @@ export default function LodgeSetupWizardPage() {
           }),
         });
         if (createRes.status === 403) {
-          setError(ADMIN_FORBIDDEN_SAVE_REASON);
+          failAction(ADMIN_FORBIDDEN_SAVE_REASON);
           setChoreCopy({ status: "idle" });
           return;
         }
@@ -441,7 +445,7 @@ export default function LodgeSetupWizardPage() {
       setChoreCopy({ status: "done", copied, failed });
     } catch (err) {
       setChoreCopy({ status: "idle" });
-      setError(err instanceof Error ? err.message : "Failed to copy chores");
+      failAction(err instanceof Error ? err.message : "Failed to copy chores");
     } finally {
       setSaving(false);
     }
@@ -498,8 +502,8 @@ export default function LodgeSetupWizardPage() {
         </p>
         {state.failed.length > 0 && (
           <ul className="text-destructive list-disc pl-5">
-            {state.failed.map((failure) => (
-              <li key={failure}>{failure}</li>
+            {state.failed.map((line) => (
+              <li key={line}>{line}</li>
             ))}
           </ul>
         )}
@@ -547,11 +551,11 @@ export default function LodgeSetupWizardPage() {
         ))}
       </ol>
 
-      {error && (
-        <div role="alert" className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
-          {error}
-        </div>
-      )}
+      <FocusedActionError
+        id="lodge-setup-action-error"
+        error={failure.error}
+        attentionKey={failure.attentionKey}
+      />
 
       {step === "identity" && (
         <Card>
