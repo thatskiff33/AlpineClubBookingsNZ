@@ -7,6 +7,5 @@
   cannot carry is refused rather than saved on a guess. A booking, membership
   charge or other Xero document keeps the treatment in force when it was made
   for its whole life: nothing already invoiced, credited or posted changes
-  when the schedule changes.
-- Sandbox census and migration checks can use the supplied `main` snapshot
-  when no `origin` remote is configured; missing or unreadable bases still fail.
+  when the schedule changes. A place in a group booking takes the organiser's
+  booking's treatment, so the group's combined invoice and the journal agree.
