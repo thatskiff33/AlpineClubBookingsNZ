@@ -8,14 +8,14 @@ reason: adds focused action-failure alerts and attention hooks to ten admin
   refactor of its own, not part of this fix.
 
 function: src/app/(admin)/admin/finance/refund-requests/page.tsx#RefundRequestsPage
-lines: 843
+lines: 842
 reason: adds focused action-failure alerts and attention hooks to ten admin
   pages; those lines sit inside the function `RefundRequestsPage`, which was
   already over its limit before this change, and lifting it apart is a
   refactor of its own, not part of this fix.
 
 function: src/app/(admin)/admin/membership/family-groups/page.tsx#FamilyGroupsTab
-lines: 843
+lines: 845
 reason: adds focused action-failure alerts and attention hooks to ten admin
   pages; those lines sit inside the function `FamilyGroupsTab`, which was
   already over its limit before this change, and lifting it apart is a
@@ -36,7 +36,7 @@ reason: adds focused action-failure alerts and attention hooks to ten admin
   refactor of its own, not part of this fix.
 
 function: src/app/(admin)/admin/rules/seasons/page.tsx#SeasonsPage
-lines: 449
+lines: 453
 reason: adds focused action-failure alerts and attention hooks to ten admin
   pages; those lines sit inside the function `SeasonsPage`, which was already
   over its limit before this change, and lifting it apart is a refactor of its
