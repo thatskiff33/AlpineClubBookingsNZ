@@ -195,6 +195,12 @@ describe("MITIGATED is reported, and is never CLEAN", () => {
     );
   });
 
+  it("adds further properties, comma-separated and escaped like the title", () => {
+    expect(workflowCommand("warning", "T", "m", { file: "e2e/a,b:c\n.ts" })).toBe(
+      "::warning title=T,file=e2e/a%2Cb%3Ac%0A.ts::m",
+    );
+  });
+
   it("goes through main with exit 0 only while every condition holds", async () => {
     const out = [];
     vi.spyOn(console, "log").mockImplementation((line) => out.push(String(line)));
