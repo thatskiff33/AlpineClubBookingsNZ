@@ -100,7 +100,7 @@ export function SelfRemoveFromBookingCard({
     return (
       <Card className="border-success-6 bg-success-3">
         <CardHeader>
-          <CardTitle className="text-success-11">
+          <CardTitle headingLevel={2} className="text-success-11">
             You are off this booking
           </CardTitle>
         </CardHeader>
@@ -136,7 +136,7 @@ export function SelfRemoveFromBookingCard({
     <Card>
       {confirmDialog}
       <CardHeader>
-        <CardTitle>You are a guest on this booking</CardTitle>
+        <CardTitle headingLevel={2}>You are a guest on this booking</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm text-muted-foreground">
         <p>

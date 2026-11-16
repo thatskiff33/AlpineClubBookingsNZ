@@ -51,6 +51,11 @@ import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 import { loadBookingDetailGuestDietary } from "./_lib/booking-detail-guest-dietary";
 import { loadBookingDetailCancellation } from "./_lib/booking-detail-cancellation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Booking details",
+};
 
 // Candidate anchors for this long, mostly-conditional page. SectionNav prunes
 // any whose target id is absent from the DOM after mount, so listing the full
