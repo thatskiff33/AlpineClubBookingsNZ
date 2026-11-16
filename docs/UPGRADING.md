@@ -145,8 +145,10 @@ fit into.
 
 #### Before the deploy
 
-1. Be on the release that contains #4918 before you upgrade to this one. It
-   added the `{{data-hosting}}` token the new starter privacy text uses:
+1. Be on v0.14.0 or later before you upgrade to this release. v0.14.0 added
+   the `{{data-hosting}}` token the new starter privacy text uses, and a club
+   that skips it shows the token as raw text. Deploy v0.14.0 first if you run
+   an older release:
    [Starter privacy policy lists its recipients and names your host (#5007)](#starter-privacy-policy-lists-its-recipients-and-names-your-host-5007).
 
 #### After the deploy
@@ -156,14 +158,19 @@ fit into.
 
 ### Starter privacy policy lists its recipients and names your host (#5007)
 
-**Deploy the release containing #4918 first.** That release adds the
-`{{data-hosting}}` token and the **Where members' data is held** setting this
-change relies on. An app that does not know the token shows it as raw braces.
+**Be on v0.14.0 or later before you upgrade to this release.** v0.14.0 is the
+release that added the `{{data-hosting}}` token and the **Where members' data
+is held** setting this change relies on
+([#4918's note](#privacy-incident-guide-and-hosting-disclosure-settings-4918)).
+An app that does not know the token shows it as raw braces. This change ships in
+the release after v0.14.0, so a club on v0.13.2 or earlier deploys v0.14.0
+first and upgrades from there; never go straight from an older release to this
+one.
 
 `20261222030000_rewrite_starter_privacy_recipients` is a **data-only
 correction**. It adds and removes no schema and is safe to run in the ordinary
-deploy window with the previous app colour still serving, because that colour
-already knows the token.
+deploy window with the previous app colour (v0.14.0 or later) still serving,
+because that colour already knows the token.
 
 **What changes.** The migration rewrites the privacy page's body only where it
 still holds, byte for byte, the starter text that #4915 wrote (the text an
@@ -178,7 +185,7 @@ from #4914 or #4031. On such a page:
   says the System does not fix the country your data is held in;
 - section 6 refers to the hosting company described in section 5, its backup
   line moves to section 5's list, and its admin note is removed;
-- the header's "Last updated" date moves to 15 November 2026, unless the header
+- the header's "Last updated" date moves to 17 November 2026, unless the header
   was edited, in which case it is kept.
 
 **An edited privacy page keeps every byte**, including its header. Check its

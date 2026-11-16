@@ -13,5 +13,6 @@
   A privacy page that still holds the unedited starter text is updated once on
   upgrade. A page your club edited is not changed: check its sections 5 and 6
   yourself. Importing a configuration bundle exported before this release no
-  longer brings the replaced starter text back. Upgrade to the release that
-  added the hosting setting first.
+  longer brings the replaced starter text back. Be on v0.14.0 or later before
+  you upgrade to this release: v0.14.0 added the hosting setting and the token
+  the new text uses, and a club that skips it shows the token as raw text.

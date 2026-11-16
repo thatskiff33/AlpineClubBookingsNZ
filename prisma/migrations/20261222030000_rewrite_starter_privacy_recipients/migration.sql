@@ -3,8 +3,9 @@
 -- through {{data-hosting}}. Only a body still byte-for-byte #4915's text (what
 -- the chain leaves on an unedited page), or #4914's or #4031's before it (which
 -- an old bundle or a stale editor save can restore), changes; an edited page
--- keeps every byte. The header date moves only on a starter header. Needs the
--- #4918 release serving: older code shows the token as raw braces; see UPGRADING.
+-- keeps every byte. The header date moves only on a starter header. Needs
+-- v0.14.0 (the #4918 release) or later serving: older code shows the token as
+-- raw braces; see UPGRADING.
 UPDATE "PageContent"
 SET "contentHtml" = $cms$<div class="website-legal-copy">
 <div><h2>1. Who We Are</h2><p>The {{club-name}} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit incorporated society registered in New Zealand. We operate {{lodge-name}} and this booking and membership management system (&ldquo;the System&rdquo;).</p><p>We are committed to protecting your personal information and complying with the <strong>New Zealand Privacy Act 2020</strong> and its 13 Information Privacy Principles (IPPs).</p></div>
@@ -21,7 +22,7 @@ SET "contentHtml" = $cms$<div class="website-legal-copy">
 </div>$cms$,
     "headerText" = CASE
       WHEN "headerText" IN ('How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 14 November 2026</small>', 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 12 November 2026</small>', 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 17 October 2026</small>')
-      THEN 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 15 November 2026</small>'
+      THEN 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 17 November 2026</small>'
       ELSE "headerText"
     END,
     "updatedAt" = timezone('UTC', statement_timestamp())

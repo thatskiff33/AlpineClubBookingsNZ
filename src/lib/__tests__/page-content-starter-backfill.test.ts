@@ -978,7 +978,7 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
     );
     // The seed date and the migration's THEN value are the same string.
     expect(statements).toContain(`THEN ${sqlQuote(page.headerText)}`);
-    expect(page.headerText).toContain("Last updated 15 November 2026");
+    expect(page.headerText).toContain("Last updated 17 November 2026");
     expect(statements).toContain(`ELSE "headerText"`);
     // The three starter headers are the ones the earlier migrations wrote.
     expect(subjectAccessSql).toContain(`THEN ${sqlQuote(privacyHeaderOn("14 November 2026"))}`);

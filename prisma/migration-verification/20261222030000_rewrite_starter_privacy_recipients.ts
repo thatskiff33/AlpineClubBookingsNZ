@@ -44,7 +44,7 @@ const CLUB_HEADER = "Our privacy promise to members.";
 const OLDEST_HEADER_DATE = "Last updated 17 October 2026";
 const OLDER_HEADER_DATE = "Last updated 12 November 2026";
 const PREVIOUS_HEADER_DATE = "Last updated 14 November 2026";
-const NEW_HEADER_DATE = "Last updated 15 November 2026";
+const NEW_HEADER_DATE = "Last updated 17 November 2026";
 
 const bodyState = `
   SELECT
