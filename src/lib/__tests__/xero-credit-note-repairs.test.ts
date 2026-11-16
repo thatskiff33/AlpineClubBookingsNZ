@@ -1513,6 +1513,36 @@ describe("#4449: the extracted refunded-total decision gives the recount's answe
     expect(aboveCash.read).toHaveBeenCalledWith(expect.objectContaining({ id: "pay-1" }), tx);
   });
 
+  // #4449 review, item 1: on a writer's own READ COMMITTED transaction a refund note's link can commit between
+  // the notes read and the cover-above-cash read, which then takes off a failure no note counted.
+  function tornBetweenReadings(notesByReading: Array<string[]>) {
+    let reading = 0;
+    const notes = { "cn-failed": 80, "cn-current": 30 } as Record<string, number>;
+    mocks.xeroObjectLinkFindMany.mockImplementation(async ({ where }: { where: { role?: unknown; xeroObjectType?: string } }) => {
+      if (!(where.xeroObjectType === "CREDIT_NOTE" && typeof where.role === "object" && where.role !== null && "in" in where.role)) return [];
+      const ids = notesByReading[Math.min(reading, notesByReading.length - 1)];
+      reading += 1;
+      return ids.map((id) => ({ localId: "pay-1", xeroObjectId: id, metadata: { status: "AUTHORISED", total: notes[id] } }));
+    });
+    return () => reading;
+  }
+
+  it("MUTATION (#4449 item 1): a reading torn by a refund note linked mid-read is taken again until two readings agree", async () => {
+    arrange({ failureRecorded: true });
+    // The first reading's notes miss the failed refund's note, while its cover read already sees it.
+    const readings = tornBetweenReadings([["cn-current"], ["cn-current", "cn-failed"]]);
+    const decided = await decideLinkedRefundedTotalCents({ ...(prisma as object) } as never, [ibPayment]);
+    // $30 + $80 - $80 = $30. Taking the torn reading would be $30 - $80, clamped to nothing by every caller.
+    expect(decided.get("pay-1")).toBe(3000);
+    expect(readings()).toBe(3);
+  });
+
+  it("MUTATION (#4449 item 1): readings that never agree throw, so the writer rolls back and its event is retried", async () => {
+    arrange({ failureRecorded: true });
+    tornBetweenReadings([["cn-current"], ["cn-current", "cn-failed"], ["cn-current"], ["cn-current", "cn-failed"]]);
+    await expect(decideLinkedRefundedTotalCents({ ...(prisma as object) } as never, [ibPayment])).rejects.toThrow(/kept changing/);
+  });
+
   it("can go below 0, so every caller clamps after the subtraction, never before it", async () => {
     arrange({ failureRecorded: true });
     mocks.xeroObjectLinkFindMany.mockResolvedValue([]);

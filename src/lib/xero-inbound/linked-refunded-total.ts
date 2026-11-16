@@ -67,7 +67,8 @@ export async function paymentsCountingInvoiceCorrections(
  *
  * On the root client (the recount) the refund notes and the failed refunds
  * are read in one read-only snapshot (`readFailedCardRefundRecountCentsByPayment`);
- * on a caller's transaction, in that transaction (`readFailedCardRefundRecountCentsIn`).
+ * on a caller's transaction, in that transaction, read until two readings agree
+ * (`readFailedCardRefundRecountCentsIn`).
  */
 export async function decideLinkedRefundedTotalCents(
   store: Store,
@@ -86,6 +87,8 @@ export async function decideLinkedRefundedTotalCents(
         active: true,
       },
       select: { localId: true, xeroObjectId: true, metadata: true },
+      // A fixed order, so two readings of the same rows compare equal (`readFailedCardRefundRecountCentsIn`).
+      orderBy: [{ localId: "asc" }, { xeroObjectId: "asc" }],
     });
   // #4215: requests' paid-back cash, read AFTER the payment rows the caller holds.
   const [{ notesCounted: directRefundLinks, centsByPayment: failedCardRefundCentsByPaymentId }, modificationAllocationLinks, refundRequestPaidBackCentsByPaymentId] = await Promise.all([

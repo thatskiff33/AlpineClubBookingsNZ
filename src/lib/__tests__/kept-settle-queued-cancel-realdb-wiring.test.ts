@@ -28,4 +28,18 @@ describe("the kept settle's queued-cancel real-database proof stays wired into C
     expect(suite).toContain("CASE 1, SETTLE FIRST:");
     expect(suite).toContain("CASE 1, SYNC FIRST:");
   });
+
+  it("imports the kept settle's failed-later card refund proof too (#4449 review, item 1)", () => {
+    const harness = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"),
+      "utf8",
+    );
+    expect(harness).toContain('import "./kept-settle-failed-card-refund.realdb.test";');
+    const suite = readFileSync(
+      resolve(REPO_ROOT, "src/lib/__tests__/kept-settle-failed-card-refund.realdb.test.ts"),
+      "utf8",
+    );
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("syncInternetBankingPaymentsForPaidInvoice");
+  });
 });
