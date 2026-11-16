@@ -593,6 +593,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       flatWholeLodgeNightCents: flatWholeLodgeCents,
       ...(editingId ? {} : { lodgeId: scopedLodgeId }),
     };
+    const fallback = "Failed to save season";
 
     try {
       const url = editingId
@@ -607,16 +608,16 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to save season");
+        raiseError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
 
       if (activeScopeRef.current !== requestedScope) return;
 
       resetForm();
       fetchSeasons();
-    } catch (err) {
-      raiseError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      raiseError(fallback);
     } finally {
       setSaving(false);
     }
