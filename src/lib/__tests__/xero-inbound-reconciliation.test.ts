@@ -144,6 +144,13 @@ vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   // #4516 (M4d): the organisation's late cash is a hand-back debt; here, that the delivery asks for it.
   postHandBackObligation: receiptDoors.postHandBackObligation,
 }));
+// #4370: the failed-later recount reads in one read-only snapshot; here it
+// runs on the mocked client, and against a real database in
+// xero-recount-failed-later-refund.realdb.test.ts.
+vi.mock("@/lib/read-only-snapshot", () => ({
+  withReadOnlySnapshot: (client: unknown, run: (tx: unknown) => Promise<unknown>) => run(client),
+}));
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroInboundEvent: {
@@ -213,7 +220,9 @@ vi.mock("@/lib/prisma", () => ({
           roles.includes("MODIFICATION_CREDIT_NOTE_ALLOCATION") &&
           roles.includes("CREDIT_NOTE_ALLOCATION") &&
           where.metadata != null;
-        if (snapshotRead || unlistedAllocationRead) return Promise.resolve([]);
+        // #4370: the recount's bulk read of each payment's card refund reversals.
+        const reversalRead = where.role === "CARD_REFUND_REVERSAL_INVOICE" && typeof where.localId === "object";
+        if (snapshotRead || unlistedAllocationRead || reversalRead) return Promise.resolve([]);
         return mocks.linkFindMany(args);
       },
       // #3642: the group-settlement arm looks up an abandoned invoice's link.
@@ -257,6 +266,10 @@ vi.mock("@/lib/prisma", () => ({
     },
     // #4215: the refunded-total recount reads refund requests paid back; none here.
     manualRefundTask: {
+      findMany: () => Promise.resolve([]),
+    },
+    // #4370: the recount reads card refunds Stripe failed later; none here.
+    paymentRecoveryOperation: {
       findMany: () => Promise.resolve([]),
     },
     $transaction: mocks.transaction,

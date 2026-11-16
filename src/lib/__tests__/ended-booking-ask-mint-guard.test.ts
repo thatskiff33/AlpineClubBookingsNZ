@@ -97,6 +97,7 @@ import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modific
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CONTEXT = {
+  ownCardRefund: null,
   pendingRefundAmountCents: 0,
   organiserChildRefund: null,
   paymentId: "payment_1",
