@@ -30,14 +30,14 @@ import {
   NarrativeCard,
   PAY_LINK_PAGE_HEADING,
   paymentRecoveryForRefusal,
-  RedirectFailedNotice,
   toneForState,
   type Narrative,
   type PaymentLinkContext,
   type PaymentRecovery,
 } from "./pay-link-presentation";
-import { checkCardSuccess, type CardConfirmation } from "./card-success-check";
-import { takeStripeReturn } from "./stripe-return";
+import { checkCardSuccess } from "./card-success-check";
+import { takeStripeReturn, type CardConfirmation } from "@/lib/stripe-return";
+import { RedirectFailedNotice } from "@/components/stripe/redirect-failed-notice";
 import { FreshLinkCard } from "./fresh-link-card";
 import { PreviousPaymentRefundingNotice } from "@/components/previous-payment-refunding-notice";
 /*
@@ -443,7 +443,7 @@ export default function PayByLinkPage() {
           </StripeProvider>
         ) : (
           <div className="space-y-3">
-            {redirectFailed ? <RedirectFailedNotice /> : null}
+            {redirectFailed ? <RedirectFailedNotice nextStep="Choose how to pay below." /> : null}
             {payable.cardPaymentAvailable !== false ? (
               <Button onClick={startCardPayment} disabled={intentLoading}>
                 {intentLoading ? "Preparing..." : "Pay by card"}
