@@ -241,11 +241,9 @@ export async function DELETE(
       format,
       bookingId,
       result,
-      idempotencyKeyPrefix: `guest_remove_refund_${bookingId}`,
+      door: "guestRemoval",
       failureMessage:
-        "Stripe refund failed after guest removal - enqueueing recovery",
-      recoveryFailureMessage:
-        "Failed to enqueue guest-removal refund recovery - manual reconciliation required",
+        "Stripe refund failed after guest removal; the pre-persisted debt stays owed",
     });
 
     // Collect a removal-induced price increase on a Stripe booking (#1042):

@@ -69,14 +69,14 @@ export async function GET(request: NextRequest) {
       pageSize: parsed.data.pageSize,
     });
 
+    // The list envelope (page, pageSize, total, totalPages) is spread as the
+    // service built it, so a key added to AdminListPage reaches the client.
+    const { requests, pendingCount, ...envelope } = data;
     return NextResponse.json({
-      data: data.requests,
-      requests: data.requests,
-      pendingCount: data.pendingCount,
-      total: data.total,
-      page: data.page,
-      pageSize: data.pageSize,
-      totalPages: data.totalPages,
+      data: requests,
+      requests,
+      pendingCount,
+      ...envelope,
     });
   } catch (err) {
     logger.error({ err }, "Failed to load member lifecycle action requests");

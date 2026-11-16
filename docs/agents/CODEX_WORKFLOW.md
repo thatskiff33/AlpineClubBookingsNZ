@@ -277,8 +277,8 @@ skipped under 6 GiB); PR CI keeps the rest.
 `fast-censuses` (`pnpm run ci:fast-censuses`) and `migrations` first run
 `sekreton-prepare-base.sh`: fetch `origin` (failure fails), or without one use
 local `main`.
-The `realdb-all` job on GitHub remains advisory, so cite its actual result
-separately before making the PR ready.
+On GitHub, `realdb-all` runs every realdb file with the no-skip check;
+required `verify` fails unless it passed (#4907).
 
 ## Checking `main` after a merge
 
