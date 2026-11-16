@@ -1090,7 +1090,13 @@ so a blind member can miss a declined card or a wrong sign-in code:
 
 - **A failure** goes in `FocusedActionError`
   (`src/components/focused-action-error.tsx`): mounted empty with its own
-  unique `id`, filled when the action fails, and focused.
+  unique `id`, filled when the action fails, and focused. The message and the
+  counter that re-fires it when the same failure repeats have one home,
+  `useActionFailure` (`src/hooks/use-action-failure.ts`, #4975): `fail`
+  records and counts, `clear` empties without counting. The setup wizards use
+  it. Four older pages still keep the same pair by hand (Chores, Lockers,
+  Lodges and Hut fees); they predate the hook and are unconverted, so new code
+  uses the hook rather than a fifth copy.
 - **A success or progress message** goes in a `StatusRegion`
   (`src/components/status-region.tsx`): a `role="status"` region mounted
   before the request, `sr-only` while empty, so only its text changes. It is the
