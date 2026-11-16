@@ -1300,11 +1300,14 @@ old and new slots, so public abuse controls can be temporarily split across both
 runtimes during that drain. Do not run multiple publicly routed app replicas
 long-term unless the in-memory limiter is replaced with a shared store.
 
-**A `Caddyfile` change does not ship with an app deploy.** The blue/green runner
-rebuilds and cuts over the app slots; it does not reload Caddy. After pulling a
-release whose diff touches `Caddyfile` or `Caddyfile.staging` — request-body
-caps, security headers, routing — reload Caddy explicitly on the host, and check
-the config first so a typo cannot take the site down:
+**The production deploy picks up a `Caddyfile` change by itself.**
+`docker-compose.yml` mounts the checkout's `Caddyfile` into the Caddy
+container, and `scripts/run-production-blue-green-deploy.sh` validates it before
+it changes anything (step 4) and, at cutover (step 17), runs
+`docker compose up -d caddy` and reloads Caddy. Nothing is needed by hand. Only
+when a `Caddyfile` or `Caddyfile.staging` change reaches a host some other way
+(a staging host, or a deploy that does not use that script) reload Caddy
+explicitly, and check the config first so a typo cannot take the site down:
 
 ```bash
 docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
