@@ -164,8 +164,7 @@ async function claimProcessedWebhookEvent(event: StoredXeroInboundEvent) {
   try {
     await prisma.processedWebhookEvent.create({
       data: {
-        eventId: event.correlationKey,
-        source: "xero",
+        ...xeroInboundDedupMarkerWhere(event.correlationKey),
         eventType: buildProcessedWebhookEventType(event),
       },
     });

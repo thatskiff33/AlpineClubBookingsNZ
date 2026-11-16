@@ -4250,7 +4250,9 @@ inbound webhook/event recorded -> reconciliation worker processes event
   (INV-INT-039): the worker's takeover before it selects a batch, or a
   Replay, in one updateMany guarded on status and the stale updatedAt (one
   winner, a loser skips or answers 409); the winner deletes its xero dedup
-  row in the same transaction, so the reprocess applies the event
+  row in the same transaction, so the reprocess applies the event; after
+  three dead attempts on its RUNNING WEBHOOK_RECONCILE row the worker leaves
+  it PROCESSING for Replay
   its WEBHOOK_RECONCILE row is this attempt's own (INV-INT-038): an INBOUND
   row left RUNNING past the stale threshold by a dead attempt is re-claimed
   in place under a fresh startedAt (one guarded write, one winner; the dead

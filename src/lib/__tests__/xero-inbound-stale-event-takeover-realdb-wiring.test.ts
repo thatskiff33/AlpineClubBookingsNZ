@@ -24,6 +24,7 @@ describe("the stale inbound event takeover's real-database proof stays wired int
     expect(suite).toContain("one automatic run applies the stuck event");
     expect(suite).toContain("of two automatic runs racing over one stuck event, it is applied exactly once");
     expect(suite).toContain("leaves an event still inside the lease alone");
+    expect(suite).toContain("stops retaking an event past the dead-attempt cap");
     expect(suite).toContain("of two takeovers racing over one stuck event");
     expect(suite).toContain("a takeover never resets a live or reclaimed event");
     expect(suite).toContain('assertSafeRaceDbUrl(RACE_DB_URL, "Stale PROCESSING Xero inbound event takeover (INV-INT-039)")');

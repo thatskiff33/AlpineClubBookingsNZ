@@ -6,24 +6,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // shapes and the win/lose branches.
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
+  operationFindMany: vi.fn(),
   txUpdateMany: vi.fn(),
   txDeleteMany: vi.fn(),
   transaction: vi.fn(),
   warn: vi.fn(),
+  error: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroInboundEvent: { findMany: mocks.findMany },
+    xeroSyncOperation: { findMany: mocks.operationFindMany },
     $transaction: mocks.transaction,
   },
 }));
 
 vi.mock("@/lib/logger", () => ({
-  default: { info: vi.fn(), warn: mocks.warn, error: vi.fn(), debug: vi.fn() },
+  default: { info: vi.fn(), warn: mocks.warn, error: mocks.error, debug: vi.fn() },
 }));
 
 import {
+  MAX_DEAD_XERO_INBOUND_ATTEMPTS,
   takeOverStaleProcessingXeroInboundEvent,
   takeOverStaleProcessingXeroInboundEvents,
 } from "@/lib/xero-inbound/stale-event-takeover";
@@ -85,23 +89,79 @@ describe("takeOverStaleProcessingXeroInboundEvents", () => {
       }),
     );
     mocks.txDeleteMany.mockResolvedValue({ count: 1 });
+    mocks.operationFindMany.mockResolvedValue([]);
   });
 
-  it("selects only stale PROCESSING rows, oldest first, capped at the limit", async () => {
+  it("selects only stale PROCESSING rows, oldest first, and takes over at most the limit", async () => {
     mocks.findMany.mockResolvedValue([]);
 
     await expect(takeOverStaleProcessingXeroInboundEvents({ limit: 4, now: NOW })).resolves.toEqual({
       takenOver: 0,
       lost: 0,
+      heldForOfficer: 0,
     });
 
     expect(mocks.findMany).toHaveBeenCalledWith({
       where: { status: "PROCESSING", updatedAt: { lt: LEASE_EXPIRY } },
       select: { id: true, correlationKey: true },
       orderBy: { createdAt: "asc" },
-      take: 4,
+      take: 200,
     });
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("takes over no more than the limit when more stale rows are found", async () => {
+    mocks.findMany.mockResolvedValue([
+      { id: "evt_a", correlationKey: "corr_a" },
+      { id: "evt_b", correlationKey: "corr_b" },
+      { id: "evt_c", correlationKey: "corr_c" },
+    ]);
+    mocks.txUpdateMany.mockResolvedValue({ count: 1 });
+
+    await expect(takeOverStaleProcessingXeroInboundEvents({ limit: 2, now: NOW })).resolves.toEqual({
+      takenOver: 2,
+      lost: 0,
+      heldForOfficer: 0,
+    });
+    expect(mocks.txUpdateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("MUTATION: an event past the dead-attempt cap is left PROCESSING for an officer, logged, and does not crowd out the next stale event", async () => {
+    mocks.findMany.mockResolvedValue([
+      { id: "evt_poison", correlationKey: "corr_poison" },
+      { id: "evt_next", correlationKey: "corr_next" },
+    ]);
+    mocks.operationFindMany.mockResolvedValue([{ correlationKey: "corr_poison" }]);
+    mocks.txUpdateMany.mockResolvedValue({ count: 1 });
+
+    await expect(takeOverStaleProcessingXeroInboundEvents({ limit: 1, now: NOW })).resolves.toEqual({
+      takenOver: 1,
+      lost: 0,
+      heldForOfficer: 1,
+    });
+
+    expect(mocks.operationFindMany).toHaveBeenCalledWith({
+      where: {
+        correlationKey: { in: ["corr_poison", "corr_next"] },
+        direction: "INBOUND",
+        operationType: "WEBHOOK_RECONCILE",
+        status: "RUNNING",
+        attemptCount: { gte: MAX_DEAD_XERO_INBOUND_ATTEMPTS },
+      },
+      select: { correlationKey: true },
+    });
+    expect(MAX_DEAD_XERO_INBOUND_ATTEMPTS).toBe(3);
+    expect(mocks.txUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.txUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: "evt_next" }) }),
+    );
+    expect(mocks.txDeleteMany).not.toHaveBeenCalledWith({
+      where: { eventId: "corr_poison", source: "xero" },
+    });
+    expect(mocks.error).toHaveBeenCalledWith(
+      expect.objectContaining({ inboundEventId: "evt_poison" }),
+      expect.stringContaining("only an officer's Replay"),
+    );
   });
 
   it("counts the rows it took over and the ones another writer moved first", async () => {
@@ -118,6 +178,7 @@ describe("takeOverStaleProcessingXeroInboundEvents", () => {
     await expect(takeOverStaleProcessingXeroInboundEvents({ limit: 10, now: NOW })).resolves.toEqual({
       takenOver: 2,
       lost: 1,
+      heldForOfficer: 0,
     });
 
     expect(mocks.txDeleteMany).toHaveBeenCalledTimes(2);

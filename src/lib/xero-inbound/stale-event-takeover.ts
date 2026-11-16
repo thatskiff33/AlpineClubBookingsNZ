@@ -19,13 +19,30 @@
  * reprocess report a duplicate and mark the event PROCESSED without applying it.
  *
  * The operation row the dead attempt left RUNNING is recovered by the
- * reprocess's own start (`INV-INT-038`). No advisory lock: the guarded write is
- * the claim (`INV-LOCK-001`).
+ * reprocess's own start (`INV-INT-038`), which counts each dead attempt on it.
+ * An event whose own processing kills the process would otherwise be retaken,
+ * and take its process down again, every lease: past
+ * `MAX_DEAD_XERO_INBOUND_ATTEMPTS` the automatic worker leaves it PROCESSING,
+ * logs an error each run, and an officer's Replay is the only route.
+ *
+ * No advisory lock: the guarded write is the claim (`INV-LOCK-001`).
  */
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { staleProcessingXeroInboundEventFilter } from "@/lib/xero-stale-operations";
 import { xeroInboundDedupMarkerWhere } from "./dedup-marker";
+import { INBOUND_RECONCILE_DIRECTION, INBOUND_RECONCILE_OPERATION_TYPE } from "./reconcile-operation";
+
+/**
+ * Dead attempts on one event after which the automatic worker stops taking it
+ * over (`INV-INT-039`). Read from the RUNNING inbound reconcile operation's
+ * `attemptCount`, which `INV-INT-038` increments on each takeover of a dead
+ * attempt's row: at 3, the first attempt and two automatic retakes all died.
+ */
+export const MAX_DEAD_XERO_INBOUND_ATTEMPTS = 3;
+
+/** Stale rows read per run, so events held for an officer never crowd out newer stale ones. */
+const STALE_SCAN_LIMIT = 200;
 
 interface StaleInboundEvent {
   id: string;
@@ -65,27 +82,58 @@ export async function takeOverStaleProcessingXeroInboundEvent(
 }
 
 /**
+ * The correlation keys whose RUNNING inbound reconcile operation records
+ * `MAX_DEAD_XERO_INBOUND_ATTEMPTS` dead attempts or more.
+ */
+async function exhaustedCorrelationKeys(correlationKeys: string[]): Promise<Set<string>> {
+  if (correlationKeys.length === 0) return new Set();
+  const operations = await prisma.xeroSyncOperation.findMany({
+    where: {
+      correlationKey: { in: correlationKeys },
+      direction: INBOUND_RECONCILE_DIRECTION,
+      operationType: INBOUND_RECONCILE_OPERATION_TYPE,
+      status: "RUNNING",
+      attemptCount: { gte: MAX_DEAD_XERO_INBOUND_ATTEMPTS },
+    },
+    select: { correlationKey: true },
+  });
+  return new Set(operations.flatMap((operation) => (operation.correlationKey ? [operation.correlationKey] : [])));
+}
+
+/**
  * The automatic worker's step before it selects a batch: take over up to
  * `limit` stale PROCESSING events, oldest first. `lost` counts the events this
- * worker found stale but another writer moved first.
+ * worker found stale but another writer moved first; `heldForOfficer` the
+ * stale events past the dead-attempt cap, left PROCESSING for Replay.
  */
 export async function takeOverStaleProcessingXeroInboundEvents(options: {
   limit: number;
   now?: Date;
-}): Promise<{ takenOver: number; lost: number }> {
+}): Promise<{ takenOver: number; lost: number; heldForOfficer: number }> {
   const now = options.now ?? new Date();
   const stale = await prisma.xeroInboundEvent.findMany({
     where: staleProcessingXeroInboundEventFilter(now),
     select: { id: true, correlationKey: true },
     orderBy: { createdAt: "asc" },
-    take: options.limit,
+    take: STALE_SCAN_LIMIT,
   });
 
-  let takenOver = 0;
+  const exhausted = await exhaustedCorrelationKeys(stale.map((event) => event.correlationKey));
   for (const event of stale) {
+    if (exhausted.has(event.correlationKey)) {
+      logger.error(
+        { inboundEventId: event.id, correlationKey: event.correlationKey, maxDeadAttempts: MAX_DEAD_XERO_INBOUND_ATTEMPTS },
+        "Xero inbound event killed its worker on every attempt; it is left PROCESSING and only an officer's Replay retries it (INV-INT-039)",
+      );
+    }
+  }
+
+  const eligible = stale.filter((event) => !exhausted.has(event.correlationKey)).slice(0, options.limit);
+  let takenOver = 0;
+  for (const event of eligible) {
     if (await takeOverStaleProcessingXeroInboundEvent(event, now)) {
       takenOver += 1;
     }
   }
-  return { takenOver, lost: stale.length - takenOver };
+  return { takenOver, lost: eligible.length - takenOver, heldForOfficer: exhausted.size };
 }

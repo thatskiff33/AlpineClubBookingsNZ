@@ -773,7 +773,10 @@ as a duplicate and never applied twice by racing takeovers.
 - **The operation row** the dead attempt left is recovered by `INV-INT-038`.
 - **Replays are harmless.** Handlers are idempotent; the same SES feedback
   (message id and event type) is not counted twice toward suppression.
-- **Limits.** An event that kills its worker is retaken each lease. Xero
+- **A poison event stops being retaken.** After three dead attempts (the
+  `INV-INT-038` row's `attemptCount`), the worker leaves the event PROCESSING
+  and logs an error each run; only Replay retries it.
+- **Limits.** Xero
   outcome writes are not fenced, so a live attempt past the lease can overlap
   its successor. SNS's default HTTP/S policy stops retrying within a minute, so
   SES takeover needs the longer delivery policy `CONFIGURATION.md` gives. The

@@ -21,7 +21,10 @@
  * - two automatic runs racing over one stuck event apply it exactly once;
  * - of two takeovers racing over one stuck event, exactly one wins, and a
  *   takeover never moves a live or finished event;
- * - an event still inside the lease is not touched.
+ * - an event still inside the lease is not touched;
+ * - an event whose attempts all died up to `MAX_DEAD_XERO_INBOUND_ATTEMPTS`
+ *   is left PROCESSING by the automatic worker, and an officer's Replay still
+ *   applies it.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions, which
@@ -171,6 +174,34 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       expect(await prisma.xeroInboundEvent.findUniqueOrThrow({ where: { id: live.id } })).toMatchObject({ status: "PROCESSING" });
       expect(await prisma.xeroInboundEvent.findUniqueOrThrow({ where: { id: done.id } })).toMatchObject({ status: "PROCESSED" });
       expect(await prisma.processedWebhookEvent.count({ where: { eventId: { in: [KEY, `${KEY}-done`] }, source: "xero" } })).toBe(2);
+    });
+
+    it("stops retaking an event past the dead-attempt cap, and an officer's Replay still applies it", async () => {
+      const { MAX_DEAD_XERO_INBOUND_ATTEMPTS } = await import("@/lib/xero-inbound/stale-event-takeover");
+      const event = await stuckEvent(KEY);
+      const abandoned = await prisma.xeroSyncOperation.create({
+        data: {
+          direction: "INBOUND", entityType: "WIDGET", operationType: "WEBHOOK_RECONCILE", status: "RUNNING",
+          correlationKey: KEY, replayable: true, requestPayload: { resourceId: `${P}-resource` }, startedAt: ABANDONED_AT,
+          attemptCount: MAX_DEAD_XERO_INBOUND_ATTEMPTS,
+        },
+      });
+
+      const result = await runWorker();
+
+      expect(result).toMatchObject({ found: 0, processed: 0, skipped: 0 });
+      expect(await prisma.xeroInboundEvent.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({
+        status: "PROCESSING", updatedAt: ABANDONED_AT,
+      });
+      expect(await prisma.processedWebhookEvent.count({ where: { eventId: KEY, source: "xero" } })).toBe(1);
+
+      const { replayStoredXeroInboundEvent } = await import("@/lib/xero-inbound/event-processing");
+      await replayStoredXeroInboundEvent(event.id);
+
+      expect(await prisma.xeroInboundEvent.findUniqueOrThrow({ where: { id: event.id } })).toMatchObject({ status: "PROCESSED" });
+      expect(await operations(KEY)).toEqual([
+        expect.objectContaining({ id: abandoned.id, status: "SUCCEEDED", attemptCount: MAX_DEAD_XERO_INBOUND_ATTEMPTS + 1 }),
+      ]);
     });
 
     it("leaves an event still inside the lease alone", async () => {

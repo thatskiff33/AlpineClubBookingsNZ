@@ -96,7 +96,10 @@ does not record a refund (#4315).
    minutes the automatic worker resets it and processes it again, taking the
    operation over too. **Replay** does the same at once for an event already
    past those 15 minutes, and is refused while it is still being processed.
-   Mark failed still works on the operation.
+   An event that has stopped the server three times running is not retried by
+   itself again: it stays **Processing**, an error is logged on each run, and
+   only **Replay** retries it. Mark failed still works on the operation, and
+   lets the automatic retry start counting again.
    Mark one **resolved** only after you have fixed it in Xero yourself: it is
    then treated as done and is never retried or recreated automatically,
    though the repair tool still lists it for information. You cannot resolve
