@@ -1249,7 +1249,7 @@ export const MEMBER_RECORD_ACTION_LITERAL_FILES_2755: readonly string[] = [
  * member-visible category must be named in
  * `OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755`, so a NEW one fails by name with
  * the readership question stated, instead of only nudging the `account` count in
- * the old distribution pin — a nudge whose failure message invited a lane to bump
+ * the old distribution pin: a nudge whose failure message invited a lane to bump
  * the number and move on.
  */
 export const MEMBER_RECORD_ADMIN_SURFACES_2755: readonly string[] = [

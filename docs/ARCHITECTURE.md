@@ -1313,7 +1313,7 @@ is a reviewed line there. They fall into three shapes:
   also has the third. Nothing is mis-gated either way; the bucket boundary is
   where the test can draw one mechanically, not a clean taxonomy.
 - **A member detail per-record card gated on a DIFFERENT permission area than
-  the page banner** — today exactly one, `member-credit-card.tsx`, which the
+  the page banner**: today exactly one, `member-credit-card.tsx`, which the
   test holds as a review gate. The other eight cards in
   `src/app/(admin)/admin/membership/members/[id]/_components/` were converted under #2168
   and now take their coverage from the page banner. The credit card did not,

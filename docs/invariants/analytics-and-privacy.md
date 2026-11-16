@@ -639,7 +639,7 @@ decision, 9 August 2026 (#2695). Reasoning: `src/lib/audit-member-disclosure.ts`
   exceed by the free-text limit.
 - **Two things a member reads off a row are NOT this rule's.** The `summary`
   column: the short title on every row, derived from the row's columns and
-  sanitised like `details` — denying its writers is a readership change
+  sanitised like `details`; denying its writers is a readership change
   reserved to the owner. And the booking page's replay of two payment-failure
   `details` to the booking's own member, gated by `buildBookingHistoryItems`'s
   required audience argument (#3232 D4).

@@ -887,7 +887,7 @@ model reads as "there is no problem" — is the failure mode the whole
   **no** current production audit write site that records no category. That is
   new and it is narrower than it sounds. When #2581 opened, 82 sites recorded
   none, and the merge with `main` that brought #2676 in classified all 82 at the
-  source — so **no new audit row is born uncategorised**, but **every row written before that runtime deployed still
+  source, so **no new audit row is born uncategorised**, but **every row written before that runtime deployed still
   carries no category** and is still invisible to every entry in this pack. Back-
   filling those rows is a separate, independently reviewable data change that has
   not run, so the caveat stands for historical events and only for those. This
