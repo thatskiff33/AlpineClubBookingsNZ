@@ -50,7 +50,7 @@ export async function RecentNewsCard({ memberId }: { memberId: string }) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="flex items-center gap-2 text-lg">
+        <CardTitle headingLevel={2} className="flex items-center gap-2 text-lg">
           <Newspaper className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
           Recent News
           {unreadCount > 0 ? (

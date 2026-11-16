@@ -190,6 +190,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     load: () => import("../../../scripts/lib/budget-base-ref.mjs"),
   },
   {
+    module: "scripts/release/upgrade-docs.mjs",
+    declaration: "scripts/release/upgrade-docs.d.mts",
+    load: () => import("../../../scripts/release/upgrade-docs.mjs"),
+  },
+  {
     module: "scripts/sync-user-guide-wiki.mjs",
     declaration: "scripts/sync-user-guide-wiki.d.mts",
     load: () => import("../../../scripts/sync-user-guide-wiki.mjs"),

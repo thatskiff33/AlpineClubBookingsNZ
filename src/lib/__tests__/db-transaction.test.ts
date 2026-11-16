@@ -10,6 +10,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import {
+  LOCK1_HOLDER_TRANSACTION_BUDGET,
   isRootPrismaClient,
   withOptionalTransaction,
   withStoreTransaction,
@@ -31,6 +32,28 @@ describe("withOptionalTransaction", () => {
     expect(mocks.$transaction).not.toHaveBeenCalled();
     expect(fn).toHaveBeenCalledWith("CALLER_TX");
     expect(result).toBe("ran-with:CALLER_TX");
+  });
+
+  // #4933: the options reach the transaction this opens, and only that one.
+  it("passes no options to its own transaction when none are given", async () => {
+    await withOptionalTransaction(undefined, async () => "ok");
+    expect(mocks.$transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.$transaction.mock.calls[0]).toHaveLength(1);
+  });
+
+  it("forwards options to its own transaction", async () => {
+    await withOptionalTransaction(undefined, async () => "ok", LOCK1_HOLDER_TRANSACTION_BUDGET);
+    expect(mocks.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      LOCK1_HOLDER_TRANSACTION_BUDGET,
+    );
+  });
+
+  it("ignores options on the caller's transaction, whose opener's budget governs", async () => {
+    const fn = vi.fn(async (tx: unknown) => tx);
+    await withOptionalTransaction("CALLER_TX" as never, fn as never, LOCK1_HOLDER_TRANSACTION_BUDGET);
+    expect(mocks.$transaction).not.toHaveBeenCalled();
+    expect(fn).toHaveBeenCalledWith("CALLER_TX");
   });
 
   it("propagates a callback error (rolls back the caller's tx via rethrow)", async () => {
