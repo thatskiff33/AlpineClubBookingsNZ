@@ -315,8 +315,8 @@ export default function SubscriptionsPage() {
         `/api/admin/xero/sync-memberships?seasonYear=${seasonYear}&mode=${mode}`,
         { method: "POST" }
       );
-      const data = await res.json();
       if (res.ok) {
+        const data = await res.json();
         setSyncMessage({
           type: "success",
           text:
@@ -326,10 +326,10 @@ export default function SubscriptionsPage() {
         });
         fetchData();
       } else {
-        setSyncMessage({ type: "error", text: data.error || "Sync failed" });
+        setSyncMessage({ type: "error", text: await apiErrorMessageFromResponse(res, "Sync failed") });
       }
     } catch {
-      setSyncMessage({ type: "error", text: "Sync failed — check Xero connection" });
+      setSyncMessage({ type: "error", text: "Sync failed" });
     } finally {
       setSyncing(null);
       setSyncActionPending(false);
@@ -384,12 +384,15 @@ export default function SubscriptionsPage() {
           }),
         },
       );
-      const json = await res.json();
       if (res.ok) {
+        const json = await res.json();
         setSyncMessage({ type: "success", text: json.message || "Subscription updated." });
         fetchData();
       } else {
-        setSyncMessage({ type: "error", text: json.error || "Manual payment failed." });
+        setSyncMessage({
+          type: "error",
+          text: await apiErrorMessageFromResponse(res, "Manual payment failed."),
+        });
       }
     } catch {
       setSyncMessage({ type: "error", text: "Manual payment failed." });

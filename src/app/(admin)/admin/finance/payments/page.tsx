@@ -662,8 +662,7 @@ export default function PaymentsPage() {
           setInvoiceNotice(result.message);
         }
       } else {
-        const err = await res.json();
-        setInvoiceError(err.error || "Failed to generate invoice");
+        setInvoiceError(await apiErrorMessageFromResponse(res, "Failed to generate invoice"));
       }
     } catch {
       setInvoiceError("Failed to generate invoice");
