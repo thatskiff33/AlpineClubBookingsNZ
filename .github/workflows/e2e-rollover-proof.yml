@@ -380,7 +380,6 @@ jobs:
           push: false
           tags: tacbookings-e2e-app:ci
           build-args: |
-            NEXT_PUBLIC_SENTRY_DSN=
             RELEASE_ID=${{ github.sha }}
             NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: |

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAppVersion } from "@/lib/app-version";
 import { requireAdmin } from "@/lib/session-guards";
 import { getDetailedHealthReport } from "@/lib/health-check";
+import { buildSentryDashboardInfo } from "@/lib/observability/sentry-dashboard-info";
 import { prisma } from "@/lib/prisma";
 import { getWebhookStats } from "@/lib/webhook-log";
 import { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review";
@@ -34,30 +35,6 @@ interface RuntimeStatusPayload {
 function getTrimmedEnv(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? value : null;
-}
-
-function buildSentryDashboardInfo() {
-  const dsn = getTrimmedEnv("SENTRY_DSN");
-  const org = getTrimmedEnv("SENTRY_ORG");
-  const project = getTrimmedEnv("SENTRY_PROJECT");
-  const missingFields = [
-    !dsn ? "SENTRY_DSN" : null,
-    !org ? "SENTRY_ORG" : null,
-    !project ? "SENTRY_PROJECT" : null,
-  ].filter((field): field is string => Boolean(field));
-  const sentryDashboardUrl =
-    missingFields.length === 0 && org && project
-      ? `https://sentry.io/organizations/${encodeURIComponent(org)}/issues/?project=${encodeURIComponent(project)}`
-      : null;
-
-  return {
-    sentryConfigured: Boolean(dsn),
-    sentryDashboardUrl,
-    sentryConfigWarning:
-      missingFields.length > 0
-        ? `${missingFields.join(", ")} ${missingFields.length === 1 ? "is" : "are"} not configured; admin health cannot link directly to Sentry.`
-        : null,
-  };
 }
 
 function isWebRuntimeRole(role: string | undefined) {
