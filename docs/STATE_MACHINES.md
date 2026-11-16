@@ -4013,15 +4013,37 @@ on `FAILED` alone. An installation whose role nobody has declared, and a live
 installation that has declared a local capture mailbox, both land on `FAILED`
 instead, carrying a `deliveryBlockReason`: those are configuration faults, so they
 stay retryable and go out by themselves once the deployment is corrected —
-PROVIDED the row still holds a rendered body. It does not for the twenty-six
+PROVIDED the row still holds a rendered body. It does not for the
 `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose logged recipient is
 redacted, because a live sign-in link, a door code or a payment link must not sit
 at rest; and the retry cron selects only rows that still hold one. Such a row is
 therefore written AT the retry ceiling (`attempts = 3`, the one constant
 `EMAIL_RETRY_MAX_ATTEMPTS` in `src/lib/email/retry-selection.ts`), which drops it
-out of the retry query and into the operator's email-failure review queue for a
-manual re-send, and its `errorMessage` says exactly that rather than promising
-it will self-heal.
+out of the retry query and into the operator's email-failure review queue, and
+its `errorMessage` says so rather than promising it will self-heal. The queue cannot resend it: it says why
+on the row and links its booking or member, and the officer sends a fresh
+message from there (or from Token Email Recovery for its three templates). For
+the three booking emails below whose booking still exists, the row links
+straight to that booking's fresh-copy section instead.
+
+An exhausted `FAILED` row that still holds a body can be handed back to the
+cron with **Try again** (#4963): one status-guarded `updateMany` (id, `FAILED`,
+`attempts >= 3`, `RETAINS_REPLAYABLE_EMAIL_BODY`, and not a booking-scoped
+template with no `bookingId`, which the cron retires on sight with its body kept,
+#2258) sets `attempts` to one below the ceiling (2) and dates `lastAttemptAt` past the backoff, then
+writes an `email.failure.requeued` audit row. A row naming a booking that has
+since been deleted is refused before that write (`EmailLog.bookingId` has no
+foreign key, and the cron would read the missing booking as nothing suppressed
+and send). A press that matches nothing (another press won, the cron sent it, or
+no requeueable body is left) is refused with 409 and writes no audit row. The
+route never sends: the cron's next run selects the row and re-runs its suppression, No-emails
+and authority checks before its guarded claim. `deliveryBlockReason` is left for
+that run's terminal write to clear. Archive and Try again are both audit rows,
+and the newer of the two decides whether the row shows as archived; an archive
+older than the row's `lastAttemptAt` (one that raced a Try again and lost to the
+cron's next failure) does not count. Pinned by
+`email-failure-requeue.test.ts` and, against a real database,
+`email-failure-requeue.realdb.test.ts`.
 A copy that has explicitly declared a capture mailbox transmits into it normally
 and its rows are ordinary `SENT`.
 
@@ -4035,11 +4057,13 @@ revoked authority or stale mailbox -> detail CTA removed, bearer/page action pre
 unknown legacy authority -> retired for manual review
 application rollback -> old worker cannot select quarantined new-version booking body
 exhausted or suppressed -> admin-visible failure/suppression
+exhausted + body retained -> operator requeue (Try again) -> retryable failed
 ```
 
 An exhausted failure of `booking-confirmed`, `pre-arrival-reminder` or
-`split-guest-payment-link` is never replayed. An officer with bookings edit access
-sends a fresh copy from the booking page instead (ALP-588): rendered again from
+`split-guest-payment-link` is never replayed, so the queue offers no **Try
+again** for it. An officer with bookings edit access sends a fresh copy from the
+booking page instead (ALP-588), which the failure's row links to: rendered again from
 the booking's current owner and data through its normal sender and `sendEmail`,
 with the payment link re-issued by the existing revoke-and-remint workflow. Only
 an outcome of `sent` archives that booking's earlier exhausted failures of the
