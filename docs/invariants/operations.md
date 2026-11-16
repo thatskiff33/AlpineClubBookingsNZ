@@ -590,20 +590,14 @@ rules first written here. #2765 extended it with the measured-audience half.
   demands a destructive reset on every development database that applied it.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
-  A GENERAL "did a reclassification ship without a backfill" check is
-  **not available**: the audit-writer census pins only 130 of its 548 write sites
-  per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
-  `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
-  `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
-  by `audit-writer-census.test.ts` so this figure and the copy of it in
-  `bed-allocation-audit-category-backfill.test.ts` cannot go stale again —
-  deliberately, because pinning all of them would make every feature that records
-  something edit a 400-line literal — so for the other 383 there is no baseline
-  a check could compare against, and the category distribution alone cannot see a
-  reclassification that another one compensates for. The two `verify` gates that
-  can read a pull request parse its BODY, not its diff. So outside the pinned
-  population this is a rule a reviewer applies, and the reviewer is the
-  enforcement.
+  Since #5211 every write site has a per-site baseline: the generated ledger
+  `scripts/audit/audit-write-sites.ts` records each site's category, one line per
+  site, so a reclassification anywhere fails `audit-writer-census.test.ts` by
+  name. A GENERAL "did it ship WITH a backfill" check is still **not
+  available**: the ledger sees the move, not the migration or issue that answers
+  for it, and the two `verify` gates that can read a pull request parse its BODY,
+  not its diff. So outside #2751's population this is a rule a reviewer applies,
+  prompted by the changed ledger line, and the reviewer is the enforcement.
 
   **The same pull request also states the MEASURED before/after audience, per
   site.** Owner decision of 11 August 2026 on #2765, D3, extending this rule
