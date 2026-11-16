@@ -486,18 +486,22 @@ describe("SetupPanels", () => {
 
   it("leaves focus alone when the contact groups cannot be loaded on opening", async () => {
     mocks.fetchJson.mockResolvedValue({ membershipTypes: [] })
-    // One failure is enough to see where it lands; later automatic retries succeed.
+    // One failure is enough to see where it lands. The opening load is not
+    // retried automatically (ALP-591), so the admin's Load press recovers it.
     mocks.loadGroups.mockReset()
     mocks.loadGroups
       .mockRejectedValueOnce(new Error("Groups read failed"))
       .mockResolvedValue({ groups: [{ id: "group-1", name: "Adults", contactCount: 1 }] })
     render(<SetupPanels {...props} />)
-    await screen.findByText("Adults")
+    await screen.findByText("Groups read failed")
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
     expect(document.activeElement).toBe(document.body)
     expect(alertById("xero-setup-action-error")).toBeEmptyDOMElement()
+    fireEvent.click(screen.getByRole("button", { name: "Load Contact Groups" }))
+    await screen.findByText("Adults")
+    expect(screen.queryByText("Groups read failed")).toBeNull()
   })
 
   it("does not take focus for an old failure when the card is collapsed and re-opened", async () => {
