@@ -637,11 +637,16 @@ second note.
   amount, and only while `xeroCreditNoteId` is null. The same note id is
   success. A different id fails and is not overwritten. The link role is
   `ADMIN_GRANT_CREDIT_NOTE`.
+- **A contact repair keeps the queued request (#5221).** The repair's stored
+  payload spreads `buildAdminGrantCreditNotePayload`, the builder approval
+  queues with. The outbox routes and claims the row by that `queueType`, so a
+  row given back to PENDING after a failed retry still runs.
 - **No new lock.** The stamp moves no balance (`INV-LOCK-001`). It uses no new
   key or order (`INV-LOCK-002`) and no new site (`INV-LOCK-003`).
 
-Pinned by `xero-admin-grant-credit-note.test.ts`, `member-credit.test.ts` and
-`xero-operation-outbox-payload.test.ts`.
+Pinned by `xero-admin-grant-credit-note.test.ts`, `member-credit.test.ts`,
+`xero-operation-outbox-payload.test.ts` and
+`xero-admin-grant-credit-note-contact-repair.realdb.test.ts`.
 
 ## One outcome per Xero operation row (#4356)
 

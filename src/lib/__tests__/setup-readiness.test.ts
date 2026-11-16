@@ -11,6 +11,7 @@ import {
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 import { decideClubTimeZoneBackfill } from "@/lib/config-self-heal-steps";
+import { BROWSER_SENTRY_OFF_DETAIL } from "@/lib/observability/browser-sentry-config";
 import { decideEnvironmentRole } from "@/lib/environment-role";
 import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import {
@@ -231,6 +232,31 @@ describe("setup-readiness", () => {
     for (const dir of tempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  describe("Sentry runtime readiness", () => {
+    it.each([undefined, "", "   ", "https://public@example.ingest.sentry.io/1"])("reports browser reporting from the runtime environment (%s)", browserDsn => {
+      const report = buildSetupReadiness({
+        env: { ...baseEnv, NEXT_PUBLIC_SENTRY_DSN: browserDsn },
+        database: completeDatabase,
+        configDir: makeConfigDir(),
+      });
+      const sentry = findStep(report, "sentry")!;
+      expect(sentry.status).toBe(browserDsn?.trim() ? "complete" : "warning");
+      expect(sentry.details.join(" ")).toContain(browserDsn?.trim() ? "configured at runtime" : "off");
+      expect(sentry.details.join(" ")).not.toContain("https://public@");
+      // One sentence per fact: the off line is not repeated as a "missing" line.
+      expect(sentry.details.filter(line => line.includes("NEXT_PUBLIC_SENTRY_DSN"))).toHaveLength(browserDsn?.trim() ? 0 : 1);
+    });
+
+    it("words browser Sentry off exactly as System Health does", () => {
+      const sentry = findStep(buildSetupReadiness({
+        env: { ...baseEnv, NEXT_PUBLIC_SENTRY_DSN: " " },
+        database: completeDatabase,
+        configDir: makeConfigDir(),
+      }), "sentry")!;
+      expect(sentry.details).toContain(BROWSER_SENTRY_OFF_DETAIL);
+    });
   });
 
   it("reports a complete setup without exposing secret values", () => {
