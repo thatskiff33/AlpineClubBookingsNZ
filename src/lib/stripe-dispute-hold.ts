@@ -72,6 +72,19 @@ export async function paymentCaptureIntentIds(
   return [...new Set(ids.filter((id): id is string => Boolean(id)))];
 }
 
+/**
+ * #4911, #5061 follow-up (`INV-PAY-154`): THE payment-level read - the hold on
+ * every capture a booking payment holds (`paymentCaptureIntentIds`). A paid
+ * cancel, its preview, a price-reducing edit and its quote all read it here, so
+ * none can miss a capture the others see. Read it after the caller's locks.
+ */
+export async function paymentDisputedCaptureCents(
+  db: DisputeReader & Pick<Prisma.TransactionClient, "paymentTransaction">,
+  payment: { id: string; stripePaymentIntentId: string | null; additionalPaymentIntentId: string | null },
+): Promise<CaptureDisputeHold> {
+  return disputedCaptureCents(db, await paymentCaptureIntentIds(db, payment));
+}
+
 /** A refund the chokepoint refused because its capture is disputed. */
 export class DisputedCaptureRefundRefusedError extends Error {
   override name = "DisputedCaptureRefundRefusedError";
