@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 
 const mocks = vi.hoisted(() => ({
   canEdit: vi.fn(),
@@ -68,11 +69,19 @@ const CLUB_TODAY_CANDIDATES = [
 
 function payload(options: {
   decisionDate?: string;
-  membershipTypeName?: string;
-  exemptMembers?: Array<{ memberId: string; memberName: string; ageTier: string | null }>;
+  membershipTypeName?: string | null;
+  subscriptionCategoryName?: string | null;
+  chargeMembershipTypeName?: string | null;
+  chargeSubscriptionCategoryName?: string | null;
+  exemptMembers?: Array<{ memberId: string; memberName: string; ageTier: string | null; exemptBy?: "AGE_TIER" | "MEMBERSHIP_TYPE"; membershipTypeName?: string }>;
+  ungroupedCategoryMembers?: Array<{
+    subscriptionCategoryId: string;
+    subscriptionCategoryName: string;
+    members: Array<{ memberId: string; memberName: string }>;
+  }>;
 } = {}) {
   const decisionDate = options.decisionDate ?? "2026-07-13";
-  const membershipTypeName = options.membershipTypeName ?? "Full";
+  const membershipTypeName = options.membershipTypeName === undefined ? "Full" : options.membershipTypeName;
   return {
     preview: {
       seasonYear: 2026,
@@ -83,6 +92,7 @@ function payload(options: {
       entries: [{
         key: "entry-1",
         membershipTypeName,
+        subscriptionCategoryName: options.subscriptionCategoryName ?? null,
         billingBasis: "PER_MEMBER",
         prorationRule: "NONE",
         chargedAmountCents: 12_000,
@@ -94,12 +104,14 @@ function payload(options: {
       }],
       exceptions: [{ fingerprint: "same", message: "Configure billing" }],
       exemptMembers: options.exemptMembers ?? [],
+      ungroupedCategoryMembers: options.ungroupedCategoryMembers ?? [],
       alreadyInvoiced: [],
     },
     charges: [{
       id: "charge-1",
       status: "EMAIL_FAILED",
-      membershipTypeName: "Full",
+      membershipTypeName: options.chargeMembershipTypeName === undefined ? "Full" : options.chargeMembershipTypeName,
+      subscriptionCategoryName: options.chargeSubscriptionCategoryName ?? null,
       chargedAmountCents: 12_000,
       recipientName: "Member One",
       xeroInvoiceNumber: "INV-1",
@@ -126,6 +138,22 @@ describe("subscription billing panel", () => {
     vi.unstubAllGlobals();
   });
 
+  // Subscription-category decoupling: an entry/charge with a null
+  // membershipTypeName (a category charge) must render the category name
+  // via chargeAxisDisplayName, never a blank label — the admin billing
+  // queue's one direct render of this nullable pair.
+  it("renders the subscription category's name, not blank, for a category-axis entry and charge", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.stubGlobal("fetch", vi.fn(() => successResponse(payload({
+      membershipTypeName: null,
+      subscriptionCategoryName: "Couple",
+      chargeMembershipTypeName: null,
+      chargeSubscriptionCategoryName: "Couple",
+    }))));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findAllByText(/Couple/)).not.toHaveLength(0);
+  });
+
   it("keeps finance mutations disabled for view-only admins and deduplicates exceptions", async () => {
     mocks.canEdit.mockReturnValue(false);
     render(<SubscriptionBillingPanel seasonYear={2026} />);
@@ -146,7 +174,10 @@ describe("subscription billing panel", () => {
     fetchMock.mockRejectedValueOnce(new Error("preview unavailable"));
     fireEvent.change(screen.getByLabelText("Decision date"), { target: { value: "2026-08-01" } });
     expect(screen.queryByRole("button", { name: "Confirm and queue annual batch" })).toBeNull();
-    expect(await screen.findByText("preview unavailable")).toBeTruthy();
+    // A request that never got an answer shows the panel's own sentence, not
+    // the browser's (ALP-589).
+    expect(await screen.findByText("Could not load billing preview.")).toBeTruthy();
+    expect(screen.queryByText("preview unavailable")).toBeNull();
     await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm and queue annual batch" })).toBeNull());
   });
 
@@ -159,7 +190,7 @@ describe("subscription billing panel", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementationOnce(() => older);
     render(<SubscriptionBillingPanel seasonYear={2026} />);
-    fetchMock.mockRejectedValueOnce(new Error("newer preview failed"));
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "newer preview failed" }, { status: 503 }));
     fireEvent.change(screen.getByLabelText("Decision date"), { target: { value: "2026-08-01" } });
     expect(await screen.findByText("newer preview failed")).toBeTruthy();
 
@@ -176,11 +207,11 @@ describe("subscription billing panel", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockRejectedValueOnce(new Error("temporary preview failure"));
     render(<SubscriptionBillingPanel seasonYear={2026} />);
-    expect(await screen.findByText("temporary preview failure")).toBeTruthy();
+    expect(await screen.findByText("Could not load billing preview.")).toBeTruthy();
     fetchMock.mockImplementationOnce(() => successResponse());
     fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
     expect(await screen.findByRole("button", { name: "Confirm and queue annual batch" })).toBeTruthy();
-    expect(screen.queryByText("temporary preview failure")).toBeNull();
+    expect(screen.queryByText("Could not load billing preview.")).toBeNull();
 
     fetchMock
       .mockResolvedValueOnce({ ok: true, json: async () => ({ message: "Due days saved" }) } as never)
@@ -244,6 +275,46 @@ describe("subscription billing panel", () => {
     expect(await screen.findByText(/Exempt \(2\)/)).toBeTruthy();
     expect(screen.getByText("Kid One")).toBeTruthy();
     expect(screen.getByText("Kid Two")).toBeTruthy();
+  });
+
+  // #4496 review: a category member exempt by a NOT_REQUIRED membership type
+  // is listed with the type as the reason, never an age tier.
+  it("names the membership type, not an age tier, for a member exempt by type", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.mocked(fetch).mockImplementation(() => successResponse(payload({
+      exemptMembers: [
+        { memberId: "kid-1", memberName: "Kid One", ageTier: "CHILD", exemptBy: "AGE_TIER" },
+        { memberId: "life-1", memberName: "Life One", ageTier: null, exemptBy: "MEMBERSHIP_TYPE", membershipTypeName: "Life Member" },
+      ],
+    })));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText(/no subscription required by age tier or membership type/)).toBeTruthy();
+    expect(screen.getByText("Membership type: Life Member")).toBeTruthy();
+    expect(screen.getByText("CHILD")).toBeTruthy();
+  });
+
+  // Subscription-category decoupling (review finding): 2+ members billed
+  // solo under the same category (not in a shared FamilyGroup) surface as a
+  // visible warning, so an officer confirming the batch notices — the field
+  // existed on the preview before this test with nothing rendering it.
+  it("warns when members share a subscription category but are billed separately", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.mocked(fetch).mockImplementation(() => successResponse(payload({
+      ungroupedCategoryMembers: [
+        {
+          subscriptionCategoryId: "cat-couple",
+          subscriptionCategoryName: "Couple",
+          members: [
+            { memberId: "alice", memberName: "Alice Adult" },
+            { memberId: "bob", memberName: "Bob Adult" },
+          ],
+        },
+      ],
+    })));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText(/billed separately, not as one group/)).toBeTruthy();
+    expect(screen.getByText(/Couple:/)).toBeTruthy();
+    expect(screen.getByText(/Alice Adult, Bob Adult/)).toBeTruthy();
   });
 
   // #2148 (D2 / constraint 3): a finance-EDIT admin's Refresh reconciles via the
@@ -656,5 +727,44 @@ describe("subscription billing panel", () => {
     expect(screen.queryByText(/^Full · Member One$/)).toBeNull();
     expect(screen.getByRole("button", { name: "Confirm and queue annual batch" }).hasAttribute("disabled")).toBe(false);
     expect(getUrls.at(-1)).toContain("decisionDate=2026-08-01");
+  });
+});
+
+// A refusal is not always JSON: the proxy answers a crashed route with an HTML
+// error page, and a request can go unanswered (ALP-589).
+describe("subscription billing panel: whatever the refusal looks like", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.canEdit.mockReturnValue(true);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  describe("loading the preview", () => {
+    itShowsEveryRefusal({
+      fallback: "Could not load billing preview.",
+      submit: async (answer) => {
+        vi.stubGlobal("fetch", vi.fn(async () => answer()));
+        render(<SubscriptionBillingPanel seasonYear={2026} />);
+      },
+    });
+  });
+
+  describe("a billing action", () => {
+    itShowsEveryRefusal({
+      fallback: "Billing action failed.",
+      submit: async (answer) => {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async (_input: string, init?: RequestInit) =>
+            init?.method === "POST" ? answer() : Response.json(payload()),
+          ),
+        );
+        render(<SubscriptionBillingPanel seasonYear={2026} />);
+        fireEvent.click(await screen.findByRole("button", { name: "Save due days" }));
+      },
+    });
   });
 });

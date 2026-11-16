@@ -20,6 +20,7 @@ export async function GET() {
   });
 
   // #4162: the voided bank refund notes' panel is finance information.
+  // #4959: the named payment rows need this and membership:view both.
   const viewerCanViewFinance = hasAdminAreaAccess(guard.session.user, {
     area: "finance",
     level: "view",

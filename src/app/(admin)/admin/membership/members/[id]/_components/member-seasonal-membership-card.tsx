@@ -36,8 +36,15 @@ import type {
   MembershipTypeSummary,
   MemberDetail,
   SeasonalMembershipAssignmentSummary,
+  SubscriptionCategorySummary,
 } from "../_types";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromBody,
+  refusalMessageOr,
+  readApiObjectOrEmpty,
+} from "@/lib/api-error-message";
+import { MemberSubscriptionCategoryField } from "./member-subscription-category-field";
 import { useClubFormat } from "@/components/club-format-provider";
 
 type BookingBehavior = "MEMBER_RATE" | "NON_MEMBER_RATE" | "BLOCK_BOOKING";
@@ -72,6 +79,10 @@ interface SeasonalMembershipPreview {
   behaviorChanged: boolean;
   bookingBehaviorChanged: boolean;
   subscriptionBehaviorChanged: boolean;
+  // Subscription-category decoupling: independent of the membership-type
+  // behaviour fields above — never affects booking rights/rate.
+  newSubscriptionCategory: SubscriptionCategorySummary | null;
+  subscriptionCategoryChanged: boolean;
   affectedCounts: {
     futureConfirmedBookings: number;
     draftBookings: number;
@@ -210,6 +221,9 @@ export function MemberSeasonalMembershipCard({
   const [typesLoading, setTypesLoading] = useState(true);
   const [seasonYear, setSeasonYear] = useState(effectiveCurrentSeasonYear);
   const [selectedMembershipTypeId, setSelectedMembershipTypeId] = useState("");
+  // Subscription-category decoupling: "" means Individual (null on the wire)
+  // — the default, unchanged-per-type-billing case.
+  const [selectedSubscriptionCategoryId, setSelectedSubscriptionCategoryId] = useState("");
   const [applyFrom, setApplyFrom] = useState("");
   const [preview, setPreview] = useState<SeasonalMembershipPreview | null>(null);
   const [reason, setReason] = useState("");
@@ -232,7 +246,8 @@ export function MemberSeasonalMembershipCard({
   const targetChanged =
     selectedMembershipTypeId.length > 0 &&
     (currentAssignment?.membershipTypeId !== selectedMembershipTypeId ||
-      (currentAssignment?.applyFrom ?? "") !== applyFrom);
+      (currentAssignment?.applyFrom ?? "") !== applyFrom ||
+      (currentAssignment?.subscriptionCategoryId ?? "") !== selectedSubscriptionCategoryId);
 
   async function loadMembershipTypes() {
     setTypesLoading(true);
@@ -241,20 +256,18 @@ export function MemberSeasonalMembershipCard({
       const response = await fetch("/api/admin/membership-types", {
         credentials: "same-origin",
       });
-      const body = (await response.json()) as
+      const body = (await readApiObjectOrEmpty(response)) as
         | MembershipTypesResponse
         | { error?: string };
       if (!response.ok || !("membershipTypes" in body)) {
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to load membership types"),
         );
       }
       setMembershipTypes(body.membershipTypes);
     } catch (loadError) {
       setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Failed to load membership types",
+        refusalMessageOr(loadError, "Failed to load membership types"),
       );
     } finally {
       setTypesLoading(false);
@@ -280,9 +293,13 @@ export function MemberSeasonalMembershipCard({
       currentAssignment?.membershipTypeId ?? activeFallback?.id ?? "",
     );
     setApplyFrom(currentAssignment?.applyFrom ?? "");
+    setSelectedSubscriptionCategoryId(
+      currentAssignment?.subscriptionCategoryId ?? "",
+    );
   }, [
     currentAssignment?.applyFrom,
     currentAssignment?.membershipTypeId,
+    currentAssignment?.subscriptionCategoryId,
     membershipTypes,
     seasonYear,
   ]);
@@ -291,7 +308,7 @@ export function MemberSeasonalMembershipCard({
     setPreview(null);
     setReason("");
     setMessage("");
-  }, [member.id, seasonYear, selectedMembershipTypeId]);
+  }, [member.id, seasonYear, selectedMembershipTypeId, selectedSubscriptionCategoryId]);
 
   async function previewChange() {
     if (!selectedMembershipTypeId) {
@@ -312,24 +329,23 @@ export function MemberSeasonalMembershipCard({
           body: JSON.stringify({
             seasonYear,
             membershipTypeId: selectedMembershipTypeId,
+            subscriptionCategoryId: selectedSubscriptionCategoryId || null,
             applyFrom: applyFrom || null,
           }),
         },
       );
-      const body = (await response.json()) as
+      const body = (await readApiObjectOrEmpty(response)) as
         | { preview: SeasonalMembershipPreview }
         | { error?: string };
       if (!response.ok || !("preview" in body)) {
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to preview membership change"),
         );
       }
       setPreview(body.preview);
     } catch (previewError) {
       setError(
-        previewError instanceof Error
-          ? previewError.message
-          : "Failed to preview membership change",
+        refusalMessageOr(previewError, "Failed to preview membership change"),
       );
     } finally {
       setPreviewing(false);
@@ -359,15 +375,16 @@ export function MemberSeasonalMembershipCard({
           body: JSON.stringify({
             seasonYear,
             membershipTypeId: selectedMembershipTypeId,
+            subscriptionCategoryId: selectedSubscriptionCategoryId || null,
             applyFrom: applyFrom || null,
             reason,
             previewToken: preview.previewToken,
           }),
         },
       );
-      const body = (await response.json()) as { error?: string };
+      const body = (await readApiObjectOrEmpty(response)) as { error?: string };
       if (!response.ok) {
-        throw new Error(
+        throw new ApiRefusalError(
           apiErrorMessageFromBody(body, "Failed to save membership change"),
         );
       }
@@ -377,9 +394,7 @@ export function MemberSeasonalMembershipCard({
       await onSaved();
     } catch (saveError) {
       setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Failed to save membership change",
+        refusalMessageOr(saveError, "Failed to save membership change"),
       );
     } finally {
       setSaving(false);
@@ -486,6 +501,13 @@ export function MemberSeasonalMembershipCard({
           </ViewOnlyActionButton>
         </div>
 
+        <MemberSubscriptionCategoryField
+          value={selectedSubscriptionCategoryId}
+          onChange={setSelectedSubscriptionCategoryId}
+          currentCategoryId={currentAssignment?.subscriptionCategoryId ?? null}
+          onLoadError={setError}
+        />
+
         <div className="grid gap-3 md:grid-cols-2">
           <div className="rounded-md border border-border p-3 text-sm">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -583,6 +605,17 @@ export function MemberSeasonalMembershipCard({
               <div className="mt-1 text-muted-foreground">
                 Applies from {preview.applyFrom ? formatCalendarDay(preview.applyFrom, clubTime.format) : "season start"}
               </div>
+              {preview.subscriptionCategoryChanged && (
+                // Maintainer review: the preview used to carry this change
+                // (subscriptionCategoryChanged/newSubscriptionCategory were
+                // already computed) without ever showing it, so an admin
+                // confirming the change saw no trace of it here.
+                <div className="mt-1 text-muted-foreground">
+                  Subscription category: {preview.previousAssignment?.subscriptionCategory?.name ?? "Individual"}
+                  {" → "}
+                  {preview.newSubscriptionCategory?.name ?? "Individual"}
+                </div>
+              )}
               <div className="mt-1 text-muted-foreground">
                 {seasonSelectLabel(
                   preview.currentSeasonSubscription.seasonYear,

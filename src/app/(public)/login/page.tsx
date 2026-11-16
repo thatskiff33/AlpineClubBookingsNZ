@@ -15,6 +15,11 @@ import { googleCredentialsConfigured } from "@/lib/google-oauth";
 import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
 import { getCachedEffectiveModuleFlags } from "@/lib/public-layout-config";
 import { LoginForm } from "./login-form";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Sign in",
+};
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;

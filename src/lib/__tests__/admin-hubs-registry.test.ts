@@ -644,6 +644,7 @@ describe("the hub prefix census", () => {
       "/admin/membership/membership-types",
       "/admin/membership/member-fields",
       "/admin/membership/subscription-lockout",
+      "/admin/membership/subscription-categories",
     ]);
     expect(adminHubOwnedPaths("members")).not.toContain("/admin/membership");
     expect(TODAYS_SOURCES.routeMapPrefixes).not.toContain("/admin/membership");
@@ -809,6 +810,7 @@ describe("the entries' shape", () => {
       "site-content",
       "site-style",
       "stuck-states",
+      "subscription-categories",
       "subscription-lockout",
       "subscriptions",
       "testing-route-error",
@@ -1101,6 +1103,15 @@ describe("isInexactAdminPagePath", () => {
   });
 });
 
+/** #4959: the Stuck States signals whose card links to their own named rows. */
+const STUCK_STATE_ROW_ANCHORS = [
+  "payment-group-settlement-refund-unexecuted",
+  "payment-cancelled-refund-unrecorded",
+  "payment-recovery-exhausted",
+  "payment-group-settlement-stale",
+  "booking-unnamed-placeholder-guests",
+];
+
 describe("tabs and anchors", () => {
   it("links a tab, the default one without a query, and a section", () => {
     expect(adminTabHref("family-groups", "suggestions")).toBe("/admin/family-groups?tab=suggestions");
@@ -1138,7 +1149,7 @@ describe("tabs and anchors", () => {
       ["membership-cancellations", ["requests", "settings"], []],
       ["family-groups", ["groups", "suggestions"], []],
       ["health", [], ["integration-readiness"]],
-      ["stuck-states", [], ["bank-refund-voids"]],
+      ["stuck-states", [], ["bank-refund-voids", ...STUCK_STATE_ROW_ANCHORS]],
     ]);
   });
 
@@ -1236,6 +1247,10 @@ describe("tabs and anchors", () => {
    * An anchor whose element is a shared component's, outside the page's
    * directory: the page must render the component, and the component must give
    * its element the id through the registry-typed constant pinned below.
+   *
+   * #4959: each Stuck States signal's table row is the item's own element. The
+   * page renders `<TableRow id={item.id}`, and the dashboard module writes each
+   * signal's id out as a literal, so the anchor is the id the card links to.
    */
   const COMPONENT_ANCHORS: Record<
     string,
@@ -1246,6 +1261,12 @@ describe("tabs and anchors", () => {
       file: "src/components/admin/bank-refund-voids-to-answer-panel.tsx",
       id: "id={BANK_REFUND_VOIDS_ANCHOR}",
     },
+    ...Object.fromEntries(
+      STUCK_STATE_ROW_ANCHORS.map((anchor) => [
+        anchor,
+        { renders: "<TableRow id={item.id}", file: "src/lib/stuck-state-dashboard.ts", id: `id: "${anchor}"` },
+      ]),
+    ),
   };
 
   /** Why `anchor` is not rendered by `page`, or `null` when it is. */
@@ -1271,7 +1292,7 @@ describe("tabs and anchors", () => {
     // The panel writes `id={BANK_REFUND_VOIDS_ANCHOR}`; its stuck-state row links
     // with adminAnchorHref. One spelling, typed against the registry.
     expect(BANK_REFUND_VOIDS_ANCHOR).toBe("bank-refund-voids");
-    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR]);
+    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR, ...STUCK_STATE_ROW_ANCHORS]);
     expect(adminAnchorHref("stuck-states", BANK_REFUND_VOIDS_ANCHOR)).toBe(
       "/admin/stuck-states#bank-refund-voids",
     );
@@ -1756,6 +1777,7 @@ describe("buildAdminUrlRules", () => {
       ["/admin/site-content", "/admin/website/site-content"],
       ["/admin/site-style", "/admin/website/site-style"],
       ["/admin/stuck-states", "/admin/system/stuck-states"],
+      ["/admin/subscription-categories", "/admin/membership/subscription-categories"],
       ["/admin/subscription-lockout", "/admin/membership/subscription-lockout"],
       ["/admin/subscriptions", "/admin/finance/subscriptions"],
       ["/admin/testing/route-error", "/admin/system/testing/route-error"],
@@ -2136,6 +2158,9 @@ describe("the registry is inert", () => {
       "C5: the member back-link labels are the registry's",
     "src/lib/__tests__/admin-moved-page-literals.test.ts":
       "C5: no production code spells a moved page's old URL as a literal",
+    "src/lib/__tests__/admin-hub-card-titles.test.ts":
+      "a hub card that opens a whole page is titled with its registry label",
+    "src/app/(admin)/admin/display/page.tsx": "its cards are titled with their pages' registry labels",
     "src/lib/__tests__/xero-oauth-return-path.test.ts":
       "C5: the OAuth return-path check accepts both Xero landing pages at either place",
     "src/lib/__tests__/xero-setup-links.test.ts":
@@ -2153,6 +2178,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/rules/fee-configuration/page.tsx": "C6: it redirects to the fee console's adminHref",
     "src/lib/__tests__/fee-configuration-redirect.test.ts":
       "C6: pins the Fee Configuration stub's redirect to the fee console's adminHref",
+    "src/app/(admin)/admin/rules/fees/_components/finance-fees-sections.tsx":
+      "#4496: the Subscription Categories links are adminHref",
     "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": "C6: the Seasons link is adminHref",
     "src/app/(admin)/admin/rules/seasons/page.tsx": "C6: the Fees link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx":
@@ -2208,6 +2235,8 @@ describe("the registry is inert", () => {
       "C8: saving and cancelling return to Member Notices at its adminHref",
     "src/components/admin/club-posts/club-posts-admin.tsx":
       "C8: the Message Board's tab links and search form address it at its adminHref",
+    "src/app/(admin)/admin/membership/subscription-categories/page.tsx":
+      "#4496: added after C8, registered in MEMBERS_HUB; its Fees link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/contact-sync-panel.tsx":
       "C9: the affected-member link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/erased-member-contacts-panel.tsx":

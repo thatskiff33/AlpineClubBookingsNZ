@@ -55,6 +55,7 @@ function seedDateWriteProblems(code: string): string[] {
   const source = ts.createSourceFile("seed.ts", code, ts.ScriptTarget.Latest, true);
   const problems: string[] = [];
   let canonicalImport = false;
+  let bookingWriterImport = false;
   let writers = 0;
   const propertyName = (name: ts.PropertyName): string | undefined => {
     if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
@@ -93,6 +94,13 @@ function seedDateWriteProblems(code: string): string[] {
         (entry) => entry.name.text === "seededBookingDates" && !entry.propertyName,
       );
     }
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) &&
+        node.moduleSpecifier.text === "./demo-seed-writers") {
+      const bindings = node.importClause?.namedBindings;
+      bookingWriterImport = !!bindings && ts.isNamedImports(bindings) && bindings.elements.some(
+        (entry) => entry.name.text === "createDemoBooking" && !entry.propertyName,
+      );
+    }
     const namedBinding =
       ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ||
       ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node) ||
@@ -108,14 +116,21 @@ function seedDateWriteProblems(code: string): string[] {
         (importedBinding && !canonicalBinding)) {
       problems.push("INV-SSOT-001: seededBookingDates must come from the canonical import without local shadowing");
     }
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+    const sharedWriter = ts.isCallExpression(node) && ts.isIdentifier(node.expression) &&
+      node.expression.text === "createDemoBooking";
+    if (ts.isCallExpression(node) && (sharedWriter || (ts.isPropertyAccessExpression(node.expression) &&
         node.expression.expression.getText(source) === "prisma.booking" &&
-        !["findMany", "findFirst", "findUnique", "findUniqueOrThrow", "delete", "deleteMany", "count"].includes(node.expression.name.text)) {
+        !["findMany", "findFirst", "findUnique", "findUniqueOrThrow", "delete", "deleteMany", "count"].includes(node.expression.name.text)))) {
       writers += 1;
+      const methodName = sharedWriter ? "create" : (node.expression as ts.PropertyAccessExpression).name.text;
+      if (sharedWriter && (!bookingWriterImport || node.arguments[0]?.getText(source) !== "prisma")) {
+        problems.push("INV-SSOT-001: shared Booking writer must use its canonical import and prisma client");
+      }
       const argument = node.arguments[0];
       const data = argument && ts.isObjectLiteralExpression(argument)
         ? argument.properties.find((p) => p.name && propertyName(p.name) === "data") : undefined;
-      const object = data && ts.isPropertyAssignment(data) ? data.initializer : undefined;
+      const object = sharedWriter ? node.arguments[1]
+        : data && ts.isPropertyAssignment(data) ? data.initializer : undefined;
       const last = object && ts.isObjectLiteralExpression(object) ? object.properties.at(-1) : undefined;
       const guarded = last && ts.isSpreadAssignment(last) && ts.isCallExpression(last.expression) &&
         last.expression.expression.getText(source) === "seededBookingDates" && last.expression.arguments.length === 2;
@@ -124,14 +139,14 @@ function seedDateWriteProblems(code: string): string[] {
       );
       // Cleanup/outbox offer metadata updates do not write booking dates. An
       // opaque spread or data variable is not proof and still fails closed.
-      if (["update", "updateMany"].includes(node.expression.name.text) &&
+      if (["update", "updateMany"].includes(methodName) &&
           object && ts.isObjectLiteralExpression(object) && !explicitDates &&
           object.properties.every((property) =>
             (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
             propertyName(property.name) !== undefined)) {
         // Still visit nested expressions below: metadata is not a license to
         // hide another Booking writer inside an initializer.
-      } else if (node.expression.name.text !== "create" || !guarded || explicitDates) {
+      } else if (methodName !== "create" || !guarded || explicitDates) {
         problems.push(`INV-SSOT-001: ${node.getText(source)} must end Booking data with ...seededBookingDates(checkIn, checkOut)`);
       }
     }
@@ -408,6 +423,14 @@ describe("#4002 stay windows are clear of every seeded booking night", () => {
     expect(pair.start.checkIn > winter.end).toBe(true);
     expect(() => helpers.linkedMoveStayWindows({ checkIn: run.shiftDateOnly(monday, 700) })).toThrow("No seeded-season linked-move pair");
     expect(() => helpers.linkedMoveStayWindows({ checkIn: run.shiftDateOnly(monday, 1) })).toThrow("Monday");
+  });
+
+  it("checks dates passed to the shared demo Booking writer too", () => {
+    const prefix = 'import { seededBookingDates } from "./e2e-fixtures"; import { createDemoBooking } from "./demo-seed-writers";';
+    const call = 'createDemoBooking(prisma, { memberId: "m", ...seededBookingDates(a, b) });';
+    expect(seedDateWriteProblems(prefix + call)).toEqual([]);
+    expect(seedDateWriteProblems(prefix + call.replace("...seededBookingDates(a, b)", "checkIn: a, checkOut: b"))).not.toEqual([]);
+    expect(seedDateWriteProblems(prefix.replace("./demo-seed-writers", "./other") + call)).not.toEqual([]);
   });
 
   it("seed Booking writes finish with the canonical guarded dates", () => {

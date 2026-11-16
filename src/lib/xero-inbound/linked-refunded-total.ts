@@ -7,8 +7,10 @@
  * (`repairRefundedPaymentBusinessState`, which adds the note being synced),
  * the kept settle (`decideInternetBankingReceiptFigure`) and the note sync's
  * allocation write (`writeCurrentCreditNoteAllocation`), the last two inside
- * their own locked transactions. It writes nothing and takes no lock; callers
- * clamp and floor what it returns.
+ * their own locked transactions. #4370 (`INV-PAY-155`): what card refunds
+ * Stripe failed later take off is subtracted here, so every writer keeps that
+ * rule. It writes nothing and takes no lock; callers clamp and floor what it
+ * returns.
  */
 import { PaymentSource, PaymentTransactionKind, type PaymentStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -16,6 +18,7 @@ import { type CreditNoteAllocationCents, getJsonRecord, getRefundContributionCen
 import { isIncludedRefundCreditNoteStatus } from "@/lib/xero-refund-note-status";
 import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-credit-modification-notes";
 import { readRefundRequestPaidBackCentsByPaymentId } from "./refund-request-paid-back";
+import { readFailedCardRefundRecountCentsByPayment, readFailedCardRefundRecountCentsIn } from "./failed-card-refund-recount";
 import { receiptCountsInvoiceCorrections } from "./ib-receipt-reasons";
 import { CLEARING_ALLOCATION_LINK_WHERE, distinctClearingAllocations, NOTE_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
 
@@ -56,19 +59,25 @@ export async function paymentsCountingInvoiceCorrections(
  * to it or (#3979) to its bank-transfer invoice once (`distinctClearingAllocations`,
  * summed per note by `sumAppliedCentsByCreditNote`) that moved cash, or is an
  * invoice correction against a receipt still at the stored figure, and (#4215,
- * `INV-PAY-118`) its refund requests' paid-back cash. `excludeCreditNoteId` is
- * the note a recount is syncing, which it adds itself.
+ * `INV-PAY-118`) its refund requests' paid-back cash, less (#4370,
+ * `INV-PAY-155`) what card refunds Stripe failed later take off. The
+ * subtraction is applied here, before every caller's clamp and floor, and it
+ * can take the figure below 0. `excludeCreditNoteId` is the note a recount is
+ * syncing, which it adds itself.
+ *
+ * On the root client (the recount) the refund notes and the failed refunds
+ * are read in one read-only snapshot (`readFailedCardRefundRecountCentsByPayment`);
+ * on a caller's transaction, in that transaction (`readFailedCardRefundRecountCentsIn`).
  */
 export async function decideLinkedRefundedTotalCents(
   store: Store,
-  payments: ReadonlyArray<{ id: string; source: PaymentSource; xeroInvoiceId: string | null }>,
+  payments: ReadonlyArray<{ id: string; bookingId: string; refundedAmountCents: number; source: PaymentSource; xeroInvoiceId: string | null }>,
   options: { excludeCreditNoteId?: string | null; transactionRowsOverride?: ReadonlyMap<string, readonly ReceiptRow[]> } = {},
 ): Promise<Map<string, number>> {
   const paymentIds = payments.map((payment) => payment.id);
   const excluded = options.excludeCreditNoteId ?? null;
-  // #4215: requests' paid-back cash, read AFTER the payment rows the caller holds.
-  const [directRefundLinks, modificationAllocationLinks, refundRequestPaidBackCentsByPaymentId] = await Promise.all([
-    store.xeroObjectLink.findMany({
+  const readDirectRefundLinks = (db: Store) =>
+    db.xeroObjectLink.findMany({
       where: {
         localModel: "Payment",
         localId: { in: paymentIds },
@@ -77,7 +86,12 @@ export async function decideLinkedRefundedTotalCents(
         active: true,
       },
       select: { localId: true, xeroObjectId: true, metadata: true },
-    }),
+    });
+  // #4215: requests' paid-back cash, read AFTER the payment rows the caller holds.
+  const [{ notesCounted: directRefundLinks, centsByPayment: failedCardRefundCentsByPaymentId }, modificationAllocationLinks, refundRequestPaidBackCentsByPaymentId] = await Promise.all([
+    store === (prisma as Store)
+      ? readFailedCardRefundRecountCentsByPayment(payments, readDirectRefundLinks)
+      : readFailedCardRefundRecountCentsIn(store, payments, readDirectRefundLinks),
     // The note's own role only: a payment's role-less links mirror its refund and account notes (#4786).
     store.xeroObjectLink.findMany({
       where: { localModel: "Payment", localId: { in: paymentIds }, xeroObjectType: "ALLOCATION", role: NOTE_ALLOCATION_ROLE, active: true },
@@ -171,7 +185,13 @@ export async function decideLinkedRefundedTotalCents(
       ? await paymentsCountingInvoiceCorrections(paymentIds, store, options.transactionRowsOverride)
       : new Set<string>();
 
-  const linkedCents = new Map(paymentIds.map((paymentId) => [paymentId, refundRequestPaidBackCentsByPaymentId.get(paymentId) ?? 0]));
+  // #4370 (`INV-PAY-155`): the failed-later card refunds come off here, once, before any caller's clamp or floor.
+  const linkedCents = new Map(
+    paymentIds.map((paymentId) => [
+      paymentId,
+      (refundRequestPaidBackCentsByPaymentId.get(paymentId) ?? 0) - (failedCardRefundCentsByPaymentId.get(paymentId) ?? 0),
+    ]),
+  );
   const add = (paymentId: string, cents: number) => linkedCents.set(paymentId, (linkedCents.get(paymentId) ?? 0) + cents);
 
   const directRefundCentsByPaymentId = new Map<string, Map<string, number>>();

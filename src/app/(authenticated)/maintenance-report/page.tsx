@@ -85,7 +85,9 @@ export default function MaintenanceReportPage() {
       <div className="mx-auto max-w-xl space-y-6 p-4 sm:p-6">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            {/* The submitted card is the page's whole content with no h1 in
+                this render state — the form state's h1 is a separate branch. */}
+            <CardTitle headingLevel={1} className="flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-primary" aria-hidden="true" />
               Thank you — that has been sent
             </CardTitle>

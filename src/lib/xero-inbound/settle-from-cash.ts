@@ -190,7 +190,7 @@ async function keptRefundedTotal(
       ];
   const linked = await decideLinkedRefundedTotalCents(
     tx,
-    [{ id: payment.id, source: PaymentSource.INTERNET_BANKING, xeroInvoiceId: input.invoiceId }],
+    [{ ...payment, source: PaymentSource.INTERNET_BANKING, xeroInvoiceId: input.invoiceId }],
     { transactionRowsOverride: new Map([[payment.id, capturedRows]]) },
   );
   const linkedCents = Math.min(Math.max(linked.get(payment.id) ?? 0, 0), payment.amountCents);

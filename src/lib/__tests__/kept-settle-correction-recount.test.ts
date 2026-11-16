@@ -213,7 +213,10 @@ describe("a keep sets the whole refunded total its links decide, in its own tran
     expect(mocks.decideLinked).toHaveBeenCalledTimes(1);
     const [store, payments, options] = mocks.decideLinked.mock.calls[0];
     expect(store).toHaveProperty("paymentTransaction");
-    expect(payments).toEqual([{ id: PAYMENT_ID, source: "INTERNET_BANKING", xeroInvoiceId: INVOICE_ID }]);
+    // #4370: with the booking and stored total the failed-card subtraction reads.
+    expect(payments).toEqual([
+      { id: PAYMENT_ID, bookingId: "booking-1", amountCents: 30_000, refundedAmountCents: 0, source: "INTERNET_BANKING", xeroInvoiceId: INVOICE_ID },
+    ]);
     expect(options.transactionRowsOverride.get(PAYMENT_ID)).toEqual([pendingReceipt({ status: "SUCCEEDED" })]);
     expect(options).not.toHaveProperty("excludeCreditNoteId");
   });

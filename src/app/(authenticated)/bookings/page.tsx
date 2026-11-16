@@ -21,6 +21,11 @@ import {
   bookingListLodgeLabel,
   countActiveLodgesForBookingList,
 } from "@/lib/lodges";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "My bookings",
+};
 
 export default async function MyBookingsPage() {
   const session = await auth();
