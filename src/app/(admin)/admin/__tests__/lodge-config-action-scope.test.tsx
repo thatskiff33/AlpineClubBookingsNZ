@@ -22,6 +22,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -280,10 +281,6 @@ describe("a late failure after a lodge switch", () => {
 
   function stubSeasonsFetch(heldMethod: "PUT" | "DELETE") {
     vi.stubGlobal(
-      "confirm",
-      vi.fn(() => true),
-    );
-    vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
@@ -315,10 +312,18 @@ describe("a late failure after a lodge switch", () => {
     [
       "a delete",
       "DELETE",
-      async () =>
+      async () => {
         fireEvent.click(
           await screen.findByRole("button", { name: "Delete Winter 2026" }),
-        ),
+        );
+        // Delete asks first through the shared confirmation dialog (#4973); the
+        // request this test holds open starts once it is confirmed.
+        fireEvent.click(
+          within(await screen.findByRole("dialog")).getByRole("button", {
+            name: "Delete season",
+          }),
+        );
+      },
     ],
     [
       "a window save",

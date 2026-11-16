@@ -11,7 +11,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -78,7 +78,6 @@ let seasonFetches = 0;
 beforeEach(() => {
   seasonFetches = 0;
   installScrollIntoViewSpy();
-  vi.stubGlobal("confirm", () => true);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -113,6 +112,16 @@ function renderSection() {
   );
 }
 
+// Delete asks first through the shared confirmation dialog (#4973).
+async function confirmSeasonDelete() {
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete season" }));
+}
+
+async function deleteWinter() {
+  fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+  await confirmSeasonDelete();
+}
+
 function errorBox() {
   return document.getElementById("hut-fees-error");
 }
@@ -121,7 +130,7 @@ describe("Hut Fees: a refused delete or toggle is readable (#4976)", () => {
   it("shows the server's sentence for a 404 delete", async () => {
     mutationResponse = () => Response.json({ error: "Season not found" }, { status: 404 });
     renderSection();
-    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    await deleteWinter();
 
     await waitFor(() => expect(errorBox()).toHaveTextContent("Season not found"));
   });
@@ -129,7 +138,7 @@ describe("Hut Fees: a refused delete or toggle is readable (#4976)", () => {
   it("shows the fallback, not a parse error, for an HTML delete refusal", async () => {
     mutationResponse = HTML_502;
     renderSection();
-    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    await deleteWinter();
 
     await waitFor(() => expect(errorBox()).toHaveTextContent("Failed to delete"));
     expect(errorBox()).not.toHaveTextContent(/JSON/);
@@ -155,6 +164,7 @@ describe("Hut Fees: a refused delete or toggle is readable (#4976)", () => {
       };
       renderSection();
       fireEvent.click(await screen.findByRole("button", { name: button }));
+      if (_action === "delete") await confirmSeasonDelete();
 
       await waitFor(() => expect(errorBox()).toHaveTextContent(fallback));
       expect(errorBox()).not.toHaveTextContent(/fetch/i);
@@ -166,11 +176,13 @@ describe("Hut Fees: a refused delete or toggle is readable (#4976)", () => {
     renderSection();
     const remove = await screen.findByRole("button", { name: "Delete Winter 2026" });
     fireEvent.click(remove);
+    await confirmSeasonDelete();
     await waitFor(() => expect(errorBox()).toHaveTextContent("Season not found"));
     await expectRecoveryAlertToHoldFocus(errorBox());
 
     act(() => remove.focus());
     fireEvent.click(remove);
+    await confirmSeasonDelete();
 
     await expectRecoveryAlertToHoldFocus(errorBox());
   });
@@ -178,7 +190,7 @@ describe("Hut Fees: a refused delete or toggle is readable (#4976)", () => {
   it("clears an earlier refusal when the next attempt succeeds", async () => {
     mutationResponse = () => Response.json({ error: "Season not found" }, { status: 404 });
     renderSection();
-    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    await deleteWinter();
     await waitFor(() => expect(errorBox()).toHaveTextContent("Season not found"));
 
     mutationResponse = () => Response.json({ success: true });
@@ -191,7 +203,7 @@ describe("Hut Fees: a refused delete or toggle is readable (#4976)", () => {
   it("refreshes the seasons after a successful delete", async () => {
     mutationResponse = () => Response.json({ success: true });
     renderSection();
-    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    await deleteWinter();
 
     await waitFor(() => expect(seasonFetches).toBe(2));
     expect(errorBox()).toHaveTextContent("");
