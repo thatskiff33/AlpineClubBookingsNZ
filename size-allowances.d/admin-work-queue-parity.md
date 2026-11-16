@@ -7,7 +7,7 @@ The `function:` entries cover the same calls inside components already over
 the function-length limit.
 
 file: src/app/(admin)/admin/finance/refund-requests/page.tsx
-lines: 986
+lines: 1016
 reason: the only growth is the import of `notifyAdminQueueChanged` and the
   call at each decision that changes this queue, so the Needs Attention badge
   refetches after the officer acts (#4962). The call has to sit at the
@@ -61,7 +61,7 @@ reason: the only growth is the import of `notifyAdminQueueChanged` and the
   piece of work.
 
 function: src/app/(admin)/admin/finance/refund-requests/page.tsx#RefundRequestsPage
-lines: 816
+lines: 844
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
