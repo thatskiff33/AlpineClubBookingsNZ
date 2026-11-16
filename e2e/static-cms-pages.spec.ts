@@ -776,8 +776,8 @@ test.describe("unpublishing a CMS page", () => {
  * one rather than an extra assertion there: unpublish proves the stored copy is
  * cleared when a page is HIDDEN, and deletion is the lifecycle step that had no
  * supported writer at all until MC-03D. The failure mode is the same and it is
- * the whole point of the case — a 200 on the request immediately after the
- * delete means the stored copy outlived the write, and on a quiet site it would
+ * the whole point of the case — a 200 still answering seconds after the
+ * delete (the case polls briefly, #5205) means the stored copy outlived the write, and on a quiet site it would
  * keep answering for hours, because `revalidate = 300` hands a stale entry to
  * the requester before regeneration starts rather than blocking on it.
  *

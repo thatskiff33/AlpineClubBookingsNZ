@@ -8,7 +8,7 @@ import {
   writeClubRawCss,
   type AdminClubTheme,
 } from "./helpers/site-style";
-import { adminWriteVisiblePoll } from "./helpers/public-cache";
+import { ADMIN_WRITE_VISIBLE_POLL } from "./helpers/public-cache";
 
 /*
   The kiosk PIN must not be readable by administrator Raw CSS (#2981).
@@ -162,15 +162,15 @@ test.describe("kiosk PIN entry under administrator Raw CSS", () => {
 
     // Positive control FIRST. If Raw CSS were not reaching this page, every
     // assertion after it would be meaningless. The page is re-opened until it
-    // does, within a bound far below the cache lifetimes: the theme route clears
-    // the public caches as its response finishes, so the first load after
-    // `beforeAll` saved the probe rules can still be the old stylesheet (#5205).
+    // does: the theme route clears the public caches as its response finishes,
+    // so the first load after `beforeAll` saved the probe rules can still be the
+    // old stylesheet (#5205).
     await expect(async () => {
       await page.goto("/hut-leader-instructions?a=e2e-2981-assignment");
       await expect(field).toBeVisible();
       expect((await observe(page)).outlineColor).toBe(CONTROL_OUTLINE);
-    }).toPass(
-      adminWriteVisiblePoll("the saved Raw CSS must reach the kiosk page"),
+    }, "the saved Raw CSS must reach the kiosk page").toPass(
+      ADMIN_WRITE_VISIBLE_POLL,
     );
 
     // Masked by default (#3460): rendered glyphs are a channel a font could

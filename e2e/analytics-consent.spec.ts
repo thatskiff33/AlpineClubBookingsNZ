@@ -2,7 +2,7 @@ import { expect, test, type APIRequestContext, type Page } from "./helpers/acces
 import { storageStatePath } from "./helpers/auth";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { overrideModules, setModuleSettings } from "./helpers/modules";
-import { adminWriteVisiblePoll } from "./helpers/public-cache";
+import { ADMIN_WRITE_VISIBLE_POLL } from "./helpers/public-cache";
 
 /*
   Google Analytics consent, end to end (#2573, docs/E2E_PLAYWRIGHT.md).
@@ -112,12 +112,11 @@ async function expectPublicSiteServes(data: {
       ? "off"
       : `${data.measurementId} banner=${data.consentBannerEnabled}`;
   await expect
-    .poll(
-      servedAnalyticsState,
-      adminWriteVisiblePoll(
+    .poll(servedAnalyticsState, {
+      message:
         "the public home page must be served with the analytics settings just saved",
-      ),
-    )
+      ...ADMIN_WRITE_VISIBLE_POLL,
+    })
     .toBe(expected);
 }
 

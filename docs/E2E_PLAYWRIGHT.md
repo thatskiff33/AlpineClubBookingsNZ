@@ -1079,11 +1079,14 @@ specs nearly always lost that race and passed; on a faster runner
 on changes that touched none of them.
 
 A spec that asserts "the public site shows what the admin just saved" polls for
-it with the helpers in `e2e/helpers/public-cache.ts`, never on the first
-request and never after a sleep. The one bound, `ADMIN_WRITE_VISIBLE_WITHIN_MS`,
-is 10 seconds: below the 15-second tagged-cache lifetime and the 300-second
-stored-page backstop, so a pass is still the write clearing the cache and never
-the cache ageing out. Do not raise it past 15 seconds.
+it, never on the first request and never after a sleep. The three specs above
+share one 10-second bound in `e2e/helpers/public-cache.ts`. For a stored CMS
+page that the spec warmed just before the write, a pass inside it is still the
+write clearing the store, because the page could not age out in under 300
+seconds. For a page served from the tagged layout caches it only waits for the
+change: those entries live 15 seconds from their last rebuild, which a spec
+does not control, so the unit tier pins those invalidations.
+`club-identity-smoke.spec.ts` keeps its own, longer wait for the same reason.
 
 ### What is deliberately NOT the fix
 

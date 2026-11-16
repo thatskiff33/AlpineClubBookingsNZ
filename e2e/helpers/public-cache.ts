@@ -17,25 +17,32 @@ import { expect, type APIRequestContext } from "@playwright/test";
 /**
  * How long an admin write may take to show on the public site.
  *
- * Deliberately BELOW both cache lifetimes: the tagged layout caches live 15
- * seconds and a stored CMS page 300. A pass inside this bound is therefore still
- * evidence that the write invalidated the cache, and can never be the cache
- * ageing out by itself. Do not raise it past 15 seconds, and do not replace the
- * poll with a sleep, which proves nothing about when the change landed.
+ * What a pass inside it proves depends on which cache the page is served from:
+ *
+ *  • A STORED CMS page lives 300 seconds, so a spec that warms the page and then
+ *    writes (`static-cms-pages.spec.ts`) has still proved the write cleared the
+ *    store: the page could not have aged out in 10.
+ *  • The TAGGED layout caches live 15 seconds from when the entry was last
+ *    rebuilt, which a spec does not control. For those (analytics settings, the
+ *    theme) the poll only waits for the change to be served; it is not evidence
+ *    that the write invalidated anything. The unit tier pins those invalidations.
+ *
+ * Keep it well under the 300-second backstop, and do not replace the poll with a
+ * sleep, which proves nothing about when the change landed.
  */
 const ADMIN_WRITE_VISIBLE_WITHIN_MS = 10_000;
 
 /** Poll steps: the first probe is immediate, so a write that has landed costs nothing. */
 const PROBE_INTERVALS_MS = [50, 100, 250, 500];
 
-/** The options every "has the write landed" poll in the suite shares. */
-export function adminWriteVisiblePoll(message: string) {
-  return {
-    message,
-    timeout: ADMIN_WRITE_VISIBLE_WITHIN_MS,
-    intervals: PROBE_INTERVALS_MS,
-  };
-}
+/**
+ * The timing every "has the write landed" poll shares. Fits both `expect.poll`
+ * and `toPass`; the failure message is the caller's, passed the way each takes it.
+ */
+export const ADMIN_WRITE_VISIBLE_POLL = {
+  timeout: ADMIN_WRITE_VISIBLE_WITHIN_MS,
+  intervals: PROBE_INTERVALS_MS,
+};
 
 /**
  * Assert that `path` answers `status` once the admin write just made has landed.
@@ -48,9 +55,9 @@ export async function expectStatusAfterAdminWrite(
   message: string,
 ): Promise<void> {
   await expect
-    .poll(
-      async () => (await request.get(path)).status(),
-      adminWriteVisiblePoll(message),
-    )
+    .poll(async () => (await request.get(path)).status(), {
+      message,
+      ...ADMIN_WRITE_VISIBLE_POLL,
+    })
     .toBe(status);
 }
