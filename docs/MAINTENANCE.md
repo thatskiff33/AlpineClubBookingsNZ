@@ -2862,9 +2862,10 @@ from Xero, one call every 1.5 seconds, in note-id order. Each listed line shows:
 The list comes first; the run ends with the count and the cents per payment
 source. A note Xero reports live is not listed. A link the app already records
 as VOIDED or DELETED is counted in its own line, outside the list and its
-totals: it needs no action, because the nightly link cleanup (#4161) retires
-it. A note Xero cannot find, or that could not be read, goes on a separate
-"could not read" list.
+totals. It needs no action: the app already treats the note as cancelled, and
+for the payment's own refund note the nightly link cleanup (#4161) also
+retires the link. A note Xero cannot find, or that could not be read, goes on
+a separate "could not read" list.
 
 **What it writes.** It changes no booking, payment, credit, link or Xero
 record. It can write API-usage rows and, if the Xero token needs refreshing,
@@ -2877,24 +2878,49 @@ own share of it is used (85% of the app's 1,000-call daily budget, counting
 everything else the app called that day, which leaves the rest to the outbox
 and the inbound sync), if Xero needs reconnecting, or after three failed reads
 in a row. Its reads never arm the outage pause; that pause lives in memory in
-each process, so the report and the running app never see each other's. When
-it stops, the output says **THE LIST IS INCOMPLETE** and prints
-`To carry on, run again with --resume-from <id>` (`stopped.resumeFrom` in the
-JSON). A club with more distinct refund notes than one day's share, roughly
-600 to 800 on a quiet day, takes several days: run it each day with the
-printed `--resume-from` until a run ends with no stop. A resumed run's lines
-and totals cover only the notes it read, so keep each day's output together.
-A resume id that is no longer on an active link is refused: start again from
-the beginning. Exit code 0 means the run read everything in its scope; 2 means
-it did not; 1 is an error or a refused argument.
+each process, so the report and the running app never see each other's.
 
-**Could not read.** A read that failed, or a note Xero sent without a status,
-may read on a later run. A note **Xero says does not exist** never will, so do
+Whenever a run leaves a note unread (a failed read, or a stop before the note
+was reached), the output says **THE LIST IS INCOMPLETE** and prints
+`To carry on, run again with --resume-from <id>` (`resumeFrom` in the JSON).
+That id is the earliest note the run did not read, so the next run retries
+every failed read before it moves on; a note after it that was already read
+can be read and listed again, and the later run's line is the one to act on.
+A note Xero answers for, even "no such note", counts as read and is not
+retried. A club with more distinct refund notes than one day's share, roughly
+600 to 800 on a quiet day, takes several days.
+
+How to finish a multi-day walk:
+
+1. Run the report. If it says **THE LIST IS INCOMPLETE**, keep its output and
+   run it again the next day with the `--resume-from` id it printed.
+2. A resumed run says its output, totals included, is **this run only**: keep
+   every day's output together.
+3. The walk is finished when a resumed run prints "This was the last part:
+   every note from <id> to the end was read; the notes before it were covered
+   by earlier runs", with no **THE LIST IS INCOMPLETE** line (exit code 0,
+   `walkFinished: true` in the JSON). A run from the beginning that reads
+   everything says neither and has `complete: true`.
+4. If a run prints **NO PROGRESS** (it could not read even the note it resumed
+   from), do not keep re-running with the same id: if the stop was the daily
+   limit, wait until tomorrow; otherwise ask a maintainer.
+
+If the note a resume id names has since left the active set (handled with
+**Sync from Xero now**, say), the run starts at the next note after it and
+says so; every note before the id was covered by earlier runs. An id that was
+never a refund note on any link is refused. Exit code 0 means nothing in this
+run's scope is left to read; 2 means a note is; 1 is an error or a refused
+argument.
+
+**Could not read.** A read that failed is retried by the next run (above). A
+note Xero sent without a status is reported and not retried: ask a
+maintainer. A note **Xero says does not exist** will never be readable, so do
 not wait for it. First check that Xero is connected to the organisation the
 note was raised in (**Admin → Finance → Xero Sync**). If it is, the app's link
 points at nothing: **Sync from Xero now** on that booking fails, reporting
-the note was not found, and no tool in the app retires such a link. Ask
-a maintainer to look at it, giving the payment and note ids privately.
+the note was not found, and no tool in the app retires such a link yet
+(#5233, which needs an owner decision on the rule). Ask a maintainer to look
+at it, giving the payment and note ids privately.
 
 **Privacy.** The output names members' payments and refunds by id and amount.
 It goes to your terminal only. Never post it in an issue, a pull request or

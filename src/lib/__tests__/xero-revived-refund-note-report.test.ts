@@ -86,7 +86,12 @@ function reportDb(links: LinkRow[], payments: PaymentRow[]) {
     return matching.slice(start, start + args.take).map(({ id, localId, xeroObjectId, xeroObjectNumber, role, metadata }) => ({ id, localId, xeroObjectId, xeroObjectNumber, role, metadata }));
   });
   const paymentFindMany = vi.fn(async (args: { where: { id: { in: string[] } } }) => payments.filter((p) => args.where.id.in.includes(p.id)));
-  const db = writeThrowingDb({ xeroObjectLink: { findMany: linkFindMany }, payment: { findMany: paymentFindMany } });
+  // Any refund-note link, active or not, naming a note: the resume cursor's "was it ever ours?" check.
+  const linkFindFirst = vi.fn(async (args: { where: { role: { in: string[] }; xeroObjectId: string } }) => {
+    const found = links.find((l) => l.localModel === "Payment" && l.xeroObjectType === "CREDIT_NOTE" && args.where.role.in.includes(l.role) && l.xeroObjectId === args.where.xeroObjectId);
+    return found ? { id: found.id } : null;
+  });
+  const db = writeThrowingDb({ xeroObjectLink: { findMany: linkFindMany, findFirst: linkFindFirst }, payment: { findMany: paymentFindMany } });
   return { db: db as Parameters<typeof report.readActiveRefundNoteLinks>[0], linkFindMany, paymentFindMany };
 }
 
@@ -183,6 +188,7 @@ describe("#4336 revived refund-note report: classification", () => {
       },
     ].sort((a, b) => a.creditNoteId!.localeCompare(b.creditNoteId!)));
     expect(result.totals).toEqual({
+      scope: "whole-population",
       count: 2,
       bySource: [
         { paymentSource: "INTERNET_BANKING", count: 1, countedCents: 20_000, requestNoteCents: 0 },
@@ -191,7 +197,7 @@ describe("#4336 revived refund-note report: classification", () => {
       ],
     });
     expect(result).toMatchObject({
-      complete: true, activeLinks: 4, readCount: 4, couldNotRead: [], alreadyRecordedCancelled: [], stopped: null,
+      complete: true, walkFinished: true, resumeFrom: null, noProgress: false, activeLinks: 4, readCount: 4, couldNotRead: [], alreadyRecordedCancelled: [], stopped: null,
       scope: { resumedFrom: null, notesInPopulation: 4, notesInThisRun: 4 },
     });
   });
@@ -264,6 +270,8 @@ describe("#4336 revived refund-note report: classification", () => {
     expect(result.revived).toEqual([]);
     expect(result.complete).toBe(false);
     expect(result.stopped).toBeNull();
+    // Only the failed read is left to retry; a definite "no such note" is an answer.
+    expect(result.resumeFrom).toBe(failing);
     // Not stopped, still incomplete: the text says so, not only the exit code.
     expect(formatRevivedRefundNoteReport(result)).toContain("THE LIST IS INCOMPLETE");
   });
@@ -287,7 +295,9 @@ describe("#4336 revived refund-note report: classification", () => {
       { sleep: noPause },
     );
     expect(result.couldNotRead.map((n) => n.creditNoteId)).toEqual([ids[0], ids[2], ids[3], ids[4]]);
-    expect(result.stopped).toEqual({ reason: "consecutive-failures", detail: "3 reads failed in a row.", resumeFrom: ids[5], notReached: [ids[5]] });
+    expect(result.stopped).toEqual({ reason: "consecutive-failures", detail: "3 reads failed in a row.", notReached: [ids[5]] });
+    // The resume id is the earliest note not read, so the next part retries the failures.
+    expect(result.resumeFrom).toBe(ids[0]);
     expect(result.readCount).toBe(1);
   });
 
@@ -353,7 +363,8 @@ describe("#4336 revived refund-note report: Xero limits and the breaker", () => 
       };
     })(), { sleep: noPause });
     expect(result.revived.map((r) => r.creditNoteId)).toEqual([ids[0]]);
-    expect(result.stopped).toMatchObject({ reason: "daily-limit", resumeFrom: ids[1], notReached: [ids[1], ids[2]] });
+    expect(result.stopped).toMatchObject({ reason: "daily-limit", notReached: [ids[1], ids[2]] });
+    expect(result.resumeFrom).toBe(ids[1]);
   });
 
   it("stops before any call when the app's share of today's Xero calls is used up", async () => {
@@ -414,7 +425,7 @@ describe("#4336 revived refund-note report: the app already records the void", (
     const result = await run(await report.readActiveRefundNoteLinks(db));
     expect(result.alreadyRecordedCancelled.map((r) => r.linkId)).toEqual(["l1"]);
     expect(result.revived.map((r) => r.linkId)).toEqual(["l2"]);
-    expect(result.totals).toEqual({ count: 1, bySource: [{ paymentSource: "INTERNET_BANKING", count: 1, countedCents: 20_000, requestNoteCents: 0 }] });
+    expect(result.totals).toEqual({ scope: "whole-population", count: 1, bySource: [{ paymentSource: "INTERNET_BANKING", count: 1, countedCents: 20_000, requestNoteCents: 0 }] });
     expect(result.complete).toBe(true);
   });
 });
@@ -487,13 +498,17 @@ describe("#4336 revived refund-note report: the command line", () => {
     const first = await cliRun(["--json"]);
     const day1 = JSON.parse(first.out);
     expect(first.exit).toBe(2);
-    expect(day1).toMatchObject({ complete: false, readCount: 4, stopped: { reason: "daily-limit", resumeFrom: ids[4] } });
+    expect(day1).toMatchObject({ complete: false, walkFinished: false, readCount: 4, resumeFrom: ids[4], stopped: { reason: "daily-limit" } });
 
     allowed = 100; // the next day
-    const second = await cliRun(["--json", "--resume-from", day1.stopped.resumeFrom]);
+    const second = await cliRun(["--json", "--resume-from", day1.resumeFrom]);
     const day2 = JSON.parse(second.out);
     expect(second.exit).toBe(0);
-    expect(day2).toMatchObject({ complete: true, readCount: 3, scope: { resumedFrom: ids[4], notesInPopulation: 7, notesInThisRun: 3 } });
+    // A resumed run never claims the whole population; it says the walk is finished.
+    expect(day2).toMatchObject({
+      complete: false, walkFinished: true, resumeFrom: null, noProgress: false, readCount: 3, totals: { scope: "this-run-only" },
+      scope: { resumedFrom: ids[4], startedFrom: ids[4], coversWholePopulation: false, notesInPopulation: 7, notesInThisRun: 3 },
+    });
 
     const asked = xero.getCreditNote.mock.calls.map((call) => call[1]);
     expect(asked).toEqual(ids); // each once, in order, none skipped
@@ -505,7 +520,11 @@ describe("#4336 revived refund-note report: the command line", () => {
     const { ids } = population(4);
     usage.budgetAllows.mockImplementation(async () => true);
     const resumed = await cliRun(["--resume-from", ids[2]!]);
-    expect(resumed.out).toContain(`Resumed from note ${ids[2]}: this run covers 2 of the 4 credit notes. Everything below covers only the notes read in this run`);
+    expect(resumed.exit).toBe(0);
+    expect(resumed.out).toContain(`Resumed from note ${ids[2]}. This run covers 2 of the 4 credit notes; the notes before it were covered by earlier runs. Everything below, totals included, is THIS RUN ONLY.`);
+    expect(resumed.out).toContain(`This was the last part: every note from ${ids[2]} to the end was read; the notes before it were covered by earlier runs.`);
+    expect(resumed.out).toContain("Total, THIS RUN ONLY:");
+    expect(resumed.out).not.toContain("INCOMPLETE");
     let allowed = 1;
     usage.budgetAllows.mockImplementation(async () => allowed-- > 0);
     const stopped = await cliRun([]);
@@ -514,15 +533,87 @@ describe("#4336 revived refund-note report: the command line", () => {
     expect(stopped.out).toContain("THE LIST IS INCOMPLETE");
   });
 
-  it("refuses a resume cursor that names no note in today's population, before reading Xero", async () => {
+  it("refuses a resume cursor that was never a refund note on any link, before reading Xero", async () => {
     const { xero } = population(3);
     for (const cursor of ["no-such-note", "zzzz-after-every-note"]) {
       const { exit, err, out } = await cliRun(["--resume-from", cursor]);
       expect(exit).toBe(1);
-      expect(err).toContain("--resume-from names no credit note");
+      expect(err).toContain("--resume-from names no credit note on any refund-note link");
       expect(out).toBe("");
     }
     expect(xero.getCreditNote).not.toHaveBeenCalled();
+  });
+
+  it("a cursor whose note has left the active set starts at the next note after it, and says so", async () => {
+    const fake = new XeroFake();
+    const ids = notes(fake, 4).sort();
+    prismaHolder.db = reportDb(
+      ids.map((id, i) => link(`l${i}`, `p${i}`, id, { active: i !== 1 })), // ids[1] was handled since
+      ids.map((_, i) => ({ id: `p${i}`, bookingId: `b${i}`, source: "STRIPE" as const, xeroRefundCreditNoteId: null })),
+    ).db;
+    const xero = installXero(fake);
+    const { exit, out } = await cliRun(["--json", "--resume-from", ids[1]!]);
+    expect(exit).toBe(0);
+    expect(JSON.parse(out).scope).toEqual({ resumedFrom: ids[1], startedFrom: ids[2], coversWholePopulation: false, notesInPopulation: 3, notesInThisRun: 2 });
+    expect(xero.getCreditNote.mock.calls.map((call) => call[1])).toEqual([ids[2], ids[3]]);
+    const text = await cliRun(["--resume-from", ids[1]!]);
+    expect(text.out).toContain(`Resumed from note ${ids[1]}, which is no longer on an active link, so this run started at ${ids[2]}, the next note after it.`);
+  });
+
+  /** Fail the reads whose 1-based call numbers are listed, by queueing a 500 just before each. */
+  function failCalls(xero: ReturnType<typeof installXero>, calls: number[]) {
+    let call = 0;
+    usage.budgetAllows.mockImplementation(async () => {
+      call += 1;
+      if (calls.includes(call)) xero.failNext({ statusCode: 500 });
+      return true;
+    });
+  }
+
+  it("a to f, with b, c and d failing in run 1: the resume id retries them, and every note is read once successfully", async () => {
+    const { ids, xero } = population(6, 1);
+    failCalls(xero, [2, 3, 4]);
+    const first = JSON.parse((await cliRun(["--json"])).out);
+    expect(first).toMatchObject({ complete: false, walkFinished: false, resumeFrom: ids[1], stopped: { reason: "consecutive-failures", notReached: [ids[4], ids[5]] } });
+    expect(first.couldNotRead.map((n: { creditNoteId: string }) => n.creditNoteId)).toEqual([ids[1], ids[2], ids[3]]);
+
+    failCalls(xero, []);
+    const second = await cliRun(["--json", "--resume-from", first.resumeFrom]);
+    const run2 = JSON.parse(second.out);
+    expect(second.exit).toBe(0);
+    expect(run2).toMatchObject({ walkFinished: true, complete: false, couldNotRead: [], scope: { resumedFrom: ids[1], notesInThisRun: 5 } });
+    const succeeded = [...first.revived, ...run2.revived].map((r: { creditNoteId: string }) => r.creditNoteId);
+    expect(succeeded).toEqual(ids); // all six, each once
+    expect(xero.getCreditNote.mock.calls.map((call) => call[1])).toEqual([...ids.slice(0, 4), ...ids.slice(1)]);
+  });
+
+  it("the three-in-a-row stop still fires on a resume, and a resume that makes no progress says so", async () => {
+    const { ids, xero } = population(5, 1);
+    failCalls(xero, [1, 2, 3]);
+    const { exit, out } = await cliRun(["--resume-from", ids[1]!]);
+    expect(exit).toBe(2);
+    expect(out).toContain("three reads failed in a row");
+    expect(out).toContain(`To carry on, run again with --resume-from ${ids[1]}`);
+    expect(out).toContain("NO PROGRESS: this run could not read even the note it resumed from.");
+    const json = JSON.parse((failCalls(xero, [1, 2, 3]), await cliRun(["--json", "--resume-from", ids[1]!])).out);
+    expect(json).toMatchObject({ noProgress: true, resumeFrom: ids[1] });
+  });
+
+  it("a note Xero says does not exist, before the cursor, is not retried", async () => {
+    const { ids, xero } = population(4, 1);
+    let call = 0;
+    usage.budgetAllows.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) xero.failNext({ statusCode: 404 });
+      return call <= 2;
+    });
+    const first = JSON.parse((await cliRun(["--json"])).out);
+    expect(first.couldNotRead).toEqual([expect.objectContaining({ creditNoteId: ids[0], reason: "not-found" })]);
+    expect(first.resumeFrom).toBe(ids[2]); // past the 404, at the first note not reached
+    usage.budgetAllows.mockImplementation(async () => true);
+    const second = JSON.parse((await cliRun(["--json", "--resume-from", first.resumeFrom])).out);
+    expect(second).toMatchObject({ walkFinished: true, scope: { notesInThisRun: 2 } });
+    expect(xero.getCreditNote.mock.calls.filter((c) => c[1] === ids[0])).toHaveLength(1);
   });
 
   it("refuses a missing, repeated or unknown argument, and prints help", async () => {

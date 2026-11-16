@@ -26,7 +26,12 @@
  *
  * A walk can be resumed: notes are read in id order, and `resumeFrom` starts at
  * a given note, so a population larger than one day's share of Xero calls is
- * covered across several runs with no note read twice.
+ * covered across several runs. The id a run hands on (`resumeFrom` on the
+ * report) is the EARLIEST note it did not read: a failed read or a note never
+ * reached. So a resumed run retries every failure before it moves on, and no
+ * note is left behind; a note after a failed one can be read again by the next
+ * part. A definite "Xero has no such note" is an answer, not a failure: it is
+ * reported, and never pins the cursor.
  *
  * Runbook: docs/MAINTENANCE.md, "Find refund notes Xero voided that the app
  * still counts (#4336)".
@@ -102,7 +107,7 @@ export class RevivedReportStop extends Error {
   }
 }
 
-/** A resume cursor that names no note in today's population. The message is safe to print. */
+/** A resume cursor that was never a refund note on any link. The message is safe to print. */
 export class RevivedReportCursorError extends Error {
   constructor(message: string) {
     super(message);
@@ -135,22 +140,46 @@ export interface SourceTotal {
 }
 
 export interface RevivedRefundNoteReport {
-  /** True when every note in this run's scope was read and none failed. */
+  /** True only for a run from the beginning that read every note: the whole population is accounted for. */
   complete: boolean;
-  /** What this run covers: the whole population, or the notes from `resumedFrom` on. */
-  scope: { resumedFrom: string | null; notesInPopulation: number; notesInThisRun: number };
+  /**
+   * True when this run read every note in its scope (no stop, no failed read):
+   * for a resumed run, the multi-day walk is finished, the notes before its
+   * start having been read by earlier parts.
+   */
+  walkFinished: boolean;
+  /** The earliest note this run did not read (failed or not reached), for `--resume-from`; null when there is none. */
+  resumeFrom: string | null;
+  /** A resumed run that could not read even its first note: running again with the same id will not help. */
+  noProgress: boolean;
+  /**
+   * What this run covers. `startedFrom` is the first note it read: the cursor
+   * itself, or (when the cursor's note has left the active set since) the next
+   * note after it.
+   */
+  scope: {
+    resumedFrom: string | null;
+    startedFrom: string | null;
+    coversWholePopulation: boolean;
+    notesInPopulation: number;
+    notesInThisRun: number;
+  };
   activeLinks: number;
   /** Notes Xero answered for (found or not found) in this run. */
   readCount: number;
   /** Xero says VOIDED or DELETED while the app records a live status (or none): the ones to correct. */
   revived: RevivedRefundNoteRow[];
-  /** Xero says cancelled and the app already records it; the nightly link cleanup (#4161) retires these. */
+  /**
+   * Xero says cancelled and the app already records it: no action needed, the
+   * app already treats the note as cancelled. On the payment's own role the
+   * nightly link cleanup (#4161) also retires the link.
+   */
   alreadyRecordedCancelled: RevivedRefundNoteRow[];
   couldNotRead: CouldNotReadNote[];
-  /** Set when the run ended early; `resumeFrom` is the first note not read, for `--resume-from`. */
-  stopped: { reason: RevivedReportStopReason; detail: string; resumeFrom: string; notReached: string[] } | null;
-  /** Over `revived` only, and only the notes read in this run. */
-  totals: { count: number; bySource: SourceTotal[] };
+  /** Set when the run ended early, with the notes it never asked. */
+  stopped: { reason: RevivedReportStopReason; detail: string; notReached: string[] } | null;
+  /** Over `revived` only. A resumed run's totals are "this-run-only": add the earlier parts'. */
+  totals: { scope: "whole-population" | "this-run-only"; count: number; bySource: SourceTotal[] };
 }
 
 type ReportDb = Pick<Prisma.TransactionClient, "xeroObjectLink" | "payment">;
@@ -222,7 +251,7 @@ function sleepFor(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function totalsOf(revived: RevivedRefundNoteRow[]): RevivedRefundNoteReport["totals"] {
+function totalsOf(revived: RevivedRefundNoteRow[], scope: RevivedRefundNoteReport["totals"]["scope"]): RevivedRefundNoteReport["totals"] {
   const bySource = new Map<PaymentSource | "UNKNOWN", SourceTotal>();
   for (const row of revived) {
     const key = row.paymentSource ?? "UNKNOWN";
@@ -232,23 +261,39 @@ function totalsOf(revived: RevivedRefundNoteRow[]): RevivedRefundNoteReport["tot
     entry.requestNoteCents += row.requestNoteCents ?? 0;
     bySource.set(key, entry);
   }
-  return { count: revived.length, bySource: [...bySource.values()].sort((a, b) => a.paymentSource.localeCompare(b.paymentSource)) };
+  return { scope, count: revived.length, bySource: [...bySource.values()].sort((a, b) => a.paymentSource.localeCompare(b.paymentSource)) };
 }
 
 /**
- * The notes this run reads, in id order: all of them, or (`resumeFrom`) that
- * note and every later one. A cursor that names no note in today's population
- * is refused rather than guessed at, so no note is skipped.
+ * The notes this run reads, in id order: all of them, or from the cursor on.
+ * Every note before the cursor was read by an earlier part, so when the
+ * cursor's own note has since left the active set (handled, say), the run
+ * starts at the next note after it. A cursor that was never a refund note on
+ * any link (`cursorWasLinked` false) is refused rather than guessed at.
  */
-function notesInScope(allNoteIds: string[], resumeFrom: string | null): string[] {
+function notesInScope(allNoteIds: string[], resumeFrom: string | null, cursorWasLinked: boolean): string[] {
   if (resumeFrom === null) return allNoteIds;
-  const start = allNoteIds.indexOf(resumeFrom);
-  if (start < 0) {
+  if (allNoteIds.includes(resumeFrom)) return allNoteIds.slice(allNoteIds.indexOf(resumeFrom));
+  if (!cursorWasLinked) {
     throw new RevivedReportCursorError(
-      "--resume-from names no credit note on an active refund-note link. Use the id the stopped run printed, or run the report from the start.",
+      "--resume-from names no credit note on any refund-note link. Use the id the previous run printed.",
     );
   }
-  return allNoteIds.slice(start);
+  return allNoteIds.filter((id) => id > resumeFrom);
+}
+
+/** Whether `creditNoteId` is, or was, the note on a Payment refund-note link in either role, active or not. */
+export async function wasRefundNoteOnAnyLink(db: Pick<Prisma.TransactionClient, "xeroObjectLink">, creditNoteId: string): Promise<boolean> {
+  const link = await db.xeroObjectLink.findFirst({
+    where: {
+      localModel: REFUND_CREDIT_NOTE_LINK_WHERE.localModel,
+      xeroObjectType: REFUND_CREDIT_NOTE_LINK_WHERE.xeroObjectType,
+      role: { in: [...REFUND_NOTE_LINK_ROLES] },
+      xeroObjectId: creditNoteId,
+    },
+    select: { id: true },
+  });
+  return link !== null;
 }
 
 /**
@@ -261,14 +306,15 @@ function notesInScope(allNoteIds: string[], resumeFrom: string | null): string[]
 export async function classifyRevivedRefundNotes(
   links: ActiveRefundNoteLink[],
   readCreditNote: CreditNoteReader,
-  options: { sleep?: (ms: number) => Promise<void>; spacingMs?: number; resumeFrom?: string | null } = {},
+  options: { sleep?: (ms: number) => Promise<void>; spacingMs?: number; resumeFrom?: string | null; cursorWasLinked?: boolean } = {},
 ): Promise<RevivedRefundNoteReport> {
   const sleep = options.sleep ?? sleepFor;
   const spacingMs = options.spacingMs ?? DEFAULT_READ_SPACING_MS;
   const linksByNote = new Map<string, ActiveRefundNoteLink[]>();
   for (const link of links) linksByNote.set(link.creditNoteId, [...(linksByNote.get(link.creditNoteId) ?? []), link]);
   const allNoteIds = [...linksByNote.keys()].sort();
-  const noteIds = notesInScope(allNoteIds, options.resumeFrom ?? null);
+  const resumedFrom = options.resumeFrom ?? null;
+  const noteIds = notesInScope(allNoteIds, resumedFrom, options.cursorWasLinked ?? false);
 
   const revived: RevivedRefundNoteRow[] = [];
   const alreadyRecordedCancelled: RevivedRefundNoteRow[] = [];
@@ -278,7 +324,7 @@ export async function classifyRevivedRefundNotes(
   let stopped: RevivedRefundNoteReport["stopped"] = null;
   const stopAt = (reason: RevivedReportStopReason, detail: string, index: number) => {
     const notReached = noteIds.slice(index);
-    stopped = notReached.length > 0 ? { reason, detail, resumeFrom: notReached[0]!, notReached } : null;
+    stopped = notReached.length > 0 || reason === "consecutive-failures" ? { reason, detail, notReached } : null;
   };
 
   for (const [index, noteId] of noteIds.entries()) {
@@ -320,21 +366,31 @@ export async function classifyRevivedRefundNotes(
         xeroStatus: reading.status.trim().toUpperCase(),
         xeroUpdatedAt: reading.updatedAt?.toISOString() ?? null,
       };
-      // The same predicate on the app's own record: a link that already says cancelled is the #4161 heal's.
+      // The same predicate on the app's own record: a link that already says cancelled needs no action.
       const appRecordsCancelled = link.appStatus !== null && !isIncludedRefundCreditNoteStatus(link.appStatus);
       (appRecordsCancelled ? alreadyRecordedCancelled : revived).push(row);
     }
   }
 
+  // The earliest note not read: a failed read, else the first never reached. Read order is id order.
+  const stop = stopped as RevivedRefundNoteReport["stopped"];
+  const unread = [...couldNotRead.filter((note) => note.reason === "failed").map((note) => note.creditNoteId), ...(stop?.notReached ?? [])].sort();
+  const resumeFrom = unread[0] ?? null;
+  const walkFinished = resumeFrom === null;
+  const coversWholePopulation = resumedFrom === null;
+  const startedFrom = noteIds[0] ?? null;
   return {
-    complete: stopped === null && couldNotRead.length === 0,
-    scope: { resumedFrom: options.resumeFrom ?? null, notesInPopulation: allNoteIds.length, notesInThisRun: noteIds.length },
+    complete: coversWholePopulation && walkFinished,
+    walkFinished,
+    resumeFrom,
+    noProgress: resumedFrom !== null && resumeFrom !== null && resumeFrom === startedFrom,
+    scope: { resumedFrom, startedFrom, coversWholePopulation, notesInPopulation: allNoteIds.length, notesInThisRun: noteIds.length },
     activeLinks: links.length,
     readCount,
     revived,
     alreadyRecordedCancelled,
     couldNotRead,
     stopped,
-    totals: totalsOf(revived),
+    totals: totalsOf(revived, coversWholePopulation ? "whole-population" : "this-run-only"),
   };
 }

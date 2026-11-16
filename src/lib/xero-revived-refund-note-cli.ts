@@ -11,6 +11,7 @@ import {
   classifyRevivedRefundNotes,
   readActiveRefundNoteLinks,
   RevivedReportCursorError,
+  wasRefundNoteOnAnyLink,
   type CreditNoteReader,
 } from "@/lib/xero-revived-refund-note-report";
 
@@ -25,11 +26,13 @@ Options:
                         note that could not be read.
   --json                Print the full report as JSON instead (logs go to
                         stderr, so stdout is JSON only).
-  --resume-from <id>    Carry on a run that stopped early, from the note it
-                        printed. Totals then cover only this run's notes.
+  --resume-from <id>    Carry on from the note the previous run printed. It
+                        retries every note that run could not read; totals
+                        then cover this run only.
   --help, -h            Show this help.
 
-Exit codes: 0 complete, 2 incomplete (see the output), 1 error.`;
+Exit codes: 0 every note in this run's scope was read (for a resumed run: the
+walk is finished), 2 some notes were not read (see the output), 1 error.`;
 
 export interface RevivedReportArgs {
   help: boolean;
@@ -66,7 +69,7 @@ export interface RevivedReportCliDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** Run the report for `argv`; returns the exit code (0 complete, 2 incomplete, 1 refused). */
+/** Run the report for `argv`; returns the exit code (0 nothing left to read, 2 notes left to read, 1 refused). */
 export async function runRevivedRefundNoteReportCli(argv: string[], deps: RevivedReportCliDeps): Promise<number> {
   const args = parseRevivedReportArgs(argv);
   if ("error" in args) {
@@ -79,16 +82,17 @@ export async function runRevivedRefundNoteReportCli(argv: string[], deps: Revive
   }
   await deps.preflight(); // before any link is walked
   const links = await readActiveRefundNoteLinks(deps.db);
+  const cursorWasLinked = args.resumeFrom !== null && (await wasRefundNoteOnAnyLink(deps.db, args.resumeFrom));
   let report;
   try {
-    report = await classifyRevivedRefundNotes(links, deps.reader(), { sleep: deps.sleep, resumeFrom: args.resumeFrom });
+    report = await classifyRevivedRefundNotes(links, deps.reader(), { sleep: deps.sleep, resumeFrom: args.resumeFrom, cursorWasLinked });
   } catch (error) {
     if (!(error instanceof RevivedReportCursorError)) throw error;
     deps.err(error.message);
     return 1;
   }
   deps.out(args.json ? JSON.stringify(report, null, 2) : formatRevivedRefundNoteReport(report, { list: args.list }));
-  return report.complete ? 0 : 2;
+  return report.walkFinished ? 0 : 2;
 }
 
 /**
