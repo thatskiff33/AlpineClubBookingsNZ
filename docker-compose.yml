@@ -649,7 +649,6 @@ services:
       dockerfile: Dockerfile
       target: builder
       args:
-        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
         # AID-3 (#2372): mirror the app image's bundle build metadata.
         GIT_COMMIT_SHA: ${GIT_COMMIT_SHA:-}
         KNOWLEDGE_BUNDLE_OBSERVED_AT: ${KNOWLEDGE_BUNDLE_OBSERVED_AT:-}
