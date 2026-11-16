@@ -1,1 +1,0 @@
-- **A cancel with nothing left to refund to the card says the refund was processed (#4084).** Follow-up to #4089: when a cancellation's frozen card-refund plan comes to $0 (the money was already returned another way), the Booking Cancelled email and screen say the refund has been processed, as before, rather than that it is on its way.
