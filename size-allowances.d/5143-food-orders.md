@@ -27,12 +27,6 @@ lines: 1262
 reason: the `foodOrders` module flag's travel classification, which every module
   flag must carry in this one list.
 
-file: src/lib/email-message-registry.ts
-lines: 2526
-reason: the `food-order-placed` template's audience, trigger metadata, required
-  token and six approved tokens; each is one entry in a registry table that has
-  to name every template.
-
 file: src/proxy.ts
 lines: 1217
 reason: the `/api/food-orders/:path*` matcher entry; Next requires the matcher
