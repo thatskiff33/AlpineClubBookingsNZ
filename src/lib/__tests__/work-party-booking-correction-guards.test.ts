@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *    refund is offered exactly where the edit asked for a method
  *    (`requiresSettlementMethod`), on a card- or bank-paid booking alike, and
  *    one requested where the edit offers none is refused (409);
- *  - #129 decision 6 (16 Nov): the officer's own or family's booking is refused
+ *  - fork #129 decision 6 (16 Nov): the officer's own or family's booking is refused
  *    exactly when money would come back to them, on the preview and the save;
  *    for an organiser-paid joiner the recipient is the group organiser;
  *  - the settlement method is a checked figure on its own: a save whose figures
@@ -221,7 +221,7 @@ describe("the options are the ordinary edit's (upstream owner decision, 15 Nov 2
   });
 });
 
-describe("own or family booking (#129 decision 6, 16 Nov)", () => {
+describe("own or family booking (fork #129 decision 6, 16 Nov)", () => {
   it("allows the officer's own booking when nothing comes back", async () => {
     seedBooking({ memberId: "officer-1", status: "PAYMENT_PENDING", payment: null });
     edit({}, false);

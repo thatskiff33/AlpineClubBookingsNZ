@@ -86,7 +86,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("BookingWorkPartyControls settlement (#129)", () => {
+describe("BookingWorkPartyControls settlement (fork #129)", () => {
   it("offers Club credit and Refund to card on a card-paid booking, and re-runs the preview on a new choice", async () => {
     serve((body) => ({
       outcome: "quoted",
@@ -153,5 +153,55 @@ describe("BookingWorkPartyControls settlement (#129)", () => {
       /goes to the organiser, the way they paid: to their card, or by bank transfer/,
     );
     expect(screen.getByText(/Returned to the group organiser:/)).toBeInTheDocument();
+  });
+});
+
+describe("BookingWorkPartyControls after a refused apply", () => {
+  it("drops the old figures on a 409 that is not FIGURES_CHANGED, so nothing stale can be confirmed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string; body?: string }) => {
+        if (init?.method !== "POST") return new Response(JSON.stringify(workParties), { status: 200 });
+        const body = JSON.parse(init.body ?? "{}");
+        if (body.mode === "apply") {
+          return new Response(JSON.stringify({ error: "The booking already has a work party.", code: "CONFLICT" }), {
+            status: 409,
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            outcome: "quoted",
+            figures: figures(),
+            settlementOptions: { methods: ["credit"], paidByOrganiser: false, refundTo: null },
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+    await openAndPreview();
+    fireEvent.click(screen.getByRole("button", { name: "Add and email member" }));
+    await screen.findByText("The booking already has a work party.");
+    expect(screen.queryByTestId("work-party-figures")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add and email member" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show the new total" })).toBeInTheDocument();
+  });
+
+  it("disables the work-party picker while a request is in flight", async () => {
+    let release: (r: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string }) => {
+        if (init?.method === "POST") return new Promise<Response>((resolve) => (release = resolve));
+        return new Response(JSON.stringify(workParties), { status: 200 });
+      }),
+    );
+    render(<BookingWorkPartyControls bookingId="booking-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Add to work party" }));
+    const show = await screen.findByRole("button", { name: "Show the new total" });
+    await waitFor(() => expect(show).toBeEnabled());
+    fireEvent.click(show);
+    await waitFor(() => expect(screen.getByRole("combobox")).toBeDisabled());
+    release(new Response(JSON.stringify({ error: "x" }), { status: 400 }));
+    await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
   });
 });

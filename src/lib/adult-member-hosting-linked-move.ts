@@ -601,7 +601,7 @@ export function combineLinkedMoveQuote(input: {
     // one sum is `editMoneyBackCents` (why it never double-counts is there).
     // Deliberately the SETTLEMENT's money only, as before: an unpaid booking's
     // freed applied credit (`refundedExcessCreditCents`) is not added here, which
-    // would change this offer's figures (fork #129 left that to its own issue, #132).
+    // would change this offer's figures (fork #129 left that to its own issue, triyder/AlpineClubBookingsNZ#132).
     combinedRefundCents: sum(editMoneyBackCents),
     combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),
     combinedOrganiserRefundCents: input.organiserRefunds.totalCents, combinedOrganiserBankTransferRefundCents: input.organiserRefunds.bankTransferCents,

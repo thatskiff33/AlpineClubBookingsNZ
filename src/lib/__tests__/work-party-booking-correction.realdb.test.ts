@@ -1068,7 +1068,7 @@ async function batchRefusal(params: {
     settlementMethod: "credit",
   });
 
-  it("#129 card-paid, Refund to card: the whole reduction is the pipeline's own card refund, untiered, with no credit", async () => {
+  it("fork #129 card-paid, Refund to card: the whole reduction is the pipeline's own card refund, untiered, with no credit", async () => {
     await seed("paid");
     stripeRefundsFail();
 
@@ -1122,7 +1122,7 @@ async function batchRefusal(params: {
     ).toBeGreaterThan(0);
   }, 60_000);
 
-  it("#129 card-paid, Club credit chosen: as the default, the whole reduction as credit and no refund", async () => {
+  it("fork #129 card-paid, Club credit chosen: as the default, the whole reduction as credit and no refund", async () => {
     await seed("paid");
     stripeRefundsFail();
     const figures = await quote({ settlementMethod: "credit" });
@@ -1134,7 +1134,7 @@ async function batchRefusal(params: {
     expect(await prisma.paymentRefund.count({ where: { paymentId: PAYMENT_ID } })).toBe(0);
   }, 60_000);
 
-  it("#129 paid by Internet Banking, Refund to bank account: the ordinary edit's bank-transfer hand-back, in full, with no credit", async () => {
+  it("fork #129 paid by Internet Banking, Refund to bank account: the ordinary edit's bank-transfer hand-back, in full, with no credit", async () => {
     // Upstream owner decision (15 Nov 2026): the officer chooses a refund (card
     // or bank, as on an ordinary edit) or account credit. The ordinary edit's
     // "card" method on a bank-paid booking is a refund the treasurer sends back
@@ -1172,7 +1172,7 @@ async function batchRefusal(params: {
     expect(await prisma.memberCredit.count({ where: { memberId: OWNER_ID } })).toBe(0);
   }, 60_000);
 
-  it("#129 paid by Internet Banking, Club credit: as the default, the whole reduction as credit, no hand-back", async () => {
+  it("fork #129 paid by Internet Banking, Club credit: as the default, the whole reduction as credit, no hand-back", async () => {
     await seed("bank-paid");
     const figures = await quote({ settlementMethod: "credit" });
     expect(figures).toEqual(paidCreditFigures());
@@ -1183,7 +1183,7 @@ async function batchRefusal(params: {
     expect(await refundOperations()).toEqual([]);
   }, 60_000);
 
-  it("#129 organiser-paid joiner: allowed, and the reduction goes back to the organiser's card", async () => {
+  it("fork #129 organiser-paid joiner: allowed, and the reduction goes back to the organiser's card", async () => {
     await seed("organiser-paid");
     stripeRefundsFail();
 
@@ -1219,7 +1219,7 @@ async function batchRefusal(params: {
     expect(await recoveryRows("own-card", 1)).toEqual(rows);
   }, 60_000);
 
-  it("#129 decision 6: the officer's own UNPAID booking is allowed, and its price just drops", async () => {
+  it("fork #129 decision 6: the officer's own UNPAID booking is allowed, and its price just drops", async () => {
     await seed("unpaid", undefined, OFFICER_ID);
     const figures = await quote();
     expect(figures).toEqual({
@@ -1281,7 +1281,7 @@ async function batchRefusal(params: {
     expect(await workPartyRedemptions()).toEqual([]);
   }, 60_000);
 
-  it("#129 decision 6: the officer's own card-paid booking is refused, by either method, with nothing written", async () => {
+  it("fork #129 decision 6: the officer's own card-paid booking is refused, by either method, with nothing written", async () => {
     await seed("paid", undefined, OFFICER_ID);
     const before = await snapshot();
     expect(await correctionRefusal()).toEqual({ status: 409, message: correction.WORK_PARTY_OWN_MONEY_BACK_MESSAGE });
@@ -1293,7 +1293,7 @@ async function batchRefusal(params: {
     expect(await prisma.memberCredit.count({ where: { memberId: OFFICER_ID } })).toBe(0);
   }, 60_000);
 
-  it("#129 decision 6: a paid booking owned by a member of the officer's family group is refused, preview and apply", async () => {
+  it("fork #129 decision 6: a paid booking owned by a member of the officer's family group is refused, preview and apply", async () => {
     await seed("paid");
     await prisma.familyGroup.create({
       data: {
@@ -1312,7 +1312,7 @@ async function batchRefusal(params: {
     expect(await workPartyRedemptions()).toEqual([]);
   }, 60_000);
 
-  it("#129 decision 6 (lane's reading): a joiner's booking whose group organiser is the officer is refused", async () => {
+  it("fork #129 decision 6 (lane's reading): a joiner's booking whose group organiser is the officer is refused", async () => {
     await seed("organiser-paid", undefined, OWNER_ID, OFFICER_ID);
     stripeRefundsFail();
     const before = await snapshot();

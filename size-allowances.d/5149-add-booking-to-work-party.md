@@ -1,4 +1,4 @@
-# File-size allowances for #5149 (fork #119, #129): add an existing booking to a work party
+# File-size allowances for #5149 (fork #119, fork #129): add an existing booking to a work party
 
 The feature's own logic lives in new modules written to their own ceilings:
 `src/lib/work-party-booking-correction.ts`, and the batch service's argument

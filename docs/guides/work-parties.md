@@ -89,7 +89,9 @@ What happens:
   [Payments](payments.md#pay-back-a-refund-for-a-cash-booking)).
 - **Paid with account credit, or nothing left to refund:** it goes back as club
   credit only, in full, because an ordinary change offers no refund either.
-  Account credit the booking had used always goes back to the member's balance.
+  The discount comes back to the member's balance as credit, up to the credit
+  the booking had used: only the part the cash can't return, capped at the
+  credit applied.
 - **Paid by the group organiser:** the money goes back to the organiser, the way
   every change to a joiner's booking does: to the organiser's card, or by bank
   transfer if they paid by Internet Banking. The figures show "Returned to the
@@ -120,9 +122,9 @@ someone in your family group, when nothing comes back, for example an unpaid
 booking with no account credit applied, whose price just drops. When the change
 would refund or credit any money, including account credit an unpaid booking
 had applied that is now more than its new total, **Show the new total** says
-another officer must add it, and nothing is saved. For a joiner's booking the group organiser paid for, the same applies
-when you, or someone in your family group, organised the group, because the
-money goes back to the organiser.
+another officer must add it, and nothing is saved. For a joiner's booking the
+group organiser paid for, the same applies when you, or someone in your family
+group, organised the group, because the money goes back to the organiser.
 
 A booking can be on only one work party. Removing a booking from a work party is
 not available.

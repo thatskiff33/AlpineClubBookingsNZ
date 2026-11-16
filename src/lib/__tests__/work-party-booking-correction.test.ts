@@ -112,7 +112,7 @@ describe("workPartyBookingEligibility", () => {
     ).toEqual({ ok: true });
   });
 
-  it("no longer has an organiser-paid refusal (#129 decision 5)", () => {
+  it("no longer has an organiser-paid refusal (fork #129 decision 5)", () => {
     // The rule takes no organiser-paid input: such a joiner is eligible on the
     // same terms as any booking, and its money goes back to the organiser.
     expect(Object.keys(booking)).not.toContain("paidByOrganiser");
@@ -214,7 +214,7 @@ describe("actorIsMemberOrFamily (the member-guest family boundary)", () => {
   });
 });
 
-describe("workPartySettlementOptions and the settlement guard (#129, upstream owner decision 15 Nov 2026)", () => {
+describe("workPartySettlementOptions and the settlement guard (fork #129, upstream owner decision 15 Nov 2026)", () => {
   const paidCard = {
     status: BookingStatus.PAID,
     organiserSettled: false,
@@ -266,7 +266,7 @@ describe("workPartySettlementOptions and the settlement guard (#129, upstream ow
   });
 });
 
-describe("own or family booking: refused only when money comes back (#129 decision 6, 16 Nov)", () => {
+describe("own or family booking: refused only when money comes back (fork #129 decision 6, 16 Nov)", () => {
   const unpaid: WorkPartyCorrectionFigures = {
     previousFinalPriceCents: 20_000,
     newFinalPriceCents: 15_000,

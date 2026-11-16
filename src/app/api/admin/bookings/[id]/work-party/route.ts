@@ -28,7 +28,7 @@ import {
 
 const centsField = z.number().int().min(-100_000_000).max(100_000_000);
 
-// The officer's settlement choice (#129); absent is the default (club credit,
+// The officer's settlement choice (fork #129); absent is the default (club credit,
 // or the organiser's disposition). The service refuses one it does not offer.
 const settlementMethodField = z.enum(["credit", "card"]).optional();
 
@@ -104,7 +104,7 @@ export async function GET(
   const current =
     redemptions.find((row) => row.promoCode?.workPartyEvent)?.promoCode?.workPartyEvent ?? null;
   const ownerMemberId = bookingOwner(booking).memberId;
-  // #129 decision 6: an officer's own or family's booking is listed like any
+  // fork #129 decision 6: an officer's own or family's booking is listed like any
   // other; whether money would come back to them is decided on the preview's
   // figures, under the service's locks.
   const [bookingLodgeId, today, quotePriced, multiPromoCodes, events] = await Promise.all([
@@ -150,7 +150,7 @@ export async function GET(
 /**
  * "Add booking to work party" (fork #119). `mode: "preview"` runs the whole
  * change and rolls it back, returning the figures and the settlement methods
- * offered (`settlementOptions`, #129) for the confirm dialog;
+ * offered (`settlementOptions`, fork #129) for the confirm dialog;
  * `mode: "apply"` saves it, refusing if the figures moved since the preview.
  * Booking Officers and Full Admins (`bookings:edit`); the service re-authorises
  * the officer under its locks. The work and the money rules are in
@@ -168,9 +168,9 @@ export async function POST(
   }
   const { id } = await params;
 
-  // INV-AUTH-010: the handler reaches the batch modification's refund
-  // operations (it never refunds, but the census reads the call graph), so it
-  // asks for a fresh proof after the guard and before it reads the body.
+  // INV-AUTH-010: the handler can refund through the canonical booking edit (to
+  // the card, a bank hand-back, or the group organiser), so it asks for a fresh
+  // proof after the guard and before it reads the body.
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
 

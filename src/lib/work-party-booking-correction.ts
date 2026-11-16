@@ -24,7 +24,7 @@
  *    (`settlementMethod: "card"`): this module calls no provider and writes no
  *    refund row or task of its own;
  *  - the eligibility rule (`workPartyBookingEligibility`), shared with the UI;
- *  - the owner's rule for the officer's own and family's bookings (#129
+ *  - the owner's rule for the officer's own and family's bookings (fork #129
  *    decision 6, `workPartyOwnMoneyBackRefusal`): allowed while nothing comes
  *    back, refused when the change would refund or credit money to the officer
  *    or their family, which another officer must then do;
@@ -67,7 +67,7 @@ import {
   type BatchModificationPreTransaction,
 } from "@/lib/booking-batch-modification-service";
 import { workPartyEventRefusal } from "@/lib/work-party";
-import { editMoneyBackCents } from "@/lib/edit-money-back";
+import { workPartyCreditBackCents } from "@/lib/edit-money-back";
 
 export type WorkPartyBookingEligibility =
   | { ok: true }
@@ -113,8 +113,8 @@ export interface WorkPartyEligibilityEvent {
  * list, the service (again, under the locks) and so the dialog all use. Each
  * refusal is one the canonical edit would make anyway, stated up front in an
  * officer's words rather than discovered at the preview, plus the owner's
- * started-stay refusal (#119 decision 3). An organiser-paid joiner is allowed
- * (#129 decision 5); an officer's own or family's booking is refused only once
+ * started-stay refusal (fork #119 decision 3). An organiser-paid joiner is allowed
+ * (fork #129 decision 5); an officer's own or family's booking is refused only once
  * the figures show money coming back (`workPartyOwnMoneyBackRefusal`). The
  * editable-status answer is the edit doors' own (`activeLifecycleEditRefusal`,
  * #3245) and the event answer is `workPartyEventRefusal`; neither is copied.
@@ -172,7 +172,7 @@ export function workPartyBookingEligibility(
 }
 
 /**
- * Whether the acting officer is this member or in their family (#129 decision
+ * Whether the acting officer is this member or in their family (fork #129 decision
  * 6). Family is the one existing definition, the member-guest boundary's
  * (`getAllowedGuestMemberIds`: the member plus every co-member of all their
  * family groups). No member (an organisation) has no family.
@@ -312,18 +312,18 @@ export interface WorkPartyCorrectionFigures {
 }
 
 /**
- * Every cent the change hands back: the settlement's (`editMoneyBackCents`)
- * plus an unpaid booking's applied credit freed by the lower price.
+ * Every cent the change hands back: the card refund plus every credit route
+ * (`workPartyCreditBackCents`).
  */
 export function workPartyMoneyBackCents(figures: WorkPartyCorrectionFigures): number {
-  return editMoneyBackCents(figures) + figures.refundedExcessCreditCents;
+  return figures.refundAmountCents + workPartyCreditBackCents(figures);
 }
 
 export const WORK_PARTY_OWN_MONEY_BACK_MESSAGE =
   "This change would refund or credit money to you or your family, so another officer must add this booking to the work party.";
 
 /**
- * #129 decision 6 (owner, 16 Nov 2026): an officer may add their own or their
+ * fork #129 decision 6 (owner, 16 Nov 2026): an officer may add their own or their
  * family's booking while nothing comes back (an unpaid booking with no account
  * credit applied: its price just drops); once the change would refund or
  * credit any money (`workPartyMoneyBackCents`), another officer
@@ -381,7 +381,7 @@ export type WorkPartyCorrectionMode =
 
 /**
  * Every money figure the officer sees, and how it settles; any that moved
- * refuses the save — a changed method too (#129), so a save is never refunded
+ * refuses the save — a changed method too (fork #129), so a save is never refunded
  * where the officer was shown credit, or the reverse.
  */
 const FIGURE_KEYS = [
@@ -403,7 +403,7 @@ export async function addBookingToWorkParty(
     /** Absent means notify, as every officer edit does by default. */
     notifyMember?: boolean;
     /**
-     * The officer's choice (#129 decision 1); absent means the default — club
+     * The officer's choice (fork #129 decision 1); absent means the default — club
      * credit, or the organiser's disposition. `card` (a refund, to the card or
      * by bank transfer) is refused (409) unless `workPartySettlementOptions`
      * offers it.
@@ -513,7 +513,7 @@ export async function addBookingToWorkParty(
       const methodForEdit = organiserPaid
         ? workPartyDefaultSettlementMethod(booking)
         : params.settlementMethod ?? workPartyDefaultSettlementMethod(booking);
-      // Who any money back goes to (#129 decision 6), and whether that is the
+      // Who any money back goes to (fork #129 decision 6), and whether that is the
       // officer or their family: fresh family rows, under the locks. For an
       // organiser-paid joiner it is the group organiser, the parent's owner.
       const recipientMemberId = organiserPaid && booking.parentBookingId
@@ -585,7 +585,7 @@ export async function addBookingToWorkParty(
         refundAmountCents: modified.refundAmountCents,
         settlementMethod,
       };
-      // #129: a refund only where it was meant — the officer chose a refund
+      // fork #129: a refund only where it was meant — the officer chose a refund
       // (`resolveWorkPartySettlementMethod` admits `card` only where offered),
       // or the organiser's money goes back to them. Any other refund is a path
       // the options missed; refuse rather than pay it.
@@ -593,7 +593,7 @@ export async function addBookingToWorkParty(
       if (figures.refundAmountCents > 0 && !refundExpected) {
         throw new ApiError("This booking's change would be refunded, not credited, so it can't be added here.", 409);
       }
-      // #129 decision 6: decided on the figures, so the preview refuses too.
+      // fork #129 decision 6: decided on the figures, so the preview refuses too.
       const ownMoneyBack = workPartyOwnMoneyBackRefusal(figures, recipientIsActorOrFamily);
       if (ownMoneyBack) throw new ApiError(ownMoneyBack, 409);
       if (params.dryRun) throw new WorkPartyCorrectionDryRun(figures, settlementOptions);

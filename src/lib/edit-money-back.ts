@@ -27,3 +27,17 @@ export interface EditSettlementMoneyBack {
 export function editMoneyBackCents(result: EditSettlementMoneyBack): number {
   return result.refundAmountCents + result.accountCreditAmountCents + result.appliedCreditGivenBackCents;
 }
+
+/**
+ * Every cent of a work-party correction that comes back as account credit
+ * (`INV-SSOT`, one rule for the server's `workPartyMoneyBackCents` and the
+ * confirm dialog): paid money credited, a paid booking's applied credit given
+ * back, and an unpaid one's applied credit freed (`refundedExcessCreditCents`).
+ */
+export function workPartyCreditBackCents(
+  figures: Pick<EditSettlementMoneyBack, "accountCreditAmountCents" | "appliedCreditGivenBackCents"> & {
+    refundedExcessCreditCents: number;
+  },
+): number {
+  return figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents + figures.refundedExcessCreditCents;
+}

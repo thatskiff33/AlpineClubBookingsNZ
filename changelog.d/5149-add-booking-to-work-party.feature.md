@@ -1,4 +1,4 @@
-- **Officers can add an existing booking to a work party** (fork #119, #129).
+- **Officers can add an existing booking to a work party** (fork #119, fork #129).
   For a member who forgot to tick "I am attending a working bee", a Booking
   Officer or Full Admin opens the booking and clicks **Add to work party** in
   its admin tools. They choose the work party and see the new total and the

@@ -177,7 +177,7 @@ describe("POST", () => {
   });
 });
 
-describe("POST settlement method (#129)", () => {
+describe("POST settlement method (fork #129)", () => {
   const settlementOptions = { methods: ["credit", "card"], paidByOrganiser: false };
 
   it("returns the methods offered with the preview", async () => {
@@ -242,7 +242,7 @@ describe("GET", () => {
     },
   ];
 
-  it("lists the officer's own booking like any other: the money-back rule is the preview's (#129 decision 6)", async () => {
+  it("lists the officer's own booking like any other: the money-back rule is the preview's (fork #129 decision 6)", async () => {
     h.bookingFindUnique.mockResolvedValue(ownBooking("officer-1"));
     h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
     const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();

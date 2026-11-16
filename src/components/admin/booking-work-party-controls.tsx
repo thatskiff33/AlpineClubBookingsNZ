@@ -26,6 +26,7 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
+import { workPartyCreditBackCents } from "@/lib/edit-money-back";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify-validation";
@@ -51,7 +52,7 @@ type WorkPartyOption = {
  * officer picks the work party, sees what the booking will cost and how much
  * comes back (a dry run of the real change), and confirms. On a paid booking
  * the officer chooses club credit or a refund, as on an ordinary edit: to the
- * card, or by bank transfer for Internet Banking (#129, upstream owner
+ * card, or by bank transfer for Internet Banking (fork #129, upstream owner
  * decision 15 Nov 2026); the choice re-runs the dry run. An organiser-paid joiner's money goes back to
  * the organiser. The figures shown are the figures saved — the route refuses
  * if they, or the choice, moved.
@@ -147,6 +148,8 @@ export function BookingWorkPartyControls({
         return;
       }
       if (!res.ok) {
+        // A refusal leaves nothing the officer saw valid to confirm: drop the old figures.
+        setFigures(null);
         setError(data.error || "The booking could not be added to the work party.");
         return;
       }
@@ -227,6 +230,7 @@ export function BookingWorkPartyControls({
                 <Label htmlFor={`work-party-${bookingId}`}>Work party</Label>
                 <Select
                   value={selectedId}
+                  disabled={busy}
                   onValueChange={(value) => {
                     setSelectedId(value);
                     setFigures(null);
@@ -335,8 +339,8 @@ export function BookingWorkPartyControls({
 }
 
 /**
- * How the discount comes back (#129): a plain line for an organiser-paid
- * joiner, whose money has the organiser's one disposition (#129 decision 5);
+ * How the discount comes back (fork #129): a plain line for an organiser-paid
+ * joiner, whose money has the organiser's one disposition (fork #129 decision 5);
  * otherwise a choice only where there is one, as on an ordinary edit — club
  * credit or a refund, named for where it goes (the card, or a bank transfer
  * for Internet Banking; upstream owner decision, 15 Nov 2026).
@@ -398,9 +402,8 @@ function WorkPartyMoneyBackLines({
   money: (cents: number) => string;
 }) {
   // Every cent coming back as credit: paid money credited, a paid booking's
-  // applied credit given back, and an unpaid one's applied credit freed (#129).
-  const creditBackCents =
-    figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents + figures.refundedExcessCreditCents;
+  // applied credit given back, and an unpaid one's applied credit freed (fork #129).
+  const creditBackCents = workPartyCreditBackCents(figures);
   return (
     <>
       {figures.refundAmountCents > 0 && (
