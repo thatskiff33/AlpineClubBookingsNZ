@@ -210,7 +210,7 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
   });
 });
 
-describe("openingCredits — the owner's 16 Nov 2026 decision on #4988, pinned", () => {
+describe("openingCredits: the owner's 16 Nov 2026 decision on #4988, pinned", () => {
   it("offers the whole LIABILITY class, falls back to hutFeeRefunds and has no default", () => {
     expect(MAPPING_ACCOUNT_FILTERS.openingCredits.accountClass).toBe("LIABILITY");
     expect(MAPPING_ACCOUNT_FILTERS.openingCredits.accountTypes).toBeUndefined();
