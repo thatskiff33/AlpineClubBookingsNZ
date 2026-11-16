@@ -195,10 +195,10 @@ fit into.
    - [The breached-password check needs outbound HTTPS (#4610)](#the-breached-password-check-needs-outbound-https-4610)
    - [Copies of the site need an explicit mail provider flag (#3035)](#copies-of-the-site-need-an-explicit-mail-provider-flag-3035)
    - [Deploy the release tag (#4978)](#deploy-the-release-tag-4978)
-   - [Alpine Central Server: API 2.6, Fees-page rates and stricter booking addresses](#alpine-central-server-api-26-fees-page-rates-and-stricter-booking-addresses)
+   - [Alpine Central Server: a new, optional connection on API 2.6](#alpine-central-server-a-new-optional-connection-on-api-26)
 7. Tell members and officers about the changes they will notice at the upgrade:
    - [Members signed in more than 7 days ago are asked to sign in again (#4611)](#members-signed-in-more-than-7-days-ago-are-asked-to-sign-in-again-4611)
-   - [Club notices now reach members who never saved their email preferences (#4987)](#club-notices-now-reach-members-who-never-saved-their-email-preferences-4987)
+   - [Club notices reach every member who has not turned them off (#4987)](#club-notices-reach-every-member-who-has-not-turned-them-off-4987)
    - [Treasurers now send internet-banking refunds themselves (#3827)](#treasurers-now-send-internet-banking-refunds-themselves-3827)
 
 #### During the window
@@ -234,9 +234,10 @@ fit into.
 
 #### After the deploy
 
-1. Decide on after-stay dietary clearing first, and before the next 03:30 club
-   time. It ships on, and its first run is the first nightly pruning run after
-   the upgrade. A cleared note cannot be restored except from a backup:
+1. Decide on after-stay dietary clearing. It ships on (30 days). An install
+   upgrading from `v0.13.2` has no stay dietary notes yet, so the first run
+   clears nothing; the setting matters once the club switches the dietary
+   field on. A cleared note cannot be restored except from a backup:
    [Old stays' dietary notes are cleared on the first night after upgrading (#4916)](#old-stays-dietary-notes-are-cleared-on-the-first-night-after-upgrading-4916).
 2. Work through the runbook's
    [§3 post-upgrade checklist](PRODUCTION_UPGRADE_RUNBOOK.md#3-post-upgrade-checklist),
@@ -280,10 +281,10 @@ fit into.
    - [One-off categorisation of older activity entries with no category (#2581)](#one-off-categorisation-of-older-activity-entries-with-no-category-2581)
 5. Do the after-the-deploy part of each of these sections, which come from
    this release's changelog entries:
-   - [Reload Caddy after deploying (#2246, #3293)](#reload-caddy-after-deploying-2246-3293)
+   - [Caddy picks up the new Caddyfile at cutover (#2246, #3293)](#caddy-picks-up-the-new-caddyfile-at-cutover-2246-3293)
    - [Add the `refund.failed` event to the Stripe webhook (#4104)](#add-the-refundfailed-event-to-the-stripe-webhook-4104)
    - [Add the four card-dispute events to the Stripe webhook (#4911)](#add-the-four-card-dispute-events-to-the-stripe-webhook-4911)
-   - [Subscribe the Xero webhook to Credit Notes (#4046)](#subscribe-the-xero-webhook-to-credit-notes-4046)
+   - [Subscribe the Xero webhook to Credit Notes (PR #4046)](#subscribe-the-xero-webhook-to-credit-notes-pr-4046)
    - [Retry failed membership subscription invoices (#3971)](#retry-failed-membership-subscription-invoices-3971)
    - [Set a data-encryption key (#4456)](#set-a-data-encryption-key-4456)
    - [Settle old edit reviews with the one-off clean-up (#4343)](#settle-old-edit-reviews-with-the-one-off-clean-up-4343)
@@ -296,8 +297,8 @@ fit into.
    - [Settle refund credit notes closed with no payment (#3548)](#settle-refund-credit-notes-closed-with-no-payment-3548)
    - [Remove account-credit note links left on bookings a credit was applied to (#4712)](#remove-account-credit-note-links-left-on-bookings-a-credit-was-applied-to-4712)
    - [Check guest-acceptance refund retries that gave up before this release (#4101)](#check-guest-acceptance-refund-retries-that-gave-up-before-this-release-4101)
-   - [Leftover price-increase card retries from the previous version (#4079)](#leftover-price-increase-card-retries-from-the-previous-version-4079)
-   - [Alpine Central Server: API 2.6, Fees-page rates and stricter booking addresses](#alpine-central-server-api-26-fees-page-rates-and-stricter-booking-addresses)
+   - [Leftover price-increase card retries from v0.13.2 (#4079)](#leftover-price-increase-card-retries-from-v0132-4079)
+   - [Alpine Central Server: a new, optional connection on API 2.6](#alpine-central-server-a-new-optional-connection-on-api-26)
    - [AI Diagnostics: provision its database role (#2374, #2375, #2376, #2377)](#ai-diagnostics-provision-its-database-role-2374-2375-2376-2377)
    - [Check who now receives admin alerts (#2548)](#check-who-now-receives-admin-alerts-2548)
    - [Look for content pages at newly reserved addresses (#2352)](#look-for-content-pages-at-newly-reserved-addresses-2352)
@@ -407,7 +408,13 @@ and the member's own profile note are not touched.
 time, untick **Enable after-stay dietary clearing**, or change the period
 (1 to 365 days), and save. Support edit and bookings edit permission are both
 needed. The page shows how many notes the next run would clear. Clubs that never
-switched on the dietary field have no notes and nothing changes for them. See
+switched on the dietary field have no notes and nothing changes for them.
+
+**Upgrading from `v0.13.2`:** the stay note itself is new in this release
+(`20261011010000_add_booking_guest_dietary_requirements` adds
+`BookingGuest.dietaryRequirements` with no backfill), so such an install has no
+stay dietary notes and the first run clears nothing. The setting (on, 30 days)
+matters once the club switches the dietary field on. See
 the [retention schedule](PRIVACY_RETENTION.md#automatic-retention-and-operator-review).
 
 ### One-off update of the starter FAQ's personal-data answer (#4914 follow-up)
@@ -811,6 +818,10 @@ the app now works out again which of the member's open card payments are out of
 date, keeps cancelling those (restarting a cancellation that had given up), and
 stops cancelling the one the booking can still be paid with, even if its
 cancellation was waiting to retry. No migration runs.
+
+**Who this applies to.** Reversing a booking recorded as paid in cash arrived
+on `main` on 29 July 2026 (#2262), after `v0.13.2`, so only an install that ran
+`main` after that date can have one; an install upgrading from `v0.13.2` has none.
 
 **After upgrading.** A reversal made before this release (or by the previous
 colour during the switch) could leave such a waiting cancellation behind. It
@@ -2896,27 +2907,19 @@ tag: `git fetch origin tag v0.14.0`, then
 `DEPLOY_REF=v0.14.0 ./scripts/run-production-blue-green-deploy.sh`. See
 [`DEPLOYMENT.md` → The deploy refuses a commit that is not a release (#4978)](../DEPLOYMENT.md#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
 
-### Alpine Central Server: API 2.6, Fees-page rates and stricter booking addresses
+### Alpine Central Server: a new, optional connection on API 2.6
 
-Only for a club connected to the Alpine Central Server.
-
-- **Version.** This site syncs only while the central server runs the same API
-  version, and this release speaks `2.6` (`SERVERNZ_EXPECTED_SERVER_VERSION` in
-  `src/lib/servernz-api-version.ts`). With any other version every
-  server-bound transfer pauses until the lagging side is upgraded; the setup
-  page shows both numbers, and nothing needs resetting afterwards.
-- **Your own lodge's rates.** Your own lodge's non-member rates and season dates
-  now come from the Fees page, through the switch **Rates and season dates from
-  the Fees page**, which is on by default. On upgrading, the rates and dates you
-  typed are replaced from the Fees page at the next upload: check the
-  Non-Member rates on **Admin → Fees** first, or turn the switch off.
-- **Booking page addresses.** An Other lodge's **Non-member booking page URL**
-  saved before the stricter rule is flagged as soon as the form opens and must
-  be corrected before the lodge can be saved again; until then the upload
-  leaves it out.
-
-See [Lodges → Other lodges](guides/lodges.md#other-lodges) and
-[Integrations → Connect to the Alpine Central Server](guides/integrations.md#connect-to-the-alpine-central-server).
+`v0.13.2` has no Alpine Central Server connection and no other-lodges
+registry, so nothing changes for an existing install until a club chooses to
+connect. If you connect it, this release syncs only while the central server
+runs API `2.6`, matched on both major and minor
+(`SERVERNZ_EXPECTED_SERVER_VERSION` in `src/lib/servernz-api-version.ts`);
+with any other version every server-bound transfer pauses until the lagging
+side is upgraded, and the setup page shows both numbers. Once connected, your
+own lodge's non-member rates and season dates come from the Fees page by
+default (the switch **Rates and season dates from the Fees page**). See
+[Integrations → Connect to the Alpine Central Server](guides/integrations.md#connect-to-the-alpine-central-server)
+and [Lodges → Other lodges](guides/lodges.md#other-lodges).
 
 ### Members signed in more than 7 days ago are asked to sign in again (#4611)
 
@@ -2927,13 +2930,14 @@ in: 7 days by default, or any whole number of hours from 8 to 720 under
 who signed in more than 7 days earlier (30 days for the lodge tablet) is asked
 to sign in again on their next page load. See the [security guide](guides/security.md).
 
-### Club notices now reach members who never saved their email preferences (#4987)
+### Club notices reach every member who has not turned them off (#4987)
 
 Bulk email is now one of two kinds. A **club notice** goes to every member in
-the chosen group except those who turn off the new **Club notices** preference
-on their profile. A **club newsletter** still goes only to members who turned on
-**Club newsletters**. Members who never saved their email preferences will now
-receive club notices, where before they received no bulk email at all. The kind
+the chosen group unless they turn off the new **Club notices** preference on
+their profile, including members who had turned off, or never turned on, the
+old marketing emails: `20261220120000_add_club_notices_preference` adds the
+preference switched on for every member. A **club newsletter** still goes only
+to members who turned on **Club newsletters**. The kind
 is chosen for each message in **Admin → Members → Communications**; see the
 [communications guide](guides/communications.md).
 
@@ -2948,7 +2952,7 @@ deploy itself.
 
 ### Leave the Stripe webhook API version alone in this deploy (#4029)
 
-Payments now use the Stripe library's own API version (stripe-node 23). Webhook
+Payments now use stripe-node 23.1.0 and its API version, `2026-10-28.endive`. Webhook
 events keep arriving at the version set on the club's Stripe webhook endpoint;
 leave that setting alone in the same deploy. After deploying, a test-mode
 payment, saved-card charge and refund on staging is a sensible smoke check.
@@ -2956,14 +2960,14 @@ payment, saved-card charge and refund on staging is a sensible smoke check.
 ### Finish the switch before any group organiser's cancellation (#3854)
 
 Finish the switch to the new version before processing any group organiser's
-cancellation. If the previous version cancels a joiner the new version has
-already settled, that joiner's ledger is left wrong (the census reports it, and
+cancellation. `v0.13.2` writes no booking ledger lines. If `v0.13.2` cancels a
+joiner the new version has already settled, that joiner's ledger is left wrong (the census reports it, and
 an officer corrects it by hand).
 
 ### Rolling back past #3880 needs a check first (#3880)
 
-The release before #3880 treats a bank-transfer payment's refund notes as one
-note, so it can switch off the per-refund notes a review raised. Before rolling
+`v0.13.2`, like every release before #3880, treats a bank-transfer payment's
+refund notes as one note, so it can switch off the per-refund notes a review raised. Before rolling
 back, let every review refund note finish, queued or an operator's retry, and
 list refund-note links marked `perDelta`: with none the rollback is safe; with
 any, after rolling forward set active again by hand each listed link the old
@@ -2971,15 +2975,17 @@ code switched off whose note is still live in Xero. See "Deploy and rollback
 note (#3880)" in the
 [Xero architecture guide](xero/ARCHITECTURE.md#flow-1--outbound-financial-documents-the-outbox).
 
-### Reload Caddy after deploying (#2246, #3293)
+### Caddy picks up the new Caddyfile at cutover (#2246, #3293)
 
-This release changes `Caddyfile`. The changelog entries for #2246 and #3293 say
-Caddy must be reloaded on the host after deploying, because the app deploy alone
-does not pick it up: validate with
+This release changes `Caddyfile`. The production deploy picks it up by itself:
+`docker-compose.yml` mounts the checkout's `Caddyfile` into the Caddy
+container, and `scripts/run-production-blue-green-deploy.sh` validates it
+before it changes anything (step 4) and, at cutover (step 17), runs
+`docker compose up -d caddy` and reloads Caddy. Nothing is needed by hand. Only
+if you deploy some other way, validate with
 `docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile`, then
-`docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`. The
-commands are in
-[`DEPLOYMENT.md` → Public Rate Limits And Proxy Headers](../DEPLOYMENT.md#public-rate-limits-and-proxy-headers).
+reload with `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`
+([`DEPLOYMENT.md` → Public Rate Limits And Proxy Headers](../DEPLOYMENT.md#public-rate-limits-and-proxy-headers)).
 
 ### Add the `refund.failed` event to the Stripe webhook (#4104)
 
@@ -3001,7 +3007,7 @@ before the upgrade are not back-filled, so check Stripe's **Disputes** page
 once after adding the events and handle any open dispute by hand. See
 [`DEPLOYMENT.md` → Webhooks](../DEPLOYMENT.md#webhooks).
 
-### Subscribe the Xero webhook to Credit Notes (#4046)
+### Subscribe the Xero webhook to Credit Notes (PR #4046)
 
 A credit note voided in Xero is now recorded here. Xero webhook subscriptions
 are chosen in the Xero developer portal, not in this app: under **My Apps → your
@@ -3013,8 +3019,8 @@ Events**, filter to `CREDITNOTE`, and Replay the event.
 
 Every membership subscription charge failed in Xero with "Membership
 subscription charge not found", so those members were never invoiced. After this
-release, open **Xero → Operations**, find each failed membership subscription
-invoice row, and press **Retry in background**. Retry is refused for a charge
+release, open **Admin → Finance → Xero Sync**, Xero Operations panel, find each
+failed membership subscription invoice row, and press **Retry in background**. Retry is refused for a charge
 that already has a Xero invoice, so it cannot bill anyone twice. If one charge
 has several failed rows, only the newest offers the button. See the
 [Xero guide](guides/xero.md).
@@ -3038,12 +3044,14 @@ and [`DEPLOYMENT.md` → Adding a data-encryption key (#4456)](../DEPLOYMENT.md#
 
 ### Settle old edit reviews with the one-off clean-up (#4343)
 
-After this is the only version serving, run
-`pnpm run bookings:edit-review-cleanup` against a copy of the database, read the
-dry-run, then apply it with `--actor`. It prices any review still open through
-the normal refund, credit or charge, and re-sets a booking total that an old
-review froze to the sum of its guests; that re-set moves no money. Run it again
-only to confirm it has nothing left to do. See
+Edit reviews arrived after `v0.13.2`, so an install upgrading from `v0.13.2`
+has none and there is nothing to do. To confirm, once this release alone
+serves, run the read-only census, `pnpm run bookings:edit-review-cleanup`,
+against the live database. If it reports anything, run
+`pnpm run bookings:edit-review-cleanup -- --dry-run` against the live database
+(its preview runs inside a transaction it rolls back) and read it, then apply
+it with `pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>`
+against the live database. See
 [`MAINTENANCE.md`](MAINTENANCE.md#settle-open-edit-reviews-and-re-base-frozen-headlines-4343).
 
 ### Retire payments deleted in Xero before this release (#4531)
@@ -3063,21 +3071,25 @@ to repeat; see
 
 ### Drain Xero refund-note workers, then run the read-only checks (#4195, #4215, #4223)
 
-The [Xero architecture guide](xero/ARCHITECTURE.md#flow-2--inbound-reconciliation-webhooks--incremental-cursors)
-carries a deploy note for each:
+Refund-request credit notes and the bank-transfer refund-note changes these
+notes cover arrived after `v0.13.2`. Coming from `v0.13.2` the window already
+stops every old worker, so there is nothing to drain and the first runs of the
+checks find nothing. They matter after a rollback to `v0.13.2` and a roll
+forward. The [Xero architecture guide](xero/ARCHITECTURE.md#flow-2--inbound-reconciliation-webhooks--incremental-cursors)
+carries the notes:
 
-- **#4195:** stop the previous release's Xero outbox and retry workers before
-  this release takes over, and do not retry refund-request notes from the
-  previous release during the switch. Before rolling back and after rolling
-  forward, run the two read-only checks in "Deploy and rollback note (#4195)",
-  and check in Xero each request note they list.
-- **#4215:** after deploying, and after any rollback and roll forward, run the
+- **#4195:** during a switch from `v0.13.2`, stop its Xero outbox and retry
+  workers before this release takes over, and do not retry refund-request notes
+  from `v0.13.2`. Before rolling back and after rolling forward, run the two
+  read-only checks in "Deploy and rollback note (#4195)", and check in Xero each
+  request note they list.
+- **#4215:** after any rollback to `v0.13.2` and roll forward, run the
   read-only check in "Deploy and rollback note (#4215)". It lists the
   bank-transfer payments that read less refunded than their records show; check
   each one in Xero. The same note has a second check for the opposite case.
 - **#4223:** stop and drain old refund-note workers and web or direct retries
   before enabling new refund-note writes; a rollback requires the same drain in
-  reverse.
+  reverse. The drain is described in "Deploy and rollback note (#4091)".
 
 ### Run the settled-cash audit for Internet Banking bookings (#3979)
 
@@ -3092,9 +3104,10 @@ describes.
 
 Run the read-only `pnpm run payments:audit-refunded-total` (add `--json` for
 machine-readable output). It lists payments whose refunded total a card refund
-after an account-credit settlement left short (#3640), and bank refunds
-recorded as "Paid another way" that a late card refund failure took out of the
-refunded total (#4280), for the treasurer to review. It repairs nothing. See
+after an account-credit settlement left short (#3640), for the treasurer to
+review. It also lists bank refunds recorded as "Paid another way" that a late
+card refund failure took out of the refunded total (#4280); "Paid another way"
+did not exist in `v0.13.2`, so an install upgrading from it has none of those. It repairs nothing. See
 [`MAINTENANCE.md`](MAINTENANCE.md#audit-refunded-totals-left-short-by-the-old-refund-arithmetic-3640).
 
 ### List organiser-paid joiners' refunded figures (#3653)
@@ -3122,28 +3135,51 @@ reviewed, removes them. See
 
 ### Check guest-acceptance refund retries that gave up before this release (#4101)
 
-A refund retry that had already given up before this release stays stuck.
+Only installs that ran `main` between 3 and 14 October 2026 can have one: the
+guest-acceptance re-price arrived on 3 October and its fix (#4109) on 14 October,
+so an install upgrading from `v0.13.2` has none. A refund retry that had already
+given up before this release stays stuck.
 Stripe did make that refund, so check the Stripe dashboard and do not pay the
 member again. The **Card refunds Stripe gave up on** list now marks such a row
 **Stripe may have refunded**. See the [Stuck States guide](guides/stuck-states.md).
 
-### Leftover price-increase card retries from the previous version (#4079)
+### Leftover price-increase card retries from v0.13.2 (#4079)
 
-The changelog entry says: "Upgrading from v0.13.2 or earlier: run a release
-containing #4077 for a day first, or any leftover retry from the old version
-ends the same way." Ending that way means the retry gives up and alerts an
-administrator, who checks Stripe for that booking and amount. No tag before
-`v0.14.0` contains #4077.
+`v0.13.2` creates a background retry when it cannot finish asking a member's
+card for a booking's price increase (`PaymentRecoveryOperation` rows of type
+`CREATE_ADDITIONAL_PAYMENT_INTENT`). This release looks for the earlier card
+request more narrowly. No member is charged twice: an unrecorded payment
+request is never confirmed. But a retry the old runner lost track of can no
+longer be matched; it gives up after its retries and alerts an officer, and the
+price increase stays uncollected until someone acts.
+
+**Before deploying,** list them with this read-only query, which writes
+nothing:
+
+```sql
+SELECT "id", "bookingId", "amountCents", "status", "attempts", "lastError", "createdAt"
+FROM "PaymentRecoveryOperation"
+WHERE "type" = 'CREATE_ADDITIONAL_PAYMENT_INTENT' AND "status" <> 'SUCCEEDED'
+ORDER BY "createdAt";
+```
+
+Most finish by themselves after the upgrade. One that cannot be matched shows,
+after its retries, under **Exhausted recovery operations** on **Admin →
+Monitoring & Support → Stuck States**, and an officer is alerted. For it, find
+the unpaid Stripe payment for that booking and amount, cancel it in Stripe, and
+collect the increase another way. Run the query again a day after deploying.
+See the [Stuck States guide](guides/stuck-states.md).
 
 ### AI Diagnostics: provision its database role (#2374, #2375, #2376, #2377)
 
-Only if your club uses AI Diagnostics, which is off by default. Before AI
-Diagnostics can be used, its read-only database login must be created with
-`pnpm run diagnostics:provision-role`, and the resulting connection string set
-as `AI_DIAGNOSTICS_DATABASE_URL`. Later changes in this release each say to
-re-run `pnpm run diagnostics:provision-role` after deploying; until it is run,
-Diagnostics reports its database role as over-privileged and the new tools
-decline to run. See
+AI Diagnostics is new in this release and off by default; this step is only for
+a club that turns it on. Before it can be used, its read-only database login
+must be created with `pnpm run diagnostics:provision-role`, and the resulting
+connection string set as `AI_DIAGNOSTICS_DATABASE_URL`. The command requires
+`AI_DIAGNOSTICS_DB_PASSWORD` (at least 20 characters). It connects with
+`DATABASE_URL` unless `AI_DIAGNOSTICS_PROVISION_DATABASE_URL` is set, which a
+deployment using the least-privilege database roles (#4453) must set to its
+operator connection. See
 [AI Diagnostics deployment → Provisioning](ai-diagnostics/deployment.md#provisioning).
 
 ### Check who now receives admin alerts (#2548)
@@ -3171,8 +3207,9 @@ add one there to keep the link visible. See
 
 ### Re-run Xero repair sweeps whose check-in dates mattered (#2868)
 
-Running the Xero booking repair tool (`pnpm run xero:booking-repair`) with
-`--from` and `--to` used to search check-in dates one day early. The two dates
+In `v0.13.2` the Xero booking repair tool was run as
+`npx tsx scripts/xero-booking-repair.ts`; it is now `pnpm run xero:booking-repair`.
+Run with `--from` and `--to`, it used to search check-in dates one day early. The two dates
 you type are now the two days searched. Re-run any sweep whose check-in dates
 mattered.
 
