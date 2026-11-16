@@ -308,7 +308,9 @@ describe("SetupPanels — contact-group auto-load runs once per opening (ALP-591
     await waitFor(() => expect(mockLoadGroups).toHaveBeenCalledTimes(2));
     await settle();
     expect(mockLoadGroups).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("Xero is unreachable")).toBeTruthy();
+    // The pressed retry's failure replaces the opening load's passive notice:
+    // shown once, in the focused action alert (#4975), not twice.
+    expect(screen.getByText("Xero is unreachable").closest("#xero-setup-action-error")).not.toBeNull();
   });
 
   it("an empty result is requested once, and diagnostics refresh once", async () => {

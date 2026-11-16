@@ -88,8 +88,10 @@ export function SetupPanels({
     }) => {
       if (options?.refreshFromXero) setRefreshingGroups(true)
       else setLoadingGroups(true)
+      // Any new attempt supersedes the opening load's passive notice, so a
+      // pressed retry that fails shows its error once, in the focused alert.
+      setLoadError("")
       if (options?.pressed) clearActionError()
-      else setLoadError("")
       try {
         const result = await loadAdminXeroContactGroups({
           refreshFromXero: options?.refreshFromXero,
