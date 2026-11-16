@@ -18,10 +18,10 @@ import {
   getSetupRequiredEnvNames,
   buildSetupReadiness,
   normalizeSetupProgress,
-  renderSetupCheckReport,
   type SetupDatabaseSnapshot,
   type SetupReadiness,
 } from "@/lib/setup-readiness";
+import { renderSetupCheckReport } from "@/lib/setup-readiness-report";
 
 /**
  * A resolved environment role for the fixtures below, built by the REAL
