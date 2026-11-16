@@ -616,3 +616,46 @@ describe("#4210: held for an officer when the row that made it was closed Paid a
     expect(await keep(tx)).toEqual({});
   });
 });
+
+// #4284 (`INV-PAY-121`): which row made a failed refund is decided by the
+// owed figure's attribution, so a `createdAt` tie must not let the order the
+// rows or refunds were read in pick a different row. The real-database proof
+// of the tie order is `card-refund-owed-tie-order.realdb.test.ts`.
+describe("#4284: a createdAt tie names the same maker whatever order findOwner reads in", () => {
+  const CLOSED_AT = new Date("2026-06-20T00:00:10.000Z");
+  const retry = (id: string, at: Date) =>
+    row({ id, status: "SUCCEEDED", nextRetryAt: null, idempotencyKey: `card_refund_failed_later_re_${id}`, stripeKeyPrefix: `card_refund_failed_later_re_${id}`, createdAt: at, succeededAt: CLOSED_AT });
+  const FAILED_LATER_RETRY = { ...REFUND, metadata: { bookingId: "booking-1", reason: "card_refund_failed_later" } };
+  const recorded = (stripeRefundId: string, status: string) => ({ stripeRefundId, paymentTransactionId: "txn-1", amountCents: 4_000, status, createdAt: REFUNDED_AT, stripeCreatedAt: REFUNDED_AT });
+  const madeBy = (tx: ReturnType<typeof fakeTx>) => (inserted(tx)?.allocationPlan as Array<{ madeByOperationId?: string | null }>)[0]?.madeByOperationId;
+
+  it("two rows raised at the same instant: the later id takes the refund, in either read order", async () => {
+    const rows = [retry("a", RAISED_AT), retry("b", RAISED_AT)];
+    for (const read of [rows, [...rows].reverse()]) {
+      const tx = fakeTx({ rows: read });
+      await keep(tx, FAILED_LATER_RETRY);
+      expect(madeBy(tx)).toBe("b");
+    }
+  });
+
+  it("two refunds recorded at the same instant: each fills the same row, in either read order", async () => {
+    // re_0 comes first by `stripeRefundId`, so it fills the newest row (b) and
+    // the failing re_1 the older one (a).
+    const rows = [retry("a", new Date(RAISED_AT.getTime() - 1_000)), retry("b", RAISED_AT)];
+    const refunds = [recorded("re_0", "succeeded"), recorded("re_1", "failed")];
+    for (const read of [refunds, [...refunds].reverse()]) {
+      const tx = fakeTx({ rows });
+      tx.paymentRefund.findMany = vi.fn(async () => read);
+      await keep(tx, FAILED_LATER_RETRY);
+      expect(madeBy(tx)).toBe("a");
+    }
+  });
+
+  it("both reads ask PostgreSQL for the owed figure's one order", async () => {
+    const tx = fakeTx({ rows: [retry("a", RAISED_AT)] });
+    await keep(tx, FAILED_LATER_RETRY);
+    const orderOf = (mock: { mock: { calls: unknown[][] } }) => (mock.mock.calls[0]?.[0] as { orderBy?: unknown }).orderBy;
+    expect(orderOf(tx.paymentRecoveryOperation.findMany)).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    expect(orderOf(tx.paymentRefund.findMany)).toEqual([{ createdAt: "asc" }, { stripeRefundId: "asc" }]);
+  });
+});
