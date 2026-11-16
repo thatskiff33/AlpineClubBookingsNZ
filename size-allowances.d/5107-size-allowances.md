@@ -22,7 +22,7 @@ reason: adds the getAdminPage import and reads the page heading, and the
   apart is a refactor of its own, not part of this fix.
 
 file: src/app/(admin)/admin/dashboard/page.tsx
-lines: 1001
+lines: 987
 reason: the pending-review card heading now reads the refund-requests
   registry label, which takes two more lines than the typed string it
   replaces, and the existing admin-hubs import gains getAdminPage (#4968).
@@ -65,7 +65,7 @@ reason: adds the getAdminPage import, and the card title reads the minimum
   part of this fix.
 
 function: src/app/(admin)/admin/dashboard/page.tsx#AdminDashboardPage
-lines: 616
+lines: 605
 reason: the pending-review card heading now reads the refund-requests
   registry label, two more lines than the typed string it replaces (#4968).
   The function was already over its limit; lifting it apart is a refactor of
