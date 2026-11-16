@@ -37,6 +37,9 @@ vi.mock("@/lib/prisma", () => ({
     memberLifecycleActionRequest: { count: vi.fn() },
     deletionRequest: { count: vi.fn() },
     bookingChangeRequest: { count: vi.fn() },
+    // #4969: the card reads all four Booking Requests queues.
+    newBookingPolicyExceptionRequest: { count: vi.fn(async () => 0) },
+    bookingRequest: { count: vi.fn(async () => 0) },
     lodge: { count: vi.fn() },
   },
 }));

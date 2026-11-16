@@ -114,7 +114,12 @@ describe("getAdminPendingCounts", () => {
         return where.OR ? 12 : 5;
       },
     );
-    mocks.bookingChangeRequestCount.mockResolvedValue(6);
+    // One table, two queues (#4969): LOCKED_PERIOD rows are the Changes tab,
+    // POLICY_EXCEPTION rows join the new-booking exceptions on their tab.
+    mocks.bookingChangeRequestCount.mockImplementation(
+      async ({ where }: { where: { kind?: string } }) =>
+        where.kind === "LOCKED_PERIOD" ? 6 : where.kind === "POLICY_EXCEPTION" ? 3 : 999,
+    );
     mocks.newBookingPolicyExceptionRequestCount.mockResolvedValue(16);
     mocks.bookingRequestCount.mockResolvedValue(7);
     mocks.getPendingMembershipCancellationReviewCount.mockResolvedValue(8);
@@ -154,8 +159,8 @@ describe("getAdminPendingCounts", () => {
       manualRefundTasks: 15,
       creditApprovals: 4,
       bookingReviews: 5,
-      bookingChangeRequests: 6,
-      newBookingPolicyExceptionRequests: 16,
+      lockedPeriodChangeRequests: 6,
+      policyExceptionRequests: 16 + 3,
       publicBookingRequests: 7,
       unpaidFinishedStays: 12,
       unsettledAdditionalFinishedStays: 13,
@@ -225,7 +230,16 @@ describe("getAdminPendingCounts", () => {
         },
       },
     });
+    // Mirrors /api/admin/booking-change-requests (LOCKED_PERIOD only) and the
+    // unified exception queue (POLICY_EXCEPTION change requests + new-booking
+    // exception requests), so each tab's badge counts the list it shows.
     expect(mocks.bookingChangeRequestCount).toHaveBeenCalledWith({
+      where: { kind: "LOCKED_PERIOD", status: "REQUESTED" },
+    });
+    expect(mocks.bookingChangeRequestCount).toHaveBeenCalledWith({
+      where: { kind: "POLICY_EXCEPTION", status: "REQUESTED" },
+    });
+    expect(mocks.newBookingPolicyExceptionRequestCount).toHaveBeenCalledWith({
       where: { status: "REQUESTED" },
     });
     expect(mocks.bookingRequestCount).toHaveBeenCalledWith({
