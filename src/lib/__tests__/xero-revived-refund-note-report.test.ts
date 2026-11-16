@@ -5,6 +5,9 @@
  * every write method throws, and so is the Xero client: the report finishing
  * at all is the proof it writes nothing. No live provider or database.
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { XeroClient } from "xero-node";
 import { XeroFake } from "@/test/providers/xero-fake";
@@ -46,9 +49,14 @@ function writeThrowingDb(models: Record<string, Record<string, unknown>>): unkno
   );
 }
 
+// The app-wide client the script hands the report. Each test points it at its own double; by default
+// it is a double with no reads at all, whose every write throws.
+const prismaHolder = vi.hoisted(() => ({ db: null as unknown }));
 const usage = vi.hoisted(() => ({ record: vi.fn<(row: { workflow?: string }) => Promise<undefined>>(async () => undefined), budgetAllows: vi.fn(async () => true) }));
 // The app-wide client: nothing here may read or write it. The report's own reads go through an injected double.
-vi.mock("@/lib/prisma", () => ({ prisma: writeThrowingDb({}) }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: new Proxy({}, { get: (_t, key) => (key === "then" ? undefined : Reflect.get(prismaHolder.db as object, key)) }),
+}));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 // The API-usage meter every metered call writes: recorded here so the test can see it is the only write.
 vi.mock("@/lib/xero-api-usage", async (importOriginal) => ({
@@ -60,6 +68,9 @@ vi.mock("@/lib/xero-api-usage", async (importOriginal) => ({
 const { resetXeroRateLimitStateForTests, withXeroRetry } = await import("@/lib/xero-api-client");
 const { setXeroClientForTests, resetXeroClientForTests } = await import("@/lib/xero-test-client-override");
 const report = await import("@/lib/xero-revived-refund-note-report");
+const { formatRevivedRefundNoteReport } = await import("@/lib/xero-revived-refund-note-format");
+const cli = await import("@/lib/xero-revived-refund-note-cli");
+const { prisma } = await import("@/lib/prisma");
 const reader = await import("@/lib/xero-revived-refund-note-reader");
 
 type LinkRow = { id: string; localModel: string; localId: string; xeroObjectType: string; xeroObjectId: string; xeroObjectNumber: string | null; role: string; active: boolean; metadata: unknown };
@@ -124,6 +135,7 @@ const run = (links: ActiveRefundNoteLink[]) => report.classifyRevivedRefundNotes
 
 beforeEach(() => {
   writesAttempted.length = 0;
+  prismaHolder.db = writeThrowingDb({});
   usage.record.mockClear();
   usage.budgetAllows.mockReset().mockResolvedValue(true);
   noPause.mockClear();
@@ -131,6 +143,8 @@ beforeEach(() => {
 afterEach(() => {
   resetXeroClientForTests();
   resetXeroRateLimitStateForTests();
+  // EVERY test is a read-only proof: no write reached the database double or the Xero client.
+  expect(writesAttempted).toEqual([]);
 });
 
 describe("#4336 revived refund-note report: classification", () => {
@@ -159,24 +173,27 @@ describe("#4336 revived refund-note report: classification", () => {
     expect(result.revived).toEqual([
       {
         linkId: "l1", paymentId: "pay-bank", bookingId: "book-1", paymentSource: "INTERNET_BANKING", role: "REFUND_CREDIT_NOTE", refundRequestId: null,
-        creditNoteId: voided, creditNoteNumber: "CN-1", appStatus: "AUTHORISED", countedCents: 20_000, pointerNamesNote: true,
+        creditNoteId: voided, creditNoteNumber: "CN-1", appStatus: "AUTHORISED", countedCents: 20_000, requestNoteCents: null, pointerNamesNote: true,
         xeroStatus: "VOIDED", xeroUpdatedAt: UPDATED.toISOString(),
       },
       {
         linkId: "l2", paymentId: "pay-card", bookingId: "book-2", paymentSource: "STRIPE", role: "REFUND_REQUEST_CREDIT_NOTE", refundRequestId: "rr-1",
-        creditNoteId: deleted, creditNoteNumber: null, appStatus: "AUTHORISED", countedCents: 4_550, pointerNamesNote: false,
+        creditNoteId: deleted, creditNoteNumber: null, appStatus: "AUTHORISED", countedCents: null, requestNoteCents: 4_550, pointerNamesNote: false,
         xeroStatus: "DELETED", xeroUpdatedAt: UPDATED.toISOString(),
       },
     ].sort((a, b) => a.creditNoteId!.localeCompare(b.creditNoteId!)));
     expect(result.totals).toEqual({
       count: 2,
       bySource: [
-        { paymentSource: "INTERNET_BANKING", count: 1, countedCents: 20_000 },
-        { paymentSource: "STRIPE", count: 1, countedCents: 4_550 },
+        { paymentSource: "INTERNET_BANKING", count: 1, countedCents: 20_000, requestNoteCents: 0 },
+        // A refund request's own note: shown by its value, never as cents the app counts.
+        { paymentSource: "STRIPE", count: 1, countedCents: 0, requestNoteCents: 4_550 },
       ],
     });
-    expect(result).toMatchObject({ activeLinks: 4, notesToRead: 4, readCount: 4, couldNotRead: [], stopped: null });
-    expect(report.isRevivedRefundNoteReportComplete(result)).toBe(true);
+    expect(result).toMatchObject({
+      complete: true, activeLinks: 4, readCount: 4, couldNotRead: [], alreadyRecordedCancelled: [], stopped: null,
+      scope: { resumedFrom: null, notesInPopulation: 4, notesInThisRun: 4 },
+    });
   });
 
   it("reads active links of both refund-note roles only, through the app's own link definition", async () => {
@@ -245,7 +262,10 @@ describe("#4336 revived refund-note report: classification", () => {
       { creditNoteId: "never-in-xero", paymentIds: ["p1"], reason: "not-found", detail: null },
     ]);
     expect(result.revived).toEqual([]);
-    expect(report.isRevivedRefundNoteReportComplete(result)).toBe(false);
+    expect(result.complete).toBe(false);
+    expect(result.stopped).toBeNull();
+    // Not stopped, still incomplete: the text says so, not only the exit code.
+    expect(formatRevivedRefundNoteReport(result)).toContain("THE LIST IS INCOMPLETE");
   });
 
   it("stops after three failed reads in a row, and a good read resets the count", async () => {
@@ -267,7 +287,7 @@ describe("#4336 revived refund-note report: classification", () => {
       { sleep: noPause },
     );
     expect(result.couldNotRead.map((n) => n.creditNoteId)).toEqual([ids[0], ids[2], ids[3], ids[4]]);
-    expect(result.stopped).toEqual({ reason: "consecutive-failures", detail: "3 reads failed in a row.", notReached: [ids[5]] });
+    expect(result.stopped).toEqual({ reason: "consecutive-failures", detail: "3 reads failed in a row.", resumeFrom: ids[5], notReached: [ids[5]] });
     expect(result.readCount).toBe(1);
   });
 
@@ -303,12 +323,12 @@ describe("#4336 revived refund-note report: Xero limits and the breaker", () => 
     await expect(withXeroRetry(async () => "ok", { maxTransientRetries: 0 })).resolves.toBe("ok");
   });
 
-  it("stops with an outage reason when a breaker armed elsewhere is cooling down", async () => {
+  it("a pause armed earlier in the same process fails reads like any other failure (the pause is per process)", async () => {
     const { links } = await oneOfEach(2);
     await expect(withXeroRetry(async () => { throw Object.assign(new Error("down"), { response: { statusCode: 503 } }); }, { maxTransientRetries: 0 })).rejects.toThrow();
     const result = await run(links);
-    expect(result.stopped).toMatchObject({ reason: "outage", notReached: links.map((l) => l.creditNoteId).sort() });
-    expect(result.readCount).toBe(0);
+    expect(result.couldNotRead.map((n) => n.detail)).toEqual(["no answer from Xero", "no answer from Xero"]);
+    expect(result).toMatchObject({ stopped: null, readCount: 0, complete: false });
   });
 
   it("waits on a minute rate limit and reads the note", async () => {
@@ -333,7 +353,7 @@ describe("#4336 revived refund-note report: Xero limits and the breaker", () => 
       };
     })(), { sleep: noPause });
     expect(result.revived.map((r) => r.creditNoteId)).toEqual([ids[0]]);
-    expect(result.stopped).toMatchObject({ reason: "daily-limit", notReached: [ids[1], ids[2]] });
+    expect(result.stopped).toMatchObject({ reason: "daily-limit", resumeFrom: ids[1], notReached: [ids[1], ids[2]] });
   });
 
   it("stops before any call when the app's share of today's Xero calls is used up", async () => {
@@ -342,6 +362,13 @@ describe("#4336 revived refund-note report: Xero limits and the breaker", () => 
     const result = await run(links);
     expect(xero.getCreditNote).not.toHaveBeenCalled();
     expect(result.stopped).toMatchObject({ reason: "daily-limit" });
+  });
+
+  it("a budget check that throws fails the note through the same safe description", async () => {
+    const { links } = await oneOfEach(1);
+    usage.budgetAllows.mockRejectedValue(new Error("connect ECONNREFUSED postgres://user:pw@db"));
+    const result = await run(links);
+    expect(result.couldNotRead).toEqual([expect.objectContaining({ reason: "failed", detail: "no answer from Xero" })]);
   });
 });
 
@@ -358,7 +385,6 @@ describe("#4336 revived refund-note report: read-only proof", () => {
     const before = fake.snapshot();
     const result = await run(await report.readActiveRefundNoteLinks(db));
     expect(result.revived).toHaveLength(1);
-    expect(writesAttempted).toEqual([]);
     expect(fake.snapshot()).toEqual(before);
     // The one row-writer reached: the metered call's usage row, once per read.
     expect(usage.record).toHaveBeenCalledTimes(2);
@@ -369,67 +395,165 @@ describe("#4336 revived refund-note report: read-only proof", () => {
     const { db } = reportDb([], []);
     expect(() => (db.xeroObjectLink as unknown as { updateMany: () => void }).updateMany()).toThrow("write attempted");
     expect(() => (db.payment as unknown as { update: () => void }).update()).toThrow("write attempted");
+    expect(writesAttempted).toEqual(["xeroObjectLink.updateMany", "payment.update"]);
+    writesAttempted.length = 0; // the control's own writes, so the afterEach proof stays meaningful
   });
 });
 
-describe("#4336 revived refund-note report: output", () => {
-  const sample: Awaited<ReturnType<typeof report.classifyRevivedRefundNotes>> = {
-    activeLinks: 3,
-    notesToRead: 3,
-    readCount: 2,
-    revived: [{
-      linkId: "l1", paymentId: "pay-1", bookingId: "book-1", paymentSource: "INTERNET_BANKING", role: "REFUND_REQUEST_CREDIT_NOTE", refundRequestId: "rr-1",
-      creditNoteId: "note-1", creditNoteNumber: "CN-0101", appStatus: "AUTHORISED", countedCents: 20_000, pointerNamesNote: false,
-      xeroStatus: "VOIDED", xeroUpdatedAt: "2026-06-20T03:00:00.000Z",
-    }],
-    couldNotRead: [{ creditNoteId: "note-2", paymentIds: ["pay-2"], reason: "failed", detail: "Xero answered HTTP 500" }],
-    stopped: { reason: "daily-limit", detail: "Xero's daily limit was reached; run the report again tomorrow.", notReached: ["note-3"] },
-    totals: { count: 1, bySource: [{ paymentSource: "INTERNET_BANKING", count: 1, countedCents: 20_000 }] },
-  };
-
-  it("prints counts and cents per source, and points to --list", () => {
-    expect(report.formatRevivedRefundNoteReport(sample)).toBe([
-      "Read-only: this report changed nothing.",
-      "Active refund-note links: 3, on 3 credit note(s). Read from Xero: 2.",
-      "Xero says VOIDED or DELETED, the app still has the link active: 1",
-      "  INTERNET_BANKING: 1 link(s), the app counts 200.00",
-      "Could not read: 1 credit note(s)",
-      "STOPPED EARLY, the list is incomplete: Xero's daily limit, or the app's share of it, was reached. 1 credit note(s) not read. Xero's daily limit was reached; run the report again tomorrow.",
-      "Run again with --list for each payment and note.",
-    ].join("\n"));
+describe("#4336 revived refund-note report: the app already records the void", () => {
+  it("puts a link the app already records VOIDED in its own bucket, outside the list and its totals", async () => {
+    const fake = new XeroFake();
+    const [healed, revived] = notes(fake, 2);
+    fake.voidCreditNote(healed!);
+    fake.voidCreditNote(revived!);
+    const { db } = reportDb(
+      [link("l1", "p1", healed!, { metadata: { status: "VOIDED", total: 200 } }), link("l2", "p2", revived!)],
+      [{ id: "p1", bookingId: "b1", source: "INTERNET_BANKING", xeroRefundCreditNoteId: null }, { id: "p2", bookingId: "b2", source: "INTERNET_BANKING", xeroRefundCreditNoteId: null }],
+    );
+    installXero(fake);
+    const result = await run(await report.readActiveRefundNoteLinks(db));
+    expect(result.alreadyRecordedCancelled.map((r) => r.linkId)).toEqual(["l1"]);
+    expect(result.revived.map((r) => r.linkId)).toEqual(["l2"]);
+    expect(result.totals).toEqual({ count: 1, bySource: [{ paymentSource: "INTERNET_BANKING", count: 1, countedCents: 20_000, requestNoteCents: 0 }] });
+    expect(result.complete).toBe(true);
   });
+});
 
-  it("with --list prints every column of each line and each unread note", () => {
-    const text = report.formatRevivedRefundNoteReport(sample, { list: true });
-    for (const part of [
-      "payment pay-1  booking book-1  source INTERNET_BANKING",
-      "role REFUND_REQUEST_CREDIT_NOTE  refund request rr-1",
-      "note CN-0101  note-1",
-      "Xero VOIDED (updated 2026-06-20T03:00:00.000Z)  app records AUTHORISED  app counts 200.00",
-      "Payment.xeroRefundCreditNoteId names it: no",
-      "note note-2  read failed (Xero answered HTTP 500)  payment(s) pay-2",
-      "not read: note note-3",
-    ]) expect(text).toContain(part);
-    expect(text).not.toContain("--list");
-  });
+describe("#4336 revived refund-note report: the command line", () => {
+  /** The script's own wiring: the shared `prisma` import, the live reader, and captured stdout and stderr. */
+  function cliRun(argv: string[]) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const code = cli.runRevivedRefundNoteReportCli(argv, {
+      db: prisma as unknown as Parameters<typeof report.readActiveRefundNoteLinks>[0],
+      preflight: async () => undefined,
+      reader: () => reader.createXeroCreditNoteReader(),
+      out: (text) => out.push(text),
+      err: (text) => err.push(text),
+      sleep: noPause,
+    });
+    return code.then((exit) => ({ exit, out: out.join("\n"), err: err.join("\n") }));
+  }
 
-  it("prints a clean run plainly", () => {
-    const clean = { ...sample, revived: [], couldNotRead: [], stopped: null, readCount: 3, totals: { count: 0, bySource: [] } };
-    expect(report.formatRevivedRefundNoteReport(clean)).toBe([
-      "Read-only: this report changed nothing.",
-      "Active refund-note links: 3, on 3 credit note(s). Read from Xero: 3.",
-      "Xero says VOIDED or DELETED, the app still has the link active: 0",
-      "Could not read: 0 credit note(s)",
-    ].join("\n"));
-  });
+  function population(count: number, voidedEvery = 2) {
+    const fake = new XeroFake();
+    const ids = notes(fake, count).sort();
+    ids.forEach((id, i) => { if (i % voidedEvery === 0) fake.voidCreditNote(id); });
+    const fixture = reportDb(
+      ids.map((id, i) => link(`l${i}`, `p${i}`, id)),
+      ids.map((_, i) => ({ id: `p${i}`, bookingId: `b${i}`, source: "INTERNET_BANKING" as const, xeroRefundCreditNoteId: null })),
+    );
+    prismaHolder.db = fixture.db;
+    return { ids, xero: installXero(fake) };
+  }
 
-  it("the JSON output carries every field the text does", () => {
-    const parsed = JSON.parse(JSON.stringify(sample, null, 2));
-    expect(parsed).toEqual(sample);
+  it("--json prints only the report as JSON on stdout, even when a rate-limit retry is logged", async () => {
+    const { ids, xero } = population(3);
+    xero.failNext({ statusCode: 429, headers: { "retry-after": "0", "x-rate-limit-problem": "minute" } });
+    const { exit, out } = await cliRun(["--json"]);
+    const parsed = JSON.parse(out);
+    expect(exit).toBe(0);
+    expect(parsed).toMatchObject({ complete: true, readCount: 3, stopped: null, totals: { count: 2 } });
+    expect(parsed.revived.map((r: { creditNoteId: string }) => r.creditNoteId)).toEqual([ids[0], ids[2]]);
     expect(Object.keys(parsed.revived[0]).sort()).toEqual([
       "appStatus", "bookingId", "countedCents", "creditNoteId", "creditNoteNumber", "linkId", "paymentId", "paymentSource",
-      "pointerNamesNote", "refundRequestId", "role", "xeroStatus", "xeroUpdatedAt",
+      "pointerNamesNote", "refundRequestId", "requestNoteCents", "role", "xeroStatus", "xeroUpdatedAt",
     ]);
+  });
+
+  it("the script sends logs to stderr before it does any work", () => {
+    const logger = pino();
+    cli.sendLogsToStderr(logger);
+    expect(((logger as unknown as Record<symbol, { fd: number }>)[pino.symbols.streamSym]).fd).toBe(2);
+    const source = readFileSync(path.join(process.cwd(), "scripts/xero-revived-refund-note-report.ts"), "utf8");
+    expect(source.indexOf("sendLogsToStderr(logger);")).toBeGreaterThan(0);
+    expect(source.indexOf("sendLogsToStderr(logger);")).toBeLessThan(source.indexOf("runRevivedRefundNoteReportCli(process.argv"));
+  });
+
+  it("prints the list first and the totals last, and a clean run exits 0", async () => {
+    population(2);
+    const { exit, out } = await cliRun(["--list"]);
+    expect(exit).toBe(0);
+    const lines = out.split("\n");
+    expect(lines.findIndex((l) => l.includes("payment p0"))).toBeLessThan(lines.findIndex((l) => l.startsWith("Total:")));
+    expect(lines.at(-1)).toBe("  INTERNET_BANKING: 1 link(s); the app counts 200.00");
+    expect(out).not.toContain("INCOMPLETE");
+  });
+
+  it("a population larger than one day's share completes across two runs, no note read twice and none skipped", async () => {
+    const { ids, xero } = population(7);
+    let allowed = 4; // today's share
+    usage.budgetAllows.mockImplementation(async () => allowed-- > 0);
+    const first = await cliRun(["--json"]);
+    const day1 = JSON.parse(first.out);
+    expect(first.exit).toBe(2);
+    expect(day1).toMatchObject({ complete: false, readCount: 4, stopped: { reason: "daily-limit", resumeFrom: ids[4] } });
+
+    allowed = 100; // the next day
+    const second = await cliRun(["--json", "--resume-from", day1.stopped.resumeFrom]);
+    const day2 = JSON.parse(second.out);
+    expect(second.exit).toBe(0);
+    expect(day2).toMatchObject({ complete: true, readCount: 3, scope: { resumedFrom: ids[4], notesInPopulation: 7, notesInThisRun: 3 } });
+
+    const asked = xero.getCreditNote.mock.calls.map((call) => call[1]);
+    expect(asked).toEqual(ids); // each once, in order, none skipped
+    const listed = [...day1.revived, ...day2.revived].map((r: { creditNoteId: string }) => r.creditNoteId);
+    expect(listed).toEqual(ids.filter((_, i) => i % 2 === 0));
+  });
+
+  it("labels a resumed run's totals as covering only that run, and prints the resume id when it stops", async () => {
+    const { ids } = population(4);
+    usage.budgetAllows.mockImplementation(async () => true);
+    const resumed = await cliRun(["--resume-from", ids[2]!]);
+    expect(resumed.out).toContain(`Resumed from note ${ids[2]}: this run covers 2 of the 4 credit notes. Everything below covers only the notes read in this run`);
+    let allowed = 1;
+    usage.budgetAllows.mockImplementation(async () => allowed-- > 0);
+    const stopped = await cliRun([]);
+    expect(stopped.exit).toBe(2);
+    expect(stopped.out).toContain(`To carry on, run again with --resume-from ${ids[1]}`);
+    expect(stopped.out).toContain("THE LIST IS INCOMPLETE");
+  });
+
+  it("refuses a resume cursor that names no note in today's population, before reading Xero", async () => {
+    const { xero } = population(3);
+    for (const cursor of ["no-such-note", "zzzz-after-every-note"]) {
+      const { exit, err, out } = await cliRun(["--resume-from", cursor]);
+      expect(exit).toBe(1);
+      expect(err).toContain("--resume-from names no credit note");
+      expect(out).toBe("");
+    }
+    expect(xero.getCreditNote).not.toHaveBeenCalled();
+  });
+
+  it("refuses a missing, repeated or unknown argument, and prints help", async () => {
+    population(1);
+    expect((await cliRun(["--resume-from"])).exit).toBe(1);
+    expect((await cliRun(["--resume-from", "--json"])).err).toContain("needs the credit note id");
+    expect((await cliRun(["--resume-from", "a", "--resume-from", "b"])).err).toContain("may be given once");
+    expect((await cliRun(["--bogus"])).err).toContain("Unknown argument: --bogus");
+    const help = await cliRun(["--help"]);
+    expect(help).toMatchObject({ exit: 0, out: cli.REVIVED_REPORT_USAGE });
+  });
+
+  it("text output: request-note cents are shown apart from the cents the app counts", async () => {
+    const fake = new XeroFake();
+    const [own, request] = notes(fake, 2);
+    fake.voidCreditNote(own!);
+    fake.voidCreditNote(request!);
+    prismaHolder.db = reportDb(
+      [link("l1", "p1", own!), link("l2", "p1", request!, { role: "REFUND_REQUEST_CREDIT_NOTE", metadata: { status: "AUTHORISED", total: 45.5, refundRequestId: "rr-1" } })],
+      [{ id: "p1", bookingId: "b1", source: "STRIPE", xeroRefundCreditNoteId: own! }],
+    ).db;
+    installXero(fake);
+    const { out } = await cliRun(["--list"]);
+    for (const part of [
+      "payment p1  booking b1  source STRIPE",
+      "role REFUND_REQUEST_CREDIT_NOTE  refund request rr-1",
+      "note value 45.50 (a refund request's own note: not in the refunded total)",
+      "app counts 200.00",
+      "Payment.xeroRefundCreditNoteId names it: yes",
+      "  STRIPE: 2 link(s); the app counts 200.00; refund requests' own notes 45.50 (not part of the refunded total)",
+    ]) expect(out).toContain(part);
   });
 });
 

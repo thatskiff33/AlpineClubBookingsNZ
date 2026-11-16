@@ -151,14 +151,19 @@ pnpm run xero:revived-refund-note-report --list
 ```
 
 It asks Xero about every refund note the app has an active link to, about 40 a
-minute, and lists each one Xero reports VOIDED or DELETED. It writes no
-booking, payment, credit or link row. Its output names members' payments, so
-keep it off any public place. For each line, open the booking and use **Sync
-from Xero now**, then run the report again. What each line leads to, and what
-to do if the run stops early:
+minute, and lists each one Xero reports VOIDED or DELETED. It changes no
+booking, payment, credit, link or Xero record. It can write API-usage rows
+and, if the Xero token needs refreshing, the new token, its refresh lease and
+a credential audit row; a failed refresh alerts the admins, as it would for
+the app. Its output names members' payments, so keep it off any public place.
+For each line, open the booking and use **Sync from Xero now**, then run the
+report again. If the run stops early (a club with more refund notes than one
+day's share of Xero calls), carry on the next day with the
+`--resume-from <id>` it prints. What each line leads to:
 [MAINTENANCE.md](MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
 
-**Rollback.** Nothing to undo: the report changes no record.
+**Rollback.** Nothing to undo: the report changes no booking, payment,
+credit, link or Xero record.
 
 ---
 

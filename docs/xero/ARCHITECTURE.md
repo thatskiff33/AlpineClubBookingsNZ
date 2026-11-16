@@ -1339,8 +1339,9 @@ refunds Stripe failed later, a different drift. So the owner-run, read-only
 reader in `xero-revived-refund-note-reader.ts`) asks Xero about the note on
 every active link in both refund-note roles, through the same link definition,
 status predicate and contribution helper as the rest of this section, and lists
-each one Xero reports cancelled. It writes no money or link row, and its reads
-never arm the transient breaker. Each listed note is corrected by a booking's
+each one Xero reports cancelled. It changes no booking, payment, credit, link
+or Xero record, and its reads never arm the in-process outage pause. A link
+the app already records cancelled is counted apart: the #4161 heal retires it. Each listed note is corrected by a booking's
 **Sync from Xero now**, whose fresh VOIDED reading the rule above always
 applies. Runbook:
 [MAINTENANCE.md](../MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).

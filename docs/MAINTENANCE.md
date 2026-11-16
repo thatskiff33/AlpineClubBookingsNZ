@@ -2840,31 +2840,61 @@ environment: it needs the app's `AUTH_SECRET` and `DATABASE_URL` to read the
 stored Xero login, and refuses before reading anything if it cannot.
 
 ```bash
-pnpm run xero:revived-refund-note-report          # counts, and cents per payment source
-pnpm run xero:revived-refund-note-report --list   # also each payment, booking and note
-pnpm run xero:revived-refund-note-report --json
+pnpm run xero:revived-refund-note-report                      # counts, and cents per payment source
+pnpm run xero:revived-refund-note-report --list               # also each payment, booking and note
+pnpm run xero:revived-refund-note-report --json               # JSON on stdout; logs go to stderr
+pnpm run xero:revived-refund-note-report --resume-from <id>   # carry on a run that stopped early
 ```
 
-**What it reads and writes.** It reads every active refund-note link (both the
-payment's own role and a refund request's), outside any transaction, and asks
-Xero about each distinct note once, one call every 1.5 seconds. It lists each
-note Xero reports VOIDED or DELETED with the payment, booking and payment
-source, the link role and refund request, the note's number and id, Xero's
-status and `UpdatedDateUTC`, the status the app records, the cents the app
-counts for the link, and whether `Payment.xeroRefundCreditNoteId` names it. It
-ends with the count and the cents per payment source. A note Xero reports live
-is not listed; one Xero cannot find, or that could not be read, goes on a
-separate "could not read" list. It writes no booking, payment, credit, link or
-operation row. Like every metered Xero call, each read adds to the API-usage
-meter, and the shared Xero client may refresh and store its token.
+**What it reads.** Every active refund-note link (both the payment's own role
+and a refund request's), outside any transaction, then each distinct note once
+from Xero, one call every 1.5 seconds, in note-id order. Each listed line shows:
 
-**Limits.** A minute rate limit waits and retries. The run stops, printing what
-it read so far, on Xero's daily limit (or once the app's own share of it is
-used, leaving the rest to the outbox and the inbound sync), while Xero calls
-are paused after an outage, if Xero needs reconnecting, or after three failed
-reads in a row. Its reads never pause the app's own Xero work: they do not arm
-the shared outage pause. Exit code 0 means the list is complete; 2 means it is
-not (run it again later); 1 is an error.
+- the payment, booking and payment source;
+- the link role, and the refund request for a request's own note;
+- the note's number and id;
+- Xero's status and `UpdatedDateUTC`, and the status the app records;
+- for the payment's own note, the cents the app counts toward its refunded
+  total; for a refund request's own note, the note's value instead, shown
+  apart because the refunded total never counts it;
+- whether `Payment.xeroRefundCreditNoteId` names the note.
+
+The list comes first; the run ends with the count and the cents per payment
+source. A note Xero reports live is not listed. A link the app already records
+as VOIDED or DELETED is counted in its own line, outside the list and its
+totals: it needs no action, because the nightly link cleanup (#4161) retires
+it. A note Xero cannot find, or that could not be read, goes on a separate
+"could not read" list.
+
+**What it writes.** It changes no booking, payment, credit, link or Xero
+record. It can write API-usage rows and, if the Xero token needs refreshing,
+the new token, its refresh lease and a credential audit row; a failed refresh
+alerts the admins, as it would for the app.
+
+**Limits, and carrying on.** A minute rate limit waits and retries. The run
+stops, printing what it read so far, on Xero's daily limit or once the app's
+own share of it is used (85% of the app's 1,000-call daily budget, counting
+everything else the app called that day, which leaves the rest to the outbox
+and the inbound sync), if Xero needs reconnecting, or after three failed reads
+in a row. Its reads never arm the outage pause; that pause lives in memory in
+each process, so the report and the running app never see each other's. When
+it stops, the output says **THE LIST IS INCOMPLETE** and prints
+`To carry on, run again with --resume-from <id>` (`stopped.resumeFrom` in the
+JSON). A club with more distinct refund notes than one day's share, roughly
+600 to 800 on a quiet day, takes several days: run it each day with the
+printed `--resume-from` until a run ends with no stop. A resumed run's lines
+and totals cover only the notes it read, so keep each day's output together.
+A resume id that is no longer on an active link is refused: start again from
+the beginning. Exit code 0 means the run read everything in its scope; 2 means
+it did not; 1 is an error or a refused argument.
+
+**Could not read.** A read that failed, or a note Xero sent without a status,
+may read on a later run. A note **Xero says does not exist** never will, so do
+not wait for it. First check that Xero is connected to the organisation the
+note was raised in (**Admin → Finance → Xero Sync**). If it is, the app's link
+points at nothing: **Sync from Xero now** on that booking fails, reporting
+the note was not found, and no tool in the app retires such a link. Ask
+a maintainer to look at it, giving the payment and note ids privately.
 
 **Privacy.** The output names members' payments and refunds by id and amount.
 It goes to your terminal only. Never post it in an issue, a pull request or

@@ -5,17 +5,21 @@
  *
  * The reader follows the credit-note mirror sweep (#4270): one `getCreditNote`
  * per note through the metered `callXeroApi`, outside any transaction, with
- * `armTransientBreaker: false`, so however often a report read fails it can
- * never pause the app's own Xero work. A minute-limit 429 waits and retries
+ * `armTransientBreaker: false`, so its failures never arm the outage pause.
+ * That pause lives in memory, per process: the report's process and the
+ * running app never see each other's, so the flag guards anything else this
+ * process might do after a report read. A minute-limit 429 waits and retries
  * (`withXeroRetry`); a server error is not retried, it fails that note and
  * counts toward the walk's three-in-a-row stop. Xero's daily limit, the app's
- * deferrable share of it, an outage cooldown armed elsewhere and a lost
- * connection end the walk (`RevivedReportStop`).
+ * deferrable share of it, and a lost connection end the walk
+ * (`RevivedReportStop`).
  *
- * Writes: none to booking, payment, credit, link or operation rows. Like every
- * metered Xero call, each read adds to the API-usage meter
- * (`XeroApiUsageEvent`, `XeroApiUsageDaily`), and the shared client may refresh
- * and store the Xero token (`getAuthenticatedXeroClient`).
+ * Writes: no booking, payment, credit, link or Xero record. Like every metered
+ * Xero call, each read writes API-usage rows (`XeroApiUsageEvent`,
+ * `XeroApiUsageDaily`). If the token needs refreshing, the shared client
+ * (`getAuthenticatedXeroClient`) stores the new token, its refresh lease and a
+ * credential audit row, and a failed refresh alerts the admins by email, as it
+ * would for the app.
  */
 import { getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import { getOperationalXeroConfig } from "@/lib/xero-config";
@@ -28,7 +32,6 @@ import {
   getAuthenticatedXeroClient,
   XeroDailyLimitError,
   XeroReconnectRequiredError,
-  XeroTransientOutageError,
 } from "@/lib/xero-api-client";
 import { RevivedReportStop, type CreditNoteReader } from "@/lib/xero-revived-refund-note-report";
 
@@ -90,9 +93,6 @@ function stopFor(error: unknown): RevivedReportStop | null {
   if (error instanceof XeroDailyLimitError) {
     return new RevivedReportStop("daily-limit", "Xero's daily limit was reached; run the report again tomorrow.");
   }
-  if (error instanceof XeroTransientOutageError) {
-    return new RevivedReportStop("outage", "Xero calls are paused for a few minutes after repeated Xero errors; run the report again later.");
-  }
   if (error instanceof XeroReconnectRequiredError) {
     return new RevivedReportStop("reconnect", "Xero needs reconnecting in the admin panel before the report can run.");
   }
@@ -109,10 +109,10 @@ export function createXeroCreditNoteReader(
 ): CreditNoteReader {
   const budgetAllows = deps.budgetAllows ?? xeroDailyBudgetAllowsDeferrableCall;
   return async (creditNoteId) => {
-    if (!(await budgetAllows())) {
-      throw new RevivedReportStop("daily-limit", "The app's share of today's Xero calls is used up; run the report again tomorrow.");
-    }
     try {
+      if (!(await budgetAllows())) {
+        throw new RevivedReportStop("daily-limit", "The app's share of today's Xero calls is used up; run the report again tomorrow.");
+      }
       const { xero, tenantId } = await getAuthenticatedXeroClient();
       const response = await callXeroApi(() => xero.accountingApi.getCreditNote(tenantId, creditNoteId), {
         operation: "getCreditNote",
@@ -129,6 +129,7 @@ export function createXeroCreditNoteReader(
         updatedAt: xeroInstant(note.updatedDateUTC),
       };
     } catch (error) {
+      if (error instanceof RevivedReportStop) throw error;
       if (getXeroErrorStatusCode(error) === 404) return null;
       const stop = stopFor(error);
       if (stop) throw stop;
