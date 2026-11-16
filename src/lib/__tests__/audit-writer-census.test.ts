@@ -275,7 +275,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         if (JSON.stringify(after.reviewed ?? []) !== JSON.stringify(before.reviewed ?? [])) {
           problems.push(
             `REVIEW RECORD CHANGED in ${fn}: ${before.action} was reviewed by [${(before.reviewed ?? []).join(" ")}], ` +
-              `now [${(after.reviewed ?? []).join(" ")}]. Removing a reviewed classification is a decision to state.`,
+              `now [${(after.reviewed ?? []).join(" ")}]. Either a reviewed record gained or lost this site, which is ` +
+              "a decision to state, or a site added or removed earlier in this function shifted the #n keys that " +
+              "record uses, and its keys need moving with the sites.",
           );
         }
       }
