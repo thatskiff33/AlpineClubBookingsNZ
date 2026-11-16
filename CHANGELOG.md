@@ -10021,6 +10021,18 @@ and are folded in the same way.
   Change Email section. Before, both vanished on reload, and the only way to
   check a deletion request was to go through the irreversible-action dialog
   again.
+- **Member notices: a committee news board with read tracking, on by default
+  (PR #2238; entry added at release, the pull request carried none).** The
+  committee can write a notice at **Admin → Members → Member notices**
+  (`/admin/notices`), aim it at everyone or at chosen membership types, lodges,
+  committee roles or members, and publish it. Targeted members see it on their
+  dashboard's **Recent News** card and on the **Recent News** page (`/notices`).
+  A notice can be pinned, can expire, can be limited to financial members, and
+  can ask members to acknowledge it; the notice's admin page shows who has read
+  and acknowledged it. Publishing can also send one email to the audience, which
+  goes as a club notice. The **Member notices** module is on by default, and
+  writing or publishing notices needs membership edit access. The
+  [Member notices guide](docs/guides/member-notices.md) has the details.
 
 ### Xero and accounting
 
