@@ -405,8 +405,9 @@ async function scheduleUnregisteredChange(): Promise<void> {
     });
     await expectCensusAgrees(placeId);
 
-    // Billed to the organiser instead, the place's lines on the group's combined invoice carry the same tax.
-    await prisma.booking.update({ where: { id: placeId }, data: { organiserSettled: true } });
+    // Billed to the organiser instead (a confirmed place awaiting the organiser's settle), the place's
+    // lines on the group's combined invoice carry the same tax.
+    await prisma.booking.update({ where: { id: placeId }, data: { organiserSettled: true, status: "CONFIRMED" } });
     const { buildGroupSettlementInvoiceLines } = await import("@/lib/xero-group-settlement-invoice-lines");
     const combined = await buildGroupSettlementInvoiceLines(organiserId, organiserRendering);
     expect(combined.childCount).toBe(1);
