@@ -7,7 +7,6 @@ import { settleOrganiserExtraReduction } from "@/lib/organiser-extra-netting";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import {
   BookingStatus,
-  PaymentSource,
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
@@ -44,6 +43,7 @@ import {
   canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
+  hasSettledCardPayment,
   isSettledBookingStatus,
   recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
@@ -231,9 +231,7 @@ export async function applyPaymentAdjustments(
   // asked by card, as a card-paid one's; every REDUCTION reads `hasSettledPayment`.
   const zeroDollarCardIncrease =
     netAmountCents > 0 && !hasSettledPayment && canAskCardForIncrease(booking);
-  const hasSucceededPayment =
-    (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE) ||
-    zeroDollarCardIncrease;
+  const hasSucceededPayment = hasSettledCardPayment(booking) || zeroDollarCardIncrease;
   // #4299: the one home's answer, or the organiser's combined invoice standing for it.
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
   let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)

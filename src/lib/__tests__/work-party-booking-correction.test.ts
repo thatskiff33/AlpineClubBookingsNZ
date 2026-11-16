@@ -3,7 +3,15 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BookingStatus } from "@prisma/client";
 import {
+  actorIsMemberOrFamily,
+  resolveWorkPartySettlementMethod,
+  WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
+  WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
   workPartyBookingEligibility,
+  workPartyMoneyBackCents,
+  workPartyOwnMoneyBackRefusal,
+  workPartySettlementOptions,
+  type WorkPartyCorrectionFigures,
   type WorkPartyEligibilityBooking,
   type WorkPartyEligibilityContext,
   type WorkPartyEligibilityEvent,
@@ -25,7 +33,6 @@ const booking: WorkPartyEligibilityBooking = {
   checkOut: d("2026-08-04"),
   hasWorkParty: false,
   hasOtherPromoCode: false,
-  paidByOrganiser: false,
   quotePriced: false,
   memberOwned: true,
 };
@@ -105,10 +112,11 @@ describe("workPartyBookingEligibility", () => {
     ).toEqual({ ok: true });
   });
 
-  it("refuses an organiser-paid joiner's booking (owner decision 4)", () => {
-    expect(
-      workPartyBookingEligibility({ ...booking, paidByOrganiser: true }, context, event),
-    ).toMatchObject(refusal(/paid by its group organiser/));
+  it("no longer has an organiser-paid refusal (#129 decision 5)", () => {
+    // The rule takes no organiser-paid input: such a joiner is eligible on the
+    // same terms as any booking, and its money goes back to the organiser.
+    expect(Object.keys(booking)).not.toContain("paidByOrganiser");
+    expect(workPartyBookingEligibility(booking, context, event)).toEqual({ ok: true });
   });
 
   it("refuses an organisation's booking, which holds no account credit", () => {
@@ -169,6 +177,139 @@ describe("workPartyBookingEligibility", () => {
     expect(
       workPartyBookingEligibility(booking, { ...context, bookingLodgeId: "lodge-2" }, event),
     ).toMatchObject(refusal(/held at Main Lodge/));
+  });
+});
+
+describe("actorIsMemberOrFamily (the member-guest family boundary)", () => {
+  // Two family groups: the owner is in g1 with a partner; the partner is also
+  // in g2 with a cousin. The owner's family is g1's members only.
+  const links = [
+    { memberId: "owner", familyGroupId: "g1" },
+    { memberId: "partner", familyGroupId: "g1" },
+    { memberId: "partner", familyGroupId: "g2" },
+    { memberId: "cousin", familyGroupId: "g2" },
+  ];
+  const db = {
+    familyGroupMember: {
+      findMany: async ({ where }: { where: { memberId?: string; familyGroupId?: { in: string[] } } }) =>
+        links.filter((row) =>
+          where.memberId !== undefined
+            ? row.memberId === where.memberId
+            : where.familyGroupId!.in.includes(row.familyGroupId),
+        ),
+    },
+  } as unknown as Parameters<typeof actorIsMemberOrFamily>[0];
+
+  it.each([
+    ["the owner", "owner", true],
+    ["a co-member of the owner's family group", "partner", true],
+    ["a member of another group of that co-member's", "cousin", false],
+    ["anyone else", "stranger", false],
+  ])("answers %s", async (_label, actor, expected) => {
+    expect(await actorIsMemberOrFamily(db, "owner", actor)).toBe(expected);
+  });
+
+  it("is false for an organisation's booking, which has no member owner", async () => {
+    expect(await actorIsMemberOrFamily(db, null, "owner")).toBe(false);
+  });
+});
+
+describe("workPartySettlementOptions and the settlement guard (#129, upstream owner decision 15 Nov 2026)", () => {
+  const paidCard = {
+    status: BookingStatus.PAID,
+    organiserSettled: false,
+    parentBookingId: null,
+    payment: { status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE" },
+  };
+  const paidBank = { ...paidCard, payment: { ...paidCard.payment, source: "INTERNET_BANKING" } };
+
+  // `editAsks` is the ordinary edit's own answer (`requiresSettlementMethod`):
+  // the options mirror it, so a refund is offered exactly where the edit offers one.
+  it.each([
+    ["paid by card", paidCard, true, ["credit", "card"], false, "card"],
+    ["paid by card with some credit", { ...paidCard, payment: { ...paidCard.payment, creditAppliedCents: 5_000 } }, true, ["credit", "card"], false, "card"],
+    ["paid by Internet Banking: a refund by bank transfer, as on an ordinary edit", paidBank, true, ["credit", "card"], false, "bank"],
+    ["paid, but the edit offers no choice (nothing refundable)", paidCard, false, ["credit"], false, null],
+    ["paid by Internet Banking, but the edit offers no choice", paidBank, false, ["credit"], false, null],
+    ["paid wholly with account credit", { ...paidCard, payment: { ...paidCard.payment, amountCents: 0, creditAppliedCents: 20_000 } }, false, ["credit"], false, null],
+    ["unpaid (card intent open)", { ...paidCard, status: BookingStatus.PAYMENT_PENDING, payment: { ...paidCard.payment, status: "PENDING" } }, false, ["credit"], false, null],
+    ["with no payment row", { ...paidCard, status: BookingStatus.PENDING, payment: null }, false, ["credit"], false, null],
+    ["an organiser-paid joiner (card)", { ...paidCard, organiserSettled: true, parentBookingId: "parent" }, false, ["card"], true, null],
+    ["an organiser-paid joiner (Internet Banking)", { ...paidBank, organiserSettled: true, parentBookingId: "parent" }, false, ["card"], true, null],
+  ] as const)("%s", (_label, shape, editAsks, methods, organiser, refundTo) => {
+    expect(workPartySettlementOptions(shape, editAsks)).toEqual({ methods, paidByOrganiser: organiser, refundTo });
+  });
+
+  it("defaults to the first method offered", () => {
+    expect(resolveWorkPartySettlementMethod({ methods: ["credit", "card"], paidByOrganiser: false, refundTo: "card" }, undefined)).toBe("credit");
+    expect(resolveWorkPartySettlementMethod({ methods: ["card"], paidByOrganiser: true, refundTo: null }, undefined)).toBe("card");
+  });
+
+  it("takes the officer's choice when it is offered, by card or by bank", () => {
+    for (const refundTo of ["card", "bank"] as const) {
+      const options = { methods: ["credit", "card"] as const, paidByOrganiser: false, refundTo };
+      expect(resolveWorkPartySettlementMethod(options, "card")).toBe("card");
+      expect(resolveWorkPartySettlementMethod(options, "credit")).toBe("credit");
+    }
+  });
+
+  it("refuses a refund where only credit is offered, with 409", () => {
+    expect(() =>
+      resolveWorkPartySettlementMethod({ methods: ["credit"], paidByOrganiser: false, refundTo: null }, "card"),
+    ).toThrow(expect.objectContaining({ status: 409, message: WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE }));
+  });
+
+  it("refuses credit on an organiser-paid joiner, whose money goes back to the organiser", () => {
+    expect(() =>
+      resolveWorkPartySettlementMethod({ methods: ["card"], paidByOrganiser: true, refundTo: null }, "credit"),
+    ).toThrow(expect.objectContaining({ status: 409, message: expect.stringMatching(/group organiser/) }));
+  });
+});
+
+describe("own or family booking: refused only when money comes back (#129 decision 6, 16 Nov)", () => {
+  const unpaid: WorkPartyCorrectionFigures = {
+    previousFinalPriceCents: 20_000,
+    newFinalPriceCents: 15_000,
+    priceDiffCents: -5_000,
+    accountCreditAmountCents: 0,
+    appliedCreditGivenBackCents: 0,
+    refundedExcessCreditCents: 0,
+    additionalAmountCents: 0,
+    refundAmountCents: 0,
+    settlementMethod: "credit",
+  };
+
+  it("counts every way money comes back: refund, credit, applied credit given back, and an unpaid booking's freed credit", () => {
+    expect(workPartyMoneyBackCents(unpaid)).toBe(0);
+    expect(
+      workPartyMoneyBackCents({
+        ...unpaid,
+        refundAmountCents: 1,
+        accountCreditAmountCents: 2,
+        appliedCreditGivenBackCents: 4,
+        refundedExcessCreditCents: 8,
+      }),
+    ).toBe(15);
+  });
+
+  it("allows the officer's own or family's booking when nothing comes back (the price just drops)", () => {
+    expect(workPartyOwnMoneyBackRefusal(unpaid, true)).toBeNull();
+    // An unpaid ask taking the reduction is not money back either.
+    expect(workPartyOwnMoneyBackRefusal({ ...unpaid, additionalAmountCents: 1_000 }, true)).toBeNull();
+  });
+
+  it.each([
+    ["a card refund", { refundAmountCents: 5_000, settlementMethod: "card" as const }],
+    ["account credit", { accountCreditAmountCents: 5_000 }],
+    ["applied credit given back", { appliedCreditGivenBackCents: 5_000 }],
+    ["an unpaid booking's applied credit freed by the lower price (F1)", { refundedExcessCreditCents: 3_000 }],
+    ["one cent of credit", { accountCreditAmountCents: 1 }],
+  ])("refuses when %s would go to the officer or their family", (_label, change) => {
+    expect(workPartyOwnMoneyBackRefusal({ ...unpaid, ...change }, true)).toBe(WORK_PARTY_OWN_MONEY_BACK_MESSAGE);
+  });
+
+  it("allows money back to anyone else", () => {
+    expect(workPartyOwnMoneyBackRefusal({ ...unpaid, accountCreditAmountCents: 5_000 }, false)).toBeNull();
   });
 });
 

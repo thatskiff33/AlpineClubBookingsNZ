@@ -37,9 +37,7 @@ import {
   resolveTargetDates,
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
-  type LoadedBookingForModify,
   type ResolvedGuestNameUpdate,
-  type PricingResult,
   isBookingFullyPaidForGuestNameEdits,
   isMemberWholeLodgeBooking,
   isQuotePricedBooking,
@@ -148,6 +146,12 @@ import {
 import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateFullReductionSettlementOptions, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
+import { buildIdentityOnlyPricing } from "@/lib/booking-identity-only-pricing";
+import {
+  assertOfficerWorkPartyCorrectionCall,
+  workPartyCorrectionRecord,
+  type OfficerWorkPartyCorrection,
+} from "@/lib/booking-batch-work-party-correction";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -286,6 +290,7 @@ type BatchModificationTransactionResult =
     xeroAdditionalAmountCents: number;
     xeroRefundAmountCents: number;
     appliedCreditGivenBackCents: number;
+    refundedExcessCreditCents: number; // F20 (#1887): an unpaid booking's applied credit the lower price freed
     settlementMethod: BookingModificationSettlementMethod | null;
     policyRetainedAmountCents: number;
     guestNameUpdates: ResolvedGuestNameUpdate[];
@@ -325,6 +330,8 @@ export type BatchModificationResponse = {
   accountCreditAmountCents: number;
   /** #3809: applied credit the reduction gave back, as account credit. */
   appliedCreditGivenBackCents: number;
+  /** F20 (#1887): an UNPAID booking's applied credit above its new worth, returned to the balance. */
+  refundedExcessCreditCents: number;
   additionalAmountCents: number;
   /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
   billedToOrganiserCents: number;
@@ -404,108 +411,6 @@ export type BatchModificationResponse = {
    */
   pendingHostingReconcile?: () => Promise<void>;
 };
-
-/**
- * Pricing echo for identity-only modifications (#1099): stored totals,
- * per-guest prices, and night rows exactly as persisted, in booking-guest
- * order (matching proposedRemainingGuests when nothing is added or removed).
- * Guests without night rows (quoted or pre-#713 bookings) echo empty night
- * arrays, which the guest-sync step treats as "leave the rows alone".
- */
-function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResult {
-  // #3031: NO `?? 0`, ANYWHERE IN THIS ECHO. These amounts are written straight
-  // back onto `BookingGuestNight.priceCents` by `syncGuestNights`, so a default
-  // would replace a night's real sold price with a magic zero on an edit whose
-  // entire promise is that it preserves it (INV-MOD-028). A night loaded without
-  // its price is a SELECT that did not ask for it — the census in
-  // `in-progress-edit-sold-price-census.test.ts` exists to stop exactly that —
-  // and the honest response is to refuse rather than to invent. A stored value
-  // that is negative IS echoed, unchanged: the promise is byte-for-byte
-  // preservation, and repairing damaged rows is #2745's audited decision, not
-  // this echo's.
-  //
-  // ONE READ OF THE ROWS, feeding both the breakdown and the per-night rates
-  // (`INV-SSOT`). They were read twice, and the second read defaulted — dead
-  // only because object-literal properties evaluate in source order and the
-  // refusal happened to precede it. A prohibited construct on a money value must
-  // not depend on evaluation order for its harmlessness.
-  //
-  // #3170: AND A ROW THAT SAYS "NOT KNOWN" IS ECHOED AS THAT. Byte-for-byte
-  // preservation is the promise, and a `NULL` is a value this column holds: a
-  // parked edit wrote one before #4317, and the old deploy may still write one
-  // during a blue/green overlap. A spelling correction moves no money, so it
-  // writes the row back as it found it; the next priced edit values it
-  // (`INV-MOD-028`).
-  //
-  // The two absences stay apart, exactly as they do at the write. `null` is the
-  // row's own statement and is preserved; `undefined` is still a SELECT that
-  // did not ask for the price — a caller wiring defect — and still throws.
-  //
-  // Each guest carries its own echoed nights rather than a second array read
-  // back by position, so the rate vector and its dates cannot drift apart from
-  // the guest they describe (#2800).
-  const echoedGuests = booking.guests.map((guest) => ({
-    guest,
-    nights: (guest.nights ?? []).map((night) => {
-      if (night.priceCents === undefined) {
-        throw new Error(
-          `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
-        );
-      }
-      if (night.priceSource === undefined) {
-        throw new Error(
-          `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without price provenance (#3275)`,
-        );
-      }
-      return {
-        stayDate: night.stayDate,
-        priceCents: night.priceCents,
-        priceSource: night.priceSource,
-      };
-    }),
-  }));
-  return {
-    kind: "priced",
-    inProgressPlan: null,
-    capacityOverridden: false,
-    newTotalPriceCents: booking.totalPriceCents,
-    priceBreakdown: {
-      totalPriceCents: booking.totalPriceCents,
-      guests: echoedGuests.map(({ guest, nights }) => ({
-        priceCents: guest.priceCents,
-        perNightCents: nights.map((night) => night.priceCents),
-        nightDates: nights.map((night) => night.stayDate),
-        perNightPriceSources: nights.map((night) => night.priceSource),
-      })),
-    },
-    // #3170: RATES ONLY, and the pair stays aligned. A night whose stored price
-    // is not known has no rate to state, so it is dropped from BOTH lists
-    // together rather than carried as a null one list would read as zero. This
-    // echo's rates are unused in practice — a price-preserving modification
-    // re-runs no promotion cap, which is the only reader — so dropping is safe
-    // as well as honest; what would not be safe is a rate vector whose
-    // positions no longer matched its dates.
-    guestNightRates: echoedGuests.map(({ guest, nights }) => {
-      const rated = nights.filter(
-        (night): night is typeof night & { priceCents: number } =>
-          night.priceCents !== null,
-      );
-      return {
-        bookingGuestId: guest.id,
-        memberId: guest.memberId ?? null,
-        isMember: guest.isMember,
-        perNightRates: rated.map((night) => night.priceCents),
-        nightDates: rated.map((night) => night.stayDate),
-        consentStatus: guest.consentStatus ?? null,
-      };
-    }),
-    // Nothing was rated here — this echo does not run the rate resolver at all.
-    // A request carrying an other-lodge election is therefore kept OFF this path
-    // (see `pricePreservingModification` below): storing the flag from an echo
-    // would stamp a re-rate the money never made.
-    otherLodgeRatedGuestIds: new Set<string>(),
-  };
-}
 
 /**
  * Everything a batch modification must resolve BEFORE its transaction opens
@@ -694,59 +599,6 @@ async function resolveOrdinaryXeroLockDateGuard(
     decide: (facts) =>
       assertDateEditClearsXeroLockDateFromFacts(booking, input, facts),
   };
-}
-
-/**
- * Fork #119: what `officerWorkPartyCorrection` names — the work party an
- * officer is adding the booking to, and its internal promo, for a work party
- * the member was entitled to and missed ("Add booking to work party").
- * Built only by `work-party-booking-correction.ts`, its ONE caller, pinned by
- * `work-party-booking-correction.test.ts`. A SERVICE argument, like
- * `waiveChangeFee` and for the same reason: `input` is a parsed request body
- * on the member routes.
- *
- * It does three things and nothing else:
- *  - admits that one internal promo code (`applyPromoCodeChanges`);
- *  - charges no change fee — an officer correction, not the member's change;
- *  - returns the reduction IN FULL (`calculateFullReductionSettlementOptions`,
- *    as #4533's promo correction does), not cut by the cancellation tier,
- *    because the member is given what ticking the box would have given them.
- */
-export type OfficerWorkPartyCorrection = {
-  readonly workPartyEventId: string;
-  readonly promoCodeId: string;
-};
-
-/** The money rule a work-party correction carries, recorded with it. */
-const OFFICER_WORK_PARTY_MONEY_RULE = {
-  changeFee: "none",
-  reduction: "returned in full",
-} as const;
-
-/** The only request fields a work-party correction may carry. */
-const OFFICER_WORK_PARTY_INPUT_KEYS: ReadonlySet<string> = new Set([
-  "promoCodes",
-  "settlementMethod",
-  "notifyMember",
-]);
-
-/**
- * The argument zeroes the fee and lifts the tier, so it must never ride a
- * date or guest change, a member's actor, or a self-committing call: those are
- * programming errors, refused before anything is read.
- */
-function assertOfficerWorkPartyCorrectionCall(call: {
-  hasCallerTransaction: boolean;
-  actorRole: string;
-  inputKeys: readonly string[];
-}): void {
-  if (!call.hasCallerTransaction || call.actorRole !== "ADMIN") {
-    throw new Error("officerWorkPartyCorrection needs an officer and a caller transaction");
-  }
-  const extra = call.inputKeys.filter((key) => !OFFICER_WORK_PARTY_INPUT_KEYS.has(key));
-  if (extra.length > 0) {
-    throw new Error(`officerWorkPartyCorrection carries only a promo change, not: ${extra.join(", ")}`);
-  }
 }
 
 export async function modifyBookingBatch({
@@ -2076,10 +1928,9 @@ export async function modifyBookingBatch({
                 capacityOverridden: capacityOverridden,
               }
             : {}),
-          // Fork #119: an officer's work-party correction, and why it carried
-          // no fee and returned the reduction in full.
+          // Fork #119: an officer's work-party correction, and its money rule.
           ...(officerWorkPartyCorrection
-            ? { officerWorkPartyCorrection: { ...officerWorkPartyCorrection, ...OFFICER_WORK_PARTY_MONEY_RULE } }
+            ? { officerWorkPartyCorrection: workPartyCorrectionRecord(officerWorkPartyCorrection) }
             : {}),
           // #3750: which approved change request this executed, how its fee was
           // decided, and whether an officer confirmed a past-night overbooking.
@@ -2311,6 +2162,7 @@ export async function modifyBookingBatch({
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
       appliedCreditGivenBackCents: payments.appliedCreditGivenBackCents,
       ownCardRefund,
+      refundedExcessCreditCents: lifecycle.refundedExcessCreditCents,
       organiserChildRefund: payments.organiserChildRefund,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
@@ -2516,6 +2368,7 @@ export async function modifyBookingBatch({
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
+      refundedExcessCreditCents: result.refundedExcessCreditCents,
       additionalAmountCents: result.additionalAmountCents,
       billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
@@ -2562,6 +2415,7 @@ export async function modifyBookingBatch({
       refundAmountCents: result.refundAmountCents,
       accountCreditAmountCents: result.accountCreditAmountCents,
       appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
+      refundedExcessCreditCents: result.refundedExcessCreditCents,
       additionalAmountCents: result.additionalAmountCents,
       billedToOrganiserCents: result.billedToOrganiserCents,
       settlementMethod: result.settlementMethod,
@@ -2649,16 +2503,9 @@ async function dispatchBatchPostTransactionSideEffects({
     // opted out — members always notify), so every suppressed edit is auditable.
     // #3750: the change request this executed and its fee rule, so the audit
     // trail answers "why did a finished stay change" on its own.
-    // Fork #119: the work party an officer added the booking to, and the
-    // money rule that came with it, so the trail says why the reduction came
-    // back in full with no fee.
+    // Fork #119: the work party an officer added the booking to, and its money rule (why no fee, in full).
     ...(result.officerWorkPartyCorrection
-      ? {
-          officerWorkPartyCorrection: {
-            ...result.officerWorkPartyCorrection,
-            ...OFFICER_WORK_PARTY_MONEY_RULE,
-          },
-        }
+      ? { officerWorkPartyCorrection: workPartyCorrectionRecord(result.officerWorkPartyCorrection) }
       : {}),
     ...(result.finishedStayCorrection
       ? {

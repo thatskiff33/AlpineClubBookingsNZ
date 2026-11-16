@@ -7,6 +7,7 @@ import {
   type StrandedCoverageBooking,
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
+import { editMoneyBackCents } from "@/lib/edit-money-back";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -596,13 +597,12 @@ export function combineLinkedMoveQuote(input: {
     combinedChangeFeeCents: sum((r) => r.changeFeeCents),
     combinedAmountDueCents: sum((r) => r.additionalAmountCents),
     // A reduction can come back as a card refund OR as account credit, and the
-    // member chose once for both. Summing the two is right rather than
-    // double-counting: exactly one of them is non-zero per booking, because
-    // `calculateModificationSettlementOptions` routes a given reduction down one
-    // path or the other, never both; credit given back (#3809) adds to either.
-    combinedRefundCents: sum(
-      (r) => r.refundAmountCents + r.accountCreditAmountCents + r.appliedCreditGivenBackCents,
-    ),
+    // member chose once for both; credit given back (#3809) adds to either. The
+    // one sum is `editMoneyBackCents` (why it never double-counts is there).
+    // Deliberately the SETTLEMENT's money only, as before: an unpaid booking's
+    // freed applied credit (`refundedExcessCreditCents`) is not added here, which
+    // would change this offer's figures (fork #129 left that to its own issue, #132).
+    combinedRefundCents: sum(editMoneyBackCents),
     combinedPolicyRetainedCents: sum((r) => r.policyRetainedAmountCents),
     combinedOrganiserRefundCents: input.organiserRefunds.totalCents, combinedOrganiserBankTransferRefundCents: input.organiserRefunds.bankTransferCents,
     // THE WRITE'S OWN TEST, never a reading of the resolved amounts. The refusal is

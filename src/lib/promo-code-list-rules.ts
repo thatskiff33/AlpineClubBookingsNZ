@@ -53,3 +53,21 @@ export function promoCodeListRefusal(input: {
   if (input.typedCodes.length > 1) return ONE_PROMO_CODE_PER_BOOKING_MESSAGE;
   return null;
 }
+
+/**
+ * Whether a code an edit names may be applied. Internal promos (work party
+ * events) cannot be entered as codes, and a code renamed between the unlocked
+ * read and the lock is not found (`promoCode` undefined). Fork #119: the one
+ * exception is the internal code `admittedInternalPromoCodeId` names, the work
+ * party an officer's "Add booking to work party" is adding. That is a service
+ * argument the batch service receives beside `tx`, never a request-body field,
+ * so no member route can set it; every other internal code is still refused as
+ * not found. Its one caller is `applyPromoCodeChanges`.
+ */
+export function enteredPromoCodeAdmitted<T extends { id: string; internal: boolean }>(
+  promoCode: T | undefined,
+  admittedInternalPromoCodeId: string | null,
+): promoCode is T {
+  if (!promoCode) return false;
+  return !promoCode.internal || promoCode.id === admittedInternalPromoCodeId;
+}

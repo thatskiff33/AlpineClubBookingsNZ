@@ -6624,7 +6624,9 @@ Order, in one transaction:
 2. Reauthorise the officer from fresh roles (`reauthorizeBookingOfficerFromDb`).
 3. Re-read the booking and the work party under the locks and apply the shared
    eligibility rule (`workPartyBookingEligibility`), including "already has a
-   work party".
+   work party". Fork #129: the money's recipient's family rows are read on
+   this `tx` too, and the own-or-family refusal is decided on the edit's
+   figures, before the preview's rollback or the save's commit.
 4. Run `modifyBookingBatch` on the same `tx` with `officerWorkPartyCorrection`
    and a `preTransaction` resolved before the transaction (`INV-LOCK-004`). The
    service re-enters all three keys and takes the member keys after them. Any
@@ -6637,7 +6639,12 @@ Order, in one transaction:
 **Counterparts and idempotency.** There is no claim row: a cancel, capture or
 refund of the same booking holds `lock(1)`, and two concurrent applies serialise
 on it — the second re-reads a booking that already carries the work party and is
-refused, so the discount and its credit apply once. Proved against PostgreSQL in
+refused, so the discount and its credit or refund apply once. A refund the
+officer chose (fork #129) is the edit's own: its ledger lines (and, for an
+organiser-paid joiner, the organiser-child refund debt; for Internet Banking,
+the edit's bank-transfer hand-back task, `raiseEditRefundHandBackIfOwed`) are
+written in this transaction; a card refund's Stripe call runs after commit, and
+a failed one is kept owed as a recovery row. Proved against PostgreSQL in
 `work-party-booking-correction.realdb.test.ts`.
 
 ### One-open-request slot for exception requests (#2524)

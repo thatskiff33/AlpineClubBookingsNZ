@@ -337,10 +337,19 @@ These family rules are enforced by automated tests (issue #1132):
     (`officerWorkPartyCorrection`) that no request body can carry, and a census
     pins its one caller (and the service refuses it without an officer, a
     caller transaction and a promo-only change). It moves money only through
-    the canonical booking edit, as account credit: organiser-paid bookings,
-    whose money would go back to the organiser, are refused, so it never
-    refunds. It applies only the figures the officer was shown, and answers 404
-    while the Work Parties module is off. Its POST is on the step-up list
+    the canonical booking edit's own settlement (fork #129): account credit by
+    default, a refund only when the officer chooses it where the edit itself
+    offers one — to the card, or the edit's bank-transfer hand-back for
+    Internet Banking (any other method is refused, 409) — and an organiser-paid
+    joiner's money back to the organiser by the pipeline's organiser
+    disposition. It adds no refund path, calls no provider itself, and refuses
+    any refund the offered options did not mean. When the change would refund
+    or credit money to the acting officer or their family (the member-guest
+    family boundary; for an organiser-paid joiner, the group organiser's), it
+    refuses on the preview and the save alike, decided on the figures under
+    its locks. It applies only the figures the
+    officer was shown, settlement method included, and answers 404 while the
+    Work Parties module is off. Its POST is on the step-up list
     (`INV-AUTH-010`): the canonical edit it calls reaches the refund
     operations, so it asks for a fresh proof before reading the body.
 

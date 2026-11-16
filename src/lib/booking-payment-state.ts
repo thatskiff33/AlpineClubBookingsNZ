@@ -163,6 +163,14 @@ export function hasCapturedPayment(
 /** The `Payment.source` a card ask is minted against, checked by the compiler. */
 const CARD_PAYMENT_SOURCE = "STRIPE" satisfies PaymentSource;
 
+/** Paid by card: a settled booking holding captured Stripe money a reduction can refund to the card. The one
+ * answer for `applyPaymentAdjustments` (`hasSucceededPayment`: a Stripe refund, not the bank-transfer hand-back) and
+ * for where "Add to work party"'s refund goes (fork #129). */
+export function hasSettledCardPayment(booking: { status: string; payment: (BookingPaymentState & { source: string }) | null | undefined }): boolean {
+  const { status, payment } = booking;
+  return isSettledBookingStatus(status) && hasCapturedPayment(payment) && payment?.source === CARD_PAYMENT_SOURCE;
+}
+
 /**
  * #3502 (`INV-PAY-047`, `INV-MOD-018`): may an edit that RAISES this booking's
  * price ask the member's card for the difference? THE ONE ANSWER, asked by every

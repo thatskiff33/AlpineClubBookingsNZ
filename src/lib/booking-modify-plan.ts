@@ -15,7 +15,7 @@ import {
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
-import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
+import { enteredPromoCodeAdmitted, promoCodeListRefusal } from "@/lib/promo-code-list-rules";
 import {
   AdminReviewStatus,
   type AgeTier,
@@ -2070,23 +2070,6 @@ export function resolvePromoBeneficiarySelection({
   return [...selected].sort((a, b) => a - b);
 }
 
-/**
- * Whether a code an edit names may be applied. Internal promos (work party
- * events) cannot be entered as codes, and a code renamed between the unlocked
- * read and the lock is not found. Fork #119: the one exception is the internal
- * code `officerWorkPartyPromoCodeId` names, the work party an officer's "Add
- * booking to work party" is adding. That is a service argument the batch
- * service receives beside `tx`, never a request-body field, so no member route
- * can set it; every other internal code is still refused as not found.
- */
-function enteredPromoCodeAdmitted<T extends { id: string; internal: boolean }>(
-  promoCode: T | undefined,
-  officerWorkPartyPromoCodeId: string | null,
-): promoCode is T {
-  if (!promoCode) return false;
-  return !promoCode.internal || promoCode.id === officerWorkPartyPromoCodeId;
-}
-
 export async function applyPromoCodeChanges(
   tx: Prisma.TransactionClient,
   {
@@ -2104,8 +2087,7 @@ export async function applyPromoCodeChanges(
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
-    /** Fork #119: the one internal code `enteredPromoCodeAdmitted` admits. */
-    officerWorkPartyPromoCodeId?: string | null;
+    officerWorkPartyPromoCodeId?: string | null; // Fork #119: the one internal code `enteredPromoCodeAdmitted` admits
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{
@@ -2273,7 +2255,6 @@ export async function applyPromoCodeChanges(
     }
     const id = incomingIds.find((row) => row.code === entry.code)?.id;
     const promoCode = incomingRows.find((row) => row.id === id && row.code === entry.code);
-    // An internal code, or one renamed since the unlocked read, is not found.
     if (!enteredPromoCodeAdmitted(promoCode, officerWorkPartyPromoCodeId)) {
       throw new ApiError("Promo code not found", 400);
     }
@@ -2603,7 +2584,7 @@ export async function applyGuestChanges(
    *        parked call site passes an EMPTY future-night list on purpose, because
    *        a strand whose total is frozen is not buying anything, so a night the
    *        edit newly puts it on is unknown as well.
-   *      - `buildIdentityOnlyPricing` (`booking-batch-modification-service.ts`),
+   *      - `buildIdentityOnlyPricing` (`booking-identity-only-pricing.ts`),
    *        which echoes a strand's stored night prices back unchanged on a
    *        name-only correction — including the blanks, byte for byte. It
    *        creates no new blank; it declines to repair one.

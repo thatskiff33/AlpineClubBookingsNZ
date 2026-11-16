@@ -60,25 +60,46 @@ Admin).
 2. Choose the work party. Every active work party that overlaps the stay is
    listed. If the booking is already on one, the dialog says so instead.
 3. Click **Show the new total**. You see the booking's new total, how much comes
-   back to the member as **account credit**, and anything still to pay.
-4. Leave **Email the member about the change** ticked (or untick it), then click
-   **Add to work party**. It starts unticked when the booking has **No emails**
-   on.
+   back and how, and anything still to pay.
+4. If the booking was paid, choose **Club credit** (the default) or a refund,
+   as on an ordinary booking change: **Refund to card** when it was paid by
+   card, **Refund to bank account** when it was paid by Internet Banking. The
+   figures are worked out again for your choice.
+5. Click **Add and email member** or **Add without emailing**. When the booking
+   has **No emails** on there is one **Add to work party** button and the member
+   is not emailed.
 
 What happens:
 
 - The booking is repriced exactly as if the member had ticked the box when
   booking. The discount applies to each guest's nights inside the window.
 - **Unpaid:** the amount owed drops. With a 100% discount an unpaid booking can
-  end up owing nothing, and is then settled as any $0 booking is.
-- **Paid:** what was paid above the new total goes back as **account credit**,
-  in full, including account credit the booking had used. Nothing is refunded,
-  and no cancellation-policy tier cuts it.
+  end up owing nothing, and is then settled as any $0 booking is. If account
+  credit was applied to it and is now more than the new total, the extra goes
+  back to the member's balance, shown as account credit in the figures.
+- **Paid by card:** what was paid above the new total goes back as **club
+  credit**, or, if you chose it, as a **refund to the card** ("Refunded to card"
+  in the figures). Either way it comes back in full, and no cancellation-policy
+  tier cuts it.
+- **Paid by Internet Banking:** the same choice. A **refund to the bank
+  account** ("To be refunded by bank transfer" in the figures) is the ordinary
+  booking change's own: it raises one task in the **Money to settle** card for
+  the treasurer to pay back by bank transfer, and the member's email says the
+  club will refund them by bank transfer (see
+  [Payments](payments.md#pay-back-a-refund-for-a-cash-booking)).
+- **Paid with account credit, or nothing left to refund:** it goes back as club
+  credit only, in full, because an ordinary change offers no refund either.
+  Account credit the booking had used always goes back to the member's balance.
+- **Paid by the group organiser:** the money goes back to the organiser, the way
+  every change to a joiner's booking does: to the organiser's card, or by bank
+  transfer if they paid by Internet Banking. The figures show "Returned to the
+  group organiser".
 - **No change fee** is charged: this is an officer correcting a missed tick, not
   the member changing their stay.
 - It goes through the normal booking change, so the booking's history, the
-  ledger and Xero (an account credit note for a paid booking) record it like any
-  other change. The history marks it as a work-party correction.
+  ledger, Xero (a credit note for a paid booking) and any refund are recorded
+  and made like any other change's. The history marks it as a work-party
+  correction.
 - If the booking changed between the preview and the save, you are shown the
   new figures and asked to confirm again; nothing is saved meanwhile.
 
@@ -88,13 +109,20 @@ reason:
 - the booking isn't pending, confirmed or paid (for example cancelled, a draft,
   awaiting review, or on the waitlist);
 - the stay has already started, so its prices are fixed;
-- the group organiser paid for it (its money would go back to the organiser, so
-  this action never applies);
 - it belongs to an organisation (a school), which has no account credit;
 - it is priced by its quote (a school or booking-request quote);
 - it already has another promo code and the club allows only one discount per
   booking (the same rule as when booking);
 - the work party is held at another lodge.
+
+**Your own or your family's booking.** You can add your own booking, or one of
+someone in your family group, when nothing comes back, for example an unpaid
+booking with no account credit applied, whose price just drops. When the change
+would refund or credit any money, including account credit an unpaid booking
+had applied that is now more than its new total, **Show the new total** says
+another officer must add it, and nothing is saved. For a joiner's booking the group organiser paid for, the same applies
+when you, or someone in your family group, organised the group, because the
+money goes back to the organiser.
 
 A booking can be on only one work party. Removing a booking from a work party is
 not available.
@@ -121,6 +149,7 @@ not available.
 | Work Parties is missing from the sidebar / 404s | The `workParties` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view work parties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | A work party is "not available" in **Add to work party** | One of the reasons listed under "When a booking can't be added" | The dialog names the reason |
+| "Another officer must add this booking" after **Show the new total** | It is your own or your family's booking (or you organised the group that paid for it), and money would come back | Ask another Booking Officer or Full Admin to add it |
 | There's no Delete button on an event | It already has attending bookings | Deactivate it instead — delete is blocked to keep the discount history |
 | A member says the discount didn't apply | The event is inactive, their nights fall outside the window, or they didn't tick the working-bee option | Check the event is Active, its dates cover their nights, and that they selected it when booking |
 | "Discount must be a whole number between 1 and 100" | A non-integer or out-of-range discount was entered | Enter a whole number from 1 to 100 |

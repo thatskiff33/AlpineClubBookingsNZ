@@ -12,7 +12,6 @@ import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { paidByOrganiser } from "@/lib/group-organiser-paid";
 import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
@@ -29,11 +28,20 @@ import {
 
 const centsField = z.number().int().min(-100_000_000).max(100_000_000);
 
+// The officer's settlement choice (#129); absent is the default (club credit,
+// or the organiser's disposition). The service refuses one it does not offer.
+const settlementMethodField = z.enum(["credit", "card"]).optional();
+
 const bodySchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("preview"), workPartyEventId: z.string().min(1) }),
+  z.object({
+    mode: z.literal("preview"),
+    workPartyEventId: z.string().min(1),
+    settlementMethod: settlementMethodField,
+  }),
   z.object({
     mode: z.literal("apply"),
     workPartyEventId: z.string().min(1),
+    settlementMethod: settlementMethodField,
     notifyMember: z.boolean().optional(),
     // The figures the officer was shown by the preview; the save refuses if
     // the booking would now come out differently (#4030 C4).
@@ -43,6 +51,7 @@ const bodySchema = z.discriminatedUnion("mode", [
       priceDiffCents: centsField,
       accountCreditAmountCents: centsField,
       appliedCreditGivenBackCents: centsField,
+      refundedExcessCreditCents: centsField,
       additionalAmountCents: centsField,
       refundAmountCents: centsField,
       settlementMethod: z.enum(["card", "credit"]),
@@ -77,9 +86,6 @@ export async function GET(
       checkOut: true,
       lodgeId: true,
       memberId: true,
-      organiserSettled: true,
-      parentBookingId: true,
-      payment: { select: { source: true } },
       promoRedemptions: {
         select: {
           id: true,
@@ -97,6 +103,10 @@ export async function GET(
   const redemptions = bookingPromoRedemptions(booking);
   const current =
     redemptions.find((row) => row.promoCode?.workPartyEvent)?.promoCode?.workPartyEvent ?? null;
+  const ownerMemberId = bookingOwner(booking).memberId;
+  // #129 decision 6: an officer's own or family's booking is listed like any
+  // other; whether money would come back to them is decided on the preview's
+  // figures, under the service's locks.
   const [bookingLodgeId, today, quotePriced, multiPromoCodes, events] = await Promise.all([
     booking.lodgeId ?? getDefaultLodgeId(prisma),
     clubTodayDateOnlyInstant(),
@@ -111,9 +121,8 @@ export async function GET(
     checkOut: booking.checkOut,
     hasWorkParty: current !== null,
     hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
-    paidByOrganiser: paidByOrganiser(booking),
     quotePriced,
-    memberOwned: Boolean(bookingOwner(booking).memberId),
+    memberOwned: Boolean(ownerMemberId),
   };
 
   return NextResponse.json({
@@ -140,7 +149,8 @@ export async function GET(
 
 /**
  * "Add booking to work party" (fork #119). `mode: "preview"` runs the whole
- * change and rolls it back, returning the figures for the confirm dialog;
+ * change and rolls it back, returning the figures and the settlement methods
+ * offered (`settlementOptions`, #129) for the confirm dialog;
  * `mode: "apply"` saves it, refusing if the figures moved since the preview.
  * Booking Officers and Full Admins (`bookings:edit`); the service re-authorises
  * the officer under its locks. The work and the money rules are in
@@ -187,6 +197,9 @@ export async function POST(
   const common = {
     bookingId: id,
     workPartyEventId: parsed.data.workPartyEventId,
+    ...(parsed.data.settlementMethod === undefined
+      ? {}
+      : { settlementMethod: parsed.data.settlementMethod }),
     actorMemberId: session.user.id,
     ipAddress: getClientIp(req),
     todayAtClub: club.today(),
