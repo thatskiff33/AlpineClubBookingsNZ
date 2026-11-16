@@ -178,7 +178,7 @@ export interface RevivedRefundNoteReport {
   couldNotRead: CouldNotReadNote[];
   /** Set when the run ended early, with the notes it never asked. */
   stopped: { reason: RevivedReportStopReason; detail: string; notReached: string[] } | null;
-  /** Over `revived` only. A resumed run's totals are "this-run-only": add the earlier parts'. */
+  /** Over `revived` only. A resumed run's totals are "this-run-only": do not add parts together, because a note after a failed read is read and counted again in the next part. */
   totals: { scope: "whole-population" | "this-run-only"; count: number; bySource: SourceTotal[] };
 }
 

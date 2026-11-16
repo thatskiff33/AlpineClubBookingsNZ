@@ -2895,15 +2895,21 @@ How to finish a multi-day walk:
 1. Run the report. If it says **THE LIST IS INCOMPLETE**, keep its output and
    run it again the next day with the `--resume-from` id it printed.
 2. A resumed run says its output, totals included, is **this run only**: keep
-   every day's output together.
+   every day's output together. Do not add the parts' totals together: a note
+   read again after an earlier failure appears in two parts. For a grand
+   total, count each note id once across the parts, using the latest part's
+   line.
 3. The walk is finished when a resumed run prints "This was the last part:
    every note from <id> to the end was read; the notes before it were covered
    by earlier runs", with no **THE LIST IS INCOMPLETE** line (exit code 0,
    `walkFinished: true` in the JSON). A run from the beginning that reads
    everything says neither and has `complete: true`.
-4. If a run prints **NO PROGRESS** (it could not read even the note it resumed
-   from), do not keep re-running with the same id: if the stop was the daily
-   limit, wait until tomorrow; otherwise ask a maintainer.
+4. If a run prints **NO PROGRESS**, check its "Read from Xero" count. If it is
+   0 and the run stopped on the daily limit, wait until tomorrow and run the
+   same command. Otherwise the note it resumed from is stuck: do not re-run
+   with the same id. Ask a maintainer, giving the note id privately. A
+   maintainer can move past it by resuming from the next note id in the
+   `--list` output; the stuck note is then checked by hand.
 
 If the note a resume id names has since left the active set (handled with
 **Sync from Xero now**, say), the run starts at the next note after it and

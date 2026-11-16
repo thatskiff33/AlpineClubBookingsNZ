@@ -593,8 +593,12 @@ describe("#4336 revived refund-note report: the command line", () => {
     const { exit, out } = await cliRun(["--resume-from", ids[1]!]);
     expect(exit).toBe(2);
     expect(out).toContain("three reads failed in a row");
-    expect(out).toContain(`To carry on, run again with --resume-from ${ids[1]}`);
-    expect(out).toContain("NO PROGRESS: this run could not read even the note it resumed from.");
+    // No progress: the output names the stuck note and must NOT also tell the
+    // operator to run again with the same id, which would loop for ever.
+    expect(out).toContain("THE LIST IS INCOMPLETE");
+    expect(out).not.toContain("To carry on, run again with --resume-from");
+    expect(out).toContain(`NO PROGRESS: note ${ids[1]} was not read again.`);
+    expect(out).toContain("do not re-run with the same id");
     const json = JSON.parse((failCalls(xero, [1, 2, 3]), await cliRun(["--json", "--resume-from", ids[1]!])).out);
     expect(json).toMatchObject({ noProgress: true, resumeFrom: ids[1] });
   });

@@ -80,14 +80,18 @@ export function formatRevivedRefundNoteReport(report: RevivedRefundNoteReport, o
     if (list) lines.push(...report.stopped.notReached.map((id) => `    not read: note ${id}`));
   }
   if (report.resumeFrom !== null) {
-    lines.push(
-      "THE LIST IS INCOMPLETE: some notes were not read (see above).",
-      `To carry on, run again with --resume-from ${report.resumeFrom} (it retries every note this run could not read, from the earliest).`,
-    );
+    lines.push("THE LIST IS INCOMPLETE: some notes were not read (see above).");
+    // A run that made no progress must not also say "run again with this id":
+    // the two lines contradict each other, and following the first one loops.
+    if (!report.noProgress) {
+      lines.push(
+        `To carry on, run again with --resume-from ${report.resumeFrom} (it retries every note this run could not read, from the earliest).`,
+      );
+    }
   }
   if (report.noProgress) {
     lines.push(
-      `NO PROGRESS: this run could not read even the note it resumed from. Running again with the same id will not help: if the reason is the daily limit, wait until tomorrow; otherwise stop and ask a maintainer.`,
+      `NO PROGRESS: note ${report.resumeFrom} was not read again. If "Read from Xero" above is 0 and the run stopped on the daily limit, wait until tomorrow and run the same command. Otherwise that note is stuck: do not re-run with the same id; ask a maintainer, giving the note id privately. A maintainer can move past it with --resume-from set to the next note id in the --list output; the stuck note then stays unread and must be checked by hand.`,
     );
   }
   if (report.walkFinished && scope.resumedFrom !== null) {
