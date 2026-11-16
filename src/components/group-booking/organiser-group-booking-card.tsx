@@ -317,7 +317,7 @@ export function OrganiserGroupBookingCard({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          <CardTitle headingLevel={2} className="flex items-center gap-2">
             <Users className="h-5 w-5" /> Invite others to join this trip
           </CardTitle>
         </CardHeader>
@@ -419,7 +419,7 @@ export function OrganiserGroupBookingCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center justify-between gap-2">
+        <CardTitle headingLevel={2} className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             <Users className="h-5 w-5" /> Group booking
           </span>

@@ -87,7 +87,7 @@ export function SubjectAccessReport({ memberId, className }: { memberId: string;
   return (
     <Card className={className}>
       <CardHeader>
-        <CardTitle>Subject access report</CardTitle>
+        <CardTitle headingLevel={2}>Subject access report</CardTitle>
         <CardDescription>
           Answer a request for a copy of someone&rsquo;s personal information. Check who is
           asking, and that they may see this person&rsquo;s record, before you send the file.
