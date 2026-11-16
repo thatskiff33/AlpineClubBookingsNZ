@@ -1915,8 +1915,8 @@ establishes:
   `SortHeader` (`aria-sort`, URL- or callback-driven), and the shared
   `Pagination` (page-size selector; URL `hrefForPage` or callback `onPageChange`
   modes) — instead of re-implementing the table shell / sort / pagination per
-  page. `bookings-pagination.tsx` / `member-pagination.tsx` are thin wrappers
-  over the shared `Pagination`.
+  page. The bookings and members lists render the shared `Pagination`
+  directly, with `formatAdminListRange` as the summary (#4960 follow-up).
 - **Design-system controls (#4467):** outside `src/components/ui/`, use
   `Button`, `Input`, `Checkbox`, `Radio`, `Select` and `Table` (or `AdminDataTable`),
   never a raw `<button>`, `<input>`, `<select>` or `<table>`, and `useConfirm()`

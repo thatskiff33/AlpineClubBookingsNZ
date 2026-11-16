@@ -34,6 +34,12 @@ import {
   xeroInboundCategoryFilterValue,
 } from "@/lib/xero-webhook-categories"
 import type { XeroInboundEvent } from "./types"
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page"
 
 export function InboundEventsPanel({
   connected,
@@ -102,12 +108,8 @@ export function InboundEventsPanel({
   const [eventTypeFilter, setEventTypeFilter] = useState(searchParams.get("inEventType") || "all")
   const [createdFrom, setCreatedFrom] = useState(searchParams.get("inCreatedFrom") || "")
   const [createdTo, setCreatedTo] = useState(searchParams.get("inCreatedTo") || "")
-  const [page, setPage] = useState(() => {
-    const requested = Number(searchParams.get("inPage") || "1")
-    return Number.isInteger(requested) && requested > 0 ? requested : 1
-  })
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("inPage")))
   const [total, setTotal] = useState(0)
-  const pageSize = 25
   const [urlSyncEnabled, setUrlSyncEnabled] = useState(hasInboundUrlState)
   const [replayingEventId, setReplayingEventId] = useState<string | null>(null)
 
@@ -130,7 +132,7 @@ export function InboundEventsPanel({
     setOrDelete("inEventType", eventTypeFilter, "all")
     setOrDelete("inCreatedFrom", createdFrom)
     setOrDelete("inCreatedTo", createdTo)
-    setOrDelete("inPage", page > 1 ? String(page) : "")
+    setAdminListPageParam(params, page, "inPage")
 
     const query = params.toString()
     const nextPath = query ? `${pathname}?${query}` : pathname
@@ -208,7 +210,7 @@ export function InboundEventsPanel({
         resourceId: resourceIdFilter,
         eventType: eventTypeFilter,
         page: String(page),
-        pageSize: String(pageSize),
+        pageSize: String(ADMIN_LIST_DEFAULT_PAGE_SIZE),
       })
       if (createdFrom) params.set("createdFrom", createdFrom)
       if (createdTo) params.set("createdTo", createdTo)
@@ -373,14 +375,14 @@ export function InboundEventsPanel({
             ))}
           </div>
         )}
-        {total > pageSize ? (
+        {total > ADMIN_LIST_DEFAULT_PAGE_SIZE ? (
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}
+              {formatAdminListRange({ page, pageSize: ADMIN_LIST_DEFAULT_PAGE_SIZE, total })}
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value - 1) }}>Previous</Button>
-              <Button variant="outline" size="sm" disabled={page * pageSize >= total} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value + 1) }}>Next</Button>
+              <Button variant="outline" size="sm" disabled={page * ADMIN_LIST_DEFAULT_PAGE_SIZE >= total} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value + 1) }}>Next</Button>
             </div>
           </div>
         ) : null}

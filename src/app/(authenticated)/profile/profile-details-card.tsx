@@ -162,7 +162,7 @@ export function ProfileDetailsCard({
       <CardHeader>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle>Personal Details</CardTitle>
+            <CardTitle headingLevel={2}>Personal Details</CardTitle>
             <CardDescription>
               View your name, phone, address, and date of birth. Changes are synced with Xero.
             </CardDescription>

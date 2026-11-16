@@ -231,6 +231,10 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   MemberMoneySourcePosting: SHARED,
   MemberMoneyRefundReservation: SHARED,
   MemberMoneyRefundReservationRelease: SHARED,
+  // #4525 (Ledger M13): a booking invoice's export manifest and its coverage
+  // rows, keyed by booking and journal component like the ledger links above.
+  MemberMoneyExportManifest: SHARED,
+  MemberMoneyExportCoverage: SHARED,
   // #4520: Stripe's own balance transaction, keyed by a payment intent rather than a member.
   StripeBalanceTransactionEvidence: OPERATIONAL,
 } as const satisfies Record<PersonalModel, Placement>;

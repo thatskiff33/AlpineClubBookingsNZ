@@ -3318,8 +3318,9 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
    overrides it and `--date YYYY-MM-DD` overrides the release date. With
    `--execute` it creates `release/v<version>`, sets `package.json`'s
    `"version"` (`pnpm-lock.yaml` does not record it), compiles the changelog
-   (step 2), folds `docs/UPGRADING.md` (step 3) and commits. It never pushes. If it stops part way it prints how to
-   inspect the branch or abandon it.
+   (step 2), files the release documents (step 3) and commits. It never
+   pushes. If it stops part way it prints how to inspect the branch or abandon
+   it.
 2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
@@ -3348,15 +3349,39 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
    If a file removal fails during apply, the compiler restores the original
    changelog and fragments so you can fix the I/O cause and retry. If that
    restoration itself fails, stop and inspect the named files before retrying.
-3. The same commit brings the upgrade documents up to date (#4979):
+3. The same commit brings the release documents up to date (#4979, #4983).
+   **A release's upgrade steps are filed under that release**: the tool
+   records the release boundary in the upgrade guide and the release notes as
+   well as the changelog, so nobody rolls them by hand.
 
    - **The upgrade guide is folded.** `release:cut prepare` renames
      `docs/UPGRADING.md`'s `## Unreleased` block to
-     `## v<previous> → v<version>` and leaves a fresh, empty `## Unreleased`
-     above it, when the block holds any steps. Read the folded section: it
-     should open with `### Upgrade checklist for this release`, the ordered
+     `## v<previous> → v<version>`, `<previous>` being the same latest tag on
+     `origin`, and leaves a fresh, empty `## Unreleased` above it. When
+     nothing was waiting, the new section says the release has no manual
+     upgrade steps, so every tag has a section. Text above `## Unreleased`
+     and every released section are left untouched. It refuses a guide that
+     already has the version's section, one with a step added since the
+     previous tag to a released section that tag already had, or any tracked
+     document (bar `CHANGELOG.md` and `changelog.d/`) that links the guide's
+     `#unreleased` anchor: the link would be left on the empty section, so
+     link the step's own heading instead. Prose that says "see Unreleased"
+     with no link is not found: name the step instead. A release section that
+     arrives whole between two tags, such as a fork merging an upstream
+     release, is not a late step. It reads the previous tag's guide from that
+     tag's commit and refuses when the commit is not in the clone (a shallow
+     clone), rather than skip the check. Read the folded section: it should
+     open with `### Upgrade checklist for this release`, the ordered
      before / during / after list, and the plan says so when it does not.
-     `--amend` does not fold; it prints the steps to move by hand.
+     `--amend` moves steps added under the fresh `## Unreleased` to the end
+     of the untagged release's section.
+   - **A notes stub is written.** `docs/releases/v<version>.md` links the
+     version's changelog and upgrade-guide sections. It carries an unfinished
+     marker (`<!-- release-notes:unfinished -->`), a note saying it is a stub
+     and a placeholder paragraph, and `publish` refuses while any of the three
+     is still in the page. `docs/releases/README.md` lists the page first under
+     "Published release notes". The documentation hub links the index, not a
+     version, so it needs no edit.
    - **The runbook stays release-agnostic.**
      `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair; its §7 and §8
      are blank templates an operator fills in offline. If it has been
@@ -3372,6 +3397,13 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      and confirm that each one added since the previous tag is reached from the
      checklist's "During the window" part. The checklist links; it never copies
      a migration's text.
+
+   The dry run lists each of these. The fold files only what sits under
+   `## Unreleased`: an upgrade step written anywhere else is left where it is,
+   so move any such step under `## Unreleased` in a pull request before you
+   prepare. Then, before merging the release-prep pull request, read the new
+   upgrade section and drop any step that no longer applies, and write the
+   notes page, deleting the marker, the stub note and the placeholder.
 4. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
    guide, `docs/ARCHITECTURE.md`, `docs/UPGRADING.md` and
    `docs/PRODUCTION_UPGRADE_RUNBOOK.md` for dependency, release, GHCR, migration,
@@ -3383,7 +3415,8 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
    GitHub Actions for Docker image build, static analysis, secret scanning,
    dependency review, and GHCR publication.
 7. Push `release/v<version>` and open the release-prep pull request from the
-   template (`pnpm run pr:check <body-file>` first). It merges like any other.
+   template (`pnpm run pr:check <body-file>` first), with the notes page
+   written. It merges like any other.
 8. After it merges, tag the merged commit and publish the GitHub release:
 
    ```bash
@@ -3399,8 +3432,16 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
    repositories are refused. It refuses when:
 
    - the commit is not on `origin/main`'s **first-parent** chain — only a
-     commit CI pushed to `main` has GHCR images, so only its tag can be
-     deployed (a release-prep branch commit inside a merge never was);
+     commit pushed to `main` gets a CI run that publishes GHCR images (a
+     release-prep branch commit inside a merge never was);
+   - its `ci.yml` push run on `main` has not published its images: GitHub
+     reports no run whose `Publish GHCR images` job succeeded, because the run
+     is still going, failed, was cancelled by hand, or never started
+     (`INV-OPS-021`). The refusal names the commit and the run. Wait for the
+     run, or re-run it with `gh run rerun <run-id>` and publish once that job
+     succeeds. The check runs in the dry run too, on the commit that would be
+     tagged (on a resume, the tagged commit), and refuses when GitHub's
+     answer cannot be read — a fine-grained token needs **Actions: Read**;
    - `origin` already has the version's tag on another commit, or the version
      is not newer than `origin`'s latest tag — nothing new was prepared;
    - `CHANGELOG.md` has no section for the version, or still has entries
@@ -3415,13 +3456,32 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      be folded into a patch release: carry it, or revert the release-prep
      merge and prepare again as minor. Or **carry** them:
      `pnpm run release:cut publish --carry-late-fragments --execute` publishes
-     anyway and lists them as carried into the next release.
+     anyway and lists them as carried into the next release;
+   - `docs/UPGRADING.md` has no `## v<previous> → v<version>` section, or still
+     has upgrade steps under `## Unreleased` — a pull request with its own
+     upgrade step merged while the release-prep one was open. They would ship
+     in this tag but read as the next release's. Fold them:
+     `pnpm run release:cut prepare --amend --execute` moves them into the
+     untagged version's section (and rolls the guide if prep never did).
+     `--carry-late-fragments` does **not** carry upgrade steps, because a
+     step a club never sees under its release is the harm this check stops;
+   - `docs/UPGRADING.md` has more `### ` steps in an already-released section
+     than the previous tag's copy of that section — a late pull request merged
+     its step into the wrong section. Rewording a released step's title adds no
+     step, so it is not refused. `prepare` refuses this too, before it has
+     written anything: move the step under `## Unreleased` in a pull request,
+     then run `prepare` again. After a refused `publish`, move it the same way,
+     then fold it with `--amend`;
+   - `docs/releases/v<version>.md` is missing, or still carries the unfinished
+     marker, the stub note or the placeholder paragraph. Write the page through
+     a pull request, then publish.
 
    The dry run also checks `gh auth status` and that `gh` can reach the
-   repository, and says which release body it will use: the section itself,
-   or — over 120,000 characters, below GitHub's 125,000 limit — a short body
-   with the entry count and a link to the section in `CHANGELOG.md` at the
-   tag. With `--execute` it writes the body to a file, creates the annotated
+   repository, prints the CI run that published the commit's images, and
+   says which release body it will use: the section itself, or — over
+   120,000 characters, below GitHub's 125,000 limit — a short body with the
+   entry count and a link to the section in `CHANGELOG.md` at the tag. With
+   `--execute` it writes the body to a file, creates the annotated
    `v<version>` tag, and only then pushes the tag and runs
    `gh release create`. A failure prints the re-run, always with
    `--commit <sha>` of the commit being tagged, and the re-run resumes: a

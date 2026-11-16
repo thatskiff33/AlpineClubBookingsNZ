@@ -16,7 +16,7 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
 import { OpeningCreditBatchesCard } from "@/components/admin/opening-credit-batches-card"
 import { Pagination } from "@/components/admin/admin-pagination"
 import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page"
-import { parseAdminListPageParam } from "@/lib/admin-list-page"
+import { parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -207,9 +207,8 @@ export default function RefundRequestsPage() {
   const rejectingAppeal = notifyChoice?.status === "REJECTED"
   const currentParams = new URLSearchParams(searchParams.toString())
   currentParams.delete("status")
-  currentParams.delete("page")
   if (filter !== "PENDING") currentParams.set("status", filter)
-  if (page > 1) currentParams.set("page", String(page))
+  setAdminListPageParam(currentParams, page)
   const currentQuery = currentParams.toString()
   const currentRefundRequestsPath = currentQuery
     ? `${REFUND_REQUESTS_HREF}?${currentQuery}`
