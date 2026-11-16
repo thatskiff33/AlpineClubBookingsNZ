@@ -46,10 +46,11 @@ by watching **data** — see [`ARCHITECTURE.md`](../ARCHITECTURE.md)
 This critical Finance item means a bank-transfer settlement figure alert failed
 three times. The existing Xero inbound job retries unsent markers older than ten
 minutes, using the same cooldown claim as invoice deliveries. After three failed
-sends it stops emailing; the item remains visible in Stuck States. Open Payments,
-check the amount against Xero, and read the booking's staff timeline for the
-settlement figure marker. No payment amount or booking status is changed by the
-retry (#4446).
+sends it stops emailing; the item remains visible in Stuck States. Each row
+under the signal names the booking and its owner (#4959): open the booking, check
+the amount against Xero, and read its staff timeline for the settlement figure
+marker. **Open** goes to Payments. No payment amount or booking status is changed
+by the retry (#4446).
 
 ### Close a card refund Stripe gave up on
 
@@ -424,6 +425,10 @@ listed - for example when the payment holds nothing more to refund because of
 a refund of another amount. It still shows in the **Exhausted recovery operations** count: ask a
 developer to reconcile it.
 
+The rows under **Exhausted recovery operations** name each operation's
+booking and owner and what it was for. A row that is also on **Card refunds
+Stripe gave up on** says to settle it there (#4959).
+
 ### Pick the refund a voided bank refund note recorded
 
 **Voided bank refund notes to answer** (finance view to see it, finance edit to
@@ -515,21 +520,31 @@ The page has no settings. What it shows:
 
 ### Who sees the named rows
 
-A few signals expand into a short list naming the individual members or bookings
-behind the count — **Members with no reachable email address** lists the members,
-and **Bookings without required adult member cover** names each booking's owner.
-Those named rows are membership-roll detail, so they appear **only if you also
-have Membership view access**. An admin with Stuck States access but not
-Membership sees the same signal, the same count, and the same **Open** link to
-work it — just not the individual names and per-member deep links. This keeps
-the queue useful to support staff (they can see a problem exists and hand it on)
-without widening who can read the membership roll.
+Signals that point at particular records expand into a short list naming the
+members or bookings behind the count — **Members with no reachable email
+address** lists the members; **Bookings without required adult member cover**
+and **Bookings with unnamed guests** name each booking and its owner; and the
+payment signals (cancelled bookings with an unrecorded refund, the three
+recovery-operation signals, the two stale group settlements and undelivered
+bank transfer amount alerts) name each booking and its owner too (#4959).
+
+Each row is read with the same filter as the count, so the list and the count
+never disagree. At most 50 rows show; a longer list ends "and N more". Each
+signal's **Open** link goes to its rows on this page, or to [Background
+Jobs](background-jobs.md) for operations the app is still retrying.
+
+The named rows are membership-roll detail, so they appear **only if you also
+have Membership view access**. The payment rows also show amounts, so they need
+**Finance view as well**. An admin without them sees the same signal and the
+same count — just not the names or links. This keeps the queue useful to
+support staff (they can see a problem exists and hand it on) without widening
+who can read the membership roll or the club's money.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| **Bookings with unnamed guests** shows a count | An upcoming school/organisation or member whole-lodge booking still lists generated placeholders ("Guest 2", "School Child 5"), so the chore list and arrival roster would print those instead of real people | Most bookers are chased automatically as check-in approaches, but not all of them: a school list the contact already **confirmed** while leaving the placeholder names in place gets no further prompt, and a booking still held for approval is not chased at all. So work the list — open each booking and edit the guest names yourself. Renaming a guest does not change their age group or the price. **This never holds up a stay** — the booking, check-in and [Chore Roster](roster.md) all work exactly as normal while the count stands |
+| **Bookings with unnamed guests** shows a count | An upcoming school/organisation or member whole-lodge booking still lists generated placeholders ("Guest 2", "School Child 5"), so the chore list and arrival roster would print those instead of real people | Most bookers are chased automatically as check-in approaches, but not all of them: a school list the contact already **confirmed** while leaving the placeholder names in place gets no further prompt, and a booking still held for approval is not chased at all. So open each booking named under the signal and edit the guest names yourself. Renaming a guest does not change their age group or the price. **This never holds up a stay** — the booking, check-in and [Chore Roster](roster.md) all work exactly as normal while the count stands |
 | **Bookings without required adult member cover** shows a count | A booking that was confirmed with the adult-member cover the club requires has since lost it — an officer overrode the refusal, a membership lapsed, another booking on the same account was cancelled, or a payment or lifecycle change removed the person who was covering it. It only appears where the lodge is set to **stop** a non-compliant booking and to allow cover from another booking on the same account (see [Booking Policies](booking-policies.md)) | Open the booking. Four things clear it, and any one of them is enough: put a qualifying adult member back on the party or on another confirmed booking on the same account for those nights, amend the booking so the uncovered nights go away, approve a policy exception for it, or cancel it. The entry clears itself once one of those is true — there is nothing to tick off. **The stay is never held up over this and nothing is ever cancelled automatically**: the beds and the payments are untouched while the count stands, and the booking owner has already been emailed once about it |
 | A signal reappears after you act | The underlying record is still in the stuck state | Follow the **Open** link and complete the resolution there; the signal clears on the next generation |
 | A payment/Xero signal is Critical | A settlement or sync didn't complete | Open it and reconcile; see [Payments](payments.md) / [Xero Sync](xero.md) |

@@ -25,8 +25,8 @@ Do not infer a staging host from production DNS guesses.
 ## Auth Path
 
 - Sign-in path: `/login`
-- Seeded admin account after `prisma/seed.ts`: the `SEED_ADMIN_EMAIL` value
-  from `.env.staging`.
+- Seeded admin account after `run --rm seed` (which runs `prisma/seed.ts`):
+  the `SEED_ADMIN_EMAIL` value from `.env.staging`.
 - Required post-seed action for shared staging: change the seed admin password
   before sharing the environment.
 
@@ -65,7 +65,7 @@ docker compose --env-file .env.staging -p tacbookings-staging \
 
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml \
-  exec app ./node_modules/.bin/tsx --conditions=react-server prisma/seed.ts
+  run --rm seed
 ```
 
 Verify the target:
