@@ -992,7 +992,11 @@ note.
    `callXeroApi` meters usage and trips process-local cool-downs
    (`XeroDailyLimitError`, `XeroTransientOutageError`).
 2. **Stale contact repair** — `retryXeroWriteWithContactRepair` repairs the
-   member↔contact link once and retries the write.
+   member↔contact link once and retries the write. Before the retry it
+   replaces the row's stored request with the caller's `buildRequestPayload`.
+   On a queued row that payload must keep every field the outbox and Retry
+   read, `queueType` first: a row given back to PENDING without it is never
+   claimed again (#5221, `INV-INT-037`).
 3. **Operation replay** — a FAILED ledger row is never auto-retried by the
    outbox loop (it only claims PENDING). Admins either replay immediately
    (`retryXeroSyncOperation`) or queue a background REQUEUE wrapper

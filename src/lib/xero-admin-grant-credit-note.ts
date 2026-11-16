@@ -5,7 +5,7 @@
 import { CreditType } from "@prisma/client";
 import { CreditNote, LineAmountTypes } from "xero-node";
 import { ADMIN_GRANT_CREDIT_NOTE_ROLE } from "@/lib/admin-grant-credit-note";
-import type { AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
+import { buildAdminGrantCreditNotePayload, type AdminGrantCreditNotePayload } from "@/lib/admin-grant-credit-note-payload";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
@@ -158,15 +158,12 @@ export async function createAdminGrantCreditNote(input: {
       operationId: syncOperation.id,
       createdByMemberId: operation.createdByMemberId ?? undefined,
       // A contact repair replaces the stored payload with this object (#3791).
-      // The queue fields have to stay on it: the next outbox pass reads
-      // `queueType` from the payload, and without it the row stays pending
-      // and the credit never receives its note.
+      // The queued request rides on it, built by its one builder (#5221): the
+      // outbox routes and claims the row by its `queueType`, and a row given
+      // back to PENDING without it is skipped on every pass.
       buildRequestPayload: (resolvedContactId) => ({
+        ...buildAdminGrantCreditNotePayload(payload),
         creditNotes: [buildCreditNote(resolvedContactId)],
-        queueType: payload.queueType,
-        amountCents: payload.amountCents,
-        mappingKey: payload.mappingKey,
-        memberCreditId: payload.memberCreditId,
       }),
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
