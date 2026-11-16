@@ -20,6 +20,7 @@ const { mockPrisma, mockCreateAuditLog } = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mockCreateAuditLog }));
 
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import {
   archiveSupersededEmailFailures,
   getExhaustedEmailFailureReviewQueue,
@@ -93,6 +94,8 @@ describe("archiveSupersededEmailFailures", () => {
           bookingId: { in: ["booking-1"] },
           templateName: { in: ["booking-confirmed"] },
           status: "FAILED",
+          // Only rows at the retry ceiling: one still being retried is not superseded.
+          attempts: { gte: EMAIL_RETRY_MAX_ATTEMPTS },
           createdAt: { lt: sendStartedAt },
         }),
       }),
