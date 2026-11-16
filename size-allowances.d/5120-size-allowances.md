@@ -15,7 +15,7 @@ reason: adds destructive-action confirmation wording and dialogs to admin
   of this fix.
 
 file: src/app/(admin)/admin/membership/family-groups/page.tsx
-lines: 922
+lines: 924
 reason: adds destructive-action confirmation wording and dialogs to admin
   pages; those lines sit inside this file, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part
@@ -29,7 +29,7 @@ reason: adds destructive-action confirmation wording and dialogs to admin
   of this fix.
 
 file: src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx
-lines: 1283
+lines: 1274
 reason: adds destructive-action confirmation wording and dialogs to admin
   pages; those lines sit inside this file, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part
@@ -43,7 +43,7 @@ reason: adds destructive-action confirmation wording and dialogs to admin
   refactor of its own, not part of this fix.
 
 function: src/app/(admin)/admin/membership/family-groups/page.tsx#FamilyGroupsTab
-lines: 860
+lines: 861
 reason: adds destructive-action confirmation wording and dialogs to admin
   pages; those lines sit inside the function `FamilyGroupsTab`, which was
   already over its limit before this change, and lifting it apart is a
@@ -64,7 +64,7 @@ reason: adds destructive-action confirmation wording and dialogs to admin
   refactor of its own, not part of this fix.
 
 function: src/app/(admin)/admin/rules/seasons/page.tsx#SeasonsPage
-lines: 417
+lines: 455
 reason: adds destructive-action confirmation wording and dialogs to admin
   pages; those lines sit inside the function `SeasonsPage`, which was already
   over its limit before this change, and lifting it apart is a refactor of its
