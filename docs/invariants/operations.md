@@ -494,9 +494,9 @@ rules first written here. #2765 extended it with the measured-audience half.
 
 - **A row-capped admin list shows its total and reaches every row (#4960).**
   When an admin route answers one page of a list, every screen that reads it
-  for that list shows the total ("Showing 1–25 of 40", even on a single page)
-  and a pager that reaches the last row, in the same change that adds the cap.
-  A cap with no pager is silent data loss: #297 hid the longest-waiting requests.
+  for that list has a pager that reaches the last row, and an officer queue
+  shows the total even on a single page, in the same change that adds the cap.
+  A cap with no pager is silent data loss (#297).
 - One shape, one pager. A capped route parses `adminListPageQueryFields` and
   answers through `adminListPage`, both in `src/lib/admin-list-page.ts`; a
   screen pages through `useAdminQueuePage` and renders the shared `Pagination` with
@@ -511,12 +511,13 @@ rules first written here. #2765 extended it with the measured-audience half.
   policy-exception queue merges two tables, so it counts each and reads each
   only to the end of the page asked for: its total is exact.
 - Enforced by `src/lib/__tests__/admin-queue-pagination-census.test.ts`, which
-  names this ID: every client file fetching a route in `CAPPED_QUEUE_ROUTES`
-  must page through the hook, guard its reads with `beginLoad`, and render
-  `Pagination` outside its loading branch, or be exempt in `NOT_A_QUEUE_LIST`;
-  each route must call `adminListPage`. It reads source text, so a new capped
-  route is covered once added to that map; other admin lists keep their own
-  page fields until next changed.
+  names this ID: a client file fetching a route in `CAPPED_QUEUE_ROUTES` (new
+  capped routes go there) must page through the hook, guard its reads with
+  `beginLoad` and render `Pagination` outside its loading branch, or be exempt
+  in `NOT_A_QUEUE_LIST`; each route must call `adminListPage` and spread
+  `adminListPageQueryFields`. Other lists it walks take range text and URL
+  page from `formatAdminListRange`, `parseAdminListPageParam` and
+  `setAdminListPageParam`; one outside it keeps its own pager.
 
 ## INV-OPS-002
 
@@ -898,3 +899,33 @@ token needs Actions read access.
 - Enforced by `scripts/ci/main-push-runs-complete.test.ts`, which evaluates
   each workflow's group for a push and a pull request, and by the
   `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
+
+## INV-OPS-022
+
+A Docker-only install can create its first admin with Docker alone, and the
+commands that do it are the ones CI runs. `DEPLOYMENT.md` "First Bootstrap"
+gives the seed as one plain line, `docker compose run --rm seed`, after the
+database roles are provisioned and switched on in `.env` and before the web
+slots start. The `seed` service runs on the builder image, the same image and
+build as `migrate`, because the runner image holds no source. It sits behind a
+profile, so `docker compose up` never starts it and an upgrade never runs it.
+It connects as the application role with a bounded pool counted in the
+connection budget, and reads the `SEED_` secrets from `.env` through
+`environment:` only, never as a build argument or on the command line.
+
+Every operator doc that tells somebody how to seed a Compose install names that
+service; none runs the seed in the app container (`exec app`), whose image
+cannot run it. The setup checklist names the Docker and developer commands from
+`src/lib/seed-commands.ts`. `.env.example` is copied by the first step, so no
+line gives Compose an empty value followed by a comment: Compose reads the
+comment as the value.
+
+- Why: #4977. "First Bootstrap" had lost its seed step, three docs gave an
+  `exec app` command that fails in the runner image, and CI seeded from the
+  host, so no check ran what an operator is told to run.
+- Enforced by `scripts/ci/first-install-smoke.mjs`, which reads the steps out of
+  `DEPLOYMENT.md` and runs them on an empty database in the
+  `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
+  nothing written; a second run must change no seeded value (bar the built-in
+  displays' `updatedAt`, refreshed from code by design). Also enforced by
+  `first-install-seed-contract.test.ts`.

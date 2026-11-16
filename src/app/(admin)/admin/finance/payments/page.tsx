@@ -58,12 +58,7 @@ import {
   FileText,
   Landmark,
   Receipt,
-  CheckCircle2,
-  XCircle,
   AlertTriangle,
-  Clock,
-  MinusCircle,
-  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -84,6 +79,13 @@ import {
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { SortHeader } from "@/components/admin/sort-header";
 import { Pagination } from "@/components/admin/admin-pagination";
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  adminListPage,
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page";
 import { DiagnosticsRecordButton } from "@/components/help-widget/diagnostics-record-button";
 import {
   usePublishDiagnosticsViewState,
@@ -100,9 +102,14 @@ import {
   isAppliedPaymentsSearch,
   type AppliedPaymentStatus,
 } from "./_applied-query-vocabulary";
+import {
+  settlementKindChip,
+  settlementKindLabel,
+  xeroStateChip,
+  xeroStateLabel,
+} from "./_payment-chips";
 import { StatusChip } from "@/components/ui/status-chip";
 import { MiniChip } from "@/components/ui/mini-chip";
-import { type ChipTone } from "@/lib/chip-tones";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
@@ -165,11 +172,6 @@ const PAYMENT_SOURCE_FILTER_LABELS: Record<string, string> = {
   STRIPE: "Stripe",
   INTERNET_BANKING: "Internet Banking",
 };
-
-function parsePageParam(value: string | null) {
-  const page = Number(value);
-  return Number.isInteger(page) && page > 0 ? page : 1;
-}
 
 function getSortBy(value: string | null): PaymentSortBy {
   return paymentSortColumns.has(value as PaymentSortBy)
@@ -243,84 +245,6 @@ interface PaymentRow {
     creditsFromCancellation: CancellationCreditEntry[];
     member: { id: string; firstName: string; lastName: string; email: string };
   };
-}
-
-function xeroStateLabel(state: string) {
-  switch (state) {
-    case "invoiceLinked":
-      return "Invoice linked";
-    case "invoiceMissing":
-      return "Invoice missing";
-    case "operationFailed":
-      return "Failed activity";
-    case "operationPartial":
-      return "Partial activity";
-    case "operationPending":
-      return "Pending activity";
-    default:
-      return "No invoice needed";
-  }
-}
-
-// Xero states have no StatusChip `kind`, so they render through the shared
-// MiniChip family: a tone + icon carrying the same meaning the old colour-only
-// badges did. Restores the distinct hues the five-tone collapse flattened (#156):
-// linked = success (green), invoiceMissing = orange (its own accent hue, as the
-// old `xeroStateClass` used), partial/pending = warning (amber, distinguished by
-// icon), failed = danger (red), not-needed = neutral. Labels are unchanged.
-function xeroStateChip(state: string): { tone: ChipTone; icon: LucideIcon } {
-  switch (state) {
-    case "invoiceLinked":
-      return { tone: "success", icon: CheckCircle2 };
-    case "invoiceMissing":
-      return { tone: "cat4", icon: FileText };
-    case "operationFailed":
-      return { tone: "danger", icon: XCircle };
-    case "operationPartial":
-      return { tone: "warning", icon: AlertTriangle };
-    case "operationPending":
-      return { tone: "warning", icon: Clock };
-    default:
-      return { tone: "neutral", icon: MinusCircle };
-  }
-}
-
-// Each cancellation-settlement kind gets a distinct hue (#156): the Settlement
-// column previously rendered every kind on the same neutral tone, hiding what
-// kind of settlement happened. Icon + label still carry the meaning.
-function settlementKindChip(kind: string): { tone: ChipTone; icon: LucideIcon } {
-  switch (kind) {
-    case "cardRefund":
-      return { tone: "info", icon: CreditCard };
-    case "accountCredit":
-      return { tone: "cat3", icon: Wallet };
-    case "mixed":
-      // Pulled out of the blue-purple arc (#156): info/indigo/purple crowded
-      // three kinds into pale blue, and cardRefund vs mixed co-occur. cat4 orange sits
-      // well clear of the other four kinds (info blue / cat3 / cat6 teal).
-      return { tone: "cat4", icon: Receipt };
-    case "restoredCredit":
-      return { tone: "cat6", icon: Wallet };
-    case "none":
-    default:
-      return { tone: "neutral", icon: MinusCircle };
-  }
-}
-
-function settlementKindLabel(kind: string) {
-  switch (kind) {
-    case "cardRefund":
-      return "Card refund";
-    case "accountCredit":
-      return "Account credit";
-    case "mixed":
-      return "Mixed";
-    case "restoredCredit":
-      return "Restored credit";
-    case "none":
-    default:
-      return "None";
-  }
 }
 
 /**
@@ -466,8 +390,8 @@ export default function PaymentsPage() {
   const [amountMax, setAmountMax] = useState(searchParams.get("amountMax") || "");
   const [sortBy, setSortBy] = useState<PaymentSortBy>(() => getSortBy(searchParams.get("sortBy")));
   const [sortDir, setSortDir] = useState<SortDir>(() => getSortDir(searchParams.get("sortDir")));
-  const [page, setPage] = useState(() => parsePageParam(searchParams.get("page")));
-  const [pageSize] = useState(25);
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")));
+  const [pageSize] = useState(ADMIN_LIST_DEFAULT_PAGE_SIZE);
   const [data, setData] = useState<PaymentRow[]>([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<PaymentsSummary>(EMPTY_PAYMENTS_SUMMARY);
@@ -595,7 +519,7 @@ export default function PaymentsPage() {
     if (amountMax) params.set("amountMax", amountMax);
     if (sortBy !== "lastUpdated") params.set("sortBy", sortBy);
     if (sortDir !== "desc") params.set("sortDir", sortDir);
-    if (page > 1) params.set("page", String(page));
+    setAdminListPageParam(params, page);
     return params;
   }, [
     status,
@@ -748,7 +672,7 @@ export default function PaymentsPage() {
     }
   }
 
-  const totalPages = Math.ceil(total / pageSize);
+  const { totalPages } = adminListPage({ page, pageSize, total });
   // #3372: the "may understate" check Reports carries beside the same figure.
   const netCollectedLedgerGapWarning = formatNetCollectedLedgerGapWarning(
     summary,
@@ -1192,7 +1116,7 @@ export default function PaymentsPage() {
         toolbar={
           loadError ? null : (
             <p>
-              Showing {data.length} of {total} payment{total === 1 ? "" : "s"}
+              {total} payment{total === 1 ? "" : "s"}
             </p>
           )
         }
@@ -1494,7 +1418,7 @@ export default function PaymentsPage() {
         page={page}
         totalPages={totalPages}
         onPageChange={setPage}
-        summary={`Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}`}
+        summary={formatAdminListRange({ page, pageSize, total })}
       />
     </div>
   );

@@ -159,10 +159,9 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   `processing` answers `PAYMENT_PROCESSING` in its own words.
 - **Retired** (`isCardIntentRetired`, through the doors' check) once the
   machinery owns it.
-- **The `/pay` link asks the server what a card success did**
-  (`checkCardSuccess`) at both exits: the resolved confirmation (`succeeded`
-  or `processing`) and the redirect return (#4955). It never shows the pay
-  buttons meanwhile; unsettled `processing` reads "being processed".
+- **Every card surface asks the server what a redirect return or an in-page
+  `processing` did** (#4955), never showing the pay buttons meanwhile;
+  unsettled `processing` reads "being processed".
 - Proven on PostgreSQL by `superseded-intent-card-doors.realdb.test.ts`, and
   by `superseded-capture-ownership.test.ts`, `payment-recovery.test.ts`,
   `issue-1992-duplicate-capture-refund.test.ts` and the door suites.
@@ -4309,3 +4308,34 @@ alert nobody received answers 500).
   not read the hold and can still mint account credit.
 - Proven by `stripe-dispute.test.ts`, `admin-stripe-dispute-alert.test.ts`,
   `cancel-refund-method.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
+
+## INV-PAY-156
+
+**Related: `INV-PAY-149`** (the dead card refund list), **`INV-SSOT-004`**
+(one instrument per figure).
+
+- **A Stuck States signal names the records behind its count** (#4959). The
+  cancelled bookings with an unrecorded refund, the three recovery-operation
+  signals, the two stale group settlements, the undelivered bank transfer
+  amount alerts and the bookings with unnamed guests each carry named rows: the
+  booking reference and owner (`bookingDetailRow`), a short summary and a link
+  to the booking. The hosting-cover rows use the same row shape.
+- **The rows are read with the count's own filter.** Each signal's `where` is
+  one named builder (`cancelledRefundUnrecordedWhere`,
+  `staleProcessingRecoveryWhere`, `overduePendingRecoveryWhere`,
+  `PAYMENT_RECOVERY_EXHAUSTED_WHERE`, the exhausted alert marker filter, the
+  unnamed-guest filter), so the list and the count cannot disagree. At most
+  `STUCK_STATE_DETAIL_ROW_CAP` (50) rows show, and the page says how many more.
+- **The gates fail closed.** Payment rows show names and money, so
+  `getStuckStateDashboard` reads them only when the caller passes both
+  `viewerCanViewMembership` and `viewerCanViewFinance`; unnamed-guest rows need
+  the first. Either flag left out means no rows and no row read; the count,
+  severity and **Open** link stay for every Support viewer (#2823).
+- **Open goes where the records are:** the signal's rows on the page (an anchor
+  the hub registry mints), or Background Jobs for operations still retrying. A
+  row Card refunds Stripe gave up on also lists says to settle it there.
+- Read-only: no count, severity, Refunds owed, Net Collected, health check,
+  lock or transaction changes.
+- Proven by `stuck-state-dashboard.test.ts`, `named-rows.test.tsx`,
+  `admin-hubs-registry.test.ts` and
+  `stuck-state-cancelled-unrecorded.realdb.test.ts`.

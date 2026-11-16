@@ -1141,7 +1141,14 @@ same permission `/api/admin/members` requires); the count and the card-level
 link stay for every support admin (#2823). Both callers (the page and
 `/api/admin/stuck-states`) resolve that flag from the acting admin's permission
 matrix and default it to `false`, so a caller that omits it fails closed to no
-names.
+names. Since #4959 the *Bookings with unnamed guests* card names its bookings
+under the same flag, and the payment signals (cancelled refunds unrecorded,
+the three recovery-operation signals, the two stale group settlements and
+undelivered bank transfer amount alerts) name theirs only when the caller also
+passes `viewerCanViewFinance`. Each row set is read with the count's own
+`where` and capped at `STUCK_STATE_DETAIL_ROW_CAP`; the page says how many more
+there are (`INV-PAY-156`). The payment counts, their row reads and the shared
+row shape live in `src/lib/stuck-state-payment-signals.ts`.
 The page also lists the card refunds Stripe gave up on (#3372), each with its
 "Paid another way" close: the list names bookings and money still owed, so the
 page loads it only for `{ area: "finance", level: "view" }`, and the close
@@ -1259,12 +1266,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **109 components render a banner, and
- 346 of the 402 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **110 components render a banner, and
+ 347 of the 403 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 346 split by WHICH rule
-covers them: **306** pass the literal
+test currently pins, which is the only authority.) Those 347 split by WHICH rule
+covers them: **307** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **40**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
@@ -1946,20 +1953,38 @@ layer yet.
 
 **A row-capped admin list shows its total and reaches every row
 (`INV-OPS-020`, #4960).** An admin route that answers one page of a list
-answers through `adminListPage` (`src/lib/admin-list-page.ts`), and every
-screen that reads it for that list pages through `useAdminQueuePage`
+answers through `adminListPage` (`src/lib/admin-list-page.ts`), and each
+officer queue screen that reads it for that list pages through `useAdminQueuePage`
 (`src/components/admin/use-admin-queue-page.ts`) and renders the shared
 `Pagination` with its "Showing 1–25 of 40" total line, shown even on a single
-page. The eight officer queues — member applications, refund appeals, booking
-approvals, change requests, public requests, policy exceptions, and the
-membership cancellation and archive queues — do so today: pending filters read
-oldest first, a filter change returns to page 1, the page is kept in the URL,
-a slower read for a page the officer has left never replaces the list, the
-pager stays mounted through a read so keyboard focus survives a page change,
-and a focused `bookingId=` / `requestId=` link pins its record when it is off
-the page. The policy exceptions queue merges two tables, so it counts each
-and reads each only to the end of the page asked for: its total is exact. `admin-queue-pagination-census.test.ts` fails a client file that
-reads a capped queue route without the hook and the pager.
+page. The officer queues — member applications, refund appeals, booking
+approvals, change requests, public requests, policy exceptions, the
+membership cancellation and archive queues, and both deletion-request
+queues — do so today: pending filters read
+oldest first, a filter change returns to page 1, the page is kept in the URL
+wherever the screen keeps its filter there (not the deletion-request queues or
+the policy exceptions tab, which keep it in memory), a slower read for a page
+the officer has left never replaces the list, the pager stays mounted through a
+read so keyboard focus survives a page change, and a focused `bookingId=` /
+`requestId=` link pins its record when it is off the page (approvals, change
+requests and public requests, the queues that read a record by id). The
+policy exceptions queue merges two tables, so it counts each and reads each only
+to the end of the page asked for: its total is exact.
+`admin-queue-pagination-census.test.ts` fails a client file that reads a capped
+queue route without the hook and the pager. The other paged admin lists
+(bookings, members, payments, subscriptions, waitlist, audit log, Xero inbound
+events and operations, promo redemptions) page through their own state rather
+than the hook, show the range line once the list has more than one page, and
+share `formatAdminListRange` for the range text and
+`parseAdminListPageParam` / `setAdminListPageParam` for the URL page; the same
+census fails hand-rolled range arithmetic, an unparsed page read or a
+hand-written page write. Five capped lists sit outside this. System issue
+reports, messages notice reads and the privacy retention preview keep their own
+pagers until next changed. The communications history and the maintenance queue
+have no pager yet: the history reads its newest 25 sends with no total, and the
+queue says "Showing the newest N of T". Both predate #4960, which left them out
+of scope, and both routes already take their page fields from the shared schema,
+so a pager needs no route change.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same

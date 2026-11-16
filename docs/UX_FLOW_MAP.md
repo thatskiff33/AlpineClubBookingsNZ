@@ -893,7 +893,7 @@ Screen: `/admin/email-deliverability`.
 
 Shows: Email delivery results and eligible retry controls.
 
-Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail.
+Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail. A failed booking confirmation, pre-arrival reminder or guest payment link links to its booking, where an officer sends a fresh copy.
 
 [Guide](guides/email-deliverability.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -1012,6 +1012,10 @@ Screen: `/admin/stuck-states`.
 Shows: Operational incidents and guided repair actions.
 
 Journey: Inspect flagged records and use the documented recovery for the selected state.
+A signal over particular bookings lists them under it (at most 50, then "and N
+more"), each linking to the booking; its **Open** link goes to that list, or to
+Background Jobs for operations still retrying (#4959). Payment lists need
+Finance view and Membership view; the unnamed-guest list needs Membership view.
 A card refund Stripe gave up on is settled on its row, never with a new Stripe
 dashboard refund (#4368): **Paid another way**, or **Try the card again** after a
 confirm dialog; a row a later Stripe refund covers reads "nothing left owed" and
