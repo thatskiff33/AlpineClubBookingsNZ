@@ -70,8 +70,10 @@ takes no lodge parameter.
 
 `MemberMoneyEvent`, `MemberMoneyJournal`, `MemberMoneyObligation`,
 `MemberMoneyApplication`, `MemberMoneySourceLink`, `MemberMoneySourcePosting`,
-`MemberMoneyRefundReservation` and `MemberMoneyRefundReservationRelease` are club-wide economic
-records: one receipt may cover several lodges. A reservation names its obligation
+`MemberMoneyRefundReservation`, `MemberMoneyRefundReservationRelease`, `MemberMoneyExportManifest`
+and `MemberMoneyExportCoverage` are club-wide economic
+records: one receipt may cover several lodges. An export manifest names its
+booking, which identifies the lodge. A reservation names its obligation
 and its funding batch, which identify the booking; an application batch names
 one booking and takes that booking's Payment row. `MemberMoneyLine` carries optional
 `bookingId` and `lodgeId` dimensions with RESTRICT foreign keys and no update
@@ -941,6 +943,13 @@ setup wizard: a second copy bought no reachable safety, pushed a 913-line file
 past its size ceiling, and made the wizard reject any incomplete test fixture —
 it broke a passing back-link test on a lodge row that simply had not bothered to
 include `doorCode`.
+
+Booking fresh email copies (`booking-fresh-email-copy.ts`, ALP-588) use the
+selected booking's persisted `lodgeId` for confirmations and pre-arrival
+reminders. The shared reminder projection carries that same lodge to the
+sender. Split payment links delegate to `issueSplitGuestPaymentLink`, which
+uses each split child's lodge and existing per-lodge mint lock. These actions
+never accept a lodge from the caller.
 
 ## Presentation Rule
 

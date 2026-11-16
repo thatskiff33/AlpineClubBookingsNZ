@@ -94,6 +94,7 @@ import {
 import type { AdminPermissionArea } from "@/lib/admin-permissions";
 import { defuseRoleLabels, foldUntrustedText } from "../../untrusted-text";
 import { FINANCE_UNPARSEABLE_VALUE } from "./finance-shared";
+import { isCalendarDate } from "@/lib/club-time";
 
 /**
  * The area a CORRELATION entry requires and a RECORD-SCOPED audit entry does not.
@@ -302,13 +303,16 @@ export const AID6B_DEFAULT_SEARCH_WINDOW: Aid6bSearchWindow = "7d";
  * in SQL, where the comparison is against a `date` column and is therefore
  * timezone-independent by construction.
  *
- * The regex is shape only; PostgreSQL rejects `2026-02-30` itself, and a rejection
- * surfaces as `query_failed`. The bounding years exist so a typo cannot become a
- * scan of a range no booking can occupy.
+ * The regex bounds the shape and the years, and `isCalendarDate` refuses a day
+ * that does not exist (`2026-02-30`, `2026-02-29`) at argument parse. Without
+ * it the value would pass to PostgreSQL, which rejects it itself and surfaces as
+ * `query_failed`, a failed query rather than a refused argument. The bounding
+ * years exist so a typo cannot become a scan of a range no booking can occupy.
  */
 export const NZ_DATE_ONLY = z
   .string()
-  .regex(/^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/);
+  .regex(/^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/)
+  .refine((value) => isCalendarDate(value), { message: "Not a real calendar day." });
 
 /**
  * A NAME search term. Letters, spaces, hyphens and apostrophes — the characters
@@ -371,19 +375,6 @@ export const PHONE_SEARCH_TERM = z
   .refine((digits) => digits.length >= 6 && digits.length <= 15);
 
 /**
- * A NEW ZEALAND CALENDAR DAY on the way out.
- *
- * Every date this pack projects is produced by `dateOnly()` in the entry's own SQL
- * or by `formatDateOnly` in its evidence source, so a value that is not
- * day-shaped means the projection read a column it did not think it was reading.
- * Reporting the sentinel makes that visible instead of shipping whatever the column
- * held into a field a consumer will parse as a date — and, worse, than shipping a
- * full ISO instant, which a model would read as a moment and narrate with a time
- * the booking does not have.
- */
-const PROJECTABLE_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-
-/**
  * A boolean that may be genuinely UNKNOWN.
  *
  * `boolOf` maps everything that is not exactly `true` to `false`, which is right
@@ -407,11 +398,22 @@ export function nullableBoolOf(value: unknown): boolean | null {
   return value === true;
 }
 
+/**
+ * A NEW ZEALAND CALENDAR DAY on the way out.
+ *
+ * Every date this pack projects is produced by `dateOnly()` in the entry's own SQL
+ * or by `formatDateOnly` in its evidence source, so a value that is not a real
+ * calendar day means the projection read a column it did not think it was reading.
+ * Reporting the sentinel makes that visible instead of shipping whatever the column
+ * held into a field a consumer will parse as a date — and, worse, than shipping a
+ * full ISO instant, which a model would read as a moment and narrate with a time
+ * the booking does not have.
+ */
 export function dateOnlyOrNull(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const text = String(value);
   if (text.length === 0) return null;
-  return PROJECTABLE_DATE_ONLY.test(text) ? text : FINANCE_UNPARSEABLE_VALUE;
+  return isCalendarDate(text) ? text : FINANCE_UNPARSEABLE_VALUE;
 }
 
 /**
