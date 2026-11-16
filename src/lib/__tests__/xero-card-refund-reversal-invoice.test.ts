@@ -199,6 +199,17 @@ describe("the failed-card-refund reversal invoice (#4369)", () => {
     );
   });
 
+  it("a stored document date that is not a real day is not used: the date is chosen afresh (ALP-580)", async () => {
+    mocks.linkFindFirst.mockImplementation(async (query: { where: { role: string } }) =>
+      query.where.role === "CARD_REFUND_REVERSAL_INVOICE"
+        ? { xeroObjectId: "inv-1", xeroObjectNumber: "INV-1", active: true, metadata: { documentDate: "2026-02-30", amountCents: 8_000 } }
+        : null,
+    );
+    await createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-1") }, providers() as never);
+    expect(mocks.createInvoices).not.toHaveBeenCalled();
+    expect(mocks.createPayment).toHaveBeenCalledWith(expect.objectContaining({ invoiceId: "inv-1", date: CLOSED_ON }));
+  });
+
   it("a Stripe receipt that fails leaves the invoice link and completes partial", async () => {
     mocks.createPayment.mockRejectedValue(new Error("payment refused"));
     await createXeroCardRefundReversalInvoice({ syncOperation: xeroClaim("op-1") }, providers() as never);

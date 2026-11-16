@@ -584,11 +584,11 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  545
+row-producing sites:  551
 uncategorised:        0
-category values: admin 115, booking 109, xero 51, family 35, payment 73,
-                 lodge 68, account 19, security 26, privacy 23,
-                 communication 21, system 4
+category values: admin 118, booking 109, xero 51, family 35, payment 73,
+                 lodge 68, account 19, security 26, privacy 25,
+                 communication 22, system 4
 ```
 
 `admin` was 96 when this page was written for #2730 (87 kept + 9 held) and is 98
@@ -904,7 +904,13 @@ refund writes when the journal refused to reserve its slice and Stripe was not a
 reservation nothing could answer. Both filed `payment` beside the other card refund rows;
 nobody's readership changes.
 
-#4632 then added two (`admin` 112 -> 114, 538 -> 540, MEASURED with
+#4915 then added two (`privacy` 23 -> 25, 543 -> 545, MEASURED with
+`pnpm run audit:census`): `member.data_exported`, a member downloading their own
+data, and `member.subject_access_exported`, a Full Admin's subject access report on
+one person. Both are `privacy`, so they need `membership:view` to read, and the
+report's row reaches the subject's own timeline on purpose: the subject sees that a
+copy of their record was released.
+#4632 then added two (`admin` 116 -> 118, 549 -> 551, MEASURED with
 `pnpm run audit:census`): `CLUB_TAX_TREATMENT_SCHEDULED` and
 `CLUB_TAX_TREATMENT_SCHEDULE_CANCELLED`, the rows the club tax treatment's one writer
 (`club-tax-settings-write.ts`) writes when a Full Admin schedules or cancels a GST change.

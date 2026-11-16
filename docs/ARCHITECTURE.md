@@ -729,13 +729,16 @@ page — and `getByRole("heading", …)` can never match it.
 
 Four rules, and they are all deliberate:
 
-1. **There is no default level, and adding one is not a developer's decision.**
-   A card that is a page's main section and a card nested inside another card's
-   content cannot share a level, so a global default would give roughly 167 call
-   sites a level nobody chose. A silently wrong level is worse for a
+1. **There is no default level, and every title classifies itself.** A card
+   that is a page's main section and a card nested inside another card's
+   content cannot share a level, so a global default would give hundreds of
+   call sites a level nobody chose. A silently wrong level is worse for a
    screen-reader user than no heading at all, because it corrupts the outline
-   they navigate by. Whether `CardTitle` should ever gain a default is an open
-   question on #2796 and belongs to the repository owner.
+   they navigate by. The owner decided this on #2796 (D1, 13 Aug 2026): no
+   default, and every `CardTitle` says whether it is a heading — a level from
+   1 to 6, or `headingLevel="none"` when the call site has looked and decided
+   it is not part of the outline. `"none"` renders exactly what an omitted prop
+   renders.
 2. **Pick the level from the page's real outline.** Find the page's `<h1>`, do
    not skip a level, and go one deeper for a card rendered inside another card's
    `CardContent`. If the page has no `<h1>` at all, that is a different bug —
@@ -758,8 +761,25 @@ Four rules, and they are all deliberate:
    renders — a positive assertion of that shape can never pass, and a negative
    one (`toHaveCount(0)`) passes *vacuously*, which is worse.
 
-The sweep is partial by design. #2796 covered the member-facing journeys; the
-admin, finance and lodge screens are the long tail and are tracked separately.
+**The census enforces D1 while the sweep finishes** (#4951,
+`INV-PUB-006`). `src/components/ui/__tests__/card-title-classification-census.test.ts`
+fails when any `CardTitle` under `src/app/(public)`, `src/app/(authenticated)`,
+`src/app/(website-dynamic)` or in the shared member cards it lists omits
+`headingLevel`, and holds the count of unclassified titles everywhere else at
+exactly `UNCLASSIFIED_BASELINE` (253 when #4951 landed). It fails both ways: a
+new unclassified title must be classified rather than raise the number, and a
+sweep that classifies titles lowers the constant in the same change. The admin,
+finance and lodge screens are swept by area, as are the member components that
+several kinds of page share (the edit-booking panel, the booking editor and the
+guest-consent card). The public website under `src/app/(website)`, including the
+membership application page, is held at the baseline too, not forbidden. When
+the baseline reaches zero, `headingLevel` becomes required by the type and the
+census retires.
+
+A screen that is one card is the page: give that card's title
+`headingLevel={1}` in every render state, and give a loading state with no
+visible title an sr-only `<h1>`, as #1242 did for `/login/enroll`. Where the page
+already renders an `<h1>`, its cards are level 2 — never two `<h1>`s.
 
 ### What a browser may say about a write it never saw an answer to (#2668)
 
@@ -1239,12 +1259,12 @@ Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
 Measured
 on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **108 components render a banner, and
- 339 of the 394 `ViewOnlyActionButton` call sites opt out** of the per-button
+figures rather than trusting a hand count: **111 components render a banner, and
+ 350 of the 405 `ViewOnlyActionButton` call sites opt out** of the per-button
 reason. (Earlier revisions of this page published 76/232/264/211 — those were
 upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 339 split by WHICH rule
-covers them: **299** pass the literal
+test currently pins, which is the only authority.) Those 350 split by WHICH rule
+covers them: **310** pass the literal
 `describeReason={false}` and are covered by a banner in the same file, and **40**
 pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
 verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
@@ -1304,6 +1324,13 @@ default** (`describeReason` left at `true`), in three shapes:
   dead buttons. Any second banner for the finance scope would break the owner's
   one-banner-per-page decision and trip the nesting rule, so the per-button
   reason stays. Bucket by SCOPE, not by folder, when reading this figure.
+
+The Setup Wizard gates checklist progress, provider tests and completion on
+`support` edit access (#4971). Its support banner stays mounted through loading
+and errors. The embedded `LodgeCapacityCard` keeps its own `lodge` edit banner:
+support edit access does not grant lodge edit access, or the reverse. The
+banner census checks this specific cross-area pair separately from duplicate
+banners covering the same permission.
 
 Every figure in this section is asserted mechanically by
 `src/components/admin/__tests__/view-only-banner-contract.test.ts` — the totals,
@@ -1916,6 +1943,41 @@ disappear as their fields are fixed, so nothing is announced while the person
 types. The first form on the layer is the committee page's role form, a
 submit-style form rather than a staged section; no staged section uses the
 layer yet.
+
+**A row-capped admin list shows its total and reaches every row
+(`INV-OPS-020`, #4960).** An admin route that answers one page of a list
+answers through `adminListPage` (`src/lib/admin-list-page.ts`), and each
+officer queue screen that reads it for that list pages through `useAdminQueuePage`
+(`src/components/admin/use-admin-queue-page.ts`) and renders the shared
+`Pagination` with its "Showing 1–25 of 40" total line, shown even on a single
+page. The officer queues — member applications, refund appeals, booking
+approvals, change requests, public requests, policy exceptions, the
+membership cancellation and archive queues, and both deletion-request
+queues — do so today: pending filters read
+oldest first, a filter change returns to page 1, the page is kept in the URL
+wherever the screen keeps its filter there (not the deletion-request queues or
+the policy exceptions tab, which keep it in memory), a slower read for a page
+the officer has left never replaces the list, the pager stays mounted through a
+read so keyboard focus survives a page change, and a focused `bookingId=` /
+`requestId=` link pins its record when it is off the page (approvals, change
+requests and public requests, the queues that read a record by id). The
+policy exceptions queue merges two tables, so it counts each and reads each only
+to the end of the page asked for: its total is exact.
+`admin-queue-pagination-census.test.ts` fails a client file that reads a capped
+queue route without the hook and the pager. The other paged admin lists
+(bookings, members, payments, subscriptions, waitlist, audit log, Xero inbound
+events and operations, promo redemptions) page through their own state rather
+than the hook, show the range line once the list has more than one page, and
+share `formatAdminListRange` for the range text and
+`parseAdminListPageParam` / `setAdminListPageParam` for the URL page; the same
+census fails hand-rolled range arithmetic, an unparsed page read or a
+hand-written page write. Five capped lists sit outside this. System issue
+reports, messages notice reads and the privacy retention preview keep their own
+pagers until next changed. The communications history and the maintenance queue
+have no pager yet: the history reads its newest 25 sends with no total, and the
+queue says "Showing the newest N of T". Both predate #4960, which left them out
+of scope, and both routes already take their page fields from the shared schema,
+so a pager needs no route change.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same

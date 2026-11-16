@@ -152,6 +152,11 @@ pnpm install --frozen-lockfile && pnpm exec prisma generate
 pnpm run setup:check                               # guided: pnpm run setup:wizard
 ```
 
+The copied `.env` declares `APP_ENVIRONMENT_ROLE=non-production`, which is right
+for a laptop. The club's live site sets `APP_ENVIRONMENT_ROLE=production`
+instead; [`DEPLOYMENT.md` → "First Bootstrap"](DEPLOYMENT.md#first-bootstrap)
+checks it before anything starts.
+
 Boot a full production-style stack (app + PostgreSQL) with Docker only:
 
 ```bash
@@ -217,8 +222,8 @@ blue/green production setup is in [`DEPLOYMENT.md`](DEPLOYMENT.md).
   migration-drift, static-analysis, and E2E checks are all required on `main`
   ([`docs/MAINTENANCE.md`](docs/MAINTENANCE.md)).
 - **Backups are drilled, not assumed.** S3-backed PostgreSQL backups are
-  configured in-app at Admin → Integrations → Database Backups (no `.env`
-  edits), run on demand or nightly, and ship with a scripted quarterly restore
+  configured in-app, through the Backup Setup wizard at Admin → Integrations
+  (no `.env` edits), run on demand or nightly, and ship with a scripted quarterly restore
   drill ([`DEPLOYMENT.md`](DEPLOYMENT.md),
   [`docs/MAINTENANCE.md`](docs/MAINTENANCE.md)).
 
