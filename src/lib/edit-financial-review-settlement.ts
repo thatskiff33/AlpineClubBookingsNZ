@@ -26,17 +26,14 @@ export { queueEditReviewChargeInvoiceInTransaction } from "@/lib/edit-financial-
 import { REVIEW_CHARGE_WRONG_KIND_MESSAGE } from "@/lib/edit-financial-review-charge-refusals";
 import {
   REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE,
-  REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
   REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
 } from "@/lib/edit-financial-review-refund-refusals";
 import { assertByHandReviewRefundWithinUnpromisedCash } from "@/lib/edit-refund-hand-back";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { executeEditReviewCardRefund } from "@/lib/edit-financial-review-card-refund";
-import { lockPaymentForRefundedTotal, planStripeRefundAllocation, type RefundAllocationSlice } from "@/lib/payment-transactions";
-import { readSupersededCaptureHeldBack } from "@/lib/superseded-capture-hold-back";
-import { lockMemberCreditLedger } from "@/lib/member-credit";
-import { SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE } from "@/lib/manual-refund-task-settlement-refusal";
+import type { RefundAllocationSlice } from "@/lib/payment-transactions";
+import { planEditReviewCardRefund } from "@/lib/edit-financial-review-card-plan";
 import { dispatchEditReviewXeroSettlement, type EditReviewHandBackXeroFacts } from "@/lib/edit-financial-review-xero-leg";
 import {
   finishEditReviewAccountCredit,
@@ -50,10 +47,7 @@ import {
 } from "@/lib/late-capture-refund-approval";
 import type { ClubFormat } from "@/lib/club-format";
 import type { ClubTimeZone } from "@/lib/club-time";
-import {
-  assertCardRefundNotOverPromised,
-  capturedShareOwedAfterCancellation,
-} from "@/lib/edit-financial-review-cancel-netting";
+import { capturedShareOwedAfterCancellation } from "@/lib/edit-financial-review-cancel-netting";
 import type { EditReviewSettlementTask } from "@/lib/edit-financial-review-settlement-task";
 import { cardShortfallSettlement } from "@/lib/cancel-card-refund-shortfall-settle";
 import type { CapacityRaceStripeRefunded } from "@/lib/capacity-race-refunded-total-correction";
@@ -435,35 +429,12 @@ export async function chooseEditReviewSettlementRoute({
       );
     }
     const { captureCents: refundCents, creditCents: creditBackCents } = await owed();
-    // Freeze the allocation and cap the amount in ONE read, on the caller's
-    // transaction and before its claim. Once the cap has passed the planned total
-    // cannot be short of it: the planner allocates newest-first across exactly
-    // the transactions the cap totalled.
-    // #4879 (`INV-PAY-150`): a live superseded capture's charge is left to its own refund,
-    // read under the Payment row (after lock(1) and the booking row); a review needing it is refused.
-    // #5171 review: the owner's member-credit key FIRST (`INV-LOCK-002`: member credit before the
-    // Payment row), since the completion's give-back and re-price take it after the claim. The read-only
-    // preview takes neither: it holds no lock(1), and the completion re-derives this under both.
-    if (!readOnlyPreview) {
-      const creditLedgerMemberId = bookingOwner(task.booking).memberId;
-      if (creditLedgerMemberId) await lockMemberCreditLedger(creditLedgerMemberId, store);
-      await lockPaymentForRefundedTotal(store, settlementPayment.id);
-    }
-    const heldBack = await readSupersededCaptureHeldBack(store, settlementPayment.id);
-    const { slices, totalRefundableCents } = await planStripeRefundAllocation({
-      paymentId: settlementPayment.id,
-      amountCents: refundCents,
-      store,
-      heldBackByTransaction: heldBack.byTransaction,
+    // #4879 (`INV-PAY-150`), #5171 review: the frozen plan and both caps, under the owner's member key and
+    // the Payment row, around a live superseded capture's hold-back (`edit-financial-review-card-plan.ts`).
+    const slices = await planEditReviewCardRefund({
+      paymentId: settlementPayment.id, bookingId: task.bookingId, ownerMemberId: bookingOwner(task.booking).memberId,
+      refundCents, format: club.format, store, readOnlyPreview,
     });
-    if (refundCents > totalRefundableCents) {
-      // #5171 review (`INV-SSOT`): named as the hand-back door names it when only the hold-back stands in the way.
-      if (refundCents <= totalRefundableCents + heldBack.totalCents) throw new ManualBookingPaymentError(SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE, 409);
-      throw new ManualBookingPaymentError(REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE, 400);
-    }
-    // #3835: and less the card refunds already promised and not yet made.
-    const capped = { paymentId: settlementPayment.id, bookingId: task.bookingId, refundCents, totalRefundableCents };
-    await assertCardRefundNotOverPromised({ ...capped, format: club.format, store });
     return {
       kind: "stripe-refund",
       paymentId: settlementPayment.id,

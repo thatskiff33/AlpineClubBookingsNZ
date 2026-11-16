@@ -1746,7 +1746,8 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // before the payment is read, as "Paid another way" takes it. #4851: and by
   // `closeGroupCardRefundPaidAnotherWay` and `tryOrganiserChildCardRefundAgain`,
   // the same helper, no new key. #4879: and by the edit review's card arm
-  // (`chooseEditReviewSettlementRoute`), after its lock(1), booking row and the
+  // (`chooseEditReviewSettlementRoute` through `planEditReviewCardRefund`),
+  // after its lock(1), booking row and the
   // owner's member-credit key, before it reads the superseded-capture hold-back
   // and plans; its still-owed preview takes no row lock; no new key.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and

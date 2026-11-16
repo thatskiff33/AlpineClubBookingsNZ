@@ -7361,7 +7361,8 @@ Stripe call:
   provider preflight (`processBookingModificationRefundOperation`). A manual
   hand-back reads the hold-back after its claim and after any credit
   give-back, so a member-ledger lock still comes before the Payment row.
-  Since #4879 an edit review's card arm (`chooseEditReviewSettlementRoute`)
+  Since #4879 an edit review's card arm (`chooseEditReviewSettlementRoute`,
+  through `planEditReviewCardRefund`)
   takes the booking owner's member-credit key and then the Payment row
   (`lockPaymentForRefundedTotal`) after its `lock(1)` and booking row, and reads
   the hold-back before it plans. The member key comes first because the
