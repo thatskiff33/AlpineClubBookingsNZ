@@ -39,7 +39,12 @@
  * host clock is not the club's day (`INV-DATE-019`).
  */
 
-import { type CalendarDate, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
+import {
+  type CalendarDate,
+  type ClubDateFormat,
+  calendarDateOfSerialisedDbDateOrNull,
+  formatStayDateOrNull,
+} from "@/lib/club-time"
 import {
   buildSeasonTimeline,
   type SeasonCoverageGap,
@@ -124,4 +129,14 @@ export function readSeasonSchedule<T extends SeasonSchedulePayload>(input: {
     ),
     undatedSeasons,
   };
+}
+
+// CT-4 (#2870): a season edge is a CALENDAR DATE and calendar dates take no
+// timezone — the API serialises the `@db.Date` column as UTC midnight, and the
+// kernel's calendar-date formatter pins "UTC" over that encoding, so the
+// projection is the identity for every club. It used to be read through
+// APP_TIME_ZONE, which for a club behind UTC named the previous day.
+// Both season screens print a window's edges through this one function.
+export function formatSeasonEdge(value: string, format: ClubDateFormat): string {
+  return formatStayDateOrNull(value, format) ?? value
 }
