@@ -356,12 +356,19 @@ export function applyMitigation(result, { now, root = process.cwd(), fsImpl = fs
 
 /**
  * One GitHub Actions workflow command. The message escapes `%`, CR and LF, and
- * a property additionally `:` and `,`, as the runner's parser requires.
+ * a property additionally `:` and `,`, as the runner's parser requires. `title`
+ * is always set; `properties` adds others, such as `{ file }` to attach the
+ * annotation to a path. Property names are code constants and are not escaped.
+ * This is the one home of the escaping rule (INV-SSOT-001): a script that emits
+ * an annotation calls it rather than copying the rule.
  */
-export function workflowCommand(command, title, message) {
+export function workflowCommand(command, title, message, properties = {}) {
   const data = (text) => text.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
   const property = (text) => data(text).replace(/:/g, "%3A").replace(/,/g, "%2C");
-  return `::${command} title=${property(title)}::${data(message)}`;
+  const list = Object.entries({ title, ...properties })
+    .map(([name, value]) => `${name}=${property(value)}`)
+    .join(",");
+  return `::${command} ${list}::${data(message)}`;
 }
 
 /**

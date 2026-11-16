@@ -93,6 +93,24 @@
  * they take:
  * {@link apiErrorMessageFromBody} for a parsed body, and
  * {@link apiErrorMessageFromResponse} for a `Response` it parses itself.
+ *
+ * ## Reading a reply the handler decides about itself (#4976, ALP-589)
+ *
+ * A handler that throws a refusal into its own `catch`, or that reads one body
+ * to decide between success and failure, uses the rest of this file's exports,
+ * all built on the two readers above (no second parser):
+ *
+ *  - {@link readApiErrorBody}: a reply's body, parsed once, `null` when it is
+ *    not JSON. Parse once, then hand the result to the `FromBody` functions: a
+ *    `Response` body can be read only once.
+ *  - {@link readApiObjectOrNull}: that body when it is a JSON object, else
+ *    `null`. A write that gets `null` cannot see what the server said.
+ *  - {@link readApiObjectOrEmpty}: the same, with `{}` for `null`, so a
+ *    success body can be read field by field without a throw. The one home of
+ *    the rule "an unreadable or non-object body counts as empty".
+ *  - {@link apiRefusalFromResponse} and {@link refusalMessageOr}: a typed throw
+ *    and its matching catch, so only a refusal's own sentence reaches the
+ *    screen and a dropped connection shows the screen's fallback.
  */
 
 /**
@@ -147,7 +165,7 @@ export function apiErrorCodeFromBody(body: unknown): string | null {
 }
 
 /**
- * Parse a failed response's body once, safely.
+ * Parse a reply's body once, safely: `null` when it is not JSON.
  *
  * A `Response` body can only be read once, so a caller that needs both the code
  * and the message must parse here and then use the `FromBody` functions — not
@@ -157,10 +175,47 @@ export async function readApiErrorBody(response: Response): Promise<unknown> {
   return response.json().catch(() => null);
 }
 
+/** A reply's body when it is a JSON object, else `null` (see {@link readApiErrorBody}). */
+export async function readApiObjectOrNull(
+  response: Response,
+): Promise<Record<string, unknown> | null> {
+  return jsonObjectOrNull(await readApiErrorBody(response));
+}
+
+/** A reply's body when it is a JSON object, else `{}`: never throws, never `null`. */
+export async function readApiObjectOrEmpty(response: Response): Promise<Record<string, unknown>> {
+  return (await readApiObjectOrNull(response)) ?? {};
+}
+
 /** The sentence to show, for a caller that needs nothing but the sentence. */
 export async function apiErrorMessageFromResponse(
   response: Response,
   fallback: string,
 ): Promise<string> {
   return apiErrorMessageFromBody(await readApiErrorBody(response), fallback);
+}
+
+/**
+ * A refusal read from a failed response, for a handler that throws it into its
+ * own `catch` (#4976, ALP-589).
+ *
+ * That catch also sees a request that never got an answer (`TypeError: Failed
+ * to fetch`) and any bug in the success path. Showing `err.message` for those
+ * puts the browser's words, or a JSON parse error, in front of the officer;
+ * {@link refusalMessageOr} shows the route's sentence only for this class and
+ * the screen's own fallback for everything else.
+ */
+export class ApiRefusalError extends Error {}
+
+/** Read a failed response into an {@link ApiRefusalError} to throw. */
+export async function apiRefusalFromResponse(
+  response: Response,
+  fallback: string,
+): Promise<ApiRefusalError> {
+  return new ApiRefusalError(await apiErrorMessageFromResponse(response, fallback));
+}
+
+/** The sentence for a caught error: a refusal's own, otherwise `fallback`. */
+export function refusalMessageOr(err: unknown, fallback: string): string {
+  return err instanceof ApiRefusalError ? err.message : fallback;
 }

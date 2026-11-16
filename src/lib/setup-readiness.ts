@@ -17,6 +17,7 @@ import {
 import { usableClubCurrencyCode } from "@/lib/club-format";
 import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
 import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
+import { SEED_COMMAND_DETAILS } from "@/lib/seed-commands";
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
@@ -1336,11 +1337,11 @@ function buildSeedAdminCheck(
       message:
         adminCount > 0
           ? `${adminCount} administrator account${adminCount === 1 ? "" : "s"} found.`
-          : "Run the seed command after setting SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD.",
+          : "Run the seed command after setting SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD.",
       details:
         adminCount > 0
           ? ["Admin login is available."]
-          : ["Command: pnpm run db:seed"],
+          : [...SEED_COMMAND_DETAILS],
       href: adminHref("members"),
     },
     progress,
@@ -2235,31 +2236,6 @@ export function buildSetupReadiness(
     categories,
     generatedAt: (input.now ?? new Date()).toISOString(),
   };
-}
-
-export function renderSetupCheckReport(readiness: SetupReadiness): string {
-  const lines = [
-    `Setup readiness: ${readiness.status}`,
-    `Complete ${readiness.summary.complete}/${readiness.summary.total}, warnings ${readiness.summary.warning}, blocked ${readiness.summary.blocked}, skipped ${readiness.summary.skipped}`,
-    "",
-  ];
-
-  for (const category of readiness.categories) {
-    lines.push(`${category.title} (${category.status})`);
-    for (const check of category.checks) {
-      const progressLabel =
-        check.progress === "open" ? "" : `, ${check.progress}`;
-      lines.push(
-        `- ${check.title}: ${check.status}${progressLabel} - ${check.message}`,
-      );
-      for (const detail of check.details) {
-        lines.push(`  ${detail}`);
-      }
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n").trimEnd();
 }
 
 export function getSetupRequiredEnvNames(): string[] {
