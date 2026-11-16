@@ -6,6 +6,7 @@
  * inside its line budget.
  */
 import type { Prisma } from "@prisma/client";
+import { isCalendarDate } from "@/lib/club-time";
 import { asRecord, readNumber, readString } from "@/lib/xero-json";
 
 // Anchored on the Payment; the close record is in the payload and the
@@ -44,8 +45,17 @@ const CANCELLED_CARD_REFUND_REVERSAL_STATUSES = new Set(["VOIDED", "DELETED"]);
 export function liveCardRefundReversalCents(metadata: unknown): number {
   const record = asRecord(metadata);
   const status = typeof record?.status === "string" ? record.status : "";
-  if (CANCELLED_CARD_REFUND_REVERSAL_STATUSES.has(status)) return 0;
-  const cents = record?.amountCents;
+  return CANCELLED_CARD_REFUND_REVERSAL_STATUSES.has(status) ? 0 : raisedCardRefundReversalCents(metadata);
+}
+
+/**
+ * #4370: cents a reversal invoice was raised for, live, voided or deleted. A
+ * voided link keeps its stored cents (`retiredCardRefundReversalLink`), so the
+ * inbound recount can tell a failed refund a reversal answered - even one
+ * voided since, which then subtracts nothing - from one never reversed.
+ */
+export function raisedCardRefundReversalCents(metadata: unknown): number {
+  const cents = asRecord(metadata)?.amountCents;
   return typeof cents === "number" && Number.isInteger(cents) && cents > 0 ? cents : 0;
 }
 
@@ -136,7 +146,10 @@ export function readCardRefundReversalInvoicePayload(
     !Number.isInteger(amountCents) ||
     amountCents <= 0 ||
     !closedOn ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(closedOn)
+    // A real day, not just the shape: the close writes `closedOn` from the club
+    // day, so a non-day can only be corruption, and the worker would date a Xero
+    // invoice from it.
+    !isCalendarDate(closedOn)
   ) {
     return null;
   }

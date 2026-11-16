@@ -22,6 +22,7 @@ import {
   BOOKING_REQUESTS_TABS,
   type BookingRequestsTab,
 } from "@/lib/admin-booking-requests-path";
+import { setAdminListPageParam } from "@/lib/admin-list-page";
 
 const APPROVALS_SEARCH_PARAMS = { tab: "approvals" } satisfies Record<
   string,
@@ -118,7 +119,7 @@ export default function BookingRequestsPage() {
     params.set("tab", nextTab);
     // Each tab's queue pages on its own (INV-OPS-020); a page from one tab
     // means nothing on another.
-    params.delete("page");
+    setAdminListPageParam(params, 1);
 
     if (nextTab === "approvals") {
       params.delete("requestId");

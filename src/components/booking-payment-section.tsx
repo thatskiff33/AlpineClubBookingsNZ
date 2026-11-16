@@ -1,16 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { type BookingPaymentMode } from "@/lib/booking-payment-flow";
 import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
 import { Button } from "@/components/ui/button";
+import { hasStripeReturn } from "@/lib/stripe-return";
 
 interface BookingPaymentSectionProps {
   bookingId: string;
   amountCents: number;
   paymentMode: BookingPaymentMode;
-  returnUrl: string;
   showOnMount?: boolean;
   gateDescription?: string;
   gateCtaLabel?: string;
@@ -20,13 +20,17 @@ export function BookingPaymentSection({
   bookingId,
   amountCents,
   paymentMode,
-  returnUrl,
   showOnMount = true,
   gateDescription,
   gateCtaLabel = "Continue to Payment",
 }: BookingPaymentSectionProps) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(showOnMount);
+  // ALP-569: a payer back from a redirect method is not asked to continue
+  // again; the payment section opens and reads the return.
+  useEffect(() => {
+    if (hasStripeReturn("booking")) setIsOpen(true);
+  }, []);
 
   if (!isOpen) {
     return (
@@ -47,7 +51,6 @@ export function BookingPaymentSection({
       bookingId={bookingId}
       amountCents={amountCents}
       paymentMode={paymentMode}
-      returnUrl={returnUrl}
       onPaymentComplete={() => router.refresh()}
     />
   );

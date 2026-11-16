@@ -7,10 +7,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { adminListPageQueryFields } from "@/lib/admin-list-page";
 
 const querySchema = z.object({
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 });
 
 export async function GET(request: NextRequest) {

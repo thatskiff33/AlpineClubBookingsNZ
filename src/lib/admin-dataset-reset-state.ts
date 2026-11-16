@@ -1,5 +1,6 @@
 import { endOfMonth, format, startOfMonth, subMonths } from "date-fns"
 import { BOOKING_REQUESTS_STATUS_PARAM } from "@/lib/admin-booking-requests-path"
+import { setAdminListPageParam } from "@/lib/admin-list-page"
 
 export const PAYMENT_DATASET_QUERY_KEYS = [
   "status",
@@ -187,13 +188,12 @@ export function buildBookingRequestDatasetPath({
 }): string {
   const params = new URLSearchParams(currentSearch)
   params.delete(BOOKING_REQUESTS_STATUS_PARAM)
-  params.delete("page")
   for (const [key, value] of Object.entries(fixedSearchParams)) {
     params.set(key, value)
   }
   if (recordId) params.set(recordKey, recordId)
   if (status !== defaultStatus) params.set(BOOKING_REQUESTS_STATUS_PARAM, status)
-  if (page > 1) params.set("page", String(page))
+  setAdminListPageParam(params, page)
 
   const query = params.toString()
   return query ? `${basePath}?${query}` : basePath

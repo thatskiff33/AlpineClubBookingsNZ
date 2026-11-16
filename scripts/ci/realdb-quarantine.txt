@@ -1,4 +1,4 @@
-# Real-PostgreSQL suites the advisory `realdb-all` CI job does not run (#4458).
+# Real-PostgreSQL suites the `realdb-all` CI job does not run (#4458).
 # One repo-relative path per line; `#` starts a comment. Each entry is a suite
 # that is red for a known reason: name its issue in the comment. Empty means
 # every `*.realdb.test.ts` file runs. The census

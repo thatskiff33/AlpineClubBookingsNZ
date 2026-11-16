@@ -97,15 +97,25 @@ export default function LodgeInstructionsPage() {
     };
   }, []);
 
+  // The loading and error states have no visible title, but the page still
+  // needs its one h1 in every render state (#4951).
   if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading lodge instructions...</p>;
+    return (
+      <>
+        <h1 className="sr-only">Lodge Instructions</h1>
+        <p className="text-sm text-muted-foreground">Loading lodge instructions...</p>
+      </>
+    );
   }
 
   if (notAssigned) {
     return (
       <Card className="mx-auto max-w-2xl">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          {/* This "not assigned" card is the page's whole content with no h1
+              anywhere in the tree — the loaded state's h1 is a separate
+              branch that never renders alongside this one. */}
+          <CardTitle headingLevel={1} className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5 text-warning-11" />
             Lodge Instructions
           </CardTitle>
@@ -127,9 +137,12 @@ export default function LodgeInstructionsPage() {
 
   if (error || !documents) {
     return (
-      <p className="text-sm text-danger-11">
-        {error ?? "Failed to load the lodge instructions. Please try again."}
-      </p>
+      <>
+        <h1 className="sr-only">Lodge Instructions</h1>
+        <p className="text-sm text-danger-11">
+          {error ?? "Failed to load the lodge instructions. Please try again."}
+        </p>
+      </>
     );
   }
 
