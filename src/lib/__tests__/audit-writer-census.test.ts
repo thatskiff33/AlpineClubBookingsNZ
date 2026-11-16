@@ -56,6 +56,7 @@ import {
   type AuditWriteSite,
 } from "../../../scripts/audit/audit-writer-census";
 import { AUDIT_WRITE_SITES } from "../../../scripts/audit/audit-write-sites";
+import * as MANIFEST from "../../../scripts/audit/audit-writer-census-manifest";
 import {
   APPLIED_AUDIT_CATEGORIES,
   APPROVED_FORWARDED_CATEGORY_SITES,
@@ -198,7 +199,9 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         - a REMOVED or MOVED writer fails until its line goes;
         - a RECLASSIFIED writer (same function, same action, different
           category) is named as such: that is a readership change;
-        - a SINK move at any site is named;
+        - a SINK move at any site is named, and every other attribute that
+          changed with it is named too, so a sink move cannot hide a
+          reclassification;
         - deleting a site from a reviewed record (`REVIEWED_SITE_RECORDS`)
           changes its `reviewed` tags and is named.
 
@@ -247,6 +250,34 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     }
 
     const problems: string[] = [];
+    const reviewedOf = (entry: AuditWriteSiteLedgerEntry) => (entry.reviewed ?? []).join(" ");
+    const readership =
+      "This changes WHO CAN READ the row (INV-PRIV-012) and needs INV-OPS-012's backfill answer.";
+    const shiftedKey = (entry: AuditWriteSiteLedgerEntry) =>
+      entry.reviewed
+        ? ` It carries reviewed tags [${reviewedOf(entry)}]: if it is a new site, a #n-keyed reviewed record ` +
+          "now points at it because an earlier insertion shifted that record's keys, and the record must be " +
+          "re-pointed (the standing weakness of #n-keyed records, INV-OPS-012)."
+        : "";
+    // Every attribute that differs between two entries for the same site is named.
+    const changesAt = (fn: string, before: AuditWriteSiteLedgerEntry, after: AuditWriteSiteLedgerEntry) => {
+      if (after.category !== before.category) {
+        problems.push(
+          `RECLASSIFIED in ${fn}: ${after.action} was ${before.category}, now ${after.category}. ${readership}`,
+        );
+      }
+      if (after.sink !== before.sink) {
+        problems.push(`SINK MOVED in ${fn}: ${after.action} was ${before.sink}, now ${after.sink}.`);
+      }
+      if (reviewedOf(after) !== reviewedOf(before)) {
+        problems.push(
+          `REVIEW RECORD CHANGED in ${fn}: ${after.action} was reviewed by [${reviewedOf(before)}], ` +
+            `now [${reviewedOf(after)}]. Either a reviewed record gained or lost this site, which is ` +
+            "a decision to state, or a site added or removed earlier in this function shifted the #n keys that " +
+            "record uses, and its keys need moving with the sites.",
+        );
+      }
+    };
     for (const [fn, group] of byFunction) {
       if (!group.renumbered) continue;
       const reportedBefore = problems.length;
@@ -258,39 +289,46 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         if (at >= 0) added.splice(at, 1);
         else removed.push(entry);
       }
-      // Pair what is left by sink and action: the same site, changed.
-      for (const before of [...removed]) {
-        const at = added.findIndex(
-          (after) => after.sink === before.sink && after.action === before.action,
+      // Pair what is left as the same site, changed: first by sink and action,
+      // then by action alone (a sink move). Each pair names EVERY attribute that
+      // changed, so a sink move cannot hide a reclassification.
+      for (const match of [
+        (a: AuditWriteSiteLedgerEntry, b: AuditWriteSiteLedgerEntry) =>
+          a.sink === b.sink && a.action === b.action,
+        (a: AuditWriteSiteLedgerEntry, b: AuditWriteSiteLedgerEntry) => a.action === b.action,
+      ]) {
+        for (const before of [...removed]) {
+          const at = added.findIndex((after) => match(before, after));
+          if (at < 0) continue;
+          const after = added.splice(at, 1)[0];
+          removed.splice(removed.indexOf(before), 1);
+          changesAt(fn, before, after);
+        }
+      }
+      // What is left differs in its action too. Report each REMOVED+NEW pair in
+      // this function together, saying what else differs, so a readership change
+      // inside the pair is visible, and a pure rewrite of an action expression is
+      // recognisable as one.
+      while (removed.length > 0 && added.length > 0) {
+        const before = removed.shift() as AuditWriteSiteLedgerEntry;
+        const after = added.shift() as AuditWriteSiteLedgerEntry;
+        const differs = [
+          after.category !== before.category ? `category ${before.category} -> ${after.category}` : null,
+          after.sink !== before.sink ? `sink ${before.sink} -> ${after.sink}` : null,
+          reviewedOf(after) !== reviewedOf(before)
+            ? `reviewed [${reviewedOf(before)}] -> [${reviewedOf(after)}]`
+            : null,
+        ].filter(Boolean);
+        problems.push(
+          `REMOVED+NEW in ${fn}: ${show(before)} -> ${show(after)}. ` +
+            (differs.length === 0
+              ? "Identical except for the action text: possibly the same site with its action expression rewritten."
+              : `Besides the action, ${differs.join(", ")}; if this is one site rewritten` +
+                (after.category !== before.category ? `, the category change is a readership change. ${readership}` : ", that is the change.")),
         );
-        if (at < 0) continue;
-        const after = added.splice(at, 1)[0];
-        removed.splice(removed.indexOf(before), 1);
-        if (after.category !== before.category) {
-          problems.push(
-            `RECLASSIFIED in ${fn}: ${before.action} was ${before.category}, now ${after.category}. ` +
-              "This changes WHO CAN READ the row (INV-PRIV-012) and needs INV-OPS-012's backfill answer.",
-          );
-        }
-        if (JSON.stringify(after.reviewed ?? []) !== JSON.stringify(before.reviewed ?? [])) {
-          problems.push(
-            `REVIEW RECORD CHANGED in ${fn}: ${before.action} was reviewed by [${(before.reviewed ?? []).join(" ")}], ` +
-              `now [${(after.reviewed ?? []).join(" ")}]. Either a reviewed record gained or lost this site, which is ` +
-              "a decision to state, or a site added or removed earlier in this function shifted the #n keys that " +
-              "record uses, and its keys need moving with the sites.",
-          );
-        }
       }
-      for (const entry of removed) {
-        const sinkMove = added.findIndex((after) => after.action === entry.action);
-        if (sinkMove >= 0) {
-          const after = added.splice(sinkMove, 1)[0];
-          problems.push(`SINK MOVED in ${fn}: ${entry.action} was ${entry.sink}, now ${after.sink}.`);
-          continue;
-        }
-        problems.push(`REMOVED from ${fn}: ${show(entry)}`);
-      }
-      for (const entry of added) problems.push(`NEW in ${fn}: ${show(entry)}`);
+      for (const entry of removed) problems.push(`REMOVED from ${fn}: ${show(entry)}`);
+      for (const entry of added) problems.push(`NEW in ${fn}: ${show(entry)}.${shiftedKey(entry)}`);
       if (problems.length === reportedBefore) {
         problems.push(`RENUMBERED in ${fn}: the same sites, at different #n ordinals; nothing changed class.`);
       }
@@ -299,13 +337,77 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
       problems.sort(),
       "The audit write sites in the tree and scripts/audit/audit-write-sites.ts " +
         "disagree. Run `pnpm run audit:census --write` and commit the result, after " +
-        "checking each line above. NEW and REMOVED are writers added or deleted; " +
-        "RENUMBERED is ordinals shifting because a site was added or removed earlier " +
-        "in the same function, which changes nobody's readership. RECLASSIFIED and " +
-        "SINK MOVED are real changes at an existing site (paired by function and " +
-        "action; two sites in one function sharing an action are paired by order). " +
+        "checking each line above. NEW and REMOVED are writers added or deleted " +
+        "(REMOVED+NEW pairs one of each in the same function and says what else " +
+        "differs). RENUMBERED is ordinals shifting because a site was added or " +
+        "removed earlier in the same function, which changes nobody's readership. " +
+        "RECLASSIFIED, SINK MOVED and REVIEW RECORD CHANGED are changes at an " +
+        "existing site, paired within its function by sink and action, then by " +
+        "action; two sites in one function sharing them are paired by order. " +
         "A new site must record a canonical category through an approved sink.",
     ).toEqual([]);
+  });
+
+  it("repeats no site id in the ledger file (#5211 review)", () => {
+    /*
+      The ledger is `merge=union`, and union can leave the same id twice: two
+      branches that each touch the same `#n` line keep both lines. The imported
+      object keeps only the LAST one, so when that last line happens to be right
+      every comparison above passes (trial T5a on PR #5224). The file's TEXT is
+      read here, so a repeated id fails the census by name, not only `tsc`
+      (where it is TS1117).
+    */
+    const text = readFileSync(resolve(process.cwd(), "scripts", "audit", "audit-write-sites.ts"), "utf8");
+    const seen = new Set<string>();
+    const repeated = new Set<string>();
+    for (const match of text.matchAll(/^ {2}("(?:[^"\\]|\\.)*"):/gmu)) {
+      const id = JSON.parse(match[1]) as string;
+      if (seen.has(id)) repeated.add(id);
+      seen.add(id);
+    }
+    expect(
+      [...repeated].sort(),
+      "scripts/audit/audit-write-sites.ts names these ids more than once, usually " +
+        "after a union merge. Do not pick a line by hand: run " +
+        "`pnpm run audit:census --write` on the merged tree.",
+    ).toEqual([]);
+  });
+
+  it("registers every per-site manifest record in REVIEWED_SITE_RECORDS (#5211 review)", () => {
+    /*
+      A reviewed record only shows in the ledger's `reviewed` tags if it is
+      registered. So every manifest export keyed by (or listing) site ids must
+      be registered, or excluded here with the reason it is not a record of
+      row-producing sites.
+    */
+    const NOT_SITE_RECORDS: Readonly<Record<string, string>> = {
+      APPROVED_MIGRATION_AUDIT_SQL: "migration SQL statements, not TypeScript write sites",
+      APPROVED_NON_PRODUCING_AUDIT_DML: "non-row-producing DML, which the ledger does not list",
+    };
+    const looksLikeSiteId = (value: unknown) =>
+      typeof value === "string" && /::.+#\d+$/.test(value);
+    const registered = REVIEWED_SITE_RECORDS.map(([, ids]) => [...ids].sort().join("\n"));
+    const unregistered = Object.entries(MANIFEST)
+      .filter(([name]) => !(name in NOT_SITE_RECORDS) && name !== "REVIEWED_SITE_RECORDS")
+      .map(([name, value]) => {
+        const ids = Array.isArray(value)
+          ? value
+          : value && typeof value === "object"
+            ? Object.keys(value)
+            : [];
+        return [name, ids] as const;
+      })
+      .filter(([, ids]) => ids.length > 0 && ids.every(looksLikeSiteId))
+      .filter(([, ids]) => !registered.includes([...ids].sort().join("\n")))
+      .map(([name]) => name);
+    expect(
+      unregistered,
+      "A manifest export records particular audit write sites but is not in " +
+        "REVIEWED_SITE_RECORDS, so deleting one of its entries would not show in " +
+        "the ledger. Register it there with a tag, or exclude it above with a reason.",
+    ).toEqual([]);
+    // The exclusions must still exist, or the list is rotting.
+    expect(Object.keys(NOT_SITE_RECORDS).filter((name) => !(name in MANIFEST))).toEqual([]);
   });
 
   it("tallies its sinks and categories from the same sites it lists", () => {

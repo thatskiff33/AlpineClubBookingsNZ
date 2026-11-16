@@ -1709,14 +1709,15 @@ regenerates `scripts/audit/audit-write-sites.ts` with
 `pnpm run audit:census --write`, which adds that site's line; review it,
 because the line states the category the row is filed under. Each line also
 carries the site's action and the reviewed records that name it, and the census
-compares per function by action, so its failure says NEW, REMOVED,
+compares per function by sink and action, naming every attribute that
+changed, so its failure says NEW, REMOVED, REMOVED+NEW,
 RENUMBERED (ordinals shifted by an earlier addition; nobody's readership
 changed), RECLASSIFIED, SINK MOVED or REVIEW RECORD CHANGED. Two sites in one
 function sharing an action are told apart only by order. The ledger is
 `merge=union`: two lanes whose lines sort together merge cleanly, and the cases
 union cannot get right fail loudly rather than silently. Two lanes appending to
 the SAME function both write `<fn>#1`; with different actions union keeps both
-lines, a duplicate key that fails the typecheck and the census, and with the
+lines, a repeated key that the census names (and `tsc` refuses), and with the
 identical action and category git merges the identical line and the census
 fails on the missing `#2`. Either way, regenerate on the merged tree, which is
 why the census must run on the composed tree before merging. A new

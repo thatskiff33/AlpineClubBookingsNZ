@@ -1231,7 +1231,16 @@ describe("view-only section banner coverage (#2160)", () => {
     const stray = astFiles
       .filter((f) => (bannersByFile.get(f.file) ?? []).length > 0)
       .filter((f) => jsxTags(f.ast, "ViewOnlyActionButton").length === 0)
-      .filter((f) => !jsxTags(f.ast).some((tag) => attr(tag, VOUCH_PROP)))
+      .filter(
+        (f) =>
+          !jsxTags(f.ast).some((tag) => {
+            // A vouch counts only when it is true: bare, or `={true}`.
+            const vouch = attr(tag, VOUCH_PROP);
+            if (!vouch) return false;
+            const value = attrExpression(vouch);
+            return value === null || value.kind === ts.SyntaxKind.TrueKeyword;
+          }),
+      )
       .filter((f) => f.rel !== WIZARD_SHELL_REL)
       .map((f) => f.rel);
     expect(

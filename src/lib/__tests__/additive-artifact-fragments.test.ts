@@ -117,7 +117,7 @@ const ADDITIVE_ARTIFACTS: readonly AdditiveArtifact[] = [
   {
     path: "scripts/audit/audit-write-sites.ts",
     remedy: "union-merge",
-    why: "One generated line per audit write site, sorted by id (#5211). A duplicated id is a TS1117 compile error and a census failure, and a resurrected deleted line fails the census by name, so union cannot corrupt it silently; regenerate on the merged tree.",
+    why: "One generated line per audit write site, sorted by id (#5211). A repeated id fails the census by name (it reads the file's text) and is a TS1117 compile error, and a resurrected deleted line fails the census by name, so union cannot corrupt it silently; regenerate on the merged tree.",
   },
 ];
 
