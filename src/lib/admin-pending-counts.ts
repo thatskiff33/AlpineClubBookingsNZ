@@ -1,7 +1,10 @@
 import logger from "@/lib/logger";
 import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
 import { prisma } from "@/lib/prisma";
-import { buildBookingRequestListWhere } from "@/lib/booking-request";
+import {
+  getBookingRequestPendingCounts,
+  type BookingRequestPendingCounts,
+} from "@/lib/admin-booking-request-pending-counts";
 import { getPendingMembershipCancellationReviewCount } from "@/lib/membership-cancellation-admin";
 import {
   getPendingMemberArchiveReviewCount,
@@ -25,7 +28,18 @@ import {
 
 export type { AdminPendingCounts } from "@/lib/admin-work-queues";
 
-type PendingCounter = (context: { today: Date }) => Promise<number>;
+type PendingCounterContext = {
+  today: Date;
+  /**
+   * The four Booking Requests counts, read once per batch by
+   * `getBookingRequestPendingCounts` (#4969), the definition the Booking
+   * Requests page's tab badges read too. The first of the four counters to ask
+   * starts the read; the others share it.
+   */
+  bookingRequests: () => Promise<BookingRequestPendingCounts>;
+};
+
+type PendingCounter = (context: PendingCounterContext) => Promise<number>;
 
 /**
  * One counter per count the officer work queues read (`ADMIN_WORK_QUEUES` in
@@ -34,11 +48,10 @@ type PendingCounter = (context: { today: Date }) => Promise<number>;
  * ponytail: each counter mirrors the where-clause of its queue route/service
  * (family-groups/requests, member-applications, refund-requests,
  * manual refund tasks (#2262, the cash hand-back queue),
- * credit-approvals, booking-reviews, booking-change-requests,
- * new-booking policy-exception requests (#2526),
- * booking-requests, unpaid-finished-stays and unsettled stay
- * additions, both finished and still-upcoming (shared predicates,
- * #1709/#1731/#1723/#2350),
+ * credit-approvals, the four booking-request queues (defined once in
+ * `admin-booking-request-pending-counts.ts`, #4969), unpaid-finished-stays
+ * and unsettled stay additions, both finished and still-upcoming (shared
+ * predicates, #1709/#1731/#1723/#2350),
  * membership-cancellation-requests,
  * member-lifecycle-action-requests (ARCHIVE and DELETE review queues),
  * deletion-requests, issue-reports,
@@ -59,20 +72,14 @@ const PENDING_COUNTERS = {
     prisma.manualRefundTask.count({ where: { status: "OPEN" } }),
   creditApprovals: () =>
     prisma.adminCreditAdjustmentRequest.count({ where: { status: "PENDING" } }),
-  bookingReviews: () =>
-    prisma.booking.count({
-      where: { deletedAt: null, adminReviewStatus: "PENDING" },
-    }),
-  bookingChangeRequests: () =>
-    prisma.bookingChangeRequest.count({ where: { status: "REQUESTED" } }),
-  newBookingPolicyExceptionRequests: () =>
-    prisma.newBookingPolicyExceptionRequest.count({
-      where: { status: "REQUESTED" },
-    }),
-  publicBookingRequests: () =>
-    prisma.bookingRequest.count({
-      where: buildBookingRequestListWhere("QUEUE"),
-    }),
+  bookingReviews: async ({ bookingRequests }) =>
+    (await bookingRequests()).bookingReviews,
+  lockedPeriodChangeRequests: async ({ bookingRequests }) =>
+    (await bookingRequests()).lockedPeriodChangeRequests,
+  policyExceptionRequests: async ({ bookingRequests }) =>
+    (await bookingRequests()).policyExceptionRequests,
+  publicBookingRequests: async ({ bookingRequests }) =>
+    (await bookingRequests()).publicBookingRequests,
   unpaidFinishedStays: ({ today }) =>
     prisma.booking.count({ where: buildUnpaidFinishedStaysWhere(today) }),
   unsettledAdditionalFinishedStays: ({ today }) =>
@@ -128,9 +135,14 @@ export async function getAdminPendingCounts(input?: {
     promise.catch(() => undefined);
   }
   const today = input?.today ?? (await clubTodayDateOnlyInstant());
+  let bookingRequests: Promise<BookingRequestPendingCounts> | undefined;
+  const context: PendingCounterContext = {
+    today,
+    bookingRequests: () => (bookingRequests ??= getBookingRequestPendingCounts()),
+  };
   const settled = await Promise.allSettled(
     ADMIN_PENDING_COUNT_KEYS.map(
-      (key) => input?.supplied?.[key] ?? PENDING_COUNTERS[key]({ today }),
+      (key) => input?.supplied?.[key] ?? PENDING_COUNTERS[key](context),
     ),
   );
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { buildLockedPeriodChangeRequestListWhere } from "@/lib/booking-request-queue-where";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
@@ -46,9 +46,11 @@ export async function GET(req: NextRequest) {
   // never inflate the list or its count — the symmetric exclusion to the
   // unified queue's kind:"POLICY_EXCEPTION" filter. Both findMany and count
   // reuse this `where`, so the guard applies to the total as well as the page.
-  const where: Prisma.BookingChangeRequestWhereInput = {
-    kind: "LOCKED_PERIOD",
-    ...(status === "ALL" ? {} : { status }),
+  // The clause itself lives in `booking-request-queue-where.ts`, where the
+  // Changes tab's pending badge reads it too (#4969); a focused deep link
+  // narrows the list to its one request, never the badge (INV-OPS-020).
+  const where = {
+    ...buildLockedPeriodChangeRequestListWhere(status),
     ...(requestId ? { id: requestId } : {}),
   };
   // The pending queue reads oldest first (INV-OPS-020).

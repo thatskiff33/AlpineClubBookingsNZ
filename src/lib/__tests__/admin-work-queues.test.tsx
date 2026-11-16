@@ -111,15 +111,15 @@ describe("the officer work queue registry", () => {
     const counts = {
       ...ZERO_ADMIN_PENDING_COUNTS,
       bookingReviews: 1,
-      bookingChangeRequests: 2,
-      newBookingPolicyExceptionRequests: 4,
+      lockedPeriodChangeRequests: 2,
+      policyExceptionRequests: 4,
       publicBookingRequests: 8,
     };
     expect(adminWorkQueueCount(bookingRequests, counts)).toBe(15);
 
     const onlyExceptions = {
       ...ZERO_ADMIN_PENDING_COUNTS,
-      newBookingPolicyExceptionRequests: 1,
+      policyExceptionRequests: 1,
     };
     const [card] = getAdminWorkQueueCards({
       counts: onlyExceptions,

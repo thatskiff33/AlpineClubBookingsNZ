@@ -12,7 +12,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { handsBackByHand } from "@/lib/manual-refund-hand-back-route";
 import { isLateCaptureHandBackTask } from "@/lib/late-capture-hand-back-task";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment, hasCapturedPayment } from "@/lib/booking-payment-state";
+import { editReviewRefundGoesBackOnCard, editReviewRefundSettlementPayment } from "@/lib/booking-payment-state";
 import { readBookingHasEnded } from "@/lib/booking-ended";
 import {
   chooseEditReviewChargeRoute,
@@ -55,6 +55,7 @@ import {
   capturedShareOwedAfterCancellation,
 } from "@/lib/edit-financial-review-cancel-netting";
 import type { EditReviewSettlementTask } from "@/lib/edit-financial-review-settlement-task";
+import { reviewCreditAllocationPaymentId } from "@/lib/edit-financial-review-credit-dispute";
 import { cardShortfallSettlement } from "@/lib/cancel-card-refund-shortfall-settle";
 import type { CapacityRaceStripeRefunded } from "@/lib/capacity-race-refunded-total-correction";
 import { alertGroupMirrorRefundXeroByHand, chooseGroupSettlementMirrorRoute, chooseReviewGroupSettlementMirrorRoute, type GroupSettlementMirrorRoute } from "@/lib/group-settlement-mirror-hand-back";
@@ -499,9 +500,8 @@ export async function chooseEditReviewSettlementRoute({
   return {
     kind: "account-credit",
     bookingModificationId,
-    allocateAgainstPaymentId: hasCapturedPayment(task.booking.payment)
-      ? (task.booking.payment?.id ?? null)
-      : null,
+    // #5061 follow-up (`INV-PAY-154`): refused while a dispute holds that payment.
+    allocateAgainstPaymentId: await reviewCreditAllocationPaymentId(store, task.booking.payment),
   };
 }
 

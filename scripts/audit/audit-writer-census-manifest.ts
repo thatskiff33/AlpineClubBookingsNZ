@@ -783,7 +783,10 @@ export const AUDIT_CENSUS_TOTALS = {
   // the Archive button's own writer, which moved into one helper
   // (`writeEmailFailureReviewAudit`), so it adds no site. RE-MEASURED with
   // `pnpm run audit:census`.
-  writeSites: 549,
+  // 549 -> 550 (#4963): `email.failure.requeued`, an officer's Try again on an exhausted
+  // email failure, awaited on the requeue's own transaction (`email-failure-review.ts`),
+  // `communication`. RE-MEASURED with `pnpm run audit:census` on the merged tree.
+  writeSites: 550,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1012,7 +1015,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 176 -> 177 (#4916): the after-stay dietary clear's count row. 177 -> 179 (#4851): the group organiser's close and re-arm.
     // 179 -> 181 (#4915): the two subject access writers.
     // 181 -> 182 (ALP-588): the booking fresh-copy send; its superseded-failure archive reuses the Archive button's writer.
-    createAuditLog: { total: 182, uncategorised: 0 },
+    // 182 -> 183 (#4963): Try again on an exhausted email failure.
+    createAuditLog: { total: 183, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1549,7 +1553,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // exhausted-failure archive reuses the existing email.failure.reviewed
     // writer, so adds no site. Still a membership+support read; neither
     // records a message body, token or link.
-    communication: 22,
+    // 22 -> 23 (#4963): email.failure.requeued, beside the archive row
+    // (email.failure.reviewed) it pairs with; the same membership+support read.
+    communication: 23,
     // 14 -> 15 (#2627): `member.deletion_approval_claim_released`. Still a
     // membership+support read, like every other deletion-decision row beside it,
     // so this widens nobody's access.

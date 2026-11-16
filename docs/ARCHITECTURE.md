@@ -2623,7 +2623,16 @@ surface can read a cancelled booking's untouched delta columns as money owed.
 Every queue count comes from `getAdminPendingCounts`
 (`src/lib/admin-pending-counts.ts`): the dashboard calls it while rendering and
 the sidebar reads it through `GET /api/admin/pending-counts`. Its per-queue
-where-clauses mirror the individual queue routes. Each counter settles on its
+where-clauses mirror the individual queue routes. The four Booking Requests queues in it
+(Approvals, Changes, Policy Exceptions, Public Requests) are defined once, in
+`getBookingRequestPendingCounts` (`src/lib/admin-booking-request-pending-counts.ts`,
+#4969), and each count builds its query from the where-builder its list uses
+(`src/lib/booking-request-queue-where.ts` and `buildBookingRequestListWhere`),
+so a list and its badge are narrowed together. The same helper feeds,
+through the bookings-area `GET /api/admin/booking-requests/pending-counts`,
+the Booking Requests page's tab badges and landing tab, so a bookings-only
+role still gets them; the work queue's card opens the same first tab with
+work. Each counter settles on its
 own (`Promise.allSettled`): a failed one reads as zero and is named in the
 payload's `unavailable` list, so both surfaces say which counts are missing
 rather than reading the failure as "nothing to do". A caller that already reads

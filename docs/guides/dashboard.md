@@ -77,7 +77,7 @@ number is above zero and only to an admin who can open the page it links to:
 | Card | Appears when | Opens |
 | --- | --- | --- |
 | Silent Xero Webhook | Xero has not delivered a webhook event for longer than expected | [Xero](xero.md) |
-| Booking Requests | New booking reviews, change requests, new-booking policy exception requests or public booking requests are waiting; the number is all four together | [Booking Requests](booking-requests.md), on the first tab with something waiting |
+| Booking Requests | Any Booking Requests queue has work waiting: new booking reviews, change requests, policy exceptions or public requests. The card names each queue that has some, and the number is all four together | [Booking Requests](booking-requests.md), on the first tab with work |
 | Unpaid Finished Stays | A stay ended but is still payment-pending | [Bookings](bookings.md) (pre-filtered) |
 | Bookings With Unpaid Additions | A settled booking, finished or upcoming, has an upward change still uncollected | [Bookings](bookings.md) (pre-filtered) |
 | Membership Applications | A membership application is waiting for approval | [Member Applications](member-applications.md) |

@@ -8,6 +8,9 @@ import { getAdminPendingCounts } from "@/lib/admin-pending-counts";
  * Needs Attention badges. Each count settles on its own (#4962): one that
  * fails is listed in `unavailable` and the rest still arrive. Never cached —
  * the sidebar refetches it after every navigation and queue decision.
+ * The four Booking Requests queues in it come from
+ * `getBookingRequestPendingCounts` (`admin-booking-request-pending-counts.ts`),
+ * the one definition the Booking Requests page's tab badges read too (#4969).
  */
 export async function GET() {
   const guard = await requireAdmin();

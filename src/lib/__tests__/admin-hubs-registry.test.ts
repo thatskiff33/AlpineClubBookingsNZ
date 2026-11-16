@@ -2208,6 +2208,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/system/backups/backups-client.tsx": "C7: the backup setup link is adminHref",
     "src/app/(admin)/admin/system/backups/setup/backup-wizard-steps.tsx":
       "C7: the Database Backups link is adminHref",
+    "src/app/(admin)/admin/system/health/_components/email-deliverability-section.tsx":
+      "#4963: an exhausted failure's member link is adminHref, from the stored member id only",
     "src/app/(admin)/admin/system/health/_components/health-dashboard.tsx":
       "C7: the Email Deliverability and Background Jobs cards link with adminHref",
     "src/app/(admin)/admin/system/stuck-states/page.tsx": "C7: the System Health link is adminHref",

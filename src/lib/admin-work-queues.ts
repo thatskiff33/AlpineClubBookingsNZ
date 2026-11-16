@@ -38,8 +38,10 @@ import type { FeatureFlags } from "@/config/schema";
 import { adminHref, adminLink, type AdminPageId } from "@/lib/admin-hubs";
 import {
   BOOKING_REQUESTS_TABS,
+  BOOKING_REQUESTS_TAB_COUNT_KEYS,
   buildBookingRequestsHref,
 } from "@/lib/admin-booking-requests-path";
+import { describeBookingRequestsAlert } from "@/lib/admin-booking-requests-alert";
 import {
   canViewAdminHrefWithMatrix,
   type AdminPermissionMatrix,
@@ -62,13 +64,15 @@ export const ADMIN_PENDING_COUNT_KEYS = [
   /** B5 (#2262): open hand-back tasks for cancelled cash-settled bookings. */
   "manualRefundTasks",
   "creditApprovals",
-  "bookingReviews",
-  "bookingChangeRequests",
   /**
-   * #2526: NEW-booking policy-exception requests. A MODIFICATION exception is a
-   * `BookingChangeRequest` and is already inside `bookingChangeRequests`.
+   * The four Booking Requests queues, one per tab, each counting exactly what
+   * its tab lists (#4969): read together by `getBookingRequestPendingCounts`.
+   * Locked-period change requests only; a POLICY_EXCEPTION change request is
+   * counted with the new-booking exceptions on the Policy Exceptions tab.
    */
-  "newBookingPolicyExceptionRequests",
+  "bookingReviews",
+  "lockedPeriodChangeRequests",
+  "policyExceptionRequests",
   "publicBookingRequests",
   "unpaidFinishedStays",
   "unsettledAdditionalFinishedStays",
@@ -149,16 +153,6 @@ function joinNonZero(parts: ReadonlyArray<readonly [number, string, string?]>) {
     .join(" and ");
 }
 
-const BOOKING_REQUEST_TAB_COUNTS = {
-  approvals: "bookingReviews",
-  changes: "bookingChangeRequests",
-  exceptions: "newBookingPolicyExceptionRequests",
-  public: "publicBookingRequests",
-} as const satisfies Record<
-  (typeof BOOKING_REQUESTS_TABS)[number],
-  AdminPendingCountKey
->;
-
 /**
  * The queues, in the order both surfaces show them. Adding one here is the
  * whole change for the dashboard, the sidebar and the palette; its counter goes
@@ -182,30 +176,18 @@ export const ADMIN_WORK_QUEUES: readonly AdminWorkQueue[] = [
     label: adminLink("booking-requests").label,
     href: () => adminHref("booking-requests"),
     icon: ClipboardList,
-    // #2526: a NEW-booking policy exception lives in its own table, so it is a
-    // separate term; a MODIFICATION exception is already a change request.
-    counts: [
-      "bookingReviews",
-      "bookingChangeRequests",
-      "newBookingPolicyExceptionRequests",
-      "publicBookingRequests",
-    ],
+    // One count per tab, through the one tab-to-count mapping (#4969), so the
+    // badge is the sum of the four tab badges on the Booking Requests page.
+    counts: BOOKING_REQUESTS_TABS.map((tab) => BOOKING_REQUESTS_TAB_COUNT_KEYS[tab]),
     tone: "warning",
     card: {
+      // What is waiting and where, from the helper the page's landing tab
+      // shares (#4969): the card opens the first tab with work.
       describe: (counts) =>
-        `${joinNonZero([
-          [counts.bookingReviews, "new booking review"],
-          [counts.bookingChangeRequests, "change request"],
-          [counts.newBookingPolicyExceptionRequests, "policy exception request"],
-          [counts.publicBookingRequests, "public booking request"],
-        ])} waiting for an officer's decision.`,
-      // The first tab with something on it.
+        `${describeBookingRequestsAlert(counts)?.summary ?? "No booking requests"} waiting for an officer's decision.`,
       href: (counts) =>
-        buildBookingRequestsHref(
-          BOOKING_REQUESTS_TABS.find(
-            (tab) => counts[BOOKING_REQUEST_TAB_COUNTS[tab]] > 0,
-          ) ?? "approvals",
-        ),
+        describeBookingRequestsAlert(counts)?.href ??
+        buildBookingRequestsHref("approvals"),
     },
   },
   {

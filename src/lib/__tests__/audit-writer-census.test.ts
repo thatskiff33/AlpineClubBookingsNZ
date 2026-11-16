@@ -1504,10 +1504,10 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // RE-MEASURED with `pnpm run audit:census`.
     // 413 -> 415 unpinned (#4915): the two subject access writers, `privacy`.
     // 415 -> 418 unpinned (#4496): the three Subscription Categories admin-CRUD writers, `admin`.
-    // RE-MEASURED with `pnpm run audit:census` on the merged tree.
     // 418 -> 419 unpinned (ALP-588): a booking's fresh email copy, `communication`; its superseded-failure archive reuses the Archive button's writer.
-    // RE-MEASURED with `pnpm run audit:census`.
-    ).toEqual({ pinned: 130, unpinned: 419 });
+    // 419 -> 420 unpinned (#4963): Try again on an exhausted email failure, `communication`.
+    // RE-MEASURED with `pnpm run audit:census` on the merged tree.
+    ).toEqual({ pinned: 130, unpinned: 420 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

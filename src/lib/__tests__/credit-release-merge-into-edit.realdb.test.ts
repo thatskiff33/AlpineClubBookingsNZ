@@ -312,7 +312,7 @@ let previousDatabaseUrl: string | undefined;
         result: {
           ownCardRefund: null,
           pendingRefundAmountCents: 0,
-          organiserChildRefund: null,
+          organiserChildRefund: null, refundHeldForDispute: false,
           paymentId: PAYMENT_ID,
           additionalAsk: sizeAdditionalAsk({ priceDiffCents: E_CENTS, changeFeeCents: 0, payment: mirror }),
           retiredAdditionalAsks: [],

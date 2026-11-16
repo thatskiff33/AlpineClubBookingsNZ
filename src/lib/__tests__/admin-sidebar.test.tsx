@@ -461,7 +461,7 @@ describe("AdminSidebar", () => {
       "fetch",
       buildFetchMock({
         bookingReviews: 2,
-        bookingChangeRequests: 1,
+        lockedPeriodChangeRequests: 1,
         publicBookingRequests: 3,
       }),
     );

@@ -13,18 +13,22 @@ import { Alert } from "@/components/ui/alert"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { useActionFailure } from "@/hooks/use-action-failure"
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
+import { FocusedActionError } from "@/components/focused-action-error"
 import {
   LodgeSelect,
   initialLodgeIdFromLocation,
   useLodgeOptions,
 } from "@/components/lodge-select"
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
-import { readSeasonSchedule } from "../../_lib/season-schedule";
+import { formatSeasonEdge, readSeasonSchedule } from "../../_lib/season-schedule";
+import type { Season } from "./_lib/season-window";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
 import { useClubTime } from "@/components/club-time-provider"
 import { useClubFormat } from "@/components/club-format-provider"
-import { type ClubDateFormat, formatStayDateOrNull, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
+import { calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
 import {
   SeasonCoverageGapNotice,
   SeasonCoverageGapSummary,
@@ -36,29 +40,27 @@ import {
 // rates are left untouched. Creating a season (which requires at least one rate)
 // also lives in Fees → Hut Fees, so this page edits existing windows only.
 
-interface Season {
-  id: string
-  name: string
-  type: "WINTER" | "SUMMER"
-  startDate: string
-  endDate: string
-  active: boolean
-}
-
-// CT-4 (#2870): a season edge is a CALENDAR DATE and calendar dates take no
-// timezone — the API serialises the `@db.Date` column as UTC midnight, and the
-// kernel's calendar-date formatter pins "UTC" over that encoding, so the
-// projection is the identity for every club. It used to be read through
-// APP_TIME_ZONE, which for a club behind UTC named the previous day.
-function formatSeasonEdge(value: string, format: ClubDateFormat): string {
-  return formatStayDateOrNull(value, format) ?? value
-}
-
 export default function SeasonsPage() {
   const format = useClubFormat()
   const [seasons, setSeasons] = useState<Season[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
+  // A failed READ is passive: it is shown above the list and moves nothing. A
+  // failed save, delete or toggle is the admin's own action, so it takes focus
+  // through the permanently mounted recovery alert, again on a repeat (#4975).
+  const [loadError, setLoadError] = useState("")
+  const actionFailure = useActionFailure()
+  // Saves close the edit form and removals drop their row, taking the focused
+  // control with them, so success positions at the page top (#2934).
+  const [transitionsLanded, setTransitionsLanded] = useState(0)
+  const pageRef = useRef<HTMLDivElement>(null)
+  useActionAttention({
+    // `FocusedActionError` owns the failure focus; the error is passed only so
+    // a failure suppresses the success position.
+    error: actionFailure.error,
+    errorTarget: null,
+    success: transitionsLanded,
+    successTarget: pageRef,
+  })
   const [editingId, setEditingId] = useState<string | null>(null)
   const canEdit = useAdminAreaEditAccess("bookings")
   const {
@@ -119,7 +121,7 @@ export default function SeasonsPage() {
     if (!scopedLodgeId) {
       setSeasons([])
       setEditingId(null)
-      setError("")
+      setLoadError("")
       setLoading(false)
       return
     }
@@ -133,7 +135,7 @@ export default function SeasonsPage() {
       setSeasons(data)
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return
-      setError(err instanceof Error ? err.message : "Unknown error")
+      setLoadError(err instanceof Error ? err.message : "Unknown error")
     } finally {
       setLoading(false)
     }
@@ -170,7 +172,8 @@ export default function SeasonsPage() {
     setEndDate("")
     setActive(true)
     setEditingId(null)
-    setError("")
+    setLoadError("")
+    actionFailure.clear()
   }
 
   function handleLodgeChange(nextLodgeId: string | null) {
@@ -196,7 +199,7 @@ export default function SeasonsPage() {
     if (!editingId || !lodgeScopeReady) return
     const requestedScope = scopedLodgeId
     setSaving(true)
-    setError("")
+    actionFailure.clear()
 
     // Window-only PUT: omit membershipTypeRates so the [id] route leaves the
     // season's existing rates untouched (see the route's `if (membershipTypeRates)`
@@ -211,14 +214,20 @@ export default function SeasonsPage() {
         body: JSON.stringify(payload),
       })
       if (!res.ok) {
-        setError(await apiErrorMessageFromResponse(res, fallback))
+        const message = await apiErrorMessageFromResponse(res, fallback)
+        // A refusal from a lodge the admin has since left must not take focus.
+        if (activeScopeRef.current !== requestedScope) return
+        actionFailure.fail(message)
         return
       }
       if (activeScopeRef.current !== requestedScope) return
       resetForm()
+      setTransitionsLanded((count) => count + 1)
       fetchSeasons()
     } catch {
-      setError(fallback)
+      // The request never arrived: see handleDelete.
+      if (activeScopeRef.current !== requestedScope) return
+      actionFailure.fail(fallback)
     } finally {
       setSaving(false)
     }
@@ -229,19 +238,25 @@ export default function SeasonsPage() {
     const requestedScope = scopedLodgeId
     if (!confirm("Are you sure you want to delete this season?")) return
     const fallback = "Failed to delete"
-    setError("")
+    actionFailure.clear()
     try {
       const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" })
       if (!res.ok) {
-        setError(await apiErrorMessageFromResponse(res, fallback))
+        const message = await apiErrorMessageFromResponse(res, fallback)
+        // A refusal from a lodge the admin has since left must not take focus.
+        if (activeScopeRef.current !== requestedScope) return
+        actionFailure.fail(message)
         return
       }
       if (activeScopeRef.current !== requestedScope) return
+      setTransitionsLanded((count) => count + 1)
       fetchSeasons()
     } catch {
       // The request never arrived. The browser's own wording ("Failed to fetch",
       // "Load failed") says nothing useful to an officer, so show the screen's sentence.
-      setError(fallback)
+      // A failure from a lodge the admin has since left must not take focus.
+      if (activeScopeRef.current !== requestedScope) return
+      actionFailure.fail(fallback)
     }
   }
 
@@ -249,7 +264,7 @@ export default function SeasonsPage() {
     if (!lodgeScopeReady) return
     const requestedScope = scopedLodgeId
     const fallback = "Failed to update"
-    setError("")
+    actionFailure.clear()
     try {
       const res = await fetch(`/api/admin/seasons/${season.id}`, {
         method: "PUT",
@@ -257,14 +272,18 @@ export default function SeasonsPage() {
         body: JSON.stringify({ active: !season.active }),
       })
       if (!res.ok) {
-        setError(await apiErrorMessageFromResponse(res, fallback))
+        const message = await apiErrorMessageFromResponse(res, fallback)
+        // A refusal from a lodge the admin has since left must not take focus.
+        if (activeScopeRef.current !== requestedScope) return
+        actionFailure.fail(message)
         return
       }
       if (activeScopeRef.current !== requestedScope) return
       fetchSeasons()
     } catch {
       // The request never arrived: see handleDelete.
-      setError(fallback)
+      if (activeScopeRef.current !== requestedScope) return
+      actionFailure.fail(fallback)
     }
   }
 
@@ -345,7 +364,7 @@ export default function SeasonsPage() {
   )
 
   return (
-    <div>
+    <div ref={pageRef}>
       {viewOnlyBanner}
       <div className="space-y-6">
       <AdminPageHeader
@@ -378,11 +397,16 @@ export default function SeasonsPage() {
           />
       </div>
 
-      {error && (
+      {loadError && (
         <div role="alert" className="bg-destructive/10 text-destructive px-4 py-3 rounded-md">
-          {error}
+          {loadError}
         </div>
       )}
+      <FocusedActionError
+        id="season-action-error"
+        error={actionFailure.error}
+        attentionKey={actionFailure.attentionKey}
+      />
 
       {lodgeScopeReady && editingId && canEdit && (
         <Card>
