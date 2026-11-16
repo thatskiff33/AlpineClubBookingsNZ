@@ -383,6 +383,38 @@ async function scheduleUnregisteredChange(): Promise<void> {
     await expectCensusAgrees(id);
   });
 
+  it("a group place joined after the change takes its organiser's treatment, in the journal as in Xero", async () => {
+    // The organiser booked under the baseline; the place joined the group on the change date.
+    const organiserId = await newBooking(MADE_BEFORE);
+    await scheduleUnregisteredChange();
+    const placeId = await newBooking(MADE_ON_CHANGE);
+    await prisma.booking.update({ where: { id: placeId }, data: { parentBookingId: organiserId } });
+    vi.setSystemTime(DOOR_DAY);
+
+    // The combined invoice renders on the organiser's booking, and the place's own documents on the same anchor.
+    const organiserRendering = await anchors.resolveXeroTaxRendering({ kind: "booking", bookingId: organiserId });
+    expect(organiserRendering).toEqual({ lineAmountTypes: "Inclusive", taxType: "OUTPUT2" });
+    expect(await anchors.resolveXeroTaxRendering({ kind: "booking", bookingId: placeId })).toEqual(organiserRendering);
+
+    // The place's journal split takes that treatment too, though the place itself was made on the change date.
+    await settleHistoryByCard(placeId, PRICE);
+    expect(await eventMoney(`booking-charge:${placeId}`)).toEqual({ revenueGrossCents: PRICE, gstCents: perLineTaxCents(PRICE), taxCodes: [TAX_CODE] });
+    const { createXeroInvoiceForBooking } = await import("@/lib/xero-booking-invoices");
+    expect(documentMoney(await sentBy(() => createXeroInvoiceForBooking(placeId)))).toEqual({
+      lineAmountTypes: "Inclusive", taxTypes: ["OUTPUT2"], grossCents: PRICE, perLineTaxCents: perLineTaxCents(PRICE),
+    });
+    await expectCensusAgrees(placeId);
+
+    // Billed to the organiser instead, the place's lines on the group's combined invoice carry the same tax.
+    await prisma.booking.update({ where: { id: placeId }, data: { organiserSettled: true } });
+    const { buildGroupSettlementInvoiceLines } = await import("@/lib/xero-group-settlement-invoice-lines");
+    const combined = await buildGroupSettlementInvoiceLines(organiserId, organiserRendering);
+    expect(combined.childCount).toBe(1);
+    expect(documentMoney({ lineAmountTypes: organiserRendering.lineAmountTypes, lineItems: combined.lineItems as XeroLine[] })).toEqual({
+      lineAmountTypes: "Inclusive", taxTypes: ["OUTPUT2"], grossCents: PRICE, perLineTaxCents: perLineTaxCents(PRICE),
+    });
+  });
+
   it("the database refuses a registered period without a Xero code and an unregistered one with a code", async () => {
     const insert = (id: string, effectiveFrom: string, registered: boolean, code: string | null) =>
       prisma.$executeRaw`INSERT INTO "ClubTaxSettings" ("id", "gstRegistered", "taxRateBasisPoints", "xeroTaxType", "effectiveFrom", "updatedAt")

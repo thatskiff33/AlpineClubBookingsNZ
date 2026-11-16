@@ -1,3 +1,4 @@
+import { readBookingTaxAnchorInstant } from "@/lib/booking-tax-anchor";
 import { clubTaxTreatmentOn, loadClubTaxSchedule } from "@/lib/club-tax-settings";
 import { clubCalendarDateOf, requireInstant, type Instant } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -13,9 +14,9 @@ import { xeroTaxRenderingOf, type XeroTaxRendering } from "@/lib/xero-tax-render
  * every credit note agree with each other and with the member-money journal,
  * which splits its charges on the same anchor (`booking-posting.ts`).
  *
- * - a booking's documents: the club date of `Booking.createdAt`; a group's
- *   combined documents, and a place's documents billed to its organiser, use
- *   the organiser's booking;
+ * - a booking's documents: the club date of `Booking.createdAt`; a group place's
+ *   documents, and so the group's combined documents, use the organiser's
+ *   booking (`readBookingTaxAnchorInstant`, the journal's own anchor);
  * - a subscription charge, and the note that cancels it:
  *   `MembershipSubscriptionCharge.createdAt`; a cancellation credits an invoice,
  *   so its anchor is the charge that raised that invoice, or, for an invoice
@@ -29,9 +30,8 @@ import { xeroTaxRenderingOf, type XeroTaxRendering } from "@/lib/xero-tax-render
  * under a guessed treatment.
  */
 export type XeroTaxAnchor =
+  /** A booking, or a group place, which takes its organiser's booking (`booking-tax-anchor.ts`). */
   | { kind: "booking"; bookingId: string }
-  /** A group place billed to its organiser: the organiser's booking, or the place's own when it has no parent. */
-  | { kind: "organiser-billed-place"; bookingId: string }
   | { kind: "subscription-charge"; chargeId: string }
   | { kind: "subscription-invoice"; invoiceId: string; subscriptionId: string }
   | { kind: "xero-operation"; operationId: string }
@@ -41,19 +41,8 @@ async function anchorInstant(anchor: XeroTaxAnchor): Promise<Instant> {
   switch (anchor.kind) {
     case "instant":
       return requireInstant(anchor.at);
-    case "booking": {
-      const row = await prisma.booking.findUnique({ where: { id: anchor.bookingId }, select: { createdAt: true } });
-      if (!row) throw new Error(`Booking ${anchor.bookingId} does not exist, so its documents have no tax anchor.`);
-      return requireInstant(row.createdAt);
-    }
-    case "organiser-billed-place": {
-      const place = await prisma.booking.findUnique({
-        where: { id: anchor.bookingId },
-        select: { createdAt: true, parentBooking: { select: { createdAt: true } } },
-      });
-      if (!place) throw new Error(`Booking ${anchor.bookingId} does not exist, so its documents have no tax anchor.`);
-      return requireInstant(place.parentBooking?.createdAt ?? place.createdAt);
-    }
+    case "booking":
+      return readBookingTaxAnchorInstant(prisma, anchor.bookingId);
     case "subscription-invoice": {
       const charge = await prisma.membershipSubscriptionCharge.findUnique({
         where: { xeroInvoiceId: anchor.invoiceId },

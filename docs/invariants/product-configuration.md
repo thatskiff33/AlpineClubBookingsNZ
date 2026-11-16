@@ -435,7 +435,9 @@ home for that explanation and is not repeated here.
   hard-coded tax code.
 - **Which period a charge takes is fixed by its own anchor, never the render
   or post date** (owner decision A, 11 Nov 2026): a booking's anchor is its own
-  `createdAt`, so it keeps the treatment in force when made for its whole life.
+  `createdAt` (a group place's, its organiser's booking's), so it keeps the
+  treatment in force when made for its whole life; the journal and Xero read
+  the one `readBookingTaxAnchorInstant`.
   A date the schedule does not cover refuses only a fresh split, never a guess.
 - **The one writer is behind Full Admin, audited:**
   `scheduleClubTaxChange`/`cancelScheduledClubTaxChange`

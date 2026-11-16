@@ -133,9 +133,9 @@ export async function executeOrganiserExtraAdjustment(
     const account = await getResolvedAccountMapping("hutFeeRefunds");
     if (!invoice.contact?.contactID) throw new Error("Organiser invoice has no Xero contact");
     const waive = payload.purpose === "waive";
-    // #4632: the extra invoice carried the organiser's booking's treatment, as
-    // the combined invoice does (`xero-supplementary-invoices.ts`); its note matches.
-    const taxRendering = await resolveXeroTaxRendering({ kind: "organiser-billed-place", bookingId: payload.bookingId });
+    // #4632: a group place's documents carry its organiser's booking's
+    // treatment (`booking-tax-anchor.ts`), as its extra invoice did; its note matches.
+    const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId: payload.bookingId });
     const reference = `Booking ${payload.bookingId} — ${waive ? "unpaid extra waived" : "organiser bank-transfer refund"} (${invoice.invoiceNumber ?? extraInvoiceId})`;
     const created = await callXeroApi(
       () => xero.accountingApi.createCreditNotes(tenantId, { creditNotes: [{

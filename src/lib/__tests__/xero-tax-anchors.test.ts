@@ -50,14 +50,17 @@ describe("resolveXeroTaxRendering (#4632)", () => {
   it("a booking keeps the treatment of the day it was made", async () => {
     mocks.booking.mockResolvedValue({ createdAt: BEFORE });
     await expect(resolveXeroTaxRendering({ kind: "booking", bookingId: "b" })).resolves.toEqual(BASELINE_XERO_TAX_RENDERING);
-    expect(mocks.booking).toHaveBeenCalledWith({ where: { id: "b" }, select: { createdAt: true } });
+    expect(mocks.booking).toHaveBeenCalledWith({
+      where: { id: "b" },
+      select: { createdAt: true, parentBooking: { select: { createdAt: true } } },
+    });
   });
 
-  it("a place billed to its organiser takes the organiser's booking, else its own", async () => {
+  it("a group place takes its organiser's booking, else its own", async () => {
     mocks.booking.mockResolvedValueOnce({ createdAt: AFTER, parentBooking: { createdAt: BEFORE } });
-    await expect(resolveXeroTaxRendering({ kind: "organiser-billed-place", bookingId: "place" })).resolves.toEqual(BASELINE_XERO_TAX_RENDERING);
+    await expect(resolveXeroTaxRendering({ kind: "booking", bookingId: "place" })).resolves.toEqual(BASELINE_XERO_TAX_RENDERING);
     mocks.booking.mockResolvedValueOnce({ createdAt: AFTER, parentBooking: null });
-    await expect(resolveXeroTaxRendering({ kind: "organiser-billed-place", bookingId: "place" })).resolves.toEqual(NO_TAX);
+    await expect(resolveXeroTaxRendering({ kind: "booking", bookingId: "place" })).resolves.toEqual(NO_TAX);
   });
 
   it("a subscription charge, and an invoice through its charge or else its subscription", async () => {
@@ -82,7 +85,6 @@ describe("resolveXeroTaxRendering (#4632)", () => {
     mocks.subscription.mockResolvedValue(null);
     mocks.operation.mockResolvedValue(null);
     await expect(resolveXeroTaxRendering({ kind: "booking", bookingId: "gone" })).rejects.toThrow(/no tax anchor/);
-    await expect(resolveXeroTaxRendering({ kind: "organiser-billed-place", bookingId: "gone" })).rejects.toThrow(/no tax anchor/);
     await expect(resolveXeroTaxRendering({ kind: "subscription-charge", chargeId: "gone" })).rejects.toThrow(/no tax anchor/);
     await expect(resolveXeroTaxRendering({ kind: "subscription-invoice", invoiceId: "gone", subscriptionId: "gone" })).rejects.toThrow(/no tax anchor/);
     await expect(resolveXeroTaxRendering({ kind: "xero-operation", operationId: "gone" })).rejects.toThrow(/no tax anchor/);

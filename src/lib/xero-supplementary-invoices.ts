@@ -183,12 +183,9 @@ export async function createXeroSupplementaryInvoice(params: {
     ? await resolveOrganiserXeroContact(organiserBilling, contactOptions)
     : await findOrCreateXeroContactForInvoicedParty(booking, contactOptions);
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
-  // #4632: the booking's own treatment; a place billed to its organiser
-  // carries the organiser's booking's, as its combined invoice does.
-  const taxRendering = await resolveXeroTaxRendering({
-    kind: "booking",
-    bookingId: organiserBilling?.organiserBookingId ?? bookingId,
-  });
+  // #4632: the booking's treatment; a group place's is its organiser's
+  // booking's (`booking-tax-anchor.ts`), as its combined invoice and journal split are.
+  const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
   // A negative price adjustment is a give-back, so it posts to the
   // hutFeeRefunds mapping like the standalone-reduction credit-note path
   // (owner decision on #1356): clubs that prefer a single account map

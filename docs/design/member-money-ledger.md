@@ -120,8 +120,9 @@ which is the GST-inclusive 15% treatment the Xero documents already render.
 `splitTaxInclusiveGross` derives tax = round-half-up(gross × rate ÷ (10000 +
 rate)) and net = gross − tax, in integer arithmetic only. An unregistered club
 posts revenue with no tax fields and no GST leg. Each fresh split takes the
-period in force on its own charge's anchor date — a booking's creation date,
-the same anchor its Xero documents use (`xero-tax-anchors.ts`) — never the
+period in force on its own charge's anchor date — a booking's creation date
+(a group place's organiser's booking's), the one definition its Xero documents
+also read (`booking-tax-anchor.ts`) — never the
 date it posts, so a booking keeps the treatment it was made under for its
 whole life (owner decision A). A date the schedule does not cover refuses only
 a revenue leg that needs a fresh split; a receipt, a refund, a correction or a

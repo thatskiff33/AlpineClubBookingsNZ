@@ -536,7 +536,11 @@ period in force on the document's own anchor date, and turns it into the
 ([`xero-tax-rendering.ts`](../../src/lib/xero-tax-rendering.ts)).
 
 **The anchor is the charge, never the render or send date** (owner decision A,
-11 Nov 2026): a booking's anchor is `Booking.createdAt`; a subscription
+11 Nov 2026): a booking's anchor is `Booking.createdAt`, and a group place's
+is its organiser's booking's, so a joiner's journal split matches the combined
+invoice its lines go on (`readBookingTaxAnchorInstant`,
+[`booking-tax-anchor.ts`](../../src/lib/booking-tax-anchor.ts), read by both
+sides); a subscription
 charge's is its own `createdAt`, and its cancellation credit note shares that
 anchor; an entrance-fee invoice's is its outbox operation's `createdAt`. A
 booking made before the club's GST registration or rate changes keeps the
