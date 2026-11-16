@@ -1,6 +1,5 @@
 "use client";
 
-import type { AgeTier } from "@prisma/client";
 import { useCallback, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -36,6 +35,11 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { AdminDependantIdentityResolution } from "@/components/book/admin-dependant-identity-resolution";
 import { useAdminDependantIdentity } from "./_hooks/use-admin-dependant-identity";
+import type {
+  FamilyMember,
+  PriceQuote,
+  SelectedMember,
+} from "./_lib/admin-book-types";
 import {
   DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
   type BookerDependant,
@@ -81,38 +85,6 @@ function countStayNights(checkIn: string | null, checkOut: string | null): numbe
   const from = checkIn === null ? null : parseCalendarDate(checkIn);
   const to = checkOut === null ? null : parseCalendarDate(checkOut);
   return from && to ? countClubNights(from, to) : 0;
-}
-
-interface FamilyMember {
-  id: string;
-  firstName: string;
-  lastName: string;
-  ageTier: AgeTier;
-  relationship: "self" | "partner" | "dependent";
-}
-
-interface PriceQuote {
-  guests: {
-    ageTier: string;
-    isMember: boolean;
-    nights: number;
-    priceCents: number;
-  }[];
-  totalPriceCents: number;
-  availableCreditCents?: number;
-}
-
-interface SelectedMember {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  ageTier: string;
-  // Set when the owner is an inline-created non-login NON_MEMBER (#1935): the
-  // notify dialog defaults to "don't notify" and reworded, and a placeholder
-  // (no-email) owner is never emailed at all.
-  isNonMember?: boolean;
-  isPlaceholderEmail?: boolean;
 }
 
 export default function AdminBookPage() {

@@ -7,10 +7,6 @@ load-error state, and — where a save unmounts the focused control — a
 comments; splitting a page to absorb a dozen lines of focus wiring would put
 the alert in a different file from the action that fills it.
 
-file: src/app/(admin)/admin/booking-desk/book/page.tsx
-lines: 1655
-reason: the action alert and its Xero-reconnect link replace the old error box in place.
-
 file: src/app/(admin)/admin/membership/family-groups/page.tsx
 lines: 905
 reason: two focused action alerts (revoke, save) replace two plain error boxes.
