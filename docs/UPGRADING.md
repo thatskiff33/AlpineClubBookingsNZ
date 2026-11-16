@@ -179,7 +179,6 @@ fit into.
    - [Capture mailboxes and `EMAIL_SERVER_HOST` (#3071)](#if-any-copy-of-your-site-uses-a-capture-mailbox-check-email_server_host-3071)
    - [Google Analytics stops until an admin re-enters the measurement id (#2573)](#google-analytics-stops-until-an-admin-re-enters-the-measurement-id-2573)
    - [The obsolete family-group "role" column is removed (#2520)](#the-obsolete-family-group-role-column-is-removed-2520)
-   - [Re-export configuration bundles for format version 3 (#2363)](#re-export-configuration-bundles-for-format-version-3-2363)
 4. Only if this server builds its own image (`docker compose build`, or the deploy
    script's `--build-and-push-images`), raise the build's memory ceiling before
    you build: [Building on your own server: raise `NODE_BUILD_OPTIONS` to 8192 (#5164)](#building-on-your-own-server-raise-node_build_options-to-8192-5164).
@@ -196,7 +195,12 @@ fit into.
    by the runbook's
    [§2.4 windowed migration deploy sequence](PRODUCTION_UPGRADE_RUNBOOK.md#24-windowed-migration-deploy-sequence):
    every pending windowed migration shares one window, and each is named in the
-   override reason.
+   override reason. §2.4 lists this release's windowed migrations, and
+   these subsections of it are part of the same window:
+   - [§2.4.1 #2520: drop `FamilyGroupMember.role`](PRODUCTION_UPGRADE_RUNBOOK.md#241-2520-drop-familygroupmemberrole)
+   - [§2.4.2 #3369: a school booking has an organisation](PRODUCTION_UPGRADE_RUNBOOK.md#242-3369-a-school-booking-has-an-organisation-not-an-invented-person)
+   - [§2.4.3 #3271: parent/partner exclusivity backstop](PRODUCTION_UPGRADE_RUNBOOK.md#243-3271-parentpartner-exclusivity-backstop)
+   - [#3413: pending school-adult capacity activation](PRODUCTION_UPGRADE_RUNBOOK.md#3413-pending-school-adult-capacity-activation)
 2. Keep to what these sections say about the window itself:
    - [Payment transaction history outlives its payment (#4574)](#payment-transaction-history-outlives-its-payment-4574)
    - [Booking-ledger history outlives its booking (#4514)](#booking-ledger-history-outlives-its-booking-4514)
@@ -2041,20 +2045,10 @@ BOTH `booking-policies/minimum-stay.csv` and
 `booking-policies/adult-member-hosting.csv` with the complete intended sets (or
 their exact headers alone when clearing is intentional).
 
-### Re-export configuration bundles for format version 3 (#2363)
-
-Configuration bundles now require exact **format version 3** compatibility. The
-new version adds a reviewed replace-set for minimum-stay booking policies, where
-an omitted policy is deleted after appearing in the dry-run. Version 1 and 2
-bundles are refused because they cannot state that complete, namespaced policy
-set safely; a version 2 reader likewise refuses version 3 instead of overlooking
-the destructive category.
-
-Before upgrading, re-export any configuration bundle you rely on from the
-upgraded source app. Do not change only `manifest.json` or assume **Reseal edited
-bundle** upgrades an old bundle's meaning: a valid v3 export must include
-`booking-policies/minimum-stay.csv` with the complete intended policy set (or its
-exact header alone when clearing the set is intentional).
+Version 3 (#2363) came between v0.13.2 and this release and is not accepted
+either: it added `booking-policies/minimum-stay.csv`, where a policy omitted
+from the file is deleted after appearing in the dry-run. So a bundle exported
+from v0.13.2 (format version 2) is refused; re-export it after upgrading.
 
 ### One-off cleanup of another club's lodge address (#2484)
 
