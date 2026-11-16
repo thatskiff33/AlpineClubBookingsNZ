@@ -33,6 +33,9 @@ beforeEach(() => {
   }));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+// The page keeps several empty live regions mounted (the partner-invite and form
+// failures from #4975 as well as this one), so the list's is found by its id.
+const listAlert = () => document.getElementById("family-groups-list-error") as HTMLElement;
 async function openDelete() {
   render(<FamilyGroupsPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Delete Kea Family" }));
@@ -61,8 +64,8 @@ describe("family group deletion", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete group" }));
     // The list's failure region is permanently mounted (an empty live region
     // registers before its message), so wait for the message, not the role.
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(message));
-    const alert = screen.getByRole("alert");
+    await waitFor(() => expect(listAlert()).toHaveTextContent(message));
+    const alert = listAlert();
     // The row that was clicked can be screens below the alert, so the failure
     // takes focus rather than leaving a sighted officer looking at an unchanged row.
     await waitFor(() => expect(alert).toHaveFocus());
@@ -72,14 +75,14 @@ describe("family group deletion", () => {
   it("takes focus again when the same failure repeats", async () => {
     const dialog = await openDelete();
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete group" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Family group not found"));
-    const alert = screen.getByRole("alert");
+    await waitFor(() => expect(listAlert()).toHaveTextContent("Family group not found"));
+    const alert = listAlert();
     await waitFor(() => expect(alert).toHaveFocus());
     const row = screen.getByRole("button", { name: "Delete Kea Family" });
     row.focus();
     expect(alert).not.toHaveFocus();
     fireEvent.click(row);
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete group" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
+    await waitFor(() => expect(listAlert()).toHaveFocus());
   });
 });

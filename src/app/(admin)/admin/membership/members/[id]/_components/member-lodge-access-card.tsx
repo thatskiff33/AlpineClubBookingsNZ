@@ -7,6 +7,8 @@ import {
   type AncestorViewOnlyBannerProps,
 } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { useActionFailure } from "@/hooks/use-action-failure"
+import { FocusedActionError } from "@/components/focused-action-error"
 import {
   Card,
   CardContent,
@@ -31,6 +33,39 @@ interface LodgeAccessRow {
 // presentation rule).
 interface MemberLodgeAccessCardProps extends AncestorViewOnlyBannerProps {
   memberId: string
+}
+
+/**
+ * One run of per-lodge tickboxes. Booking restrictions and staff grants are the
+ * same control over different id sets, so the markup is written once.
+ */
+function LodgeTickboxes({
+  lodges,
+  selectedIds,
+  canEdit,
+  onToggle,
+}: {
+  lodges: ReadonlyArray<{ id: string; name: string }>
+  selectedIds: readonly string[]
+  canEdit: boolean | undefined
+  onToggle: (lodgeId: string, checked: boolean) => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-4">
+      {lodges.map((lodge) => (
+        <label key={lodge.id} className="flex items-center space-x-2">
+          <input
+            type="checkbox"
+            checked={selectedIds.includes(lodge.id)}
+            disabled={!canEdit}
+            onChange={(e) => onToggle(lodge.id, e.target.checked)}
+            className="rounded border-input"
+          />
+          <span className="text-sm">{lodge.name}</span>
+        </label>
+      ))}
+    </div>
+  )
 }
 
 export function MemberLodgeAccessCard({
@@ -59,7 +94,11 @@ export function MemberLodgeAccessCard({
   } = useLodgeOptions("admin")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState("")
+  // A failed load stays passive. A refused save is the admin's own action, so
+  // it takes focus and is re-announced on a repeat (#4975).
+  const [loadError, setLoadError] = useState("")
+  const saveFailure = useActionFailure()
+  const { fail: failSave, clear: clearSaveFailure } = saveFailure
   const [success, setSuccess] = useState("")
   const [bookingRestrictionLodgeIds, setBookingRestrictionLodgeIds] = useState<
     string[]
@@ -89,14 +128,16 @@ export function MemberLodgeAccessCard({
     if (!lodgeOptionsReady) {
       saveSequenceRef.current += 1
       setLoading(false)
-      setError("")
+      setLoadError("")
+      clearSaveFailure()
       setSuccess("")
       setBookingRestrictionLodgeIds([])
       setStaffLodgeIds([])
       return
     }
     setLoading(true)
-    setError("")
+    setLoadError("")
+    clearSaveFailure()
     try {
       const res = await fetch(`/api/admin/members/${memberId}/lodge-access`)
       const body = await res.json()
@@ -119,7 +160,7 @@ export function MemberLodgeAccessCard({
       setStaffLodgeIds(
         rows.filter((row) => row.kind === "STAFF").map((row) => row.lodgeId),
       )
-    } catch (loadError) {
+    } catch (loadFailure) {
       if (
         sequence !== loadSequenceRef.current ||
         !lodgeOptionsReadyRef.current ||
@@ -127,9 +168,9 @@ export function MemberLodgeAccessCard({
       ) {
         return
       }
-      setError(
-        loadError instanceof Error
-          ? loadError.message
+      setLoadError(
+        loadFailure instanceof Error
+          ? loadFailure.message
           : "Failed to load lodge access",
       )
     } finally {
@@ -141,7 +182,7 @@ export function MemberLodgeAccessCard({
         setLoading(false)
       }
     }
-  }, [lodgeOptionsKey, memberId, lodgeOptionsReady])
+  }, [clearSaveFailure, lodgeOptionsKey, memberId, lodgeOptionsReady])
 
   useEffect(() => {
     void loadAccess()
@@ -158,7 +199,7 @@ export function MemberLodgeAccessCard({
       lodgeOptionsReadyRef.current &&
       lodgeOptionsKeyRef.current === lodgeOptionsKey
     setSaving(true)
-    setError("")
+    clearSaveFailure()
     setSuccess("")
     try {
       const res = await fetch(`/api/admin/members/${memberId}/lodge-access`, {
@@ -171,10 +212,12 @@ export function MemberLodgeAccessCard({
       if (!res.ok) {
         throw new Error(body.error || "Failed to save lodge access")
       }
+      // The save landed, so a failed earlier read of the same grants is moot.
+      setLoadError("")
       setSuccess("Lodge access saved.")
     } catch (saveError) {
       if (!ownsCurrentScope()) return
-      setError(
+      failSave(
         saveError instanceof Error
           ? saveError.message
           : "Failed to save lodge access",
@@ -252,26 +295,14 @@ export function MemberLodgeAccessCard({
             ) : null}
             <div className="space-y-2">
               <Label>Restrict bookings to</Label>
-              <div className="flex flex-wrap gap-4">
-                {lodges.map((lodge) => (
-                  <label key={lodge.id} className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={bookingRestrictionLodgeIds.includes(lodge.id)}
-                      disabled={!canEdit}
-                      onChange={(e) =>
-                        toggle(
-                          lodge.id,
-                          e.target.checked,
-                          setBookingRestrictionLodgeIds,
-                        )
-                      }
-                      className="rounded border-input"
-                    />
-                    <span className="text-sm">{lodge.name}</span>
-                  </label>
-                ))}
-              </div>
+              <LodgeTickboxes
+                lodges={lodges}
+                selectedIds={bookingRestrictionLodgeIds}
+                canEdit={canEdit}
+                onToggle={(lodgeId, checked) =>
+                  toggle(lodgeId, checked, setBookingRestrictionLodgeIds)
+                }
+              />
               {bookingRestrictionLodgeIds.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                   No restriction — this member can book every lodge.
@@ -280,28 +311,27 @@ export function MemberLodgeAccessCard({
             </div>
             <div className="space-y-2">
               <Label>Staff (kiosk) lodges</Label>
-              <div className="flex flex-wrap gap-4">
-                {lodges.map((lodge) => (
-                  <label key={lodge.id} className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={staffLodgeIds.includes(lodge.id)}
-                      disabled={!canEdit}
-                      onChange={(e) =>
-                        toggle(lodge.id, e.target.checked, setStaffLodgeIds)
-                      }
-                      className="rounded border-input"
-                    />
-                    <span className="text-sm">{lodge.name}</span>
-                  </label>
-                ))}
-              </div>
+              <LodgeTickboxes
+                lodges={lodges}
+                selectedIds={staffLodgeIds}
+                canEdit={canEdit}
+                onToggle={(lodgeId, checked) =>
+                  toggle(lodgeId, checked, setStaffLodgeIds)
+                }
+              />
               <p className="text-xs text-muted-foreground">
                 Only needed for lodge-operational (kiosk) accounts; it does not
                 affect booking access.
               </p>
             </div>
-            {error ? <p className="text-sm text-danger-11">{error}</p> : null}
+            {loadError ? (
+              <p className="text-sm text-danger-11">{loadError}</p>
+            ) : null}
+            <FocusedActionError
+              id="member-lodge-access-save-error"
+              error={saveFailure.error}
+              attentionKey={saveFailure.attentionKey}
+            />
             {success ? (
               <p className="text-sm text-success-11">{success}</p>
             ) : null}

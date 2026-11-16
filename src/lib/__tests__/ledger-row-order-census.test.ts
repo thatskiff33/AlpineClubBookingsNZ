@@ -180,7 +180,7 @@ const EXISTENCE_READS: Record<string, string> = {
     "tests stampedTransaction to throw the Xero invoice refusal; no row id is consumed.",
   "src/lib/payment-reconciliation.ts > reverseManualBookingPayment > settledStripeTransaction":
     "tests settledStripeTransaction to refuse reversing after a card capture; no row id is consumed.",
-  "src/lib/xero-booking-edit-settlement.ts > readInternetBankingReceiptCaptured > captured":
+  "src/lib/xero-booking-edit-receipt.ts > readInternetBankingReceiptCaptured > captured":
     "returns captured !== null as the receipt-captured boolean; no row id is consumed.",
   "src/lib/xero-inbound/invoice-paid-effects.ts > syncInternetBankingPaymentsForPaidInvoice > existingPrimary":
     "tests !existingPrimary before creating a primary receipt only when none exists; no row id is consumed.",
