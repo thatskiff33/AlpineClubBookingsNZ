@@ -25,7 +25,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: db }));
 // The real row writers (`postOpeningCreditRows`, `reverseOpeningCreditRows`) and
 // their shared balance rule run; only the advisory lock is recorded instead.
 vi.mock("@/lib/member-credit", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-credit")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-credit")),
   lockMemberCreditLedger: vi.fn(async (memberId: string) => {
     ledger.locked.push(memberId);
   }),
