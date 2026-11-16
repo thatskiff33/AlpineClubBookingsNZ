@@ -65,6 +65,7 @@ import {
   type SchoolChildTier,
 } from "@/lib/school-booking-constants";
 import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
+import { isPublicRequestFilter, type PublicRequestFilter } from "./public-booking-request-filters";
 
 const SCHOOL_CHILD_TIER_LABELS: Record<SchoolChildTier, string> = {
   INFANT: "Infants",
@@ -124,43 +125,6 @@ function storedDataNeedsAttention(request: {
 function parseCount(value: string): number {
   const parsed = Math.floor(Number(value));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
-type PublicRequestFilter =
-  | "QUEUE"
-  | "NEW"
-  | "VERIFIED"
-  | "PRICED"
-  | "QUOTED"
-  | "QUOTE_SENT"
-  | "QUERY_PENDING"
-  | "MODIFICATION_REQUESTED"
-  | "ACCEPTED"
-  | "APPROVED"
-  | "DECLINED"
-  | "CANCELLED"
-  | "CONVERTED"
-  | "ALL";
-
-const publicRequestFilters = new Set<PublicRequestFilter>([
-  "QUEUE",
-  "NEW",
-  "VERIFIED",
-  "PRICED",
-  "QUOTED",
-  "QUOTE_SENT",
-  "QUERY_PENDING",
-  "MODIFICATION_REQUESTED",
-  "ACCEPTED",
-  "APPROVED",
-  "DECLINED",
-  "CANCELLED",
-  "CONVERTED",
-  "ALL",
-]);
-
-function isPublicRequestFilter(value: string | null): value is PublicRequestFilter {
-  return publicRequestFilters.has(value as PublicRequestFilter);
 }
 
 interface PublicBookingRequestData {

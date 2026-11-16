@@ -60,24 +60,6 @@ reason: the only growth is the import of `notifyAdminQueueChanged` and the
   add a file and still need a call here. Splitting this page is its own
   piece of work.
 
-file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2751
-reason: the only growth is the import of `notifyAdminQueueChanged` and the
-  call at each decision that changes this queue, so the Needs Attention badge
-  refetches after the officer acts (#4962). The call has to sit at the
-  mutation site, after the request succeeds; moving it into a helper would
-  add a file and still need a call here. Splitting this page is its own
-  piece of work.
-
-file: src/components/admin/manual-refund-task-queue.tsx
-lines: 2377
-reason: the only growth is the import of `notifyAdminQueueChanged` and the
-  call at each decision that changes this queue, so the Needs Attention badge
-  refetches after the officer acts (#4962). The call has to sit at the
-  mutation site, after the request succeeds; moving it into a helper would
-  add a file and still need a call here. Splitting this page is its own
-  piece of work.
-
 function: src/app/(admin)/admin/finance/refund-requests/page.tsx#RefundRequestsPage
 lines: 817
 reason: the only growth is the `notifyAdminQueueChanged` call at each
