@@ -253,6 +253,13 @@ describe("a keep sets the whole refunded total its links decide, in its own tran
     expect(mocks.floor).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ xeroDerivedCents: 10_000, creditNoteId: null }));
   });
 
+  it("MUTATION (#4449 review, item 2): a keep held at the floor that leaves the stored total where it was sends no alert", async () => {
+    // A $40 card refund on record, its note still in the outbox: Xero's links say $0, the floor keeps the $40.
+    const alert = { paymentId: PAYMENT_ID, bookingId: "booking-1", creditNoteId: null, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 4_000 };
+    mocks.floor.mockResolvedValueOnce({ cents: 4_000, alert });
+    await expect(decide({ refundedAmountCents: 4_000, linkedCents: 0 })).resolves.toMatchObject({ paymentColumns: null, floorAlert: null });
+  });
+
   it("MUTATION: never on an invoice matched to several payments, whose share of the correction is unknown; nor is it recounted after", async () => {
     await expect(decide({ matchedPayments: 2 })).resolves.toMatchObject({ plan: { kind: "keep" }, paymentColumns: null, appliedCorrectionNotes: [] });
     expect(mocks.decideLinked).not.toHaveBeenCalled();

@@ -7,18 +7,18 @@ import { prisma } from "@/lib/prisma";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import logger from "@/lib/logger";
 import { type AccountCreditAllocationRepairResult, type AccountCreditAllocationTarget, type RefundedPaymentBusinessStateRepairResult } from "./types";
-import { buildBookingAppliedCreditDescription, getCreditNoteAmountCents, getJsonRecord, getNextRefundedPaymentStatus, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
+import { buildBookingAppliedCreditDescription, getCreditNoteAmountCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata } from "./amounts";
 import { isIncludedRefundCreditNoteStatus, readRefundNoteRowsByPayment } from "@/lib/xero-refund-note-status";
 import { findActiveXeroObjectLinks } from "./object-links";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
-import { floorBankTransferRefundedTotal } from "./credit-note-bank-transfer-floor";
+import { sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
+import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 import { createAuditLog } from "@/lib/audit";
 import { lockMemberCreditLedger } from "@/lib/member-credit";
 import { repairLegacyAppliedCreditNoteAllocationsForBooking } from "@/lib/xero-applied-credit-allocation-repair";
 import { assertNoAppliedCreditDeallocationFence } from "@/lib/xero-applied-credit-operation-serialization";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { formatCents } from "@/lib/utils";
-import { uncapturedPrimaryStatus } from "./modification-note-refunds";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
 import { capOrganiserChildMirrorAtStripeRefunds } from "@/lib/organiser-child-refund";
 
@@ -277,42 +277,25 @@ export async function repairRefundedPaymentBusinessState(input: {
       });
       effectiveRefundedTotalCents = payment.refundedAmountCents;
     }
-    // #4162 (`INV-ADDPAY-021`): never below a bank-transfer payment's own refund detail; less is alerted, not applied.
-    effectiveRefundedTotalCents = await floorBankTransferRefundedTotal({ payment, xeroDerivedCents: effectiveRefundedTotalCents, creditNoteId: input.creditNoteId, creditNoteNumber: input.creditNote.creditNoteNumber ?? null, format });
     // #3653 (`INV-PAY-114`): a Xero note never raises an organiser child's cash
     // mirror past the refunds Stripe recorded for it.
     if (isStripePayment && payment.booking.organiserSettled) {
       effectiveRefundedTotalCents = await capOrganiserChildMirrorAtStripeRefunds(prisma, payment, effectiveRefundedTotalCents);
     }
-
-    let nextStatus = getNextRefundedPaymentStatus(
-      payment.status,
-      payment.amountCents,
-      effectiveRefundedTotalCents
-    );
-    if (
-      isStripePayment &&
-      nextStatus === PaymentStatus.SUCCEEDED &&
-      (payment.status === PaymentStatus.REFUNDED ||
-        payment.status === PaymentStatus.PARTIALLY_REFUNDED)
-    ) {
-      // F5 (#1353): never un-refund a Stripe payment from Xero-derived data.
-      nextStatus = null;
-    }
-    if (
-      nextStatus === PaymentStatus.SUCCEEDED &&
-      (payment.status === PaymentStatus.REFUNDED ||
-        payment.status === PaymentStatus.PARTIALLY_REFUNDED)
-    ) {
-      // #3979 (`INV-PAY-126`): a refunded total falling to nothing on a payment
-      // nothing was ever captured on undoes an older fold (an invoice correction
-      // counted as a refund), never a refund given back: the payment returns to
-      // its uncaptured state, never to SUCCEEDED. An organiser-settled child is
-      // the #3653 mirror's, and a payment with no rows keeps today's answer.
-      if (!payment.booking.organiserSettled) {
-        nextStatus = (await uncapturedPrimaryStatus(payment.id)) ?? nextStatus;
-      }
-    }
+    // #4449 (`INV-SSOT`): the clamp, the bank-transfer floor (#4162, `INV-ADDPAY-021`: never below a bank
+    // transfer's own refund detail; less is alerted, not applied) and the status rule (F5 #1353: never
+    // un-refund a card payment; #3979: a total falling to nothing on a payment never captured returns it to
+    // its uncaptured state) are the one step the kept settle and the allocation write take too.
+    const decided = await decideXeroRefundedColumns(prisma, {
+      payment,
+      isOrganiserSettled: () => payment.booking.organiserSettled,
+      decidedCents: effectiveRefundedTotalCents,
+      creditNoteId: input.creditNoteId,
+      creditNoteNumber: input.creditNote.creditNoteNumber ?? null,
+    });
+    if (decided.floorAlert) await sendBankTransferFloorAlert(decided.floorAlert, format);
+    effectiveRefundedTotalCents = decided.refundedAmountCents;
+    const nextStatus = decided.status;
     const updates: {
       refundedAmountCents?: number;
       status?: PaymentStatus;

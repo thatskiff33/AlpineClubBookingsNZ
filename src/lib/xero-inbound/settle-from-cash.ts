@@ -38,7 +38,8 @@ import { type CreditNoteAllocationCents, sumAppliedCentsByCreditNote } from "@/l
 import type { IbSettlementKeptReason } from "@/lib/ib-settlement-figure-note";
 import { IB_RECEIPT_FROM_CASH_REASON, IB_RECEIPT_KEPT_REASON, isInternetBankingPrimary } from "./ib-receipt-reasons";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
-import { type BankTransferFloorAlert, bankTransferFloorCents } from "./credit-note-bank-transfer-floor";
+import { type BankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
+import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 
 /** The paid invoice's cash, as `quantifyXeroInvoiceCashCents` measures it. */
 export type InvoiceCash = { knownCents: number; complete: boolean };
@@ -169,7 +170,8 @@ export function paidInvoiceFacts(invoice: Pick<Invoice, "total" | "creditNotes">
  * supports. A correction whose allocation the note sync writes while the
  * settle runs waits on the Payment row the settle holds, and its sync decides
  * the total again after this commit (`writeCurrentCreditNoteAllocation`). The
- * bank-transfer floor applies (`INV-ADDPAY-021`); its alert waits for the commit.
+ * bank-transfer floor applies (`INV-ADDPAY-021`); its alert waits for the commit,
+ * and goes out only when the keep moves the stored total.
  */
 async function keptRefundedTotal(
   tx: Prisma.TransactionClient,
@@ -178,7 +180,7 @@ async function keptRefundedTotal(
     payment: { id: string; bookingId: string; amountCents: number; refundedAmountCents: number };
     rows: ReadonlyArray<CashSettlementTransaction & { reason: string | null }>;
   },
-): Promise<{ refundedAmountCents: number; floorAlert: BankTransferFloorAlert | null }> {
+): Promise<{ refundedAmountCents: number; status: PaymentStatus; floorAlert: BankTransferFloorAlert | null }> {
   const { payment } = input;
   // The receipt as the keep captures it: every uncaptured bank-transfer PRIMARY
   // row SUCCEEDED, or one created when there is none.
@@ -193,13 +195,19 @@ async function keptRefundedTotal(
     [{ ...payment, source: PaymentSource.INTERNET_BANKING, xeroInvoiceId: input.invoiceId }],
     { transactionRowsOverride: new Map([[payment.id, capturedRows]]) },
   );
-  const linkedCents = Math.min(Math.max(linked.get(payment.id) ?? 0, 0), payment.amountCents);
-  const floored = await bankTransferFloorCents(tx, {
-    payment: { ...payment, source: PaymentSource.INTERNET_BANKING },
-    xeroDerivedCents: linkedCents,
+  // #4449 (`INV-SSOT`): the clamp, floor and status step every writer from Xero takes, from the status
+  // the keep leaves the payment in: captured, so SUCCEEDED before any refund.
+  const decided = await decideXeroRefundedColumns(tx, {
+    payment: { ...payment, source: PaymentSource.INTERNET_BANKING, status: PaymentStatus.SUCCEEDED },
+    isOrganiserSettled: () => false,
+    decidedCents: linked.get(payment.id) ?? 0,
     creditNoteId: null,
   });
-  return { refundedAmountCents: floored.cents, floorAlert: floored.alert };
+  // A keep that leaves the stored total where it was alerts nothing (as before #4449): a refund on
+  // record whose note is still in the outbox is not a shortfall in Xero. A keep that moves the
+  // total and is held at the floor does alert.
+  const moved = decided.refundedAmountCents !== payment.refundedAmountCents;
+  return { refundedAmountCents: decided.refundedAmountCents, status: decided.status ?? PaymentStatus.SUCCEEDED, floorAlert: moved ? decided.floorAlert : null };
 }
 
 /**
@@ -338,7 +346,7 @@ export async function decideInternetBankingReceiptFigure(
         ? {
             amountCents: payment.amountCents,
             refundedAmountCents: kept.refundedAmountCents,
-            status: deriveAggregatePaymentStatus(PaymentStatus.SUCCEEDED, payment.amountCents, kept.refundedAmountCents, PaymentStatus.SUCCEEDED),
+            status: kept.status,
           }
         : null;
     return { plan, receiptCents, primaryRowWrite: {}, paymentColumns, floorAlert: kept?.floorAlert ?? null, mixedInvoiceExpectedCents, isPartPayment, appliedCorrectionNotes };

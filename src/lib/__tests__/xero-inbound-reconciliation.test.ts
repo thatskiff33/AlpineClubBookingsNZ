@@ -296,7 +296,7 @@ vi.mock("@/lib/xero-error-alert", () => xeroSyncErrorAlert);
 
 // #4449: a kept settle decides the payment's whole refunded total in its own
 // transaction. These cases' transactions mock none of the links that decision
-// reads, so it answers the stored total, floor included; the repair's own
+// reads, so the keep's decision answers the stored total; the repair's own
 // calls run for real. `kept-settle-correction-recount.test.ts` pins the keep's
 // use of the decision and the realdb suites drive it.
 vi.mock("@/lib/xero-inbound/linked-refunded-total", async (importOriginal) => {
@@ -304,17 +304,28 @@ vi.mock("@/lib/xero-inbound/linked-refunded-total", async (importOriginal) => {
   return {
     ...actual,
     decideLinkedRefundedTotalCents: (...args: Parameters<typeof actual.decideLinkedRefundedTotalCents>) =>
-      args[2]?.transactionRowsOverride ? Promise.resolve(new Map()) : actual.decideLinkedRefundedTotalCents(...args),
+      args[2]?.transactionRowsOverride
+        ? Promise.resolve(new Map(args[1].map((payment) => [payment.id, payment.refundedAmountCents])))
+        : actual.decideLinkedRefundedTotalCents(...args),
   };
 });
+
+// A client here that cannot read the payment's refund detail (the keep's fake
+// transactions) floors as if that detail were the stored total: a bank
+// transfer's total never goes below it, as these cases expect. Any client that
+// can read it gets the real floor.
 vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import("@/lib/xero-inbound/credit-note-bank-transfer-floor");
   return {
     ...actual,
-    bankTransferFloorCents: async (
-      _store: unknown,
-      input: { payment: { refundedAmountCents: number }; creditNoteId: string | null },
-    ) => ({ cents: input.payment.refundedAmountCents, alert: null }),
+    bankTransferFloorCents: (...args: Parameters<typeof actual.bankTransferFloorCents>) => {
+      if (typeof (args[0] as { paymentTransaction?: { aggregate?: unknown } }).paymentTransaction?.aggregate === "function") {
+        return actual.bankTransferFloorCents(...args);
+      }
+      const { payment, xeroDerivedCents } = args[1];
+      const heldAtStored = payment.source === "INTERNET_BANKING" && xeroDerivedCents < payment.refundedAmountCents;
+      return Promise.resolve({ cents: heldAtStored ? payment.refundedAmountCents : xeroDerivedCents, alert: null });
+    },
   };
 });
 
