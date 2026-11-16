@@ -438,5 +438,13 @@ Attention** entry and a Stuck States item. The default is 24 hours. Use
 a webhook gets the full threshold from its connection time. No quiet-period
 warning appears while disconnected or while the Xero module is disabled.
 
+**Refund notes voided before #4288 (#4336).** A club that ran a version before
+#4341 may hold refund credit notes that Xero voided but the app still counts.
+The owner finds them with the read-only report
+`pnpm run xero:revived-refund-note-report`, then uses **Sync from Xero now** on
+each listed booking. **Sync everything from Xero now** does not revisit them.
+What each line needs and what happens next:
+[MAINTENANCE.md](../MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
+
 Webhook receipt history and the quiet-period policy remain local to each
 installation during configuration transfer, like the Xero connection itself.
