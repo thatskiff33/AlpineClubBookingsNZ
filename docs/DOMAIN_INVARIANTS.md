@@ -373,6 +373,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
 | `INV-PAY-154` | A disputed capture is never refunded or credited |
 | `INV-PAY-155` | The inbound recount takes each failed-later card refund off once |
+| `INV-PAY-156` | Stuck States signals name their records with the count's filter |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -1002,6 +1003,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
 | `INV-OPS-021` | Every main push run completes; releases tag only published commits |
+| `INV-OPS-022` | The documented Docker first install, seed included, is what CI runs |
 
 ## Product Configuration
 
