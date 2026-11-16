@@ -1265,6 +1265,9 @@ test/demo mode or disabled:
 | `DEMO_SEED_PASSWORD`    | Optional local-only password for `pnpm run db:seed:demo` users.   |
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
+The seed runs once, on a new install, after migrations:
+`docker compose run --rm seed` on a Docker-only server, or `pnpm run db:seed`
+on a developer machine (#4977). Upgrades never run it.
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
 `SEED_ADMIN_PASSWORD` is unset, or if the lodge kiosk account is missing and
 `SEED_LODGE_PASSWORD` is unset. Before it writes anything, it checks the

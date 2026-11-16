@@ -822,7 +822,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `Prisma.BookingGetPayload`, and passed as `include` to `booking.findMany`
   // and `booking.findUnique`; Booking declares `organisation`.
   "src/lib/pre-arrival-reminder-email.ts:72",
-  "src/lib/stuck-state-dashboard.ts:629",
+  "src/lib/stuck-state-dashboard.ts:653",
   "src/lib/xero-booking-repair-types.ts:246",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",
 ];
