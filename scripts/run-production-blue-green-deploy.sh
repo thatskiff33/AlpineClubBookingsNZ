@@ -2,17 +2,23 @@
 set -Eeuo pipefail
 
 # ---------------------------------------------------------------------------
-# Readers shared by the wrapper and the engine (#4275)
+# Readers shared by the wrapper and the engine, and the live-site role check
 # ---------------------------------------------------------------------------
 #
-# Every other helper is defined inside `run_production_wrapper` or
-# `run_internal_blue_green_deploy`, so it exists only in the process that runs
-# that function — and the two run in different processes (the wrapper re-enters
-# this file with `--internal-blue-green-deploy`). These are the readers both
-# halves need, so they are defined once, at file level, rather than twice in two
-# grammars that drift apart: the wrapper's first image-repository reader kept
-# quotes, missed `export KEY=` and took the FIRST duplicate, while Compose
-# unquotes, honours `export` and takes the LAST.
+# Sourced, not defined here (#4980), so First Bootstrap's role gate
+# (scripts/check-environment-role.sh) runs the same code this script runs at
+# step 3 rather than a copy. Resolved from this file's own location, which holds
+# in the source repository (the wrapper) and in the `git archive` workspace the
+# engine re-enters from, because both are checkouts of the whole tree.
+DEPLOY_SCRIPT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+# shellcheck source=scripts/lib/compose-env-file.sh
+. "$DEPLOY_SCRIPT_LIB_DIR/compose-env-file.sh"
+# shellcheck source=scripts/lib/environment-role-check.sh
+. "$DEPLOY_SCRIPT_LIB_DIR/environment-role-check.sh"
+
+# The Caddy image helpers below are deploy-only, not `.env` readers, so they stay
+# in this file rather than the shared library; they are at file level because
+# both the wrapper (slot seeding) and the engine (Caddy validation) call them.
 
 # Extract only the requested image; a compose render can contain secrets.
 compose_service_image_ref() {
@@ -47,163 +53,6 @@ resolve_caddy_image_ref() {
   printf '%s' "$image_ref"
 }
 
-trim_whitespace() {
-  local value="$1"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  printf '%s' "$value"
-}
-
-# A deployment-supplied value made safe to echo at an operator's terminal.
-#
-# The application deliberately reduces this same string to printable ASCII before
-# it reaches a log line or a page (`sanitizeEnvironmentRoleRawValue` in
-# src/lib/environment-role-declaration.ts), for the plain reason that a value
-# holding a newline or an escape sequence must not be able to write a second line
-# into — or repaint — the terminal of the person reading the refusal. A shell that
-# echoed the raw value would be the hole that module closes, reopened one layer
-# out. Control characters become `?` rather than being deleted, so the operator
-# can SEE that something is in there; the cap matches the app's 64 characters
-# including the `...` marker, so the whole result is printable ASCII.
-printable_deploy_value() {
-  local sanitized
-
-  sanitized="$(printf '%s' "$1" | tr -c ' -~' '?')"
-  if [ "${#sanitized}" -gt 64 ]; then
-    printf '%s...' "${sanitized:0:61}"
-  else
-    printf '%s' "$sanitized"
-  fi
-}
-
-# Every shape Docker Compose's `.env` parser accepts as an assignment of any of
-# the given keys, as one extended regular expression (#4026).
-#
-#   env_assignment_pattern KEY [KEY...]
-#
-# THE ONE SPELLING OF THIS GRAMMAR. Every reader in this script that must agree
-# with Compose about whether a line assigns a key builds its pattern here, in
-# the wrapper and the engine alike. Sourcing this script starts the production
-# wrapper, so nothing outside can CALL it. A
-# downstream fork's own deploy guard instead lifts the definition out of this
-# file, the way the contract tests do (`shellFunctionSource` in
-# src/lib/__tests__/helpers/deploy-script.ts), rather than keeping a hand-made
-# copy pinned equal by a test of its own.
-#
-# THE SHAPE WAS THE FINDING, twice. The first version of the #3034 check counted
-# with `awk -F=` and `$1 == key`, which needs the key to be the WHOLE first
-# `=`-field — so three shapes Compose honours slipped past it, measured against
-# real `docker compose v5.3.1`: an INDENTED line, an `export `-prefixed line, and
-# spaces around the `=`. Then #4026 measured `docker compose config` on Compose
-# v5.6.0 and found its parser also takes a YAML-style COLON as the separator:
-# `KEY: value`, `KEY:value`, `KEY : value` and `export KEY: value`. Any of those
-# appearing a SECOND time further down a .env whose first line is correct passed
-# the duplicate check and handed every container the second value. Appending to a
-# .env by hand, or from a rehearsal script, produces exactly those shapes.
-#
-# What it matches, mirroring Compose's dotenv parser: optional leading
-# whitespace; an optional `export` followed by whitespace; the key exactly; then
-# optional whitespace and an `=` or a `:`. A comment line cannot match, because a
-# `#` before the key fails the anchor, and a longer name sharing the prefix
-# (`KEY_EXTRA=`) cannot either, because only whitespace may sit between the key
-# and its separator.
-#
-# CAPTURE GROUPS ARE FIXED so a `sed -E` caller can append its own value group:
-# group 1 is the `export` prefix, group 2 is the key that matched, and a caller's
-# first group after the pattern is `\3`. The keys are literal environment-variable
-# names from this script ([A-Za-z_][A-Za-z0-9_]*); none of them holds a regex or
-# `sed` delimiter character, and a name that did would be refused below rather
-# than silently matching something else.
-env_assignment_pattern() {
-  local alternation=""
-  local key
-
-  for key in "$@"; do
-    case "$key" in
-      '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*)
-        echo "env_assignment_pattern: not a plain variable name: $(printable_deploy_value "$key")" >&2
-        return 1
-        ;;
-    esac
-    alternation="${alternation:+$alternation|}$key"
-  done
-  if [ -z "$alternation" ]; then
-    echo "env_assignment_pattern: needs at least one key" >&2
-    return 1
-  fi
-
-  printf '^[[:space:]]*(export[[:space:]]+)?(%s)[[:space:]]*[=:]' "$alternation"
-}
-
-# One layer of matching surrounding quotes, removed (#4275: shared by the `.env`
-# reader above and the rendered-Compose readers below, which meet the same
-# quoting from two directions). Compose's dotenv parser unquotes `KEY="value"`,
-# and `docker compose config` writes a string that YAML would otherwise read as
-# a boolean, a number or nothing back WITH quotes (`USE_AWS_SES: "true"`,
-# `EMAIL_SERVER_HOST: ""`). Compared character by character rather than by a
-# `case` pattern, because a pattern holding both quote characters inside a
-# single-quoted shell word is unreadable and easy to get subtly wrong.
-strip_matching_quotes() {
-  local value="$1"
-  local first
-  local last
-
-  if [ "${#value}" -ge 2 ]; then
-    first="${value%"${value#?}"}"
-    last="${value#"${value%?}"}"
-    if [ "$first" = "$last" ] && { [ "$first" = '"' ] || [ "$first" = "'" ]; }; then
-      value="${value#?}"
-      value="${value%?}"
-    fi
-  fi
-
-  printf '%s' "$value"
-}
-
-# The value Compose would resolve for this key from an env file (#3034; shared
-# since #4027 by every reader that must agree with the containers).
-#
-#   compose_env_file_value KEY [FILE]
-#
-# FILE defaults to `.env` in the working directory, which is the engine's
-# project `.env`. The wrapper passes the SOURCE repository's `.env` (#4275), so
-# the image-repository settings it reads there follow the same grammar as every
-# value Compose hands a container, rather than a second reader's.
-#
-# LAST-WINS, matching Compose dotenv parsing rather than the first-match reader
-# used for every other `require_*_env_key`. A duplicate is refused before this matters, but if
-# that refusal is ever relaxed this reader agrees with the containers instead of
-# disagreeing with them, which is the safer default of the two.
-#
-# It then undoes what Compose undoes: an `export ` prefix, whitespace around the
-# `=` or `:`, an inline comment (the same `[[:space:]]+#` rule `get_env_file_value`
-# applies for every other key), and ONE layer of matching surrounding quotes.
-# Those last three are why `APP_ENVIRONMENT_ROLE = production`,
-# `export APP_ENVIRONMENT_ROLE=production` and `APP_ENVIRONMENT_ROLE="production"`
-# no longer abort a deploy Compose would have resolved to `production` — and in
-# particular why the first two are no longer reported as a MISSING entry for a key
-# plainly present in the file, which is what gets an operator editing the wrong
-# line under deploy pressure.
-#
-# One place it stays narrower than Compose: a `#` INSIDE a quoted value is treated
-# as an inline comment and truncated. That can only shorten a value, so it can only
-# turn an accepted value into a refused one — never the reverse — and the refusal
-# names the sanitized value it read.
-compose_env_file_value() {
-  local key="$1"
-  local file="${2:-.env}"
-  local pattern
-  local value
-
-  pattern="$(env_assignment_pattern "$key")" || return 1
-  value="$(
-    sed -nE "s/${pattern}[[:space:]]*(.*)$/\3/p" "$file" |
-      tail -n 1
-  )"
-  value="$(printf '%s' "$value" | sed -E 's/[[:space:]]+#.*$//')"
-  strip_matching_quotes "$(trim_whitespace "$value")"
-}
-
 run_production_wrapper() {
 WRAPPER_MODE="${1:-deploy}"
 DEFAULT_SOURCE_REPO="$HOME/AlpineClubBookingsNZ"
@@ -228,6 +77,8 @@ APP_IMAGE="${APP_IMAGE:-}"
 MIGRATE_IMAGE="${MIGRATE_IMAGE:-}"
 ALLOW_UNPUBLISHED_DEPLOY_COMMIT="${ALLOW_UNPUBLISHED_DEPLOY_COMMIT:-0}"
 UNPUBLISHED_DEPLOY_COMMIT_REASON="${UNPUBLISHED_DEPLOY_COMMIT_REASON:-}"
+ALLOW_UNTAGGED_DEPLOY_COMMIT="${ALLOW_UNTAGGED_DEPLOY_COMMIT:-0}"
+UNTAGGED_DEPLOY_COMMIT_REASON="${UNTAGGED_DEPLOY_COMMIT_REASON:-}"
 
 ACTIVE_UPSTREAM_FILE_REL="deploy/caddy/tacbookings-active.caddy"
 CADDY_CONFIG_CONTAINER_PATH="/etc/caddy/Caddyfile"
@@ -428,6 +279,106 @@ EOF
   warn "DEPLOYING AN UNPUBLISHED COMMIT. ${RESOLVED_REF} exists on no remote branch."
   warn "Reason given: ${UNPUBLISHED_DEPLOY_COMMIT_REASON}"
   warn "Push this commit as soon as the reason no longer holds, or the next release's preconditions are computed against a commit nobody else has."
+}
+
+# A release tag, spelled once for this script: a strict `vX.Y.Z`, the same
+# pattern as RELEASE_TAG in scripts/release/release-version.mjs (which
+# cut-release.mjs re-exports as parseReleaseTag), so the tool that cuts a
+# release and the deploy that demands one cannot disagree about what a release
+# is. `deploy-release-tag-guard-script-contract.test.ts` runs both over the
+# same names. Bash's `=~` anchors to the whole string, never to a line.
+is_release_tag_name() {
+  [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+}
+
+# Production runs a published release, not whatever `main` was that day (#4978).
+#
+# #4465 wrote "every production deploy runs a tagged release" into the guides
+# and built `release:cut`, but nothing here enforced it, and months of `main`
+# could reach production with no release to name, report against or roll back
+# to. So the deploy itself refuses a commit that no release tag points at, with
+# the same flag-plus-written-reason override as the published-commit check
+# above.
+#
+# A release tag here means exactly what `release:cut publish` creates: an
+# ANNOTATED tag named like `v0.13.2`, as origin has it. Three things follow:
+#
+# - The answer comes from `git ls-remote --tags origin`, never from this clone's
+#   own tags, so a tag made on the deploy host and never pushed does not count.
+# - Only an annotated tag has a peeled `refs/tags/<name>^{}` line, and that line
+#   carries the COMMIT the tag points at (the unpeeled line carries the tag
+#   object's own id). Matching the peeled line against RESOLVED_REF therefore
+#   refuses a lightweight tag and a tag on a different commit in one test.
+# - The existing fetch (`--prune origin main`) is left alone: widening it to
+#   tags would change the stale-ref behaviour described above.
+#
+# An unreachable origin REFUSES, unlike the published-commit check, which
+# downgrades to a warning. That check can fall back on remote-tracking refs a
+# fetch once wrote; this one has no trustworthy local answer, because a local
+# tag is exactly what it exists to distrust. During an outage the override with
+# a reason gets the deploy through, and the reason is on record.
+validate_deploy_commit_is_release_tag() {
+  local remote_tags
+  local object_id
+  local ref
+  local tag_name
+  local release_tags=""
+  local refusal
+
+  local ls_remote_status=0
+  local ls_remote_error_file
+  local ls_remote_error
+
+  # git's stderr goes to its own file, so stdout stays pure ls-remote output
+  # and a failure can still show git's own reason (no such remote, an
+  # authentication failure, a network outage).
+  ls_remote_error_file="$(mktemp)"
+  remote_tags="$(git -C "$SOURCE_REPO" ls-remote --tags origin 'refs/tags/v*' 2>"$ls_remote_error_file")" \
+    || ls_remote_status=$?
+  ls_remote_error="$(cat "$ls_remote_error_file")"
+  rm -f "$ls_remote_error_file"
+
+  if [ "$ls_remote_status" -eq 0 ]; then
+    while IFS=$'\t' read -r object_id ref; do
+      case "$ref" in
+        'refs/tags/'*'^{}') ;;
+        *) continue ;;
+      esac
+      [ "$object_id" = "$RESOLVED_REF" ] || continue
+      tag_name="${ref#refs/tags/}"
+      tag_name="${tag_name%'^{}'}"
+      is_release_tag_name "$tag_name" || continue
+      release_tags="${release_tags:+${release_tags}, }${tag_name}"
+    done <<EOF
+$remote_tags
+EOF
+
+    if [ -n "$release_tags" ]; then
+      info "Deploy commit ${RESOLVED_REF} is release ${release_tags}, confirmed against origin."
+      return 0
+    fi
+    refusal="Deploy commit ${RESOLVED_REF} is not a release: no annotated vX.Y.Z tag on origin points at it."
+  else
+    refusal="Could not reach origin to confirm that deploy commit ${RESOLVED_REF} is a release, and a tag on this host alone does not count. git said: ${ls_remote_error//$'\n'/ }"
+  fi
+
+  if ! env_flag_is_true "$ALLOW_UNTAGGED_DEPLOY_COMMIT"; then
+    echo "$refusal" >&2
+    echo "Production runs published releases, so a club can say which version it is on and roll back to the one before." >&2
+    echo "Deploy a release (git fetch origin tag vX.Y.Z, then DEPLOY_REF=vX.Y.Z), or set ALLOW_UNTAGGED_DEPLOY_COMMIT=1 together with a non-empty UNTAGGED_DEPLOY_COMMIT_REASON explaining why." >&2
+    return 1
+  fi
+
+  if [ -z "$UNTAGGED_DEPLOY_COMMIT_REASON" ]; then
+    echo "$refusal" >&2
+    echo "ALLOW_UNTAGGED_DEPLOY_COMMIT is set, but UNTAGGED_DEPLOY_COMMIT_REASON is empty." >&2
+    echo "Deploying a commit that is not a release is a decision that has to be recorded. Set UNTAGGED_DEPLOY_COMMIT_REASON to the reason." >&2
+    return 1
+  fi
+
+  warn "DEPLOYING A COMMIT THAT IS NOT A RELEASE. ${refusal}"
+  warn "Reason given: ${UNTAGGED_DEPLOY_COMMIT_REASON}"
+  warn "Cut and deploy a release as soon as the reason no longer holds (pnpm run release:cut, DEPLOYMENT.md)."
 }
 
 # Where each image repository came from: the shell environment, the source
@@ -811,6 +762,7 @@ if [ "$WRAPPER_MODE" = "build-and-push-images" ]; then
   step "3/6" "Resolving build commit and image references"
   resolve_ref
   validate_deploy_commit_is_published
+  validate_deploy_commit_is_release_tag
   resolve_image_refs
 
   # Said BEFORE the build, not after the push. A production host is logged
@@ -838,8 +790,11 @@ if [ "$WRAPPER_MODE" = "build-and-push-images" ]; then
   WORKSPACE=""
 
   echo
-  echo "Built and pushed ${RESOLVED_REF}. Deploy it with:"
-  echo "  ./scripts/run-production-blue-green-deploy.sh"
+  # Print the commit that was built, not the bare command: that would resolve
+  # origin/main, which may be a different commit whose images were never built
+  # and which the release-tag check refuses (#4978).
+  echo "Built and pushed ${RESOLVED_REF}. Deploy exactly this commit with:"
+  echo "  DEPLOY_REF=${RESOLVED_REF} ./scripts/run-production-blue-green-deploy.sh"
   return 0
 fi
 
@@ -883,6 +838,9 @@ resolve_ref
 # Before the workspace is built, so a commit no remote holds never reaches a
 # `git archive`, an image build, or the database.
 validate_deploy_commit_is_published
+# The same ordering for the release-tag check: an untagged commit is refused,
+# unless the operator records why, before any image is resolved (#4978).
+validate_deploy_commit_is_release_tag
 resolve_image_refs
 
 step "4/8" "Creating deployment workspace"
@@ -1260,34 +1218,6 @@ drop_shadow_database() {
 
 trap fail ERR
 trap 'drop_shadow_database; rm -f "${CADDY_VALIDATION_ENV_FILE:-}"' EXIT
-
-# The #3034 check's pattern for one key: the shared grammar above, for exactly
-# that key. Deliberately scoped to the role check rather than by changing
-# `get_env_file_value`, which every other `require_*_env_key` shares and which is
-# not this issue to change.
-environment_role_env_pattern() {
-  env_assignment_pattern "$1"
-}
-
-# How many lines in .env assign this key.
-#
-# `grep -c` prints 0 and EXITS 1 when nothing matches, which under `set -e` would
-# abort inside the assignment, so the status is discarded and the count kept.
-count_environment_role_env_assignments() {
-  local key="$1"
-  local pattern
-
-  # Built first and checked, so a refused key aborts rather than handing `grep`
-  # an empty pattern, which matches every line.
-  pattern="$(environment_role_env_pattern "$key")" || return 1
-  grep -cE "$pattern" .env || true
-}
-
-# The #3034 role check's reader: the shared one above, kept under the name the
-# role check and its contract test use.
-environment_role_env_value() {
-  compose_env_file_value "$1"
-}
 
 get_env_file_value() {
   local key="$1"
@@ -1703,6 +1633,53 @@ require_resolved_caddy_tls_mode() {
   esac
 }
 
+# CADDY_WWW_REDIRECT and CADDY_LEGACY_ROUTES each select an on/off pair of
+# snippets in deploy/caddy (#4981), exactly as CADDY_TLS_MODE does, so any
+# other value would stop Caddy at step 17 on a missing import; refused here,
+# read as the caddy service would receive it.
+require_resolved_caddy_switch() {
+  local key="$1"
+  local purpose="$2"
+  local value
+
+  value="$(resolved_service_env_value "$CADDY_SERVICE" "$key")"
+  case "$value" in
+    on|off) return 0 ;;
+    *)
+      echo "$key must be 'on' or 'off' ($purpose); Docker Compose would hand the '${CADDY_SERVICE}' service '$(printable_deploy_value "$value")'. Set it in .env." >&2
+      return 1
+      ;;
+  esac
+}
+
+# With CADDY_LEGACY_ROUTES=on, Caddy forwards /finance-legacy* to
+# CADDY_FINANCE_LEGACY_UPSTREAM (deploy/caddy/legacy-routes-on.caddy). It has
+# no usable default: docker-compose.yml hands Caddy the sentinel below when
+# .env does not set it, which Caddy rejects, and this check refuses the
+# sentinel, an empty value and anything that is not one host:port first.
+CADDY_FINANCE_LEGACY_UPSTREAM_UNSET="set-CADDY_FINANCE_LEGACY_UPSTREAM-for-legacy-routes:none"
+require_resolved_caddy_legacy_upstream() {
+  local mode
+  local value
+
+  mode="$(resolved_service_env_value "$CADDY_SERVICE" CADDY_LEGACY_ROUTES)"
+  [ "$mode" = "on" ] || return 0
+  value="$(resolved_service_env_value "$CADDY_SERVICE" CADDY_FINANCE_LEGACY_UPSTREAM)"
+  if [ -z "$value" ] || [ "$value" = "$CADDY_FINANCE_LEGACY_UPSTREAM_UNSET" ]; then
+    echo "CADDY_LEGACY_ROUTES=on needs CADDY_FINANCE_LEGACY_UPSTREAM: the legacy finance dashboard's host:port as Caddy reaches it (for example 10.0.0.5:8501), set in .env. It has no default. Set CADDY_LEGACY_ROUTES=off if this club runs no legacy dashboard." >&2
+    return 1
+  fi
+  # A hostname or IPv4 address and a port: no scheme, path, space, second
+  # upstream or bracketed IPv6 literal. The first three would change what the
+  # snippet's directive means; an IPv6 literal is refused (with the reason in
+  # the message) so the accepted shape stays this one narrow pattern, and a
+  # dashboard reachable only by IPv6 is given a hostname instead.
+  if ! [[ "$value" =~ ^[A-Za-z0-9._-]+:[0-9]+$ ]]; then
+    echo "CADDY_FINANCE_LEGACY_UPSTREAM must be one host:port, a hostname or IPv4 address then a port, such as 10.0.0.5:8501 (no scheme, path or IPv6 literal; use a hostname for an IPv6-only dashboard); '$(printable_deploy_value "$value")' is not. Set it in .env." >&2
+    return 1
+  fi
+}
+
 # In local mode Caddy believes the client address a trusted proxy forwards, so
 # the proxies it trusts are an explicit setting (#4275): CADDY_TRUSTED_PROXIES,
 # the address or CIDR of the proxy in front, as the caddy service would receive
@@ -1822,165 +1799,6 @@ require_http_url_env_key() {
     echo ".env entry must be a valid http(s) URL: $key" >&2
     return 1
   fi
-}
-
-# The deployment's declaration of what this installation IS (ENV-SAFETY 1, #3034;
-# epic #2986; INV-CONFIG-003).
-#
-# THIS SCRIPT DEPLOYS THE CLUB'S LIVE SITE AND NOTHING ELSE, so it requires
-# exactly `production`. That is narrower than the application parser, which
-# accepts `production` OR `non-production`, and the difference is the whole point.
-# There is no staging mode here, no `--env` switch and no alternate path: a
-# non-production stack goes through `docker-compose.staging.yml` and
-# `scripts/e2e-stack.sh`, which declare `non-production` themselves. A script
-# whose only job is the live site accepting a declaration that says "this is a
-# copy" would be accepting the one value it can prove is wrong.
-#
-# THAT IS NOT A THEORETICAL HOLE, it is the likeliest operator error. `.env.example`
-# ships `APP_ENVIRONMENT_ROLE=non-production` — correct there, because it is a
-# local-development template and a template that shipped `production` would have a
-# developer's laptop declaring itself live. But `.env.example` is ALSO the file an
-# operator diffs against their real `.env` when upgrading, and "a new key appeared
-# in the template, copy it across" is the normal upgrade move. Following that
-# through: the deploy passes, the migration runs, the new colour boots and resolves
-# NON_PRODUCTION, and then every confirmation, payment notice, waitlist offer and
-# renewal reminder for the club's REAL members is safety-suppressed — and every
-# application-managed contact on the club's REAL Xero organisation has its email
-# address rewritten to a non-deliverable one (INV-CONFIG-005). Destructive edits to
-# live accounting, made confidently, by the very mechanism this epic added to keep
-# members safe.
-#
-# So the safe-looking value is the unsafe outcome HERE, and only here. The correct
-# pairing is `non-production` in the template (safe by default on a laptop) and
-# `production` required at the one place that knows it is deploying production.
-#
-# WHY IT IS A HARD REFUSAL AND WHY IT RUNS IN THE PREFLIGHT. From this release on,
-# an installation that has not declared itself resolves UNKNOWN, and UNKNOWN fails
-# closed: nothing whose safety depends on knowing whether these are the club's real
-# members goes out. An existing production install upgrading into this release has
-# no declaration, so without this check the upgrade would succeed and then quietly
-# stop sending mail — the outcome epic #2986 explicitly forbids shipping. Refusing
-# at step 3 of 20 means the old colour is still serving, the migration has not run
-# (step 13) and nothing has been switched (step 17): the operator fixes one line in
-# .env and re-runs. `deploy-environment-role-contract.test.ts` pins that ORDER, not
-# merely this function's existence, because moving the check after step 13 or step
-# 14 brings the forbidden outcome straight back.
-#
-# The comparison is case-folded after trimming, exactly as
-# `src/lib/environment-role-declaration.ts` folds it, so the deploy gate and the
-# application cannot disagree about what counts as declared. A near miss is
-# refused rather than guessed at: `prod`, `staging`, `true` and APP_RUNTIME_ROLE's
-# own values are all rejected, because guessing is how a typo becomes "production".
-require_environment_role_env_key() {
-  local key="APP_ENVIRONMENT_ROLE"
-  local value
-  local normalised
-  local occurrences
-  local exported_normalised
-
-  # NOT `require_env_key` and NOT `get_env_file_value`, which is the fix for a
-  # second review finding rather than a refactor. Those read the first line whose
-  # whole first `=`-field is the key, so an indented or `export `-prefixed entry
-  # was reported as a MISSING .env entry for a key plainly present in the file —
-  # and a quoted value was refused as unrecognised — while Compose resolved all
-  # three to `production`. All three were fail-closed, but "missing" for a visible
-  # key is what gets an operator editing the wrong line under deploy pressure.
-  occurrences="$(count_environment_role_env_assignments "$key")"
-  if [ "$occurrences" -eq 0 ]; then
-    echo "Missing required .env entry: $key" >&2
-    echo "It declares whether this installation is the club's live site or a copy," >&2
-    echo "and nothing infers it: an undeclared installation resolves UNKNOWN and" >&2
-    echo "holds back member email and Xero writes until it is declared." >&2
-    echo "Add APP_ENVIRONMENT_ROLE=production to this deployment's .env, then re-run." >&2
-    echo "See docs/guides/environment-role.md." >&2
-    echo "This is NOT APP_RUNTIME_ROLE, which names the container slot (web-blue, cron-leader)." >&2
-    return 1
-  fi
-
-  # A DUPLICATED KEY IS REFUSED, because Compose and any first-match reader would
-  # take different lines: Compose's dotenv parsing is LAST-WINS. A duplicate is
-  # always an operator mistake, so it is refused outright rather than silently
-  # resolved in either direction — taking last-wins here would agree with Compose
-  # but would also quietly bless a file that says two different things about the
-  # most consequential setting in it. The count above sees every shape Compose
-  # accepts, including the indented and `export `-prefixed ones a `-F=` field
-  # comparison missed.
-  if [ "$occurrences" -gt 1 ]; then
-    echo ".env entry $key appears $occurrences times. Leave exactly one." >&2
-    echo "Docker Compose resolves the LAST one, so a file that says production" >&2
-    echo "on one line and non-production on another hands every container the" >&2
-    echo "value — which is how a live site would come up believing it is a copy." >&2
-    return 1
-  fi
-
-  value="$(environment_role_env_value "$key")"
-  if [ -z "$value" ]; then
-    echo ".env entry $key is present but empty, so Compose would hand the" >&2
-    echo "containers an empty value and the app would resolve UNKNOWN." >&2
-    echo "Set APP_ENVIRONMENT_ROLE=production in this deployment's .env, then re-run." >&2
-    return 1
-  fi
-  normalised="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
-
-  # A SHELL-EXPORTED VALUE BEATS THE FILE IN COMPOSE'S OWN PRECEDENCE, so a stale
-  # `export APP_ENVIRONMENT_ROLE=non-production` left in the invoking shell, a
-  # systemd unit or a restore-rehearsal script would override a correct .env and
-  # this gate would never see it. That is not hypothetical for this script: it
-  # already exports GIT_COMMIT_SHA / KNOWLEDGE_BUNDLE_OBSERVED_AT / RELEASE_ID
-  # for compose to forward, and it does not sanitise the caller's environment.
-  #
-  # Compared case-folded and trimmed, the same fold the file value gets, so a
-  # harmless `PRODUCTION` in the shell is not reported as a disagreement. Both
-  # values are named in the refusal, because "they disagree" without saying which
-  # said what is not something an operator can act on.
-  if [ -n "${APP_ENVIRONMENT_ROLE+x}" ]; then
-    exported_normalised="$(
-      printf '%s' "$(trim_whitespace "${APP_ENVIRONMENT_ROLE:-}")" |
-        tr '[:upper:]' '[:lower:]'
-    )"
-    if [ "$exported_normalised" != "$normalised" ]; then
-      echo "$key disagrees between this shell and .env, and Docker Compose would" >&2
-      echo "take the SHELL value. Refusing rather than deploying the one you did" >&2
-      echo "not edit." >&2
-      echo "  exported in this shell: $(printable_deploy_value "${APP_ENVIRONMENT_ROLE:-}")" >&2
-      echo "  in .env:                $(printable_deploy_value "$value")" >&2
-      echo "Run 'unset $key' in this shell (and remove it from whatever exported" >&2
-      echo "it — a systemd unit, a wrapper script, a restore rehearsal), then" >&2
-      echo "re-run so the .env is the only source." >&2
-      return 1
-    fi
-  fi
-
-  if [ "$normalised" != "production" ]; then
-    echo ".env entry $key must be exactly production for this script (got: $(printable_deploy_value "$value"))" >&2
-    echo "This script deploys the club's LIVE site. There is no staging mode here." >&2
-    if [ "$normalised" = "non-production" ]; then
-      echo "The value says this installation is a COPY. Deploying it would suppress" >&2
-      echo "real members' email and, once Xero containment lands, rewrite the email" >&2
-      echo "addresses on the club's real accounting contacts. Refusing." >&2
-      echo "If you copied this line from .env.example, that template is for a local" >&2
-      echo "checkout: production deployments set production here." >&2
-    else
-      echo "It declares whether this installation is the club's live site or a copy," >&2
-      echo "and nothing infers it: an undeclared installation resolves UNKNOWN and" >&2
-      echo "holds back member email and Xero writes until it is declared." >&2
-    fi
-    echo "Set APP_ENVIRONMENT_ROLE=production in this deployment's .env, then re-run." >&2
-    echo "Non-production stacks use docker-compose.staging.yml, which declares" >&2
-    echo "non-production itself. See docs/guides/environment-role.md." >&2
-    echo "This is NOT APP_RUNTIME_ROLE, which names the container slot (web-blue, cron-leader)." >&2
-    return 1
-  fi
-
-  # The canonical, validated answer, for the step-3 checks that depend on it
-  # (the email transport's capture refusal) — so none re-reads or re-folds it.
-  VALIDATED_ENVIRONMENT_ROLE="$normalised"
-
-  # Belt and braces now that the two agree: drop the variable from this shell so
-  # the .env is the ONLY source Compose can read it from. Nothing else in this
-  # script reads it, and the value is re-verified from each container's own
-  # self-report at step 14 (`assert_runtime_identity`), before the cutover.
-  unset APP_ENVIRONMENT_ROLE
 }
 
 # A gate value the app compares EXACTLY must reach the containers from .env
@@ -2438,7 +2256,8 @@ validate_repo_contract() {
 
 # Caddy validates the Caddyfile with the caddy service's WHOLE resolved
 # environment (#4275), not DOMAIN alone: the Caddyfile imports
-# `tls-{$CADDY_TLS_MODE:acme}.caddy` and reads CADDY_TRUSTED_PROXIES, MEET_HOST
+# `tls-{$CADDY_TLS_MODE:acme}.caddy` (and the CADDY_WWW_REDIRECT and
+# CADDY_LEGACY_ROUTES snippets) and reads CADDY_TRUSTED_PROXIES, MEET_HOST
 # and the rest, so validating without them checked the acme configuration on a
 # local-mode installation and left a broken local one to fail at step 17, after
 # the migration. Read from the step-3 render, so a shell export and every
@@ -4305,6 +4124,9 @@ validate_migration_lock_timeout_contract
 validate_resolved_email_transport
 require_resolved_caddy_tls_mode
 require_resolved_caddy_trusted_proxies
+require_resolved_caddy_switch CADDY_WWW_REDIRECT "whether www.<DOMAIN> redirects to <DOMAIN>"
+require_resolved_caddy_switch CADDY_LEGACY_ROUTES "whether Caddy serves a legacy finance dashboard's /finance-legacy route and bookings./dashboard. hosts"
+require_resolved_caddy_legacy_upstream
 validate_resolved_postgres_max_connections
 # Same reasoning (#3965): an unreadable bound must stop the deploy here, not
 # make the in-container read retry at step 14 compare against a non-number.

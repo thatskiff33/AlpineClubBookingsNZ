@@ -4,6 +4,7 @@ const { auditMock, capacityLockMock, prismaMock } = vi.hoisted(() => ({
   auditMock: vi.fn(),
   capacityLockMock: vi.fn(),
   prismaMock: {
+    $queryRaw: vi.fn(),
     bedAllocation: {
       findMany: vi.fn(),
       updateMany: vi.fn(),
@@ -29,10 +30,11 @@ describe("bed allocation approval transaction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     prismaMock.$executeRaw.mockResolvedValue(0);
+    prismaMock.$queryRaw.mockResolvedValue([{ held: true }]);
     prismaMock.$transaction.mockImplementation(
       async (callback: (tx: typeof prismaMock) => unknown) => callback(prismaMock),
     );
-    prismaMock.bedAllocation.findMany.mockResolvedValue([{ id: "alloc-1" }]);
+    prismaMock.bedAllocation.findMany.mockResolvedValue([{ id: "alloc-1", room: { lodgeId: "lodge-1" } }]);
     prismaMock.bedAllocation.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.lodge.findMany.mockResolvedValue([
       { id: "lodge-1" },

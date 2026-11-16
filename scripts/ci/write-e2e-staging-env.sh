@@ -2,10 +2,11 @@
 # Writes the `.env.staging` file every CI job that drives the E2E compose stack
 # needs, and refuses to write one carrying a live Stripe key.
 #
-# ONE HOME, because there are three callers (`e2e.yml` → `e2e-db`, the
-# `.github/actions/e2e-run` action every browser job uses, #4397, and
-# `e2e-rollover-proof.yml`) and the file they need is
-# identical in every value. It used to be a copied heredoc per job; the two
+# ONE HOME, because there are four callers (`e2e.yml` → `e2e-db`, the
+# `.github/actions/e2e-run` action every browser job uses, #4397,
+# `e2e-rollover-proof.yml`, and `load-smoke.yml`, #4940, whose
+# `scripts/load-stack.sh` then swaps in stub-only Stripe keys) and the file they
+# need is identical in every value. It used to be a copied heredoc per job; the two
 # copies were byte-identical in their values and had already drifted in their
 # comments, which is how the next difference would have gone unnoticed
 # (`INV-SSOT`). A `.env` for a test stack is exactly the kind of thing where one

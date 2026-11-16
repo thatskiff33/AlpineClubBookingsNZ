@@ -176,8 +176,9 @@ const CAPTURES: Capture[] = [
   { name: "admin-site-content", route: adminHref("site-content"), area: "admin" },
   { name: "admin-page-content", route: adminHref("page-content"), area: "admin" },
   { name: "admin-site-banners", route: adminHref("site-banners"), area: "admin" },
-  // mountain-conditions is gated by the `skifieldConditions` flag, which the
-  // demo seed defaults ON (prisma/schema.prisma) — so it captures normally.
+  // mountain-conditions is gated by the `skifieldWhakapapa` flag, which a fresh
+  // install leaves OFF; the E2E prepare step (e2e/setup/enable-e2e-modules.ts)
+  // turns it on, so it captures normally.
   { name: "admin-mountain-conditions", route: adminHref("mountain-conditions"), area: "admin" },
   { name: "admin-image-manager", route: adminHref("image-manager"), area: "admin" },
   // Comms — the Notifications & Email hub, its sub-pages, and deliverability.
@@ -253,9 +254,10 @@ const CAPTURES: Capture[] = [
   //
   // The committed images were re-captured at batch-3 finalisation against a
   // capture stack rebuilt from this branch (which carries #2047 + #2048):
-  //   - `admin-display` (the hub) shows the FIVE-card hub — Devices, **Visual
-  //     builder** (#2048), Layouts (Advanced), Templates, and Reference — matching
-  //     the five-card hub the display guide documents.
+  //   - `admin-display` (the hub) shows the FIVE-card hub — then titled Devices,
+  //     **Visual builder** (#2048), Layouts (Advanced), Templates, and Reference.
+  //     The cards now carry their pages' registry labels (Display Devices,
+  //     Display Builder, …); a re-capture picks those up.
   //   - `admin-display-templates` shows the FULL SEVEN built-ins from the #2047
   //     template pack: Everyday board, Whole lodge, Singles house, Room by room,
   //     Nights ahead, Lodge operations, and Welcome kiosk (each with a Builder

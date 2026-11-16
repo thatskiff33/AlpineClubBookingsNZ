@@ -37,14 +37,26 @@ on:
 permissions:
   contents: read
 
+# Pull-request runs share a group per ref and cancel superseded runs. Each push
+# run gets a group of its own, keyed on ref and commit: GitHub replaces a PENDING run
+# in a shared group even without cancel-in-progress, and every push commit must
+# finish its run. Why: INV-OPS-021 (docs/invariants/operations.md, #4989).
+# Pinned by scripts/ci/main-push-runs-complete.test.ts.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'shared' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dependency-review:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    # Every job names its runner image, never `ubuntu-latest` (#5192). GitHub
+    # moves that label to a new Ubuntu release over several weeks, so the same
+    # commit ran on 24.04 or 26.04 by chance. On 26.04 the runner's pg_dump is
+    # PostgreSQL 17 and writes `SET transaction_timeout`, which the PostgreSQL
+    # 16 service refuses, failing `Migration drift check` for every pull
+    # request. Moving to a newer image is a deliberate change: update every
+    # workflow together; `require-test-shards.test.mjs` keeps them equal.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -123,7 +135,7 @@ jobs:
   # advisory. This one is required and also runs on pushes to `main`.
   dependency-audit:
     name: Dependency audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -174,7 +186,7 @@ jobs:
 
   static-analysis:
     name: Static analysis gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -353,7 +365,7 @@ jobs:
   # pass or a real failure.
   secret-scan:
     name: Secret scan (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -493,7 +505,7 @@ jobs:
   # GitHub treats a skipped required job as satisfying branch protection.
   test-shard:
     name: Test shard (${{ matrix.shard }}/4)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -552,7 +564,7 @@ jobs:
   # environment as `verify` (`require-test-shards.test.mjs` pins all of it).
   typecheck:
     name: Typecheck
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -601,7 +613,7 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -642,7 +654,7 @@ jobs:
 
   build:
     name: Production build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       AUTH_SECRET: ci-auth-secret
@@ -676,8 +688,20 @@ jobs:
       - name: Generate Prisma client
         run: pnpm run db:generate
 
+      # `next build` type-checks the app project in a worker that inherits
+      # NODE_OPTIONS. A cold `typecheck:src` peaked at about 4.6 GB on
+      # 12 Nov 2026 (#5053), above Node's default ceiling (about 4 GB on the
+      # 16 GB hosted runner), so this required build failed or passed by chance
+      # with "JavaScript heap out of memory" (#5164). 8 GB leaves headroom, and
+      # nothing else runs beside the build here. `Typecheck` needs 12 GB
+      # because it checks the test and e2e projects too (#4752). Every other
+      # `next build` in CI, including the Docker image builds (as the
+      # Dockerfile's build-only NODE_OPTIONS arg) and scripts/e2e-stack.sh,
+      # uses this same value; `require-test-shards.test.mjs` keeps them equal.
       - name: Build
         run: pnpm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
 
       # Must run AFTER the build: production CSP is nonce-only and Next stamps
       # its nonce into inline bootstrap scripts only during DYNAMIC rendering,
@@ -726,6 +750,9 @@ jobs:
       # through that gate, so `require-test-shards.test.mjs` pins the job
       # unconditional too.
       - name: Prove the server-only boundary still refuses a seeded client import
+        # The seeded build is a real `next build`: the `Build` step's ceiling.
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: |
           set -euo pipefail
           log="${RUNNER_TEMP:-/tmp}/server-only-boundary-selftest.log"
@@ -740,7 +767,7 @@ jobs:
           fi
 
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A BACKSTOP AGAINST A HUNG JOB, NOT A TARGET (#3425). 75 does not mean a
     # 75-minute run is acceptable; it means a genuinely wedged job is still
     # killed rather than burning an hour of budget indefinitely.
@@ -757,7 +784,7 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
-      actions: read # poll this run attempt's shard, typecheck, lint and build jobs
+      actions: read # poll this run attempt's shard, typecheck, lint, build and real-PostgreSQL jobs
       # The concurrency-declaration gate fetches the CURRENT PR body from the
       # pulls API so a body edit can flip the check green on a plain re-run.
       pull-requests: read
@@ -1035,14 +1062,18 @@ jobs:
       # This is a STEP in the existing required job, not a `needs:` edge, and
       # it runs after this job's own gates, so the required job does real work
       # before it waits (#4425). One poll of this run attempt gates the unit
-      # shards and the three jobs `verify` used to run in series. The script
-      # refuses absent, duplicate, skipped and failed jobs, fails at once on
-      # the first failure, and times out rather than making `verify`
-      # vacuously green.
-      - name: Require the unit-test shards, typecheck, lint and build to pass
+      # shards, the three jobs `verify` used to run in series, and (#4907,
+      # owner decision 11 Nov 2026) every real-PostgreSQL suite in
+      # `realdb-all`. The script refuses absent, duplicate, skipped and failed
+      # jobs, fails at once on the first failure, and times out rather than
+      # making `verify` vacuously green. `realdb-all` is the slowest of them
+      # (18-25 minutes, median 23, over the 14 successful `main` push runs of
+      # 12-14 Nov 2026, measured for #4907); its 35-minute limit ends a hung
+      # run inside this poll's 45-minute wait, and both sit inside this job's 75.
+      - name: Require the unit-test shards, typecheck, lint, build and real-PostgreSQL suites to pass
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build"
+        run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"
 
       # #3432: deliberately LAST. Keep the detailed base-selection contract
       # above beside the full-history checkout it depends on; placing this
@@ -1055,7 +1086,7 @@ jobs:
 
   migration-drift:
     name: Migration drift check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # #2672 raised this from 15: this job also hosts every opt-in real-Postgres
     # lock harness, and the member-merge shared-double suite added below drives
     # ten real merge/writer interleavings whose own describe budget is 120s each.
@@ -1301,6 +1332,17 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-merge-booking-row-races.realdb.test.ts
+      # #4929: every caller-held-lock bed writer asks pg_locks whether its
+      # caller holds the global and lodge keys. Only this suite shows the probe
+      # matches the per-lodge key's real pg_locks layout (signed bigint halves),
+      # rejects another backend, a committed transaction and a shared lock, and
+      # that reconcile refuses without each tier. It self-skips without the env
+      # vars (same #1881 harness and database), so
+      # `review-findings-contracts.test.ts` fails if this step goes missing.
+      - name: Test bed-allocation caller-held lock checks against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/bed-allocation-lock-held.realdb.test.ts
 
       # #3583: the booking ledger's cut-over gate, run the way the owner runs it
       # (docs/MAINTENANCE.md) over a seeded history: booking histories made by
@@ -1351,7 +1393,7 @@ jobs:
       # with the SHIPPED statements and CLI in scratch databases of its own (roles
       # are cluster-global, so each run carries a random prefix and drops them),
       # and needs pg_dump and psql from the runner. A required step, like the
-      # diagnostics proof above, so a broken grant blocks the merge; the advisory
+      # diagnostics proof above, so a broken grant blocks the merge; the
       # realdb-all job runs the same file too. It describe.skip's itself without
       # the env vars, so this step MUST stay wired —
       # `review-findings-contracts.test.ts` fails if it goes missing.
@@ -1367,7 +1409,7 @@ jobs:
       # PostgreSQL's behaviour, not code a mock can run. The suite applies the
       # shipped migration in a scratch database of its own on the race service
       # and drops it afterwards. A required step, like the roles proof above;
-      # the advisory realdb-all job runs the same file too. It describe.skip's
+      # the realdb-all job runs the same file too. It describe.skip's
       # itself without the env vars, so this step MUST stay wired —
       # `review-findings-contracts.test.ts` fails if it goes missing.
       - name: Prove the member-money journal's enforcement against dedicated PostgreSQL
@@ -1380,7 +1422,7 @@ jobs:
       # checks can say whether a built batch really commits, and replay and
       # the concurrent-poster race are PostgreSQL behaviour, not code a mock
       # can run. Same shape as the step above: a scratch database of its own,
-      # required, and the advisory realdb-all job runs the file too. It
+      # required, and the realdb-all job runs the file too. It
       # describe.skip's itself without the env vars, so this step MUST stay
       # wired — `review-findings-contracts.test.ts` fails if it goes missing.
       - name: Prove the member-money posting command against dedicated PostgreSQL
@@ -1494,7 +1536,7 @@ jobs:
   # fails inside this job when the URL is absent, rather than skipping quietly.
   data-migration-verification:
     name: Data migration verification
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1586,23 +1628,30 @@ jobs:
   # lock in `vitest.setup.ts`), so the run is as long as the files one after
   # another.
   #
-  # ADVISORY, deliberately NOT a required check (owner ruling, 1 Sep 2026: a
-  # required-check edit waits for the owner). So no required job may name it in
-  # `needs:`; `realdb-ci-coverage-census.test.ts` fails if one does. Becoming
-  # required is a separate owner step (CONTRIBUTING.md, "Branch protection").
+  # BLOCKING through `verify` (#4907, owner decision 11 Nov 2026, option B):
+  # it is not a branch-protection context of its own; `verify`'s same-attempt
+  # poll names it by its `name:` and fails on any result but success, a skip,
+  # a cancellation, a timeout or a missing job included. So it never has a
+  # job-level `if:` or `needs:` (a skip would fail `verify` on every PR), and
+  # no job may name it in `needs:`; `realdb-ci-coverage-census.test.ts` fails
+  # on either, and on any reference besides that one poll. Through `verify` it
+  # also gates the release: `publish-ghcr-images` needs `verify`, so a red,
+  # cancelled or timed-out run on `main` publishes no image for that commit
+  # (`deployment-image-contracts.test.ts` pins both links).
   #
   # The file list is `scripts/ci/realdb-files.mjs`: every realdb file minus
   # `scripts/ci/realdb-quarantine.txt`. The census reads the same two sources,
   # so a new realdb file is either run here or named in the quarantine.
   # The per-file steps in `migration-drift` and `data-migration-verification`
-  # stay: they are required, this job is not. The last step fails the job when a
-  # listed file skipped itself or never ran (`scripts/ci/check-realdb-ran.mjs`),
-  # so a suite whose gate is unset cannot read as green. The one suite that
+  # stay: they report sooner, inside their own required jobs. The last step
+  # fails the job when a listed file skipped itself or never ran
+  # (`scripts/ci/check-realdb-ran.mjs`), so a suite whose gate is unset cannot
+  # read as green. The one suite that
   # cannot share this process (booking-ledger-history-seed, run by
   # `scripts/booking-ledger-seed-gate.sh`) is in the quarantine file.
   realdb-all:
-    name: Real-PostgreSQL suites (all, advisory)
-    runs-on: ubuntu-latest
+    name: Real-PostgreSQL suites (all)
+    runs-on: ubuntu-24.04
     # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
     # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
     # runs, so a cancelled run proved nothing (#4793). 35 is about twice the
@@ -1716,7 +1765,7 @@ jobs:
   # instead of weakening anything.
   docker-image-security:
     name: Image security gate (Trivy CRITICAL)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -1725,6 +1774,10 @@ jobs:
       # not a build arg — nothing Stripe is inlined into the image.
       NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
+      # Heap ceiling for the builder stage's `next build`, passed as the
+      # Dockerfile's build-only NODE_OPTIONS arg; it never reaches the image's
+      # runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
+      NODE_BUILD_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1770,6 +1823,7 @@ jobs:
             --build-arg GIT_COMMIT_SHA="${GIT_COMMIT_SHA}" \
             --build-arg KNOWLEDGE_BUNDLE_OBSERVED_AT="${KNOWLEDGE_BUNDLE_OBSERVED_AT}" \
             --build-arg RELEASE_ID="${GIT_COMMIT_SHA}" \
+            --build-arg NODE_OPTIONS="${NODE_BUILD_OPTIONS}" \
             --tag "${IMAGE_REF}" \
             .
 
@@ -1821,7 +1875,7 @@ jobs:
   publish-ghcr-images:
     name: Publish GHCR images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs:
       - verify
@@ -1848,6 +1902,10 @@ jobs:
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
       # Stripe credentials are DB-only (#2082) — no Stripe build args or env here.
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
+      # Heap ceiling for the builder stage's `next build` in both image builds,
+      # passed as the Dockerfile's build-only NODE_OPTIONS arg; it never reaches
+      # the published image's runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
+      NODE_BUILD_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1904,6 +1962,7 @@ jobs:
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
             RELEASE_ID=${{ env.GIT_COMMIT_SHA }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: type=gha,scope=alpineclubbookingsnz-app
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-app
 
@@ -1952,6 +2011,7 @@ jobs:
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
+            NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: type=gha,scope=alpineclubbookingsnz-migrate
           cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate
 

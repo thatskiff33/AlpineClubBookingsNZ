@@ -181,7 +181,7 @@ describe("POST /api/admin/bookings/[id]/mark-paid", () => {
   });
 
   it("surfaces a domain refusal with its own status and message", async () => {
-    const { ManualBookingPaymentError } = (await vi.importActual("@/lib/payment-reconciliation")) as typeof import("@/lib/payment-reconciliation");
+    const { ManualBookingPaymentError } = (await vi.importActual("@/lib/manual-booking-payment-error")) as typeof import("@/lib/manual-booking-payment-error");
     mocks.applyManualBookingPayment.mockRejectedValue(
       new ManualBookingPaymentError(
         "This booking has an outstanding Xero invoice — record the payment against the invoice in Xero instead.",

@@ -10,7 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { listRefundsForCharge, listRefundsForPaymentIntent, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
 import { classifySucceededSetupIntentCard } from "@/lib/setup-intent-card";
-import { isXeroConnected } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 import { releaseXeroSupplementaryInvoiceForCapturedPaymentIntent } from "@/lib/xero-supplementary-invoice-late-capture";
 import { queueRecordedCardRefundNotes, RecordedCardRefundNoteEnqueueError } from "@/lib/recorded-card-refund-notes";

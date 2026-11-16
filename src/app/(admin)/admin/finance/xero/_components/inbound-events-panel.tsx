@@ -4,11 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { servedAdminPathname } from "@/lib/admin-hubs"
 import { Button } from "@/components/ui/button"
+import { FocusedActionError } from "@/components/focused-action-error"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Input } from "@/components/ui/input"
@@ -32,6 +34,12 @@ import {
   xeroInboundCategoryFilterValue,
 } from "@/lib/xero-webhook-categories"
 import type { XeroInboundEvent } from "./types"
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page"
 
 export function InboundEventsPanel({
   connected,
@@ -88,7 +96,8 @@ export function InboundEventsPanel({
   const clubTime = useClubTime()
   const [events, setEvents] = useState<XeroInboundEvent[]>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
+  const [loadError, setLoadError] = useState("")
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
   const [statusFilter, setStatusFilter] = useState(searchParams.get("inStatus") || "all")
   const [categoryFilter, setCategoryFilter] = useState(
     xeroInboundCategoryFilterValue(searchParams.get("inEventCategory")),
@@ -99,12 +108,8 @@ export function InboundEventsPanel({
   const [eventTypeFilter, setEventTypeFilter] = useState(searchParams.get("inEventType") || "all")
   const [createdFrom, setCreatedFrom] = useState(searchParams.get("inCreatedFrom") || "")
   const [createdTo, setCreatedTo] = useState(searchParams.get("inCreatedTo") || "")
-  const [page, setPage] = useState(() => {
-    const requested = Number(searchParams.get("inPage") || "1")
-    return Number.isInteger(requested) && requested > 0 ? requested : 1
-  })
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("inPage")))
   const [total, setTotal] = useState(0)
-  const pageSize = 25
   const [urlSyncEnabled, setUrlSyncEnabled] = useState(hasInboundUrlState)
   const [replayingEventId, setReplayingEventId] = useState<string | null>(null)
 
@@ -127,7 +132,7 @@ export function InboundEventsPanel({
     setOrDelete("inEventType", eventTypeFilter, "all")
     setOrDelete("inCreatedFrom", createdFrom)
     setOrDelete("inCreatedTo", createdTo)
-    setOrDelete("inPage", page > 1 ? String(page) : "")
+    setAdminListPageParam(params, page, "inPage")
 
     const query = params.toString()
     const nextPath = query ? `${pathname}?${query}` : pathname
@@ -187,9 +192,14 @@ export function InboundEventsPanel({
     setPage(1)
   }
 
-  const fetchEvents = useCallback(async () => {
+  // A press of the header's Refresh is an action, so its failure takes focus
+  // in the alert above the card and the press clears the previous action's
+  // failure. A load the panel runs itself (opening, a filter or page change,
+  // the page's refresh token, after a replay) stays a passive notice (#4975).
+  const fetchEvents = useCallback(async (options?: { pressed?: boolean }) => {
     setLoading(true)
-    setError("")
+    if (options?.pressed) clearActionError()
+    else setLoadError("")
     try {
       const params = new URLSearchParams({
         status: statusFilter,
@@ -200,23 +210,28 @@ export function InboundEventsPanel({
         resourceId: resourceIdFilter,
         eventType: eventTypeFilter,
         page: String(page),
-        pageSize: String(pageSize),
+        pageSize: String(ADMIN_LIST_DEFAULT_PAGE_SIZE),
       })
       if (createdFrom) params.set("createdFrom", createdFrom)
       if (createdTo) params.set("createdTo", createdTo)
       const data = await fetchJson<{ data?: XeroInboundEvent[]; total?: number }>(`/api/admin/xero/inbound-events?${params.toString()}`, undefined, "Failed to fetch Xero inbound events")
       setEvents(data.data ?? [])
       setTotal(data.total ?? 0)
+      setLoadError("")
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load Xero inbound events")
+      const message = err instanceof Error ? err.message : "Failed to load Xero inbound events"
+      if (options?.pressed) failAction(message)
+      else setLoadError(message)
     } finally {
       setLoading(false)
     }
   }, [
     categoryFilter,
+    clearActionError,
     createdFrom,
     createdTo,
     eventTypeFilter,
+    failAction,
     localIdFilter,
     localModelFilter,
     page,
@@ -234,7 +249,7 @@ export function InboundEventsPanel({
 
   const replay = async (eventId: string) => {
     setReplayingEventId(eventId)
-    setError("")
+    clearActionError()
     onMessage("")
     try {
       const data = await postJson<{ message?: string }>(`/api/admin/xero/inbound-events/${eventId}/replay`, undefined, "Failed to replay Xero inbound event")
@@ -243,7 +258,7 @@ export function InboundEventsPanel({
       onRefreshOperations()
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to replay Xero inbound event")
+      failAction(err instanceof Error ? err.message : "Failed to replay Xero inbound event")
     } finally {
       setReplayingEventId(null)
     }
@@ -265,17 +280,22 @@ export function InboundEventsPanel({
   )
 
   return (
+    <>
+    {/* Outside the card's body, which unmounts while the section is collapsed:
+        Refresh sits in its always-visible header, and an alert inside the body
+        would remount on re-opening and take focus for a stale failure. */}
+    <FocusedActionError id="xero-inbound-action-error" className="mb-4" error={actionError} attentionKey={attentionKey} />
     <SectionCard
       id={xeroSectionId("inbound")}
       title="Inbound Events"
       description="Stored webhook events and their reconciliation state."
       open={open}
       onToggle={(nextOpen) => onToggle("inbound", nextOpen)}
-      actions={<Button variant="outline" size="sm" onClick={() => void fetchEvents()} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</Button>}
+      actions={<Button variant="outline" size="sm" onClick={() => void fetchEvents({ pressed: true })} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</Button>}
     >
       {viewOnlyBanner}
       <div className="space-y-4">
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
         <details className="rounded-md border bg-muted p-3 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-medium text-foreground">What do these statuses mean?</summary>
           <ul className="mt-2 space-y-1">
@@ -355,18 +375,19 @@ export function InboundEventsPanel({
             ))}
           </div>
         )}
-        {total > pageSize ? (
+        {total > ADMIN_LIST_DEFAULT_PAGE_SIZE ? (
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} of {total}
+              {formatAdminListRange({ page, pageSize: ADMIN_LIST_DEFAULT_PAGE_SIZE, total })}
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value - 1) }}>Previous</Button>
-              <Button variant="outline" size="sm" disabled={page * pageSize >= total} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value + 1) }}>Next</Button>
+              <Button variant="outline" size="sm" disabled={page * ADMIN_LIST_DEFAULT_PAGE_SIZE >= total} onClick={() => { setUrlSyncEnabled(true); setPage((value) => value + 1) }}>Next</Button>
             </div>
           </div>
         ) : null}
       </div>
     </SectionCard>
+    </>
   )
 }
