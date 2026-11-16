@@ -4291,9 +4291,8 @@ alert nobody received answers 500).
   `applyPaymentAdjustments`.
 - **Handed to the treasurer.** A paid cancel, or the whole reduction of an
   edit, raises one `CANCELLED_BOOKING_HAND_BACK` task naming the dispute, and
-  the member is told the refund is with the treasurer. A cancel's task is
-  dismissible once the dispute is LOST, or reducible by a part lost (#4516).
-  An officer review refuses account credit on a disputed payment.
+  the member is told the refund is with the treasurer. An officer review
+  refuses account credit on a disputed payment.
 - **A refused refund stops.** A recovery row refused for a dispute goes to
   the treasurer at once (`unretryableRecoveryCause`); a late capture's is held,
   never redelivered.
