@@ -22,7 +22,7 @@ import { describe, expect, it } from "vitest";
 
 import { diffBookingPricing, type ModificationPricingSide } from "@/lib/booking-modification-lines";
 import { mintLineItems } from "@/lib/xero-applied-credit-mint-accounts";
-import { buildInvoiceLineItems } from "@/lib/xero-booking-invoices";
+import { buildInvoiceLineItems } from "@/lib/xero-booking-invoice-lines";
 import { buildEntranceFeeLineItem } from "@/lib/xero-entrance-fee-invoices";
 import type { HutFeeItemCodeResolver } from "@/lib/xero-mappings";
 import { buildModificationDocumentLineItems, changeFeeLineItem } from "@/lib/xero-modification-line-items";

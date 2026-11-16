@@ -8,7 +8,7 @@ reason: routes Xero tax through the club tax schedule; those lines sit inside
   own, not part of this fix.
 
 function: src/lib/xero-booking-invoices.ts#createXeroInvoiceForBooking
-lines: 948
+lines: 951
 reason: routes Xero tax through the club tax schedule; those lines sit inside
   the function `createXeroInvoiceForBooking`, which was already over its limit
   before this change, and lifting it apart is a refactor of its own, not part

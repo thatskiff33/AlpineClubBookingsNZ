@@ -219,7 +219,7 @@ describe("confirmBilledPrimaryInvoice (#4525 review)", () => {
 
   it("turns a replayed create's ORIGINAL invoice, billing other stay lines, into a conflict that covers nothing", () => {
     const plan = covered();
-    const original = [{ description: "Ana One - earlier stay", quantity: 1, unitAmount: 120 }, changeFeeLineItem(2500, mapping)];
+    const original = [{ description: "Ana One - earlier stay", quantity: 1, unitAmount: 120 }, changeFeeLineItem(2500, mapping, BASELINE_XERO_TAX_RENDERING)];
     const confirmed = confirmBilledPrimaryInvoice(plan, original);
     expect(confirmed).toMatchObject({ outcome: "CONFLICT", reason: "STAY_CENTS", payloadHash: plan.payloadHash, lineTotalCents: 16500 });
     expect(confirmed).not.toHaveProperty("coverage");
@@ -228,8 +228,8 @@ describe("confirmBilledPrimaryInvoice (#4525 review)", () => {
 
   it("names the fee when only the change-fee line differs", () => {
     const plan = covered();
-    const stay = plan.lines.filter((line) => line.description !== changeFeeLineItem(2500, mapping).description);
-    expect(confirmBilledPrimaryInvoice(plan, [...stay, changeFeeLineItem(2000, mapping)])).toMatchObject({ outcome: "CONFLICT", reason: "FEE_CENTS" });
+    const stay = plan.lines.filter((line) => line.description !== changeFeeLineItem(2500, mapping, BASELINE_XERO_TAX_RENDERING).description);
+    expect(confirmBilledPrimaryInvoice(plan, [...stay, changeFeeLineItem(2000, mapping, BASELINE_XERO_TAX_RENDERING)])).toMatchObject({ outcome: "CONFLICT", reason: "FEE_CENTS" });
   });
 
   it("leaves a conflict as it was", () => {

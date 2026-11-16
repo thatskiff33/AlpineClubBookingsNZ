@@ -18,7 +18,7 @@ reason: the cancellation credit note resolves its invoice's tax treatment where
   the note is built, so the note repeats the invoice's treatment.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1692
+lines: 1559
 reason: the create and update paths resolve the booking's tax treatment where
   each builds its lines; the update path keeps copied lines' own tax type.
 
