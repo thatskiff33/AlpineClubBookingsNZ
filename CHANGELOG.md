@@ -18001,6 +18001,20 @@ and are folded in the same way.
   Raw CSS**, without a deploy. The ready-to-paste house skin and its `wcx-*` hooks
   are documented in the [Mountain Conditions guide](docs/guides/mountain-conditions.md).
   The underlying report data and its section visibility toggles are unchanged.
+- **Stuck States now names the bookings behind eight more signals (#4959).**
+  Cancelled bookings with a refund not recorded, the three payment recovery
+  signals, the two stale group settlements, undelivered bank transfer amount
+  alerts and bookings with unnamed guests used to show only a count, so you had
+  to hunt for the bookings yourself. Each now lists the bookings under the
+  signal, with the owner, what is stuck and a link to the booking. At most 50
+  show, with how many more there are.
+
+  The payment lists name members and show money, so they appear only to admins
+  with both Finance view and Membership view; the unnamed-guest list needs
+  Membership view. Everyone else still sees the same signal and count. Each
+  signal's **Open** link now goes to its list on the page, or to Background Jobs
+  for payment steps the app is still retrying.
+- **Admin screens now say why a request was refused, even when the server's answer is an error page.** Across finance reports and subscriptions, promo codes and fee configuration, membership applications, cancellations, types, fields and subscription categories, member credits, billing family, seasonal membership and the member's category picker, the booking-desk waitlist, hut leaders, lodge accounts, bulk messages, modules, the setup wizard, issue reports and the image manager, a refusal that came back as a web-server error page used to show "Unexpected token < in JSON", and a dropped connection showed "Failed to fetch" or nothing at all. Each screen now shows the server's own reason when it gives one, and otherwise its own plain sentence such as "Failed to save modules". A few sentences changed with it: the Subscriptions sync now says "Sync failed" rather than "Sync failed — check Xero connection", the lodge account save says "Failed to save changes", and promo codes say which action failed ("Failed to fetch promo codes") instead of "Unknown error". Refusals the server explains read exactly as before. The section edit hook and the screens other open pull requests are still converting keep their old wording until those land.
 
 ### Other lodges and the Alpine Central Server
 
@@ -20027,6 +20041,7 @@ and are folded in the same way.
   For contributors, the browser test run in CI also finishes sooner: its shards
   are balanced by how long each test file takes, they no longer wait for the
   build cache to upload, and videos are recorded only for retried tests.
+- A Docker-only install can now create its first admin. `docker compose run --rm seed` runs the base seed in a one-shot service on the migrate image, and `DEPLOYMENT.md` "First Bootstrap" gives it as step 7, once the database roles are on; the command three docs gave, which ran the seed with `exec` in the app container, failed because the app image holds no source. The setup checklist names both seed commands, and CI now runs the documented first install on an empty database and checks a second run adds no rows and changes no seeded value. `.env.example` no longer puts a comment after an empty value, which Compose read as the value, so `cp .env.example .env` followed by `docker compose up` works unedited (#4977).
 
 ### Development, testing and documentation
 
