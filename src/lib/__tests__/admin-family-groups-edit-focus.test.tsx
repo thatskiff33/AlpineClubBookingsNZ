@@ -19,6 +19,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests_
 // `CLUB_TIME_TEST_ZONE`, which is the zone this suite's expectations already
 // assumed, so no assertion here changes meaning.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 
 const EDIT_EVERYTHING: AdminPermissionMatrix = {
@@ -343,5 +344,109 @@ describe("FamilyGroupsPage edit focus (#2256)", () => {
 
     expect(await screen.findByText("Kea Family")).toBeInTheDocument();
     expect(screen.getByText("Not provided")).toBeInTheDocument();
+  });
+});
+
+// #4975: a refused action on this page is the officer's own, so it takes focus
+// and takes it again when the same refusal repeats; the form's refusal and the
+// partner-invite revoke each have their own permanently mounted alert.
+describe("FamilyGroupsPage action failures (#4975)", () => {
+  const INVITE = {
+    id: "invite-1",
+    invitedEmail: "partner@club.test",
+    expiresAt: "2026-08-01T00:00:00.000Z",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    familyGroupId: "g1",
+    familyGroupName: "Kea Family",
+    createdBy: { id: "u2", name: "Other Admin" },
+  };
+
+  function stubFetchWithInvite(revokeStatus: number, revokeBody: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : String(input);
+        if (url.startsWith("/api/admin/family-groups/partner-invites")) {
+          return init?.method === "DELETE"
+            ? new Response(JSON.stringify(revokeBody), { status: revokeStatus })
+            : jsonResponse({ invites: [INVITE] });
+        }
+        if (url.startsWith("/api/admin/family-groups/requests")) {
+          return jsonResponse({ requests: [] });
+        }
+        if (url.startsWith("/api/admin/family-groups/member-search")) {
+          return jsonResponse({
+            members: [
+              {
+                id: "member-1",
+                firstName: "Ana",
+                lastName: "Member",
+                email: "ana@club.test",
+                ageLabel: "Adult",
+              },
+            ],
+          });
+        }
+        if (url === "/api/admin/family-groups" && init?.method === "POST") {
+          return new Response(JSON.stringify({ error: "That name is already taken." }), {
+            status: 409,
+          });
+        }
+        if (url.startsWith("/api/admin/family-groups")) {
+          return jsonResponse({ familyGroups: [KEA] });
+        }
+        throw new Error(`Unstubbed fetch in test: ${url}`);
+      }),
+    );
+  }
+
+  afterEach(async () => {
+    cleanup();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("focuses a refused partner-invite revoke, and focuses it again when it repeats", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    stubFetchWithInvite(409, { error: "The invitation was just claimed." });
+    render(<FamilyGroupsPage />);
+    await screen.findByText("partner@club.test");
+    const alert = document.getElementById("partner-invite-action-error");
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const revoke = screen.getByRole("button", { name: "Revoke" });
+      revoke.focus();
+      fireEvent.click(revoke);
+      await waitFor(() => expect(alert).toHaveTextContent("The invitation was just claimed."));
+      await expectRecoveryAlertToHoldFocus(alert);
+    }
+  });
+
+  it("focuses a refused group save, and focuses it again when it repeats", async () => {
+    stubFetchWithInvite(200, {});
+    render(<FamilyGroupsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "New Group" }));
+    // The alert mounts with the form.
+    await screen.findByRole("button", { name: "Create Group" });
+    const alert = document.getElementById("family-group-save-error");
+    fireEvent.change(screen.getByLabelText("Group Name"), {
+      target: { value: "Weka Family" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Search members by name or email/), {
+      target: { value: "Ana" },
+    });
+    // Create Group stays disabled until a member is picked from the debounced search.
+    fireEvent.click(await screen.findByRole("button", { name: /Ana Member/ }));
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const create = screen.getByRole("button", { name: "Create Group" });
+      create.focus();
+      fireEvent.click(create);
+      await waitFor(() => expect(alert).toHaveTextContent("That name is already taken."));
+      await expectRecoveryAlertToHoldFocus(alert);
+    }
   });
 });

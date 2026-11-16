@@ -414,6 +414,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/edit-financial-review-charge-request.ts::recordSecondEditReviewChargeInvoice#0": {"category":"payment","sink":"createAuditLog","action":"booking.editFinancialReview.chargeShareReinvoiced"},
   "src/lib/edit-financial-review-charge-request.ts::recordUncollectedEditReviewChargeShare#0": {"category":"payment","sink":"createAuditLog","action":"booking.editFinancialReview.chargeShareUncollected"},
   "src/lib/email-admin-alert-escalation.ts::recordAdminAlertDeliveryEscalation#0": {"category":"communication","sink":"createAuditLog","action":"(dynamic) ADMIN_ALERT_DELIVERY_ESCALATION_ACTION"},
+  "src/lib/email-failure-review.ts::requeueExhaustedEmailFailure#0": {"category":"communication","sink":"createAuditLog","action":"(dynamic) EMAIL_FAILURE_REQUEUE_ACTION"},
   "src/lib/email-failure-review.ts::writeEmailFailureReviewAudit#0": {"category":"communication","sink":"createAuditLog","action":"(dynamic) EMAIL_FAILURE_REVIEW_ACTION"},
   "src/lib/environment-safety-override-write.ts::writeEnvironmentSafetyOverride.outcome#0": {"category":"admin","sink":"auditLog.create","action":"ENVIRONMENT_SAFETY_OVERRIDE_UPDATED"},
   "src/lib/family-booking-add-notifications.ts::sendFamilyMemberBookingAddNotifications#0": {"category":"communication","sink":"logAudit","action":"booking.family_add.notification_unreachable"},

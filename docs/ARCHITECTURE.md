@@ -2601,7 +2601,16 @@ required argument and shares one status list with the SQL builder, so no
 surface can read a cancelled booking's untouched delta columns as money owed.
 All sidebar badge counts come from the single `GET /api/admin/pending-counts`
 endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
-mirror the individual queue routes. Sidebar sections render expanded by
+mirror the individual queue routes. The four Booking Requests queues in it
+(Approvals, Changes, Policy Exceptions, Public Requests) are defined once, in
+`getBookingRequestPendingCounts` (`src/lib/admin-booking-request-pending-counts.ts`,
+#4969), and each count builds its query from the where-builder its list uses
+(`src/lib/booking-request-queue-where.ts` and `buildBookingRequestListWhere`),
+so a list and its badge are narrowed together. The same helper feeds the
+dashboard's Booking Requests card and, through the bookings-area
+`GET /api/admin/booking-requests/pending-counts`, the Booking Requests page's
+tab badges and landing tab, so a bookings-only role still gets them. Sidebar
+sections render expanded by
 default; a per-section collapse preference persists in localStorage.
 
 The admin command palette (#2092, `src/components/admin-command-palette.tsx`)
