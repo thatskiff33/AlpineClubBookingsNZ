@@ -27,7 +27,7 @@ type Preview = Omit<OpeningCreditPreview, "alreadyPosted"> & {
 }
 
 /**
- * The opening-credit import dialog (#4988, `INV-PAY-155`), split from
+ * The opening-credit import dialog (#4988, `INV-PAY-156`), split from
  * `OpeningCreditBatchesCard`: choose a CSV, show the server's preview and
  * total, and post it on one confirmation. Nothing is written until the
  * officer confirms the previewed total. The card remounts it (a fresh `key`)

@@ -433,10 +433,11 @@ EOF
 }
 
 # A release tag, spelled once for this script: a strict `vX.Y.Z`, the same
-# pattern as RELEASE_TAG in scripts/release/cut-release.mjs, so the tool that
-# cuts a release and the deploy that demands one cannot disagree about what a
-# release is. `deploy-release-tag-guard-script-contract.test.ts` runs both over
-# the same names. Bash's `=~` anchors to the whole string, never to a line.
+# pattern as RELEASE_TAG in scripts/release/release-version.mjs (which
+# cut-release.mjs re-exports as parseReleaseTag), so the tool that cuts a
+# release and the deploy that demands one cannot disagree about what a release
+# is. `deploy-release-tag-guard-script-contract.test.ts` runs both over the
+# same names. Bash's `=~` anchors to the whole string, never to a line.
 is_release_tag_name() {
   [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
 }

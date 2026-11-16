@@ -7886,7 +7886,7 @@ model MemberCredit {
 /// `batchKey` is the SHA-256 of the batch's canonical rows, so the same file can
 /// be posted only once (a second confirm, concurrent or later, hits the unique
 /// key). Reversal stamps `reversedAt` once and posts negative rows linked here;
-/// nothing is deleted (`INV-PAY-155`).
+/// nothing is deleted (`INV-PAY-156`).
 model OpeningCreditBatch {
   id             String    @id @default(cuid())
   batchKey       String    @unique

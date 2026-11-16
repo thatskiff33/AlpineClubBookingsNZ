@@ -96,6 +96,9 @@ const IDENTITY_MODULES = [
   // An API response order, and a pattern also written into migration SQL.
   "src/lib/hut-leader-coverage.ts",
   "src/lib/email-message-token-contract.ts",
+  // #4284: the createdAt tie-break that decides which card refund row a
+  // recorded refund fills (INV-PAY-121), which must answer the same on every read.
+  "src/lib/card-refund-tie-order.ts",
 ] as const;
 
 /** The three-way ordinal comparator, in any spacing, on any operands. */
