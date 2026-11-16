@@ -1745,14 +1745,15 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // "Try the card again" (`lockDeadCardRefundRow`), after their lock(1) and
   // before the payment is read, as "Paid another way" takes it. #4851: and by
   // `closeGroupCardRefundPaidAnotherWay` and `tryOrganiserChildCardRefundAgain`,
-  // the same helper, no new key. #4449: and by the inbound credit-note sync's
+  // the same helper, no new key.
+  // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
+  // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
+  // paragraph and its #4217 sequel.
+  // #4449: the helper is also taken by the inbound credit-note sync's
   // allocation write for a modification note on the one bank-transfer payment
   // of its invoice (`writeCurrentCreditNoteAllocation`, no lock(1), lodge or
   // member key), before its allocation row, so the Internet Banking settle
   // (lock(1) -> lodge -> member -> this row) and the write serialise here.
-  // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
-  // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
-  // paragraph and its #4217 sequel.
   "src/lib/payment-transactions.ts": 1,
   // #4161 / #4192: the nightly link cleanup's refund-note heal takes two
   // lock-only statements: the one `XeroObjectLink` row it is about to re-write
