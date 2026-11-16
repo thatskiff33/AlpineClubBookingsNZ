@@ -18,10 +18,10 @@ import {
   getSetupRequiredEnvNames,
   buildSetupReadiness,
   normalizeSetupProgress,
-  renderSetupCheckReport,
   type SetupDatabaseSnapshot,
   type SetupReadiness,
 } from "@/lib/setup-readiness";
+import { renderSetupCheckReport } from "@/lib/setup-readiness-report";
 
 /**
  * A resolved environment role for the fixtures below, built by the REAL
@@ -550,6 +550,25 @@ describe("setup-readiness", () => {
     expect(report).toContain("Runtime Environment: blocked");
     expect(report).toContain("supportEmail");
     expect(report).toContain("Run the seed command");
+  });
+
+  it("tells a Docker-only install how to seed the first admin, not only a developer (#4977)", () => {
+    // The deployment prerequisites list Docker alone, so a checklist that only
+    // says `pnpm run db:seed` leaves that operator with no command they can run.
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, adminCount: 0 },
+    });
+    const seedAdmin = readiness.categories
+      .flatMap((category) => category.checks)
+      .find((check) => check.id === "seed-admin");
+
+    expect(seedAdmin?.status).toBe("blocked");
+    expect(seedAdmin?.details).toEqual([
+      "Docker install: docker compose run --rm seed",
+      "Developer machine: pnpm run db:seed",
+    ]);
   });
 
   it("reports module state from Admin Modules activation only", () => {
