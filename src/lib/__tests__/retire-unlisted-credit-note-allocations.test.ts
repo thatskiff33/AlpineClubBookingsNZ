@@ -234,6 +234,7 @@ describe("writeCurrentCreditNoteAllocation (#4447)", () => {
 describe("the allocation write decides its bank-transfer payment's refunded total under the Payment row (#4449)", () => {
   const link = allocation("inv-1", 10_000, NOTE_ALLOCATION_ROLE, "BookingModification");
   const steps: string[] = [];
+  // The guarded claim (`updateMany` on the row as re-read under its lock).
   const paymentUpdate = vi.fn();
   const paymentFindUnique = vi.fn();
   const payment = {
@@ -264,6 +265,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
       return {};
     });
     paymentFindUnique.mockResolvedValue(payment);
+    paymentUpdate.mockResolvedValue({ count: 1 });
     mocks.decideLinked.mockImplementation(async () => {
       steps.push("decide");
       return new Map([["pay-1", 15_000]]);
@@ -273,7 +275,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
       fn({
         $executeRaw: mocks.lock,
         xeroObjectLink: { findUnique: mocks.findUnique, createMany: mocks.createMany },
-        payment: { findUnique: paymentFindUnique, update: paymentUpdate },
+        payment: { findUnique: paymentFindUnique, updateMany: paymentUpdate },
       }),
     );
   });
@@ -287,7 +289,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
   it("MUTATION: sets the whole total its links decide, never an increment on the stored one", async () => {
     await writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" });
     expect(mocks.decideLinked).toHaveBeenCalledWith(expect.anything(), [payment]);
-    expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1" }, data: { refundedAmountCents: 15_000 } });
+    expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1", status: "PARTIALLY_REFUNDED", refundedAmountCents: 5_000 }, data: { refundedAmountCents: 15_000 } });
   });
 
   it("writes nothing to a payment whose total and status the links already record", async () => {
@@ -308,7 +310,12 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
     mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
     mocks.uncapturedPrimaryStatus.mockResolvedValue("PENDING");
     await writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" });
-    expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1" }, data: { refundedAmountCents: 0, status: "PENDING" } });
+    expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1", status: "PARTIALLY_REFUNDED", refundedAmountCents: 5_000 }, data: { refundedAmountCents: 0, status: "PENDING" } });
+  });
+
+  it("MUTATION (guarded claim): a claim lost under the Payment row lock throws, rolling the allocation write back with it", async () => {
+    paymentUpdate.mockResolvedValue({ count: 0 });
+    await expect(writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" })).rejects.toThrow(/claim lost/);
   });
 
   it("decides nothing for a payment that is not a bank transfer", async () => {

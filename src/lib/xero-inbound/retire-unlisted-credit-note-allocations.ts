@@ -183,7 +183,16 @@ async function decideBankTransferRefundedTotal(
     ...(floored.cents !== payment.refundedAmountCents ? { refundedAmountCents: floored.cents } : {}),
     ...(status && status !== payment.status ? { status } : {}),
   };
-  if (Object.keys(data).length > 0) await tx.payment.update({ where: { id: payment.id }, data });
+  if (Object.keys(data).length === 0) return floored.alert;
+  // A claim on the row as re-read under its lock (`INV-LOCK-002`). The lock
+  // means nothing can move it in between, so a lost claim is a broken
+  // invariant: thrown, it rolls back the allocation write with it, and the
+  // inbound event is retried. The alert is returned only for a committed write.
+  const claimed = await tx.payment.updateMany({
+    where: { id: payment.id, status: payment.status, refundedAmountCents: payment.refundedAmountCents },
+    data,
+  });
+  if (claimed.count !== 1) throw new Error(`Refunded-total claim lost under the Payment row lock (#4449): ${payment.id}`);
   return floored.alert;
 }
 

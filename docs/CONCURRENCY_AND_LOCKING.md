@@ -8388,7 +8388,9 @@ exactly one payment, a bank-transfer one, takes that `Payment` row FIRST
 its allocation row as above, writes it, and decides the payment's whole
 refunded total under the row (`decideLinkedRefundedTotalCents`, the
 bank-transfer floor, `INV-ADDPAY-021`), writing the total and status only when
-either changes; the floor alert goes out after the commit. Budget:
+either changes, through a claim on the row as re-read under the lock (status
+and refunded total); a lost claim throws and rolls the allocation write back,
+so nothing is half-written. The floor alert goes out after the commit. Budget:
 `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`. No provider call runs in it and it
 takes no advisory key, so `INV-LOCK-003`'s registry gains no entry. Order
 (`INV-LOCK-002`): the kept settle takes `lock(1)`, lodge, member, then the
