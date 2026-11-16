@@ -6,12 +6,7 @@ import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-c
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
-import {
-  type AgeTier,
-  PaymentStatus,
-  type Role,
-} from "@prisma/client";
-import type { ModifiedBooking } from "@/lib/booking-modification-modified-booking";
+import { type AgeTier, PaymentStatus, type Role } from "@prisma/client";
 
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { repriceBookingPromotions } from "@/lib/booking-promotions";
@@ -163,7 +158,7 @@ import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-claim";
 import { changeFeeAddedToAmountOwedHistory } from "@/lib/change-fee-owed";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
-import type { DateModificationTransactionResult } from "@/lib/booking-date-modification-transaction-result";
+import type { DateModificationTransactionResult, ModifiedBooking } from "@/lib/booking-date-modification-transaction-result";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;

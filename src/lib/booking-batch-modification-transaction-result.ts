@@ -1,7 +1,8 @@
 // The batch edit's transaction result, moved verbatim from
 // `booking-batch-modification-service.ts` to keep that file under its size
 // ceiling (#5145). Types only. `ModifiedBooking` has one home for both edit
-// services, `booking-modification-modified-booking.ts` (#4516 merge, `INV-SSOT`).
+// services, `booking-modification-modified-booking.ts` (#4516 merge, `INV-SSOT`);
+// it is re-exported here so each service keeps one import line.
 import type { BookingGuest, PaymentSource, PaymentStatus } from "@prisma/client";
 
 import type { ModifiedBooking } from "@/lib/booking-modification-modified-booking";
@@ -11,6 +12,8 @@ import type { FinishedStayChangeFeeRule, FinishedStayCorrection } from "@/lib/bo
 import type { MemberGuestAddNotificationRow } from "@/lib/member-guest-add-policy";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import type { PromoChangeNotAppliedNotice } from "@/lib/promo-change-not-applied";
+
+export type { ModifiedBooking };
 
 export type BatchModificationTransactionResult =
   BookingModificationPaymentContext & {

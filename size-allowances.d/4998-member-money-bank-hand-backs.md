@@ -7,7 +7,7 @@ lines elsewhere would separate the journal post from the write and the locks it
 depends on.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1237
+lines: 1240
 reason: one argument passes the removal's journal context to the hand-back raise it already calls.
 
 file: src/lib/payment-transactions.ts
@@ -23,7 +23,7 @@ lines: 1328
 reason: the row prints why a bank or cash hand-back cannot be dismissed (owner decision, 14 Nov 2026) where the Dismiss button renders, beside the group organiser's rule it follows.
 
 function: src/lib/booking-batch-modification-service.ts#modifyBookingBatch
-lines: 1815
+lines: 1818
 reason: one argument passes the edit's actor to the hand-back raise it already calls.
 
 function: src/lib/booking-cancel.ts#performBookingCancellation
@@ -31,11 +31,11 @@ lines: 2123
 reason: the cash hand-back's R05 posts beside its task, under the claim's lock(1).
 
 function: src/lib/booking-date-modification-service.ts#modifyBookingDates
-lines: 1181
+lines: 1183
 reason: one argument passes the edit's actor to the hand-back raise it already calls.
 
 function: src/lib/booking-guest-removal-service.ts#removeBookingGuestInTransaction
-lines: 829
+lines: 830
 reason: one argument passes the edit's actor to the hand-back raise it already calls.
 
 function: src/lib/xero-inbound/invoice-paid-effects.ts#syncInternetBankingPaymentsForPaidInvoice

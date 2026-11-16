@@ -4,10 +4,7 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
-import {
-  type Role,
-} from "@prisma/client";
-import type { ModifiedBooking } from "@/lib/booking-modification-modified-booking";
+import type { Role } from "@prisma/client";
 
 import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -172,7 +169,7 @@ import {
   type FinishedStayChangeFeeRule,
   type FinishedStayCorrection,
 } from "@/lib/booking-finished-stay-correction";
-import type { BatchModificationTransactionResult } from "@/lib/booking-batch-modification-transaction-result";
+import type { BatchModificationTransactionResult, ModifiedBooking } from "@/lib/booking-batch-modification-transaction-result";
 
 /**
  * WHY a change fee on this booking was waived, as it is stored (#3232 D2).
