@@ -222,6 +222,9 @@ export function MemberGroupJoinPanel({
     return (
       <div className="mx-auto flex min-h-[60vh] max-w-lg items-center justify-center p-4">
         <Card className="w-full">
+          {/* No visible title while loading, but the page still needs its one
+              h1 in every render state (#4951). */}
+          <h1 className="sr-only">Join a group booking</h1>
           <CardContent className="py-8 text-center text-muted-foreground">
             Loading...
           </CardContent>
@@ -235,7 +238,9 @@ export function MemberGroupJoinPanel({
       <div className="mx-auto flex min-h-[60vh] max-w-lg items-center justify-center p-4">
         <Card className="w-full">
           <CardHeader>
-            <CardTitle>Group booking not found</CardTitle>
+            {/* The page (join/[code]/page.tsx) has no h1 in any render state;
+                this card is the whole page here. */}
+            <CardTitle headingLevel={1}>Group booking not found</CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             We couldn&apos;t find a group booking for this link. Please check you copied the whole
@@ -250,7 +255,9 @@ export function MemberGroupJoinPanel({
     <div className="mx-auto w-full max-w-lg p-4">
       <Card>
         <CardHeader>
-          <CardTitle>
+          {/* Same reasoning as "Group booking not found" above — the page has
+              no h1 of its own in any render state. */}
+          <CardTitle headingLevel={1}>
             Join {summary.organiserFirstName}&apos;s group at {summary.lodgeName}
           </CardTitle>
           <CardDescription>

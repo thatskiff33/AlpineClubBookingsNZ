@@ -1,6 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import { ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES } from "@/lib/booking-email-suppression";
+import {
+  type BookingFreshCopyTemplate,
+  bookingFreshCopyHref,
+  isBookingFreshCopyTemplate,
+} from "@/lib/booking-fresh-email-copy-templates";
 import { SENSITIVE_EMAIL_LOG_TEMPLATES } from "@/lib/email/internal";
 import {
   EMAIL_RETRY_BACKOFF_MS,
@@ -40,6 +45,9 @@ const REQUEUEABLE_EMAIL_FAILURE_WHERE = {
  * - `retry`: the row still holds a replayable body, so **Try again** hands it
  *   back to the email retry cron.
  * - `token_reissue`: one of Token Email Recovery's templates; reissue it there.
+ * - `fresh_copy`: a booking email whose body is never kept, about a booking
+ *   that still exists; send a fresh copy from that booking's page
+ *   (`booking-fresh-email-copy-templates.ts`).
  * - `sensitive`: it carried a sign-in link, door code or payment link, so no
  *   copy was kept (`SENSITIVE_EMAIL_LOG_TEMPLATES`, INV-CONFIG-004).
  * - `retired`: Try again cannot take it for another reason - a redacted
@@ -51,15 +59,18 @@ const REQUEUEABLE_EMAIL_FAILURE_WHERE = {
 export type ExhaustedEmailFailureRecovery =
   | "retry"
   | "token_reissue"
+  | "fresh_copy"
   | "sensitive"
   | "retired";
 
 function recoveryFor(
   templateName: string,
   canRequeue: boolean,
+  freshCopyHref: string | null,
 ): ExhaustedEmailFailureRecovery {
   if (canRequeue) return "retry";
   if (isTokenRecoveryTemplate(templateName)) return "token_reissue";
+  if (freshCopyHref) return "fresh_copy";
   if (SENSITIVE_EMAIL_LOG_TEMPLATES.has(templateName)) return "sensitive";
   return "retired";
 }
@@ -89,6 +100,12 @@ interface ExhaustedEmailFailure {
   bookingExists: boolean;
   bookingRecipientMemberId: string | null;
   recovery: ExhaustedEmailFailureRecovery;
+  /**
+   * Where an officer sends a fresh copy of this email, for a booking email
+   * whose body is never kept (`booking-fresh-email-copy-templates.ts`) and
+   * whose booking still exists; null for every other failure.
+   */
+  freshCopyHref: string | null;
   reviewedAt: string | null;
   reviewedById: string | null;
   reviewNote: string | null;
@@ -207,6 +224,10 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
     const canRequeue =
       replayableIds.has(failure.id) &&
       (failure.bookingId === null || bookingExists);
+    const freshCopyHref =
+      failure.bookingId && bookingExists && isBookingFreshCopyTemplate(failure.templateName)
+        ? bookingFreshCopyHref(failure.bookingId)
+        : null;
     const latest = latestActionByEmailLogId.get(failure.id);
     const review =
       latest?.action === EMAIL_FAILURE_REVIEW_ACTION &&
@@ -226,7 +247,8 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
       bookingId: failure.bookingId,
       bookingExists,
       bookingRecipientMemberId: failure.bookingRecipientMemberId,
-      recovery: recoveryFor(failure.templateName, canRequeue),
+      recovery: recoveryFor(failure.templateName, canRequeue, freshCopyHref),
+      freshCopyHref,
       reviewedAt: review?.createdAt.toISOString() ?? null,
       reviewedById: review?.actorMemberId ?? review?.memberId ?? null,
       reviewNote: readReviewNote(review?.metadata),
@@ -250,6 +272,48 @@ export async function getExhaustedEmailFailureReviewQueue(limit = 25) {
     failures: active.slice(0, boundedLimit),
     recentlyReviewed: reviewed.slice(0, 10),
   };
+}
+
+/**
+ * The one `email.failure.reviewed` row. The review queue decides "archived"
+ * from these rows and reads the note from `metadata.reason`, so the officer's
+ * Archive button and a fresh copy's supersede archive share this writer and
+ * cannot drift apart in action, category, severity or metadata keys.
+ */
+async function writeEmailFailureReviewAudit(input: {
+  emailLog: {
+    id: string;
+    to: string;
+    templateName: string;
+    attempts: number;
+    errorMessage: string | null;
+  };
+  reviewedByMemberId: string;
+  reason: string | null;
+  detailsSuffix?: string;
+  extraMetadata?: { bookingId: string };
+}) {
+  const { emailLog } = input;
+  await createAuditLog({
+    action: EMAIL_FAILURE_REVIEW_ACTION,
+    memberId: input.reviewedByMemberId,
+    actorMemberId: input.reviewedByMemberId,
+    targetId: emailLog.id,
+    entityType: "EmailLog",
+    entityId: emailLog.id,
+    category: "communication",
+    severity: "important",
+    outcome: "success",
+    summary: "Exhausted email failure reviewed",
+    details: `Archived exhausted ${emailLog.templateName} email failure for ${emailLog.to}${input.detailsSuffix ?? ""}.`,
+    metadata: {
+      reason: input.reason,
+      templateName: emailLog.templateName,
+      attempts: emailLog.attempts,
+      lastError: emailLog.errorMessage,
+      ...input.extraMetadata,
+    },
+  });
 }
 
 export async function markExhaustedEmailFailureReviewed(
@@ -289,24 +353,10 @@ export async function markExhaustedEmailFailureReviewed(
   }
 
   const reason = trimReviewReason(input.reason);
-  await createAuditLog({
-    action: EMAIL_FAILURE_REVIEW_ACTION,
-    memberId: input.reviewedByMemberId,
-    actorMemberId: input.reviewedByMemberId,
-    targetId: emailLog.id,
-    entityType: "EmailLog",
-    entityId: emailLog.id,
-    category: "communication",
-    severity: "important",
-    outcome: "success",
-    summary: "Exhausted email failure reviewed",
-    details: `Archived exhausted ${emailLog.templateName} email failure for ${emailLog.to}.`,
-    metadata: {
-      reason,
-      templateName: emailLog.templateName,
-      attempts: emailLog.attempts,
-      lastError: emailLog.errorMessage,
-    },
+  await writeEmailFailureReviewAudit({
+    emailLog,
+    reviewedByMemberId: input.reviewedByMemberId,
+    reason,
   });
 
   return {
@@ -415,4 +465,85 @@ export async function requeueExhaustedEmailFailure(
 
     return { id: emailLog.id, requeued: true };
   });
+}
+
+/**
+ * Exhausted failures of these booking emails that no review has archived yet.
+ * The booking page's fresh-copy panel reads this to say a copy is outstanding.
+ */
+export async function findUnarchivedExhaustedBookingEmailFailures(input: {
+  bookingIds: string[];
+  templateNames: string[];
+  createdBefore?: Date;
+}): Promise<
+  Array<{
+    id: string;
+    bookingId: string | null;
+    templateName: string;
+    to: string;
+    attempts: number;
+    errorMessage: string | null;
+  }>
+> {
+  if (input.bookingIds.length === 0 || input.templateNames.length === 0) return [];
+  const failures = await prisma.emailLog.findMany({
+    where: {
+      bookingId: { in: input.bookingIds },
+      templateName: { in: input.templateNames },
+      ...EXHAUSTED_EMAIL_FAILURE_WHERE,
+      ...(input.createdBefore ? { createdAt: { lt: input.createdBefore } } : {}),
+    },
+    orderBy: { createdAt: "asc" },
+    take: MAX_EXHAUSTED_FAILURE_SCAN,
+    select: {
+      id: true,
+      bookingId: true,
+      templateName: true,
+      to: true,
+      attempts: true,
+      errorMessage: true,
+    },
+  });
+  if (failures.length === 0) return [];
+  const reviewed = await prisma.auditLog.findMany({
+    where: {
+      action: EMAIL_FAILURE_REVIEW_ACTION,
+      targetId: { in: failures.map((failure) => failure.id) },
+    },
+    select: { targetId: true },
+  });
+  const reviewedIds = new Set(reviewed.map((review) => review.targetId));
+  return failures.filter((failure) => !reviewedIds.has(failure.id));
+}
+
+/**
+ * Archive the exhausted failures a fresh copy has just replaced.
+ *
+ * Called ONLY after the fresh copy was actually sent: each archive says the
+ * member now has a newer copy, which must never be claimed for a withheld or
+ * failed send. The FAILED rows themselves are untouched and stay as history;
+ * the archive is the same `email.failure.reviewed` audit row an officer's own
+ * Archive button writes. Returns the ids it archived.
+ */
+export async function archiveSupersededEmailFailures(input: {
+  bookingId: string;
+  templateName: BookingFreshCopyTemplate;
+  createdBefore: Date;
+  reviewedByMemberId: string;
+}): Promise<string[]> {
+  const failures = await findUnarchivedExhaustedBookingEmailFailures({
+    bookingIds: [input.bookingId],
+    templateNames: [input.templateName],
+    createdBefore: input.createdBefore,
+  });
+  for (const failure of failures) {
+    await writeEmailFailureReviewAudit({
+      emailLog: failure,
+      reviewedByMemberId: input.reviewedByMemberId,
+      reason: "Superseded by a fresh copy sent from the booking.",
+      detailsSuffix: " after a fresh copy was sent from the booking",
+      extraMetadata: { bookingId: input.bookingId },
+    });
+  }
+  return failures.map((failure) => failure.id);
 }

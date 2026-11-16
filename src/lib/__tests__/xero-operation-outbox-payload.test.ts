@@ -312,6 +312,21 @@ describe("xero operation outbox payload parsing", () => {
     );
   });
 
+  it("ALP-580: reads a card-refund reversal's close day only when it is a real day", () => {
+    const queued = {
+      queueType: "CARD_REFUND_REVERSAL_INVOICE",
+      bookingId: "booking_1",
+      paymentId: "payment_1",
+      closeTaskId: "task_close_1",
+      amountCents: 8000,
+      closedOn: "2026-07-01",
+    };
+    expect(readQueuedOutboxPayload(queued)).toEqual(queued);
+    for (const closedOn of [undefined, "", "01/07/2026", "2026-02-30"]) {
+      expect(readQueuedOutboxPayload({ ...queued, closedOn })).toBeNull();
+    }
+  });
+
   // #3971: the payload carries no charge id; a pre-fix row's blanked one is ignored.
   it("#3971: reads a subscription invoice as its queue type alone, whatever chargeId a stored row holds", () => {
     for (const stored of [
@@ -363,7 +378,7 @@ describe("xero operation outbox payload parsing", () => {
       expect(readQueuedOutboxPayload({ ...queued, capturedCents })).toBeNull();
     }
     // A receipt without its capture day would be dated on some later day.
-    for (const capturedOn of [undefined, "", "10/06/2026"]) {
+    for (const capturedOn of [undefined, "", "10/06/2026", "2026-02-30"]) {
       expect(readQueuedOutboxPayload({ ...queued, capturedOn })).toBeNull();
     }
     expect(readQueuedOutboxPayload({ ...queued, manualRefundTaskId: undefined })).toBeNull();
@@ -390,6 +405,7 @@ describe("xero operation outbox payload parsing", () => {
     expect(readQueuedOutboxPayload({ ...queued, paymentIntentId: undefined })).toBeNull();
     // A decision that does not parse never lets a retry decide again.
     expect(readQueuedOutboxPayload({ ...queued, plan: { ...plan, amountCents: 12.5 } })).toBeNull();
+    expect(readQueuedOutboxPayload({ ...queued, plan: { ...plan, date: "2026-02-30" } })).toBeNull();
     expect(getQueuedOutboxExpectedOperation("ADDITIONAL_CAPTURE_RECEIPT")).toEqual({
       entityType: "PAYMENT",
       operationType: "CREATE",

@@ -101,6 +101,8 @@ interface ExhaustedEmailFailure {
   bookingExists: boolean;
   bookingRecipientMemberId: string | null;
   recovery: ExhaustedEmailFailureRecovery;
+  /** Booking page link for a never-kept booking email; null otherwise. */
+  freshCopyHref: string | null;
   reviewedAt: string | null;
   reviewedById: string | null;
   reviewNote: string | null;

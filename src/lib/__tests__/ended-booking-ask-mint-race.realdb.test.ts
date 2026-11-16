@@ -180,6 +180,7 @@ let observerClient: PrismaClient;
         door: "guestAdd",
         failureMessage: "race-4316: the mint failed",
         result: {
+          ownCardRefund: null,
           pendingRefundAmountCents: 0,
           organiserChildRefund: null,
           paymentId: PAYMENT_ID,

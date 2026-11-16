@@ -24,7 +24,7 @@ type ExhaustedEmailFailure = HealthData["emailFailures"]["failures"][number];
  * handed back to the retry job (#4963).
  */
 const NO_RESEND_GUIDANCE: Record<
-  Exclude<ExhaustedEmailFailure["recovery"], "retry">,
+  Exclude<ExhaustedEmailFailure["recovery"], "retry" | "fresh_copy">,
   string
 > = {
   token_reissue:
@@ -477,22 +477,7 @@ export function EmailDeliverabilitySection({
                         Archive
                       </button>
                     </div>
-                    <EmailFailureLinks failure={failure} />
-                    {failure.recovery !== "retry" ? (
-                      <p className="col-span-full text-xs text-muted-foreground">
-                        {NO_RESEND_GUIDANCE[failure.recovery]}
-                      </p>
-                    ) : null}
-                    {failure.errorMessage ? (
-                      <p className="col-span-full text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          Failure reason:
-                        </span>{" "}
-                        <span className="whitespace-pre-wrap break-words">
-                          {failure.errorMessage}
-                        </span>
-                      </p>
-                    ) : null}
+                    <EmailFailureRowNotes failure={failure} />
                   </div>
                 ))}
               </div>
@@ -565,5 +550,40 @@ export function EmailDeliverabilitySection({
         )}
       </div>
     </div>
+  );
+}
+
+/*
+  The full-width notes under one exhausted-failure row: its booking and member
+  links, what to do instead when Try again is not offered (a fresh copy from
+  the booking for a token-bearing booking email, otherwise the guidance for its
+  recovery kind), and the provider's failure reason.
+*/
+function EmailFailureRowNotes({ failure }: { failure: ExhaustedEmailFailure }) {
+  return (
+    <>
+      <EmailFailureLinks failure={failure} />
+      {failure.recovery === "fresh_copy" && failure.freshCopyHref ? (
+        <p className="col-span-full text-xs text-muted-foreground">
+          This email carries a door code or payment link, so it cannot be retried.{" "}
+          <a
+            href={failure.freshCopyHref}
+            className="font-medium text-primary underline-offset-2 hover:underline"
+          >
+            Send a fresh copy from the booking
+          </a>
+        </p>
+      ) : failure.recovery !== "retry" && failure.recovery !== "fresh_copy" ? (
+        <p className="col-span-full text-xs text-muted-foreground">
+          {NO_RESEND_GUIDANCE[failure.recovery]}
+        </p>
+      ) : null}
+      {failure.errorMessage ? (
+        <p className="col-span-full text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Failure reason:</span>{" "}
+          <span className="whitespace-pre-wrap break-words">{failure.errorMessage}</span>
+        </p>
+      ) : null}
+    </>
   );
 }

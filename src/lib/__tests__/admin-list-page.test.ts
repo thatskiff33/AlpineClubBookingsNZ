@@ -5,6 +5,7 @@ import {
   adminQueueCreatedOrder,
   formatAdminListRange,
   parseAdminListPageParam,
+  setAdminListPageParam,
 } from "@/lib/admin-list-page";
 
 describe("admin list page helpers (INV-OPS-020)", () => {
@@ -34,6 +35,18 @@ describe("admin list page helpers (INV-OPS-020)", () => {
     );
   });
 
+  it("does not claim a row on a page past the last one", () => {
+    expect(formatAdminListRange({ page: 99, pageSize: 25, total: 40 })).toBe(
+      "Showing 0 of 40",
+    );
+    expect(formatAdminListRange({ page: 3, pageSize: 25, total: 50 })).toBe(
+      "Showing 0 of 50",
+    );
+    expect(formatAdminListRange({ page: 2, pageSize: 25, total: 50 })).toBe(
+      "Showing 26–50 of 50",
+    );
+  });
+
   it("orders pending filters oldest first and the rest newest first", () => {
     expect(adminQueueCreatedOrder(true)).toBe("asc");
     expect(adminQueueCreatedOrder(false)).toBe("desc");
@@ -46,5 +59,14 @@ describe("admin list page helpers (INV-OPS-020)", () => {
     expect(parseAdminListPageParam("-2")).toBe(1);
     expect(parseAdminListPageParam("2.5")).toBe(1);
     expect(parseAdminListPageParam("abc")).toBe(1);
+  });
+
+  it("writes a later page into the URL and drops the key for page 1", () => {
+    const params = new URLSearchParams("status=ALL&page=4");
+    expect(setAdminListPageParam(params, 2).toString()).toBe("status=ALL&page=2");
+    expect(setAdminListPageParam(params, 1).toString()).toBe("status=ALL");
+    expect(setAdminListPageParam(new URLSearchParams("opPage=3"), 5, "opPage").toString()).toBe(
+      "opPage=5",
+    );
   });
 });

@@ -48,6 +48,7 @@ function failure(
     bookingExists: false,
     bookingRecipientMemberId: null,
     recovery: "retired",
+    freshCopyHref: null,
     reviewedAt: null,
     reviewedById: null,
     reviewNote: null,
@@ -161,6 +162,28 @@ describe("EmailDeliverabilitySection exhausted failures", () => {
     expect(
       within(rowFor("sensitive@example.com")).getByText(/sign-in link, door code or payment link/),
     ).toBeVisible();
+  });
+
+  it("offers a fresh copy from the booking, not Try again or other guidance, on a fresh-copy row (#5165)", () => {
+    renderSection([
+      failure("fresh", "fresh@example.com", "SMTP timeout", {
+        recovery: "fresh_copy",
+        templateName: "booking-confirmed",
+        bookingId: "booking-1",
+        bookingExists: true,
+        freshCopyHref: "/bookings/booking-1#fresh-email-copies",
+      }),
+    ]);
+
+    const row = rowFor("fresh@example.com");
+    expect(within(row).getByRole("link", { name: "Send a fresh copy from the booking" })).toHaveAttribute(
+      "href",
+      "/bookings/booking-1#fresh-email-copies",
+    );
+    expect(within(row).queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(within(row).queryByText(/can't be resent from here/)).toBeNull();
+    expect(within(row).getByRole("button", { name: "Archive" })).toBeEnabled();
+    expect(within(row).getByText("SMTP timeout")).toBeVisible();
   });
 
   it("hands the row to the retry route after the officer confirms, then refreshes", async () => {

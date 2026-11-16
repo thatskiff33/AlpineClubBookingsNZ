@@ -1,17 +1,37 @@
 "use client";
 
 import { memberCardFallbackParts, memberCardLeadParts, type AdditionalAskCause } from "@/lib/additional-ask-cause";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useEffectEvent, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
 import StripeProvider from "@/components/stripe/StripeProvider";
 import PaymentForm from "@/components/stripe/PaymentForm";
+import { RedirectFailedNotice } from "@/components/stripe/redirect-failed-notice";
+import { stripeReturnUrl, takeStripeReturn, type StripeReturn } from "@/lib/stripe-return";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
+  CHECKING_PAYMENT_MESSAGE,
   isAdditionalPaymentAlreadyMade,
   isPaymentProcessing,
 } from "@/lib/payment-recovery-contract";
+
+/**
+ * Asks the confirm route to settle this card's intent; true only on its "yes".
+ * The one request both exits send: the in-page success and a redirect return.
+ */
+async function postModificationConfirm(bookingId: string, paymentIntentId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/bookings/${bookingId}/confirm-modification-payment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paymentIntentId }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 /** The same secret-response projection that drives the form (`INV-ADDPAY-023`). */
 export type AdditionalPaymentCardDisplay =
@@ -63,6 +83,20 @@ export function AdditionalPaymentCard({
   const [notice, setNotice] = useState<
     { kind: "paid" | "processing"; message: string } | null
   >(null);
+  // ALP-569: a redirect method's return to this card (`takeStripeReturn`), taken
+  // once per mount; a ref, so React strict mode's second effect run sees it.
+  const stripeReturn = useRef<StripeReturn | null>(null);
+  // The confirm request for that return, shared by strict mode's second run.
+  const returnConfirmation = useRef<Promise<boolean> | null>(null);
+  const [checkingPayment, setCheckingPayment] = useState(false);
+  const [redirectFailed, setRedirectFailed] = useState(false);
+  // Bumped when an in-page confirmation resolves `processing`: ask the door again.
+  const [recheck, setRecheck] = useState(0);
+  function completePayment() {
+    setPaymentComplete(true);
+    setTimeout(() => router.refresh(), 1500);
+  }
+  const completeReturnedPayment = useEffectEvent(() => completePayment());
   const display = useMemo<AdditionalPaymentCardDisplay>(() => paymentComplete
     ? { kind: "paid", message: "Your additional payment has been processed." }
     : notice ?? (loading ? { kind: "loading" } : clientSecret && askAmountCents !== null
@@ -72,8 +106,26 @@ export function AdditionalPaymentCard({
 
   useEffect(() => {
     let active = true;
+    stripeReturn.current ??= takeStripeReturn("additional-payment");
+    const returned = stripeReturn.current;
+    if (returned.kind === "failed") setRedirectFailed(true);
+    /*
+      ALP-569: a redirect return that succeeded asks the confirm route, which
+      settles only an intent Stripe says succeeded. Anything short of its "yes"
+      falls through to the door below, which reads Stripe too: "already made",
+      "being processed", or (a payment that never happened) the form again.
+    */
     async function fetchSecret() {
       try {
+        // Short-circuits without a return: the door is asked synchronously.
+        if (
+          returned.kind === "check" &&
+          returned.confirmation === "succeeded" &&
+          (await (returnConfirmation.current ??= postModificationConfirm(bookingId, returned.intentId)))
+        ) {
+          if (active) completeReturnedPayment();
+          return;
+        }
         const res = await fetch(
           `/api/bookings/${bookingId}/additional-payment-secret`
         );
@@ -112,7 +164,12 @@ export function AdditionalPaymentCard({
         setNotice(null);
         setError("Failed to load payment details");
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+          setCheckingPayment(false);
+          stripeReturn.current = { kind: "none" };
+          returnConfirmation.current = null;
+        }
       }
     }
     /*
@@ -127,37 +184,31 @@ export function AdditionalPaymentCard({
       the error path already cleared them.
     */
     setLoading(true);
+    setCheckingPayment(returned.kind === "check");
     setClientSecret(null);
     setAskAmountCents(null);
     fetchSecret();
     return () => {
       active = false;
     };
-  }, [bookingId, additionalAmountCents]);
+  }, [bookingId, additionalAmountCents, recheck]);
 
   async function handlePaymentSuccess(paymentIntentId: string) {
-    try {
-      await fetch(`/api/bookings/${bookingId}/confirm-modification-payment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentIntentId }),
-      });
-    } catch {
-      // Non-fatal: webhook will also confirm
-    }
-    setPaymentComplete(true);
-    setTimeout(() => router.refresh(), 1500);
+    // The answer is not read here: Stripe.js already reported success in the
+    // page, and the webhook also confirms if this request fails.
+    await postModificationConfirm(bookingId, paymentIntentId);
+    completePayment();
   }
 
   const returnUrl =
     typeof window !== "undefined"
-      ? `${window.location.origin}/bookings/${bookingId}`
+      ? stripeReturnUrl("additional-payment", `${window.location.origin}/bookings/${bookingId}`)
       : `/bookings/${bookingId}`;
 
   return (
     <Card className="border-warning-6 bg-warning-3">
       <CardHeader>
-        <CardTitle className="text-warning-11">
+        <CardTitle headingLevel={2} className="text-warning-11">
           Additional Payment Required
         </CardTitle>
       </CardHeader>
@@ -180,6 +231,9 @@ export function AdditionalPaymentCard({
           </div>
         ) : (
           <>
+            {redirectFailed && clientSecret ? (
+              <div className="mb-4"><RedirectFailedNotice /></div>
+            ) : null}
             {askAmountCents !== null ? (
               // #3340: the response's figure, never the server prop, so the
               // sentence a member reads names the amount of the very intent the
@@ -217,7 +271,7 @@ export function AdditionalPaymentCard({
             {loading && (
               <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-warning-7 border-t-transparent" />
-                Loading payment details...
+                {checkingPayment ? CHECKING_PAYMENT_MESSAGE : "Loading payment details..."}
               </div>
             )}
 
@@ -233,6 +287,7 @@ export function AdditionalPaymentCard({
                   amountCents={askAmountCents}
                   returnUrl={returnUrl}
                   onSuccess={handlePaymentSuccess}
+                  onProcessing={() => setRecheck((n) => n + 1)}
                 />
               </StripeProvider>
             )}

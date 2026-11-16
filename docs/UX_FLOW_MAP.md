@@ -893,7 +893,7 @@ Screen: `/admin/email-deliverability`.
 
 Shows: Email delivery results and eligible retry controls.
 
-Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail.
+Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail. A failed booking confirmation, pre-arrival reminder or guest payment link links to its booking, where an officer sends a fresh copy.
 
 [Guide](guides/email-deliverability.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -1012,6 +1012,10 @@ Screen: `/admin/stuck-states`.
 Shows: Operational incidents and guided repair actions.
 
 Journey: Inspect flagged records and use the documented recovery for the selected state.
+A signal over particular bookings lists them under it (at most 50, then "and N
+more"), each linking to the booking; its **Open** link goes to that list, or to
+Background Jobs for operations still retrying (#4959). Payment lists need
+Finance view and Membership view; the unnamed-guest list needs Membership view.
 A card refund Stripe gave up on is settled on its row, never with a new Stripe
 dashboard refund (#4368): **Paid another way**, or **Try the card again** after a
 confirm dialog; a row a later Stripe refund covers reads "nothing left owed" and
@@ -1072,7 +1076,13 @@ so a blind member can miss a declined card or a wrong sign-in code:
 
 - **A failure** goes in `FocusedActionError`
   (`src/components/focused-action-error.tsx`): mounted empty with its own
-  unique `id`, filled when the action fails, and focused.
+  unique `id`, filled when the action fails, and focused. The message and the
+  counter that re-fires it when the same failure repeats have one home,
+  `useActionFailure` (`src/hooks/use-action-failure.ts`, #4975): `fail`
+  records and counts, `clear` empties without counting. The setup wizards use
+  it. Four older pages still keep the same pair by hand (Chores, Lockers,
+  Lodges and Hut fees); they predate the hook and are unconverted, so new code
+  uses the hook rather than a fifth copy.
 - **A success or progress message** goes in a `StatusRegion`
   (`src/components/status-region.tsx`): a `role="status"` region mounted
   before the request, `sr-only` while empty, so only its text changes. It is the
