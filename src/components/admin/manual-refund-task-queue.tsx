@@ -79,6 +79,7 @@ import { bankRefundVoidQuestion, type BankRefundVoidAnswer } from "@/lib/bank-re
 import { formatBookingReference } from "@/lib/booking-reference";
 import { ManualRefundTaskStillOwedNotice } from "@/components/admin/manual-refund-task-still-owed-notice";
 import { AutomaticRefundNoticesCard, type AutoRefundedNotice } from "@/components/admin/automatic-refund-notices-card";
+import { DIRECTION_CHOICES, type SettlementDirection } from "@/components/admin/manual-refund-settlement-direction";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -577,45 +578,6 @@ type ResolutionTarget = {
   task: ManualRefundTask;
   resolution: "completed" | "dismissed";
 };
-
-/**
- * #3170: which way the officer says the money goes.
- *
- * `null` is "not yet chosen" and is the state the dialog OPENS in - there is no
- * default, deliberately. Before this issue the direction was implicit in the word
- * "refund", and that implicitness was the hazard: this is the first release where
- * a parked edit can have raised the price, so an officer reading the evidence can
- * correctly conclude the club is owed, and every settlement path was refund
- * -shaped. A pre-ticked "pay them back" would put the wrong-direction movement
- * one un-noticed default away.
- */
-type SettlementDirection = "REFUND_TO_MEMBER" | "CHARGE_TO_MEMBER";
-
-/**
- * What each direction actually does, in the words the officer needs BEFORE they
- * commit rather than in a receipt afterwards. Both sentences name the instrument,
- * and the charge sentence says plainly that nothing is taken from the card here -
- * the completion raises the request and the member pays it, exactly as they would
- * for an ordinary check-out extension.
- */
-const DIRECTION_CHOICES: ReadonlyArray<{
-  value: SettlementDirection;
-  label: string;
-  detail: string;
-}> = [
-  {
-    value: "REFUND_TO_MEMBER",
-    label: "The club owes the member",
-    detail:
-      "The money goes back to them: to the card they paid with, or as account credit where there is no card behind it.",
-  },
-  {
-    value: "CHARGE_TO_MEMBER",
-    label: "The member owes the club",
-    detail:
-      "They are asked to pay it: added to this booking as an additional payment on their card, or onto the booking's invoice to pay by internet banking. Nothing is taken from their card by this screen.",
-  },
-];
 
 function completionTitle({ task, resolution }: ResolutionTarget, format: ClubFormat): string {
   if (resolution === "dismissed") {
