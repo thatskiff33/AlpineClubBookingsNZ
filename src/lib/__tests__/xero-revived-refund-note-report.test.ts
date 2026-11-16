@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { XeroClient } from "xero-node";
 import { XeroFake } from "@/test/providers/xero-fake";
 import { xeroTransport } from "@/test/providers/xero-transport";
+import type { ActiveRefundNoteLink } from "@/lib/xero-revived-refund-note-report";
 
 /** Every write method on the Prisma double throws; only reads answer. */
 const READ_METHODS = new Set(["findMany", "findFirst", "findUnique", "count", "aggregate", "groupBy"]);
@@ -45,7 +46,7 @@ function writeThrowingDb(models: Record<string, Record<string, unknown>>): unkno
   );
 }
 
-const usage = vi.hoisted(() => ({ record: vi.fn(async () => undefined), budgetAllows: vi.fn(async () => true) }));
+const usage = vi.hoisted(() => ({ record: vi.fn<(row: { workflow?: string }) => Promise<undefined>>(async () => undefined), budgetAllows: vi.fn(async () => true) }));
 // The app-wide client: nothing here may read or write it. The report's own reads go through an injected double.
 vi.mock("@/lib/prisma", () => ({ prisma: writeThrowingDb({}) }));
 vi.mock("@/lib/logger", () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
@@ -119,7 +120,7 @@ function notes(fake: XeroFake, count: number) {
 }
 
 const noPause = vi.fn(async () => undefined);
-const run = (links: report.ActiveRefundNoteLink[]) => report.classifyRevivedRefundNotes(links, reader.createXeroCreditNoteReader(), { sleep: noPause });
+const run = (links: ActiveRefundNoteLink[]) => report.classifyRevivedRefundNotes(links, reader.createXeroCreditNoteReader(), { sleep: noPause });
 
 beforeEach(() => {
   writesAttempted.length = 0;
@@ -361,7 +362,7 @@ describe("#4336 revived refund-note report: read-only proof", () => {
     expect(fake.snapshot()).toEqual(before);
     // The one row-writer reached: the metered call's usage row, once per read.
     expect(usage.record).toHaveBeenCalledTimes(2);
-    expect(usage.record.mock.calls.every(([row]) => (row as { workflow: string }).workflow === reader.REVIVED_REFUND_NOTE_REPORT_WORKFLOW)).toBe(true);
+    expect(usage.record.mock.calls.every(([row]) => row.workflow === reader.REVIVED_REFUND_NOTE_REPORT_WORKFLOW)).toBe(true);
   });
 
   it("the double really throws on a write (the proof's own control)", async () => {
