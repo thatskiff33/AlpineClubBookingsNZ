@@ -1,7 +1,7 @@
 # Size allowances for #5152
 
 function: src/app/(admin)/admin/booking-desk/waitlist/page.tsx#AdminWaitlistPage
-lines: 780
+lines: 777
 reason: sweeps admin failed-response reads onto the shared refusal reader;
   those lines sit inside the function `AdminWaitlistPage`, which was already
   over its limit before this change, and lifting it apart is a refactor of its
@@ -50,7 +50,7 @@ reason: sweeps admin failed-response reads onto the shared refusal reader;
   refactor of its own, not part of this fix.
 
 function: src/app/(admin)/admin/membership/member-applications/page.tsx#MemberApplicationsPage
-lines: 724
+lines: 723
 reason: converts admin failed-response reads to the shared reader (check ok
   before parsing, fallback sentence for an unreadable body or rejected fetch);
   those lines sit inside the function `MemberApplicationsPage`, which was
