@@ -7,7 +7,12 @@
  * here writes the same tied rows twice, in opposite insertion orders, so the
  * table's physical order - what an unordered read returns - is reversed between
  * the two runs (asserted on `ctid`, so the case cannot pass without forcing both
- * orders). The figure is read through the real Net Collected select
+ * orders). Insertion order is only usually the physical order: CI runs every
+ * real-database file at once against this database, and another file's deletes
+ * plus a VACUUM can free space on an earlier page between the two inserts, so
+ * the second row lands before the first (#5171's CI run). Each case therefore
+ * rewrites its rows, a bounded number of times, until `ctid` shows the order it
+ * asked for. The figure is read through the real Net Collected select
  * (`netCollectedCardRefundSelect`) and must come out the same both times.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
@@ -68,6 +73,12 @@ const OP_NEW = "race-4284-op-new";
 const RE_X = "re_race_4284_x";
 const RE_Y = "re_race_4284_y";
 const RE_RESEND = "re_race_4284_resend";
+/**
+ * How many times a case may write its tied rows before giving up on the physical
+ * order it asked for. One inversion is rare; five in a row would mean the
+ * arrangement is not being forced at all, which must fail.
+ */
+const MAX_ARRANGE_ATTEMPTS = 5;
 
 (RUN ? describe : describe.skip)(
   "the card-refund owed figure reads a createdAt tie the same in either physical order — real PostgreSQL (#4284)",
@@ -132,6 +143,32 @@ const RE_RESEND = "re_race_4284_resend";
           : await prisma.$queryRaw<Array<{ key: string }>>`
               SELECT "stripeRefundId" AS key FROM "PaymentRefund" WHERE "paymentId" = ${PAYMENT_ID} ORDER BY ctid`;
       return rows.map((row) => row.key);
+    }
+
+    /**
+     * Writes the tied rows in `order` until the table keeps them in that physical
+     * order, deleting and rewriting them if a concurrent writer's freed space put
+     * one out of place. Returns the physical order it forced.
+     */
+    async function writeInPhysicalOrder(
+      table: "operations" | "refunds",
+      order: string[],
+      write: (key: string) => Promise<void>,
+    ): Promise<string[]> {
+      let physical: string[] = [];
+      for (let attempt = 1; attempt <= MAX_ARRANGE_ATTEMPTS; attempt += 1) {
+        for (const key of order) await write(key);
+        physical = await physicalOrder(table);
+        if (physical.join("\n") === order.join("\n")) return physical;
+        if (table === "operations") {
+          await prisma.paymentRecoveryOperation.deleteMany({ where: { paymentId: PAYMENT_ID, id: { in: order } } });
+        } else {
+          await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID, stripeRefundId: { in: order } } });
+        }
+      }
+      throw new Error(
+        `Could not force the physical order ${order.join(", ")} in ${MAX_ARRANGE_ATTEMPTS} attempts (last saw ${physical.join(", ")}).`,
+      );
     }
 
     const readPayment = () =>
@@ -211,11 +248,10 @@ const RE_RESEND = "re_race_4284_resend";
         { name: "a then b", order: [OP_A, OP_B] },
         { name: "b then a", order: [OP_B, OP_A] },
       ])("written $name: the one recorded re-send fills the same row", async ({ order }) => {
-        for (const id of order) await openRow(id, TIED_AT);
+        const physical = await writeInPhysicalOrder("operations", order, (id) => openRow(id, TIED_AT));
         await recordedRefund(RE_RESEND);
         await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: SLICE_CENTS, status: "PARTIALLY_REFUNDED" } });
 
-        const physical = await physicalOrder("operations");
         expect(physical).toEqual(order);
         const payment = await readPayment();
         // The read itself asks for the one order (`CARD_REFUND_OPERATION_ORDER_BY`).
@@ -245,10 +281,9 @@ const RE_RESEND = "re_race_4284_resend";
       ])("written $name: each refund fills the same row", async ({ order }) => {
         await openRow(OP_OLD, TIED_AT);
         await openRow(OP_NEW, new Date(TIED_AT.getTime() + 1_000));
-        for (const id of order) await recordedRefund(id);
+        const physical = await writeInPhysicalOrder("refunds", order, recordedRefund);
         await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 2 * SLICE_CENTS, status: "PARTIALLY_REFUNDED" } });
 
-        const physical = await physicalOrder("refunds");
         expect(physical).toEqual(order);
         const payment = await readPayment();
         expect(payment.refunds.map((refund) => refund.stripeRefundId)).toEqual([RE_X, RE_Y]);

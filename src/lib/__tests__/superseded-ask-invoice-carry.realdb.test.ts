@@ -238,7 +238,7 @@ function deferred() {
         result: {
           ownCardRefund: null,
           pendingRefundAmountCents: 0,
-          organiserChildRefund: null,
+          organiserChildRefund: null, refundHeldForDispute: false,
           paymentId: PAYMENT_ID,
           additionalAsk: sizeAdditionalAsk({ priceDiffCents: ownCents, changeFeeCents: 0, payment: mirror }),
           retiredAdditionalAsks: [],

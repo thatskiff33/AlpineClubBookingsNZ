@@ -8,6 +8,7 @@ import {
   type SentMessageInfo,
 } from "@/lib/email/internal";
 import {
+  EMAIL_RETRY_BACKOFF_MS,
   EMAIL_RETRY_MAX_ATTEMPTS,
   RETAINS_REPLAYABLE_EMAIL_BODY,
 } from "@/lib/email/retry-selection";
@@ -214,7 +215,7 @@ export async function retryFailedEmails(): Promise<{
   await getEmailTransporter(delivery.clearance);
 
   // Backoff: don't retry emails until at least 15 minutes after the last attempt
-  const backoffThreshold = new Date(Date.now() - 15 * 60 * 1000);
+  const backoffThreshold = new Date(Date.now() - EMAIL_RETRY_BACKOFF_MS);
 
   const failedEmails = await prisma.emailLog.findMany({
     where: {
