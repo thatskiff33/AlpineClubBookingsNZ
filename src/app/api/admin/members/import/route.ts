@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { AgeTier, Gender, Title } from "@prisma/client";
-import { z } from "zod";
 import { UNUSABLE_PLACEHOLDER_PASSWORD_HASH } from "@/lib/password-hashing";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -22,13 +21,9 @@ import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-acc
 import {
   DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
   deriveMemberImportNameFields,
-  MEMBER_IMPORT_ADDRESS_MAX_LENGTHS,
-  MEMBER_IMPORT_COMMENTS_MAX_LENGTH,
   MEMBER_IMPORT_DATE_FIELD_KEYS,
   MEMBER_IMPORT_CANCELLED_DATE_FLAG_HINT,
-  MEMBER_IMPORT_DATE_FORMAT_VALUES,
   MEMBER_IMPORT_FIELD_DEFINITIONS,
-  MEMBER_IMPORT_OCCUPATION_MAX_LENGTH,
   isMemberImportCancelledDateInFuture,
   normalizeMemberImportDateValue,
   type MemberImportDateFieldKey,
@@ -37,11 +32,8 @@ import {
 import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
-import {
-  MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH,
-  MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH,
-  findOversizedMemberImportFamilyKeys,
-} from "@/lib/member-csv-import-type-family";
+import { findOversizedMemberImportFamilyKeys } from "@/lib/member-csv-import-type-family";
+import { memberImportBodySchema, type MemberImportRow } from "@/lib/member-import-request-schema";
 import {
   assignImportedMembershipTypes,
   createImportFamilyGroups,
@@ -59,112 +51,13 @@ import { isFullAdmin } from "@/lib/access-roles";
 import {
   DIETARY_REQUIREMENTS_LABEL,
   DIETARY_REQUIREMENTS_TOO_LONG_MESSAGE,
-  dietaryRequirementsValueSchema,
   isDietaryRequirementsWithinLimit,
   normalizeImportedDietaryRequirements,
 } from "@/lib/member-dietary-field";
 import { grantMembershipAdminDietaryAccess } from "@/lib/member-dietary";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 
-const nullableImportString = (max: number) =>
-  z.string().max(max).optional().nullable();
-const dateFormatSchema = z.enum(MEMBER_IMPORT_DATE_FORMAT_VALUES);
-
-const importRowSchema = z
-  .object({
-    fullName: nullableImportString(200),
-    title: nullableImportString(40),
-    firstName: nullableImportString(100),
-    lastName: nullableImportString(100),
-    gender: nullableImportString(40),
-    occupation: nullableImportString(MEMBER_IMPORT_OCCUPATION_MAX_LENGTH),
-    // #2941: the one shape every JSON writer shares. The 500-character rule
-    // is applied below, only when this import actually takes the column.
-    dietaryRequirements: dietaryRequirementsValueSchema,
-    email: z.string().email("Invalid email address"),
-    phone: z.string().max(20).optional().nullable(), // Legacy: single phone string (will be put in phoneNumber)
-    phoneCountryCode: z.string().max(5).optional().nullable(),
-    phoneAreaCode: z.string().max(5).optional().nullable(),
-    phoneNumber: z.string().max(15).optional().nullable(),
-    dateOfBirth: z.string().max(32).optional().nullable(),
-    joinedDate: z.string().max(32).optional().nullable(),
-    cancelledDate: z.string().max(32).optional().nullable(),
-    streetAddressLine1: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetAddressLine1,
-    ),
-    streetAddressLine2: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetAddressLine2,
-    ),
-    streetCity: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetCity,
-    ),
-    streetRegion: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetRegion,
-    ),
-    streetCountry: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetCountry,
-    ),
-    streetPostalCode: nullableImportString(
-      MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetPostalCode,
-    ),
-    lifeMemberDate: z.string().max(32).optional().nullable(),
-    comments: nullableImportString(MEMBER_IMPORT_COMMENTS_MAX_LENGTH),
-    role: z.enum(MEMBER_IMPORT_ROLE_VALUES).optional().default("USER"),
-    membershipType: nullableImportString(MEMBER_IMPORT_MEMBERSHIP_TYPE_MAX_LENGTH),
-    familyKey: nullableImportString(MEMBER_IMPORT_FAMILY_KEY_MAX_LENGTH),
-    sourceLineNumber: z.number().int().positive().optional(),
-    sourceColumnLabels: z.record(z.string(), z.string().max(128)).optional(),
-  })
-  .superRefine((row, ctx) => {
-    const names = deriveMemberImportNameFields(row);
-    if (!names.firstName) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["firstName"],
-        message: "First name is required",
-      });
-    }
-    if (!names.lastName) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["lastName"],
-        message: "Last name is required",
-      });
-    }
-    if (names.firstName.length > 100) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["firstName"],
-        message: "First name must be 100 characters or fewer",
-      });
-    }
-    if (names.lastName.length > 100) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["lastName"],
-        message: "Last name must be 100 characters or fewer",
-      });
-    }
-  });
-
-const importBodySchema = z.object({
-  rows: z
-    .array(importRowSchema)
-    .min(1, "At least one row is required")
-    .max(500, "Maximum 500 rows per import"),
-  dateFormats: z
-    .object({
-      dateOfBirth: dateFormatSchema.optional(),
-      joinedDate: dateFormatSchema.optional(),
-      lifeMemberDate: dateFormatSchema.optional(),
-      cancelledDate: dateFormatSchema.optional(),
-    })
-    .optional(),
-  sendInvites: z.boolean().default(false),
-  autoLinkXero: z.boolean().default(false),
-});
-
-type ImportRow = z.infer<typeof importRowSchema>;
+type ImportRow = MemberImportRow;
 
 type ImportIdentity = {
   email: string;
@@ -266,7 +159,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = importBodySchema.safeParse(body);
+  const parsed = memberImportBodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
