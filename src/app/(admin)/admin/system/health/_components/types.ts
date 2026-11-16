@@ -95,6 +95,8 @@ interface ExhaustedEmailFailure {
   lastAttemptAt: string;
   errorMessage: string | null;
   createdAt: string;
+  /** Booking page link for a never-kept booking email; null otherwise. */
+  freshCopyHref: string | null;
   reviewedAt: string | null;
   reviewedById: string | null;
   reviewNote: string | null;

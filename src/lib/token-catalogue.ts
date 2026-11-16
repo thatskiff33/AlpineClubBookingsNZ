@@ -121,8 +121,10 @@ export const HTML_TOKEN_CATALOGUE: readonly HtmlTokenDefinition[] = [
     token: "skifield-whakapapa",
     kind: "embed",
     description:
-      "This will fetch the Whakapapa report and render road status, " +
-      "conditions, and the Facilities, Food & Drink, and Lifts groups.",
+      "Whakapapa (Mt Ruapehu) only. This will fetch the Whakapapa report " +
+      "and render road status, conditions, and the Facilities, Food & " +
+      "Drink, and Lifts groups. Needs the Whakapapa conditions report " +
+      "module; for any other ski field use skifield-conditions.",
     example: "{{skifield-whakapapa}}",
     allowsLegacySingleBrace: true,
     contexts: ["page-content-body"],

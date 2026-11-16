@@ -34,6 +34,7 @@ function failure(
     lastAttemptAt: "2026-08-01T01:00:00.000Z",
     errorMessage,
     createdAt: "2026-08-01T00:00:00.000Z",
+    freshCopyHref: null,
     reviewedAt: null,
     reviewedById: null,
     reviewNote: null,
