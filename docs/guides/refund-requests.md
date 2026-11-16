@@ -164,8 +164,22 @@ in one batch ([Moving in from your old system](moving-in.md#6-credit-post-the-op
    is refused, and nothing changes, if any member has spent any of their
    opening credit or had any credit deducted since the batch posted.
 
-When a member later spends an opening credit, Xero codes it as the member's own
-money (the hut-fee refunds account), never as goodwill (`INV-PAY-156`).
+When a member later spends an opening credit on an Internet Banking booking,
+the app raises a Xero credit note for the amount spent. Its line is coded to
+the optional **Opening Credits** account in **Xero Setup → Account mapping**,
+never to goodwill (`INV-PAY-156`):
+
+- **Your club already carries the old credit in Xero** (a member credits held
+  liability, or open credit notes or overpayments on members' contacts): set
+  **Opening Credits** to that liability account so spending relieves it, and
+  deal with any open old-system credit notes or overpayments first so the same
+  money is not recorded twice.
+- **Your club never recorded the old credit in Xero:** leave it unset, and
+  spent opening credit is coded to the hut-fee refunds account.
+
+Confirm which case applies, and the treatment, with your treasurer or
+accountant. The [moving-in guide](moving-in.md#6-credit-post-the-opening-credits)
+has the detail.
 
 ## Settings reference
 

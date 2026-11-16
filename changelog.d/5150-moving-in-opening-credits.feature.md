@@ -7,7 +7,9 @@
   every line and the total before anything is posted, posts the whole file once
   with one approval, and can reverse the batch, with a reason, until any of it
   is spent. Opening credits send no email and make no Xero or card call. When a
-  member spends one, Xero codes it as the member's own money, not goodwill. A
+  member spends one, the Xero credit note is coded to a new optional **Opening
+  Credits** account mapping, for example a member credits held account, or to
+  the hut fee refunds account while it is unset; never to goodwill. A
   new guide, *Moving in from your old system*, sets out the load order, a safe
   way to carry over stays that are already paid, and the totals to check
   against the old records. Importing future bookings is coming separately

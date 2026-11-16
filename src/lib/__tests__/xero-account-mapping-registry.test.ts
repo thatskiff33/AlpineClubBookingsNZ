@@ -210,6 +210,36 @@ describe("goodwillWriteOffs — the owner's 10 Aug 2026 decision, pinned", () =>
   });
 });
 
+describe("openingCredits — the owner's 16 Nov 2026 decision on #4988, pinned", () => {
+  it("offers the whole LIABILITY class, falls back to hutFeeRefunds and has no default", () => {
+    expect(MAPPING_ACCOUNT_FILTERS.openingCredits.accountClass).toBe("LIABILITY");
+    expect(MAPPING_ACCOUNT_FILTERS.openingCredits.accountTypes).toBeUndefined();
+    expect(ACCOUNT_MAPPING_FALLBACK_KEYS.openingCredits).toBe("hutFeeRefunds");
+    expect(ACCOUNT_MAPPING_DEFAULTS.openingCredits).toBeNull();
+  });
+
+  it("is offered on the mapping screen and asks to be decided while unset", () => {
+    expect(ACCOUNT_MAPPING_KEYS).toContain("openingCredits");
+    expect(ACCOUNT_MAPPING_KEYS_ASKING_WHILE_UNSET).toContain("openingCredits");
+    expect(describeMappingAccountFilter("openingCredits")).toBe("liability");
+  });
+
+  it("offers liability accounts only, never revenue, expense or bank", () => {
+    const chart = [
+      { code: "200", name: "Hut Fees", type: "REVENUE", class: "REVENUE" },
+      { code: "404", name: "Goodwill", type: "EXPENSE", class: "EXPENSE" },
+      { code: "606", name: "Bank", type: "BANK", class: "ASSET" },
+      { code: "2100", name: "Member credits held", type: "CURRLIAB", class: "LIABILITY" },
+    ];
+    expect(accountsForMappingKey("openingCredits", chart).map((a) => a.code)).toEqual(["2100"]);
+  });
+
+  it("refuses an item code, which would re-route the line away from the chosen account", () => {
+    expect(mappingWriteViolation("openingCredits", { code: "2100" })).toBeNull();
+    expect(mappingWriteViolation("openingCredits", { itemCode: "ITEM" })).toMatch(/does not carry/);
+  });
+});
+
 describe("bankTransferRefundAccount — the second INV-INT-021 instance (#3529, INV-PAY-101)", () => {
   it("wants a BANK account and nothing else, exactly as the Stripe account key does", () => {
     expect(MAPPING_ACCOUNT_FILTERS.bankTransferRefundAccount).toEqual(

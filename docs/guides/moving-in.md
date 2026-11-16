@@ -128,6 +128,31 @@ opening credit from an earlier batch that has not been reversed is refused, so
 a corrected file cannot credit anyone twice: reverse the wrong batch first, or
 leave those members out of the new file.
 
+**Xero clubs: choose where spent opening credit is coded, before you post.**
+Posting sends nothing to Xero. When a member later spends opening credit on an
+Internet Banking booking, the app raises a Xero credit note against that
+booking's invoice for the amount spent. The optional **Opening Credits**
+mapping in **Xero Setup → Account mapping** decides which account that credit
+note's line is coded to. It offers liability accounts only. Ask your treasurer
+or accountant which of these fits your club:
+
+- **The old credit is already in Xero**, for example as a balance in a member
+  credits held account, or as open credit notes or overpayments on members'
+  contacts. Set **Opening Credits** to the liability account that holds it, so
+  spending the credit reduces that balance. If the old system left open credit
+  notes or overpayments on members' contacts, settle with your treasurer how to
+  deal with them before members spend anything, so the same money is not
+  recorded in Xero twice: once by the old document and again by the app's.
+- **The old credit was never recorded in Xero.** Leave **Opening Credits**
+  unset. Spent opening credit is then coded to the **Hut Fee Refunds**
+  account, exactly as it was before this setting existed. The setup checklist
+  keeps listing the mapping as unset; for this case that is expected.
+
+The credit-note line carries the same tax rate as the app's other credit-note
+lines, so confirm the treatment with your treasurer or accountant for the
+account you choose. Changing the mapping affects only credit notes raised
+afterwards; notes already in Xero are not changed.
+
 If a batch was wrong, **Reverse batch** removes every credit in it, with a
 reason. Members see "Opening credit reversed" in their credit history, never
 your reason. Do it before members spend any of it: the reversal is refused, and
@@ -191,6 +216,11 @@ going on.
       the manual payments you recorded, equal the old system's prepaid list.
 - [ ] **Xero (Xero clubs):** no new invoice exists for a stay or credit that was
       paid before the move.
+- [ ] **Opening Credits mapping (Xero clubs):** set to the liability account
+      that holds the old credit, or left unset because the old credit was never
+      in Xero, as your treasurer decided. Where the old credit is in Xero, no
+      open old-system credit note or overpayment still duplicates a posted
+      opening credit.
 
 ## Settings reference
 

@@ -1206,7 +1206,7 @@ the rule: it names sibling IDs so a change to one prompts checking the others.
   manual grant carries the note queued at approval, and spend allocates it. Only a
   noteless legacy `ADMIN_ADJUSTMENT` is still minted, to
   `goodwillWriteOffs` (falling back to `hutFeeRefunds` while unset, `INV-INT-021`).
-  Every other minted share (restored or opening credit, `INV-PAY-156`) stays
+  Opening credit mints to `openingCredits` (`INV-PAY-156`); other shares stay
   on `hutFeeRefunds`.
 
 ## INV-PAY-127
@@ -4316,9 +4316,8 @@ alert nobody received answers 500).
 **`INV-LOCK-002`** (sorted member keys), **`INV-PAY-023`** (a lot with no
 Xero note mints one when spent).
 
-- **Opening credit posts once, from one approval** (#4988). A club moving in
-  carries over members' balances from one CSV. Preview writes nothing:
-  it matches each row to one current member, refuses a member named twice
+- **Opening credit posts once, from one approval** (#4988). A moving-in club
+  brings members' balances in one CSV. Preview writes nothing: it matches each row to one current member, refuses a member named twice
   or the posting admin (keeping two-person control), totals the cents, and
   offers a batch key only when no row is in error. A member holding credit
   from an unreversed batch is a row in error, checked again under the locks,
@@ -4329,10 +4328,11 @@ Xero note mints one when spent).
   key then claims it, so a second confirm posts nothing.
 - **One transaction**: the batch row, one `ADMIN_ADJUSTMENT` credit per member
   under that member's `lockMemberCreditLedger` (sorted ids), and one
-  `payment` audit row with the total. No email, no Xero document and no Stripe
-  call: the old system accounted for the balance.
-- **When spent in Xero**, the note minted for an opening-credit lot is coded
-  as the member's own money (`hutFeeRefunds`), never as a goodwill write-off.
+  `payment` audit row with the total. No email, Xero document or Stripe call:
+  the old system accounted for the balance.
+- **When spent in Xero** (owner, 16 Nov 2026), an opening-credit lot's minted
+  line is coded to the optional `openingCredits` liability mapping, else
+  `hutFeeRefunds` verbatim (`INV-INT-021`); never goodwill.
 - **Reversal is whole-batch** and only while every credit is wholly free: its
   lot untouched, the balance covering it, its members' negative-row count
   unchanged since posting (counted under the locks, not by timestamp), and no
@@ -4341,5 +4341,5 @@ Xero note mints one when spent).
   refuses it and writes nothing. A reversed batch's credits are no longer lots
   (`creditLotWhere`).
 - Proven by `opening-credit-csv.test.ts`, `opening-credit-batch.test.ts`,
-  `opening-credit-routes.test.ts`, `xero-applied-credit-plan.test.ts` and
+  `opening-credit-routes.test.ts`, `goodwill-write-off-account.test.ts` and
   `opening-credit-batch.realdb.test.ts`.

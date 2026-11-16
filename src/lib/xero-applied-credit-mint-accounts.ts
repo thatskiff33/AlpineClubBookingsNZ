@@ -17,10 +17,15 @@ import type { ResolvedAccountMappingWithFallback } from "./xero-mappings";
 /**
  * The Xero mappings a minted remainder note's lines can post to (#2717).
  *
- * Two, and only two: discretionary goodwill the club chose to bear, and a
- * member's own money being handed back. `INV-INT-021` registers both keys.
+ * Three: discretionary goodwill the club chose to bear, a member's own money
+ * being handed back, and credit brought across from a club's old system with an
+ * opening-credit import (#4988). `INV-INT-021` registers all three keys; the
+ * other two fall back to `hutFeeRefunds` while unset.
  */
-export type MintSliceMappingKey = "goodwillWriteOffs" | "hutFeeRefunds";
+export type MintSliceMappingKey =
+  | "goodwillWriteOffs"
+  | "hutFeeRefunds"
+  | "openingCredits";
 
 /**
  * The order minted lines are emitted in. Fixed and independent of ledger order,
@@ -28,6 +33,7 @@ export type MintSliceMappingKey = "goodwillWriteOffs" | "hutFeeRefunds";
  */
 const MINT_SLICE_MAPPING_KEY_ORDER: readonly MintSliceMappingKey[] = [
   "hutFeeRefunds",
+  "openingCredits",
   "goodwillWriteOffs",
 ];
 
@@ -57,17 +63,21 @@ const MINT_SLICE_MAPPING_KEY_ORDER: readonly MintSliceMappingKey[] = [
  * that window irrelevant: where the money lands no longer depends on worker
  * latency.
  *
- * AN OPENING CREDIT IS THE MEMBER'S OWN MONEY TOO (#4988, `INV-PAY-156`). It is
- * stored as an `ADMIN_ADJUSTMENT` row, but it restates a balance the club
- * already owed the member under its old system (a cancelled stay, a refund kept
- * as credit), not goodwill the club chose to grant. By the rule above it stays
- * on `hutFeeRefunds`, so the lot's `openingCredit` flag, not its type, decides.
+ * AN OPENING CREDIT HAS ITS OWN MAPPING (#4988, `INV-PAY-156`; owner,
+ * 16 Nov 2026). It is stored as an `ADMIN_ADJUSTMENT` row, but it restates a
+ * balance the club already owed the member under its old system, not goodwill
+ * the club chose to grant, so the lot's `openingCredit` flag, not its type,
+ * decides. It posts to `openingCredits`, which a club that already carries the
+ * old credit in Xero points at that liability account. While that mapping is
+ * unset it resolves to `hutFeeRefunds` verbatim (`INV-INT-021`), so the line is
+ * coded exactly as it was before the mapping existed.
  */
 export function mintSliceMappingKey(slice: {
   creditType: CreditType;
   openingCredit: boolean;
 }): MintSliceMappingKey {
-  return slice.creditType === CreditType.ADMIN_ADJUSTMENT && !slice.openingCredit
+  if (slice.openingCredit) return "openingCredits";
+  return slice.creditType === CreditType.ADMIN_ADJUSTMENT
     ? "goodwillWriteOffs"
     : "hutFeeRefunds";
 }
@@ -138,9 +148,9 @@ export function codeMintLine(
 
 /**
  * Turn the coded shares into the note's line items, merging any two whose
- * coding is identical. That merge is what makes an unset `goodwillWriteOffs` a
- * no-op: both shares resolve to the hut-fee-refund mapping and collapse back
- * into the single line an upgrading club has always had.
+ * coding is identical. That merge is what makes an unset `goodwillWriteOffs` or
+ * `openingCredits` a no-op: each share resolves to the hut-fee-refund mapping
+ * and collapses back into the single line an upgrading club has always had.
  */
 export function mintLineItems(
   codings: readonly MintLineCoding[],
