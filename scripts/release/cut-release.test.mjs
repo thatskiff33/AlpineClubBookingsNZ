@@ -17,6 +17,7 @@ import {
   prepareRelease,
   publishRelease,
   releaseBody,
+  planReleaseDocs,
   ReleaseCutError,
 } from "./cut-release.mjs";
 import { releaseSection } from "./compile-changelog.mjs";
@@ -24,10 +25,12 @@ import {
   NO_UPGRADE_STEPS,
   RUNBOOK_RELEASE_AGNOSTIC_MARKER,
   UNRELEASED_HEADING,
+  hasUpgradingSection,
   UNRELEASED_LINK,
   unreleasedBlock,
   UPGRADE_CHECKLIST_HEADING,
   UPGRADING_GUIDE_HEADINGS,
+  upgradingReleaseHeading,
 } from "./upgrade-docs.mjs";
 import { RELEASE_NOTES_UNFINISHED_MARKER } from "./release-notes.mjs";
 
@@ -624,6 +627,19 @@ describe("release:cut prepare on a fixture repository", () => {
     );
     expect(error.recovery).toContain('into "## v0.13.2 → v0.13.3" in a pull request to main, then re-run.');
     expect(snapshot(repo)).toEqual(before);
+  });
+
+  it("refuses a plain prepare when the release's section already exists, even with nothing waiting (#4983)", () => {
+    const handWritten = `${GUIDE_TOP}\n## Unreleased\n\n---\n\n## v0.13.2 → v0.13.3\n\nSteps placed by hand.\n\n---\n\n${RELEASED_UPGRADE_SECTION}`;
+    const { repo } = makeFixture({ upgrading: handWritten });
+    const before = snapshot(repo);
+    const error = expectRefusal(
+      () => prepareRelease({ repoRoot: repo, execute: true, date: "2026-10-31", run: fixtureRunner(repo), log: silentLog() }),
+      /Cannot fold docs\/UPGRADING\.md: it already has "## v0\.13\.2 → v0\.13\.3"\. A release's upgrade section is only rolled once\./,
+    );
+    expect(error.recovery).toContain("prepare --amend --execute");
+    expect(snapshot(repo)).toEqual(before);
+    expect(git(repo, "rev-parse", "--abbrev-ref", "HEAD")).toBe("main");
   });
 
   it("refuses when there is nothing to release", () => {
@@ -1518,5 +1534,77 @@ describe("release:cut publish on a fixture repository", () => {
     expect(error.message).toBe(`origin's URL is not a GitHub repository URL: ${redacted}`);
     expect(`${error.message}\n${error.recovery}`).not.toContain("SECRET-TOKEN");
     expect(`${error.message}\n${error.recovery}`).not.toContain("release-bot");
+  });
+});
+
+const PLAN_GUIDE = [
+  "# Upgrading",
+  "",
+  "## Unreleased",
+  "",
+  "### Reconnect Xero once (#4600)",
+  "",
+  "Open Admin → Xero and reconnect.",
+  "",
+  "### Run the pre-deploy check (#4601)",
+  "",
+  "Run it.",
+  "",
+  "---",
+  "",
+  "## v0.13.1 → v0.13.2",
+  "",
+  "### An older step (#1000)",
+  "",
+].join("\n");
+const PLAN_HEADING = upgradingReleaseHeading("0.13.2", "0.14.0");
+
+describe("planReleaseDocs on a directory (#4983)", () => {
+  const PLAN_INDEX = "# Release notes\n\n## Published release notes\n\n- [v0.13.2](v0.13.2.md) — older.\n";
+  let root;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "release-notes-plan-"));
+    fs.mkdirSync(path.join(root, "docs", "releases"), { recursive: true });
+    fs.writeFileSync(path.join(root, "docs", "UPGRADING.md"), PLAN_GUIDE);
+    fs.writeFileSync(path.join(root, "docs", "releases", "README.md"), PLAN_INDEX);
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const plan = (amend = false) =>
+    planReleaseDocs({
+      repoRoot: root,
+      version: "0.14.0",
+      previousTag: "v0.13.2",
+      date: "2026-11-20",
+      bump: "minor",
+      changelogHeading: "## 0.14.0 - 2026-11-20",
+      amend,
+    });
+
+  it("plans the roll, the stub and the index line without writing anything", () => {
+    const docs = plan();
+    expect(docs.files.map((file) => file.relative)).toEqual(["docs/UPGRADING.md", "docs/releases/v0.14.0.md", "docs/releases/README.md"]);
+    expect(docs.describe).toEqual([
+      'docs/UPGRADING.md: rename "## Unreleased" to "## v0.13.2 → v0.14.0" (2 step(s)), with a fresh empty "## Unreleased" above it',
+      "docs/releases/v0.14.0.md: new notes stub, marked unfinished until it is written",
+      'docs/releases/README.md: list v0.14.0 first under "Published release notes"',
+    ]);
+    expect(fs.readFileSync(path.join(root, "docs", "UPGRADING.md"), "utf8")).toBe(PLAN_GUIDE);
+    expect(fs.existsSync(path.join(root, "docs", "releases", "v0.14.0.md"))).toBe(false);
+
+    for (const file of docs.files) fs.writeFileSync(path.join(root, file.relative), file.text);
+    expect(hasUpgradingSection(fs.readFileSync(path.join(root, "docs", "UPGRADING.md"), "utf8"), PLAN_HEADING)).toBe(true);
+    // A second prepare refuses rather than writing a second heading or page.
+    expect(() => plan()).toThrow(/already has "## v0\.13\.2 → v0\.14\.0"\. A release's upgrade section is only rolled once/);
+    // --amend with nothing waiting and the page already written changes nothing.
+    expect(plan(true).files).toEqual([]);
+  });
+
+  it("refuses to overwrite a notes page that already exists", () => {
+    fs.writeFileSync(path.join(root, "docs", "releases", "v0.14.0.md"), "# Written by hand\n");
+    expect(() => plan()).toThrow(/v0\.14\.0\.md already exists/);
+    const docs = plan(true);
+    expect(docs.files.map((file) => file.relative)).toEqual(["docs/UPGRADING.md"]);
   });
 });

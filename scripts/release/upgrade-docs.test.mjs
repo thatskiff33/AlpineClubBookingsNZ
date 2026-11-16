@@ -8,7 +8,6 @@ import {
   markdownHeadings,
   NO_UPGRADE_STEPS,
   releasedSectionStepsProblem,
-  stepsAddedToReleasedSections,
   UNRELEASED_LINK,
   unreleasedBlock,
   upgradingReleaseHeading,
@@ -64,6 +63,11 @@ const VERSIONS = { fromVersion: "0.13.2", toVersion: "0.14.0" };
 /** The guide folded for v0.14.0. */
 const fold = (guide, amend = false) => foldUpgradingUnreleased(guide, { ...VERSIONS, amend });
 const waiting = (guide) => unreleasedBlock(guide).hasSteps;
+/** The late step titles `releasedSectionStepsProblem` names for v0.14.0, or none. */
+function lateSteps(args) {
+  const problem = releasedSectionStepsProblem({ ...args, previousTag: "v0.13.2" });
+  return problem === null ? [] : /did not have \((.*)\)\. Their changes/.exec(problem)[1].split("; ");
+}
 
 /** The `## ` section headed `heading`, without the heading, rule or blank edges. */
 function sectionBody(guide, heading) {
@@ -137,11 +141,11 @@ describe("upgrade-guide heading roll (#4983)", () => {
 describe("guarding released sections and odd guides (#4983)", () => {
   it("finds a step that landed in a released section, ignoring the untagged one and reworded prose", () => {
     const rolled = fold(FULL);
-    expect(stepsAddedToReleasedSections({ guide: rolled, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual([]);
+    expect(lateSteps({ guide: rolled, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual([]);
     const reworded = rolled.replace("Already shipped; never rewritten.", "Already shipped.");
-    expect(stepsAddedToReleasedSections({ guide: reworded, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual([]);
+    expect(lateSteps({ guide: reworded, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual([]);
     const merged = rolled.replace("Already shipped; never rewritten.\n", "Already shipped; never rewritten.\n\n### Late (#4800)\n\nDo it.\n");
-    expect(stepsAddedToReleasedSections({ guide: merged, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
+    expect(lateSteps({ guide: merged, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
   });
 
   it("does not call a release section that arrives whole between two tags late", () => {
@@ -150,17 +154,17 @@ describe("guarding released sections and odd guides (#4983)", () => {
     const section = "## v0.12.2 → v0.13.0\n\n### Upstream step (#600)\n\nDo it.\n\n---\n\n";
     const arrived = rolled.replace("## v0.13.1 → v0.13.2", `${section}## v0.13.1 → v0.13.2`);
     expect(stepTitles(arrived)).toContain("### Upstream step (#600)");
-    expect(stepsAddedToReleasedSections({ guide: arrived, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual([]);
+    expect(lateSteps({ guide: arrived, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual([]);
     // A late step in a section the tag already had is still caught beside it.
     const alsoLate = arrived.replace("Already shipped; never rewritten.\n", "Already shipped; never rewritten.\n\n### Late (#4800)\n\nDo it.\n");
-    expect(stepsAddedToReleasedSections({ guide: alsoLate, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
+    expect(lateSteps({ guide: alsoLate, releasedGuide: FULL, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
   });
 
   it("counts steps per section: a late step under a title other releases use is caught, a retitle is not", () => {
     // `### Post-upgrade actions` and `### Before deployment` repeat across release sections of the real guide.
     const repeated = FULL.replace("### An older step (#1000)", "### Post-upgrade actions").replace("### An even older step (#900)", "### Post-upgrade actions");
     const rolled = fold(repeated);
-    const judge = (guide) => stepsAddedToReleasedSections({ guide, releasedGuide: repeated, untaggedHeading: HEADING });
+    const judge = (guide) => lateSteps({ guide, releasedGuide: repeated, untaggedHeading: HEADING });
     expect(judge(rolled)).toEqual([]);
 
     const late = rolled.replace("Already shipped; never rewritten.\n", "Already shipped; never rewritten.\n\n### Post-upgrade actions\n\nDo it.\n");
@@ -177,7 +181,7 @@ describe("guarding released sections and odd guides (#4983)", () => {
   it("judges a first release's section, headed without an arrow, like any other", () => {
     const first = FULL.replace(RELEASED, "## v0.1.0\n\n### First step (#10)\n\nDo it.\n");
     const grown = first.replace("### First step (#10)\n\nDo it.\n", "### First step (#10)\n\nDo it.\n\n### Late (#4800)\n\nDo it.\n");
-    expect(stepsAddedToReleasedSections({ guide: grown, releasedGuide: first, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
+    expect(lateSteps({ guide: grown, releasedGuide: first, untaggedHeading: HEADING })).toEqual(["### Late (#4800)"]);
     expect(releasedSectionStepsProblem({ guide: grown, releasedGuide: first, untaggedHeading: HEADING, previousTag: "v0.1.0" })).toMatch(
       /in a section already released, which v0\.1\.0 did not have \(### Late \(#4800\)\)/,
     );

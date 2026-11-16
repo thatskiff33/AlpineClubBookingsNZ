@@ -382,7 +382,7 @@ function withoutEach(titles, known) {
  * a missing release) carries steps the tag never saw, and they are not late.
  * `untaggedHeading`'s section is never judged: it is the release being cut.
  */
-export function stepsAddedToReleasedSections({ guide, releasedGuide, untaggedHeading }) {
+function stepsAddedToReleasedSections({ guide, releasedGuide, untaggedHeading }) {
   const tagTitles = new Map(releasedSections(releasedGuide).map((section) => [section.heading, section.titles]));
   return releasedSections(guide).flatMap((section) => {
     const before = tagTitles.get(section.heading);

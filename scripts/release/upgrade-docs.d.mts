@@ -37,11 +37,6 @@ export declare function foldUpgradingUnreleased(
   text: string,
   versions: { fromVersion: string | null; toVersion: string; amend?: boolean },
 ): string;
-export declare function stepsAddedToReleasedSections(input: {
-  guide: string;
-  releasedGuide: string;
-  untaggedHeading: string;
-}): string[];
 export declare function releasedSectionStepsProblem(input: {
   guide: string;
   releasedGuide: string | null;

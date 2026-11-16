@@ -511,6 +511,21 @@ export function planReleaseDocs({ repoRoot, version, previousTag, date, bump, ch
   const block = unreleasedBlock(guide);
   if (block === null) throw new Error(`${UPGRADING_PATH} must have exactly one "${UNRELEASED_HEADING}" heading.`);
   const exists = hasUpgradingSection(guide, upgradeHeading);
+  // A release's section is rolled once: a fresh prepare refuses one already
+  // there even with nothing waiting, since that section was not written by
+  // this prepare. Only --amend may add to it.
+  if (exists && !amend) {
+    throw new ReleaseCutError(
+      `Cannot fold ${UPGRADING_PATH}: it already has "${upgradeHeading}". ` +
+        (block.hasSteps
+          ? `Its "${UNRELEASED_HEADING}" steps would have nowhere to go.`
+          : "A release's upgrade section is only rolled once."),
+      block.hasSteps
+        ? `Move the steps under "${UNRELEASED_HEADING}" into "${upgradeHeading}" in a pull request to ${MAIN_BRANCH}, then re-run.`
+        : `Remove "${upgradeHeading}" in a pull request to ${MAIN_BRANCH} if it was written by hand, then re-run; ` +
+          `if the release was already prepared, publish it or fold late steps with pnpm run release:cut prepare --amend --execute.`,
+    );
+  }
   const upgrade = {
     action: !exists ? "roll" : block.hasSteps ? "fold" : "none",
     steps: block.stepTitles.length,
