@@ -95,6 +95,7 @@ type Answer = { status: number; body: unknown };
 
 /** The one request the test holds open, and whether its body was read. */
 let releaseHeld: (answer: Answer) => void;
+let failHeld: (reason: unknown) => void;
 let heldStarted: boolean;
 let heldBodyRead: boolean;
 
@@ -110,9 +111,10 @@ function reply({ status, body }: Answer) {
 }
 
 function holdRequest() {
-  return new Promise<Answer>((resolve) => {
+  return new Promise<Answer>((resolve, reject) => {
     heldStarted = true;
     releaseHeld = resolve;
+    failHeld = reject;
   });
 }
 
@@ -262,9 +264,10 @@ describe("a late failure after a lodge switch", () => {
   });
 
   /*
-    Seasons has three refusable actions, each with its own catch-block guard
-    (`activeScopeRef.current !== requestedScope`). Each case is a mutation
-    probe for one guard: delete that guard and only its case fails.
+    Seasons has three refusable actions, and each guards a late failure twice
+    (`activeScopeRef.current !== requestedScope`): once on a refusal the server
+    sent, once in the catch for a request that never arrived. Each case is a
+    mutation probe for one guard: delete that guard and only its case fails.
   */
   const SEASON = {
     id: "season-winter",
@@ -299,10 +302,11 @@ describe("a late failure after a lodge switch", () => {
     );
   }
 
-  it.each([
+  // The method the test holds open, and the clicks that start the action.
+  const SEASON_ACTIONS: Array<[string, "PUT" | "DELETE", () => Promise<unknown>]> = [
     [
       "a toggle",
-      "PUT" as const,
+      "PUT",
       async () =>
         fireEvent.click(
           await screen.findByRole("button", { name: "Deactivate Winter 2026" }),
@@ -310,7 +314,7 @@ describe("a late failure after a lodge switch", () => {
     ],
     [
       "a delete",
-      "DELETE" as const,
+      "DELETE",
       async () =>
         fireEvent.click(
           await screen.findByRole("button", { name: "Delete Winter 2026" }),
@@ -318,7 +322,7 @@ describe("a late failure after a lodge switch", () => {
     ],
     [
       "a window save",
-      "PUT" as const,
+      "PUT",
       async () => {
         fireEvent.click(
           await screen.findByRole("button", { name: "Edit window of Winter 2026" }),
@@ -326,7 +330,9 @@ describe("a late failure after a lodge switch", () => {
         fireEvent.click(await screen.findByRole("button", { name: "Update Season" }));
       },
     ],
-  ])("is dropped on Seasons for %s", async (_name, heldMethod, startAction) => {
+  ];
+
+  it.each(SEASON_ACTIONS)("is dropped on Seasons for %s", async (_name, heldMethod, startAction) => {
     stubSeasonsFetch(heldMethod);
     render(<SeasonsPage />);
     await startAction();
@@ -346,4 +352,29 @@ describe("a late failure after a lodge switch", () => {
     expect(actionAlert("season-action-error")).toBeEmptyDOMElement();
     expect(document.activeElement).not.toBe(actionAlert("season-action-error"));
   });
+
+  it.each(SEASON_ACTIONS)(
+    "is dropped on Seasons for %s when the request never arrives",
+    async (_name, heldMethod, startAction) => {
+      stubSeasonsFetch(heldMethod);
+      render(<SeasonsPage />);
+      await startAction();
+      await waitFor(() => expect(heldStarted).toBe(true));
+
+      fireEvent.change(screen.getByLabelText("Lodge"), {
+        target: { value: LODGE_B.id },
+      });
+      expect(await screen.findByText(/No seasons configured yet/)).toBeVisible();
+
+      // The browser's own wording for a dropped connection.
+      await act(async () => {
+        failHeld(new TypeError("Failed to fetch"));
+      });
+      await act(async () => {});
+
+      // The screen's fallback sentence would be the message if the guard were gone.
+      expect(actionAlert("season-action-error")).toBeEmptyDOMElement();
+      expect(document.activeElement).not.toBe(actionAlert("season-action-error"));
+    },
+  );
 });
