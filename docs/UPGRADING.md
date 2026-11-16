@@ -136,6 +136,10 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+---
+
+## v0.13.2 → v0.14.0
+
 ### Upgrade checklist for this release
 
 The order to work in, from the release you run now to this one. Every step
