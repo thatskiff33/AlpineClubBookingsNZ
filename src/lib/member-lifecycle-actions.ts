@@ -730,8 +730,8 @@ export async function getAdminMemberLifecycleRequests({
           action,
           status,
         };
-  // INV-OPS-020: pending archive requests read oldest first; deletion (outside #4960) keeps newest first.
-  const direction = adminQueueCreatedOrder(action === MemberLifecycleAction.ARCHIVE && status === MemberLifecycleActionRequestStatus.REQUESTED);
+  // INV-OPS-020: a pending archive or deletion queue reads oldest first.
+  const direction = adminQueueCreatedOrder(status === MemberLifecycleActionRequestStatus.REQUESTED);
 
   const [requests, total, pendingCount] = await Promise.all([
     prisma.memberLifecycleActionRequest.findMany({

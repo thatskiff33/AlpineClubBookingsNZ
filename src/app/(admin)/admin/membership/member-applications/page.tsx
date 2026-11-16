@@ -9,7 +9,7 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { Pagination } from "@/components/admin/admin-pagination";
 import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
 import { adminHref } from "@/lib/admin-hubs";
-import { parseAdminListPageParam } from "@/lib/admin-list-page";
+import { parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -216,9 +216,8 @@ export default function MemberApplicationsPage() {
 
   const currentParams = new URLSearchParams(searchParams.toString());
   currentParams.delete("status");
-  currentParams.delete("page");
   if (filter !== DEFAULT_FILTER) currentParams.set("status", filter || "ALL");
-  if (page > 1) currentParams.set("page", String(page));
+  setAdminListPageParam(currentParams, page);
   const currentQuery = currentParams.toString();
   const currentPath = currentQuery
     ? `${MEMBER_APPLICATIONS_HREF}?${currentQuery}`
