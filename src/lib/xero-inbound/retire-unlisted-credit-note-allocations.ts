@@ -204,7 +204,10 @@ async function decideBankTransferRefundedTotal(
  * write decides; any floor alert goes out after the loop. An invoice matched
  * to several payments names none, as the repair after it skips one
  * (`resolvePaymentIdsByInvoiceTargets`), and a payment found only by its link
- * is decided by that repair alone.
+ * is decided by that repair alone. Narrower than that resolution on purpose,
+ * not a copy of it: the shared decision finds a bank-transfer payment's
+ * invoice allocations by the payment's own invoice id, so only such a payment
+ * can be decided here; for every one it names, the resolution names the same.
  */
 export async function writeCurrentCreditNoteAllocations(
   links: readonly XeroObjectLinkInput[],
