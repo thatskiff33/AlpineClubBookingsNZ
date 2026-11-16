@@ -998,6 +998,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
+| `INV-OPS-021` | Every main push run completes; releases tag only published commits |
 
 ## Product Configuration
 
