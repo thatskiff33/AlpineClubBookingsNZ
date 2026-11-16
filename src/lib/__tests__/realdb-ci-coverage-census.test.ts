@@ -13,10 +13,11 @@ import { jobBlock, stepBlock } from "./helpers/ci-workflow";
  * #4458: every real-PostgreSQL suite runs in CI, or is named in the quarantine.
  *
  * A `*.realdb.test.ts` file skips itself without `RUN_CONCURRENCY_RACE_TESTS=1`,
- * so a file no CI job runs is green and proves nothing. The advisory
- * `realdb-all` job runs `scripts/ci/realdb-files.mjs`; this census measures that
- * list against the tree with a walk of its own, and pins the job's wiring (a
- * text slice of `ci.yml`, like the other CI-wiring guards in this directory).
+ * so a file no CI job runs is green and proves nothing. The `realdb-all` job,
+ * which the required `verify` check gates on (#4907), runs
+ * `scripts/ci/realdb-files.mjs`; this census measures that list against the
+ * tree with a walk of its own, and pins the job's wiring (a text slice of
+ * `ci.yml`, like the other CI-wiring guards in this directory).
  */
 const REPO_ROOT = resolve(__dirname, "../../..");
 const JOB = "realdb-all";
@@ -124,14 +125,31 @@ describe("every real-PostgreSQL suite runs in CI (#4458)", () => {
     );
   });
 
-  it("stays advisory: no workflow job depends on it or names it", () => {
-    // `needs:`, `needs.realdb-all.result`, a gate step's `--job`: any mention
-    // outside the job itself would let a failure here block, or a skip here
-    // pass, a required check (owner ruling, 1 Sep 2026).
+  it("gates the merge only through verify's same-attempt poll, never `needs:` (#4907)", () => {
+    // Owner decision, 11 Nov 2026 (option B): `verify` polls this job by its
+    // display name and fails on anything but success. A `needs:` edge would
+    // let a skip here pass a required check, and a job-level `if:` or `needs:`
+    // on this job could skip it; the poll is the one sanctioned reference.
+    const name = /\n {4}name: (.+)\n/.exec(job)?.[1];
+    expect(name).toBe("Real-PostgreSQL suites (all)");
+    expect(job).not.toMatch(/\n {4}needs:/);
+
+    const verify = withoutComments(jobBlock(ci, "verify"));
+    const poll = verify
+      .split("\n")
+      .filter((line) => line.includes("node scripts/ci/require-test-shards.mjs"));
+    expect(poll, "verify has exactly one gate poll").toHaveLength(1);
+    expect(poll[0]).toContain(`--job "${name}"`);
+
     for (const file of readdirSync(workflowDir).filter((f) => /\.ya?ml$/.test(f))) {
       const text = readFileSync(join(workflowDir, file), "utf8");
       const rest = withoutComments(text.replace(jobBlock(text, JOB), ""));
+      // The job id never appears elsewhere: no `needs:`, no `needs.realdb-all.result`.
       expect(rest, `${file} mentions ${JOB} outside its own job`).not.toContain(JOB);
+      const named = rest.split("\n").filter((line) => line.includes(String(name)));
+      expect(named, `${file} names "${name}" outside verify's poll`).toEqual(
+        file === "ci.yml" ? poll : [],
+      );
     }
   });
 });
