@@ -37,8 +37,8 @@ import {
  * **What proves it clears a STORED entry rather than only a data cache**, stated
  * precisely because an earlier version of this comment named a test that does not
  * exist: the unpublish case in `e2e/static-cms-pages.spec.ts`. It warms the store
- * with a 200, hides the page through the admin PATCH, and asserts the very next
- * request is a 404 — which can only pass if `revalidatePath("/", "layout")` cleared
+ * with a 200, hides the page through the admin PATCH, and asserts a 404 within
+ * seconds (a short poll, #5205) — which can only pass if `revalidatePath("/", "layout")` cleared
  * the stored copy, since a data-cache clear would leave the 200 answering for up to
  * the 300-second backstop.
  *
