@@ -783,10 +783,13 @@ export const AUDIT_CENSUS_TOTALS = {
   // the Archive button's own writer, which moved into one helper
   // (`writeEmailFailureReviewAudit`), so it adds no site. RE-MEASURED with
   // `pnpm run audit:census`.
-  // 549 -> 550 (#4516, merged onto #4496 and ALP-588): `booking-payment.manual-refund-task.reduce-by-lost-dispute`, a disputed
+  // 549 -> 550 (#4963): `email.failure.requeued`, an officer's Try again on an exhausted
+  // email failure, awaited on the requeue's own transaction (`email-failure-review.ts`),
+  // `communication`. RE-MEASURED with `pnpm run audit:census` on the merged tree.
+  // 550 -> 551 (#4516, merged onto #4496, ALP-588 and #4963): `booking-payment.manual-refund-task.reduce-by-lost-dispute`, a disputed
   // card payment's hand-back reduced by a dispute lost for part of it; `createAuditLog`, `payment`. RE-MEASURED with
   // `pnpm run audit:census` on the merged tree.
-  writeSites: 550,
+  writeSites: 551,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1015,8 +1018,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // 176 -> 177 (#4916): the after-stay dietary clear's count row. 177 -> 179 (#4851): the group organiser's close and re-arm.
     // 179 -> 181 (#4915): the two subject access writers.
     // 181 -> 182 (ALP-588): the booking fresh-copy send; its superseded-failure archive reuses the Archive button's writer.
-    // 182 -> 183 (#4516, merged onto ALP-588): a disputed card payment's hand-back reduced by a part-lost dispute.
-    createAuditLog: { total: 183, uncategorised: 0 },
+    // 182 -> 183 (#4963): Try again on an exhausted email failure.
+    // 183 -> 184 (#4516, merged onto ALP-588 and #4963): a disputed card payment's hand-back reduced by a part-lost dispute.
+    createAuditLog: { total: 184, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1554,7 +1558,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // exhausted-failure archive reuses the existing email.failure.reviewed
     // writer, so adds no site. Still a membership+support read; neither
     // records a message body, token or link.
-    communication: 22,
+    // 22 -> 23 (#4963): email.failure.requeued, beside the archive row
+    // (email.failure.reviewed) it pairs with; the same membership+support read.
+    communication: 23,
     // 14 -> 15 (#2627): `member.deletion_approval_claim_released`. Still a
     // membership+support read, like every other deletion-decision row beside it,
     // so this widens nobody's access.

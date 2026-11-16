@@ -528,3 +528,17 @@ export function disputedCancellationHandBackReason({ bookingId, refundPercentage
 }): string {
   return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time. If the dispute is lost for at least this refund, the cardholder already has it: dismiss this task.`;
 }
+
+/**
+ * #5061 follow-up (`INV-PAY-154`): THE REASON LINE of an edit's refund
+ * hand-back raised because the card payment is disputed - a lowered price whose
+ * refund the app neither sends to the card nor holds as credit. Worded as the
+ * cancel's (`disputedCancellationHandBackReason`), naming each dispute.
+ */
+export function disputedEditRefundHandBackReason({ bookingId, editLabel, disputes }: {
+  bookingId: string;
+  editLabel: string;
+  disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
+}): string {
+  return `Booking ${bookingId} lowered by a ${editLabel} while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes) || "since closed"}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the difference.`;
+}

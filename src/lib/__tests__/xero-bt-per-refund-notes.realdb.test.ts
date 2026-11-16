@@ -324,7 +324,7 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         await raiseEditRefundHandBackIfOwed(tx, {
           bookingId: BOOKING_ID, paymentId: PAYMENT_ID, bookingModificationId: modificationId,
-          adjusted: { refundAmountCents: 5_000, hasSucceededPayment: false }, editLabel: "price reduction",
+          adjusted: { refundAmountCents: 5_000, hasSucceededPayment: false, refundHeldForDispute: false }, editLabel: "price reduction",
           booking: { organiserSettled: false, parentBookingId: null, payment: { source: "INTERNET_BANKING" } },
         });
         return enqueueXeroModificationCreditNoteOperation({

@@ -8,7 +8,6 @@ import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
 import {
   type AgeTier,
-  PaymentSource,
   PaymentStatus,
   type Role,
 } from "@prisma/client";
@@ -46,7 +45,6 @@ import {
   createModificationAdditionalPaymentIntent,
   type ModificationAdditionalAskMint,
   executeBookingModificationRefund,
-  type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
 import {
   assertNoPendingEditFinancialReview,
@@ -165,6 +163,7 @@ import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-claim";
 import { changeFeeAddedToAmountOwedHistory } from "@/lib/change-fee-owed";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
+import type { DateModificationTransactionResult } from "@/lib/booking-date-modification-transaction-result";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -182,49 +181,6 @@ export type ModifyBookingDatesInput = {
   // the member receives the change-notification email. Absent = notify.
   notifyMember?: boolean;
 };
-
-type DateModificationTransactionResult =
-  BookingModificationPaymentContext & {
-    /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
-    unpaidAskCancelled: boolean;
-    /**
-     * The plain figure the emails, the response body and the Xero leg read.
-     * Inherited from `BookingModificationPaymentContext` until #3371 replaced
-     * that field with `additionalAsk`; it is restated here because those
-     * consumers want a number and the minter must not be handed one.
-     */
-    additionalAmountCents: number;
-    billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
-    booking: ModifiedBooking;
-    priceDiffCents: number;
-    changeFeeCents: number;
-    refundAmountCents: number;
-    accountCreditAmountCents: number;
-    settlementMethod: BookingModificationSettlementMethod | null;
-    policyRetainedAmountCents: number;
-    promoRemoved: boolean;
-    // #2390: set only when a usage cap stopped the promotion reaching somebody
-    // on the repriced booking; null means everyone it applies to is covered.
-    promoCoverage: PromoCoverageNotice | null;
-    choreWarnings: string[];
-    datesChanged: boolean;
-    adminOverride: boolean;
-    notifyMember: boolean;
-    capacityOverridden: boolean;
-    oldCheckIn: Date;
-    oldCheckOut: Date;
-    hasIssuedXeroInvoice: boolean;
-    paymentStatus: PaymentStatus | null;
-    paymentSource: PaymentSource | null;
-    paymentReference: string | null;
-    xeroInvoiceNumber: string | null;
-    xeroRefundAmountCents: number;
-    appliedCreditGivenBackCents: number;
-    xeroAdditionalAmountCents: number;
-    // F20 (#1887): the reprice landed the booking fully credit-covered and it
-    // was auto-confirmed at $0, so the primary Xero invoice must be created.
-    zeroDollarAutoPaid: boolean;
-  };
 
 export type DateModificationResponse = {
   booking: ModifiedBooking;
@@ -817,6 +773,7 @@ export async function modifyBookingDates({
       unpaidAskCancelled,
       pendingRefundAmountCents,
       hasSucceededPayment,
+      refundHeldForDispute,
       hasIssuedXeroInvoice,
       xeroRefundAmountCents,
       xeroAdditionalAmountCents,
@@ -1345,6 +1302,7 @@ export async function modifyBookingDates({
       oldCheckIn,
       oldCheckOut,
       hasSucceededPayment,
+      refundHeldForDispute,
       hasIssuedXeroInvoice,
       paymentStatus: booking.payment?.status ?? null,
       paymentSource: booking.payment?.source ?? null,
@@ -1535,7 +1493,9 @@ async function dispatchDatePostTransactionSideEffects({
     // issued invoice falls back to the full delta inside classify when null.
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment, paymentId: result.paymentId,
+    // #5061 follow-up (`INV-PAY-154`): a disputed payment's reduction goes back by hand.
+    refundedThroughStripe: result.hasSucceededPayment && !result.refundHeldForDispute, paymentId: result.paymentId,
+    refundHeldForDispute: result.refundHeldForDispute,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,

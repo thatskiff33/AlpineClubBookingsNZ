@@ -2055,13 +2055,16 @@ frozen booking through the same writer a review closure uses. It moves no cash,
 card charge, account credit or Xero document. A second apply changes nothing.
 
 Run it only from the image that contains this change, after that colour is the
-only one serving, and never during a mixed-colour window. Point `DATABASE_URL`
-at a non-production copy for the dry-run. Name the database yourself:
+only one serving, and never during a mixed-colour window. The census and the
+dry-run write nothing (the dry-run's preview is rolled back), so either can be
+pointed at a non-production copy or at the live database. The apply writes, and
+it settles only the database `DATABASE_URL` names, so it is run against the live
+database. Name the database yourself:
 
 ```bash
-DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup
-DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --dry-run
-DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
+DATABASE_URL=<database> pnpm run bookings:edit-review-cleanup
+DATABASE_URL=<database> pnpm run bookings:edit-review-cleanup -- --dry-run
+DATABASE_URL=<live database> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
 ```
 
 The before-values are on the booking's `PRICE_REBASE` history row and the audit
