@@ -310,6 +310,7 @@ let previousDatabaseUrl: string | undefined;
         door: "guestAdd",
         failureMessage: "race-4491: the mint failed",
         result: {
+          ownCardRefund: null,
           pendingRefundAmountCents: 0,
           organiserChildRefund: null,
           paymentId: PAYMENT_ID,

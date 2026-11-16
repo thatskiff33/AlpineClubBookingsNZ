@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import type { ActionFailure } from "@/hooks/use-action-failure";
 import {
   MAX_CONFIGURED_LODGE_CAPACITY,
   MIN_CONFIGURED_LODGE_CAPACITY,
@@ -32,11 +33,12 @@ function settingsUrl(lodgeId: string) {
 export function useWizardCapacity(options: {
   lodgeId: string;
   onFinishStep: boolean;
-  setError: (message: string) => void;
+  /** The page's action failure: a refused or failed save takes focus. */
+  failure: Pick<ActionFailure, "fail" | "clear">;
   setSaving: (saving: boolean) => void;
   goNext: () => void;
 }) {
-  const { lodgeId, onFinishStep, setError, setSaving, goNext } = options;
+  const { lodgeId, onFinishStep, failure, setSaving, goNext } = options;
   // The configured capacity as saved, and as typed. Seeded from the lodge's
   // settings, which Add lodge now writes.
   const [capacityInput, setCapacityInput] = useState("");
@@ -101,7 +103,7 @@ export function useWizardCapacity(options: {
   async function saveCapacity() {
     const typed = parseConfiguredLodgeCapacity(capacityInput);
     if (typed.kind !== "valid") {
-      setError(NEW_LODGE_CAPACITY_REQUIRED_MESSAGE);
+      failure.fail(NEW_LODGE_CAPACITY_REQUIRED_MESSAGE);
       return;
     }
     // Dirty-gated (docs/ARCHITECTURE.md, Admin/member layer): the route audits
@@ -111,7 +113,7 @@ export function useWizardCapacity(options: {
       return;
     }
     setSaving(true);
-    setError("");
+    failure.clear();
     try {
       const res = await fetch("/api/admin/lodge-settings", {
         method: "PUT",
@@ -119,7 +121,7 @@ export function useWizardCapacity(options: {
         body: JSON.stringify({ capacity: typed.capacity, lodgeId }),
       });
       if (res.status === 403) {
-        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        failure.fail(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
       if (!res.ok) {
@@ -131,7 +133,7 @@ export function useWizardCapacity(options: {
       setCapacityInput(String(typed.capacity));
       goNext();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save capacity");
+      failure.fail(err instanceof Error ? err.message : "Failed to save capacity");
     } finally {
       setSaving(false);
     }

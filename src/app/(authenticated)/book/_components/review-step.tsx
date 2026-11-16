@@ -357,7 +357,7 @@ export function ReviewStep({
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Booking Summary</CardTitle>
+          <CardTitle headingLevel={2}>Booking Summary</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {/*
