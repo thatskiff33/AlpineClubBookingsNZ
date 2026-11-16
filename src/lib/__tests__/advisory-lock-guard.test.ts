@@ -2250,33 +2250,35 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
     const write = between("export async function writeCurrentCreditNoteAllocation(", "async function writeLockedAllocation(");
     inOrder(write, [
       "prisma.$transaction(",
-      "lockPaymentForRefundedTotal(tx, paymentId)",
+      "lockPaymentForRefundedTotal(tx, payment.id)",
       "writeLockedAllocation(tx, link, readingAt)",
-      "decideBankTransferRefundedTotal(tx, paymentId, link)",
+      "decideBankTransferRefundedTotal(tx, payment, link, written)",
       "PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS",
     ]);
-    expect(write).not.toMatch(/sendBankTransferFloorAlert|getClubFormat|notifyXeroSyncError/);
+    expect(write).not.toMatch(/sendBankTransferFloorAlert|sendFloorAlerts|getClubFormat|notifyXeroSyncError/);
     inOrder(between("async function writeLockedAllocation(", "async function decideBankTransferRefundedTotal("), [
       "tx.xeroObjectLink.createMany(",
       "FOR UPDATE",
       "tx.xeroObjectLink.findUnique(",
       "upsertXeroObjectLink(link, { store: tx })",
     ]);
-    const decide = between("async function decideBankTransferRefundedTotal(", "export async function writeCurrentCreditNoteAllocations(");
+    // #4449 review: re-read under the lock, the one payment of the invoice re-counted there, the
+    // shared columns step, and a claim on the row as re-read that also moves updatedAt.
+    const decide = between("async function decideBankTransferRefundedTotal(", "async function bankTransferPaymentIdsByInvoiceId(");
     inOrder(decide, [
       "tx.payment.findUnique(",
+      "tx.payment.count({ where: { xeroInvoiceId: target.invoiceId } })",
       "decideLinkedRefundedTotalCents(tx, [payment])",
-      "bankTransferFloorCents(tx,",
+      "decideXeroRefundedColumns(tx,",
       "tx.payment.updateMany(",
       "claimed.count !== 1",
     ]);
-    expect(decide).toContain("status: payment.status, refundedAmountCents: payment.refundedAmountCents");
+    expect(decide).toContain("status: payment.status, refundedAmountCents: payment.refundedAmountCents, updatedAt: payment.updatedAt");
     expect(decide).not.toMatch(/tx\.payment\.update\(|sendBankTransferFloorAlert|notifyXeroSyncError/);
-    // The floor alerts go out after every write's commit, outside any transaction.
-    inOrder(between("export async function writeCurrentCreditNoteAllocations(", "export async function retireUnlistedCreditNoteAllocations("), [
-      "writeCurrentCreditNoteAllocation(link,",
-      "sendBankTransferFloorAlert(alert, format)",
-    ]);
+    // The floor alerts go out after every write's commit, outside any transaction: additions and removals.
+    const afterTheWrites = ["bankTransferPaymentIdsByInvoiceId(", "writeCurrentCreditNoteAllocation(", "decidedPaymentOf(link, byInvoiceId)", "sendFloorAlerts(floorAlerts)"];
+    inOrder(between("export async function writeCurrentCreditNoteAllocations(", "export async function retireUnlistedCreditNoteAllocations("), afterTheWrites);
+    inOrder(text.slice(text.indexOf("export async function retireUnlistedCreditNoteAllocations(")), afterTheWrites);
   });
 
   it("keeps school held-reuse on global -> lodge -> re-read -> guarded claim", () => {

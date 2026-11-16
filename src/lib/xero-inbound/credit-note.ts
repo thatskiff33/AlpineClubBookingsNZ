@@ -353,6 +353,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // reading turns nothing off.
   await retireUnlistedCreditNoteAllocations({
     creditNoteId: creditNote.creditNoteID!,
+    isModificationNote,
     status: creditNote.status,
     readingMetadata: xeroCreditNoteSnapshotMetadata(creditNote),
     priorSnapshots: priorCreditNoteSnapshots,

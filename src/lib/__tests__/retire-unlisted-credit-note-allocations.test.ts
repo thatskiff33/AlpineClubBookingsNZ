@@ -110,6 +110,7 @@ describe("retireUnlistedCreditNoteAllocations (#4447)", () => {
     });
     return retireUnlistedCreditNoteAllocations({
       creditNoteId: NOTE,
+      isModificationNote: false,
       status: options.status ?? "AUTHORISED",
       readingMetadata: options.readingMetadata ?? snapshot("AUTHORISED", LATE),
       priorSnapshots: options.priorSnapshots ?? [],
@@ -237,6 +238,8 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
   // The guarded claim (`updateMany` on the row as re-read under its lock).
   const paymentUpdate = vi.fn();
   const paymentFindUnique = vi.fn();
+  const paymentCount = vi.fn();
+  const STORED_AT = new Date("2026-06-30T00:00:00.000Z");
   const payment = {
     id: "pay-1",
     bookingId: "booking-1",
@@ -245,8 +248,12 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
     status: "PARTIALLY_REFUNDED",
     source: "INTERNET_BANKING",
     xeroInvoiceId: "inv-1",
+    updatedAt: STORED_AT,
     booking: { organiserSettled: false },
   };
+  const target = { payment: { id: "pay-1", invoiceId: "inv-1" } };
+  const asRead = { id: "pay-1", status: "PARTIALLY_REFUNDED", refundedAmountCents: 5_000, updatedAt: STORED_AT };
+  const movedOn = () => (paymentUpdate.mock.calls[0]?.[0] as { data: { updatedAt: Date } }).data.updatedAt;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -265,6 +272,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
       return {};
     });
     paymentFindUnique.mockResolvedValue(payment);
+    paymentCount.mockResolvedValue(1);
     paymentUpdate.mockResolvedValue({ count: 1 });
     mocks.decideLinked.mockImplementation(async () => {
       steps.push("decide");
@@ -275,33 +283,43 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
       fn({
         $executeRaw: mocks.lock,
         xeroObjectLink: { findUnique: mocks.findUnique, createMany: mocks.createMany },
-        payment: { findUnique: paymentFindUnique, updateMany: paymentUpdate },
+        payment: { findUnique: paymentFindUnique, count: paymentCount, updateMany: paymentUpdate },
       }),
     );
   });
 
   it("MUTATION (INV-LOCK-002): locks the Payment row before the allocation row, and decides the total after the write", async () => {
-    await expect(writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" })).resolves.toEqual({ written: true, floorAlert: null });
+    await expect(writeCurrentCreditNoteAllocation(link, target)).resolves.toEqual({ written: true, floorAlert: null });
     expect(steps).toEqual(["lock Payment", "reserve allocation", "lock allocation", "write allocation", "decide"]);
     expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ maxWait: expect.any(Number) }));
   });
 
   it("MUTATION: sets the whole total its links decide, never an increment on the stored one", async () => {
-    await writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" });
+    await writeCurrentCreditNoteAllocation(link, target);
     expect(mocks.decideLinked).toHaveBeenCalledWith(expect.anything(), [payment]);
-    expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1", status: "PARTIALLY_REFUNDED", refundedAmountCents: 5_000 }, data: { refundedAmountCents: 15_000 } });
+    expect(paymentUpdate).toHaveBeenCalledWith({ where: asRead, data: { refundedAmountCents: 15_000, updatedAt: expect.any(Date) } });
   });
 
-  it("writes nothing to a payment whose total and status the links already record", async () => {
+  it("MUTATION (#4449 item 5): a written link with the total unchanged still moves updatedAt, so a recount that read the links before it loses its claim", async () => {
     mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 5_000]]));
-    await writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" });
+    await writeCurrentCreditNoteAllocation(link, target);
+    expect(paymentUpdate).toHaveBeenCalledWith({ where: asRead, data: { updatedAt: expect.any(Date) } });
+    // Forward, even on the frozen test clock that stamped the row.
+    expect(movedOn().getTime()).toBeGreaterThan(STORED_AT.getTime());
+  });
+
+  it("writes nothing to the payment when the link was not written and the total and status stand", async () => {
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 5_000]]));
+    // A newer stamp already on the row: this reading writes no link.
+    mocks.findUnique.mockResolvedValue({ active: true, metadata: snapshot("AUTHORISED", "2099-01-01T00:00:00.000Z") });
+    await expect(writeCurrentCreditNoteAllocation({ ...link, metadata: { ...link.metadata, ...snapshot("AUTHORISED", EARLY) } }, target)).resolves.toEqual({ written: false, floorAlert: null });
     expect(paymentUpdate).not.toHaveBeenCalled();
   });
 
   it("returns the floor's alert for the caller to send after the commit (INV-ADDPAY-021)", async () => {
     const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 15_000, floorCents: 20_000 };
     mocks.floor.mockResolvedValue({ cents: 20_000, alert });
-    await expect(writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" })).resolves.toEqual({ written: true, floorAlert: alert });
+    await expect(writeCurrentCreditNoteAllocation(link, target)).resolves.toEqual({ written: true, floorAlert: alert });
     expect(mocks.floor).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ creditNoteId: NOTE, xeroDerivedCents: 15_000 }));
     expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
   });
@@ -309,18 +327,29 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
   it("a total falling to nothing on a payment never captured returns it to its uncaptured state", async () => {
     mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
     mocks.uncapturedPrimaryStatus.mockResolvedValue("PENDING");
-    await writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" });
-    expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1", status: "PARTIALLY_REFUNDED", refundedAmountCents: 5_000 }, data: { refundedAmountCents: 0, status: "PENDING" } });
+    await writeCurrentCreditNoteAllocation(link, target);
+    expect(paymentUpdate).toHaveBeenCalledWith({ where: asRead, data: { refundedAmountCents: 0, status: "PENDING", updatedAt: expect.any(Date) } });
   });
 
   it("MUTATION (guarded claim): a claim lost under the Payment row lock throws, rolling the allocation write back with it", async () => {
     paymentUpdate.mockResolvedValue({ count: 0 });
-    await expect(writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" })).rejects.toThrow(/claim lost/);
+    await expect(writeCurrentCreditNoteAllocation(link, target)).rejects.toThrow(/claim lost/);
   });
 
   it("decides nothing for a payment that is not a bank transfer", async () => {
     paymentFindUnique.mockResolvedValue({ ...payment, source: "STRIPE" });
-    await writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" });
+    await writeCurrentCreditNoteAllocation(link, target);
+    expect(mocks.decideLinked).not.toHaveBeenCalled();
+    expect(paymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4449 item 6): decides nothing once a second payment holds the invoice, or the payment's invoice moved, by the time the lock is held", async () => {
+    paymentCount.mockResolvedValue(2);
+    await writeCurrentCreditNoteAllocation(link, target);
+    expect(paymentCount).toHaveBeenCalledWith({ where: { xeroInvoiceId: "inv-1" } });
+    paymentCount.mockResolvedValue(1);
+    paymentFindUnique.mockResolvedValue({ ...payment, xeroInvoiceId: "inv-other" });
+    await writeCurrentCreditNoteAllocation(link, target);
     expect(mocks.decideLinked).not.toHaveBeenCalled();
     expect(paymentUpdate).not.toHaveBeenCalled();
   });
@@ -358,6 +387,39 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
       expect(mocks.paymentFindMany).toHaveBeenCalledTimes(1);
       expect(steps).not.toContain("lock Payment");
       expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("retireUnlistedCreditNoteAllocations (#4449 item 4)", () => {
+    const removedLink = allocation("inv-1", 10_000, NOTE_ALLOCATION_ROLE, "BookingModification");
+    function retireRemoved(isModificationNote: boolean) {
+      mocks.findMany.mockImplementation(async ({ where }: { where: { xeroObjectType?: string } }) =>
+        where.xeroObjectType === "CREDIT_NOTE" ? [] : [removedLink],
+      );
+      mocks.findUnique.mockResolvedValue({ active: true, metadata: removedLink.metadata });
+      mocks.paymentFindMany.mockResolvedValue([{ id: "pay-1", xeroInvoiceId: "inv-1", source: "INTERNET_BANKING" }]);
+      return retireUnlistedCreditNoteAllocations({
+        creditNoteId: NOTE,
+        isModificationNote,
+        status: "AUTHORISED",
+        readingMetadata: snapshot("AUTHORISED", LATE),
+        priorSnapshots: [],
+        listedInvoiceIds: new Set(),
+      });
+    }
+
+    it("MUTATION: a modification note's removal takes the Payment row first and decides the total, as its write does", async () => {
+      mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+      mocks.uncapturedPrimaryStatus.mockResolvedValue(null);
+      await expect(retireRemoved(true)).resolves.toBe(1);
+      expect(steps).toEqual(["lock Payment", "lock allocation", "write allocation"]);
+      expect(paymentUpdate).toHaveBeenCalledWith({ where: asRead, data: { refundedAmountCents: 0, status: "SUCCEEDED", updatedAt: expect.any(Date) } });
+    });
+
+    it("any other note's removal takes the allocation row only", async () => {
+      await expect(retireRemoved(false)).resolves.toBe(1);
+      expect(steps).toEqual(["lock allocation", "write allocation"]);
+      expect(paymentUpdate).not.toHaveBeenCalled();
     });
   });
 });

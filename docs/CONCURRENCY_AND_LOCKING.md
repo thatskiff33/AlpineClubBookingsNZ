@@ -8382,15 +8382,21 @@ newest. A voided reading, or a live reading a stored void or a newer snapshot
 refuses, turns nothing off.
 
 **The allocation write decides a bank-transfer total (#4449).** For a
-modification note, a written allocation whose invoice is the one invoice of
-exactly one payment, a bank-transfer one, takes that `Payment` row FIRST
-(`lockPaymentForRefundedTotal`, `FOR NO KEY UPDATE`), then reserves and locks
-its allocation row as above, writes it, and decides the payment's whole
-refunded total under the row (`decideLinkedRefundedTotalCents`, the
-bank-transfer floor, `INV-ADDPAY-021`), writing the total and status only when
-either changes, through a claim on the row as re-read under the lock (status
-and refunded total); a lost claim throws and rolls the allocation write back,
-so nothing is half-written. The floor alert goes out after the commit. Budget:
+modification note, an allocation write, turning a link on or (review item 4)
+off, whose invoice is the one invoice of exactly one payment, a bank-transfer
+one, takes that `Payment` row FIRST (`lockPaymentForRefundedTotal`,
+`FOR NO KEY UPDATE`), then reserves and locks its allocation row as above,
+writes it, and decides the payment's whole refunded total under the row
+(`decideLinkedRefundedTotalCents`, then `decideXeroRefundedColumns`: the clamp,
+the bank-transfer floor of `INV-ADDPAY-021`, the status rule). Under the lock it
+first re-reads the payment and re-counts the payments holding that invoice;
+if it is no longer the one bank-transfer payment there, it decides nothing.
+It writes through a claim on the row as re-read (status, refunded total,
+`updatedAt`) whenever the total or status changes or the link was written,
+and always moves `updatedAt` forward, so a lock-free recount that read the
+links before this write loses its claim and decides again. A lost claim
+throws and rolls the allocation write back, so nothing is half-written. The
+floor alert goes out after the commit. Budget:
 `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`. No provider call runs in it and it
 takes no advisory key, so `INV-LOCK-003`'s registry gains no entry. Order
 (`INV-LOCK-002`): the kept settle takes `lock(1)`, lodge, member, then the
@@ -8402,9 +8408,23 @@ A settle that commits first is read by the write, whose re-decided total counts
 the receipt it captured; a write that commits first is read by the settle. A
 card payment, an invoice matched to several payments, or one found only by its
 link takes no `Payment` row here and is decided by the recount alone.
-`kept-settle-queued-cancel.realdb.test.ts` drives both commit orders and a
-fold above the rows, each with a writer queued on `lock(1)` and the `Payment`
-row.
+
+Not serialised on the `Payment` row: the modification note's own status write
+(its `MODIFICATION_CREDIT_NOTE` link, a void included) goes through the link
+funnel with its link row only. A settle holding the row can still count a note
+voided while it runs; the cancel queued behind it then reads a net too low by
+that note (it under-refunds, never over-refunds), until the sync's own recount
+corrects the total after its commit. Main counted live links the same way.
+
+Inside the settle's or the write's own transaction (READ COMMITTED), #4370's
+failed-later card refund reads (`readFailedCardRefundRecountCentsIn`) are taken
+again until two whole readings agree, at most four times, then the writer
+throws and its event is retried: a refund note's link write takes no `Payment`
+row, so it can commit between those statements. The recount reads them in one
+read-only snapshot. `kept-settle-queued-cancel.realdb.test.ts` drives both
+commit orders and a fold above the rows, each with a writer queued on `lock(1)`
+and the `Payment` row; `kept-settle-failed-card-refund.realdb.test.ts` drives a
+keep over a failed-later card refund on a bank transfer.
 
 **Mixed releases.** The own-row-first order is consistent within this release;
 the old canonical writer takes siblings before its own row. Running both on

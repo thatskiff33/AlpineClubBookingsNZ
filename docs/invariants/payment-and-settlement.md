@@ -4042,9 +4042,9 @@ _Split from `INV-PAY-057` (#3220)._
   modification notes by its invoice, so a later note never drops an earlier one.
   A keep sets the whole refunded total its links record under the `Payment`
   row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
-  note's allocation write locks that row first and decides it too, so a writer
-  queued on `lock(1)` reads the net (#4449). The recount after a keep or
-  replay is a backstop; failing, the event is retried (#4095).
+  note's allocation write or removal locks that row first and decides it too,
+  so a writer queued on `lock(1)` reads the net (#4449). The recount after a
+  keep or replay is a backstop; failing, the event is retried (#4095).
 - **The refunded-total repair writes through a claim** on the row it read
   (status, totals, `updatedAt`, which every settle transition touches),
   re-running once from scratch when lost, and never un-refunds a payment whose

@@ -16,7 +16,7 @@
  * reading still lists, so an older sync cannot turn the removed allocation
  * back on after the newer one switched it off.
  */
-import { PaymentSource, PaymentStatus, type Prisma } from "@prisma/client";
+import { PaymentSource, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
@@ -31,10 +31,9 @@ import {
   REFUND_NOTE_SNAPSHOT_AT_KEY,
   xeroCreditNoteSnapshotMetadata,
 } from "@/lib/xero-refund-note-status";
-import { getNextRefundedPaymentStatus } from "./amounts";
-import { type BankTransferFloorAlert, bankTransferFloorCents, sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
+import { type BankTransferFloorAlert, sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
-import { uncapturedPrimaryStatus } from "./modification-note-refunds";
+import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 
 const RETIRED_ALLOCATION_ROLES = [NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE] as const;
 
@@ -84,21 +83,22 @@ function storedAllocationStampIsNewer(storedMetadata: unknown, readingAt: Date |
  * payment's refunded total is decided under it from the links as this
  * transaction leaves them (`decideLinkedRefundedTotalCents`), so a kept settle
  * holding that row either already counted this allocation or is waited for
- * and its captured receipt read. The floor's alert is returned for the caller
- * to send after the commit.
+ * and its captured receipt read. That holds for a write that turns a link off
+ * as much as one that turns it on. The floor's alert is returned for the
+ * caller to send after the commit.
  */
 export async function writeCurrentCreditNoteAllocation(
   link: XeroObjectLinkInput,
-  options: { paymentId?: string } = {},
+  options: { payment?: { id: string; invoiceId: string } } = {},
 ): Promise<{ written: boolean; floorAlert: BankTransferFloorAlert | null }> {
   const readingAt = readRefundNoteSnapshotAt(link.metadata);
-  const { paymentId } = options;
+  const { payment } = options;
   return prisma.$transaction(async (tx) => {
-    if (paymentId) await lockPaymentForRefundedTotal(tx, paymentId);
+    if (payment) await lockPaymentForRefundedTotal(tx, payment.id);
     const written = await writeLockedAllocation(tx, link, readingAt);
-    const floorAlert = paymentId ? await decideBankTransferRefundedTotal(tx, paymentId, link) : null;
+    const floorAlert = payment ? await decideBankTransferRefundedTotal(tx, payment, link, written) : null;
     return { written, floorAlert };
-  }, paymentId ? PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS : undefined);
+  }, payment ? PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS : undefined);
 }
 
 async function writeLockedAllocation(tx: Prisma.TransactionClient, link: XeroObjectLinkInput, readingAt: Date | null): Promise<boolean> {
@@ -147,98 +147,120 @@ async function writeLockedAllocation(tx: Prisma.TransactionClient, link: XeroObj
 
 /**
  * #4449: the bank-transfer payment's refunded total as its links now record
- * it, under the Payment row lock this transaction holds: clamped to the
- * payment, held at its own refund detail (`bankTransferFloorCents`,
- * `INV-ADDPAY-021`), and its status as the recount derives it
- * (`getNextRefundedPaymentStatus`; a total falling to nothing on a payment
- * never captured returns it to its uncaptured state, `uncapturedPrimaryStatus`).
- * Written only when either changes.
+ * it, under the Payment row lock this transaction holds, through the step
+ * every writer from Xero takes (`decideXeroRefundedColumns`: clamp, the
+ * bank-transfer floor of `INV-ADDPAY-021`, the status rule).
+ *
+ * Re-checked under the lock: the payment is still a bank transfer and still
+ * the one payment whose own invoice id is the allocated invoice; otherwise it
+ * decides nothing and leaves the payment to the recount after it.
+ *
+ * Written through a claim on the row as re-read, when the total or status
+ * moves, and also whenever this transaction wrote the link: `updatedAt` then
+ * moves too, so a lock-free recount that read the links before this write
+ * loses its claim on the row it read and decides again.
  */
 async function decideBankTransferRefundedTotal(
   tx: Prisma.TransactionClient,
-  paymentId: string,
+  target: { id: string; invoiceId: string },
   link: XeroObjectLinkInput,
+  linkWritten: boolean,
 ): Promise<BankTransferFloorAlert | null> {
   const payment = await tx.payment.findUnique({
-    where: { id: paymentId },
-    select: { id: true, bookingId: true, amountCents: true, refundedAmountCents: true, status: true, source: true, xeroInvoiceId: true, booking: { select: { organiserSettled: true } } },
+    where: { id: target.id },
+    select: { id: true, bookingId: true, amountCents: true, refundedAmountCents: true, status: true, source: true, xeroInvoiceId: true, updatedAt: true, booking: { select: { organiserSettled: true } } },
   });
-  if (!payment || payment.source !== PaymentSource.INTERNET_BANKING) return null;
+  if (!payment || payment.source !== PaymentSource.INTERNET_BANKING || payment.xeroInvoiceId !== target.invoiceId) return null;
+  if ((await tx.payment.count({ where: { xeroInvoiceId: target.invoiceId } })) !== 1) return null;
   const linked = await decideLinkedRefundedTotalCents(tx, [payment]);
-  const creditNoteId = readString(asRecord(link.metadata)?.creditNoteId) ?? null;
-  const floored = await bankTransferFloorCents(tx, {
+  const decided = await decideXeroRefundedColumns(tx, {
     payment,
-    xeroDerivedCents: Math.min(Math.max(linked.get(payment.id) ?? 0, 0), payment.amountCents),
-    creditNoteId,
+    isOrganiserSettled: () => payment.booking.organiserSettled,
+    decidedCents: linked.get(payment.id) ?? 0,
+    creditNoteId: readString(asRecord(link.metadata)?.creditNoteId) ?? null,
   });
-  let status = getNextRefundedPaymentStatus(payment.status, payment.amountCents, floored.cents);
-  if (
-    status === PaymentStatus.SUCCEEDED &&
-    (payment.status === PaymentStatus.REFUNDED || payment.status === PaymentStatus.PARTIALLY_REFUNDED) &&
-    !payment.booking.organiserSettled
-  ) {
-    status = (await uncapturedPrimaryStatus(payment.id, tx)) ?? status;
-  }
-  const data = {
-    ...(floored.cents !== payment.refundedAmountCents ? { refundedAmountCents: floored.cents } : {}),
-    ...(status && status !== payment.status ? { status } : {}),
+  const changes = {
+    ...(decided.refundedAmountCents !== payment.refundedAmountCents ? { refundedAmountCents: decided.refundedAmountCents } : {}),
+    ...(decided.status && decided.status !== payment.status ? { status: decided.status } : {}),
   };
-  if (Object.keys(data).length === 0) return floored.alert;
+  if (Object.keys(changes).length === 0 && !linkWritten) return decided.floorAlert;
   // A claim on the row as re-read under its lock (`INV-LOCK-002`). The lock
   // means nothing can move it in between, so a lost claim is a broken
   // invariant: thrown, it rolls back the allocation write with it, and the
   // inbound event is retried. The alert is returned only for a committed write.
+  // `updatedAt` always moves forward, even on a frozen clock.
+  const updatedAt = new Date(Math.max(new Date().getTime(), payment.updatedAt.getTime() + 1));
   const claimed = await tx.payment.updateMany({
-    where: { id: payment.id, status: payment.status, refundedAmountCents: payment.refundedAmountCents },
-    data,
+    where: { id: payment.id, status: payment.status, refundedAmountCents: payment.refundedAmountCents, updatedAt: payment.updatedAt },
+    data: { ...changes, updatedAt },
   });
   if (claimed.count !== 1) throw new Error(`Refunded-total claim lost under the Payment row lock (#4449): ${payment.id}`);
-  return floored.alert;
+  return decided.floorAlert;
+}
+
+/**
+ * #4449 (`INV-PAY-126`): for a modification note, the payment each allocated
+ * invoice names: the one payment whose own invoice id it is, when that
+ * payment is a bank transfer. An invoice matched to several payments names
+ * none, as the repair after it skips one (`resolvePaymentIdsByInvoiceTargets`),
+ * and a payment found only by its link is decided by that repair alone.
+ * Narrower than that resolution on purpose, not a copy of it: the shared
+ * decision finds a bank-transfer payment's invoice allocations by the
+ * payment's own invoice id, so only such a payment can be decided by an
+ * allocation write; for every one it names, the resolution names the same.
+ * Read before the lock; `decideBankTransferRefundedTotal` re-checks it under it.
+ */
+async function bankTransferPaymentIdsByInvoiceId(
+  links: ReadonlyArray<{ metadata?: unknown }>,
+  isModificationNote: boolean,
+): Promise<Map<string, string>> {
+  const byInvoiceId = new Map<string, string>();
+  const invoiceIds = [
+    ...new Set(links.map((link) => readString(asRecord(link.metadata)?.invoiceId)).filter((id): id is string => Boolean(id))),
+  ];
+  if (!isModificationNote || invoiceIds.length === 0) return byInvoiceId;
+  const payments = await prisma.payment.findMany({
+    where: { xeroInvoiceId: { in: invoiceIds } },
+    select: { id: true, xeroInvoiceId: true, source: true },
+  });
+  for (const invoiceId of invoiceIds) {
+    const [only, ...more] = payments.filter((payment) => payment.xeroInvoiceId === invoiceId);
+    if (only && more.length === 0 && only.source === PaymentSource.INTERNET_BANKING) byInvoiceId.set(invoiceId, only.id);
+  }
+  return byInvoiceId;
+}
+
+/** The payment a link's write decides (`bankTransferPaymentIdsByInvoiceId`), if any. */
+function decidedPaymentOf(link: { metadata?: unknown }, byInvoiceId: ReadonlyMap<string, string>): { payment?: { id: string; invoiceId: string } } {
+  const invoiceId = readString(asRecord(link.metadata)?.invoiceId);
+  const id = invoiceId ? byInvoiceId.get(invoiceId) : undefined;
+  return id && invoiceId ? { payment: { id, invoiceId } } : {};
+}
+
+/** Floor alerts go out after every write's commit, outside any transaction. */
+async function sendFloorAlerts(alerts: readonly BankTransferFloorAlert[]): Promise<void> {
+  if (alerts.length === 0) return;
+  const format = await getClubFormat();
+  for (const alert of alerts) await sendBankTransferFloorAlert(alert, format);
 }
 
 /**
  * The inbound credit-note sync's allocation writes (#4447), each through
- * `writeCurrentCreditNoteAllocation`. #4449 (`INV-PAY-126`): for a
- * modification note, a link whose invoice is the one invoice of exactly one
- * payment, a bank-transfer one, names that payment, whose refunded total that
- * write decides; any floor alert goes out after the loop. An invoice matched
- * to several payments names none, as the repair after it skips one
- * (`resolvePaymentIdsByInvoiceTargets`), and a payment found only by its link
- * is decided by that repair alone. Narrower than that resolution on purpose,
- * not a copy of it: the shared decision finds a bank-transfer payment's
- * invoice allocations by the payment's own invoice id, so only such a payment
- * can be decided here; for every one it names, the resolution names the same.
+ * `writeCurrentCreditNoteAllocation`. #4449 (`INV-PAY-126`): a modification
+ * note's write names the payment `bankTransferPaymentIdsByInvoiceId` finds,
+ * whose refunded total that write decides; any floor alert goes out after the loop.
  */
 export async function writeCurrentCreditNoteAllocations(
   links: readonly XeroObjectLinkInput[],
   input: { isModificationNote: boolean },
 ): Promise<void> {
-  const bankTransferPaymentIdByInvoiceId = new Map<string, string>();
-  const invoiceIds = [
-    ...new Set(links.map((link) => readString(asRecord(link.metadata)?.invoiceId)).filter((id): id is string => Boolean(id))),
-  ];
-  if (input.isModificationNote && invoiceIds.length > 0) {
-    const payments = await prisma.payment.findMany({
-      where: { xeroInvoiceId: { in: invoiceIds } },
-      select: { id: true, xeroInvoiceId: true, source: true },
-    });
-    for (const invoiceId of invoiceIds) {
-      const [only, ...more] = payments.filter((payment) => payment.xeroInvoiceId === invoiceId);
-      if (only && more.length === 0 && only.source === PaymentSource.INTERNET_BANKING) {
-        bankTransferPaymentIdByInvoiceId.set(invoiceId, only.id);
-      }
-    }
-  }
+  const byInvoiceId = await bankTransferPaymentIdsByInvoiceId(links, input.isModificationNote);
   const floorAlerts: BankTransferFloorAlert[] = [];
   for (const link of links) {
-    const invoiceId = readString(asRecord(link.metadata)?.invoiceId);
-    const paymentId = invoiceId ? bankTransferPaymentIdByInvoiceId.get(invoiceId) : undefined;
-    const { floorAlert } = await writeCurrentCreditNoteAllocation(link, paymentId ? { paymentId } : {});
+    const { floorAlert } = await writeCurrentCreditNoteAllocation(link, decidedPaymentOf(link, byInvoiceId));
     if (floorAlert) floorAlerts.push(floorAlert);
   }
-  if (floorAlerts.length === 0) return;
-  const format = await getClubFormat();
-  for (const alert of floorAlerts) await sendBankTransferFloorAlert(alert, format);
+  await sendFloorAlerts(floorAlerts);
 }
 
 /**
@@ -247,6 +269,8 @@ export async function writeCurrentCreditNoteAllocations(
  */
 export async function retireUnlistedCreditNoteAllocations(input: {
   creditNoteId: string;
+  /** #4449: a modification note's removal decides its bank-transfer payment's total, as its write does. */
+  isModificationNote: boolean;
   status: unknown;
   readingMetadata: unknown;
   priorSnapshots: readonly unknown[];
@@ -276,20 +300,28 @@ export async function retireUnlistedCreditNoteAllocations(input: {
   });
 
   const readingAt = readRefundNoteSnapshotAt(input.readingMetadata);
-  let retired = 0;
-  for (const link of links) {
+  const unlisted = links.filter((link) => {
     const metadata = asRecord(link.metadata);
     const invoiceId = readString(metadata?.invoiceId);
-    if (readString(metadata?.creditNoteId) !== input.creditNoteId) continue;
-    if (!invoiceId || input.listedInvoiceIds.has(invoiceId)) continue;
-
-    const { written: turnedOff } = await writeCurrentCreditNoteAllocation({
-      ...link,
-      active: false,
-      metadata: { [REFUND_NOTE_SNAPSHOT_AT_KEY]: readingAt?.toISOString() ?? null },
-      mergeMetadata: true,
-    });
+    return readString(metadata?.creditNoteId) === input.creditNoteId && Boolean(invoiceId) && !input.listedInvoiceIds.has(invoiceId!);
+  });
+  // #4449: the payment's Payment row first, as the write that turned the link on took it.
+  const byInvoiceId = await bankTransferPaymentIdsByInvoiceId(unlisted, input.isModificationNote);
+  let retired = 0;
+  const floorAlerts: BankTransferFloorAlert[] = [];
+  for (const link of unlisted) {
+    const { written: turnedOff, floorAlert } = await writeCurrentCreditNoteAllocation(
+      {
+        ...link,
+        active: false,
+        metadata: { [REFUND_NOTE_SNAPSHOT_AT_KEY]: readingAt?.toISOString() ?? null },
+        mergeMetadata: true,
+      },
+      decidedPaymentOf(link, byInvoiceId),
+    );
     if (turnedOff) retired += 1;
+    if (floorAlert) floorAlerts.push(floorAlert);
   }
+  await sendFloorAlerts(floorAlerts);
   return retired;
 }
