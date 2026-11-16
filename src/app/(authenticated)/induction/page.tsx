@@ -88,7 +88,7 @@ export default function InductionPage() {
         <>
           <Card>
             <CardHeader>
-              <CardTitle>Your induction</CardTitle>
+              <CardTitle headingLevel={2}>Your induction</CardTitle>
               <CardDescription>
                 Work through the checklist below with your assigned signers so
                 they can confirm one overall Pass.
@@ -109,7 +109,7 @@ export default function InductionPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
+              <CardTitle headingLevel={2} className="flex items-center gap-2">
                 <PenLine className="h-5 w-5" />
                 Inductions awaiting your sign-off
               </CardTitle>
