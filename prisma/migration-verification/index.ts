@@ -27,6 +27,7 @@ import addPaymentTransactionInsertionSeq from "./20261117010000_add_payment_tran
 import correctStarterPrivacyAuditRetention from "./20261119010000_correct_starter_privacy_audit_retention";
 import addXeroConnection from "./20261124010000_add_xero_connection";
 import memberMoneyApplications from "./20261210080000_member_money_applications";
+import memberMoneyExportManifest from "./20261221030000_member_money_export_manifest";
 import memberMoneyJournal from "./20261127010000_member_money_journal";
 import stripeBalanceEvidence from "./20261211010000_stripe_balance_evidence";
 import releaseCancelledBookingPromos from "./20261217010000_release_cancelled_booking_promos";
@@ -34,7 +35,7 @@ import correctStarterPrivacyRetentionAndHosting from "./20261214010000_correct_s
 import summariseStarterFaqPersonalData from "./20261218070000_summarise_starter_faq_personal_data";
 import correctStarterPrivacySubjectAccess from "./20261220010000_correct_starter_privacy_subject_access";
 import addSkifieldWhakapapaModule from "./20261221010000_add_skifield_whakapapa_module";
-import clubTaxSchedule from "./20261221030000_club_tax_schedule";
+import clubTaxSchedule from "./20261221040000_club_tax_schedule";
 import type { DataMigrationVerification } from "./types";
 
 /**
@@ -91,5 +92,6 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   summariseStarterFaqPersonalData,
   correctStarterPrivacySubjectAccess,
   addSkifieldWhakapapaModule,
+  memberMoneyExportManifest,
   clubTaxSchedule,
 ];

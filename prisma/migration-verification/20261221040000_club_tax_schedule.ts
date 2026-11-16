@@ -1,7 +1,7 @@
 import type { DataMigrationVerification } from "./types";
 
 const verification: DataMigrationVerification = {
-  migration: "20261221030000_club_tax_schedule",
+  migration: "20261221040000_club_tax_schedule",
   intent:
     "An existing registered row keeps today's Xero output code, an existing unregistered row names none, and the new CHECK holds both.",
   idempotentReRun: false,

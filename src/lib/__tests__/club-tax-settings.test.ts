@@ -14,7 +14,7 @@ import {
 import { requireCalendarDate } from "@/lib/club-time";
 
 const MIGRATION = readFileSync("prisma/migrations/20261128050000_club_tax_settings/migration.sql", "utf8");
-const SCHEDULE_MIGRATION = readFileSync("prisma/migrations/20261221030000_club_tax_schedule/migration.sql", "utf8");
+const SCHEDULE_MIGRATION = readFileSync("prisma/migrations/20261221040000_club_tax_schedule/migration.sql", "utf8");
 const day = requireCalendarDate;
 const period = (overrides: Partial<ClubTaxPeriod>): ClubTaxPeriod => ({ ...CLUB_TAX_SETTINGS_DEFAULTS, ...overrides });
 const unregistered = (effectiveFrom: string) => period({ gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null, effectiveFrom: day(effectiveFrom) });

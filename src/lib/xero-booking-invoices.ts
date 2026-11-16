@@ -1,8 +1,8 @@
 /**
  * Booking-invoice create / update against Xero.
  *
- * Owns `buildInvoiceLineItems`, `createXeroInvoiceForBooking`, and
- * `updateXeroBookingInvoiceForBooking`. The create path also records the
+ * Owns `createXeroInvoiceForBooking` and `updateXeroBookingInvoiceForBooking`;
+ * re-exports `buildInvoiceLineItems` from `xero-booking-invoice-lines.ts`. The create path also records the
  * matching Xero payment when the Stripe charge succeeded with a
  * non-zero amount.
  */
@@ -47,21 +47,15 @@ import {
   xeroInvoiceEmailIsWithheldAtCreation,
 } from "@/lib/xero-invoice-email-instruction";
 import {
-  describeGuestRateMembershipLabel,
   getAccountMapping,
   getHutFeeItemCodeMap,
   getHutFeeSeasonType,
-  type HutFeeItemCodeResolver,
   getResolvedAccountMapping,
 } from "./xero-mappings";
-import {
-  applyHutFeeLineCodes,
-  resolveHutFeeLineItemCode,
-} from "@/lib/xero-hut-fee-line-codes";
+import { buildInvoiceLineItems } from "@/lib/xero-booking-invoice-lines";
+import { buildPrimaryInvoiceLines } from "@/lib/xero-primary-invoice-lines";
 import {
   isPromoAdjustmentLineDescription,
-  planPromoAdjustmentLines,
-  promoAdjustmentLineItems,
   promoAdjustmentLineRecord,
 } from "@/lib/xero-promo-adjustment-lines";
 import {
@@ -73,14 +67,7 @@ import {
   invoicedPartyContactRepair,
 } from "@/lib/organisation-xero-contacts";
 import { formatDateOnly } from "@/lib/date-only";
-import {
-  evenlySplitCents,
-  ONE_DAY_MS,
-  splitNightsIntoPriceRuns,
-  type NightPriceRun,
-} from "@/lib/night-price-runs";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { BASELINE_XERO_TAX_RENDERING, xeroLineTax, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
 import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
@@ -99,7 +86,7 @@ import {
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
 import { asRecord } from "@/lib/xero-json";
 import { bookingWorthCents, isCapturedPaymentStatus, recordedChangeFeeCents } from "@/lib/booking-payment-state";
-import { CHANGE_FEE_LINE_DESCRIPTION, changeFeeLineItem, invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
+import { CHANGE_FEE_LINE_DESCRIPTION, invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 import {
   cardSettleAllocatesAppliedCredit,
   cardSettleAppliedCreditCents,
@@ -114,6 +101,7 @@ import {
 } from "@/lib/xero-primary-invoice-fee-gap";
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
+import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest } from "@/lib/member-money/doors";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -130,159 +118,8 @@ export interface UpdateXeroBookingInvoiceOptions
 // Line-item construction
 // ---------------------------------------------------------------------------
 
-/**
- * Build Xero invoice line items from a booking's guests and stay nights.
- * Exported for testing.
- *
- * @param itemCodeResolver - Per-guest hut-fee item code resolver keyed by
- *   membership type (#1930, E4). When provided with a seasonType, each guest
- *   gets its own item code from its rateMembershipType snapshot (NULL falls
- *   back isMember -> FULL/NON_MEMBER).
- * @param itemCode - Single hutFeesIncome item code applied to all guests, used
- *   only when the resolver is absent/unconfigured or no seasonType is known —
- *   never as a fallback for a per-guest miss once keyed rows exist.
- * @param taxRendering - The treatment the lines carry (#4632), resolved from
- *   the booking's tax anchor by every caller that sends the document; the
- *   baseline only for a caller that totals lines without sending them.
- */
-export function buildInvoiceLineItems(
-  guests: Array<{
-    firstName: string;
-    lastName: string;
-    ageTier: string;
-    isMember: boolean;
-    // Rate-membership-type snapshot (#1930, E4) — drives the hut-fee item code.
-    rateMembershipTypeId?: string | null;
-    priceCents: number;
-    // Per-night rows (issue #713). When present, line items are emitted per
-    // contiguous run; otherwise the guest is billed as one line over the whole
-    // booking range, the pre-#713 behaviour.
-    // #3170: a night whose stored price is `null` is a night whose sold price is
-    // NOT KNOWN — written by a parked edit that committed a structural change
-    // without valuing it. See the guest branch below for what this builder does
-    // with one, and why it does not simply drop it.
-    nights?: Array<{ stayDate: Date; priceCents: number | null }> | null;
-  }>,
-  checkIn: Date,
-  checkOut: Date,
-  nights: number,
-  accountCode: string = "200",
-  itemCode?: string | null,
-  accountCodeExplicitlyConfigured: boolean = false,
-  itemCodeResolver?: HutFeeItemCodeResolver,
-  seasonType?: string | null,
-  taxRendering: XeroTaxRendering = BASELINE_XERO_TAX_RENDERING,
-): LineItem[] {
-  // The precedence itself (#1930, E4) lives in `xero-hut-fee-line-codes.ts`,
-  // shared with the itemised modification documents (#3530) so a night's money
-  // is coded the same way whichever document carries it.
-  const applyCodes = (
-    lineItem: LineItem,
-    guest: { ageTier: string; isMember: boolean; rateMembershipTypeId?: string | null },
-  ) =>
-    applyHutFeeLineCodes(lineItem, {
-      itemCode: resolveHutFeeLineItemCode(guest, { itemCodeResolver, seasonType, itemCode }),
-      accountCode,
-      accountCodeExplicitlyConfigured,
-    });
-
-  const runToLineItem = (
-    run: NightPriceRun,
-    guest: {
-      firstName: string;
-      lastName: string;
-      ageTier: string;
-      isMember: boolean;
-      rateMembershipTypeId?: string | null;
-    }
-  ): LineItem => {
-    const description = [
-      `${guest.firstName} ${guest.lastName}`,
-      // #2543: the label follows the RATE snapshot, so it agrees with the item
-      // code `applyCodes` resolves from the same field. See
-      // `describeGuestRateMembershipLabel`.
-      `(${guest.ageTier}, ${describeGuestRateMembershipLabel(itemCodeResolver, guest)})`,
-      `${run.nightCount} night${run.nightCount !== 1 ? "s" : ""}`,
-      `${formatDateOnly(run.startDate)} - ${formatDateOnly(run.endExclusive)}`,
-    ].join(" - ");
-    // perNightCents * nightCount === totalCents by construction, so the line
-    // reconciles to the exact cent total (#1163).
-    return applyCodes({
-      description,
-      quantity: run.nightCount,
-      unitAmount: run.perNightCents / 100, // Xero uses dollars, not cents
-      ...xeroLineTax(taxRendering), // the booking's tax treatment (#4632)
-    }, guest);
-  };
-
-  return guests.flatMap((guest) => {
-    const loadedNights = guest.nights ?? [];
-    /**
-     * #3170: the nights this guest's rows can actually price.
-     *
-     * A `null` night is one a PARKED edit committed without valuing (epic
-     * #2797): the structural change landed and the money is held as an OPEN
-     * `EDIT_FINANCIAL_REVIEW` task for a person to price.
-     *
-     * DROPPING SUCH A NIGHT FROM THE RUNS WOULD LOSE MONEY, silently. The runs
-     * reconcile to `guest.priceCents` only because they partition every night
-     * the guest holds; omitting one emits an invoice SHORT by that night's
-     * share, which is a real under-charge on a live Xero document
-     * (INV-MONEY-003). So an unknown night disqualifies the per-night detail
-     * for this guest ENTIRELY, and the guest falls to the whole-range legacy
-     * branch below — which bills `guest.priceCents`, a real stored number, over
-     * the booking's own range. That is the same treatment a pre-#713 or
-     * quoted guest with no night rows already gets, and it invents nothing:
-     * the even split below is a LINE-SPLITTING presentation that sums to the
-     * stored total exactly and is never written back to any row.
-     */
-    const guestNights = loadedNights.every(
-      (night): night is { stayDate: Date; priceCents: number } =>
-        typeof night.priceCents === "number",
-    )
-      ? loadedNights
-      : [];
-
-    // No per-night detail: bill the whole booking range (legacy path). Split
-    // the flat total into an exact per-night cent vector and run it through the
-    // same price-run splitter, so the emitted lines reconcile to guest.priceCents
-    // by construction (#1163). With no remainder this collapses to one line,
-    // byte-identical to the pre-#1163 behaviour.
-    if (guestNights.length === 0) {
-      if (nights <= 0) {
-        // Degenerate range: keep the single legacy line (quantity 0) rather
-        // than dividing by zero in the even split.
-        const description = [
-          `${guest.firstName} ${guest.lastName}`,
-          // #2543 — same rate-driven label as `runToLineItem`.
-          `(${guest.ageTier}, ${describeGuestRateMembershipLabel(itemCodeResolver, guest)})`,
-          `${nights} night${nights !== 1 ? "s" : ""}`,
-          `${formatDateOnly(checkIn)} - ${formatDateOnly(checkOut)}`,
-        ].join(" - ");
-        return [applyCodes({
-          description,
-          quantity: nights,
-          unitAmount: guest.priceCents / 100, // Xero uses dollars, not cents
-          ...xeroLineTax(taxRendering), // the booking's tax treatment (#4632)
-        }, guest)];
-      }
-      const syntheticNights = evenlySplitCents(guest.priceCents, nights).map(
-        (priceCents, i) => ({
-          stayDate: new Date(checkIn.getTime() + i * ONE_DAY_MS),
-          priceCents,
-        })
-      );
-      return splitNightsIntoPriceRuns(syntheticNights).map((run) =>
-        runToLineItem(run, guest)
-      );
-    }
-
-    // One line item per price-homogeneous contiguous run of nights.
-    return splitNightsIntoPriceRuns(guestNights).map((run) =>
-      runToLineItem(run, guest)
-    );
-  });
-}
+/** Lives in `xero-booking-invoice-lines.ts`; re-exported for existing importers. */
+export { buildInvoiceLineItems };
 
 /**
  * #1641 — after a CARD booking's invoice is raised with its effective Stripe
@@ -378,6 +215,33 @@ async function enrichClaimedOperationMoneyReconciliation(
   });
 }
 
+/**
+ * The lines the claimed operation sent, from its stored request (#4525), or
+ * null where it stored none. A read failure is null too: the manifest waits.
+ */
+async function readStoredPrimaryInvoiceLines(
+  syncOperationId: string,
+): Promise<{ storedLines: LineItem[] | null; storedLineAmountTypes: string | null }> {
+  try {
+    const operation = await prisma.xeroSyncOperation.findUnique({
+      where: { id: syncOperationId },
+      select: { requestPayload: true },
+    });
+    const invoices = asRecord(operation?.requestPayload)?.invoices;
+    const invoice = Array.isArray(invoices) ? asRecord(invoices[0]) : undefined;
+    const lines = invoice?.lineItems;
+    // #4632: the basis the stored invoice was raised under, frozen beside its lines.
+    const basis = invoice?.lineAmountTypes;
+    return {
+      storedLines: Array.isArray(lines) ? (lines as LineItem[]) : null,
+      storedLineAmountTypes: typeof basis === "string" ? basis : null,
+    };
+  } catch (error) {
+    logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice lines");
+    return { storedLines: null, storedLineAmountTypes: null };
+  }
+}
+
 export async function createXeroInvoiceForBooking(
   bookingId: string,
   options?: CreateXeroBookingInvoiceOptions
@@ -410,6 +274,14 @@ export async function createXeroInvoiceForBooking(
       xeroObjectUrl: buildXeroInvoiceUrl(booking.payment.xeroInvoiceId),
       role: "PRIMARY_INVOICE",
     });
+    // #4525 (Ledger M13): a run that linked the invoice but recorded no manifest
+    // records it here from the lines its operation stored. Nothing is rebuilt.
+    if (options?.syncOperation) {
+      await recordPrimaryInvoiceManifest(
+        { kind: "REPLAY", bookingId, ...(await readStoredPrimaryInvoiceLines(options.syncOperation.id)) },
+        booking.payment.xeroInvoiceId,
+      );
+    }
     // #3955 review X4 (round 3), #3980: a prior run that persisted the link but
     // died before or inside its gap check re-runs it here, from what the invoice
     // billed and the booking's worth as recorded with the link. Idempotent.
@@ -596,7 +468,6 @@ export async function createXeroInvoiceForBooking(
     // #4632: the treatment in force when the booking was made, for every line.
     resolveXeroTaxRendering({ kind: "booking", bookingId }),
   ]);
-  const incomeCode = hutFeeMapping.code ?? "200";
   const bankCode = stripeBankCode ?? "606";
 
   // Calculate nights using the same logic as the pricing engine
@@ -608,60 +479,50 @@ export async function createXeroInvoiceForBooking(
   const bookingSeasonType = await getHutFeeSeasonType(checkIn, booking.lodgeId);
 
   // Build line items with per-guest item codes
-  const lineItems = buildInvoiceLineItems(
-    booking.guests.map((g) => ({
-      firstName: g.firstName,
-      lastName: g.lastName,
-      ageTier: g.ageTier,
-      isMember: g.isMember,
-      rateMembershipTypeId: g.rateMembershipTypeId,
-      priceCents: g.priceCents,
-      nights: (g.nights ?? []).map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
-    })),
-    checkIn,
-    checkOut,
-    nights,
-    incomeCode,
-    hutFeeMapping.itemCode,
-    hutFeeMapping.codeExplicitlyConfigured,
-    // Always pass the resolver: on a legacy-only install (no keyed rows) it
-    // resolves the flat hutFeeItem; when unconfigured or without a seasonType,
-    // buildInvoiceLineItems falls to hutFeeMapping.itemCode (#1930, E4).
-    // Byte-identical to main's boolean-keyed map precedence.
-    hutFeeItemCodeMap,
-    bookingSeasonType,
-    taxRendering,
-  );
-
-  // Add signed promo adjustment lines if applicable. Negative values behave
-  // like discounts; positive values are extra revenue. One line per code
-  // (#3828, `INV-MONEY-040`); a booking with one code keeps its one line, and a
-  // several-code split that cannot be trusted falls back to the aggregate line
-  // and is recorded on the operation below.
-  const promoLinePlan = planPromoAdjustmentLines({
-    aggregateCents: xeroPromoAdjustmentCents,
-    redemptions: booking.promoRedemptions,
-    adjustmentRows: booking.nightAdjustments,
-  });
-  // The promo line's codes (#1930, E4) - shared with the promotion-delta line
-  // of an itemised modification document (#3530).
-  lineItems.push(
-    ...promoAdjustmentLineItems(promoLinePlan, {
-      firstGuest: booking.guests[0] ?? null,
-      itemCodeResolver: hutFeeItemCodeMap,
-      seasonType: bookingSeasonType,
-      hutFeeMapping,
-    }, taxRendering),
-  );
-  const promoLineRecord = promoAdjustmentLineRecord(promoLinePlan);
-
+  const invoiceGuests = booking.guests.map((g) => ({
+    firstName: g.firstName,
+    lastName: g.lastName,
+    ageTier: g.ageTier,
+    isMember: g.isMember,
+    rateMembershipTypeId: g.rateMembershipTypeId,
+    priceCents: g.priceCents,
+    nights: (g.nights ?? []).map((n) => ({ stayDate: n.stayDate, priceCents: n.priceCents })),
+  }));
+  // #4525 review: the lines are composed in ONE place, `buildPrimaryInvoiceLines`,
+  // which the manifest planner below calls too (`INV-SSOT`). Guest lines with
+  // per-guest item codes (#1930, E4); then the signed promo adjustment lines,
+  // one per code (#3828, `INV-MONEY-040`), a several-code split that cannot be
+  // trusted falling back to the aggregate line recorded on the operation below;
+  // then the change-fee line.
   // #3750 (owner, 7 Oct 2026, "Add fee to amount owed"; #3955 review X2): the
-  // change fee recorded on the payment is billed here in full — the ONE figure
+  // change fee recorded on the payment is billed in full — the ONE figure
   // the pay steps collect too (`recordedChangeFeeCents`), so the invoice equals
   // what the member is charged. No other document can have carried it yet;
   // the reasoning is on the helper.
-  const feeOwedCents = recordedChangeFeeCents(booking.payment);
-  if (feeOwedCents > 0) lineItems.push(changeFeeLineItem(feeOwedCents, hutFeeMapping, taxRendering));
+  const primaryLineInput = {
+    guests: invoiceGuests,
+    checkIn,
+    checkOut,
+    nights,
+    hutFeeMapping,
+    hutFeeItemCodeMap,
+    seasonType: bookingSeasonType,
+    promo: {
+      aggregateCents: xeroPromoAdjustmentCents,
+      redemptions: booking.promoRedemptions,
+      adjustmentRows: booking.nightAdjustments,
+      firstGuest: booking.guests[0] ?? null,
+    },
+    changeFeeCents: recordedChangeFeeCents(booking.payment),
+    // #4632: the treatment in force when the booking was made, on every line.
+    taxRendering,
+  };
+  const primaryLines = buildPrimaryInvoiceLines(primaryLineInput);
+  const lineItems = primaryLines.lines;
+  const promoLineRecord = promoAdjustmentLineRecord(primaryLines.promoLinePlan);
+  // #4525 (Ledger M13): the same composition, planned against the journal's components.
+  // Kept aside for the manifest once the link is stored; these lines are still what is sent.
+  const manifestPlan = await planPrimaryInvoiceManifest({ bookingId, ...primaryLineInput });
   // #3980: the worth this read gives and what its lines bill, stored with the link.
   const builtFrom = {
     worthCents: bookingWorthCents({ finalPriceCents: booking.finalPriceCents, changeFeeCents: booking.payment.changeFeeCents }),
@@ -1194,6 +1055,12 @@ export async function createXeroInvoiceForBooking(
       primaryInvoiceCashCents,
       primaryInvoiceAttemptedCashCents: shouldRecordStripeInvoicePayment ? invoicePaymentCents : 0,
     });
+    // #4525 (Ledger M13): the manifest, in its own transaction after the link. Never throws.
+    // A replayed create returns the ORIGINAL invoice, so the plan is held to the lines it bills.
+    await recordPrimaryInvoiceManifest(
+      { kind: "BUILT", bookingId, plan: manifestPlan, billedLines: createdInvoice.lineItems ?? lineItems },
+      createdInvoice.invoiceID,
+    );
     await prisma.paymentTransaction.updateMany({
       where: {
         paymentId: booking.payment.id,
