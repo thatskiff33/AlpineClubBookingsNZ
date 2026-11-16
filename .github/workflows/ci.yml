@@ -37,9 +37,14 @@ on:
 permissions:
   contents: read
 
+# Pull-request runs share a group per ref and cancel superseded runs. Each push
+# run gets a group of its own, keyed on ref and commit: GitHub replaces a PENDING run
+# in a shared group even without cancel-in-progress, and every push commit must
+# finish its run. Why: INV-OPS-021 (docs/invariants/operations.md, #4989).
+# Pinned by scripts/ci/main-push-runs-complete.test.ts.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'shared' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dependency-review:
@@ -60,7 +65,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -141,7 +146,7 @@ jobs:
       # pnpm itself, for `pnpm audit`; its version comes from `packageManager`
       # in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       # No `cache: pnpm`: nothing here installs, so there is no store to hit.
       - name: Set up Node.js
@@ -318,7 +323,7 @@ jobs:
       # gate on findings so the alerts still publish.
       - name: Upload Semgrep SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/semgrep-output/semgrep-results.published.sarif
           category: semgrep
@@ -532,7 +537,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -579,7 +584,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -628,7 +633,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -669,7 +674,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -779,7 +784,7 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
-      actions: read # poll this run attempt's shard, typecheck, lint and build jobs
+      actions: read # poll this run attempt's shard, typecheck, lint, build and real-PostgreSQL jobs
       # The concurrency-declaration gate fetches the CURRENT PR body from the
       # pulls API so a body edit can flip the check green on a plain re-run.
       pull-requests: read
@@ -803,7 +808,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1057,14 +1062,18 @@ jobs:
       # This is a STEP in the existing required job, not a `needs:` edge, and
       # it runs after this job's own gates, so the required job does real work
       # before it waits (#4425). One poll of this run attempt gates the unit
-      # shards and the three jobs `verify` used to run in series. The script
-      # refuses absent, duplicate, skipped and failed jobs, fails at once on
-      # the first failure, and times out rather than making `verify`
-      # vacuously green.
-      - name: Require the unit-test shards, typecheck, lint and build to pass
+      # shards, the three jobs `verify` used to run in series, and (#4907,
+      # owner decision 11 Nov 2026) every real-PostgreSQL suite in
+      # `realdb-all`. The script refuses absent, duplicate, skipped and failed
+      # jobs, fails at once on the first failure, and times out rather than
+      # making `verify` vacuously green. `realdb-all` is the slowest of them
+      # (18-25 minutes, median 23, over the 14 successful `main` push runs of
+      # 12-14 Nov 2026, measured for #4907); its 35-minute limit ends a hung
+      # run inside this poll's 45-minute wait, and both sit inside this job's 75.
+      - name: Require the unit-test shards, typecheck, lint, build and real-PostgreSQL suites to pass
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build"
+        run: node scripts/ci/require-test-shards.mjs --job Typecheck --job Lint --job "Production build" --job "Real-PostgreSQL suites (all)"
 
       # #3432: deliberately LAST. Keep the detailed base-selection contract
       # above beside the full-history checkout it depends on; placing this
@@ -1175,7 +1184,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1384,7 +1393,7 @@ jobs:
       # with the SHIPPED statements and CLI in scratch databases of its own (roles
       # are cluster-global, so each run carries a random prefix and drops them),
       # and needs pg_dump and psql from the runner. A required step, like the
-      # diagnostics proof above, so a broken grant blocks the merge; the advisory
+      # diagnostics proof above, so a broken grant blocks the merge; the
       # realdb-all job runs the same file too. It describe.skip's itself without
       # the env vars, so this step MUST stay wired —
       # `review-findings-contracts.test.ts` fails if it goes missing.
@@ -1400,7 +1409,7 @@ jobs:
       # PostgreSQL's behaviour, not code a mock can run. The suite applies the
       # shipped migration in a scratch database of its own on the race service
       # and drops it afterwards. A required step, like the roles proof above;
-      # the advisory realdb-all job runs the same file too. It describe.skip's
+      # the realdb-all job runs the same file too. It describe.skip's
       # itself without the env vars, so this step MUST stay wired —
       # `review-findings-contracts.test.ts` fails if it goes missing.
       - name: Prove the member-money journal's enforcement against dedicated PostgreSQL
@@ -1413,7 +1422,7 @@ jobs:
       # checks can say whether a built batch really commits, and replay and
       # the concurrent-poster race are PostgreSQL behaviour, not code a mock
       # can run. Same shape as the step above: a scratch database of its own,
-      # required, and the advisory realdb-all job runs the file too. It
+      # required, and the realdb-all job runs the file too. It
       # describe.skip's itself without the env vars, so this step MUST stay
       # wired — `review-findings-contracts.test.ts` fails if it goes missing.
       - name: Prove the member-money posting command against dedicated PostgreSQL
@@ -1431,6 +1440,17 @@ jobs:
         env:
           RUN_CONCURRENCY_RACE_TESTS: "1"
         run: pnpm exec vitest run src/lib/__tests__/member-money-applications.realdb.test.ts
+
+      # #4525 (Ledger M13): the primary invoice's export manifest against real
+      # PostgreSQL, as the INSERT/SELECT-only application role. Immutability,
+      # the coverage keys and the deferred coverage-total check are PostgreSQL
+      # behaviour. Same shape as the step above. It describe.skip's itself
+      # without the env vars, so this step MUST stay wired —
+      # `review-findings-contracts.test.ts` fails if it goes missing.
+      - name: Prove the member-money export manifest against dedicated PostgreSQL
+        env:
+          RUN_CONCURRENCY_RACE_TESTS: "1"
+        run: pnpm exec vitest run src/lib/__tests__/member-money-export-manifest.realdb.test.ts
 
       # E8 (#1934): real-Postgres behavior of the member-grouping cutover
       # migration (legacy-rule deactivation, shape-dedupe, backfill, mode seed,
@@ -1574,7 +1594,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1619,22 +1639,29 @@ jobs:
   # lock in `vitest.setup.ts`), so the run is as long as the files one after
   # another.
   #
-  # ADVISORY, deliberately NOT a required check (owner ruling, 1 Sep 2026: a
-  # required-check edit waits for the owner). So no required job may name it in
-  # `needs:`; `realdb-ci-coverage-census.test.ts` fails if one does. Becoming
-  # required is a separate owner step (CONTRIBUTING.md, "Branch protection").
+  # BLOCKING through `verify` (#4907, owner decision 11 Nov 2026, option B):
+  # it is not a branch-protection context of its own; `verify`'s same-attempt
+  # poll names it by its `name:` and fails on any result but success, a skip,
+  # a cancellation, a timeout or a missing job included. So it never has a
+  # job-level `if:` or `needs:` (a skip would fail `verify` on every PR), and
+  # no job may name it in `needs:`; `realdb-ci-coverage-census.test.ts` fails
+  # on either, and on any reference besides that one poll. Through `verify` it
+  # also gates the release: `publish-ghcr-images` needs `verify`, so a red,
+  # cancelled or timed-out run on `main` publishes no image for that commit
+  # (`deployment-image-contracts.test.ts` pins both links).
   #
   # The file list is `scripts/ci/realdb-files.mjs`: every realdb file minus
   # `scripts/ci/realdb-quarantine.txt`. The census reads the same two sources,
   # so a new realdb file is either run here or named in the quarantine.
   # The per-file steps in `migration-drift` and `data-migration-verification`
-  # stay: they are required, this job is not. The last step fails the job when a
-  # listed file skipped itself or never ran (`scripts/ci/check-realdb-ran.mjs`),
-  # so a suite whose gate is unset cannot read as green. The one suite that
+  # stay: they report sooner, inside their own required jobs. The last step
+  # fails the job when a listed file skipped itself or never ran
+  # (`scripts/ci/check-realdb-ran.mjs`), so a suite whose gate is unset cannot
+  # read as green. The one suite that
   # cannot share this process (booking-ledger-history-seed, run by
   # `scripts/booking-ledger-seed-gate.sh`) is in the quarantine file.
   realdb-all:
-    name: Real-PostgreSQL suites (all, advisory)
+    name: Real-PostgreSQL suites (all)
     runs-on: ubuntu-24.04
     # PR CI measured this job at 9m02s (#4476). By 8 Nov 2026 it took 16-18
     # minutes on `main` and was cancelled at the old 20-minute limit in 4 of 7
@@ -1674,7 +1701,7 @@ jobs:
 
       # The pnpm version comes from `packageManager` in package.json (#3673).
       - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1906,7 +1933,7 @@ jobs:
           echo "MIGRATE_IMAGE_NAME=${MIGRATE_IMAGE%:*}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

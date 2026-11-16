@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { adminListPageField } from "@/lib/admin-list-page";
 import {
   buildAuditCategoryWhere,
   buildMemberAuditLogWhere,
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 const querySchema = z.object({
   category: z.string().optional().default("all"),
-  page: z.coerce.number().int().min(1).optional().default(1),
+  page: adminListPageField,
   pageSize: z.coerce.number().int().min(1).max(50).optional().default(10),
 });
 

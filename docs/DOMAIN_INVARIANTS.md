@@ -20,7 +20,7 @@ description, so you can find the right file without opening more than one.
 
 | File under `docs/invariants/` | Prefixes | Read it when you are changing… |
 | --- | --- | --- |
-| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies |
+| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies, a member page's tab title and headings |
 | [`money.md`](invariants/money.md) | `INV-MONEY` | anything holding cents: fee authorities, whole-lodge pricing, promo caps, subscription charges, or the Xero invoice identity behind them |
 | [`booking-dates-and-capacity.md`](invariants/booking-dates-and-capacity.md) | `INV-DATE`, `INV-CAP`, plus `INV-LIFE-062` | what day it is, who is present, how many beds, which bed, custodian bed holds |
 | [`payment-and-settlement.md`](invariants/payment-and-settlement.md) | `INV-PAY` | taking, clearing, crediting or refunding money |
@@ -68,7 +68,8 @@ operative ones:
 
 ## Public authoritative content
 
-What the public site is allowed to publish.
+What the public site is allowed to publish, the image copies a gallery serves, and a
+member page's outline and title.
 File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 `INV-PUB`.
 
@@ -79,6 +80,7 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
 | `INV-PUB-004` | `{{data-hosting}}` publishes only the two typed hosting values, escaped, or fallback |
 | `INV-PUB-005` | Galleries serve current, smaller copies made at upload; originals kept |
+| `INV-PUB-006` | Member pages: own tab title, one h1; CardTitles declare a level |
 
 ## Money
 
@@ -370,6 +372,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
 | `INV-PAY-154` | A disputed capture is never refunded or credited |
+| `INV-PAY-155` | The inbound recount takes each failed-later card refund off once |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -977,6 +980,7 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-003` | Every global-lock call site is registered, by site, with its own reason |
 | `INV-LOCK-004` | A read taken under a lock uses the caller's transaction client |
 | `INV-LOCK-005` | Advisory-lock transactions use fresh READ COMMITTED snapshots |
+| `INV-LOCK-006` | A lock(1) waiter states the shared budget; contention is a 503 |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
 | `INV-OPS-020` | A row-capped admin list shows its total and reaches every row |
@@ -996,6 +1000,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
+| `INV-OPS-021` | Every main push run completes; releases tag only published commits |
 
 ## Product Configuration
 
