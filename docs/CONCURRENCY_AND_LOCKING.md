@@ -7612,7 +7612,15 @@ stated limit in the payments guide. The reduce action
 and dispute re-read through the same decision, then claims with an `updateMany`
 guarded on `status: OPEN` and the amount it read, before the journal's part
 withdrawal (under the Payment row it holds) and the audit row; a lost claim
-writes nothing. No new advisory key or row-lock statement. Every other hand-back writer and the late-cash mint hold
+writes nothing. A dispute-held edit's hand-back (#5151) is dismissed and
+reduced through the same decision and the same three locks (owner decision,
+18 Nov 2026), which also re-reads every task on the payment: lost cents go once
+across the payment's hand-backs, oldest open task first (`INV-PAY-157`). Every
+door that applies them holds `lock(1)`, so two officers on two tasks of one
+payment run one after the other and the second reads what the first applied;
+an older task's dismissal or reduction never changes a younger one's share. Mark
+paid reads the same rule under `lock(1)` and the booking row, before its own
+Payment row. No new advisory key or row-lock statement. Every other hand-back writer and the late-cash mint hold
 `lock(1)`. An organisation's late-cash hand-back (`invoice-paid-effects.ts`)
 posts its R05 after the delivery's Payment row, so it reads the owner plainly
 rather than taking the booking row: no Payment -> booking edge, and no member

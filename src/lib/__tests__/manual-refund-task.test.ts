@@ -962,13 +962,65 @@ describe("resolveManualRefundTask", () => {
       expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledTimes(1);
     });
 
-    it("#4516: an edit's hand-back on a booking with a lost dispute is still refused, and reads no disputes", async () => {
-      await withFacts({ occurrenceKey: "edit-refund-hand-back:mod-1", booking: { memberId: "member-1", lodgeId: "lodge-1", status: "PAID", payment: null } });
+    // #4516 (owner decision, 18 Nov 2026, comment 6951152823): a dispute-held edit's hand-back (#5151) follows the same
+    // rule as a cancellation's. MUTATIONS: narrowing the rule back to cancellations fails every case below.
+    const EDIT = { occurrenceKey: "edit-refund-hand-back:mod-1", booking: { memberId: "member-1", lodgeId: "lodge-1", status: "PAID", payment: null } };
+
+    it("#4516 (owner, 18 Nov 2026): an edit's hand-back whose lost dispute covers it dismisses: Payment row, disputes, claim, R05 withdrawn", async () => {
+      await withFacts(EDIT);
       mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST")]);
 
-      await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
+      await dismissTask();
 
-      expect(mocks.stripeDisputeFindMany).not.toHaveBeenCalled();
+      expect(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]).toBeLessThan(mocks.stripeDisputeFindMany.mock.invocationCallOrder[0]!);
+      expect(mocks.stripeDisputeFindMany.mock.invocationCallOrder[0]).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]!);
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledExactlyOnceWith(tx, expect.anything(), expect.objectContaining({ scope: "hand-back", id: "task-1" }));
+    });
+
+    it.each([
+      ["open", [dispute("OPEN")], /while the card payment's dispute is open/],
+      ["won", [dispute("WON")], /the card payment's dispute was won, so the club still owes it/],
+      ["lost for part", [dispute("LOST", "dp_1", 3000)], DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL],
+    ])("#4516 (owner, 18 Nov 2026): an edit's hand-back refuses Dismiss while its dispute is %s, writing nothing", async (_label, disputes, message) => {
+      await withFacts(EDIT);
+      mocks.stripeDisputeFindMany.mockResolvedValue(disputes);
+
+      await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: typeof message === "string" ? message : expect.stringMatching(message) });
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+      expect(vi.mocked(withdrawRefundObligation)).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["lost for part (reduce it first)", [dispute("LOST", "dp_1", 3000)], DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING],
+      ["lost for all of it (dismiss it instead)", [dispute("LOST", "dp_1", 9000)], DISPUTED_HAND_BACK_LOST_NOT_PAYABLE],
+      ["lost on one charge while another is still open", [dispute("LOST", "dp_1", 3000), dispute("OPEN", "dp_2", 2000)], DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE],
+    ])("#4516 (owner, 18 Nov 2026): Mark paid on an edit's hand-back is refused while its dispute is %s", async (_label, disputes, message) => {
+      await withFacts(EDIT);
+      mocks.stripeDisputeFindMany.mockResolvedValue(disputes);
+      await expect(resolveManualRefundTask({ taskId: "task-1", resolution: "completed", note: null, actingMemberId: "admin-1", confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null }, CLUB_FORMAT_TEST))
+        .rejects.toMatchObject({ status: 409, message });
+      expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("#4516 (owner, 18 Nov 2026): a won dispute leaves an edit's hand-back payable", async () => {
+      await withFacts(EDIT);
+      mocks.stripeDisputeFindMany.mockResolvedValue([dispute("WON")]);
+      await resolveManualRefundTask({ taskId: "task-1", resolution: "completed", note: null, actingMemberId: "admin-1", confirmedAmountCents: null, direction: "REFUND_TO_MEMBER", recordedNightPrices: null }, CLUB_FORMAT_TEST);
+      expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: ManualRefundTaskStatus.COMPLETED }) }));
+    });
+
+    it("#4516 (owner, 18 Nov 2026): a lost dispute dismisses an edit's hand-back even after the booking was cancelled (the money went back through the bank)", async () => {
+      await withFacts({ ...EDIT, booking: { ...EDIT.booking, status: "CANCELLED" } });
+      mocks.stripeDisputeFindMany.mockResolvedValue([dispute("LOST")]);
+
+      await dismissTask();
+
+      expect(vi.mocked(withdrawRefundObligation)).toHaveBeenCalledTimes(1);
+    });
+
+    it("CONTROL: an edit's hand-back with no dispute is still refused (the four-way dismissal is later)", async () => {
+      await withFacts(EDIT);
+      await expect(dismissTask()).rejects.toMatchObject({ status: 409, message: JOURNAL_HAND_BACK_DISMISS_REFUSAL });
       expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
     });
 

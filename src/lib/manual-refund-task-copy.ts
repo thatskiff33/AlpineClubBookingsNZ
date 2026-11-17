@@ -467,6 +467,17 @@ export const DISPUTED_HAND_BACK_REDUCTION_FAILED = "Could not reduce the refund.
 export const DISPUTED_HAND_BACK_REDUCED_REFUSAL =
   "This refund can't be dismissed: the lost card dispute has already reduced it, and the club still owes the rest. Mark it paid once the money has gone back.";
 
+/**
+ * That hand-back while the payment's lost disputes go to an older refund on the same payment first (owner decision,
+ * 18 Nov 2026: lost cents are counted once across the payment's refunds, oldest first). The club still owes this one.
+ */
+export const DISPUTED_HAND_BACK_LOSS_ON_ANOTHER_REFUND =
+  "This refund can't be dismissed: the lost card dispute is set against an earlier refund on the same card payment, so the club still owes this one. Mark it paid once the money has gone back.";
+
+/** The reduce action on that hand-back: nothing of the lost dispute is left for it. */
+export const DISPUTED_HAND_BACK_LOSS_ON_ANOTHER_REFUND_REDUCTION =
+  "There is nothing to reduce here: the lost card dispute is set against an earlier refund on the same card payment.";
+
 /** The reduce action refused on a task that is not a disputed card payment's hand-back. */
 export const NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL =
   "Only a refund handed to the treasurer because its card payment is disputed can be reduced by a lost dispute.";

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   taskFindUnique: vi.fn(),
   taskFindUniqueOrThrow: vi.fn(),
   taskUpdateMany: vi.fn(async () => ({ count: 1 })),
+  taskFindMany: vi.fn(async (): Promise<unknown[]> => []),
   disputeFindMany: vi.fn(async (): Promise<unknown[]> => []),
   lockBookingRow: vi.fn(async () => undefined),
   lockPayment: vi.fn(async () => undefined),
@@ -23,7 +24,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: async (fn: (tx: unknown) => unknown) => fn({
       $executeRaw: (...a: unknown[]) => mocks.executeRaw(...(a as [])),
-      manualRefundTask: { findUnique: mocks.taskFindUnique, findUniqueOrThrow: mocks.taskFindUniqueOrThrow, updateMany: mocks.taskUpdateMany },
+      manualRefundTask: { findUnique: mocks.taskFindUnique, findUniqueOrThrow: mocks.taskFindUniqueOrThrow, updateMany: mocks.taskUpdateMany, findMany: mocks.taskFindMany },
       stripeDispute: { findMany: mocks.disputeFindMany },
     }),
   },
@@ -126,8 +127,14 @@ describe("reducing a disputed card payment's hand-back by a dispute lost for par
     expect(mocks.taskUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("refuses an edit's hand-back, which no dispute reduces, reading no disputes", async () => {
+  it("#4516 (owner, 18 Nov 2026): reduces a dispute-held edit's hand-back the same way, Payment row before the disputes", async () => {
     withTask({ occurrenceKey: "edit-refund-hand-back:mod-1" });
+    expect(await reduce()).toEqual({ taskId: "task-1", wasCents: 10_000, reducedByCents: 3_000, stillOwedCents: 7_000 });
+    expect(mocks.lockPayment.mock.invocationCallOrder[0]).toBeLessThan(mocks.disputeFindMany.mock.invocationCallOrder[0]!);
+  });
+
+  it("refuses a hand-back that is not a disputed card payment's (an appeal's bank part), reading no disputes", async () => {
+    withTask({ occurrenceKey: "refund-request-hand-back:req-1" });
     await expect(reduce()).rejects.toMatchObject({ status: 409, message: NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL });
     expect(mocks.disputeFindMany).not.toHaveBeenCalled();
   });

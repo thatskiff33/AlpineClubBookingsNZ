@@ -951,8 +951,10 @@ Dismissing a real bank or cash hand-back, whenever it was raised, is refused
 for now, so its debt stays open until it is paid (owner decision, 14 Nov 2026,
 #4516); a four-way dismissal that records why follows in its own change. A card
 shortfall's part to check keeps its dismissal, and a disputed card payment's
-hand-back is dismissed once its dispute is lost, or reduced by a dispute lost
-for part of it (owner decisions, 15 Nov 2026); each withdraws its debt, or that
+hand-back, a cancellation's or a dispute-held edit's, is dismissed once its
+dispute is lost, or reduced by a dispute lost for part of it, lost cents counted
+once across the payment's hand-backs, oldest first (owner decisions, 15 and 18
+Nov 2026, `INV-PAY-157`); each withdraws its debt, or that
 part of it, exactly (a part is a Dr refund payable, Cr receivable batch paying
 the debt). An
 approved appeal's bank part posts its concession against goodwill first, as

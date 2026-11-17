@@ -190,11 +190,11 @@ export async function resolveManualRefundTask(
     // settled by paying it. The cancel counted it as going back; dismissing it
     // now would leave the cancellation's kept figure wrong. Read under lock(1)
     // (taken above for this kind), which a paid cancel also holds.
-    if (resolution === "dismissed" && isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED) {
+    const journalDismissal = await decideJournalHandBackDismissal(tx, task, resolution); // #4516: under lock(1), the booking row and the Payment row, disputes and the payment's tasks re-read; before the claim
+    if (resolution === "dismissed" && isEditRefundHandBackTask(task) && task.booking.status === BookingStatus.CANCELLED && !journalDismissal.disputeLost) { // #4516 (owner, 18 Nov 2026): a lost dispute already sent it back
       throw new ManualBookingPaymentError(editRefundHandBackDismissAfterCancelMessage(task.booking), 409); // #3949: names the organiser on a group child
     }
-    const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); // #4042
-    const journalDismissal = await decideJournalHandBackDismissal(tx, task, resolution); if (journalDismissal.refusal) throw new ManualBookingPaymentError(journalDismissal.refusal, 409); // #4516: under lock(1), the booking row and the Payment row, disputes re-read; before the claim
+    const groupRefusal = groupOrganiserHandBackRefusal(task, resolution, confirmedAmountCents, format); if (groupRefusal) throw new ManualBookingPaymentError(groupRefusal, 409); if (journalDismissal.refusal) throw new ManualBookingPaymentError(journalDismissal.refusal, 409); // #4042; #4516
     const laterRemoval = resolution === "completed" && input.refuseIfGuestRemovedSinceRaised === true ? await editReviewLaterRemovalRefusal(tx, task, resolution) : null; if (laterRemoval) throw new ManualBookingPaymentError(laterRemoval, 409); // #4343: the clean-up's opt-in, under lock(1), which a consent removal also holds; an officer is warned instead (owner, 24 Oct)
     const isEditReview = task.kind === ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW;
 

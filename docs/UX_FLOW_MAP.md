@@ -649,7 +649,7 @@ Screen: `/admin/payments`.
 
 Shows: Payment records, statuses and links to related bookings.
 
-Journey: Filter payments, open a record, and inspect its booking and provider status. On **Money to settle**, a refund handed to the treasurer because its card payment is disputed offers **Reduce by lost dispute** when the dispute was lost for part of it: the confirmation states what the refund was, what it is reduced by and what is still owed, and the task stays open for the rest (#4516).
+Journey: Filter payments, open a record, and inspect its booking and provider status. On **Money to settle**, a refund handed to the treasurer because its card payment is disputed offers **Reduce by lost dispute** when the dispute was lost for part of it: the confirmation states what the refund was, what it is reduced by and what is still owed, and the task stays open for the rest (#4516). The same holds for a booking change's refund held by a dispute; lost money is counted once across a payment's refunds, oldest first, and a row with lost money set against it offers no **Mark paid back** (`INV-PAY-157`).
 
 [Guide](guides/payments.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

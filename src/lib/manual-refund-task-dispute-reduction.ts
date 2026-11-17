@@ -30,7 +30,7 @@ import { prisma } from "@/lib/prisma";
 
 const SELECT = {
   id: true, bookingId: true, paymentId: true, kind: true, occurrenceKey: true, partPaymentReviewPaymentId: true, reason: true,
-  status: true, amountCents: true, raisedAmountCents: true, booking: { select: { memberId: true } },
+  status: true, createdAt: true, amountCents: true, raisedAmountCents: true, booking: { select: { memberId: true } },
 } satisfies Prisma.ManualRefundTaskSelect;
 
 /** What a reduction did: what the refund was, what it was reduced by and what is still owed. */

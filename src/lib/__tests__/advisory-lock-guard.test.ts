@@ -1748,8 +1748,9 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // row first, so this Payment row is after them; so does a cancellation
   // hand-back's completion (`lockCancellationHandBackBeforeClaim`) and (owner
   // decisions 15 Nov 2026) the dismissal of a card shortfall's part to check or
-  // a disputed card payment's hand-back (`decideJournalHandBackDismissal`, which
-  // then re-reads the booking's disputes), whose R05 withdrawal after the claim
+  // a disputed card payment's hand-back, a cancellation's or (owner decision,
+  // 18 Nov 2026) a dispute-held edit's (`decideJournalHandBackDismissal`, which
+  // then re-reads the booking's disputes and the payment's tasks), whose R05 withdrawal after the claim
   // re-takes it. The order a "Paid another way" close takes
   // the Payment row and that task's row in; #4824: an approval's plan
   // (`planLateCaptureApprovalRefund`) takes it first, before it reads what the

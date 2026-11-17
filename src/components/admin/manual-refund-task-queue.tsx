@@ -121,6 +121,8 @@ interface ManualRefundTask {
   disputedHandBackLost?: boolean;
   /** #4516: its disputes lost for part of what is still owed: the reduction the server offers. Optional, as above. */
   disputeReduction?: { reducedByCents: number; stillOwedCents: number } | null;
+  /** #4516 (owner decision, 18 Nov 2026): set, the server refuses Mark paid (a lost dispute this refund takes), so none is offered. */
+  markPaidRefusal?: string | null;
   /** #4097: what a card cancellation's card refund could not carry - by bank transfer, or checked first. Optional, as above. */
   cardShortfallHandBack?: boolean;
   cardShortfallCheck?: boolean;
@@ -1642,7 +1644,7 @@ export function ManualRefundTaskQueue() {
                       {manualRefundTaskKindAllowsSettlement(
                         task.kind,
                         isPartPaymentReview(task),
-                      ) ? (
+                      ) && !task.markPaidRefusal ? (
                       <ViewOnlyActionButton
                         canEdit={canEdit}
                         type="button"

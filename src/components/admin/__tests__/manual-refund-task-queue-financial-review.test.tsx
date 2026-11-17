@@ -19,7 +19,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
-import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
+import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 
 /**
  * #3033 (epic #2797) — the finance queue told every admin the wrong thing about
@@ -348,6 +348,21 @@ describe("a real bank or cash hand-back offers no Dismiss for now (#4516, owner 
   it("CONTROL: with no reduction offered there is no reduce button", async () => {
     await renderQueue({ tasks: [{ ...HAND_BACK_TASK, journalHandBackDismissRefusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, disputeReduction: null }], viewerCanViewBookings: true });
     expect(screen.queryByRole("button", { name: /reduce by lost dispute/i })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["lost in full: Dismiss, never Mark paid", { journalHandBackDismissRefusal: null, disputedHandBackLost: true, markPaidRefusal: DISPUTED_HAND_BACK_LOST_NOT_PAYABLE }, true],
+    ["lost in part: Reduce, never Mark paid", { journalHandBackDismissRefusal: DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, disputeReduction: { reducedByCents: 3_000, stillOwedCents: 5_000 }, markPaidRefusal: DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING }, false],
+  ])("#4516 (owner decision, 18 Nov 2026): a dispute-held edit's hand-back %s", async (_label, facts, dismissible) => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, kind: "CANCELLED_BOOKING_HAND_BACK", editRefundHandBack: true, ...facts }], viewerCanViewBookings: true });
+
+    expect(screen.queryByRole("button", { name: /mark paid back/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^dismiss$/i }) !== null).toBe(dismissible);
+  });
+
+  it("CONTROL: a won dispute (no Mark paid refusal) keeps Mark paid back", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, kind: "CANCELLED_BOOKING_HAND_BACK", editRefundHandBack: true, journalHandBackDismissRefusal: disputedHandBackDismissRefusal("WON"), markPaidRefusal: null }], viewerCanViewBookings: true });
+    expect(screen.getByRole("button", { name: /mark paid back/i })).toBeInTheDocument();
   });
 
   it("#4516: once its dispute is lost it keeps Dismiss, and the dialog says the cardholder already has the money", async () => {

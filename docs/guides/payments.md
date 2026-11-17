@@ -199,10 +199,15 @@ member is told the club will arrange their refund.
    and the bank-transfer part of a card refund shortfall. A card refund
    shortfall's part to check can still be dismissed, once you have confirmed
    the card refund reached the member (owner decision, 15 Nov 2026; see below).
-   So can the hand-back a cancellation raises when the cardholder is disputing
-   the card payment, once Stripe records the dispute as lost for at least the
-   refund due: the cardholder already has the money back through their bank,
-   so dismiss it with a note. While the dispute is open, if the club won it, or
+   So can the hand-back a cancellation or a booking change raises when the
+   cardholder is disputing the card payment (owner decisions, 15 and 18 Nov
+   2026), once Stripe records the dispute as lost for at least the refund due:
+   the cardholder already has the money back through their bank, so dismiss it
+   with a note. Lost money is counted once across all the refunds on that card
+   payment, oldest refund first: a $100 loss on a payment with a $100 refund
+   from a booking change and a later $200 refund from its cancellation lets you
+   dismiss the $100 one and leaves the $200 one owed in full, never both. A
+   refund the loss does not reach says so, and is paid as usual. While the dispute is open, if the club won it, or
    if it was lost for less than the refund, the app refuses Dismiss and says
    why: the club may still owe that refund. For a dispute lost for part of the
    refund, use **Reduce by lost dispute** instead (owner decision, 15 Nov 2026):
