@@ -21,26 +21,21 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
 
 /**
- * #3033 (epic #2797) — the finance queue told every admin the wrong thing about
- * a financial-review row, and could not show them the evidence to price it.
+ * The finance queue's "Money to settle" card: what it says about each kind of
+ * row, who may follow its booking link, and - since #4344 (wave C1 of #4302) -
+ * that a retired officer edit review is shown read-only.
  *
- * THE DEFECT THIS FIXES WAS ALREADY LIVE. #3030 added the
- * `EDIT_FINANCIAL_REVIEW` kind and this card could already render one, under a
- * standing paragraph saying every row here "was paid in cash or by a bank
- * transfer that never reached Xero, and have since been cancelled". None of that
- * is true of a review row: the booking is live, the stay change saved, and the
- * money is unresolved rather than owed in cash.
+ * The officer review's own settle screen, its evidence block, its night-price
+ * boxes and its still-owed notice were retired with the review. The route no
+ * longer lists one (`route.test.ts`) and the resolve route refuses the kind
+ * (`resolve-route.test.ts`); a review row reaches this card only from an older
+ * route during a deploy, and the cases below hold what the card does then.
  *
- * MUTATION PROOF. Print the cash paragraph unconditionally and "prints the cash
- * hand-back sentence only over rows it describes" fails. Render the evidence
- * block for a hand-back row, or drop it for a review row, and the two evidence
- * tests fail. Reuse the hand-back dismissal wording on a review row and "a
- * dismissal on a review reads as a finding, not a refusal" fails. Enable the
- * completion button on an unpriced review and "refuses to offer a completion it
- * knows the server will reject" fails. Render the booking link without checking
- * the flag and "prints the identifier instead of a link the viewer cannot
- * follow" fails. Format an absent stored night price as $0.00 and "keeps an
- * absent stored price apart from a comped night" fails.
+ * MUTATION PROOF. Give a review row its old buttons back and "offers no control
+ * on a retired review" fails. Print the cash paragraph over a review row and
+ * "does not describe a retired review as a cancelled cash booking" fails.
+ * Render the booking link without checking the flag and "prints the identifier
+ * instead of a link the viewer cannot follow" fails.
  */
 
 const STAY = {
@@ -57,40 +52,19 @@ const HAND_BACK_TASK = {
   reason: "Cancelled after a cash payment",
   createdAt: "2026-06-20T00:00:00Z",
   memberName: "Ada Lovelace",
-  reviewEvidence: null,
-  reviewEvidenceUnreadable: false,
   ...STAY,
 };
 
-const REVIEW_TASK = {
+/** What an older route still listing an open review would send. */
+const RETIRED_REVIEW_TASK = {
   id: "task-review",
   bookingId: "booking-edit",
-  // Unpriced, which is the ordinary shape of a review: the whole point is that
-  // the system refused to invent a number.
   amountCents: null,
   raisedAmountCents: null,
   kind: "EDIT_FINANCIAL_REVIEW",
   reason: "A change to this booking could not be priced from stored history.",
   createdAt: "2026-06-21T00:00:00Z",
   memberName: "Grace Hopper",
-  reviewEvidence: {
-    cause: "PARTIAL_STORED_NIGHT_PRICES",
-    surrenderedNightDates: ["2026-08-11"],
-    addedNightDates: [],
-    storedEvidence: {
-      guestTotalCents: 12000,
-      nightPrices: [
-        { date: "2026-08-10", priceCents: 6000 },
-        // An absence, not a comped night.
-        { date: "2026-08-11", priceCents: null },
-      ],
-    },
-    bookingCheckIn: "2026-08-10",
-    bookingCheckOut: "2026-08-12",
-    // This edit added nobody; the #3166 cases below supply their own.
-    guestsAddedByEdit: null,
-  },
-  reviewEvidenceUnreadable: false,
   ...STAY,
 };
 
@@ -111,6 +85,19 @@ async function renderQueue(body: unknown) {
     expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
   );
   return screen.getByTestId("manual-refund-task-queue");
+}
+
+/** How many close POSTs the screen made. A load is a GET and has no init. */
+function postCount(fetchMock: { mock: { calls: unknown[][] } }): number {
+  return fetchMock.mock.calls.filter((call) => call[1] !== undefined).length;
+}
+
+function postBody(fetchMock: { mock: { calls: unknown[][] } }) {
+  const post = fetchMock.mock.calls.find((call) => call[1] !== undefined);
+  return JSON.parse((post?.[1] as { body: string }).body) as Record<
+    string,
+    unknown
+  >;
 }
 
 afterEach(() => {
@@ -303,178 +290,69 @@ describe("a group organiser's Internet Banking hand-back has its own sentence (#
   });
 });
 
-describe("the card only makes claims about rows it actually holds (#3033)", () => {
-  it("prints the cash hand-back sentence only over rows it describes", async () => {
-    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
+
+describe("a retired officer edit review is shown, never acted on (#4344)", () => {
+  it("offers no control on a retired review, and says why", async () => {
+    const queue = await renderQueue({
+      tasks: [RETIRED_REVIEW_TASK],
+      viewerCanViewBookings: true,
+    });
+    const row = within(queue).getByText(/Grace Hopper/).closest("li");
+    expect(row).not.toBeNull();
+
+    expect(within(row as HTMLElement).queryAllByRole("button")).toHaveLength(0);
+    expect(
+      within(row as HTMLElement).getByTestId("manual-refund-task-retired-review"),
+    ).toHaveTextContent(/retired/);
+    // Its booking is still one click away, which is where its history lives.
+    expect(within(row as HTMLElement).getByRole("link")).toHaveAttribute(
+      "href",
+      "/bookings/booking-edit",
+    );
+  });
+
+  it("does not describe a retired review as a cancelled cash booking, or as a settled zero", async () => {
+    const queue = await renderQueue({
+      tasks: [RETIRED_REVIEW_TASK],
+      viewerCanViewBookings: true,
+    });
 
     expect(
       screen.queryByTestId("manual-refund-task-hand-back-intro"),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByTestId("manual-refund-task-review-intro"),
-    ).toBeInTheDocument();
+    expect(queue).toHaveTextContent("Amount not known");
+    expect(queue).not.toHaveTextContent("$0.00");
   });
 
-  it("prints the review sentence only when a review is waiting", async () => {
-    await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
-
-    expect(
-      screen.getByTestId("manual-refund-task-hand-back-intro"),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByTestId("manual-refund-task-review-intro"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("prints both when the queue holds both, and neither speaks for the other", async () => {
-    await renderQueue({
-      tasks: [HAND_BACK_TASK, REVIEW_TASK],
+  it("leaves the hand-back beside it fully actionable", async () => {
+    const queue = await renderQueue({
+      tasks: [HAND_BACK_TASK, RETIRED_REVIEW_TASK],
       viewerCanViewBookings: true,
     });
+    const handBack = within(queue).getByText(/Ada Lovelace/).closest("li");
 
+    expect(
+      within(handBack as HTMLElement).getByRole("button", { name: "Mark paid back" }),
+    ).toBeEnabled();
+    expect(
+      within(handBack as HTMLElement).getByRole("button", { name: "Dismiss" }),
+    ).toBeEnabled();
     expect(
       screen.getByTestId("manual-refund-task-hand-back-intro"),
     ).toHaveTextContent(/Some of these bookings were paid in cash/);
-    expect(
-      screen.getByTestId("manual-refund-task-review-intro"),
-    ).toHaveTextContent(/could not be worked out/);
-  });
-
-  it("never shows an unpriced review as a settled zero", async () => {
-    const queue = await renderQueue({
-      tasks: [REVIEW_TASK],
-      viewerCanViewBookings: true,
-    });
-
-    expect(queue).toHaveTextContent("Awaiting pricing");
-    expect(queue).not.toHaveTextContent("$0.00");
+    expect(screen.getAllByTestId("manual-refund-task-retired-review")).toHaveLength(1);
   });
 });
 
-describe("the evidence an admin prices from (#3033, owner decision D3)", () => {
-  it("shows the safe diagnostic category, the nights and the stored prices", async () => {
-    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
-
-    const evidence = screen.getByTestId("manual-refund-task-review-evidence");
-    // The cause reaches the screen as a sentence, never as its enum name.
-    expect(evidence).not.toHaveTextContent("PARTIAL_STORED_NIGHT_PRICES");
-    expect(evidence).toHaveTextContent(/Only some of the nights given back/);
-    expect(evidence).toHaveTextContent("Nights given back: 11 Aug 2026");
-    expect(evidence).toHaveTextContent("Nights added by the same change: none");
-    expect(evidence).toHaveTextContent("Stored total for this guest: $120.00");
-  });
-
-  it("keeps an absent stored price apart from a comped night", async () => {
-    // A zero is a real price the club charged; "no stored price" is the evidence
-    // gap that raised the task. Collapsing them hides what is being looked at.
-    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
-
-    const evidence = screen.getByTestId("manual-refund-task-review-evidence");
-    expect(evidence).toHaveTextContent("10 Aug 2026 $60.00");
-    expect(evidence).toHaveTextContent("11 Aug 2026 no stored price");
-  });
-
-  it("says that the same change added guests, and that they have not been charged (#3166)", async () => {
-    // The block above describes an existing guest nobody touched. Without this
-    // line the card reads "nights given back: none · nights added: none" while
-    // the booking has just gained two people worth $640 that a parked edit
-    // deliberately did not bill — money recorded only on their own rows.
-    await renderQueue({
-      tasks: [
-        {
-          ...REVIEW_TASK,
-          reviewEvidence: {
-            ...REVIEW_TASK.reviewEvidence!,
-            guestsAddedByEdit: { count: 2, totalPriceCents: 64000 },
-          },
-        },
-      ],
-      viewerCanViewBookings: true,
-    });
-
-    const evidence = screen.getByTestId("manual-refund-task-review-evidence");
-    expect(evidence).toHaveTextContent("This change also added 2 guests");
-    expect(evidence).toHaveTextContent("$640.00");
-    expect(evidence).toHaveTextContent(/has not been charged/);
-  });
-
-  it("says nothing about added guests when the change added none", async () => {
-    // The CONTROL. A line that appeared on every review would be furniture, and
-    // an admin would stop reading it.
-    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
-
-    expect(
-      screen.getByTestId("manual-refund-task-review-evidence"),
-    ).not.toHaveTextContent("This change also added");
-  });
-
-  it("shows no evidence block on a hand-back row, which has none", async () => {
-    await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
-
-    expect(
-      screen.queryByTestId("manual-refund-task-review-evidence"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("says out loud when captured evidence cannot be read back", async () => {
-    // An absence would be read as "none was captured", which is the opposite of
-    // the truth and would send an admin to price from the wrong material.
-    await renderQueue({
-      tasks: [
-        { ...REVIEW_TASK, reviewEvidence: null, reviewEvidenceUnreadable: true },
-      ],
-      viewerCanViewBookings: true,
-    });
-
-    expect(
-      screen.getByTestId("manual-refund-task-review-evidence-unreadable"),
-    ).toHaveTextContent(/cannot be read/);
-  });
-
-  it("warns, naming the guest, when a guest whose nights the review moved was removed after it was raised (#4317)", async () => {
-    // The removal credited that guest's stored total, which a parked edit never
-    // changed: settling could credit given-back nights again, or charge for
-    // added ones the guest no longer holds. It asks for a check, not a
-    // dismissal: the review may still hold money owed for another guest.
-    await renderQueue({
-      tasks: [
-        {
-          ...REVIEW_TASK,
-          reviewGuestsRemovedSinceRaised: [
-            { strandIndex: 0, strandCount: 2, guestTotalCents: 30_000, gaveNightsBack: true, addedNights: false },
-            { strandIndex: 1, strandCount: 2, guestTotalCents: 20_000, gaveNightsBack: false, addedNights: true },
-          ],
-        },
-      ],
-      viewerCanViewBookings: true,
-    });
-
-    const [credit, charge] = screen.getAllByTestId("manual-refund-task-review-guest-removed");
-    expect(credit).toHaveTextContent("Guest 1 of 2, stored at $300.00, was removed from the booking after this review was raised.");
-    expect(credit).toHaveTextContent("Check Xero and the booking before settling");
-    expect(credit).toHaveTextContent("could credit those nights again");
-    expect(credit).not.toHaveTextContent(/dismiss/i);
-    expect(charge).toHaveTextContent("Guest 2 of 2, stored at $200.00, was removed");
-    expect(charge).toHaveTextContent("could charge for nights this guest no longer holds");
-  });
-
-  it("says nothing about a removed guest on a review whose guests are all still there", async () => {
-    await renderQueue({
-      tasks: [{ ...REVIEW_TASK, reviewGuestsRemovedSinceRaised: [] }],
-      viewerCanViewBookings: true,
-    });
-
-    expect(screen.queryByTestId("manual-refund-task-review-guest-removed")).not.toBeInTheDocument();
-  });
-
+describe("the booking link and the amount line (#3033)", () => {
   it("prints the identifier instead of a link the viewer cannot follow", async () => {
     // This card is gated on finance:view, which a Finance Viewer holds with no
     // bookings access at all. The route says which it is; absent, the card fails
     // closed.
-    const queue = await renderQueue({ tasks: [REVIEW_TASK] });
+    const queue = await renderQueue({ tasks: [HAND_BACK_TASK] });
 
     expect(queue.querySelectorAll("a")).toHaveLength(0);
-    expect(queue).toHaveTextContent("booking-edit");
+    expect(queue).toHaveTextContent("booking-cash");
   });
 
   it("offers the link to an admin whose own booking this is", async () => {
@@ -485,7 +363,7 @@ describe("the evidence an admin prices from (#3033, owner decision D3)", () => {
       grants are read independently — here the global one is off.
     */
     const queue = await renderQueue({
-      tasks: [{ ...REVIEW_TASK, viewerOwnsBooking: true }],
+      tasks: [{ ...HAND_BACK_TASK, viewerOwnsBooking: true }],
       viewerCanViewBookings: false,
     });
 
@@ -498,24 +376,24 @@ describe("the evidence an admin prices from (#3033, owner decision D3)", () => {
     // The control for the pair above: absent means false on both, so a response
     // that establishes neither prints the identifier.
     const queue = await renderQueue({
-      tasks: [REVIEW_TASK],
+      tasks: [HAND_BACK_TASK],
       viewerCanViewBookings: false,
     });
 
     expect(queue).not.toHaveTextContent(
       "View the booking's payment and rate history",
     );
-    expect(queue).toHaveTextContent("booking-edit");
+    expect(queue).toHaveTextContent("booking-cash");
   });
 
   it("offers the payment and rate history link when the viewer may open it", async () => {
     const queue = await renderQueue({
-      tasks: [REVIEW_TASK],
+      tasks: [HAND_BACK_TASK],
       viewerCanViewBookings: true,
     });
 
     const link = queue.querySelector("a");
-    expect(link).toHaveAttribute("href", "/bookings/booking-edit");
+    expect(link).toHaveAttribute("href", "/bookings/booking-cash");
     expect(queue).toHaveTextContent("payment and rate history");
   });
 
@@ -533,10 +411,10 @@ describe("the evidence an admin prices from (#3033, owner decision D3)", () => {
   });
 
   it("says nothing about a raise it cannot compare against", async () => {
-    // A review raised unpriced and later confirmed has no raised figure, and
-    // "was Awaiting pricing" would read as a movement that never happened.
+    // A task raised with no amount has no raised figure to compare against, and
+    // "raised at" nothing would read as a movement that never happened.
     await renderQueue({
-      tasks: [{ ...REVIEW_TASK, amountCents: 4200, raisedAmountCents: null }],
+      tasks: [{ ...HAND_BACK_TASK, amountCents: 4200, raisedAmountCents: null }],
       viewerCanViewBookings: true,
     });
 
@@ -553,218 +431,11 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     return waitFor(() => screen.getByRole("dialog"));
   }
 
-  it("a dismissal on a review reads as a finding, not a refusal", async () => {
-    // On a hand-back, dismissing means the member declined or it was settled
-    // another way. On a review it means somebody looked and nothing is owed —
-    // a statement about the money, which the record has to carry.
-    const dialog = await openDialog(REVIEW_TASK, "No adjustment");
-
-    expect(dialog).toHaveTextContent(/nothing to pay back or credit/);
-    expect(dialog).toHaveTextContent(/moves no money/);
-    expect(dialog).not.toHaveTextContent(/declined the refund/);
-    expect(dialog).toHaveTextContent("Close with no adjustment");
-  });
-
   it("a dismissal on a hand-back keeps its own wording", async () => {
     const dialog = await openDialog(HAND_BACK_TASK, "Dismiss");
 
     expect(dialog).toHaveTextContent(/declined the refund/);
     expect(dialog).toHaveTextContent("Dismiss refund");
-  });
-
-  it("refuses to offer a completion until the officer has said how much and which way", async () => {
-    /*
-      #3033 disarmed this button whenever the task carried no amount, because
-      nothing on this screen could supply one and a button whose only outcome is
-      a refusal is worse than no button. #3170 supplies one, so the guard moves
-      to the two things the officer must now decide: an unpriced review opens with
-      neither, and the button is still dead.
-    */
-    const dialog = await openDialog(REVIEW_TASK, "Record the adjustment");
-
-    expect(dialog).toHaveTextContent(/Which way does this money go\?/);
-    // And it does not print "Record Awaiting pricing as paid back".
-    expect(dialog).not.toHaveTextContent("Awaiting pricing as paid back");
-    expect(
-      screen.getByRole("button", { name: "Settle the review" }),
-    ).toBeDisabled();
-
-    // An amount alone is not enough: the direction is what stops a wrong-way
-    // movement, so it is required rather than defaulted.
-    fireEvent.change(screen.getByLabelText("Amount"), {
-      target: { value: "45.00" },
-    });
-    expect(
-      screen.getByRole("button", { name: "Settle the review" }),
-    ).toBeDisabled();
-
-    // And a direction alone is not enough either — the control is a genuine
-    // pair, not one requirement wearing two labels.
-    fireEvent.change(screen.getByLabelText("Amount"), {
-      target: { value: "" },
-    });
-    fireEvent.click(screen.getByLabelText(/The club owes the member/));
-    expect(
-      screen.getByRole("button", { name: "Pay the member back" }),
-    ).toBeDisabled();
-  });
-
-  it("does not tell an admin a decided adjustment has already gone", async () => {
-    /*
-      A review whose amount an admin has confirmed used to fall through to the
-      hand-back arm: "Record $45.00 as paid back to Grace Hopper?", over a body
-      saying "only do this once the money has actually gone back to the member".
-      An adjustment is a figure just decided — nothing has physically gone
-      anywhere, and waiting until it has is the opposite of what to do.
-    */
-    const priced = { ...REVIEW_TASK, id: "task-review-priced", amountCents: 4500 };
-    const dialog = await openDialog(priced, "Record the adjustment");
-
-    // #3170: the figure is now in the box the officer can amend, not printed in
-    // the title - the title carries no direction at all any more (see below).
-    expect(screen.getByLabelText("Amount")).toHaveValue("45.00");
-    expect(dialog).not.toHaveTextContent(/as paid back/);
-    expect(dialog).not.toHaveTextContent(/actually gone back to the member/);
-    fireEvent.click(screen.getByLabelText(/The club owes the member/));
-    expect(
-      screen.getByRole("button", { name: "Pay the member back" }),
-    ).not.toBeDisabled();
-  });
-
-  it("never names a direction before the officer has chosen one (#3170)", async () => {
-    /*
-      THE MEASURED HAZARD. Every settlement route was refund-shaped and the copy
-      read "Record an adjustment", which is neutral to read and settles as a
-      refund. This child is the first that can park an edit which RAISED the
-      price, so an officer who correctly concludes "they owe us $200" and types it
-      would have had $200 sent to their card.
-
-      So: no direction in the title, no pre-ticked radio, and the button - the
-      last thing read before money moves - says which way.
-    */
-    const priced = { ...REVIEW_TASK, id: "task-review-dir", amountCents: 4500 };
-    const dialog = await openDialog(priced, "Record the adjustment");
-
-    expect(dialog).toHaveTextContent("Settle this review for Grace Hopper?");
-    expect(dialog).not.toHaveTextContent(/Record an adjustment/);
-    expect(screen.getByLabelText(/The club owes the member/)).not.toBeChecked();
-    expect(screen.getByLabelText(/The member owes the club/)).not.toBeChecked();
-    expect(screen.getByRole("button", { name: "Settle the review" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByLabelText(/The member owes the club/));
-    expect(
-      screen.getByRole("button", { name: "Ask the member to pay" }),
-    ).toBeInTheDocument();
-    // And it says plainly that this screen does not take the money.
-    expect(dialog).toHaveTextContent(
-      /Nothing is taken from their card by this screen/,
-    );
-  });
-
-  it("MUTATION: on a cancelled booking, says what is still owed BEFORE the officer completes (#3835)", async () => {
-    const priced = { ...REVIEW_TASK, id: "task-review-owed", amountCents: null };
-    await openDialog(priced, "Record the adjustment");
-    // The server's answer, by the completion's own rule (`previewEditReviewStillOwed`).
-    vi.mocked(fetch).mockImplementation((async (url: string) => ({
-      ok: true,
-      status: 200,
-      json: async () =>
-        url.includes("/still-owed?")
-          ? { preview: { shareCents: Number(new URL(url, "http://x").searchParams.get("shareCents")), stillOwedCents: 2500, captureCents: 2500, creditCents: 0, route: "hand-back" } }
-          : { tasks: [priced] },
-    })) as never);
-
-    fireEvent.click(screen.getByLabelText(/The club owes the member/));
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "50.00" } });
-
-    expect(await screen.findByTestId("manual-refund-task-still-owed")).toHaveTextContent(
-      "Only $25.00 of the $50.00 share is still owed after the booking's cancellation - hand back $25.00, not the full share.",
-    );
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith("/api/admin/payments/manual-refund-tasks/task-review-owed/still-owed?shareCents=5000");
-    // Nothing is asked for a charge: the notice is about money going back.
-    fireEvent.click(screen.getByLabelText(/The member owes the club/));
-    await waitFor(() => expect(screen.queryByTestId("manual-refund-task-still-owed")).not.toBeInTheDocument());
-  });
-
-  it("posts a positive magnitude and an explicit direction (#3170)", async () => {
-    const priced = { ...REVIEW_TASK, id: "task-review-post", amountCents: null };
-    await openDialog(priced, "Record the adjustment");
-
-    fireEvent.change(screen.getByLabelText("Amount"), {
-      target: { value: "200.00" },
-    });
-    fireEvent.click(screen.getByLabelText(/The member owes the club/));
-    fireEvent.change(screen.getByLabelText(/^Note/), {
-      target: { value: "two extra nights, priced from the 2024 rate card" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Ask the member to pay" }));
-
-    await waitFor(() => {
-      const call = vi.mocked(fetch).mock.calls.find(
-        ([url]) =>
-          typeof url === "string" &&
-          url.includes("/manual-refund-tasks/task-review-post"),
-      );
-      expect(call).toBeDefined();
-      const body = JSON.parse(String((call?.[1] as RequestInit).body));
-      // A magnitude and a direction, never a signed amount.
-      expect(body.confirmedAmountCents).toBe(20000);
-      expect(body.direction).toBe("CHARGE_TO_MEMBER");
-    });
-  });
-
-  it("asks how a hand-settled refund went back, and posts only what the officer chose (#3536)", async () => {
-    const handSettled = { ...REVIEW_TASK, id: "task-review-hand", paidBackByHand: true };
-    await openDialog(handSettled, "Record the adjustment");
-    // Not before a direction: a charge is never handed back.
-    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText(/The member owes the club/));
-    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText(/The club owes the member/));
-    // Offered with nothing chosen: the app never answers for the officer.
-    expect(screen.getByLabelText("In cash")).not.toBeChecked();
-    expect(screen.getByLabelText("By bank transfer")).not.toBeChecked();
-    // The help sentence is the group's accessible description, not loose text.
-    expect(
-      screen.getByRole("group", { name: "How did the club pay the member back?" }),
-    ).toHaveAccessibleDescription(/only changes the wording on the Xero credit note/);
-    fireEvent.click(screen.getByLabelText("In cash"));
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "73.00" } });
-    fireEvent.change(screen.getByLabelText(/^Note/), {
-      target: { value: "handed back at the lodge" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Pay the member back" }));
-
-    await waitFor(() => {
-      // #3835's still-owed preview GETs the same task's path; the settle is the call with a body.
-      const call = vi.mocked(fetch).mock.calls.find(
-        ([url, init]) =>
-          typeof url === "string" && url.includes("/manual-refund-tasks/task-review-hand") && init !== undefined,
-      );
-      expect(call).toBeDefined();
-      const body = JSON.parse(String((call?.[1] as RequestInit).body));
-      expect(body.direction).toBe("REFUND_TO_MEMBER");
-      expect(body.handedBackInCash).toBe(true);
-    });
-  });
-
-  it("#3949 review round 3: a review on a joiner the organiser paid for by internet banking is worded for the organiser, and asks no cash-or-bank", async () => {
-    await openDialog({ ...REVIEW_TASK, id: "task-review-organiser", paidBackByHand: true, paidToGroupOrganiser: true }, "Record the adjustment");
-    const dialog = screen.getByRole("dialog");
-    expect(dialog.textContent).toMatch(/money the club owes goes back to the organiser by bank transfer, never to the member/);
-    // Round 4: a charge is refused here, so the member is never said to be asked to pay on this booking.
-    expect(dialog.textContent).toMatch(/it cannot be asked for from here: agree it with the organiser/);
-    expect(dialog.textContent).not.toMatch(/asked to pay it on this booking/);
-    fireEvent.click(screen.getByLabelText(/The club owes the member/));
-    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Pay the group organiser back" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Pay the member back" })).not.toBeInTheDocument();
-  });
-
-  it("never asks cash-or-bank where a refund is not paid back by hand (#3536)", async () => {
-    await openDialog({ ...REVIEW_TASK, id: "task-review-card", paidBackByHand: false }, "Record the adjustment");
-    fireEvent.click(screen.getByLabelText(/The club owes the member/));
-    expect(screen.queryByLabelText("In cash")).not.toBeInTheDocument();
   });
 
   it("does not read a hand-back's placeholder as an amount", async () => {
@@ -781,11 +452,10 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     };
     const dialog = await openDialog(unpriced, "Mark paid back");
 
-    expect(dialog).not.toHaveTextContent("Awaiting pricing as paid back");
+    expect(dialog).not.toHaveTextContent("Amount not known as paid back");
     expect(dialog).toHaveTextContent(
       "Record this refund as paid back to Ada Lovelace?",
     );
-    // Still a hand-back: it keeps the hand-back body, not the review's.
     expect(dialog).toHaveTextContent(/actually gone back to the member/);
   });
 
@@ -796,506 +466,5 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     expect(
       screen.getByRole("button", { name: "Record as paid back" }),
     ).not.toBeDisabled();
-  });
-});
-
-/**
- * #3191: the settle screen asks what a booking's unpriced nights sold for, and
- * #3195: the $0 refusal says what to do instead.
- *
- * MUTATION PROOF. Pre-fill a night box from the remaining balance and "fills
- * nothing in" fails. Enable the confirm button on a half-filled set and "will
- * not settle a half-answered set of nights" fails. Drop the zero sentence and
- * "explains a $0 settlement instead of just refusing to move" fails. Render the
- * section on a row that has no blanks and "asks nothing where there is nothing
- * to fill in" fails.
- */
-const REVIEW_WITH_BLANKS = {
-  ...REVIEW_TASK,
-  // #3498: ONE ENTRY PER REPAIRABLE STRAND of the item. This review names one
-  // strand, and it IS the strand the settlement moves - so `absorbsSettlement`
-  // is true and every case below reconciles against the target it always did.
-  unpricedNights: [
-    {
-      summary: {
-        dates: ["2026-08-11", "2026-08-12"],
-        knownNightTotalCents: 6000,
-        storedGuestTotalCents: 12000,
-      },
-      absorbsSettlement: true,
-      // The ITEM's own ordinal, which the officer's figures come back naming.
-      strandIndex: 0,
-    },
-  ],
-};
-
-function nightBox(date: string) {
-  return screen.getByLabelText(
-    date === "2026-08-11" ? "11 Aug 2026" : "12 Aug 2026",
-  );
-}
-
-async function openSettleDialog(task: unknown, control: string) {
-  await renderQueue({ tasks: [task], viewerCanViewBookings: true });
-  fireEvent.click(screen.getByRole("button", { name: control }));
-  await waitFor(() =>
-    expect(screen.getByTestId("unpriced-night-price-fields")).toBeInTheDocument(),
-  );
-}
-
-/** How many settle POSTs the screen made. A load is a GET and has no init. */
-function postCount(fetchMock: { mock: { calls: unknown[][] } }): number {
-  return fetchMock.mock.calls.filter((call) => call[1] !== undefined).length;
-}
-
-function postBody(fetchMock: { mock: { calls: unknown[][] } }) {
-  const post = fetchMock.mock.calls.find((call) => call[1] !== undefined);
-  return JSON.parse((post?.[1] as { body: string }).body) as Record<
-    string,
-    unknown
-  >;
-}
-
-describe("recording what the unpriced nights sold for (#3191)", () => {
-  it("asks nothing where there is nothing to fill in", async () => {
-    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Record the adjustment" }),
-    );
-
-    await waitFor(() =>
-      expect(screen.getByLabelText("Amount")).toBeInTheDocument(),
-    );
-    expect(
-      screen.queryByTestId("unpriced-night-price-fields"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("fills nothing in, and cannot state a target until the settlement is known", async () => {
-    await openSettleDialog(REVIEW_WITH_BLANKS, "Record the adjustment");
-
-    // Nothing is offered as a starting figure. A box that arrives with a number
-    // in it is a derivation an officer can accept by pressing a button, which is
-    // exactly what INV-MOD-028 forbids.
-    expect(nightBox("2026-08-11")).toHaveValue("");
-    expect(nightBox("2026-08-12")).toHaveValue("");
-    expect(
-      screen.getByTestId("unpriced-night-price-target-unknown"),
-    ).toBeInTheDocument();
-  });
-
-  it("offers the same boxes on the no-adjustment path, where most parked stays end", async () => {
-    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
-
-    expect(nightBox("2026-08-11")).toBeInTheDocument();
-    // Nothing moves, so the target is known immediately: the nights make up the
-    // difference between what is already priced and the stored total.
-    expect(
-      screen.queryByTestId("unpriced-night-price-target-unknown"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("no control fills a box in, and nothing it posts carries a night nobody typed", async () => {
-    /*
-      THE HALF THE SOURCE CENSUS CANNOT SEE (#3191). A remainder fill -
-      `targetCents - enteredCents` into the last empty box - matches none of
-      `stored-night-price-repair-census.test.ts`'s patterns, and the server
-      cannot catch it either: it would arrive as a complete, reconciling vector
-      the checker is obliged to accept. The property is about the RESULT, so it
-      is asserted as behaviour on the real screen rather than as a regex over
-      the source.
-
-      THIS TEST USED TO MATCH BUTTON NAMES AGAINST A REGEX, and a review lens
-      disproved it by building the thing and watching it pass: a button reading
-      "Use the balance", writing the remainder into the last empty box, was green
-      on this test AND on all eight of the census's. The surviving defence was
-      the spelling of a button, which is exactly the weakness the census docblock
-      rejects a regex for. So the dialog's whole control inventory is pinned and
-      every control that is not a way out is PRESSED, whatever it is called.
-
-      Its second half covers a fill that never touches a box: `entries.push({
-      date: missing, priceCents: target - sum })` leaves the boxes empty, arms
-      the confirm button, and posts a price for a night nobody typed. Asserting
-      box values cannot see it; asserting that the screen will not SETTLE a set
-      it completed for the officer can.
-
-      MUTATION PROOF: either shape fails here. Both were built and run.
-    */
-    const fetchMock = stubLoad({
-      tasks: [REVIEW_WITH_BLANKS],
-      viewerCanViewBookings: true,
-    });
-    render(<ManualRefundTaskQueue />);
-    await waitFor(() =>
-      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "No adjustment" }));
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("unpriced-night-price-fields"),
-      ).toBeInTheDocument(),
-    );
-    // The note is filled in so that NOTHING but the night arithmetic is left
-    // holding the confirm button back.
-    fireEvent.change(screen.getByLabelText("Note (required)"), {
-      target: { value: "Nothing owed either way." },
-    });
-    // One night left, one figure outstanding, and the arithmetic is forced -
-    // which is exactly when a screen is tempted to be helpful.
-    fireEvent.change(nightBox("2026-08-11"), { target: { value: "35.00" } });
-
-    const dialog = screen.getByRole("dialog");
-    const buttonName = (button: HTMLElement) =>
-      button.getAttribute("aria-label") ?? (button.textContent ?? "").trim();
-    const firstNightName = (nightBox("2026-08-11") as HTMLInputElement)
-      .labels?.[0]?.textContent?.trim();
-    const secondNightName = (nightBox("2026-08-12") as HTMLInputElement)
-      .labels?.[0]?.textContent?.trim();
-    /*
-      The inventory, pinned. A new control on this dialog fails HERE and has to
-      be added below - at which point the loop underneath presses it and proves
-      it does not fill a box in. Without this the loop would be a guard that only
-      arms itself once somebody has already added the thing it guards against.
-    */
-    expect(
-      new Set(within(dialog).getAllByRole("button").map(buttonName)),
-    ).toEqual(
-      new Set([
-        "Close",
-        "Cancel",
-        "Close with no adjustment",
-        `Increase ${firstNightName} by one dollar`,
-        `Decrease ${firstNightName} by one dollar`,
-        `Increase ${secondNightName} by one dollar`,
-        `Decrease ${secondNightName} by one dollar`,
-      ]),
-    );
-
-    // The two controls attached to the blank second night must not invent its
-    // value. Target them by their accessible names, rather than weakening the
-    // dialog's exhaustive button inventory to ignore the shared money control.
-    for (const name of [
-      `Increase ${secondNightName} by one dollar`,
-      `Decrease ${secondNightName} by one dollar`,
-    ]) {
-      const blankNightControl = within(dialog).getByRole("button", { name });
-      expect(blankNightControl).toBeDisabled();
-      fireEvent.click(blankNightControl);
-    }
-
-    const waysOut = new Set(["Close", "Cancel"]);
-    const confirm = within(dialog).getByRole("button", {
-      name: "Close with no adjustment",
-    });
-    for (const button of within(dialog).getAllByRole("button")) {
-      if (button === confirm || waysOut.has(buttonName(button))) continue;
-      fireEvent.click(button);
-    }
-
-    // Nothing was offered, and nothing was typed for the officer.
-    expect(nightBox("2026-08-11")).toHaveValue("35.00");
-    expect(nightBox("2026-08-12")).toHaveValue("");
-
-    // And the screen will not settle a set it completed for them either - which
-    // is the only thing that catches a fill made straight into the posted
-    // entries, where there is no box value to look at.
-    expect(confirm).toBeDisabled();
-    fireEvent.click(confirm);
-    expect(postCount(fetchMock)).toBe(0);
-  });
-
-  it("takes a typed 0.00 as a real price, not as an empty box", async () => {
-    /*
-      #3191: "a free night is 0.00, which is a real price and not the same as
-      leaving it blank" is printed under the boxes and asserted nowhere until
-      this test. The distinction is the whole epic in miniature, and it runs
-      through three layers that each collapse null and zero differently, so it
-      is pinned end to end: typed here, posted as `priceCents: 0`.
-    */
-    const fetchMock = stubLoad({
-      tasks: [REVIEW_WITH_BLANKS],
-      viewerCanViewBookings: true,
-    });
-    render(<ManualRefundTaskQueue />);
-    await waitFor(() =>
-      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "No adjustment" }));
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("unpriced-night-price-fields"),
-      ).toBeInTheDocument(),
-    );
-    fireEvent.change(screen.getByLabelText("Note (required)"), {
-      target: { value: "The second night was comped." },
-    });
-    // $120.00 stored, $60.00 already priced, nothing moving: the first night
-    // carries the whole $60.00 and the second was genuinely free.
-    fireEvent.change(nightBox("2026-08-11"), { target: { value: "60.00" } });
-    fireEvent.change(nightBox("2026-08-12"), { target: { value: "0.00" } });
-
-    const confirm = screen.getByRole("button", {
-      name: "Close with no adjustment",
-    });
-    await waitFor(() => expect(confirm).toBeEnabled());
-    fireEvent.click(confirm);
-
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
-    expect(postBody(fetchMock).recordedNightPrices).toEqual([
-      {
-        strandIndex: 0,
-        nightPrices: [
-          { date: "2026-08-11", priceCents: 6000 },
-          { date: "2026-08-12", priceCents: 0 },
-        ],
-      },
-    ]);
-  });
-
-  it("names the box it cannot read, instead of asking for amounts it already has", async () => {
-    /*
-      #3191 fix round. `parseDecimalDollarsToCents` answers null for "1,200.00",
-      "$45" and "45." alike, and folding that in with "not typed" told the
-      officer to give an amount for every night while every night visibly held
-      one - the #2685 class `money-input.ts` warns its callers about.
-    */
-    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
-    fireEvent.change(nightBox("2026-08-11"), { target: { value: "1,200.00" } });
-    fireEvent.change(nightBox("2026-08-12"), { target: { value: "25.00" } });
-
-    const verdict = screen.getByTestId("unpriced-night-price-reconciliation");
-    expect(verdict).toHaveTextContent(/11 Aug 2026/);
-    expect(verdict).toHaveTextContent(/not one this box can read/);
-    expect(verdict).not.toHaveTextContent(/every night listed/);
-    expect(
-      screen.getByRole("button", { name: "Close with no adjustment" }),
-    ).toBeDisabled();
-  });
-
-  it("tells a screen reader why the button will not press", async () => {
-    /*
-      #3191 fix round. The confirm control is DISABLED behind the running
-      verdict, so a reader who cannot see that paragraph is left with a control
-      that will not press and no reason given - the bare refusal the owner's
-      31 Aug 2026 decision rejected on the $0.00 control in this same dialog.
-      Every box is described by it, and by the "0.00 is a real price" hint,
-      in that order.
-    */
-    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
-    const verdict = screen.getByTestId("unpriced-night-price-reconciliation");
-    expect(verdict).toHaveAttribute("aria-live", "polite");
-
-    for (const date of ["2026-08-11", "2026-08-12"]) {
-      const described = (
-        nightBox(date).getAttribute("aria-describedby") ?? ""
-      ).split(" ");
-      expect(described[0]).toBe(verdict.id);
-      expect(described).toHaveLength(2);
-      expect(document.getElementById(described[1])).toHaveTextContent(
-        /a free night is 0.00/,
-      );
-    }
-  });
-
-  it("will not settle a half-answered set of nights", async () => {
-    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
-    fireEvent.change(screen.getByLabelText("Note (required)"), {
-      target: { value: "Nothing owed either way." },
-    });
-    fireEvent.change(nightBox("2026-08-11"), { target: { value: "60.00" } });
-
-    expect(
-      screen.getByRole("button", { name: "Close with no adjustment" }),
-    ).toBeDisabled();
-    const verdict = screen.getByTestId("unpriced-night-price-reconciliation");
-    expect(verdict).toHaveTextContent(/every night listed, or leave them all blank/);
-    /*
-      #3191 fix round: said as guidance, not as a rejection. This is what an
-      officer sees on their very first keystroke of a multi-night answer, and
-      warning colour there reads as "you have done something wrong" when they
-      have simply not finished. The sentence is unchanged; only its loudness is.
-    */
-    expect(verdict.className).toContain("text-muted-foreground");
-
-    /*
-      SECOND PASS (#3191): "filled in" was the wrong test for "finished", and a
-      review lens measured why. On a single-blank strand - the ordinary shape -
-      the last box holds text from the first digit, so typing the `4` of `45.00`
-      turned the paragraph red mid-number, which is the effect the paragraph
-      above claims to remove. Leaving the box is the signal instead, so a wrong
-      figure the officer is still typing stays quiet.
-    */
-    fireEvent.change(nightBox("2026-08-12"), { target: { value: "1" } });
-    expect(
-      screen.getByTestId("unpriced-night-price-reconciliation").className,
-    ).toContain("text-muted-foreground");
-
-    // Both boxes answered AND left, and the figures still wrong: now it is a
-    // rejection.
-    fireEvent.change(nightBox("2026-08-12"), { target: { value: "1.00" } });
-    fireEvent.blur(nightBox("2026-08-11"));
-    fireEvent.blur(nightBox("2026-08-12"));
-    expect(
-      screen.getByTestId("unpriced-night-price-reconciliation").className,
-    ).toContain("text-warning-11");
-  });
-
-  it("settles once the figures add up, and posts exactly what was typed", async () => {
-    const fetchMock = stubLoad({
-      tasks: [REVIEW_WITH_BLANKS],
-      viewerCanViewBookings: true,
-    });
-    render(<ManualRefundTaskQueue />);
-    await waitFor(() =>
-      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "No adjustment" }));
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("unpriced-night-price-fields"),
-      ).toBeInTheDocument(),
-    );
-    fireEvent.change(screen.getByLabelText("Note (required)"), {
-      target: { value: "Nothing owed either way." },
-    });
-    // $120.00 stored, $60.00 already priced, nothing moving: $60.00 to place.
-    fireEvent.change(nightBox("2026-08-11"), { target: { value: "35.00" } });
-    fireEvent.change(nightBox("2026-08-12"), { target: { value: "25.00" } });
-
-    const confirm = screen.getByRole("button", {
-      name: "Close with no adjustment",
-    });
-    await waitFor(() => expect(confirm).toBeEnabled());
-    fireEvent.click(confirm);
-
-    await waitFor(() =>
-      expect(fetchMock.mock.calls.length).toBeGreaterThan(1),
-    );
-    expect(postBody(fetchMock).recordedNightPrices).toEqual([
-      {
-        strandIndex: 0,
-        nightPrices: [
-          { date: "2026-08-11", priceCents: 3500 },
-          { date: "2026-08-12", priceCents: 2500 },
-        ],
-      },
-    ]);
-  });
-
-  it("#3219 D2: will not close a review whose boxes are offered and blank, and the boxes are what unblock it", async () => {
-    /*
-      THIS WAS THE CONTROL, AND D2 REVERSED IT (owner, 5 September 2026). Closing
-      with the boxes blank used to send the body this screen sent before #3191.
-      It cannot any more: the booking's own price is worked out again from these
-      nights when the review closes, so a review closed blank leaves a headline
-      its guests no longer agree with - after a parked removal, still counting a
-      guest who is gone (#3257).
-
-      The button is dead rather than the post being refused after a round trip,
-      and the reason is the paragraph the officer was already shown, in D2's own
-      words - not a second sentence saying the same thing.
-    */
-    const fetchMock = stubLoad({
-      tasks: [REVIEW_WITH_BLANKS],
-      viewerCanViewBookings: true,
-    });
-    render(<ManualRefundTaskQueue />);
-    await waitFor(() =>
-      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "No adjustment" }));
-    await waitFor(() =>
-      expect(
-        screen.getByTestId("unpriced-night-price-fields"),
-      ).toBeInTheDocument(),
-    );
-    fireEvent.change(screen.getByLabelText("Note (required)"), {
-      target: { value: "Nothing owed either way." },
-    });
-
-    const confirm = screen.getByRole("button", {
-      name: "Close with no adjustment",
-    });
-    expect(confirm).toBeDisabled();
-    // The sentence the officer is shown. It rides the summary the boxes are
-    // introduced by, so it is asserted for its WORDING rather than as evidence
-    // of the block - the two assertions below are what carry that weight.
-    expect(
-      screen.getByText(/this review cannot be closed/i),
-    ).toBeInTheDocument();
-
-    fireEvent.click(confirm);
-    // Nothing beyond the queue's own load was posted.
-    expect(fetchMock.mock.calls.length).toBe(1);
-
-    /*
-      THE DISCRIMINATING HALF. Without it this test cannot tell "blank boxes
-      disable the button" from "this button is disabled": every assertion above
-      also passes for a screen that never enables it at all, and for a paragraph
-      that renders whether or not anything is blocked. Filling the boxes with
-      figures that reconcile is the ONLY thing that changes here, so the button
-      coming alive is what pins the blanks as the cause.
-    */
-    fireEvent.change(nightBox("2026-08-11"), { target: { value: "30.00" } });
-    fireEvent.change(nightBox("2026-08-12"), { target: { value: "30.00" } });
-    await waitFor(() => expect(confirm).toBeEnabled());
-  });
-});
-
-describe("a $0 settlement is refused in words that help (#3195)", () => {
-  it("explains a $0 settlement instead of just refusing to move", async () => {
-    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Record the adjustment" }),
-    );
-    await waitFor(() =>
-      expect(screen.getByLabelText("Amount")).toBeInTheDocument(),
-    );
-    fireEvent.change(screen.getByLabelText("Amount"), {
-      target: { value: "0.00" },
-    });
-
-    const refusal = await screen.findByTestId(
-      "manual-refund-task-zero-amount-refusal",
-    );
-    // It names the control the officer can actually see on this row.
-    expect(refusal).toHaveTextContent(/close the review with no adjustment/);
-    expect(
-      screen.getByRole("button", { name: "Settle the review" }),
-    ).toBeDisabled();
-
-    /*
-      #3195 fix round: and it is announced. The button is disabled behind this
-      sentence, so a reader who never hears it gets the bare refusal the owner's
-      decision rejected. It is listed FIRST on the amount box, ahead of the
-      worked example, which is the ordering `field-hint.tsx` exists to enforce.
-    */
-    expect(refusal).toHaveAttribute("aria-live", "polite");
-    const described = (
-      screen.getByLabelText("Amount").getAttribute("aria-describedby") ?? ""
-    ).split(" ");
-    expect(described[0]).toBe(refusal.id);
-    expect(described).toHaveLength(2);
-    expect(document.getElementById(described[1])).toHaveTextContent(
-      /how much, without a plus or minus/,
-    );
-  });
-
-  it("says nothing about zero when a real amount is typed", async () => {
-    // THE CONTROL: the sentence is about a zero, not a standing warning.
-    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Record the adjustment" }),
-    );
-    await waitFor(() =>
-      expect(screen.getByLabelText("Amount")).toBeInTheDocument(),
-    );
-    fireEvent.change(screen.getByLabelText("Amount"), {
-      target: { value: "45.00" },
-    });
-
-    expect(
-      screen.queryByTestId("manual-refund-task-zero-amount-refusal"),
-    ).not.toBeInTheDocument();
   });
 });

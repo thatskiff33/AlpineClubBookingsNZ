@@ -1348,7 +1348,7 @@ longer skips a booking whose strands it could not read.
 
 ## INV-MOD-045
 
-**Legacy: settles tasks raised before #4317; wave C removes both acts (D6).**
+**Retired: #4344 (wave C1) removed both acts' screens and routes, so no person can supply these amounts any more; the completion door's half goes with wave C3 (D6).**
 Until #4317 a blank was never repaired by a reprice, only by a person supplying
 the amount; an edit now re-writes it at its `INV-MOD-028` value.
 
@@ -1374,7 +1374,7 @@ and a strand whose rows are all readable but **do not add up**.
 
 ## INV-MOD-046
 
-**Legacy: wave C removes this act (D6).** **The second act cannot change what
+**Retired by #4344 (wave C1 of #4302, D6): the control and its route are gone.** **The second act cannot change what
 anybody owes, and that is arithmetic rather than policy.** With every held night asked for, nothing counts as already known
 and nothing is being settled, so the target is the stored total flat and the
 writer re-bases that total to the number already on file. What it CAN do is
@@ -1383,9 +1383,8 @@ for — which is the officer's judgement, is what a mismatch needs, and is why t
 audit entry carries the previous per-night values as well as both totals. The
 guarantee is about what anybody OWES and is deliberately no wider: two readers
 elsewhere count night rows or sum them inside a date window, so a member's
-nomination nights and which month income lands in can both move. Stated once, in
-`src/lib/stored-night-price-strand-reconcile.ts`'s module docblock, and analysed
-in [`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
+nomination nights and which month income lands in can both move. Analysed in
+[`CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md).
 
 **Its fence is eligibility, not arithmetic.** A strand the exactness classifier
 calls `exact` is refused outright, so this is not a general re-pricer; so is a
@@ -1520,14 +1519,9 @@ drives the real route and asserts the guest is deleted at that credit with the
 remaining guest locked at its valued nights, and that a review raised before
 #4317 still refuses the removal.
 
-**Legacy, wave C (D6).** THE SECOND ACT is pinned by
-`stored-night-price-strand-reconcile.test.ts`, which proves the same property the
-same way — it takes a strand this rule's own classifier calls `unusable`, in all
-three of its shapes, runs the real plan and the real writer over a store that
-applies the same fences the database does, and asks the same classifier again.
-Its eligibility fence, its no-op total, its created night set (with a bed count
-measured through the real capacity predicate) and its re-derivation of the night
-list are each mutation-verified.
+**Retired, wave C1 (D6, #4344).** THE SECOND ACT and its test were deleted with
+the officer review; `retired-edit-review-screens-census.test.ts` keeps its route
+and screens from coming back.
 
 ## INV-MOD-054
 

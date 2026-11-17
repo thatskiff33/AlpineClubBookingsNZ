@@ -222,9 +222,7 @@ const REVIEWED_NON_MONEY_OPAQUE_WRITERS = new Map<
     // #3029: the school attendee rename. It became opaque only because it now
     // spreads the rename's dietary decision (`INV-MOD-059`); it still writes
     // names and nothing that holds money.
-    // #4344: the rate-derived backfill's compare-and-set, moved out of the retiring review store.
-  "src/lib/rate-derived-night-price-store.ts|bookingGuestNight|updateMany|priceCents,priceSource|1",
-  "src/lib/school-attendee-confirmation.ts|bookingGuest|opaquePayload||1",
+    "src/lib/school-attendee-confirmation.ts|bookingGuest|opaquePayload||1",
     {
       reason: "attendee name and the rename's dietary decision only",
       sourceShape:
