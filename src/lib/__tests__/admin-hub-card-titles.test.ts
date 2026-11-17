@@ -23,10 +23,10 @@ import { DISPLAY_GLOSSARY_LEAD } from "@/lib/lodge-display/display-terminology";
  *
  * Why a census and not a helper that builds the whole card from one id: a card
  * may name a slice of a page, so a helper that forced the label would be wrong
- * for those; and the Display hub keeps literal hrefs, which the builder's
- * `hardNavigate` guard reads from source, so it needs a census whatever the
- * other hubs do. The census reads every form, so the older `adminLink` cards
- * are held to the same rule as the new ones.
+ * for those; and the Display hub's cards are `adminHref` calls that the
+ * builder's `hardNavigate` guard reads from source (C11 part 1, #4808), so it
+ * needs a census whatever the other hubs do. The census reads every form, so
+ * the older `adminLink` cards are held to the same rule as the new ones.
  */
 
 const ROOT = process.cwd();
@@ -182,10 +182,14 @@ describe("admin hub cards are titled with their page's registry label", () => {
   const { files, checked, mismatches, exempted } = scan();
 
   it("PREMISE: the scan reads the production tree and finds the hubs' cards", () => {
-    expect(files).toContain("src/app/(admin)/admin/display/page.tsx");
+    expect(files).toContain("src/app/(admin)/admin/lodge-ops/display/page.tsx");
     expect(files.some((file) => file.includes("__tests__"))).toBe(false);
-    // A literal href and an adminHref one, so both forms are seen.
-    expect(checked).toContain("src/app/(admin)/admin/display/page.tsx: /admin/display/builder");
+    // An `adminHref` card and an `adminLink` one are seen. The Display hub's
+    // cards stopped being literal hrefs when it moved under lodge-ops (C11 part
+    // 1, #4808); the literal form is read by the fixture test below.
+    expect(checked).toContain(
+      'src/app/(admin)/admin/lodge-ops/display/page.tsx: adminHref("display-builder")',
+    );
     expect(checked).toContain('src/app/(admin)/admin/integrations/page.tsx: adminHref("stripe-setup")');
     expect(checked).toContain(
       'src/app/(admin)/admin/membership/membership-setup/page.tsx: adminLink("membership-types").href',

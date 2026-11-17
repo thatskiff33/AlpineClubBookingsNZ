@@ -2250,7 +2250,6 @@ describe("the registry is inert", () => {
       "C5: no production code spells a moved page's old URL as a literal",
     "src/lib/__tests__/admin-hub-card-titles.test.ts":
       "a hub card that opens a whole page is titled with its registry label",
-    "src/app/(admin)/admin/display/page.tsx": "its cards are titled with their pages' registry labels",
     "src/lib/__tests__/xero-oauth-return-path.test.ts":
       "C5: the OAuth return-path check accepts both Xero landing pages at either place",
     "src/lib/__tests__/xero-setup-links.test.ts":
@@ -2412,7 +2411,8 @@ describe("the registry is inert", () => {
     "src/lib/__tests__/admin-url-census.test.ts":
       "C17: pins adminUrlPattern against the registry in both switch states",
     "src/app/(admin)/admin/alpine-server/setup/alpine-server-setup.tsx": "C11 part 1 (#4808): the Lodges link is adminHref",
-    "src/app/(admin)/admin/lodge-ops/display/page.tsx": "C11 part 1 (#4808): the hub's cards are adminHref",
+    "src/app/(admin)/admin/lodge-ops/display/page.tsx":
+      "C11 part 1 (#4808): the hub's cards are adminHref, titled with their pages' registry labels",
     "src/app/(admin)/admin/lodge-ops/display/builder/page.tsx":
       "C11 part 1 (#4808): its back link is adminLink, the Advanced mode links adminHref",
     "src/app/(admin)/admin/lodge-ops/display/devices/page.tsx": "C11 part 1 (#4808): its back link is adminLink",
