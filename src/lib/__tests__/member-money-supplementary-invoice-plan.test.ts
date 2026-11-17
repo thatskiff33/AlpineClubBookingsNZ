@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 // The builders' modules load the client; the planners never query it.
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 import type { Prisma } from "@prisma/client";
-import { readSupplementarySliceEvent } from "@/lib/member-money/internal/supplementary-invoice-manifest";
+import { readSettledShareSliceEvents, readSupplementarySliceEvent } from "@/lib/member-money/internal/supplementary-invoice-manifest";
 import { LineAmountTypes, type LineItem } from "xero-node";
 import { modificationChangeFeeKey } from "@/lib/booking-ledger-posting-keys";
 import { changeFeeLineItem } from "@/lib/xero-modification-line-items";
@@ -120,6 +120,74 @@ describe("planSupplementaryBookingInvoice (ALP-436)", () => {
     expect(plan).toMatchObject({ outcome: "CONFLICT", reason: "FEE_CENTS" });
   });
 
+  describe("an edit whose financial review settled shares before it was sent", () => {
+    const CLOSE_A = "review-close:task-a:line-1";
+    const CLOSE_B = "review-close:task-b:line-1";
+    const shareLine = (cents: number): LineItem => ({ description: "Agreed adjustment", quantity: 1, unitAmount: cents / 100, accountCode: "201" });
+    const closure = (eventKey: string, ...legs: PostedRevenueLeg[]) => ({ eventKey, reversed: false, legs });
+    const withShares = (overrides: Partial<SupplementaryInvoicePlanInput> = {}) => input({
+      lines: [stayLine(4500), shareLine(1500), shareLine(500), changeFeeLineItem(2000, mapping)],
+      shareEvents: [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, 1500)), closure(CLOSE_B, leg("BOOKING_REVENUE", STAY, 500))],
+      ...overrides,
+    });
+
+    it("covers the edit's slice, each share's closure as a slice of its own, and the fee", () => {
+      expect(planSupplementaryBookingInvoice(withShares())).toMatchObject({
+        outcome: "COVERED",
+        lineTotalCents: 8500,
+        coverage: [
+          { account: "BOOKING_REVENUE", chargeIdentity: STAY, sliceKey: EVENT, coveredCents: 4500 },
+          { account: "BOOKING_REVENUE", chargeIdentity: STAY, sliceKey: CLOSE_A, coveredCents: 1500 },
+          { account: "BOOKING_REVENUE", chargeIdentity: STAY, sliceKey: CLOSE_B, coveredCents: 500 },
+          { account: "FEE_REVENUE", chargeIdentity: FEE, coveredCents: 2000 },
+        ],
+      });
+    });
+
+    it("covers a parked edit whose shares alone explain the stay lines", () => {
+      expect(planSupplementaryBookingInvoice(withShares({
+        lines: [shareLine(1500), changeFeeLineItem(2000, mapping)],
+        sliceEvent: { eventKey: EVENT, reversed: false, legs: [leg("FEE_REVENUE", FEE, 2000)] },
+        shareEvents: [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, 1500))],
+      }))).toMatchObject({ outcome: "COVERED", coverage: [{ sliceKey: CLOSE_A, coveredCents: 1500 }, { account: "FEE_REVENUE" }] });
+    });
+
+    it("records the share's slice as STAY_CENTS when the closure is not read", () => {
+      expect(planSupplementaryBookingInvoice(withShares({ shareEvents: [] }))).toMatchObject({ outcome: "CONFLICT", reason: "STAY_CENTS" });
+    });
+
+    it.each([
+      ["a share with no closure", [null]],
+      ["a share whose task closed twice", ["AMBIGUOUS" as const]],
+      ["a closure moving another booking's revenue", [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, 2000), leg("BOOKING_REVENUE", "booking:other:charge", 100))]],
+    ])("refuses %s as COMPONENT_UNUSABLE", (_label, shareEvents) => {
+      expect(planSupplementaryBookingInvoice(withShares({ shareEvents }))).toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE" });
+    });
+
+    it("refuses a closure that moves a fee", () => {
+      expect(planSupplementaryBookingInvoice(withShares({
+        shareEvents: [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, 2000), leg("FEE_REVENUE", FEE, 100))],
+      }))).toMatchObject({ outcome: "CONFLICT", reason: "FEE_CENTS" });
+    });
+
+    it("refuses a give-back share netted against the edit's charge", () => {
+      expect(planSupplementaryBookingInvoice(withShares({
+        lines: [stayLine(4500), shareLine(-1500), changeFeeLineItem(2000, mapping)],
+        shareEvents: [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, -1500))],
+      }))).toMatchObject({ outcome: "CONFLICT", reason: "REDUCTION_NETTED" });
+    });
+
+    it("never reads shares into a second ask", () => {
+      const plan = planSupplementaryBookingInvoice(input({
+        anchor: { kind: "SECOND_ASK", modificationId: MOD, taskId: "task-9" },
+        lines: [stayLine(3000)],
+        sliceEvent: closure("review-close:task-9:line-1", leg("BOOKING_REVENUE", STAY, 3000)),
+        shareEvents: [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, 1500))],
+      }));
+      expect(plan).toMatchObject({ outcome: "COVERED", coverage: [{ sliceKey: "review-close:task-9:line-1", coveredCents: 3000 }] });
+    });
+  });
+
   it("refuses a fee a later event has since moved", () => {
     const plan = planSupplementaryBookingInvoice(input({
       postedLegs: [leg("BOOKING_REVENUE", STAY, 18500), leg("FEE_REVENUE", FEE, 2000), leg("FEE_REVENUE", FEE, -500)],
@@ -189,6 +257,23 @@ describe("readSupplementarySliceEvent (ALP-436)", () => {
   it("refuses multiple live closures and ignores fully reversed closures", async () => {
     await expect(readSupplementarySliceEvent(read([journal("one"), journal("two")]).db, BOOKING, anchor)).resolves.toBe("AMBIGUOUS");
     await expect(readSupplementarySliceEvent(read([journal("old", true)]).db, BOOKING, anchor)).resolves.toBeNull();
+  });
+
+  it("reads each settled share's one live closure for an edit, and none for a second ask", async () => {
+    const findMany = vi.fn()
+      .mockResolvedValueOnce([journal("review-close:a:old", true), journal("review-close:a:live")])
+      .mockResolvedValueOnce([]);
+    const db = { memberMoneyJournal: { findMany } } as unknown as Pick<Prisma.TransactionClient, "memberMoneyJournal">;
+    const share = (taskId: string) => ({ taskId, sign: 1 as const, amountCents: 100, note: null });
+    const loadShares = vi.fn().mockResolvedValue([share("a"), share("b")]);
+    await expect(readSettledShareSliceEvents(db, BOOKING, { kind: "MODIFICATION", modificationId: MOD }, loadShares))
+      .resolves.toEqual([expect.objectContaining({ eventKey: "review-close:a:live" }), null]);
+    expect(loadShares).toHaveBeenCalledWith(BOOKING, MOD);
+    expect(findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: { event: { eventKey: { startsWith: "review-close:b:" } }, reversesJournalId: null },
+    }));
+    await expect(readSettledShareSliceEvents(db, BOOKING, anchor, loadShares)).resolves.toEqual([]);
+    expect(loadShares).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a reversed modification visible so its planner can refuse it", async () => {

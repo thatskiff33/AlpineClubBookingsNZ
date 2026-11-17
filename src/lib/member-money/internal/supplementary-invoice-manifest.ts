@@ -3,6 +3,7 @@ import type { LineItem } from "xero-node";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
 import { exactPrefix } from "../../prisma-exact-prefix";
+import { loadEditReviewSettledShares } from "../../xero-modification-line-items";
 import { CHARGE_LEG_SELECT, chargeLegsOf, readBookingChargeLegs } from "./booking-journal-read";
 import { memberMoneyEventKeys, reviewCloseKeyPrefix } from "./keys";
 import { planSupplementaryBookingInvoice, type SliceEvent, type SupplementaryAnchor } from "./supplementary-invoice-plan";
@@ -38,6 +39,18 @@ async function readSliceEvent(db: Pick<Prisma.TransactionClient, "memberMoneyJou
   return journals.map((journal) => ({ eventKey: journal.event.eventKey, reversed: journal.reversedBy !== null, legs: journal.lines }));
 }
 
+/** A review task's one live closure: null when none stands, "AMBIGUOUS" when more than one does. */
+async function readReviewClosure(
+  db: Pick<Prisma.TransactionClient, "memberMoneyJournal">,
+  bookingId: string,
+  taskId: string,
+): Promise<SliceEvent | null | "AMBIGUOUS"> {
+  const closures = (await readSliceEvent(db, { eventKey: exactPrefix(reviewCloseKeyPrefix(taskId)) }, bookingId))
+    .filter((event) => !event.reversed);
+  if (closures.length > 1) return "AMBIGUOUS";
+  return closures[0] ?? null;
+}
+
 /** The event an anchor's slice is cut from: the edit's own, or the second ask's one review closure. */
 export async function readSupplementarySliceEvent(
   db: Pick<Prisma.TransactionClient, "memberMoneyJournal">,
@@ -48,10 +61,25 @@ export async function readSupplementarySliceEvent(
     const [event] = await readSliceEvent(db, { eventKey: memberMoneyEventKeys.modification(anchor.modificationId) }, bookingId);
     return event ?? null;
   }
-  const closures = (await readSliceEvent(db, { eventKey: exactPrefix(reviewCloseKeyPrefix(anchor.taskId)) }, bookingId))
-    .filter((event) => !event.reversed);
-  if (closures.length > 1) return "AMBIGUOUS";
-  return closures[0] ?? null;
+  return readReviewClosure(db, bookingId, anchor.taskId);
+}
+
+/**
+ * The closures of an edit's settled review shares, one per share task, in the
+ * order the invoice itemises them: the same tasks its lines were built from
+ * (`loadEditReviewSettledShares`). A second ask bills no shares.
+ */
+export async function readSettledShareSliceEvents(
+  db: Pick<Prisma.TransactionClient, "memberMoneyJournal">,
+  bookingId: string,
+  anchor: SupplementaryAnchor,
+  loadShares: typeof loadEditReviewSettledShares = loadEditReviewSettledShares,
+): Promise<Array<SliceEvent | null | "AMBIGUOUS">> {
+  if (anchor.kind !== "MODIFICATION") return [];
+  const shares = await loadShares(bookingId, anchor.modificationId);
+  const events: Array<SliceEvent | null | "AMBIGUOUS"> = [];
+  for (const share of shares) events.push(await readReviewClosure(db, bookingId, share.taskId));
+  return events;
 }
 
 /** Record the manifest for the supplementary invoice just sent. A key already recorded keeps its first row. Never throws. */
@@ -68,6 +96,7 @@ export async function recordSupplementaryInvoiceManifest(input: {
     const plan = planSupplementaryBookingInvoice({
       ...input,
       sliceEvent: await readSupplementarySliceEvent(prisma, bookingId, input.anchor),
+      shareEvents: await readSettledShareSliceEvents(prisma, bookingId, input.anchor),
       postedLegs: await readBookingChargeLegs(prisma, bookingId),
     });
     const result = await prisma.$transaction((tx) => writeExportManifest(tx, {

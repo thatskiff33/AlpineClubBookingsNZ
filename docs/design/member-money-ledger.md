@@ -575,7 +575,11 @@ because an edit corrects the whole component and charges the remainder: the
 non-fee lines must equal what the edit's own `modification:` event moved the
 stay charge by, and the coverage row names that event in `sliceKey`. A second
 ask bills the movement of its review task's one live `review-close:` event, and
-no fee. The change-fee line must equal the fee the event posted and the edit's
+no fee. An edit whose financial review settled shares before it was sent bills
+each share too, and each share's movement was posted by its task's closure, not
+by the edit's event: each closure is a slice of its own, keyed by its event, the
+stay lines must equal the sum of the slices, and a closure moving a fee or a
+give-back share netted against the charge is a conflict. The change-fee line must equal the fee the event posted and the edit's
 fee component's live gross, and is covered whole. A reduction netted against a
 fee (`REDUCTION_NETTED`), a missing, reversed or ambiguous event, or any other
 mismatch is a `CONFLICT` with no coverage. The primary invoice's coverage keeps

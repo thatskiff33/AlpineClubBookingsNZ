@@ -128,8 +128,14 @@ export async function recordPrimaryInvoiceUpdateManifest(input: {
     if (plan.outcome === "CONFLICT" && result === "WRITTEN") {
       logger.warn({ bookingId, providerInvoiceId, problem: plan.problem }, "The primary invoice's update does not match its manifest; the update's manifest records a conflict");
     }
+    if (result === "KEPT_FIRST") {
+      logger.info({ bookingId, providerInvoiceId }, "The primary invoice update's manifest was already recorded differently; the first row stands");
+    }
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return;
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      logger.info({ bookingId, providerInvoiceId }, "Another run recorded the primary invoice update's manifest first; the first row stands");
+      return;
+    }
     logger.error({ err: error, bookingId, providerInvoiceId }, "Could not record the primary invoice update's export manifest");
   }
 }

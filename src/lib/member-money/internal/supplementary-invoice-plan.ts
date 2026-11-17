@@ -1,10 +1,10 @@
 import { LineAmountTypes, type LineItem } from "xero-node";
 import type { MemberMoneyExportConflictReason } from "@prisma/client";
 import { modificationChangeFeeKey } from "../../booking-ledger-posting-keys";
-import { CHANGE_FEE_LINE_DESCRIPTION, invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
+import { invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
 import { bookingChargeIdentity } from "./booking-charges";
 import { componentKey, liveComponentGross, liveComponentSplit, type PostedRevenueLeg } from "./components";
-import { primaryInvoicePayloadHash, type PrimaryInvoiceCoverage } from "./primary-invoice-plan";
+import { frozenLineCodes, primaryInvoicePayloadHash, splitStayAndFeeCents, type PrimaryInvoiceCoverage } from "./primary-invoice-plan";
 
 /**
  * THE SUPPLEMENTARY BOOKING INVOICE, PLANNED FROM THE JOURNAL (#4525, Ledger
@@ -26,6 +26,14 @@ import { primaryInvoicePayloadHash, type PrimaryInvoiceCoverage } from "./primar
  * posted. A second ask (a review task's further share) bills the stay movement
  * of the task's one live review closure and no fee. A reduction netted against
  * a fee bills no component whole or as a slice: a conflict, never a guess.
+ *
+ * SETTLED REVIEW SHARES. An edit whose financial review settled before its
+ * invoice was sent bills the edit's own movement plus each settled share
+ * (`selectModificationDocumentLines`: the stored lines and the shares together
+ * explain `priceDiffCents`). Each share's stay movement is posted by its task's
+ * review closure (R21), not by the edit's event, so each closure is a slice of
+ * its own, keyed by its event: the stay lines equal the sum of the slices, and
+ * a closure moves no fee.
  */
 
 /** The event an invoice's slice is cut from, as the store reads it. */
@@ -56,6 +64,12 @@ export interface SupplementaryInvoicePlanInput {
    * "AMBIGUOUS" when a second ask's task closed more than once.
    */
   sliceEvent: SliceEvent | null | "AMBIGUOUS";
+  /**
+   * An edit's settled review shares' closures, one per share task, each read
+   * as a second ask's is (the one live closure, null or "AMBIGUOUS"). Empty
+   * for a second ask, which never itemises shares, and for an edit with none.
+   */
+  shareEvents?: ReadonlyArray<SliceEvent | null | "AMBIGUOUS">;
   /** The booking's posted BOOKING_REVENUE and FEE_REVENUE legs (`readBookingChargeLegs`). */
   postedLegs: readonly PostedRevenueLeg[];
 }
@@ -79,9 +93,7 @@ export type SupplementaryInvoicePlan =
 /** Plan the supplementary invoice the sender sent: its coverage or its conflict. */
 export function planSupplementaryBookingInvoice(input: SupplementaryInvoicePlanInput): SupplementaryInvoicePlan {
   const { bookingId, anchor, lines, sliceEvent, postedLegs } = input;
-  const isFee = (line: LineItem) => line.description === CHANGE_FEE_LINE_DESCRIPTION;
-  const stayCents = invoiceLineItemsTotalCents(lines.filter((line) => !isFee(line)));
-  const feeCents = invoiceLineItemsTotalCents(lines.filter(isFee));
+  const { stayCents, feeCents } = splitStayAndFeeCents(lines);
   const lineTotalCents = invoiceLineItemsTotalCents(lines);
   const rendering = (coverage: SupplementaryInvoiceCoverage[]): SupplementaryRendering => ({
     legacyKey: input.legacyKey,
@@ -90,7 +102,7 @@ export function planSupplementaryBookingInvoice(input: SupplementaryInvoicePlanI
       source: "BUILT",
       anchor,
       priceLines: input.priceLines ?? null,
-      lineCodes: lines.map((line) => ({ accountCode: line.accountCode ?? null, itemCode: line.itemCode ?? null })),
+      lineCodes: frozenLineCodes(lines),
       taxType: "OUTPUT2",
       lineAmountTypes: LineAmountTypes.Inclusive,
       componentTaxCodes: coverage.map(({ account, chargeIdentity, sliceKey, taxCode }) =>
@@ -105,21 +117,43 @@ export function planSupplementaryBookingInvoice(input: SupplementaryInvoicePlanI
   if (sliceEvent === "AMBIGUOUS") return conflict("COMPONENT_UNUSABLE", "the review task closed more than once; which closure this bills is unknown");
   if (!sliceEvent) return conflict("COMPONENT_UNUSABLE", "the journal holds no event for what this invoice bills");
   if (sliceEvent.reversed) return conflict("COMPONENT_UNUSABLE", `the journal reversed ${sliceEvent.eventKey}`);
+  const shareEvents = anchor.kind === "MODIFICATION" ? input.shareEvents ?? [] : [];
+  const shareSlices: SliceEvent[] = [];
+  for (const share of shareEvents) {
+    if (share === "AMBIGUOUS") return conflict("COMPONENT_UNUSABLE", "a settled review share's task closed more than once; which closure this bills is unknown");
+    if (!share) return conflict("COMPONENT_UNUSABLE", "the journal holds no closure for a settled review share this invoice bills");
+    shareSlices.push(share);
+  }
 
+  // Each slice moves the stay charge and nothing else of booking revenue; together they are what the stay lines bill.
   const stayIdentity = bookingChargeIdentity(bookingId);
+  const stayKey = componentKey("BOOKING_REVENUE", stayIdentity);
   const moved = liveComponentGross(sliceEvent.legs);
-  const otherStay = [...moved].find(([key, cents]) =>
-    cents !== 0 && key.startsWith(componentKey("BOOKING_REVENUE", "")) && key !== componentKey("BOOKING_REVENUE", stayIdentity));
-  if (otherStay) return conflict("COMPONENT_UNUSABLE", `${sliceEvent.eventKey} moves booking revenue other than the stay charge`);
+  const stayMovements: { event: SliceEvent; cents: number }[] = [];
+  for (const event of [sliceEvent, ...shareSlices]) {
+    const eventMoved = event === sliceEvent ? moved : liveComponentGross(event.legs);
+    const otherStay = [...eventMoved].find(([key, cents]) =>
+      cents !== 0 && key.startsWith(componentKey("BOOKING_REVENUE", "")) && key !== stayKey);
+    if (otherStay) return conflict("COMPONENT_UNUSABLE", `${event.eventKey} moves booking revenue other than the stay charge`);
+    if (event !== sliceEvent && [...eventMoved].some(([key, cents]) => cents !== 0 && key.startsWith(componentKey("FEE_REVENUE", "")))) {
+      return conflict("FEE_CENTS", `${event.eventKey} moves a fee this invoice does not bill`);
+    }
+    stayMovements.push({ event, cents: eventMoved.get(stayKey) ?? 0 });
+  }
+  if (stayMovements.reduce((sum, { cents }) => sum + cents, 0) !== stayCents) {
+    return conflict("STAY_CENTS", `the stay lines do not bill what ${stayMovements.map(({ event }) => event.eventKey).join(" and ")} moved the stay charge by`);
+  }
+  if (stayMovements.some(({ cents }) => cents < 0)) {
+    return conflict("REDUCTION_NETTED", "the invoice nets a settled review share's give-back against what the edit charges");
+  }
 
   const coverage: SupplementaryInvoiceCoverage[] = [];
-  const stayMoved = moved.get(componentKey("BOOKING_REVENUE", stayIdentity)) ?? 0;
-  if (stayMoved !== stayCents) return conflict("STAY_CENTS", `the stay lines do not bill what ${sliceEvent.eventKey} moved the stay charge by`);
-  if (stayCents > 0) {
-    const slice = liveComponentSplit(sliceEvent.legs, "BOOKING_REVENUE", stayIdentity);
-    if (!slice || "problem" in slice) return conflict("COMPONENT_UNUSABLE", slice ? slice.problem : "the event posts no stay charge");
+  for (const { event, cents } of stayMovements) {
+    if (cents === 0) continue;
+    const slice = liveComponentSplit(event.legs, "BOOKING_REVENUE", stayIdentity);
+    if (!slice || "problem" in slice) return conflict("COMPONENT_UNUSABLE", slice ? slice.problem : `${event.eventKey} posts no stay charge`);
     if (slice.bookingId !== bookingId) return conflict("COMPONENT_UNUSABLE", `the stay charge ${stayIdentity} names another booking`);
-    coverage.push({ account: "BOOKING_REVENUE", chargeIdentity: stayIdentity, sliceKey: sliceEvent.eventKey, coveredCents: stayCents, taxCode: slice.taxCode });
+    coverage.push({ account: "BOOKING_REVENUE", chargeIdentity: stayIdentity, sliceKey: event.eventKey, coveredCents: cents, taxCode: slice.taxCode });
   }
 
   // A second ask bills a review's share, never a fee; an edit bills its own fee and no other.

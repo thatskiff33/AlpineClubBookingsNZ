@@ -107,16 +107,21 @@ export function planReplayedPrimaryBookingInvoice(input: {
     postedLegs: input.postedLegs,
     mapping: {
       source: "STORED_REQUEST",
-      lineCodes: input.storedLines.map((line) => ({
-        accountCode: line.accountCode ?? null,
-        itemCode: line.itemCode ?? null,
-      })),
+      lineCodes: frozenLineCodes(input.storedLines),
     },
   });
 }
 
-/** A line array's stay and change-fee cents, the fee line known by the words `changeFeeLineItem` gives it. */
-function splitStayAndFeeCents(lines: ReadonlyArray<LineItem>): { stayCents: number; feeCents: number } {
+/** The account and item code of each line sent, frozen beside a manifest (every invoice planner). */
+export function frozenLineCodes(lines: ReadonlyArray<LineItem>): { accountCode: string | null; itemCode: string | null }[] {
+  return lines.map((line) => ({ accountCode: line.accountCode ?? null, itemCode: line.itemCode ?? null }));
+}
+
+/**
+ * A line array's stay and change-fee cents, the fee line known by the words
+ * `changeFeeLineItem` gives it. The one split every invoice planner uses.
+ */
+export function splitStayAndFeeCents(lines: ReadonlyArray<LineItem>): { stayCents: number; feeCents: number } {
   const isFee = (line: LineItem) => line.description === CHANGE_FEE_LINE_DESCRIPTION;
   return {
     stayCents: invoiceLineItemsTotalCents(lines.filter((line) => !isFee(line))),
@@ -251,7 +256,7 @@ export function planPrimaryInvoiceUpdate(input: {
     frozenMapping: {
       source: "UPDATED_FROM_PROVIDER",
       primaryManifestId: primary.id,
-      lineCodes: lines.map((line) => ({ accountCode: line.accountCode ?? null, itemCode: line.itemCode ?? null })),
+      lineCodes: frozenLineCodes(lines),
       lineAmountTypes: input.lineAmountTypes,
     },
     lineTotalCents,
