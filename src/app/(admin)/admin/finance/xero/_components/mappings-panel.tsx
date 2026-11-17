@@ -238,7 +238,10 @@ export function MappingsPanel({
     setHutFeeItemCodes(savedHutFeeItemCodes)
     setEntranceFeeItemCodes(savedEntranceFeeItemCodes)
     setEditing(false)
-    setError("")
+    // With nothing saved yet the only error on screen is the failed opening
+    // load, and nothing re-asserts it now that the load no longer loops; keep
+    // it shown until the admin retries (#5203).
+    if (savedMappings) setError("")
   }
 
   /*

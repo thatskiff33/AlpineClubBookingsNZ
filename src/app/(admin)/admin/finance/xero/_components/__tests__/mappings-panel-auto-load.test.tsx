@@ -101,6 +101,41 @@ describe("MappingsPanel — auto-load runs once per opening (#5203)", () => {
     expect(mappingsRequests()).toBe(2);
   });
 
+  it("leaving the step and coming back loads again after a failed load", async () => {
+    // The setup wizard renders only the active step, so leaving the Account
+    // mapping step unmounts this panel and returning mounts it afresh with
+    // `open` unchanged. A fresh mount must get its own automatic load.
+    const first = render(panel(true));
+    await screen.findByText("Xero is unreachable");
+    await settle();
+    expect(mappingsRequests()).toBe(1);
+
+    first.unmount();
+    await settle();
+    expect(mappingsRequests()).toBe(1);
+
+    render(panel(true));
+    await screen.findByText("Xero is unreachable");
+    await settle();
+    expect(mappingsRequests()).toBe(2);
+  });
+
+  it("a failed load stays shown when the admin opens editing and cancels it", async () => {
+    // Edit Mappings is enabled with nothing loaded. Cancel restores the saved
+    // copy, which is still empty; it must not also wipe the load error, because
+    // nothing re-asserts it now that the load no longer loops.
+    render(panel(true));
+    await screen.findByText("Xero is unreachable");
+    await settle();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Mappings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await settle();
+
+    expect(screen.getByText("Xero is unreachable")).toBeTruthy();
+    expect(mappingsRequests()).toBe(1);
+  });
+
   it("disconnecting and reconnecting Xero loads again after a failed load", async () => {
     const { rerender } = render(panel(true));
     await screen.findByText("Xero is unreachable");
