@@ -1088,6 +1088,24 @@ change: those entries live 15 seconds from their last rebuild, which a spec
 does not control, so the unit tier pins those invalidations.
 `club-identity-smoke.spec.ts` keeps its own, longer wait for the same reason.
 
+### 9. The axe audit reads the page you are leaving (issue #5155)
+
+The accessibility fixture (`e2e/helpers/accessibility.ts`) audits a page just
+before the next navigation or click and again at teardown. A spec that asserts
+only the URL can leave while the page is still changing, and the audit then
+reports a state the settled page does not have. In CI run 43464799024 it
+reported `document-title` on the Members page in every attempt: the page
+replaced its URL with the same URL on mount, and that soft navigation removed
+the `<title>` until the server sent it back. The page no longer makes that
+no-op replace.
+
+Before a spec leaves a page, assert three things: the URL, the page's own
+content in place of the loading skeleton (no `[data-route-loading]` left, and a
+heading or table only the loaded page has), and a non-empty title with
+`toHaveTitle(/\S/)`. `e2e/admin-roles.spec.ts` does this for every page it
+visits. A title check alone is not enough, because the title from the first
+load can satisfy it just before a soft navigation removes it.
+
 ### What is deliberately NOT the fix
 
 Bumping `retries`, widening a `toBeVisible` timeout, `page.waitForTimeout`, or
