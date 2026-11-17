@@ -136,6 +136,35 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### Find refund notes Xero voided that the app still counts (#4336)
+
+**Who needs it.** A deployment that ran any version before #4341 (v0.13.2 or
+earlier) with Xero connected. Before #4341, an older "live" reading of a refund
+credit note could undo the app's record that the treasurer had voided it in
+Xero, so the app may count a refund as documented while Xero credits nothing.
+
+**What to do, once, after the upgrade.** No migration runs and nothing changes
+on its own. From the live app's environment, run the read-only report:
+
+```bash
+pnpm run xero:revived-refund-note-report --list
+```
+
+It asks Xero about every refund note the app has an active link to, about 40 a
+minute, and lists each one Xero reports VOIDED or DELETED. It changes no
+booking, payment, credit, link or Xero record. It can write API-usage rows
+and, if the Xero token needs refreshing, the new token, its refresh lease and
+a credential audit row; a failed refresh alerts the admins, as it would for
+the app. Its output names members' payments, so keep it off any public place.
+For each line, open the booking and use **Sync from Xero now**, then run the
+report again. If the run stops early (a club with more refund notes than one
+day's share of Xero calls), carry on the next day with the
+`--resume-from <id>` it prints. What each line leads to:
+[MAINTENANCE.md](MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
+
+**Rollback.** Nothing to undo: the report changes no booking, payment,
+credit, link or Xero record.
+
 ---
 
 ## v0.13.2 → v0.14.0

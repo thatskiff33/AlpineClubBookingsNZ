@@ -1335,6 +1335,26 @@ released without waiting on Payment, as for a status-less write, and the inbound
 pointer gate refuses the note. A hand-made answer whose note was voided
 meanwhile is refused (409), and its completion rolls back.
 
+**Voids an older reading already erased (#4336).** #4288 stops new cases; it
+cannot see a mirror an older live reading revived before it, because the void
+is gone from the local row. The webhook path (#4046, #4091) records a void only
+when Xero sends an event for it, and the nightly #4161 heal only acts on a link
+whose recorded status already says VOIDED or DELETED. Neither revisits a note
+whose recorded status went back to live. The #4370 recount takes off card
+refunds Stripe failed later, a different drift. So the owner-run, read-only
+`pnpm run xero:revived-refund-note-report` (`xero-revived-refund-note-report.ts`,
+reader in `xero-revived-refund-note-reader.ts`) asks Xero about the note on
+every active link in both refund-note roles, through the same link definition,
+status predicate and contribution helper as the rest of this section, and lists
+each one Xero reports cancelled. It changes no booking, payment, credit, link
+or Xero record, and its reads never arm the in-process outage pause. A link
+the app already records cancelled is counted apart and needs no action: the
+app already treats it as cancelled, and on the payment's own role the #4161
+heal also retires the link. Each listed note is corrected by a booking's
+**Sync from Xero now**, whose fresh VOIDED reading the rule above always
+applies. Runbook:
+[MAINTENANCE.md](../MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
+
 The inbound reconcile then acts on each payment's note as that payment's own
 refund-note row holds it when it acts (`readRefundNoteRowsByPayment`), never on
 the raw reading or on a verdict remembered from its own link write. Its recount

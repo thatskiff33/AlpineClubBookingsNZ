@@ -762,16 +762,27 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
 
     // And the bulk half of the action family is re-derived from the route's own
     // zod enum, so a fourth bulk action cannot mint an unpinned member-record
-    // action name. The enum is the route's whole bound on `action`, and the audit
-    // call interpolates it as `member.bulk-${action}`.
+    // action name. The enum sits in `bulk-update/schema.ts` (moved out of the
+    // route to keep it under its hard ceiling, #4926); it is the route's whole
+    // bound on `action`, the route parses its body with that schema, and the
+    // audit call interpolates the action as `member.bulk-${action}`.
     const bulkRoute = readFileSync(
       join(process.cwd(), "src/app/api/admin/members/bulk-update/route.ts"),
       "utf8",
     );
-    const enumMatch = /action:\s*z\.enum\(\[([^\]]*)\]\)/.exec(bulkRoute);
+    expect(
+      bulkRoute,
+      "The bulk-update route no longer parses its body with `bulkUpdateSchema`, " +
+        "so the enum this test reads is not the route's bound on `action`.",
+    ).toContain("bulkUpdateSchema.safeParse(");
+    const bulkSchema = readFileSync(
+      join(process.cwd(), "src/app/api/admin/members/bulk-update/schema.ts"),
+      "utf8",
+    );
+    const enumMatch = /action:\s*z\.enum\(\[([^\]]*)\]\)/.exec(bulkSchema);
     expect(
       enumMatch,
-      "The bulk-update route no longer bounds `action` with an inline z.enum, so " +
+      "The bulk-update schema no longer bounds `action` with an inline z.enum, so " +
         "this test can no longer derive which `member.bulk-*` audit actions exist. " +
         "Re-establish the bound before relying on MEMBER_RECORD_ADMIN_ACTIONS_2755.",
     ).not.toBeNull();
