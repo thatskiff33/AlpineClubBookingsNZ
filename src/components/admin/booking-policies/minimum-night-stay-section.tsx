@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import { useEditorFocusReturn } from "@/hooks/use-editor-focus-return"
 import { useRowActionFocusReturn } from "@/hooks/use-row-action-focus-return"
 import { rowKey, toggleKey, useRowHeadings } from "./list-row-focus"
+import { getAdminPage } from "@/lib/admin-hubs"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
@@ -737,8 +738,8 @@ export function MinimumNightStaySection() {
                 <div>
                   <CardTitle {...editorFocus.titleProps}>
                     {scopeLodgeName
-                      ? `Minimum Night Stay — ${scopeLodgeName}`
-                      : "Minimum Night Stay"}
+                      ? `${getAdminPage("booking-policies-minimum-stay").label} — ${scopeLodgeName}`
+                      : getAdminPage("booking-policies-minimum-stay").label}
                   </CardTitle>
                   <CardDescription>
                     Require a minimum number of nights when a booking touches specific days of the week

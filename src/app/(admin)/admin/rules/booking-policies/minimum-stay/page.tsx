@@ -1,5 +1,5 @@
 import { BackLink } from "@/components/admin/back-link";
-import { adminLink } from "@/lib/admin-hubs";
+import { adminLink, getAdminPage } from "@/lib/admin-hubs";
 import { MinimumNightStaySection } from "@/components/admin/booking-policies/minimum-night-stay-section";
 
 export default function MinimumStayPage() {
@@ -8,7 +8,7 @@ export default function MinimumStayPage() {
       <div>
         <BackLink {...adminLink("booking-policies")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
-          Minimum Night Stay
+          {getAdminPage("booking-policies-minimum-stay").label}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Require a minimum number of nights when a booking touches specific days
