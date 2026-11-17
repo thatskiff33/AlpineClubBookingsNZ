@@ -169,7 +169,7 @@ needed, #4473):
    `patches/`, and each patch's line under `patchedDependencies` in
    `pnpm-workspace.yaml` (remove the key, and its comment, too if it is left
    empty). Delete any test that pins the patch's behaviour (for #5252,
-   `scripts/ci/picomatch-redos-patch.test.mjs`).
+   `scripts/ci/picomatch-redos-patch.test.ts`).
 3. Run `pnpm install` to re-lock, so `pnpm-lock.yaml` no longer records the
    patch hash.
 4. Leave `patches/.gitkeep` in place: the Docker `deps` stage copies
