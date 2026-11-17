@@ -384,7 +384,6 @@ export async function applyPaymentAdjustments(
         additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
       }
     }
-
   } else if (xeroAdditionalAmountCents > 0) {
     additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
   }
