@@ -35,25 +35,7 @@ const ROOT = process.cwd();
  * Cards allowed another title: `file` to `href` to why. Each must still be
  * found, so a stale entry fails as surely as a new mismatch.
  */
-const EXEMPT: Record<string, Record<string, string>> = {
-  // #4968 (PR #5107) moves the Setup cards into `setup/hub-cards.ts`, titled
-  // from the registry, drops Foundations' card back to Setup, and retitles the
-  // Booking Policies cards. Until it lands, the old titles stay here so the two
-  // changes do not conflict; whichever merges second drops these entries.
-  "src/app/(admin)/admin/setup/setup-page-client.tsx": {
-    "/admin/setup/foundations": "#4968 renames Initial Setup to Foundations Setup",
-    "/admin/setup/finance": "#4968 renames Finance to Finance Setup",
-    'adminHref("notifications")': "#4968 renames Email Messages / Notifications to Notifications & Email",
-  },
-  "src/app/(admin)/admin/setup/foundations/page.tsx": {
-    "/admin/setup": "#4968 removes Foundations' Setup Checklist card",
-  },
-  "src/app/(admin)/admin/rules/booking-policies/page.tsx": {
-    'adminHref("booking-policies-cancellation")': "#4968 renames Default Cancellation Policy to Cancellation Policy",
-    'adminHref("booking-policies-periods")': "#4968 renames Date-Specific Periods to Booking Periods",
-    'adminHref("booking-policies-minimum-stay")': "#4968 renames Minimum Night Stay to Minimum Stay",
-  },
-};
+const EXEMPT: Record<string, Record<string, string>> = {};
 
 /** Every production `.ts`/`.tsx` file under `dir`, tests and the registry left out. */
 function productionFiles(dir: string): string[] {
@@ -208,8 +190,7 @@ describe("admin hub cards are titled with their page's registry label", () => {
     );
     expect(
       stale,
-      "a reviewed card is gone or now matches: drop it from EXEMPT. Once #4968 (PR #5107) and this test " +
-        "are both on main, set EXEMPT to {} and delete its comment.",
+      "a reviewed card is gone or now matches: drop it from EXEMPT.",
     ).toEqual([]);
   });
 

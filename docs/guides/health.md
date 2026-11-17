@@ -46,9 +46,9 @@ Under the page heading, above the status board, the **Integration readiness** se
 provider-backed setup pages: **Xero Setup**, **Xero Sync**, **Modules** and
 **Email Deliverability**. Each card shows only while its module is on and to an
 admin who can view its page (the Xero cards need the finance area). This was the
-Setup Wizard's separate **Operational Integrations** page
+Setup page's separate **Operational Integrations** page
 (`/admin/setup/integrations`) until #4796 folded it in here; that address, and
-the Setup Wizard's **Integration Readiness** card, open this section
+the Setup page's **Integration Readiness** card, open this section
 (`/admin/health#integration-readiness`).
 
 ## Settings reference
