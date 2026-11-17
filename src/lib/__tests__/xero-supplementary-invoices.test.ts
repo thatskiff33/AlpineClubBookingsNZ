@@ -456,6 +456,11 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
       source: "STORED", reason: null, storedSumCents: null, sharesSumCents: 3275, billedCents: 3275, lineCount: 2, shareCount: 2,
     });
     expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:3275:0:v1");
+    // #4525 (ALP-436): the manifest covers exactly the shares these lines itemise.
+    expect(mocks.recordSupplementaryInvoiceManifest).toHaveBeenCalledWith(expect.objectContaining({
+      anchor: { kind: "MODIFICATION", modificationId: "mod_lines" },
+      itemisedShareTaskIds: ["t1", "t2"],
+    }));
   });
 
   it("a share settled between a failed send and its retry never renders a line the retry does not bill: it falls back, same total", async () => {
@@ -484,14 +489,17 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     const first = { id: "t1", amountCents: 2275, settlementDirection: "CHARGE_TO_MEMBER", note: "owing", completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext };
     const run = async () => {
       mocks.startXeroSyncOperation.mockClear();
+      mocks.recordSupplementaryInvoiceManifest.mockClear();
       await createXeroSupplementaryInvoice({ format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: 2275, changeFeeCents: 0, bookingModificationId: "mod_lines" });
       const payload = mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
-      return { lines: payload.invoices[0].lineItems, record: payload.priceLines };
+      const recorded = mocks.recordSupplementaryInvoiceManifest.mock.calls[0]?.[0];
+      return { lines: payload.invoices[0].lineItems, record: payload.priceLines, itemisedShareTaskIds: recorded?.itemisedShareTaskIds };
     };
 
     mocks.manualRefundTaskFindMany.mockResolvedValue([first]);
     const attempt1 = await run();
     expect(attempt1.record).toMatchObject({ source: "STORED", shareCount: 1 });
+    expect(attempt1.itemisedShareTaskIds).toEqual(["t1"]);
 
     // A second share lands on the same anchor; the operation still bills 2275
     // (the restate could not join it, INV-PAY-070).
@@ -500,6 +508,8 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(attempt2.record).toMatchObject({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", sharesSumCents: 3275, billedCents: 2275 });
     expect(attempt2.lines[0].description).toBe("Booking modification - price adjustment (Booking bk1)");
     expect(lineTotalCents(attempt2.lines)).toBe(lineTotalCents(attempt1.lines));
+    // The single line itemises no share, so its manifest claims none (#4525, ALP-436).
+    expect(attempt2.itemisedShareTaskIds).toEqual([]);
   });
 
   it("a restated operation billing a raised figure falls back to the single line, with the reason (INV-PAY-070)", async () => {
@@ -904,6 +914,66 @@ describe("a second ask survives a Xero rejection replayably (#3193)", () => {
         localId: "mod_123",
       }),
     ).toEqual({ supported: true, reason: null });
+  });
+
+  /**
+   * ALP-580: the kept-late-capture charge day this row stored is read back
+   * strictly. This code wrote it from a real Stripe charge day, so a right-shaped
+   * day that does not exist can only be corruption. It must not be dated onto the
+   * Xero invoice; the real day is re-read from Stripe and stored in its place.
+   */
+  describe("a stored kept-late-capture charge day (ALP-580)", () => {
+    const keptLate = (keptLateCaptureDay: string) => ({
+      queueType: "SUPPLEMENTARY_INVOICE",
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      recordPayment: false,
+      paymentIntentId: "pi_late",
+      keptLateCaptureDay,
+    });
+
+    const runWithStoredDay = async (keptLateCaptureDay: string) => {
+      mocks.xeroSyncOperationFindUnique.mockResolvedValue({
+        requestPayload: keptLate(keptLateCaptureDay),
+      });
+      mocks.manualRefundTaskFindUnique.mockResolvedValue({ status: "DISMISSED" });
+      mocks.readStripeCaptureDocumentDate.mockResolvedValue("2026-06-10");
+      mocks.retryXeroWriteWithContactRepair.mockRejectedValue(new Error("sentinel-stop"));
+
+      await expect(
+        createXeroSupplementaryInvoice({
+          format: CLUB_FORMAT_TEST,
+          bookingId: "bk1",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: false,
+          syncOperation: xeroClaim("op_q"),
+        }),
+      ).rejects.toThrow("sentinel-stop");
+    };
+
+    it("re-reads the real day from Stripe when the stored one does not exist, and stores that instead", async () => {
+      await runWithStoredDay("2026-02-30");
+
+      expect(mocks.readStripeCaptureDocumentDate).toHaveBeenCalledWith("pi_late", expect.any(String));
+      // The first update is the corrected payload, stored before any Xero call.
+      const stored = mocks.xeroSyncOperationUpdate.mock.calls[0][0].data.requestPayload;
+      expect(stored.keptLateCaptureDay).toBe("2026-06-10");
+      // The last is the invoice the run recorded: dated the real day, never 30 February.
+      const recorded = mocks.xeroSyncOperationUpdate.mock.calls.at(-1)![0].data.requestPayload;
+      expect(recorded.invoices[0].date).toBe("2026-06-10");
+    });
+
+    it("uses a real stored day as it stands, without asking Stripe", async () => {
+      await runWithStoredDay("2026-06-09");
+
+      expect(mocks.readStripeCaptureDocumentDate).not.toHaveBeenCalled();
+      const recorded = mocks.xeroSyncOperationUpdate.mock.calls.at(-1)![0].data.requestPayload;
+      expect(recorded.invoices[0].date).toBe("2026-06-09");
+    });
   });
 
   describe("#4494: a gap invoice whose payment would overlap the credit-release sweep's share", () => {

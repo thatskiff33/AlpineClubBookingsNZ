@@ -960,6 +960,7 @@ describe("P2.3: Guest subscription check", () => {
       requiresSettlementMethod: true,
       returnsToOrganiser: false,
       organiserRefundByBankTransfer: false,
+      refundHeldForDispute: false,
     });
   });
 

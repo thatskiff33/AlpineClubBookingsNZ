@@ -13,7 +13,7 @@
 // is byte-for-byte identical to the unset behaviour and no test that asserts the
 // sender address changes. Set with ??= so any test that deliberately exercises a
 // different/!ok config by assigning or deleting these keeps control.
-import { vi } from "vitest";
+import { beforeEach, vi } from "vitest";
 import { SAFE_DEFAULT_CONFIG } from "@/config/club";
 
 // `server-only` is a Next.js guard that throws when a module is imported outside
@@ -106,6 +106,15 @@ process.env.DOTENV_CONFIG_QUIET ??= "true";
 if (typeof document !== "undefined") {
   const { configure } = await import("@testing-library/dom");
   configure({ asyncUtilTimeout: 4_000 });
+}
+
+// #4950: the booking wizard keeps its work in `sessionStorage`, and jsdom keeps
+// that storage for the whole file. Without this, one test's picks are restored
+// into the next test's wizard. Each test starts in a fresh tab instead.
+if (typeof window !== "undefined") {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
 }
 
 // #4367: real-PostgreSQL files share one race database, so they take turns

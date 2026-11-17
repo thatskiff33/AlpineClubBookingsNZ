@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import { Button } from "@/components/ui/button";
 import { OFFICER_SIGN_IN_ENFORCED } from "@/lib/officer-sign-in-switch";
+import { saveResponseAsFile } from "@/lib/save-response-as-file";
 
 /**
  * Member CSV export. While officer sign-in is off this stays a normal link.
@@ -44,17 +45,7 @@ async function downloadMemberExport(href: string): Promise<void> {
       toast.error("Could not export members.");
       return;
     }
-    const header = response.headers.get("Content-Disposition") ?? "";
-    const named = /filename="([^"]+)"/.exec(header);
-    const filename = named?.[1] ?? "members.csv";
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    await saveResponseAsFile(response, "members.csv");
   } catch {
     toast.error("Could not export members.");
   }

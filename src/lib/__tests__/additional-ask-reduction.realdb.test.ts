@@ -2709,8 +2709,9 @@ let webhookClient: PrismaClient;
       return createModificationAdditionalPaymentIntent({
         format: CLUB_FORMAT_TEST, bookingId: BOOKING_ID,
         result: {
+          ownCardRefund: null,
           pendingRefundAmountCents: 0, organiserChildRefund: null, paymentId: PAYMENT_ID,
-          additionalAsk: increase.adjusted.additionalAsk, retiredAdditionalAsks: [], hasSucceededPayment: true,
+          additionalAsk: increase.adjusted.additionalAsk, retiredAdditionalAsks: [], hasSucceededPayment: true, refundHeldForDispute: false,
           hasIssuedXeroInvoice: false, paymentCustomerId: "cus_race_3954", memberEmail: "race-3954@example.invalid",
           memberName: "Ask Payer", memberFirstName: "Ask", memberId: MEMBER_ID, bookingModificationId: increase.id, priceLines: null,
         },

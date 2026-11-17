@@ -11,6 +11,12 @@ import {
   removeScrollIntoViewSpy,
 } from "./helpers/focus";
 
+// An editor: the write buttons are gated on support edit access (#4971).
+vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
+  useAdminAreaEditAccess: () => true,
+}));
+
 const setup = {
   readiness: {
     status: "warning",
@@ -51,6 +57,12 @@ const setup = {
 const response = (body: unknown, ok = true) => ({ ok, json: async () => body });
 const fetchMock = vi.fn();
 let scroll: ReturnType<typeof installScrollIntoViewSpy>;
+// The finish announcement; the view-only banner is the page's other status region.
+function finishStatus() {
+  const region = document.getElementById("setup-success");
+  expect(region).toHaveAttribute("role", "status");
+  return region!;
+}
 function mount() {
   return render(
     <SetupPageClient
@@ -58,6 +70,14 @@ function mount() {
       features={{} as FeatureFlags}
     />,
   );
+}
+// Mark Setup Complete is in the header from the first render, disabled until the
+// first load lands, so finding it is not proof it can be clicked. A click on a
+// disabled button never reaches its handler (#5198); wait until it can.
+async function findEnabledButton(name: string) {
+  const button = await screen.findByRole("button", { name });
+  await waitFor(() => expect(button).toBeEnabled());
+  return button;
 }
 beforeEach(() => {
   scroll = installScrollIntoViewSpy();
@@ -99,7 +119,7 @@ describe("Setup action attention", () => {
       );
     }
     mount();
-    const button = await screen.findByRole("button", { name });
+    const button = await findEnabledButton(name);
     const alert = document.getElementById("setup-error");
     expect(alert).toBeEmptyDOMElement();
     expect(alert).toHaveAttribute("role", "alert");
@@ -162,10 +182,8 @@ describe("Setup action attention", () => {
       </div>,
     );
     Object.assign(container.firstElementChild!, { scrollTo });
-    const finish = await screen.findByRole("button", {
-      name: "Mark Setup Complete",
-    });
-    const status = screen.getByRole("status");
+    const finish = await findEnabledButton("Mark Setup Complete");
+    const status = finishStatus();
     expect(status).toBeEmptyDOMElement();
     fetchMock
       .mockResolvedValueOnce(response({}))
@@ -193,16 +211,14 @@ describe("Setup action attention", () => {
 
   it("drops the finish notice when a refresh finds setup reopened", async () => {
     mount();
-    const finish = await screen.findByRole("button", {
-      name: "Mark Setup Complete",
-    });
+    const finish = await findEnabledButton("Mark Setup Complete");
     const completed = response({
       ...setup,
       progress: { ...setup.progress, completedAt: "2026-07-01T00:00:00.000Z" },
     });
     fetchMock.mockResolvedValueOnce(response({})).mockResolvedValueOnce(completed);
     fireEvent.click(finish);
-    const status = screen.getByRole("status");
+    const status = finishStatus();
     await waitFor(() =>
       expect(status).toHaveTextContent("Setup has been marked complete."),
     );
@@ -227,7 +243,7 @@ describe("Setup action attention", () => {
     );
     mount();
     await screen.findByText("Setup has been marked complete.");
-    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    expect(finishStatus()).toBeEmptyDOMElement();
     expect(scroll).not.toHaveBeenCalled();
   });
 

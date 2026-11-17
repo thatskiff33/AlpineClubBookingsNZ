@@ -50,7 +50,7 @@ export function BookingGuestDietaryCard({
   return (
     <Card id="dietary" className="scroll-mt-20">
       <CardHeader>
-        <CardTitle>{DIETARY_REQUIREMENTS_LABEL}</CardTitle>
+        <CardTitle headingLevel={2}>{DIETARY_REQUIREMENTS_LABEL}</CardTitle>
         <CardDescription>
           Copied from each member&apos;s profile when they were added to this
           booking, then kept for this stay only. Changing it here does not change

@@ -37,6 +37,7 @@ export const MEMBERS_HUB = defineHub({
     {
       id: "member-applications",
       label: "Applications",
+      keywords: ["member applications"],
       oldPath: "/admin/member-applications",
       area: "membership",
       moved: true,
@@ -46,6 +47,7 @@ export const MEMBERS_HUB = defineHub({
       // `/admin/membership-cancellation` and `/admin/setup/cancellation`.
       id: "membership-cancellations",
       label: "Cancellation Requests",
+      keywords: ["membership cancellations"],
       oldPath: "/admin/membership-cancellations",
       area: "membership",
       tabs: ["requests", "settings"],
@@ -65,6 +67,7 @@ export const MEMBERS_HUB = defineHub({
     {
       id: "induction",
       label: "Induction",
+      keywords: ["induction register"],
       oldPath: "/admin/induction",
       area: "membership",
       flags: ["induction"],
@@ -129,8 +132,19 @@ export const MEMBERS_HUB = defineHub({
       // viewer whose matrix lacks them.
       id: "subscription-lockout",
       label: "Subscription Lockout",
+      keywords: ["subscription lockout settings"],
       oldPath: "/admin/subscription-lockout",
       area: "membership",
+      moved: true,
+    },
+    {
+      // Subscription categories (#4496): a second billing axis alongside
+      // membership type, so it sits beside membership-types.
+      id: "subscription-categories",
+      label: "Subscription Categories",
+      oldPath: "/admin/subscription-categories",
+      area: "membership",
+      keywords: ["category", "billing", "flat fee", "couple", "family rate"],
       moved: true,
     },
   ],

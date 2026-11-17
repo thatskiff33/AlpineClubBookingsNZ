@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { IntegrationWizard } from "@/components/admin/integration-wizard";
+import { getAdminPage } from "@/lib/admin-hubs";
 import type { WizardStepConfig } from "@/components/admin/integration-wizard";
 import {
   useBackupWizardContext,
@@ -98,7 +99,7 @@ export function BackupSetupWizard() {
   return (
     <IntegrationWizard<BackupWizardContext>
       wizardId="backup"
-      title="Database backup setup"
+      title={getAdminPage("backups-setup").label}
       description="Enter your S3 credentials, choose the destination, turn on nightly backups, and run a real verification backup — all in-app."
       steps={steps}
       context={context}

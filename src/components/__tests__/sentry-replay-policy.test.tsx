@@ -5,11 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const sentry = vi.hoisted(() => ({
   replay: undefined as undefined | { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> },
   replayIntegration: vi.fn(), addIntegration: vi.fn(),
+  ready: Promise.resolve("https://example.invalid") as Promise<string | null>,
 }));
 vi.mock("@sentry/nextjs", () => ({
   getReplay: () => sentry.replay,
   replayIntegration: sentry.replayIntegration,
   addIntegration: sentry.addIntegration,
+}));
+vi.mock("@/lib/observability/browser-sentry-client", () => ({
+  get browserSentryReady() { return sentry.ready; },
 }));
 import { SentryReplayPolicy } from "@/components/sentry-replay-policy";
 import { SENTRY_REPLAY_POLICY_CHANGED, SENTRY_REPLAY_POLICY_PATH } from "@/lib/privacy-retention-replay";
@@ -20,7 +24,7 @@ beforeEach(() => {
   sentry.addIntegration.mockReset().mockImplementation(() => {
     sentry.replay = { start: vi.fn(), stop: vi.fn() };
   });
-  vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "https://example.invalid");
+  sentry.ready = Promise.resolve("https://example.invalid");
 });
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
@@ -30,17 +34,38 @@ describe("club opt-in for Sentry Replay", () => {
     expect(sentry.replayIntegration).not.toHaveBeenCalled();
     expect(sentry.addIntegration).not.toHaveBeenCalled();
   });
-  it("starts only after opt-in, masks content, and stops when disabled", () => {
+  it("starts only after opt-in, masks content, and stops when disabled", async () => {
     const view = render(<SentryReplayPolicy enabled />);
-    expect(sentry.replayIntegration).toHaveBeenCalledWith({ maskAllText: true, blockAllMedia: true });
+    await waitFor(() => expect(sentry.replayIntegration).toHaveBeenCalledWith({ maskAllText: true, blockAllMedia: true }));
     expect(sentry.replay?.start).toHaveBeenCalledOnce();
     const replay = sentry.replay;
     view.rerender(<SentryReplayPolicy enabled={false} />);
     expect(replay?.stop).toHaveBeenCalled();
   });
-  it("stays off without a configured Sentry destination", () => {
-    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "");
+  it("stops an existing recorder without a runtime Sentry destination", async () => {
+    sentry.ready = Promise.resolve(null);
+    sentry.replay = { start: vi.fn(), stop: vi.fn() };
+    await act(async () => { render(<SentryReplayPolicy enabled />); });
+    expect(sentry.replay.stop).toHaveBeenCalled();
+    expect(sentry.replay.start).not.toHaveBeenCalled();
+    expect(sentry.addIntegration).not.toHaveBeenCalled();
+  });
+
+  it("waits for Sentry initialization even when the club already opted in", async () => {
+    let resolve!: (dsn: string | null) => void;
+    sentry.ready = new Promise(r => { resolve = r; });
     render(<SentryReplayPolicy enabled />);
+    expect(sentry.addIntegration).not.toHaveBeenCalled();
+    await act(async () => { resolve("https://example.invalid"); });
+    expect(sentry.replay?.start).toHaveBeenCalledOnce();
+  });
+
+  it("does not start a recorder after unmount while configuration is pending", async () => {
+    let resolve!: (dsn: string | null) => void;
+    sentry.ready = new Promise(r => { resolve = r; });
+    const view = render(<SentryReplayPolicy enabled />);
+    view.unmount();
+    await act(async () => { resolve("https://example.invalid"); });
     expect(sentry.addIntegration).not.toHaveBeenCalled();
   });
 

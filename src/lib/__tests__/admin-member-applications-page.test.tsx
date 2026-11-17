@@ -2,6 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 
 // #1997: the page derives view-only gating from the session matrix via
 // useAdminAreaEditAccess("membership"). Mock an all-edit admin so the existing
@@ -23,6 +24,13 @@ vi.mock("next-auth/react", () => ({
       },
     },
   }),
+}));
+
+// #4960: the page mirrors its filter and page into the URL.
+const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: navigation.replace, push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
 import MemberApplicationsPage from "@/app/(admin)/admin/membership/member-applications/page";
@@ -90,11 +98,25 @@ function listResponse() {
   };
 }
 
+/**
+ * One request a refusal case answers itself (#4976, ALP-589); every other
+ * request gets the suite's ordinary answer below.
+ */
+let refused: {
+  matches: (url: string, init?: RequestInit) => boolean;
+  answer: () => Response | Promise<Response>;
+} | null = null;
+
 describe("MemberApplicationsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    refused = null;
+    navigation.search = "";
     global.fetch = fetchMock as typeof fetch;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (refused?.matches(url, init)) {
+        return Promise.resolve().then(refused.answer);
+      }
       if (init?.method === "PUT") {
         return Promise.resolve({
           ok: true,
@@ -308,5 +330,290 @@ describe("MemberApplicationsPage", () => {
     expect(
       screen.getByRole("button", { name: /Reject application/i })
     ).toBeTruthy();
+  });
+
+  // #4976 (ALP-589): every handler used to parse the reply before checking
+  // `ok`. Their catches already fell back, so these hold the shared reader in
+  // place rather than a visible fix.
+  describe("a refused request says why", () => {
+    async function refreshTheStuckApplication() {
+      render(<MemberApplicationsPage />);
+      await screen.findByText("Stuck Nominators");
+      fireEvent.click(screen.getByRole("button", { name: /Refresh nomination workflow/i }));
+    }
+
+    async function searchForANominator() {
+      render(<MemberApplicationsPage />);
+      await screen.findByText("Stuck Nominators");
+      fireEvent.change(screen.getAllByPlaceholderText(/Search name or email/i)[0], {
+        target: { value: "Nom Three" },
+      });
+      fireEvent.click(screen.getAllByRole("button", { name: /Search members/i })[0]);
+    }
+
+    async function replaceTheNominator() {
+      await searchForANominator();
+      fireEvent.click((await screen.findAllByRole("button", { name: /^Use$/ }))[0]);
+    }
+
+    async function rejectTheStuckApplication() {
+      render(<MemberApplicationsPage />);
+      await screen.findByText("Stuck Nominators");
+      fireEvent.click(screen.getByRole("button", { name: /Reject application/i }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: /Reject and email applicant/i }),
+      );
+    }
+
+    describe("loading the applications", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not load member applications.",
+        submit: async (answer) => {
+          refused = {
+            matches: (url) => url.startsWith("/api/admin/member-applications?"),
+            answer,
+          };
+          render(<MemberApplicationsPage />);
+        },
+      });
+    });
+
+    describe("reviewing an application", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not update the application.",
+        submit: async (answer) => {
+          refused = { matches: (_url, init) => init?.method === "PUT", answer };
+          await rejectTheStuckApplication();
+        },
+      });
+
+      it("reloads the list after a successful review", async () => {
+        await rejectTheStuckApplication();
+
+        expect(await screen.findByText("Application rejected.")).toBeTruthy();
+        await waitFor(() => expect(listLoads()).toBe(2));
+      });
+    });
+
+    describe("refreshing the nomination workflow", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not refresh the nomination workflow.",
+        submit: async (answer) => {
+          refused = { matches: (url) => url.endsWith("/nominations/refresh"), answer };
+          await refreshTheStuckApplication();
+        },
+      });
+
+      it("reloads the list after a successful refresh", async () => {
+        await refreshTheStuckApplication();
+
+        expect(await screen.findByText("Nomination workflow refreshed.")).toBeTruthy();
+        await waitFor(() => expect(listLoads()).toBe(2));
+      });
+    });
+
+    describe("searching for a replacement nominator", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not search members.",
+        submit: async (answer) => {
+          refused = { matches: (url) => url.startsWith("/api/admin/members?"), answer };
+          await searchForANominator();
+        },
+      });
+    });
+
+    describe("replacing a nominator", () => {
+      itShowsEveryRefusal({
+        fallback: "Could not replace the nominator.",
+        submit: async (answer) => {
+          refused = { matches: (url) => url.endsWith("/replace"), answer };
+          await replaceTheNominator();
+        },
+      });
+
+      it("reloads the list after a successful replacement", async () => {
+        await replaceTheNominator();
+
+        expect(await screen.findByText("Nominator replaced with Nom Three.")).toBeTruthy();
+        await waitFor(() => expect(listLoads()).toBe(2));
+      });
+    });
+  });
+});
+
+function listLoads() {
+  return fetchMock.mock.calls.filter(([url]) =>
+    String(url).startsWith("/api/admin/member-applications?"),
+  ).length;
+}
+
+/*
+  #4960 / INV-OPS-020: the route returns 25 applications a page. The worked
+  example: 40 pending applications after an open day. The list says so, and
+  the next page holds the other 15.
+*/
+describe("MemberApplicationsPage paging (#4960)", () => {
+  let listUrls: URL[];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    navigation.search = "";
+    listUrls = [];
+    global.fetch = fetchMock as typeof fetch;
+    fetchMock.mockImplementation((input: string) => {
+      const url = new URL(input, "http://localhost");
+      if (url.pathname === "/api/admin/member-applications") {
+        listUrls.push(url);
+        const page = Number(url.searchParams.get("page"));
+        const pageRows = page === 1 ? 25 : 15;
+        const applications = Array.from({ length: pageRows }, (_, index) =>
+          baseApplication({
+            id: `app-${page}-${index}`,
+            applicantFirstName: `Applicant${page}x${index}`,
+            status: "PENDING_ADMIN",
+          }),
+        );
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            data: applications,
+            applications,
+            pendingCount: 40,
+            page,
+            pageSize: 25,
+            total: 40,
+            totalPages: 2,
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+  });
+
+  it("shows 25 of 40, reaches the other 15, and restarts at page 1 on a filter change", async () => {
+    render(<MemberApplicationsPage />);
+
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeTruthy();
+    expect(listUrls[0].searchParams.get("status")).toBe("PENDING_ADMIN");
+    expect(listUrls[0].searchParams.get("page")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeTruthy();
+    expect(listUrls.at(-1)!.searchParams.get("page")).toBe("2");
+    expect(screen.getAllByText(/Applicant2x14/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/Applicant1x0/)).toHaveLength(0);
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenLastCalledWith(
+        "/admin/member-applications?page=2",
+        { scroll: false },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText("Showing 1–25 of 40")).toBeTruthy();
+    expect(listUrls.at(-1)!.searchParams.get("page")).toBe("1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByText("Showing 26–40 of 40");
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    await waitFor(() => expect(listUrls.at(-1)!.searchParams.has("status")).toBe(false));
+    expect(listUrls.at(-1)!.searchParams.get("page")).toBe("1");
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenLastCalledWith(
+        "/admin/member-applications?status=ALL",
+        { scroll: false },
+      ),
+    );
+  });
+
+  it("opens on the filter and page the URL names", async () => {
+    navigation.search = "status=APPROVED&page=2";
+    render(<MemberApplicationsPage />);
+
+    expect(await screen.findByText("Showing 26–40 of 40")).toBeTruthy();
+    expect(listUrls[0].searchParams.get("status")).toBe("APPROVED");
+    expect(listUrls[0].searchParams.get("page")).toBe("2");
+  });
+
+  /*
+    The page-2 read is held while the officer goes back to page 1. Its late
+    answer must not put page 2's rows under page 1's pager (INV-OPS-020), and
+    the pager is the same focused button through the load.
+  */
+  it("keeps the pager focused through a load and ignores a slower read for a page left", async () => {
+    const slow: { release?: () => void } = {};
+    fetchMock.mockImplementation(async (input: string) => {
+      const url = new URL(input, "http://localhost");
+      if (url.pathname !== "/api/admin/member-applications") {
+        return { ok: true, json: async () => ({}) };
+      }
+      const page = Number(url.searchParams.get("page"));
+      if (page === 2) {
+        await new Promise<void>((resolve) => {
+          slow.release = resolve;
+        });
+      }
+      const applications = [
+        baseApplication({ id: `app-${page}`, applicantFirstName: `Applicant${page}x0`, status: "PENDING_ADMIN" }),
+      ];
+      return {
+        ok: true,
+        json: async () => ({ applications, pendingCount: 100, page, pageSize: 25, total: 100, totalPages: 4 }),
+      };
+    });
+    render(<MemberApplicationsPage />);
+    expect(await screen.findByText("Showing 1–25 of 100")).toBeTruthy();
+
+    const next = screen.getByRole("button", { name: "Next page" });
+    next.focus();
+    fireEvent.click(next);
+    await waitFor(() => expect(slow.release).toBeDefined());
+    expect(screen.getByRole("button", { name: "Next page" })).toBe(next);
+    expect(document.activeElement).toBe(next);
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect((await screen.findAllByText(/Applicant1x0/)).length).toBeGreaterThan(0);
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryAllByText(/Applicant2x0/)).toHaveLength(0);
+    expect(screen.getAllByText(/Applicant1x0/).length).toBeGreaterThan(0);
+    expect(screen.getByText("Showing 1–25 of 100")).toBeTruthy();
+  });
+
+  it("never lets a slower failed read for a page left show its error", async () => {
+    const slow: { release?: () => void } = {};
+    fetchMock.mockImplementation(async (input: string) => {
+      const url = new URL(input, "http://localhost");
+      if (url.pathname !== "/api/admin/member-applications") {
+        return { ok: true, json: async () => ({}) };
+      }
+      const page = Number(url.searchParams.get("page"));
+      if (page === 2) {
+        await new Promise<void>((resolve) => {
+          slow.release = resolve;
+        });
+        return { ok: false, json: async () => ({ error: "Stale read failed" }) };
+      }
+      const applications = [
+        baseApplication({ id: "app-1", applicantFirstName: "Applicant1x0", status: "PENDING_ADMIN" }),
+      ];
+      return {
+        ok: true,
+        json: async () => ({ applications, pendingCount: 100, page, pageSize: 25, total: 100, totalPages: 4 }),
+      };
+    });
+    render(<MemberApplicationsPage />);
+    await screen.findByText("Showing 1–25 of 100");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(slow.release).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    expect((await screen.findAllByText(/Applicant1x0/)).length).toBeGreaterThan(0);
+
+    slow.release!();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Stale read failed")).toBeNull();
+    expect(screen.getAllByText(/Applicant1x0/).length).toBeGreaterThan(0);
   });
 });
