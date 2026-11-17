@@ -304,6 +304,25 @@ describe("revealing an opened editor (#4115)", () => {
       expect(document.activeElement).toBe(other);
     });
 
+    it("reveals nothing when the dialog has closed by the time the editor renders", () => {
+      const { card, dialog, edit } = cardBehindDialog();
+      // Editable in the card all along, so it was never in the dialog's baseline.
+      const scope = control(card, "select", { "aria-label": "Scope" });
+      edit.focus();
+
+      const opening = captureEditorOpening("section", "trigger");
+      expect(opening.dialog).toBe(dialog);
+      // The dialog closes as the editor opens: the card is no longer behind a modal.
+      dialog.remove();
+      card.removeAttribute("aria-hidden");
+      revealOpenedEditor(opening);
+
+      // Falling back to the card would compare its controls with the dialog's
+      // baseline and treat the select as newly opened.
+      expect(scope.scrollIntoView).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(document.body);
+    });
+
     it("leaves a section whose card holds its own Edit to the ordinary reveal", () => {
       const card = markedRegion();
       const field = control(card, "input", { disabled: "" });

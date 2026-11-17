@@ -9,6 +9,7 @@ import {
   useState,
   type RefObject,
 } from "react";
+import { DIALOG_SELECTOR } from "@/hooks/use-inert-outside-popup";
 import {
   captureFocusReturn,
   elementByMarker,
@@ -128,8 +129,6 @@ export interface EditorOpening {
   openedFrom: HTMLElement | null | false;
 }
 
-const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';
-
 /**
  * The dialog an opening control sits in, when the section's card is a separate
  * surface from it: neither around the control nor inside the dialog (#5183).
@@ -236,7 +235,8 @@ export function mayRevealOpenedEditor(
  * An Edit that sits in a dialog outside the section's card (the analytics
  * card's) reveals inside that dialog instead, and a dialog editor that made no
  * control editable leaves focus to the dialog: the card behind the modal is
- * never a fallback (#5183).
+ * never a fallback. If that dialog has closed by the time the editor renders,
+ * nothing is revealed (#5183).
  *
  * The scroll is `block: "nearest"`, unlike `revealEditor`'s `"start"`: the
  * admin pressed Edit (or Add, or a row's Edit) inside this section, so it is
@@ -249,14 +249,17 @@ export function mayRevealOpenedEditor(
 export function revealOpenedEditor(opening: EditorOpening | null) {
   if (!opening || typeof document === "undefined") return;
   const region = elementByMarker(RETURN_FOCUS_REGION_ATTRIBUTE, opening.regionId);
-  const dialog = opening.dialog?.isConnected ? opening.dialog : null;
-  const scope = dialog ?? region;
+  // The dialog stays the scope even if it has closed since: `editableBefore` was
+  // taken from its controls, so the region cannot stand in for it (a control that
+  // was already editable there would read as newly opened). A closed dialog has
+  // no connected control to focus, so nothing is revealed.
+  const scope = opening.dialog ?? region;
   if (!scope || !mayRevealOpenedEditor(opening, scope)) return;
   for (const control of editableControlsIn(scope)) {
     if (opening.editableBefore.has(control)) continue;
     if (focusAndKeepInView(control)) return;
   }
-  if (!dialog) focusAndKeepInView(region);
+  if (!opening.dialog) focusAndKeepInView(region);
 }
 
 /**

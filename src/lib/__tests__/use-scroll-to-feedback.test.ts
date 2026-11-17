@@ -411,6 +411,28 @@ describe("use-scroll-to-feedback", () => {
       expect(target.hasAttribute("tabindex")).toBe(false);
     });
 
+    // Switching window or tab blurs the focused element, yet it stays the page's
+    // active element and has focus again on return. Removing the tabindex then
+    // would make it non-focusable and drop focus to the page, the loss this
+    // module exists to prevent (#5183). A real move of focus fires its blur with
+    // the target no longer active, which is what the second half asserts.
+    it("keeps the tabindex through a window blur, and removes it once focus moves on", async () => {
+      const target = document.createElement("div");
+      const other = document.createElement("input");
+      document.body.append(target, other);
+      expect(focusConnectedTarget(target)).toBe(true);
+
+      target.dispatchEvent(new FocusEvent("blur"));
+      await twoFrames();
+      expect(document.activeElement).toBe(target);
+      expect(target.getAttribute("tabindex")).toBe("-1");
+
+      // The listener outlived that blur, so a later real move still cleans up.
+      other.focus();
+      expect(target.hasAttribute("tabindex")).toBe(false);
+      expect(document.activeElement).toBe(other);
+    });
+
     it("reports a refusal, and leaves nothing behind on a target that took no focus", () => {
       const disabled = document.createElement("button");
       disabled.disabled = true;

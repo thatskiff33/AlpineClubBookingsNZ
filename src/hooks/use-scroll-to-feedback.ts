@@ -380,11 +380,17 @@ export function focusConnectedTarget(
   const landed = document.activeElement === target;
   if (!hadTabIndex && !keepTabIndex && target.hasAttribute("tabindex")) {
     if (landed) {
-      target.addEventListener(
-        "blur",
-        () => target.removeAttribute("tabindex"),
-        { once: true },
-      );
+      // A window or tab switch also blurs the element, yet it stays the page's
+      // active element and gets focus back on return. Taking the attribute off
+      // then would make it non-focusable and drop focus to the page (#5183), so
+      // wait for a blur where focus has moved on (the active element is no longer
+      // the target while a browser or jsdom fires it) and keep listening until then.
+      const release = () => {
+        if (document.activeElement === target) return;
+        target.removeAttribute("tabindex");
+        target.removeEventListener("blur", release);
+      };
+      target.addEventListener("blur", release);
     } else {
       target.removeAttribute("tabindex");
     }
