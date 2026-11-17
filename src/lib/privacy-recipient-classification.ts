@@ -28,7 +28,7 @@ interface PrivacyRecipient {
 export const PRIVACY_RECIPIENTS = {
   stripe: {
     name: "Stripe",
-    dataSent: "Payment amounts, payer name and email, payment references and booking or subscription identifiers; card details go directly from the browser to Stripe.",
+    dataSent: "Payment amounts, payer name and email, an internal member identifier, and payment and booking identifiers; card details go directly from the browser to Stripe.",
     enablement: "Stripe credentials and payment features enable payments; disconnecting or disabling the payment feature stops new payments, but does not delete Stripe records.",
     processing: "See the club's Stripe account terms and Stripe's privacy notice; the application does not fix a processing country.",
     memberFacing: true,

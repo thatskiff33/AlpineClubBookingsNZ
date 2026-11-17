@@ -91,7 +91,7 @@ const STARTER_PRIVACY_RECIPIENT_COPY: Record<MemberFacingRecipientId, StarterRec
   },
   stripe: {
     title: "Stripe",
-    text: "Payment processing. Stripe receives payment amounts, the payer&rsquo;s name and email address and booking or subscription references. Card details go from your browser directly to Stripe.",
+    text: "Payment processing. Stripe receives payment amounts, the payer&rsquo;s name and email address, an internal member identifier, and payment and booking references. Card details go from your browser directly to Stripe.",
     notice: "See <a href=\"https://stripe.com/privacy\" target=\"_blank\" rel=\"noopener noreferrer\">Stripe&rsquo;s Privacy Policy</a>.",
   },
   xero: {
