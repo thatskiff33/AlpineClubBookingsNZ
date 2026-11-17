@@ -88,7 +88,7 @@ export const LODGE_OPS_HUB = defineHub({
     },
     {
       id: "roster",
-      label: "Roster",
+      label: "Chore Roster",
       oldPath: "/admin/roster",
       area: "lodge",
       flags: ["chores"],
@@ -106,6 +106,7 @@ export const LODGE_OPS_HUB = defineHub({
     {
       id: "chores",
       label: "Chores",
+      keywords: ["chore templates"],
       oldPath: "/admin/chores",
       area: "lodge",
       flags: ["chores"],
@@ -147,6 +148,7 @@ export const LODGE_OPS_HUB = defineHub({
     {
       id: "display-builder",
       label: "Display Builder",
+      keywords: ["visual builder"],
       oldPath: "/admin/display/builder",
       area: "lodge",
       flags: ["lobbyDisplay"],
@@ -163,6 +165,7 @@ export const LODGE_OPS_HUB = defineHub({
     {
       id: "display-layouts",
       label: "Display Layouts",
+      keywords: ["advanced mode"],
       oldPath: "/admin/display/layouts",
       area: "lodge",
       flags: ["lobbyDisplay"],
@@ -202,6 +205,7 @@ export const LODGE_OPS_HUB = defineHub({
       // Exempt from lobbyDisplay (#2249): it is how the module is turned on.
       id: "display-setup",
       label: "Display Setup",
+      keywords: ["lodge display setup"],
       oldPath: "/admin/display/setup",
       area: "lodge",
       moved: false,
