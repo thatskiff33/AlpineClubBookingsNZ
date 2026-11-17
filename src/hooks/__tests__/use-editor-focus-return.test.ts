@@ -213,6 +213,118 @@ describe("revealing an opened editor (#4115)", () => {
     expect(document.activeElement).toBe(document.body);
   });
 
+  // The analytics card (#5183): its card is hidden behind the modal, Edit sits in
+  // the dialog, and the render Edit causes disables the focused Edit (Save takes
+  // its place) rather than removing it, so a browser drops focus to the page and
+  // Radix's focus scope, which watches only removed nodes, never sees it.
+  describe("an Edit in a dialog outside the section's card (#5183)", () => {
+    function cardBehindDialog() {
+      const card = markedRegion();
+      card.setAttribute("aria-hidden", "true");
+      const dialog = document.createElement("div");
+      dialog.setAttribute("role", "dialog");
+      document.body.append(dialog);
+      const edit = control(dialog, "button", {
+        "data-return-focus-trigger": "trigger",
+      });
+      return { card, dialog, edit };
+    }
+
+    it("focuses the first control the opening made editable in the dialog, not the hidden card", () => {
+      const { card, dialog, edit } = cardBehindDialog();
+      const id = control(dialog, "input", { disabled: "" });
+      const message = control(dialog, "textarea", { disabled: "" });
+      edit.focus();
+
+      const opening = captureEditorOpening("section", "trigger");
+      expect(opening.dialog).toBe(dialog);
+      // The render the opening caused: the fields come alive and the focused
+      // Edit is disabled, which a browser answers by dropping focus to the page.
+      id.disabled = false;
+      message.disabled = false;
+      edit.disabled = true;
+      revealOpenedEditor(opening);
+
+      expect(document.activeElement).toBe(id);
+      expect(card.contains(document.activeElement)).toBe(false);
+      expect(id.scrollIntoView).toHaveBeenCalledWith({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    });
+
+    it("finds the dialog from the trigger marker when a click focused nothing", () => {
+      const { dialog, edit } = cardBehindDialog();
+      const field = control(dialog, "input", { disabled: "" });
+      edit.blur();
+
+      const opening = captureEditorOpening("section", "trigger");
+      field.disabled = false;
+      revealOpenedEditor(opening);
+
+      expect(opening.dialog).toBe(dialog);
+      expect(document.activeElement).toBe(field);
+    });
+
+    it("skips a control the dialog could already edit", () => {
+      const { dialog, edit } = cardBehindDialog();
+      const scope = control(dialog, "select", { "aria-label": "Scope" });
+      const field = control(dialog, "input", { disabled: "" });
+      edit.focus();
+
+      const opening = captureEditorOpening("section", "trigger");
+      field.disabled = false;
+      revealOpenedEditor(opening);
+
+      expect(document.activeElement).toBe(field);
+      expect(scope.scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    it("never falls back to the hidden card when the dialog's editor made nothing editable", () => {
+      const { card, edit } = cardBehindDialog();
+      edit.focus();
+
+      revealOpenedEditor(captureEditorOpening("section", "trigger"));
+
+      expect(document.activeElement).toBe(edit);
+      expect(card.contains(document.activeElement)).toBe(false);
+    });
+
+    it("moves nothing once focus has gone to another control in the dialog", () => {
+      const { dialog, edit } = cardBehindDialog();
+      const field = control(dialog, "input", { disabled: "" });
+      const other = control(dialog, "input");
+      edit.focus();
+
+      const opening = captureEditorOpening("section", "trigger");
+      field.disabled = false;
+      other.focus();
+      revealOpenedEditor(opening);
+
+      expect(document.activeElement).toBe(other);
+    });
+
+    it("leaves a section whose card holds its own Edit to the ordinary reveal", () => {
+      const card = markedRegion();
+      const field = control(card, "input", { disabled: "" });
+      const dialog = document.createElement("div");
+      dialog.setAttribute("role", "dialog");
+      card.append(dialog);
+      const edit = control(dialog, "button", {
+        "data-return-focus-trigger": "trigger",
+      });
+      edit.focus();
+
+      const opening = captureEditorOpening("section", "trigger");
+      // The dialog is inside the card, so it is not a separate surface.
+      expect(opening.dialog).toBeNull();
+      field.disabled = false;
+      revealOpenedEditor(opening);
+
+      expect(document.activeElement).toBe(field);
+    });
+  });
+
   it("moves nothing when there is no record or no marked section", () => {
     const outside = document.createElement("input");
     document.body.append(outside);
