@@ -1,3 +1,4 @@
+import type { BookingCashCover } from "@/lib/booking-cash-evidence";
 import { loadBookingAppliedCredit } from "@/lib/booking-confirmation-credit";
 import {
   bookingCancelledRefundSentence,
@@ -585,19 +586,23 @@ export async function sendBookingPendingEmail(
  * arrive as a whole line or as nothing (see composeOptionalEmailLine).
  *
  * - owes: the amount, and a held-bed sentence that is true for this booking -
- *   CONFIRMED on a bed-holding bank transfer, or on an exclusive hold, holds
- *   its beds while it owes;
+ *   a CONFIRMED booking on a bed-holding bank transfer holds its beds while it
+ *   owes;
  * - covered: nothing;
  * - organiser pays: says so, and asks the member for nothing;
  * - unknown, or unread: the neutral line - no amount, no "paid" (owner
  *   decision 3, 16 Oct 2026).
+ *
+ * `amount` is the raw figure behind the line for an override: what is owed
+ * when the records prove it (zero once covered), and empty when they cannot -
+ * never "$0.00" for a balance nobody can vouch for.
  */
 export function bookingPolicyExceptionApprovedPaymentNote(
   args: { cover: BookingCashCover | null; bedsHeld: boolean },
   format: ClubFormat,
 ): { paymentNote: string; amount: string } {
-  const cover = args.cover ?? { kind: "unknown" };
-  switch (cover.kind) {
+  const { cover } = args;
+  switch (cover?.kind) {
     case "owes": {
       const amount = formatMoneyCents(cover.cents, format);
       return {
@@ -608,13 +613,19 @@ export function bookingPolicyExceptionApprovedPaymentNote(
       };
     }
     case "covered":
-      return { amount: "", paymentNote: "" };
+      return { amount: formatMoneyCents(0, format), paymentNote: "" };
     case "organiser_pays":
-      return { amount: "", paymentNote: "Your group organiser pays for this stay, so there is nothing for you to pay on this booking." };
-    case "unknown":
       return {
         amount: "",
-        paymentNote: "To see whether anything is still to pay on this booking, open it from your account or contact the club's treasurer.",
+        paymentNote:
+          "Your group organiser pays for this stay, so there is nothing for you to pay on this booking.",
+      };
+    case "unknown":
+    case undefined:
+      return {
+        amount: "",
+        paymentNote:
+          "To see whether anything is still to pay on this booking, open it from your account or contact the club.",
       };
   }
 }
@@ -689,8 +700,7 @@ export async function sendBookingPolicyExceptionApprovedEmail(
       paymentNote,
       adminNotesLine,
       // Raw values behind the two composed lines, so an admin override written
-      // against either form keeps rendering. `amount` is empty unless an amount
-      // is owed: never "$0.00" for a balance the records cannot prove.
+      // against either form keeps rendering.
       amount,
       adminNotes: args.adminNotes ?? "",
     },
