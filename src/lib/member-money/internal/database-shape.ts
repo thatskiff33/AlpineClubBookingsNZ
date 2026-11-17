@@ -172,6 +172,8 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
         `PRIMARY KEY (id)`,
       member_money_export_coverage_shape:
         `CHECK ((("coveredCents" > 0) AND (length("chargeIdentity") > 0)))`,
+      member_money_export_coverage_application:
+        `CHECK (((("documentRole" = 'PRIMARY_BOOKING_INVOICE'::"MemberMoneyExportDocumentRole") = ("applicationKey" IS NULL)) AND (("applicationKey" IS NULL) OR (length("applicationKey") > 0))))`,
     },
   },
   triggers: {
@@ -336,10 +338,12 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
         `CREATE UNIQUE INDEX "MemberMoneyExportManifest_pkey" ON public."MemberMoneyExportManifest" USING btree (id)`,
     },
     MemberMoneyExportCoverage: {
-      MemberMoneyExportCoverage_documentRole_account_chargeIdenti_key:
-        `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_documentRole_account_chargeIdenti_key" ON public."MemberMoneyExportCoverage" USING btree ("documentRole", account, "chargeIdentity")`,
+      MemberMoneyExportCoverage_application_key:
+        `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_application_key" ON public."MemberMoneyExportCoverage" USING btree ("documentRole", account, "chargeIdentity", "applicationKey") WHERE ("applicationKey" IS NOT NULL)`,
       MemberMoneyExportCoverage_pkey:
         `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_pkey" ON public."MemberMoneyExportCoverage" USING btree (id)`,
+      MemberMoneyExportCoverage_whole_component_key:
+        `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_whole_component_key" ON public."MemberMoneyExportCoverage" USING btree ("documentRole", account, "chargeIdentity") WHERE ("documentRole" = 'PRIMARY_BOOKING_INVOICE'::"MemberMoneyExportDocumentRole")`,
     },
   },
 } as const satisfies {

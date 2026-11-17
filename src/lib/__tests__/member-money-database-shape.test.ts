@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { MEMBER_MONEY_DATABASE_SHAPE } from "@/lib/member-money/internal/database-shape";
 import { MEMBER_MONEY_RELATIONS } from "@/lib/member-money-tables";
 
-const MIGRATION = ["20261127010000_member_money_journal", "20261210080000_member_money_applications", "20261221030000_member_money_export_manifest"].map((name) => readFileSync(`prisma/migrations/${name}/migration.sql`, "utf8")).join("\n");
+const MIGRATION = ["20261127010000_member_money_journal", "20261210080000_member_money_applications", "20261221030000_member_money_export_manifest", "20261221040000_member_money_capture_receipt_manifest"].map((name) => readFileSync(`prisma/migrations/${name}/migration.sql`, "utf8")).join("\n");
 
 /** Each relation's names, sorted, from `[relation, name]` pairs. */
 function namesByRelation(pairs: Iterable<readonly [string, string]>) {
@@ -63,8 +63,11 @@ describe("member money database shape (#4513)", () => {
   });
 
   it("pins every unique index the migration creates, primary keys included", () => {
+    // A later migration may replace a key: an index it drops is no longer pinned.
+    const dropped = new Set([...MIGRATION.matchAll(/DROP INDEX "(\w+)"/g)].map(([, name]) => name!));
     const indexes = [...MIGRATION.matchAll(/CREATE UNIQUE INDEX "(\w+)" ON "(\w+)"/g)]
-      .map(([, name, relation]) => [relation!, name!] as const);
+      .map(([, name, relation]) => [relation!, name!] as const)
+      .filter(([, name]) => !dropped.has(name));
     expect(pinnedNames(MEMBER_MONEY_DATABASE_SHAPE.uniqueIndexes)).toEqual(namesByRelation([...indexes, ...primaryKeys]));
   });
 

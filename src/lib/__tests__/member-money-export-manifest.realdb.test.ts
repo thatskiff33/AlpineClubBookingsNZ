@@ -25,7 +25,10 @@ async function booking(): Promise<string> {
   return id;
 }
 
-function row(bookingId: string, overrides: Partial<ExportManifestRow> = {}): ExportManifestRow {
+type PrimaryRow = Extract<ExportManifestRow, { documentRole: "PRIMARY_BOOKING_INVOICE" }>;
+type ReceiptRow = Extract<ExportManifestRow, { documentRole: "CAPTURE_RECEIPT" }>;
+
+function row(bookingId: string, overrides: Partial<PrimaryRow> = {}): PrimaryRow {
   return {
     documentRole: "PRIMARY_BOOKING_INVOICE",
     legacyKey: `booking:${bookingId}:invoice:v1`,
@@ -41,6 +44,22 @@ function row(bookingId: string, overrides: Partial<ExportManifestRow> = {}): Exp
       { account: "FEE_REVENUE", chargeIdentity: `fee:${bookingId}`, coveredCents: 2500, taxCode: "GST_INCLUSIVE_1500BP" },
     ],
     ...overrides,
+  };
+}
+
+/** A capture receipt of `cents` of one capture, under its own Xero payment key. */
+function receipt(bookingId: string, key: string, cents: number, capture = `capture:pi_${bookingId}`): ReceiptRow {
+  return {
+    documentRole: "CAPTURE_RECEIPT",
+    legacyKey: key,
+    bookingId,
+    outcome: "COVERED",
+    reason: null,
+    payloadHash: "c".repeat(64),
+    frozenMapping: { invoiceId: "INV-4525" },
+    lineTotalCents: cents,
+    providerInvoiceId: `PAY-${key}`,
+    coverage: [{ account: "STRIPE_CLEARING", chargeIdentity: capture, coveredCents: cents, taxCode: null, applicationKey: key }],
   };
 }
 
@@ -119,5 +138,40 @@ async function stored(bookingId: string) {
     await expect(app.query(`INSERT INTO "MemberMoneyExportCoverage" (id,"manifestId","documentRole",account,"chargeIdentity","coveredCents")
       VALUES ('late-4525', $1, 'PRIMARY_BOOKING_INVOICE', 'BOOKING_REVENUE', $2, 16500)`, [manifests[0].id, `booking:${id}:late`]))
       .rejects.toMatchObject({ code: "23514", message: expect.stringContaining("conflict_with_coverage") });
+  });
+
+  it("lets several receipts cover one capture under their own keys, and refuses a key covering it twice", async () => {
+    const id = await booking();
+    await expect(write(receipt(id, `payment:${id}:a`, 5000))).resolves.toBe("WRITTEN");
+    await expect(write(receipt(id, `payment:${id}:b`, 3000))).resolves.toBe("WRITTEN");
+    await expect(write(receipt(id, `payment:${id}:a`, 5000))).resolves.toBe("SAME");
+    const { coverage } = await stored(id);
+    expect(coverage).toEqual([{ chargeIdentity: `capture:pi_${id}`, coveredCents: 5000 }, { chargeIdentity: `capture:pi_${id}`, coveredCents: 3000 }]);
+    // One key naming the same capture twice, on a manifest of its own.
+    const twice = receipt(id, `payment:${id}:c`, 2000);
+    await expect(write({ ...twice, lineTotalCents: 4000, coverage: [twice.coverage[0], twice.coverage[0]] })).rejects.toMatchObject({ code: "P2002" });
+  });
+
+  it("keeps the primary invoice's whole-component key beside receipts naming the same component", async () => {
+    const id = await booking();
+    await write(row(id));
+    const stay = row(id).coverage[0];
+    await expect(write(receipt(id, `payment:${id}:stay`, 14000, stay.chargeIdentity))).resolves.toBe("WRITTEN");
+    const other = await booking();
+    await expect(write(row(other, { lineTotalCents: 14000, coverage: [stay] }))).rejects.toMatchObject({ code: "P2002" });
+  });
+
+  it("requires an application key on a receipt's coverage and refuses one on the primary invoice's", async () => {
+    const id = await booking();
+    await write(receipt(id, `payment:${id}:k`, 100, `capture:pi_${id}:k`));
+    const [{ id: receiptId }] = (await app.query(`SELECT id FROM "MemberMoneyExportManifest" WHERE "legacyKey" = $1`, [`payment:${id}:k`])).rows;
+    await expect(app.query(`INSERT INTO "MemberMoneyExportCoverage" (id,"manifestId","documentRole",account,"chargeIdentity","coveredCents")
+      VALUES ('nokey-4525', $1, 'CAPTURE_RECEIPT', 'STRIPE_CLEARING', $2, 1)`, [receiptId, `capture:pi_${id}:nokey`]))
+      .rejects.toMatchObject({ code: "23514", constraint: "member_money_export_coverage_application" });
+    await write(row(id, { legacyKey: `booking:${id}:key`, lineTotalCents: 1, coverage: [{ ...row(id).coverage[0], chargeIdentity: `booking:${id}:key`, coveredCents: 1 }] }));
+    const [{ id: invoiceId }] = (await app.query(`SELECT id FROM "MemberMoneyExportManifest" WHERE "legacyKey" = $1`, [`booking:${id}:key`])).rows;
+    await expect(app.query(`INSERT INTO "MemberMoneyExportCoverage" (id,"manifestId","documentRole",account,"chargeIdentity","coveredCents","applicationKey")
+      VALUES ('keyed-4525', $1, 'PRIMARY_BOOKING_INVOICE', 'BOOKING_REVENUE', $2, 1, 'k')`, [invoiceId, `booking:${id}:keyed`]))
+      .rejects.toMatchObject({ code: "23514", constraint: "member_money_export_coverage_application" });
   });
 });

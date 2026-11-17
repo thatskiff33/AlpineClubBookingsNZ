@@ -9553,6 +9553,8 @@ model MemberMoneyRefundReservationRelease {
 /// M13 (#4525): the outbound document families whose coverage a manifest records.
 enum MemberMoneyExportDocumentRole {
   PRIMARY_BOOKING_INVOICE
+  /// A stored Xero payment's cents of one card capture, under its own idempotency key.
+  CAPTURE_RECEIPT
 }
 
 enum MemberMoneyExportOutcome {
@@ -9565,6 +9567,10 @@ enum MemberMoneyExportConflictReason {
   STAY_CENTS
   FEE_CENTS
   COMPONENT_UNUSABLE
+  /// A receipt's cents exceed what is left of its capture's live cash debit.
+  CAPTURE_CENTS
+  /// The receipt names no capture, or the journal holds no live receipt for it.
+  CAPTURE_NOT_JOURNALLED
 }
 
 /// M13 (#4525): what one sent provider document covers, written once under its
@@ -9590,8 +9596,11 @@ model MemberMoneyExportManifest {
   @@index([bookingId])
 }
 
-/// One journal component a manifest's document bills whole. A component is billed
-/// by at most one document of each role.
+/// One journal component a manifest's document covers. A primary invoice bills a
+/// component whole, once (no applicationKey); a capture receipt covers cents of
+/// one capture under its own applicationKey, so several receipts may name one
+/// capture. Both keys are raw-SQL partial unique indexes Prisma cannot express
+/// (prisma/partial-unique-indexes.tsv).
 model MemberMoneyExportCoverage {
   id String @id @default(cuid())
   manifestId String
@@ -9600,8 +9609,8 @@ model MemberMoneyExportCoverage {
   chargeIdentity String
   coveredCents Int
   taxCode String?
+  applicationKey String?
   manifest MemberMoneyExportManifest @relation(fields: [manifestId, documentRole], references: [id, documentRole], onDelete: Restrict, onUpdate: Restrict)
-  @@unique([documentRole, account, chargeIdentity])
   @@index([manifestId, documentRole])
 }
 

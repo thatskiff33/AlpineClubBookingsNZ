@@ -31,3 +31,5 @@ export { MemberMoneyReservationRefused } from "./internal/store";
 
 // #4525 (M13): the primary booking invoice's export manifest, planned beside the sender's lines and recorded after its link.
 export { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest } from "./internal/primary-invoice-manifest";
+// #4525 (M13): a capture receipt's export manifest, recorded by each capture sender after it stores a Xero payment id.
+export { recordCaptureReceiptManifest, type CaptureReceiptManifestInput } from "./internal/capture-receipt-manifest";
