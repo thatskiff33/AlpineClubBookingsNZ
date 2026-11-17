@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   ADMIN_LIST_DEFAULT_PAGE_SIZE,
   parseAdminListPageParam,
@@ -22,6 +22,7 @@ const MEMBERS_DATASET_QUERY_KEYS = [
 
 export function useMembersQueryState() {
   const router = useRouter()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const [search, setSearch] = useState(searchParams.get("q") || "")
   const [debouncedSearch, setDebouncedSearch] = useState(search)
@@ -72,9 +73,15 @@ export function useMembersQueryState() {
     return queryString ? `${adminHref("members")}?${queryString}` : adminHref("members")
   }, [buildMembersSearchParams])
 
+  // Replace only when the URL is not already the canonical one. A replace to
+  // the URL the officer is already on is still a soft navigation: Next drops
+  // the page's <title> until the server streams it back (#5155).
   useEffect(() => {
-    router.replace(buildMembersListPath(), { scroll: false })
-  }, [buildMembersListPath, router])
+    const target = buildMembersListPath()
+    const currentSearch = searchParams.toString()
+    const current = currentSearch ? `${pathname}?${currentSearch}` : pathname
+    if (target !== current) router.replace(target, { scroll: false })
+  }, [buildMembersListPath, pathname, router, searchParams])
 
   const setFilter = useCallback((key: keyof Filters, value: string) => {
     setFilters((current) => ({ ...current, [key]: value }))

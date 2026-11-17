@@ -2,15 +2,18 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { adminHref } from "@/lib/admin-hubs"
 import { useMembersQueryState } from "./use-members-query-state"
 
 const navigation = vi.hoisted(() => ({
+  currentPathname: "/admin/members",
   currentSearch: "",
   replace: vi.fn(),
 }))
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: navigation.replace }),
+  usePathname: () => navigation.currentPathname,
   useSearchParams: () => new URLSearchParams(navigation.currentSearch),
 }))
 
@@ -35,6 +38,7 @@ function Harness() {
 describe("useMembersQueryState Reset", () => {
   beforeEach(() => {
     navigation.replace.mockReset()
+    navigation.currentPathname = adminHref("members")
     navigation.currentSearch = ""
   })
 
@@ -73,5 +77,51 @@ describe("useMembersQueryState Reset", () => {
         expect(url.searchParams.has(key)).toBe(false)
       }
     })
+  })
+})
+
+// A replace to the URL the page is already on is a soft navigation that drops
+// the <title> until the server streams it back; the E2E axe audit caught the
+// gap as document-title (#5155).
+describe("useMembersQueryState URL sync on mount", () => {
+  beforeEach(() => {
+    navigation.replace.mockReset()
+    navigation.currentPathname = adminHref("members")
+    navigation.currentSearch = ""
+  })
+
+  it.each([
+    ["no query", ""],
+    ["a canonical filtered query", "q=Aroha&sortBy=email&sortDir=desc&role=ADMIN"],
+  ])("does not navigate when the URL is already canonical (%s)", async (_label, search) => {
+    navigation.currentSearch = search
+
+    render(<Harness />)
+    // Outlast the 300 ms search debounce, which re-runs the sync effect.
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    expect(navigation.replace).not.toHaveBeenCalled()
+  })
+
+  it("rewrites a non-canonical URL to the canonical one", async () => {
+    navigation.currentSearch = "role=ADMIN&q=Aroha&page=1&sortBy=name&futureContext=keep"
+
+    render(<Harness />)
+
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalled())
+    expect(navigation.replace).toHaveBeenLastCalledWith(
+      `${adminHref("members")}?futureContext=keep&q=Aroha&role=ADMIN`,
+      { scroll: false },
+    )
+  })
+
+  it("navigates to the members URL from any other path", async () => {
+    navigation.currentPathname = "/admin/some-other-path"
+
+    render(<Harness />)
+
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenCalledWith(adminHref("members"), { scroll: false }),
+    )
   })
 })
