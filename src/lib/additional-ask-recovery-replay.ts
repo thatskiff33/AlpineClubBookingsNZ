@@ -324,6 +324,15 @@ export const CARRIED_ASK_CHALLENGE_WAIT_MS = 60 * 60 * 1000;
 export const CARRIED_ASK_CHALLENGE_RECHECK_MS = 15 * 60 * 1000;
 
 /**
+ * #4755 review: the payments cron ticks every 15 minutes and picks rows whose
+ * `nextRetryAt` has passed when its run starts. A recheck stamped exactly 15
+ * minutes after the decision (which comes after the run's start, the claim and
+ * the Stripe read) would miss the next tick by moments and wait for the one
+ * after, so it is stamped this much earlier to land on the next run.
+ */
+export const CARRIED_ASK_CHALLENGE_RECHECK_LEAD_MS = 60 * 1000;
+
+/**
  * #4755: the carried ask the replay last saw in a 3D Secure challenge, and when
  * it first saw it (`PaymentRecoveryOperation.carriedAskChallenge*`). Kept on the
  * recovery row because every claim clears `lastError`.
@@ -414,7 +423,7 @@ export async function carriedAskPaymentWait(
     return {
       kind: "wait",
       message: `Additional intent recovery waiting: the unpaid ask it would carry (${liveAsk}) is requires_action at Stripe - waiting for the member to finish their bank's 3D Secure check, for up to ${CARRIED_ASK_CHALLENGE_WAIT_MS / 3_600_000} hour from when this recovery first saw it (${sighting.seenAt.toISOString()}), checked again every ${CARRIED_ASK_CHALLENGE_RECHECK_MS / 60_000} minutes`,
-      recheckAt: new Date(now.getTime() + CARRIED_ASK_CHALLENGE_RECHECK_MS),
+      recheckAt: new Date(now.getTime() + CARRIED_ASK_CHALLENGE_RECHECK_MS - CARRIED_ASK_CHALLENGE_RECHECK_LEAD_MS),
       challenge: sighting,
     };
   }

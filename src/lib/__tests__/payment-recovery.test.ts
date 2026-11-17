@@ -5340,7 +5340,7 @@ describe("payment recovery worker", () => {
       expect(mockGetPaymentIntent.mock.invocationCallOrder[0]!).toBeLessThan(mockCreatePaymentIntent.mock.invocationCallOrder[0]!);
     });
 
-    it("#4755: a mid-3DS ask is waited on - nothing minted or cancelled, the sighting recorded and a 15-minute recheck, in the fenced wait write", async () => {
+    it("#4755: a mid-3DS ask is waited on - nothing minted or cancelled, the sighting recorded and a recheck due by the next 15-minute run, in the fenced wait write", async () => {
       primeQueue(additionalIntentOperation());
       mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
       mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status: "requires_action" });
@@ -5355,7 +5355,7 @@ describe("payment recovery worker", () => {
         .filter((args) => args.data?.status === PaymentRecoveryOperationStatus.FAILED);
       expect(waitWrites).toHaveLength(1);
       const seenAt = waitWrites[0]!.data.carriedAskChallengeSeenAt as Date;
-      expect(waitWrites[0]!.data).toMatchObject({ carriedAskChallengeIntentId: "pi_later_edit", nextRetryAt: new Date(seenAt.getTime() + 15 * 60 * 1000) });
+      expect(waitWrites[0]!.data).toMatchObject({ carriedAskChallengeIntentId: "pi_later_edit", nextRetryAt: new Date(seenAt.getTime() + 14 * 60 * 1000) });
       expect(recoveryFailureAlerts()).toEqual([]);
     });
 

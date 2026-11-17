@@ -2487,7 +2487,7 @@ let webhookClient: PrismaClient;
           expect(stripe.intents.size).toBe(1);
           expect(await cancellationFor(e2Intent.id)).toEqual([]);
           const waiting = await recoveryRow(e1);
-          const { CARRIED_ASK_CHALLENGE_RECHECK_MS } = await import("@/lib/additional-ask-recovery-replay");
+          const { CARRIED_ASK_CHALLENGE_RECHECK_LEAD_MS, CARRIED_ASK_CHALLENGE_RECHECK_MS } = await import("@/lib/additional-ask-recovery-replay");
           expect(waiting).toMatchObject({
             status: "FAILED",
             attempts,
@@ -2495,8 +2495,10 @@ let webhookClient: PrismaClient;
             carriedAskChallengeIntentId: e2Intent.id,
             lastError: expect.stringContaining("3D Secure"),
           });
-          // The short recheck from the first sighting, not the 12-hour step.
-          expect(waiting.nextRetryAt!.getTime() - waiting.carriedAskChallengeSeenAt!.getTime()).toBe(CARRIED_ASK_CHALLENGE_RECHECK_MS);
+          // The short recheck from the first sighting (a minute early, to land on the next tick), not the 12-hour step.
+          expect(waiting.nextRetryAt!.getTime() - waiting.carriedAskChallengeSeenAt!.getTime()).toBe(
+            CARRIED_ASK_CHALLENGE_RECHECK_MS - CARRIED_ASK_CHALLENGE_RECHECK_LEAD_MS,
+          );
           expect(recoveryAlerts.sent).toEqual([]);
 
           // A second look inside the hour keeps the first sighting's time.

@@ -18,6 +18,7 @@ import type { AskTransaction } from "@/lib/additional-ask-reduction";
 import { ADDITIONAL_PAYABLE_BOOKING_STATUSES, resolveAdditionalPaymentDoor } from "@/lib/additional-payment-chase";
 import { isAwaitingMemberAuthentication, staleIntentAction } from "@/lib/stale-intent-action";
 import {
+  CARRIED_ASK_CHALLENGE_RECHECK_LEAD_MS,
   CARRIED_ASK_CHALLENGE_RECHECK_MS,
   CARRIED_ASK_CHALLENGE_WAIT_MS,
   CARRIED_ASK_PAYMENT_WAIT_MAX_MS,
@@ -360,11 +361,20 @@ describe("carriedAskPaymentWait: a member on their bank's 3D Secure page can fin
     const wait = await carriedAskPaymentWait(livePayment, challenge, QUEUED, null, NOW);
     expect(wait).toMatchObject({
       kind: "wait",
-      recheckAt: new Date(NOW.getTime() + CARRIED_ASK_CHALLENGE_RECHECK_MS),
+      recheckAt: new Date(NOW.getTime() + CARRIED_ASK_CHALLENGE_RECHECK_MS - CARRIED_ASK_CHALLENGE_RECHECK_LEAD_MS),
       challenge: { paymentIntentId: "pi_e2", seenAt: NOW },
     });
     expect(wait.kind === "wait" && wait.message).toContain("(pi_e2) is requires_action at Stripe");
     expect(wait.kind === "wait" && wait.message).toContain("3D Secure");
+  });
+
+  it("the recheck is due before the next 15-minute payments tick, so it is not pushed to the one after", async () => {
+    // The decision comes moments after the run's start; a recheck at exactly +15 minutes misses the next run.
+    const decidedAfterRunStart = new Date(NOW.getTime() + 1_500);
+    const wait = await carriedAskPaymentWait(livePayment, challenge, QUEUED, null, decidedAfterRunStart);
+    const nextTick = new Date(NOW.getTime() + 15 * 60 * 1000);
+    expect(wait.kind === "wait" && wait.recheckAt!.getTime()).toBeLessThanOrEqual(nextTick.getTime());
+    expect(wait.kind === "wait" && wait.recheckAt!.getTime()).toBeGreaterThan(NOW.getTime() + 10 * 60 * 1000);
   });
 
   it("a sighting younger than the timeout, or at it exactly, still waits and keeps its first time", async () => {
