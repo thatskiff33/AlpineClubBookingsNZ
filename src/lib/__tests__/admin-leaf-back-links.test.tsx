@@ -4,6 +4,7 @@ import type { ComponentProps, ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ClubTimeTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 // #1940: several leaf pages now read the session permission matrix for view-only
 // gating; provide an edit-level admin session so the back-link render succeeds.
@@ -72,7 +73,7 @@ vi.mock("@/lib/module-settings", () => ({
 vi.mock("@/app/(admin)/admin/display/setup/display-setup-wizard", () => ({
   DisplaySetupWizard: () => null,
 }));
-// #2046 F6: the Induction Settings leaf drills in from the Induction Register;
+// #2046 F6: the Induction Settings leaf drills in from the Induction page;
 // stub its two client panels so only the top-of-page BackLink is asserted.
 vi.mock("@/components/admin/induction-settings-panel", () => ({
   InductionSettingsPanel: () => null,
@@ -136,11 +137,11 @@ describe("admin drill-down leaf back links", () => {
 
   // #2046 F6: the Induction Settings leaf replaced its ad-hoc outline button
   // ("Induction register") with the shared BackLink to the register.
-  it("points the Induction Settings leaf back at the Induction Register", () => {
+  it("points the Induction Settings leaf back at the Induction page by its menu name (#4968)", () => {
     const html = renderLeaf(<AdminInductionSettingsPage />);
 
     expect(html).toContain('href="/admin/induction"');
-    expect(html).toContain("← Induction Register");
+    expect(html).toContain(`← ${getAdminPage("induction").label}`);
   });
 
   // #2046: the five Lobby Display leaves each drilled into from /admin/display

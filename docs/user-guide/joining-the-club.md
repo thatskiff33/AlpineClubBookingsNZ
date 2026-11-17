@@ -112,4 +112,4 @@ Joining fees and how they are charged are the club's decision; see
   the [nomination lifecycle](../STATE_MACHINES.md#nomination-lifecycle), and the
   [membership lifecycle invariants](../invariants/membership-lifecycle.md).
   Operators review applications with the
-  [Member Applications](../guides/member-applications.md) guide.
+  [Applications](../guides/member-applications.md) guide.

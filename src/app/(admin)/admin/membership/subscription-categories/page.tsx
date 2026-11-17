@@ -12,7 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { BackLink } from "@/components/admin/back-link";
-import { adminHref, adminLink } from "@/lib/admin-hubs";
+import { adminHref, adminLink, getAdminPage } from "@/lib/admin-hubs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -91,7 +91,7 @@ export default function AdminSubscriptionCategoriesPage() {
         <BackLink {...adminLink("membership-setup")} />
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Subscription categories</h1>
+            <h1 className="text-2xl font-bold text-foreground">{getAdminPage("subscription-categories").label}</h1>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
               Flat-rate billing categories — e.g. Couple, Family — that decide
               how a member&apos;s annual subscription is billed, independent of

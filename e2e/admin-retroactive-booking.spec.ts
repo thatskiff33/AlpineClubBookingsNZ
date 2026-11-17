@@ -29,6 +29,7 @@ import {
   pastStayLeftoverCheckIns,
   pastStayWindowForAttempt,
 } from "./helpers/stay-dates";
+import { getAdminPage } from "../src/lib/admin-hubs";
 
 // docs/END_TO_END_TEST_MATRIX.md row "Admin retroactive create (#1695)": a Full
 // Admin records a stay that already happened via /admin/book — toggle "Record a
@@ -167,7 +168,7 @@ test("an admin records a past stay on behalf of a member without emailing them",
   const page = await adminContext.newPage();
   await page.goto("/admin/book");
   await expect(
-    page.getByRole("heading", { name: "Book on Behalf of Member" }),
+    page.getByRole("heading", { name: getAdminPage("book").label }),
   ).toBeVisible();
 
   // Pick the target member through the search picker.
