@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isCalendarDate } from "@/lib/club-time";
 import type { CalendarDate } from "@/lib/club-time";
+import { nonNegativeCentsSchema } from "@/lib/cents-schema";
 
 /**
  * #3030 (epic #2797, owner decision D3): the shape of
@@ -338,44 +339,6 @@ export type EditFinancialReviewContext = {
 export const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
   message: "Expected a yyyy-mm-dd calendar date.",
 });
-
-/**
- * Integer cents, non-negative — `INV-MONEY-001`, and the same rule the
- * `ManualRefundTask_amount_nonnegative` CHECK enforces in the database.
- *
- * `INV-SSOT`, and this is the ONE home for it across this feature. #3030 needed
- * the rule in four places — the raise (`edit-financial-review.ts`), the
- * completion (`manual-refund-task-resolution.ts`), the stored-evidence parser
- * below, and the admin route's request body — and there was no existing exported
- * predicate to route to: the idiom is inline at ten pre-existing sites, none of
- * them named, and `money-input.ts` is a PARSER for money a person typed, not a
- * validator for an amount that is already a number. Four callers is the second
- * clause of the rule ("if two places need it, move it to one module"), so it
- * lives here — in the client-safe half of the feature, which every one of the
- * four can import.
- *
- * #3031 added a fifth, and it is the one that explains why the rule has to be
- * shared rather than merely tidy: a stored `BookingGuestNight.priceCents` is a
- * bare `Int` with NO non-negative constraint, so "is this stored value usable as
- * money at all" is asked by the planner that refuses to price from it as well as
- * by the writers above. Those two disagreeing is the difference between refusing
- * a value and storing it.
- *
- * The ten pre-existing inline sites are deliberately NOT refactored onto this;
- * that is a wider change than this issue, and doing it half-way would leave the
- * rule looking centralised when it is not.
- */
-export const nonNegativeCentsSchema = z.number().int().nonnegative();
-
-/**
- * The same rule as a predicate, for the server callers that validate a number
- * they already hold and throw their own domain error. Derived FROM the schema
- * rather than re-implemented beside it, so there is one definition and not two
- * that agree today.
- */
-export function isNonNegativeIntegerCents(value: unknown): value is number {
-  return nonNegativeCentsSchema.safeParse(value).success;
-}
 
 /**
  * Null is accepted where the evidence is genuinely absent, which is not the same

@@ -3,7 +3,7 @@ import {
   type GuestNightInput,
 } from "@/lib/booking-guest-stay-ranges";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
-import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import type { BookingGuestNightPriceSource } from "@prisma/client";
 
 export type StoredNightPriceWithSource = {

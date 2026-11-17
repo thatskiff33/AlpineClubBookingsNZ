@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
-import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
+import { nonNegativeCentsSchema } from "@/lib/cents-schema";
 import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-payment-note";
 import { PAID_BACK_CHOICES, PAID_BACK_REST_CHOICES } from "@/lib/card-refund-paid-back";
 import { closeGroupCardRefundPaidAnotherWay } from "@/lib/card-refund-group-paid-another-way";

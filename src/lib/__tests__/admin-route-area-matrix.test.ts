@@ -220,11 +220,6 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/bookings/[id]/member-guest-candidates": "bookings",
   "/api/admin/bookings/[id]/no-emails": "bookings",
   "/api/admin/bookings/[id]/requested-room": "bookings",
-  // #3214: a second bookings-prefixed path deliberately resolved to finance by
-  // SPECIAL_ROUTE_AREA_PATTERNS, for the same reason as mark-paid above -
-  // recording what a stay's nights sold for is money evidence, gated
-  // finance:edit, and the handler declares that requirement explicitly.
-  "/api/admin/bookings/[id]/stored-night-prices": "finance",
   // #2649: the stranded zero-dollar waitlist confirm repair. It moves booking
   // status, so path inference gives it bookings:edit, and the route declares
   // that permission explicitly rather than relying on inference.
@@ -463,9 +458,6 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // is gated exactly as closing one is - undoing a money decision is not a
   // lesser act than taking it.
   "/api/admin/payments/manual-refund-tasks/[id]/reopen": "finance",
-  // #3835: what a review share on a cancelled booking still owes, read by the
-  // settle dialog before completing - a finance read, gated as the queue is.
-  "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",
   "/api/admin/pending-counts": "overview",
   "/api/admin/privacy-hosting": "content",
   "/api/admin/privacy-retention": "support",

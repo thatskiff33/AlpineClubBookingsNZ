@@ -2,10 +2,10 @@ import "server-only";
 import { ManualRefundTaskKind, Prisma } from "@prisma/client";
 
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import {
   editFinancialReviewStrandMovesNights,
   editFinancialReviewStrandRecords,
-  isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
 } from "@/lib/edit-financial-review-context";
 import type { EditFinancialReviewStrandRecord } from "@/lib/edit-financial-review-context";

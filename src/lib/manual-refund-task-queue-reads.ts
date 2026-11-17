@@ -24,6 +24,27 @@ import type { DismissedManualRefundTaskRow } from "@/lib/manual-refund-task-queu
  */
 
 /**
+ * Every money task EXCEPT a retired officer edit review (#4343, #4344).
+ *
+ * The finance queue lists none of them, open or dismissed: the kind is
+ * retired, nothing raises one any more, and the resolve and reopen doors
+ * refuse it. Applied in the query, before each list's `take`, so a leftover row
+ * can never push work the club still owes past the limit.
+ *
+ * THE `kind: null` ARM IS LOAD-BEARING. `kind` is nullable - every row written
+ * before #3030 added the column has none, and the card reads that as the
+ * hand-back it has always been - and a bare `kind: { not: ... }` compiles to
+ * `kind <> ...` in SQL, which is never true of a NULL. Without the arm, every
+ * legacy hand-back would silently drop off the queue.
+ */
+export const NOT_RETIRED_REVIEW_WHERE = {
+  OR: [
+    { kind: null },
+    { kind: { not: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW } },
+  ],
+} satisfies Prisma.ManualRefundTaskWhereInput;
+
+/**
  * An informational list that degrades to "unavailable" rather than rejecting the
  * batch carrying the actionable queue beside it (#2750 review).
  *
@@ -72,6 +93,8 @@ export function readOrDegrade<T>(
  * An `EDIT_FINANCIAL_REVIEW` is excluded for a different reason (#4343): that
  * kind is retired, and the queue must not offer to put one back. The reopen
  * door refuses it as well; this query is what keeps the button off the card.
+ * {@link NOT_RETIRED_REVIEW_WHERE} says why it is spelled with a `kind: null`
+ * arm.
  */
 export function readDismissedManualRefundTasks(
   store: Pick<Prisma.TransactionClient, "manualRefundTask">,
@@ -80,7 +103,7 @@ export function readDismissedManualRefundTasks(
   return store.manualRefundTask.findMany({
     where: {
       status: "DISMISSED",
-      kind: { not: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW },
+      ...NOT_RETIRED_REVIEW_WHERE,
       completedByMemberId: { not: null },
       completedAt: {
         gte: new Date(
