@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ADMIN_PAGES, getAdminPage } from "@/lib/admin-hubs";
+import { withAdminHubTwins } from "@/lib/admin-hubs/security-map";
 import { FRAME_SRC_SELF_PATHS, TIGHT_IMG_SRC_PATHS } from "@/lib/csp";
 
 /**
@@ -167,6 +168,23 @@ describe("routes with a scoped CSP relaxation are entered by a HARD navigation (
       expect(RELAXED_PATHS).toContain(page.oldPath);
       expect(RELAXED_PATHS).toContain(page.hubPath);
     }
+  });
+
+  it("takes each relaxed page's two addresses from the registry's twin rule (INV-SSOT)", () => {
+    // csp.ts must not pair an old path with a hub path itself: it asks the same
+    // rule the module-gate exemptions use, so the two cannot drift apart.
+    const source = fs.readFileSync(path.join(REPO_ROOT, "src/lib/csp.ts"), "utf8");
+    expect(source).toMatch(/withAdminHubTwins\(/);
+    expect(source).not.toMatch(/\.hubPath\b/);
+
+    const oldPath = (id: "display-preview" | "display-builder") => getAdminPage(id).oldPath;
+    expect(FRAME_SRC_SELF_PATHS).toEqual(
+      withAdminHubTwins([oldPath("display-preview"), oldPath("display-builder")]),
+    );
+    expect(TIGHT_IMG_SRC_PATHS).toEqual([
+      "/display",
+      ...withAdminHubTwins([oldPath("display-preview")]),
+    ]);
   });
 
   it("reads adminHref of a relaxed page as a relaxed target, and nothing else", () => {

@@ -1,6 +1,7 @@
 // Relative, not `@/`: not every loader that can reach a module beside the
 // registry resolves the alias (see `src/lib/admin-hubs/release.ts`).
 import { getAdminPage, type AdminPageId } from "./admin-hubs";
+import { withAdminHubTwins } from "./admin-hubs/security-map";
 
 export const CSP_HEADER = "Content-Security-Policy";
 // test seam
@@ -103,10 +104,13 @@ export function setSecurityHeaders(headers: Headers, pathname?: string) {
  * (C11 #4808). Both are listed whatever `ADMIN_HUBS_LIVE` says: the page is
  * served at one and redirected from the other, and the redirect response is
  * itself on this pathname. Each stays a single exact path.
+ *
+ * The pairing is the registry's own twin rule, `withAdminHubTwins`, the one
+ * the module-gate exemptions use (`INV-SSOT`). It is not repeated here, so a
+ * change to that rule reaches these allowlists in the same edit.
  */
 function bothAdminPaths(id: AdminPageId): readonly string[] {
-  const page = getAdminPage(id);
-  return [page.oldPath, page.hubPath];
+  return withAdminHubTwins([getAdminPage(id).oldPath]);
 }
 
 /**
