@@ -6,7 +6,7 @@ browser's own words. Every growth below is those option lines, or an import of
 `ApiRefusalError`, in a file or function that was already over its budget.
 
 file: src/app/(admin)/admin/system/backups/backups-client.tsx
-lines: 798
+lines: 812
 reason: the plan (ALP-650) makes every useSectionEditState caller name its own
   fallback sentence, so a failure with no worded refusal shows that instead of
   "Failed to fetch"; the added lines are those options, set beside the save
@@ -14,7 +14,7 @@ reason: the plan (ALP-650) makes every useSectionEditState caller name its own
   two option lines would invent a seam for this change alone.
 
 file: src/components/admin/booking-policies/minimum-night-stay-section.tsx
-lines: 862
+lines: 863
 reason: the plan (ALP-650) makes every useSectionEditState caller name its own
   fallback sentence, so a failure with no worded refusal shows that instead of
   "Failed to fetch"; the added lines are those options, set beside the save
@@ -54,7 +54,7 @@ reason: the plan (ALP-650) makes every useSectionEditState caller name its own
   two option lines would invent a seam for this change alone.
 
 function: src/components/admin/booking-policies/default-cancellation-policy-section.tsx#DefaultCancellationPolicySection
-lines: 535
+lines: 514
 reason: the plan (ALP-650) makes every useSectionEditState caller name its own
   fallback sentence, so a failure with no worded refusal shows that instead of
   "Failed to fetch"; the added lines are those options, set beside the save
