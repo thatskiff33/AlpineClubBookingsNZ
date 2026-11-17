@@ -23,12 +23,12 @@ import { requireInstant } from "@/lib/club-time";
 import {
   CONFIG_URL,
   RUN_URL,
+  STATUS_LOAD_FALLBACK,
   STATUS_URL,
   type BackupStatus,
 } from "@/app/(admin)/admin/system/backups/backup-status";
 import { apiErrorMessageFromResponse, apiRefusalFromResponse } from "@/lib/api-error-message";
 
-const LOAD_FALLBACK = "Could not load config.";
 const SAVE_FALLBACK = "Could not save local backup settings.";
 
 /**
@@ -134,7 +134,7 @@ export function LocalBackupCard({
     },
     load: async () => {
       const res = await fetch(STATUS_URL, { cache: "no-store" });
-      if (!res.ok) throw await apiRefusalFromResponse(res, LOAD_FALLBACK);
+      if (!res.ok) throw await apiRefusalFromResponse(res, STATUS_LOAD_FALLBACK);
       const data = (await res.json()) as BackupStatus;
       return {
         localEnabled: data.localEnabled,
@@ -162,7 +162,7 @@ export function LocalBackupCard({
       return { localEnabled: draft.localEnabled, localPath: draft.localPath };
     },
     successMessage: "Local backup settings saved.",
-    loadErrorFallback: LOAD_FALLBACK,
+    loadErrorFallback: STATUS_LOAD_FALLBACK,
     saveErrorFallback: SAVE_FALLBACK,
     // The directory is MANDATORY once the switch is on — a local backup with
     // nowhere to write is a tick that silently does nothing. The server refuses
