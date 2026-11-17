@@ -579,6 +579,47 @@ export async function sendBookingPendingEmail(
 }
 
 /**
+ * #4069 (`INV-PAY-157`): the approval email's payment line, one per cash-cover
+ * answer. Composed by the sender, never conditionally in the body: the render
+ * path has no conditional syntax, so a token that is sometimes empty must
+ * arrive as a whole line or as nothing (see composeOptionalEmailLine).
+ *
+ * - owes: the amount, and a held-bed sentence that is true for this booking -
+ *   CONFIRMED on a bed-holding bank transfer, or on an exclusive hold, holds
+ *   its beds while it owes;
+ * - covered: nothing;
+ * - organiser pays: says so, and asks the member for nothing;
+ * - unknown, or unread: the neutral line - no amount, no "paid" (owner
+ *   decision 3, 16 Oct 2026).
+ */
+export function bookingPolicyExceptionApprovedPaymentNote(
+  args: { cover: BookingCashCover | null; bedsHeld: boolean },
+  format: ClubFormat,
+): { paymentNote: string; amount: string } {
+  const cover = args.cover ?? { kind: "unknown" };
+  switch (cover.kind) {
+    case "owes": {
+      const amount = formatMoneyCents(cover.cents, format);
+      return {
+        amount,
+        paymentNote: args.bedsHeld
+          ? `There is ${amount} to pay on this booking. Your beds are currently held. Open it from your account to pay, or to see the bank-transfer instructions if you are paying by bank transfer.`
+          : `There is ${amount} to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid.`,
+      };
+    }
+    case "covered":
+      return { amount: "", paymentNote: "" };
+    case "organiser_pays":
+      return { amount: "", paymentNote: "Your group organiser pays for this stay, so there is nothing for you to pay on this booking." };
+    case "unknown":
+      return {
+        amount: "",
+        paymentNote: "To see whether anything is still to pay on this booking, open it from your account or contact the club's treasurer.",
+      };
+  }
+}
+
+/**
  * Tell a member their booking-policy exception request was approved and the
  * booking now exists (#2526).
  *
@@ -593,6 +634,9 @@ export async function sendBookingPendingEmail(
  * Only the NEW-booking flavour uses this. An approved CHANGE to an existing
  * booking is announced by the canonical `booking-modified` email the modification
  * service already sends, so the two never double up.
+ *
+ * #4069 (`INV-PAY-157`): the payment line follows the booking's cash cover,
+ * never its status (`bookingPolicyExceptionApprovedPaymentNote`).
  */
 export async function sendBookingPolicyExceptionApprovedEmail(
   // Booking this message belongs to (#2258); see sendBookingConfirmedEmail.
@@ -603,8 +647,10 @@ export async function sendBookingPolicyExceptionApprovedEmail(
     checkIn: Date;
     checkOut: Date;
     guestCount: number;
-    /** Integer cents still owed on the created booking; 0 owes nothing. */
-    amountDueCents: number;
+    /** What the booking's cash covers (`readBookingCashCover`); null when it could not be read. */
+    cover: BookingCashCover | null;
+    /** Whether the booking holds its beds (`bookingHoldsCapacity`), read in the same snapshot. */
+    bedsHeld: boolean;
     /** The officer's decision note, when they left one. */
     adminNotes?: string | null;
     // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
@@ -612,14 +658,7 @@ export async function sendBookingPolicyExceptionApprovedEmail(
   },
   format: ClubFormat,
 ) {
-  const amountDue = formatMoneyCents(args.amountDueCents, format);
-  // Composed by the sender, never conditionally in the body: the render path has
-  // no conditional syntax, so a token that is sometimes empty must arrive as a
-  // whole line or as nothing (see composeOptionalEmailLine).
-  const paymentNote =
-    args.amountDueCents > 0
-      ? `There is ${amountDue} to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid.`
-      : "";
+  const { paymentNote, amount } = bookingPolicyExceptionApprovedPaymentNote(args, format);
   const adminNotesLine = composeOptionalEmailLine(
     "Note from the club",
     args.adminNotes,
@@ -650,8 +689,9 @@ export async function sendBookingPolicyExceptionApprovedEmail(
       paymentNote,
       adminNotesLine,
       // Raw values behind the two composed lines, so an admin override written
-      // against either form keeps rendering.
-      amount: amountDue,
+      // against either form keeps rendering. `amount` is empty unless an amount
+      // is owed: never "$0.00" for a balance the records cannot prove.
+      amount,
       adminNotes: args.adminNotes ?? "",
     },
     lodgeId: args.lodgeId,

@@ -1,4 +1,4 @@
-import type { AgeTier, BookingStatus } from "@prisma/client";
+import type { AgeTier, BookingStatus, Prisma } from "@prisma/client";
 import { bookingOwner, bookingOwnerEmail } from "@/lib/booking-owner";
 import type { CalendarDate } from "@/lib/club-time";
 
@@ -10,7 +10,9 @@ import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { resolveHostingCoverageIncidents } from "@/lib/adult-member-hosting-coverage-incidents";
 import { recordAdultMemberHostingReviewDecision } from "@/lib/adult-member-hosting-review";
 import { createConfirmedBooking } from "@/lib/booking-create";
-import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
+import { readBookingCashCover } from "@/lib/booking-cash-evidence";
+import { bookingHoldsCapacity } from "@/lib/booking-status";
+import { withReadOnlySnapshot } from "@/lib/read-only-snapshot";
 import {
   modifyBookingBatch,
   type BatchModificationPreTransaction,
@@ -665,38 +667,35 @@ export function buildPolicyExceptionApprovalHooks(
      * review). A MODIFICATION needs nothing here: `modifyBookingBatch` sends the
      * canonical "your booking was changed" email itself, and a second notice
      * would compete with it.
+     *
+     * #4069 (`INV-PAY-157`): what is owed comes from the cash records, never the
+     * booking's status. The member may have switched to a bed-holding bank
+     * transfer while the deferred work ran (CONFIRMED, a pending bank payment),
+     * and an officer may have set the exclusive hold. So the amount
+     * (`readBookingCashCover`) and whether the beds are held
+     * (`bookingHoldsCapacity`) are read in ONE read-only snapshot, and the email
+     * goes after it closes. A snapshot that cannot be read still sends, with the
+     * neutral line in place of an amount.
      */
     async notifyApproved(request) {
       const bookingId = outcome.createdBookingId;
       if (!bookingId) return;
-      const booking = await prisma.booking.findUnique({
-        where: { id: bookingId },
-        select: {
-          id: true,
-          checkIn: true,
-          checkOut: true,
-          finalPriceCents: true,
-          lodgeId: true,
-          status: true,
-          member: { select: { id: true, email: true, firstName: true } },
-          // #3369: the owner may be an Organisation; bookingOwner() reads both.
-          organisation: { select: { name: true, email: true } },
-          guests: { select: { id: true } },
-          payment: { select: { status: true, changeFeeCents: true } },
-        },
-      });
+      let read: Awaited<ReturnType<typeof readApprovedBookingSnapshot>> | undefined;
+      try {
+        read = await readApprovedBookingSnapshot(bookingId);
+      } catch (err) {
+        logger.error(
+          { err, bookingId },
+          "Could not read the approved booking's cash cover; the approval email will say so neutrally",
+        );
+      }
+      const booking = read ? read.booking : await prisma.booking.findUnique({ where: { id: bookingId }, select: approvedBookingEmailSelect });
       // #3369: ONE home for "is there an address to send to?".
       // `bookingOwnerEmail()` turns the organisation projection's honest `""`
       // into an explicit null, and carries the named-but-unreadable-member case
       // the hand-written chain here used to spell for itself.
       const ownerEmail = booking ? bookingOwnerEmail(booking) : null;
       if (!booking || !ownerEmail) return;
-      // What is still owed (#4058, `INV-PAY-119`): nothing once the create
-      // settled it; else what the pay step asks, through the one home.
-      const settled =
-        booking.status === "PAID" ||
-        booking.status === "CONFIRMED" ||
-        booking.payment?.status === "SUCCEEDED";
       await sendBookingPolicyExceptionApprovedEmail(
         {
           bookingId: booking.id,
@@ -710,7 +709,8 @@ export function buildPolicyExceptionApprovalHooks(
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guestCount: booking.guests.length,
-          amountDueCents: settled ? 0 : (await readBookingAmountOwed(booking)).dueCents,
+          cover: read?.cover ?? null,
+          bedsHeld: read?.bedsHeld ?? false,
           adminNotes: context.adminNotes ?? null,
           lodgeId: booking.lodgeId,
         },
@@ -752,6 +752,52 @@ export function buildPolicyExceptionApprovalHooks(
   };
 
   return { hooks, outcome };
+}
+
+/** The created booking, as the approval email addresses and describes it. */
+const approvedBookingEmailSelect = {
+  id: true,
+  checkIn: true,
+  checkOut: true,
+  lodgeId: true,
+  status: true,
+  // `bookingHoldsCapacity`'s other two inputs (#1254, #1764).
+  adminCapacityHoldAt: true,
+  originBookingRequest: { select: { id: true } },
+  member: { select: { id: true, email: true, firstName: true } },
+  // #3369: the owner may be an Organisation; bookingOwner() reads both.
+  organisation: { select: { name: true, email: true } },
+  guests: { select: { id: true } },
+} satisfies Prisma.BookingSelect;
+
+/**
+ * #4069: the created booking, what its cash covers and whether its beds are
+ * held, all from ONE read-only snapshot, so the amount and the held-bed
+ * sentence cannot describe two different moments. The beds are held exactly
+ * when `bookingHoldsCapacity` says so: an exclusive whole-lodge hold can only
+ * be set on a booking that already holds (the exclusive-hold route refuses
+ * otherwise), so its flag adds nothing, and one left behind by a released
+ * admin hold must not claim beds the booking does not hold.
+ */
+async function readApprovedBookingSnapshot(bookingId: string) {
+  return withReadOnlySnapshot(
+    prisma,
+    async (tx) => {
+      const booking = await tx.booking.findUnique({ where: { id: bookingId }, select: approvedBookingEmailSelect });
+      if (!booking) return undefined;
+      return {
+        booking,
+        cover: await readBookingCashCover(tx, bookingId),
+        bedsHeld: bookingHoldsCapacity({
+          status: booking.status,
+          isRequestConverted: booking.originBookingRequest !== null,
+          hasAdminCapacityHold: booking.adminCapacityHoldAt !== null,
+        }),
+      };
+    },
+    // Post-commit, so wait for a connection rather than lose the email.
+    { maxWait: 10_000, timeout: 10_000 },
+  );
 }
 
 // ---------------------------------------------------------------------------
