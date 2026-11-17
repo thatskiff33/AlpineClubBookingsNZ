@@ -23,7 +23,7 @@ SET "contentHtml" = $cms$<div class="website-legal-copy">
 </div>$cms$,
     "headerText" = CASE
       WHEN "headerText" IN ('How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 14 November 2026</small>', 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 12 November 2026</small>', 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 17 October 2026</small>', 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 1 April 2026</small>')
-      THEN 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 17 November 2026</small>'
+      THEN 'How we collect, use, and protect your personal information.<br><small>Effective 1 April 2026 &mdash; Last updated 18 November 2026</small>'
       ELSE "headerText"
     END,
     "updatedAt" = timezone('UTC', statement_timestamp())

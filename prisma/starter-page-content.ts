@@ -43,7 +43,7 @@ const POLICY_DATE_LINE =
 // section 8 (what the access download holds). Section 10 promises a date bump.
 // Terms is unchanged and keeps the shared line.
 const PRIVACY_POLICY_DATE_LINE =
-  "Effective 1 April 2026 &mdash; Last updated 17 November 2026";
+  "Effective 1 April 2026 &mdash; Last updated 18 November 2026";
 
 /** Register recipients a club's privacy notice must cover when the flow is used. */
 type MemberFacingRecipientId = {

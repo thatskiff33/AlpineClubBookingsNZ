@@ -987,7 +987,7 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
     );
     // The seed date and the migration's THEN value are the same string.
     expect(statements).toContain(`THEN ${sqlQuote(page.headerText)}`);
-    expect(page.headerText).toContain("Last updated 17 November 2026");
+    expect(page.headerText).toContain("Last updated 18 November 2026");
     expect(statements).toContain(`ELSE "headerText"`);
     // The four starter headers are the ones the earlier migrations wrote, and
     // the one the policy backfill planted with the #1945 body.

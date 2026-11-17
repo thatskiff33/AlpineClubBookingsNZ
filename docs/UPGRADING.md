@@ -194,7 +194,7 @@ from #4914, #4031 or #1945. On such a page:
   says the System does not fix the country your data is held in;
 - section 6 refers to the hosting company described in section 5, its backup
   line moves to section 5's list, and its admin note is removed;
-- the header's "Last updated" date moves to 17 November 2026, unless the header
+- the header's "Last updated" date moves to 18 November 2026, unless the header
   was edited, in which case it is kept.
 
 **An edited privacy page keeps every byte**, including its header. Check its
