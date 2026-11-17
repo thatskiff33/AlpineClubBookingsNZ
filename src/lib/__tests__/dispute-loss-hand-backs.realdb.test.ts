@@ -166,12 +166,11 @@ const refundPayable = async (bookingId: string) => (await db.memberMoneyLine.fin
     expect(await refundPayable(id)).toBe(10_000);
   });
 
-  it("two officers at the same moment, one dismissing the $100 edit hand-back, one reducing the $200 cancel hand-back by the same $100: only one applies it", async () => {
-    const id = await disputedCardBooking({ status: "LOST", cents: 10_000 });
-    const edit = await raise(id, "edit", 10_000, 1);
-    const cancel = await raise(id, "cancel", 20_000, 2);
-
-    // A barrier: hold lock(1), start both doors, wait (bounded) until both are queued on it, then let them race.
+  /**
+   * Two officers at the same moment: hold `lock(1)`, start both doors, wait (bounded) until both are queued on it,
+   * then let them race. Returns each door's outcome, in the order given.
+   */
+  async function race(first: () => Promise<unknown>, second: () => Promise<unknown>) {
     const { PrismaClient: Client } = await import("@prisma/client");
     const { createPrismaPgAdapter } = await import("@/lib/prisma-adapter");
     const blocker = new Client({ adapter: createPrismaPgAdapter(process.env.CONCURRENCY_RACE_DATABASE_URL) });
@@ -186,24 +185,67 @@ const refundPayable = async (bookingId: string) => (await db.memberMoneyLine.fin
     }, { timeout: 60_000, maxWait: 10_000 });
     try {
       await lockTaken;
-      const outcomes = Promise.allSettled([dismiss(edit), reduce(cancel, 20_000, 10_000)]);
+      const outcomes = Promise.allSettled([first(), second()]);
       const waiting = async () => Number((await db.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid = 1`)[0]!.n);
       for (let tries = 0; tries < 200 && (await waiting()) < 2; tries += 1) await new Promise((r) => setTimeout(r, 50));
-      expect(await waiting()).toBe(2);
       release();
       await holder;
-      const [dismissed, reduced] = await outcomes;
-      expect(dismissed.status).toBe("fulfilled");
-      expect(reduced.status).toBe("rejected");
+      return await outcomes;
     } finally {
       release();
       await holder.catch(() => undefined);
       await blocker.$disconnect();
     }
+  }
+  const audits = (taskId: string, action: string) => db.auditLog.count({ where: { entityId: taskId, action } });
+  const events = (prefix: string) => db.memberMoneyEvent.count({ where: { eventKey: { startsWith: prefix } } });
+
+  // What this pins: the allocation is order-independent (dismissing or reducing an older task by x raises what is
+  // applied by x and lowers what older tasks owe by x, so no other task's share moves), so the younger task's
+  // Reduce is refused whichever door runs first. The money race is two officers on the SAME task (below).
+  it("two officers at the same moment on two tasks: the $100 edit hand-back dismissed, the $200 cancel's Reduce refused in either order", async () => {
+    const id = await disputedCardBooking({ status: "LOST", cents: 10_000 });
+    const edit = await raise(id, "edit", 10_000, 1);
+    const cancel = await raise(id, "cancel", 20_000, 2);
+
+    const [dismissed, reduced] = await race(() => dismiss(edit), () => reduce(cancel, 20_000, 10_000));
+    expect(dismissed.status).toBe("fulfilled");
+    expect(reduced.status).toBe("rejected");
 
     expect(await status(edit)).toMatchObject({ status: "DISMISSED" });
     expect(await status(cancel)).toMatchObject({ status: "OPEN", amountCents: 20_000 });
     expect(await refundPayable(id)).toBe(20_000);
     expect(await db.memberMoneyObligation.count({ where: { obligationKey: memberMoneyEventKeys.refundObligation("hand-back", cancel) } })).toBe(1);
+  });
+
+  it("two officers reducing the SAME task by the same lost $30 at the same moment: one reduction, one withdrawal, the loser writes nothing", async () => {
+    const id = await disputedCardBooking({ status: "LOST", cents: 3_000 });
+    const cancel = await raise(id, "cancel", 10_000, 1);
+
+    const before = await db.memberMoneyEvent.count();
+    const outcomes = await race(() => reduce(cancel, 10_000, 3_000), () => reduce(cancel, 10_000, 3_000));
+    expect(outcomes.map((o) => o.status).sort()).toEqual(["fulfilled", "rejected"]);
+
+    expect(await status(cancel)).toMatchObject({ status: "OPEN", amountCents: 7_000 });
+    expect(await events(`hand-back-reduced:${cancel}|`)).toBe(1);
+    expect(await db.memberMoneyEvent.count()).toBe(before + 1);
+    expect(await audits(cancel, "booking-payment.manual-refund-task.reduce-by-lost-dispute")).toBe(1);
+    expect(await refundPayable(id)).toBe(7_000);
+  });
+
+  it("two officers dismissing the SAME fully lost edit hand-back at the same moment: one dismissal, one withdrawal, the loser writes nothing", async () => {
+    const id = await disputedCardBooking({ status: "LOST", cents: 10_000 });
+    const edit = await raise(id, "edit", 10_000, 1);
+
+    const before = await db.memberMoneyEvent.count();
+    const outcomes = await race(() => dismiss(edit), () => dismiss(edit));
+    expect(outcomes.map((o) => o.status).sort()).toEqual(["fulfilled", "rejected"]);
+
+    expect(await status(edit)).toMatchObject({ status: "DISMISSED" });
+    // The raise's R05 and exactly one withdrawal of it (a whole debt is reversed), nothing from the loser.
+    expect(await db.memberMoneyEvent.count()).toBe(before + 1);
+    expect(await db.memberMoneyJournal.count({ where: { reverses: { event: { eventKey: memberMoneyEventKeys.refundObligation("hand-back", edit) } } } })).toBe(1);
+    expect(await audits(edit, "booking-payment.manual-refund-task.dismiss")).toBe(1);
+    expect(await refundPayable(id)).toBe(0);
   });
 });

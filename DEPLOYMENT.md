@@ -2250,6 +2250,13 @@ bank-transfer refund. When the Finance alert says a dispute was lost:
    the loss does not reach (it went to an older refund) stays owed in full.
    Neither task offers **Mark paid back** while lost money is set against it,
    and while another dispute on the payment is still open, wait for it.
+   **Before upgrading to the release with this rule (#4516),** look in
+   Finance > Payments for refund tasks on a disputed card payment that were
+   dismissed while the dispute was still open. The app counts every dismissed
+   one as lost money already applied, so a later refund on that payment is
+   reduced by less than was lost (a $50 refund dismissed early, then $150 lost
+   against a $150 refund, leaves $50 the club pays twice). Note each one for
+   the treasurer, who settles that payment's later refund by hand.
 
 A won dispute needs no Xero entry unless the withdrawal was recorded by hand
 before the win; then record its reversal the same way.

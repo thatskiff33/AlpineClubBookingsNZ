@@ -223,9 +223,12 @@ member is told the club will arrange their refund.
    had that money twice and the app cannot record your payment: take it to the
    treasurer. In rare cases Stripe turns a
    lost dispute into a "late win" and returns the money to the club; the app
-   sends no new alert for that (#5197), so if you see one, reopen the
-   dismissed task (the recently dismissed list offers it for 30 days; after
-   that, take it to the treasurer) and pay the member. A late win after a
+   sends Finance a "Lost card payment dispute now won" alert but does not yet
+   reopen the task itself (#5197 will), so reopen the dismissed task (the
+   recently dismissed list offers it for 30 days; after that, take it to the
+   treasurer) and pay the member. A booking change's refund dismissed for a
+   lost dispute after its booking was cancelled cannot be reopened in the app
+   yet: the treasurer handles it by hand until #5197 ships. A late win after a
    reduction is the same limit: the reduction stays, so take the restored
    amount to the treasurer.
    A task dismissed before this change can still be reopened.

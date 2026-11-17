@@ -4343,6 +4343,9 @@ alert nobody received answers 500).
   row Card refunds Stripe gave up on also lists says to settle it there.
 - Read-only: no count, severity, Refunds owed, Net Collected, health check,
   lock or transaction changes.
+- Proven by `stuck-state-dashboard.test.ts`, `named-rows.test.tsx`,
+  `admin-hubs-registry.test.ts` and
+  `stuck-state-cancelled-unrecorded.realdb.test.ts`.
 
 ## INV-PAY-157
 
@@ -4365,13 +4368,14 @@ alert nobody received answers 500).
   task has a share. An OPEN dispute on the payment refuses Dismiss and Reduce;
   a WON one leaves the task payable. A lost dispute lets an edit's hand-back be
   dismissed after its booking was cancelled.
-- **Serialised.** Dismissal and reduction take `lock(1)`, the booking row,
-  then the Payment row, and re-read the disputes and the payment's tasks
-  before a status- or amount-guarded claim; Mark paid reads under `lock(1)`.
+- **Serialised, order-independent.** Dismiss and Reduce take `lock(1)`, the
+  booking row, the Payment row, then re-read; Mark paid reads under `lock(1)`.
+  Applying x to an older task raises applied and lowers older owed by x, so no
+  other share moves; one task's second officer meets the guarded claim.
+- Limit: a dispute-loss task dismissed for another reason (by older code) still
+  counts all it was raised for. A $50 edit refund dismissed while the dispute
+  was open, then a $150 cancel refund with $150 lost: the cancel is reduced by
+  only $100 (`DEPLOYMENT.md`).
 - Proven by `manual-refund-task-dispute-loss.test.ts`,
   `manual-refund-task.test.ts`, `manual-refund-task-dispute-reduction.test.ts`,
-  `edit-refund-hand-back.test.ts` and `dispute-loss-hand-backs.realdb.test.ts`
-  (both task orders, a loss split across two tasks, two officers at once).
-- Proven by `stuck-state-dashboard.test.ts`, `named-rows.test.tsx`,
-  `admin-hubs-registry.test.ts` and
-  `stuck-state-cancelled-unrecorded.realdb.test.ts`.
+  `edit-refund-hand-back.test.ts` and `dispute-loss-hand-backs.realdb.test.ts`.
