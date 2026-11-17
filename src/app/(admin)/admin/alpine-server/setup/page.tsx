@@ -3,9 +3,10 @@ import { BackLink } from "@/components/admin/back-link";
 import { getServerNzSetupState } from "@/lib/servernz-config";
 import { loadServerNzSettings, serverNzDefaultBaseUrl } from "@/lib/servernz-settings";
 import { AlpineServerSetup } from "./alpine-server-setup";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 export const metadata: Metadata = {
-  title: "Alpine Central Server setup",
+  title: getAdminPage("alpine-server-setup").label,
 };
 
 // Server component: resolves the (metadata-only) connection state once, then
@@ -20,7 +21,7 @@ export default async function AlpineServerSetupPage() {
   return (
     <div className="max-w-6xl p-6">
       <BackLink href="/admin/integrations" label="Integrations" />
-      <h1 className="mt-2 mb-2 text-2xl font-bold">Alpine Central Server</h1>
+      <h1 className="mt-2 mb-2 text-2xl font-bold">{getAdminPage("alpine-server-setup").label}</h1>
       <p className="mb-6 text-muted-foreground">
         Connect this club to the Alpine Central Server (ServerNZ). Request a
         connection, store the API key you are issued, then upload or download the

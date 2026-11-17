@@ -680,7 +680,7 @@ function getSummary(log: AuditTimelineLog): string {
  *
  * What it still shows is the writer's `summary` column, and that is a DELIBERATE
  * limit of this change rather than an oversight. `summary` is the timeline's
- * short title; 188 write sites in member-visible categories set one today and
+ * short title; many write sites in member-visible categories set one, and
  * denying them all would withdraw history from members at every one of those
  * sites at once — a readership change reserved to the owner by `INV-PRIV-012`
  * and `INV-OPS-012`, not a consequence a lane may take on its way past. What

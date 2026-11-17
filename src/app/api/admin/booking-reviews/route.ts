@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { buildBookingReviewListWhere } from "@/lib/booking-request-queue-where";
 import {
   bookingReviewReasonCodes,
   bookingReviewReasonSentences,
@@ -36,6 +37,8 @@ export async function GET(req: NextRequest) {
   }
 
   const { status, page, pageSize, bookingId } = parsed.data;
+  // Each where below starts from the Approvals tab's shared clause, which its
+  // pending badge also reads (#4969).
   const skip = (page - 1) * pageSize;
   const include = {
     member: {
@@ -60,12 +63,11 @@ export async function GET(req: NextRequest) {
   let total: number;
   if (status === "ALL") {
     const pendingWhere: Prisma.BookingWhereInput = {
-      deletedAt: null,
-      adminReviewStatus: "PENDING",
+      ...buildBookingReviewListWhere("PENDING"),
       ...idFilter,
     };
     const decidedWhere: Prisma.BookingWhereInput = {
-      deletedAt: null,
+      ...buildBookingReviewListWhere("ALL"),
       adminReviewStatus: { in: ["APPROVED", "REJECTED"] },
       ...idFilter,
     };
@@ -98,7 +100,7 @@ export async function GET(req: NextRequest) {
     ]);
     rows = [...pendingRows, ...decidedRows];
   } else {
-    const where = { deletedAt: null, adminReviewStatus: status, ...idFilter } as const;
+    const where = { ...buildBookingReviewListWhere(status), ...idFilter };
     const direction = adminQueueCreatedOrder(status === "PENDING");
     [rows, total] = await Promise.all([
       prisma.booking.findMany({

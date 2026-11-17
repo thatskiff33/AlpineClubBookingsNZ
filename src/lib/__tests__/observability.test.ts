@@ -52,6 +52,7 @@ const mockPrisma = vi.hoisted(() => ({
   },
   emailLog: {
     findMany: vi.fn(),
+    count: vi.fn(),
   },
   auditLog: {
     count: vi.fn(),
@@ -580,6 +581,7 @@ describe("OBS-03: cron job run recording", { timeout: 30_000 }, () => {
 describe("OBS-07: GET /api/admin/health", () => {
   const ENV_KEYS = [
     "SENTRY_DSN",
+    "NEXT_PUBLIC_SENTRY_DSN",
     "SENTRY_ORG",
     "SENTRY_PROJECT",
     "CRON_ENABLED",
@@ -626,6 +628,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
@@ -653,6 +656,7 @@ describe("OBS-07: GET /api/admin/health", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     resetHealthEnv();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
@@ -707,6 +711,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
@@ -747,6 +752,9 @@ describe("OBS-07: GET /api/admin/health", () => {
         activeCount: 0,
         reviewedCount: 0,
         scannedCount: 0,
+        totalExhaustedCount: 0,
+        scanLimit: 200,
+        scanCapped: false,
         maxAttempts: 3,
       },
       failures: [],
@@ -793,6 +801,7 @@ describe("OBS-07: GET /api/admin/health", () => {
   });
 
   it("returns a real Sentry dashboard link only when the dashboard config is complete", async () => {
+    process.env.NEXT_PUBLIC_SENTRY_DSN = "https://public@example.ingest.sentry.io/123";
     process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/123";
     process.env.SENTRY_ORG = "example-alpine-club";
     process.env.SENTRY_PROJECT = "456";
@@ -808,6 +817,20 @@ describe("OBS-07: GET /api/admin/health", () => {
       "https://sentry.io/organizations/example-alpine-club/issues/?project=456"
     );
     expect(data.systemInfo.sentryConfigWarning).toBeNull();
+  });
+
+  it.each([undefined, "", "   "])("warns when browser reporting is off at runtime (%s), even with server Sentry", async browserDsn => {
+    vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", browserDsn);
+    process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/123";
+    process.env.SENTRY_ORG = "example-alpine-club";
+    process.env.SENTRY_PROJECT = "456";
+    mockAdminSession();
+    mockAdminHealthDependencies();
+    const { GET } = await import("@/app/api/admin/health/route");
+    const data = await (await GET()).json();
+    expect(data.systemInfo.sentryConfigured).toBe(true);
+    expect(data.systemInfo.sentryConfigWarning).toContain("Browser Sentry is off");
+    expect(data.systemInfo.sentryConfigWarning).toContain("runtime");
   });
 
   it("reports partial Sentry dashboard config as a warning instead of placeholder links", async () => {
@@ -860,6 +883,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({

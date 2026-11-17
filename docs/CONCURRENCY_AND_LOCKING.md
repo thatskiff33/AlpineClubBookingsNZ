@@ -6082,9 +6082,10 @@ refuses any booking without an unresolved report, so a report lost to process
 teardown would leave a genuinely stranded member repairable only from a database
 session — the thing #2649 exists to remove. The `.catch` guard keeps the previous
 failure semantics exactly (a failed write is logged, and the operator-door
-response is still returned), and the census manifest records the sink move: this
-is the case where `writeSites` does not change at all because one sink loses a
-site and another gains one, which is why the per-sink pins exist.
+response is still returned), and the census records the sink move: the site
+total does not change at all, because one sink loses a site and another gains
+one, which is why the census's per-site ledger records each site's sink
+(`scripts/audit/audit-write-sites.ts`, #5211).
 
 Since #2649 that operator door is a button rather than a database session.
 `POST /api/admin/bookings/[id]/return-to-waitlist` (`bookings: edit`, `waitlist`
@@ -7366,6 +7367,16 @@ Stripe call:
   provider preflight (`processBookingModificationRefundOperation`). A manual
   hand-back reads the hold-back after its claim and after any credit
   give-back, so a member-ledger lock still comes before the Payment row.
+  Since #4879 an edit review's card arm (`chooseEditReviewSettlementRoute`,
+  through `planEditReviewCardRefund`)
+  takes the booking owner's member-credit key and then the Payment row
+  (`lockPaymentForRefundedTotal`) after its `lock(1)` and booking row, and reads
+  the hold-back before it plans. The member key comes first because the
+  completion's credit give-back and re-price take it after the claim; it is
+  re-entrant, so they take it again at no cost. The still-owed preview, which
+  holds no `lock(1)`, takes neither and reads in its rolled-back snapshot. A
+  "Paid another way" close reads it under the Payment row it already holds,
+  after its claim. No new advisory key and no new lock order.
   After commit the edit sends that plan, closes the row on that plan once
   every slice is made, and otherwise leaves it owed: refusals moved, made
   slices marked, unanswered slices on their original key. The

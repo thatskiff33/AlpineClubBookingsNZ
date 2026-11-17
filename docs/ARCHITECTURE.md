@@ -1278,64 +1278,57 @@ one commit, and because a scope change is itself a load it unmounts the
 for the duration of the round trip. That banner shape started in the five
 Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
-Measured
-on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **110 components render a banner, and
- 347 of the 402 `ViewOnlyActionButton` call sites opt out** of the per-button
-reason. (Earlier revisions of this page published 76/232/264/211 — those were
-upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 347 split by WHICH rule
-covers them: **307** pass the literal
-`describeReason={false}` and are covered by a banner in the same file, and **40**
-pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
-verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
+`view-only-banner-contract.test.ts` classifies every `ViewOnlyActionButton`
+call site rather than counting them, and this page publishes no totals (#5211):
+a total moved with every pull request that added a gated control or a banner,
+so any two such pull requests conflicted over the same sentence. Run the test
+for the live picture. Most call sites opt out of the per-button reason, under
+one of two rules. Some pass the literal `describeReason={false}` and are covered
+by a banner in the same file. Others pass
+`describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a verified
+vouching parent, either at a parent's own JSX render site (#2168) or through the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
-through the wizard shell* below. The
-remaining **55 controls across 30 files deliberately keep the per-button
-default** (`describeReason` left at `true`), in three shapes:
+through the wizard shell* below. The rest deliberately keep the per-button
+default (`describeReason` left at `true`). Each file that does is listed, with
+how many controls it holds, in the test's `KEEPS_OWN_REASON`, so a new keeper
+is a reviewed line there. They fall into three shapes:
 
 - **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
-  a separate accessibility container — focus is trapped and the page behind is
-  commonly inert — so a banner rendered in the page body does not reach them.
-  (11 controls across 5 files, including the confirmed bed-allocation move
-  dialog, which the test enumerates by name; three further
-  controls of this shape live in files counted under the next bucket, see
-  there.)
+  a separate accessibility container (focus is trapped and the page behind is
+  commonly inert), so a banner rendered in the page body does not reach them.
+  The test names these files, including the confirmed bed-allocation move
+  dialog; a few further controls of this shape live in files read under the
+  next shape, see there.
 - **Leaf components with no section of their own**, which a parent drops into
   someone else's layout (for example the member detail header's action toolbar,
   the booking capacity/exclusive hold controls, the family-group login-holder
   and request-review sub-sections, and the non-member contact form). Nothing
   local proves an ancestor renders a banner above them, so the reason stays on
-  the control. (40 controls across 24 files.) Nine of those 40 sit inside a
-  setup wizard and are **scope** exceptions rather than indirection ones: each is
-  gated on a permission NARROWER than the banner its shell renders, so an admin
-  who has the wizard's area but not that narrower one meets no banner at all.
-  Eight are new to this bucket with #2324, and are the four provider wizards'
-  credential-ish writes — Xero credentials and webhook key, Stripe keys and
-  signing secret, Google credentials and verify, the backups credentials and
-  destination — all of which additionally need Full Admin. The ninth, the Lodge
-  Display wizard's `support`-gated module switch under a `lodge` banner, has been
-  an exception since #2249 and stays one for the same reason; #2324 moved its
-  three lodge-gated siblings out of this bucket and into the vouched one. Before
-  those, the per-booking "No emails" switch (#2259), dropped into the Admin tools
-  card's layout beside the capacity and exclusive holds. Newest are the
-  cash / off-Xero payment feature's four controls (#2262): Record and Reverse
-  manual payment, a leaf dropped into that same Admin tools card, and the
+  the control. Some of these sit inside a setup wizard and are **scope**
+  exceptions rather than indirection ones: each is gated on a permission
+  NARROWER than the banner its shell renders, so an admin who has the wizard's
+  area but not that narrower one meets no banner at all. They are the four
+  provider wizards' credential-ish writes (Xero credentials and webhook key,
+  Stripe keys and signing secret, Google credentials and verify, the backups
+  credentials and destination), all of which additionally need Full Admin, and
+  the Lodge Display wizard's `support`-gated module switch under a `lodge`
+  banner, an exception since #2249; #2324 moved its three lodge-gated siblings
+  into the vouched rule. Also here: the per-booking "No emails" switch (#2259),
+  dropped into the Admin tools card's layout beside the capacity and exclusive
+  holds, and the cash / off-Xero payment feature's controls (#2262): Record and
+  Reverse manual payment, a leaf in that same Admin tools card, and the
   manual-refund-task queue's Mark-paid-back and Dismiss pair, a card on the
-  Payments page with no banner of its own. Read that
-  bucket as the
-  REMAINDER — everything that is neither a member detail card nor one of the
-  five dialog-only files — rather than as a claim that all 36 are leaves.
-  Thirteen of the twenty-one files are (24 controls); six are the wizard step
-  files just described (9 controls); and the last two, `page-content-panel.tsx`
-  and `site-banners-panel.tsx`, are full banner-bearing panels whose last 3
-  controls sit inside their own edit/create `Dialog`, so those 3 are really the
-  first shape occurring inside a file that also has the third. Nothing is
-  mis-gated either way — the point is only that the bucket boundary is where the
-  test can draw one mechanically, not a clean taxonomy.
+  Payments page with no banner of its own. Read this shape as the REMAINDER
+  (everything that is neither the member detail card below nor one of the
+  dialog-only files) rather than as a claim that all are leaves: two of its
+  files, `page-content-panel.tsx` and `site-banners-panel.tsx`, are full
+  banner-bearing panels whose last controls sit inside their own edit/create
+  `Dialog`, so those are really the first shape occurring inside a file that
+  also has the third. Nothing is mis-gated either way; the bucket boundary is
+  where the test can draw one mechanically, not a clean taxonomy.
 - **A member detail per-record card gated on a DIFFERENT permission area than
-  the page banner** — today exactly one: `member-credit-card.tsx` (4 controls
-  across 1 file). The other eight cards in
+  the page banner**: today exactly one, `member-credit-card.tsx`, which the
+  test holds as a review gate. The other eight cards in
   `src/app/(admin)/admin/membership/members/[id]/_components/` were converted under #2168
   and now take their coverage from the page banner. The credit card did not,
   and that is deliberate rather than a leftover: the page banner states the
@@ -1344,7 +1337,7 @@ default** (`describeReason` left at `true`), in three shapes:
   edit but finance view-only would meet no banner at all while looking at four
   dead buttons. Any second banner for the finance scope would break the owner's
   one-banner-per-page decision and trip the nesting rule, so the per-button
-  reason stays. Bucket by SCOPE, not by folder, when reading this figure.
+  reason stays. Bucket by SCOPE, not by folder.
 
 The Setup Wizard gates checklist progress, provider tests and completion on
 `support` edit access (#4971). Its support banner stays mounted through loading
@@ -2608,7 +2601,16 @@ required argument and shares one status list with the SQL builder, so no
 surface can read a cancelled booking's untouched delta columns as money owed.
 All sidebar badge counts come from the single `GET /api/admin/pending-counts`
 endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
-mirror the individual queue routes. Sidebar sections render expanded by
+mirror the individual queue routes. The four Booking Requests queues in it
+(Approvals, Changes, Policy Exceptions, Public Requests) are defined once, in
+`getBookingRequestPendingCounts` (`src/lib/admin-booking-request-pending-counts.ts`,
+#4969), and each count builds its query from the where-builder its list uses
+(`src/lib/booking-request-queue-where.ts` and `buildBookingRequestListWhere`),
+so a list and its badge are narrowed together. The same helper feeds the
+dashboard's Booking Requests card and, through the bookings-area
+`GET /api/admin/booking-requests/pending-counts`, the Booking Requests page's
+tab badges and landing tab, so a bookings-only role still gets them. Sidebar
+sections render expanded by
 default; a per-section collapse preference persists in localStorage.
 
 The admin command palette (#2092, `src/components/admin-command-palette.tsx`)

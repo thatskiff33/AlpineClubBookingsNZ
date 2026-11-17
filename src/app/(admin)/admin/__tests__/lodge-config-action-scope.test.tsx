@@ -2,7 +2,7 @@
 
 // A late failure belongs to the lodge it was taken on (#4975 follow-up).
 //
-// Chores and Lockers are lodge-scoped. An admin clicks Save, Delete or Toggle
+// Chores, Lockers and Seasons are lodge-scoped. An admin clicks Save, Delete or Toggle
 // on lodge A, switches the lodge select to B, and only then does A's request
 // come back refused. The success paths already drop a late response for a lodge
 // the admin has left (#2887). A failure must too: it now lands in the
@@ -22,6 +22,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -89,11 +90,13 @@ vi.mock("next/navigation", () => ({
 
 import ChoresPage from "@/app/(admin)/admin/chores/page";
 import LockersPage from "@/app/(admin)/admin/lockers/page";
+import SeasonsPage from "@/app/(admin)/admin/rules/seasons/page";
 
 type Answer = { status: number; body: unknown };
 
 /** The one request the test holds open, and whether its body was read. */
 let releaseHeld: (answer: Answer) => void;
+let failHeld: (reason: unknown) => void;
 let heldStarted: boolean;
 let heldBodyRead: boolean;
 
@@ -109,9 +112,10 @@ function reply({ status, body }: Answer) {
 }
 
 function holdRequest() {
-  return new Promise<Answer>((resolve) => {
+  return new Promise<Answer>((resolve, reject) => {
     heldStarted = true;
     releaseHeld = resolve;
+    failHeld = reject;
   });
 }
 
@@ -259,4 +263,123 @@ describe("a late failure after a lodge switch", () => {
     expect(actionAlert("lockers-action-error")).toBeEmptyDOMElement();
     expect(document.activeElement).not.toBe(actionAlert("lockers-action-error"));
   });
+
+  /*
+    Seasons has three refusable actions, and each guards a late failure twice
+    (`activeScopeRef.current !== requestedScope`): once on a refusal the server
+    sent, once in the catch for a request that never arrived. Each case is a
+    mutation probe for one guard: delete that guard and only its case fails.
+  */
+  const SEASON = {
+    id: "season-winter",
+    name: "Winter 2026",
+    type: "WINTER",
+    startDate: "2026-06-01T00:00:00.000Z",
+    endDate: "2026-09-30T00:00:00.000Z",
+    active: true,
+  };
+
+  function stubSeasonsFetch(heldMethod: "PUT" | "DELETE") {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url === `/api/admin/seasons/${SEASON.id}` && method === heldMethod) {
+          return reply(await holdRequest());
+        }
+        if (url === "/api/admin/seasons?lodgeId=lodge-a") {
+          return reply({ status: 200, body: [SEASON] });
+        }
+        if (url === "/api/admin/seasons?lodgeId=lodge-b") {
+          return reply({ status: 200, body: [] });
+        }
+        throw new Error(`Unstubbed fetch in test: ${method} ${url}`);
+      }),
+    );
+  }
+
+  // The method the test holds open, and the clicks that start the action.
+  const SEASON_ACTIONS: Array<[string, "PUT" | "DELETE", () => Promise<unknown>]> = [
+    [
+      "a toggle",
+      "PUT",
+      async () =>
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Deactivate Winter 2026" }),
+        ),
+    ],
+    [
+      "a delete",
+      "DELETE",
+      async () => {
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Delete Winter 2026" }),
+        );
+        // Delete asks first through the shared confirmation dialog (#4973); the
+        // request this test holds open starts once it is confirmed.
+        fireEvent.click(
+          within(await screen.findByRole("dialog")).getByRole("button", {
+            name: "Delete season",
+          }),
+        );
+      },
+    ],
+    [
+      "a window save",
+      "PUT",
+      async () => {
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Edit window of Winter 2026" }),
+        );
+        fireEvent.click(await screen.findByRole("button", { name: "Update Season" }));
+      },
+    ],
+  ];
+
+  it.each(SEASON_ACTIONS)("is dropped on Seasons for %s", async (_name, heldMethod, startAction) => {
+    stubSeasonsFetch(heldMethod);
+    render(<SeasonsPage />);
+    await startAction();
+    await waitFor(() => expect(heldStarted).toBe(true));
+
+    fireEvent.change(screen.getByLabelText("Lodge"), {
+      target: { value: LODGE_B.id },
+    });
+    expect(await screen.findByText(/No seasons configured yet/)).toBeVisible();
+
+    await refuseAfterSwitch({
+      status: 500,
+      body: { error: "Lodge A season failed." },
+    });
+
+    expect(screen.queryByText("Lodge A season failed.")).toBeNull();
+    expect(actionAlert("season-action-error")).toBeEmptyDOMElement();
+    expect(document.activeElement).not.toBe(actionAlert("season-action-error"));
+  });
+
+  it.each(SEASON_ACTIONS)(
+    "is dropped on Seasons for %s when the request never arrives",
+    async (_name, heldMethod, startAction) => {
+      stubSeasonsFetch(heldMethod);
+      render(<SeasonsPage />);
+      await startAction();
+      await waitFor(() => expect(heldStarted).toBe(true));
+
+      fireEvent.change(screen.getByLabelText("Lodge"), {
+        target: { value: LODGE_B.id },
+      });
+      expect(await screen.findByText(/No seasons configured yet/)).toBeVisible();
+
+      // The browser's own wording for a dropped connection.
+      await act(async () => {
+        failHeld(new TypeError("Failed to fetch"));
+      });
+      await act(async () => {});
+
+      // The screen's fallback sentence would be the message if the guard were gone.
+      expect(actionAlert("season-action-error")).toBeEmptyDOMElement();
+      expect(document.activeElement).not.toBe(actionAlert("season-action-error"));
+    },
+  );
 });

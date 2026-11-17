@@ -7,6 +7,7 @@ import {
   waitFor,
 } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { AiAssistantClient } from "../ai-assistant-client";
 
 vi.mock("next-auth/react", () => ({
@@ -219,5 +220,98 @@ describe("AiAssistantClient usage panel", () => {
     vi.stubGlobal("fetch", makeFetch({ usage: exhaustedUsage }));
     render(<AiAssistantClient initialKeyState="saved" keySetAt={null} />);
     await waitFor(() => expect(screen.getByText("exhausted")).toBeTruthy());
+  });
+});
+
+/*
+  #4975: a refused save is the admin's own action, so it takes focus and takes
+  it again when the same refusal repeats. A failed spend-cap READ stays a
+  passive box that moves nothing, and a save that then lands retires it.
+*/
+describe("AiAssistantClient action failures", () => {
+  const refused = (message: string) =>
+    ({ ok: false, status: 400, json: async () => ({ error: message }) }) as Response;
+
+  /** `makeFetch()` with `answer` consulted first; it returns undefined to defer. */
+  function fetchWith(answer: (url: string, method: string) => Response | undefined) {
+    const base = makeFetch();
+    return vi.fn(async (url: string, opts?: RequestInit) => {
+      return answer(url, opts?.method ?? "GET") ?? base(url, opts);
+    });
+  }
+
+  it("focuses a refused key save, and focuses it again when it repeats", async () => {
+    vi.stubGlobal(
+      "fetch",
+      fetchWith((url, method) =>
+        url.includes("/integrations/credentials") && method === "POST"
+          ? refused("The key was refused.")
+          : undefined,
+      ),
+    );
+    render(<AiAssistantClient initialKeyState="not_configured" keySetAt={null} />);
+    fireEvent.change(screen.getByLabelText(/API key/i), {
+      target: { value: "sk-ant-secret" },
+    });
+    const alert = document.getElementById("anthropic-api-key-save-error");
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const save = screen.getByRole("button", { name: "Save API key" });
+      save.focus();
+      fireEvent.click(save);
+      await waitFor(() => expect(alert?.textContent).toBe("The key was refused."));
+      await expectRecoveryAlertToHoldFocus(alert);
+    }
+  });
+
+  it("focuses a refused spend-cap save, and focuses it again when it repeats", async () => {
+    vi.stubGlobal(
+      "fetch",
+      fetchWith((url, method) =>
+        url.includes("/ai-assistant/settings") && method === "PUT"
+          ? refused("That cap was refused.")
+          : undefined,
+      ),
+    );
+    render(<AiAssistantClient initialKeyState="saved" keySetAt={null} />);
+    const input = (await screen.findByLabelText(/Monthly cap/i)) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("10.00"));
+    const alert = document.getElementById("ai-budget-save-error");
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const save = screen.getByRole("button", { name: "Save spend cap" });
+      save.focus();
+      fireEvent.click(save);
+      await waitFor(() => expect(alert?.textContent).toBe("That cap was refused."));
+      await expectRecoveryAlertToHoldFocus(alert);
+    }
+  });
+
+  it("keeps a failed spend-cap load passive, and retires it when a save lands", async () => {
+    vi.stubGlobal(
+      "fetch",
+      fetchWith((url, method) =>
+        url.includes("/ai-assistant/settings") && method === "GET"
+          ? refused("Spend cap unavailable.")
+          : undefined,
+      ),
+    );
+    render(<AiAssistantClient initialKeyState="saved" keySetAt={null} />);
+    const input = (await screen.findByLabelText(/Monthly cap/i)) as HTMLInputElement;
+    const loadAlert = await screen.findByText("Spend cap unavailable.");
+    expect(loadAlert.getAttribute("role")).toBe("alert");
+    expect(document.getElementById("ai-budget-save-error")?.textContent).toBe("");
+    // The failed read moved no focus, and did not mark itself as the focus target.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(document.body);
+    expect(loadAlert.closest('[tabindex="-1"]')).toBeNull();
+
+    fireEvent.change(input, { target: { value: "12.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save spend cap" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Monthly spend cap saved.")).toBeTruthy(),
+    );
+    expect(screen.queryByText("Spend cap unavailable.")).toBeNull();
   });
 });

@@ -12,6 +12,8 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { FocusedActionError } from "@/components/focused-action-error"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button"
 import { Pagination } from "@/components/admin/admin-pagination"
 import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page"
@@ -30,7 +32,7 @@ import {
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
 import { getCancellationSettlementBreakdown, type CancellationCreditEntry } from "@/lib/payment-status-display"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
-import { adminHref } from "@/lib/admin-hubs"
+import { adminHref, getAdminPage } from "@/lib/admin-hubs"
 import { useClubTime } from "@/components/club-time-provider"
 import { parseInstant, type BoundClubTime, formatStayDateOrNull } from "@/lib/club-time"
 import { MoneyInput } from "@/components/ui/money-input"
@@ -192,7 +194,12 @@ export default function RefundRequestsPage() {
   const [adminNotes, setAdminNotes] = useState("")
   const [approvedAmount, setApprovedAmount] = useState("")
   const [processingRefund, setProcessingRefund] = useState(false)
-  const [error, setError] = useState("")
+  // A failed queue load stays a passive box. A refused approve, reject or
+  // credit review is the officer's own action, so it takes focus and is
+  // re-announced when the same refusal repeats (#4975).
+  const [loadError, setLoadError] = useState("")
+  const actionFailure = useActionFailure()
+  const { fail: failAction, clear: clearActionFailure } = actionFailure
   // #1792: the pending approve/reject action waiting on the admin's notify-or-not
   // choice, plus whether the choice dialog is open. A refund appellant always has
   // an email on file, so the dialog is shown for every approve and reject — the
@@ -222,7 +229,8 @@ export default function RefundRequestsPage() {
     // the list now shown, nor its error or loading end (INV-OPS-020).
     const isCurrent = beginLoad()
     setLoading(true)
-    setError("")
+    setLoadError("")
+    clearActionFailure()
 
     try {
       const [refundRes, creditRes] = await Promise.all([
@@ -249,13 +257,13 @@ export default function RefundRequestsPage() {
       receive(refundData, refundRows.length)
       setCreditApprovals(Array.isArray(creditData) ? creditData : [])
     } catch {
-      if (isCurrent()) setError("Failed to load review queue")
+      if (isCurrent()) setLoadError("Failed to load review queue")
     } finally {
       if (isCurrent()) setLoading(false)
     }
     // setState functions are referentially stable; they are listed so the
     // manual dependencies match what the React Compiler infers.
-  }, [beginLoad, filter, page, receive, setCreditApprovals, setError, setLoading, setRefundRequests])
+  }, [beginLoad, clearActionFailure, filter, page, receive, setCreditApprovals, setLoadError, setLoading, setRefundRequests])
 
   useEffect(() => {
     fetchRequests()
@@ -265,12 +273,12 @@ export default function RefundRequestsPage() {
   // validates the amount up front so the admin never gets the dialog then an
   // error; reject has nothing to pre-validate.
   function startRefundNotifyChoice(id: string, status: "APPROVED" | "REJECTED") {
-    setError("")
+    clearActionFailure()
     if (status === "APPROVED") {
       // #2685: the exact parser, so "50x" is refused instead of approving $50.
       const cents = parseDecimalDollarsToCents(approvedAmount)
       if (cents === null || cents <= 0) {
-        setError("Please enter a valid refund amount")
+        failAction("Please enter a valid refund amount")
         return
       }
     }
@@ -320,7 +328,7 @@ export default function RefundRequestsPage() {
     noEmails = false
   ) {
     setProcessingRefund(true)
-    setError("")
+    clearActionFailure()
 
     try {
       const body: Record<string, unknown> = {
@@ -335,7 +343,7 @@ export default function RefundRequestsPage() {
       if (status === "APPROVED") {
         const cents = parseDecimalDollarsToCents(approvedAmount)
         if (cents === null || cents <= 0) {
-          setError("Please enter a valid refund amount")
+          failAction("Please enter a valid refund amount")
           setProcessingRefund(false)
           return
         }
@@ -376,7 +384,7 @@ export default function RefundRequestsPage() {
       )
       await fetchRequests()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+      failAction(err instanceof Error ? err.message : "Unknown error")
     } finally {
       setProcessingRefund(false)
     }
@@ -387,7 +395,7 @@ export default function RefundRequestsPage() {
     decision: "APPROVE" | "REJECT"
   ) {
     setReviewingCreditId(request.id)
-    setError("")
+    clearActionFailure()
 
     try {
       const res = await fetch(
@@ -412,7 +420,7 @@ export default function RefundRequestsPage() {
       )
       await fetchRequests()
     } catch (err) {
-      setError(
+      failAction(
         err instanceof Error ? err.message : "Failed to review credit adjustment"
       )
     } finally {
@@ -460,21 +468,43 @@ export default function RefundRequestsPage() {
       {viewOnlyBanner}
       <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Refund Appeals &amp; Credits</h1>
+        <h1 className="text-3xl font-bold">{getAdminPage("refund-requests").label}</h1>
         <p className="text-muted-foreground mt-1">
           Review refund appeals and manual credit approvals from one queue
         </p>
       </div>
 
-      {error && (
+      {loadError && (
         <div
           role="alert"
           className="bg-destructive/10 text-destructive px-4 py-3 rounded-md"
         >
-          {error}
-          <button onClick={() => setError("")} className="ml-2 underline">Dismiss</button>
+          {loadError}
+          <Button
+            type="button"
+            variant="link"
+            onClick={() => setLoadError("")}
+            className="ml-2 h-auto p-0 text-inherit underline"
+          >
+            Dismiss
+          </Button>
         </div>
       )}
+      <FocusedActionError
+        id="refund-review-action-error"
+        error={actionFailure.error}
+        attentionKey={actionFailure.attentionKey}
+        action={
+          <Button
+            type="button"
+            variant="link"
+            onClick={clearActionFailure}
+            className="h-auto p-0 text-inherit underline"
+          >
+            Dismiss
+          </Button>
+        }
+      />
 
 
       <div className="flex gap-2">
