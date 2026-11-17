@@ -48,6 +48,7 @@ import {
   retireUnlistedCreditNoteAllocations,
   writeCurrentCreditNoteAllocation,
   writeCurrentCreditNoteAllocations,
+  sendFloorAlertsNotRecounted,
 } from "@/lib/xero-inbound/retire-unlisted-credit-note-allocations";
 import { xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 import { getNextRefundedPaymentStatus } from "@/lib/xero-inbound/amounts";
@@ -329,19 +330,33 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
     expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
   });
 
-  it("MUTATION (#4449 verify, low 2): a write that leaves the total where it was sends no floor alert; the recount after it is the one", async () => {
+  it("MUTATION (#4449 verify, low 2): a write held at the floor returns its alert whether or not it moves the total", async () => {
     // $50 recorded on the payment, its note still in the outbox: the stored total and the detail are $50, Xero shows $0.
-    // The recount's own alert for this state is pinned in xero-credit-note-repairs.test.ts ("#4162 MUTATION ... it alerts instead").
     const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 5_000 };
     mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
     mocks.floor.mockResolvedValue({ cents: 5_000, alert });
-    await expect(writeCurrentCreditNoteAllocation(link, target)).resolves.toEqual({ written: true, floorAlert: null });
-    mocks.paymentFindMany.mockResolvedValue([{ id: "pay-1", xeroInvoiceId: "inv-1", source: "INTERNET_BANKING" }]);
-    await writeCurrentCreditNoteAllocations([link], { isModificationNote: true });
-    expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
+    await expect(writeCurrentCreditNoteAllocation(link, target)).resolves.toEqual({ written: true, floorAlert: alert });
   });
 
-  it("a write that moves the total and is held at the floor alerts once", async () => {
+  it("the sync's writes hold their alerts for after its recount, which sends only those for payments it did not decide", async () => {
+    const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 5_000 };
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.floor.mockResolvedValue({ cents: 5_000, alert });
+    mocks.paymentFindMany.mockResolvedValue([{ id: "pay-1", xeroInvoiceId: "inv-1", source: "INTERNET_BANKING" }]);
+    const held: unknown[] = [];
+    await writeCurrentCreditNoteAllocations([link], { isModificationNote: true, heldFloorAlerts: held as never });
+    expect(held).toEqual([alert]);
+    expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
+    // The recount decided pay-1 and alerted it: nothing more.
+    await sendFloorAlertsNotRecounted(held as never, new Set(["pay-1"]));
+    expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
+    // A payment the recount did not decide: the write's alert, once.
+    await sendFloorAlertsNotRecounted(held as never, new Set(["pay-other"]));
+    expect(mocks.sendFloorAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendFloorAlert).toHaveBeenCalledWith(alert, expect.anything());
+  });
+
+  it("with no holder, a write held at the floor sends its alert itself, once", async () => {
     const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 2_000 };
     mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
     mocks.floor.mockResolvedValue({ cents: 2_000, alert });

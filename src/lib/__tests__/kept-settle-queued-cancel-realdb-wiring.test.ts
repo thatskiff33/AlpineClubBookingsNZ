@@ -42,4 +42,12 @@ describe("the kept settle's queued-cancel real-database proof stays wired into C
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(suite).toContain("syncInternetBankingPaymentsForPaidInvoice");
   });
+
+  it("imports the one-floor-alert-per-sync proof too (#4449 verify, low 2)", () => {
+    const harness = readFileSync(resolve(REPO_ROOT, "src/lib/__tests__/concurrency-lock-races.realdb.test.ts"), "utf8");
+    expect(harness).toContain('import "./allocation-floor-alert-once.realdb.test";');
+    const suite = readFileSync(resolve(REPO_ROOT, "src/lib/__tests__/allocation-floor-alert-once.realdb.test.ts"), "utf8");
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("reconcileXeroCreditNote");
+  });
 });

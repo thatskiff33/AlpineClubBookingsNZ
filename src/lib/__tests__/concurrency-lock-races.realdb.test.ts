@@ -268,6 +268,8 @@ import "./ib-settle-from-cash.realdb.test";
 import "./kept-settle-queued-cancel.realdb.test";
 // #4449 review: a kept settle takes a card refund Stripe failed later off the total it decides (#4370).
 import "./kept-settle-failed-card-refund.realdb.test";
+// #4449 verify: one bank-transfer floor alert per payment per inbound credit-note sync.
+import "./allocation-floor-alert-once.realdb.test";
 // #4047: read-only invoice discovery and post-provider audience/lifecycle fences.
 import "./booking-outstanding-observation.realdb.test";
 // #3864 reuses it to prove an edit's stored credit election is never spent on top

@@ -121,15 +121,17 @@ describe("the allocation write and its removal through the real floor and status
     );
   });
 
-  it("#4449 verify, low 2: held at the floor with the total unmoved, the real floor's alert is not sent by the write", async () => {
+  it("#4449 verify, low 2: held at the floor with the total unmoved, the real floor's alert is held for the sync, not sent by the write", async () => {
     // $50 recorded and in the detail, its note still in the outbox: Xero shows $0. The recount alerts this once.
     const { updateMany } = arrange({ refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED", detailCents: 5_000 });
     mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
 
-    await writeCurrentCreditNoteAllocations([allocation], { isModificationNote: true });
+    const held: unknown[] = [];
+    await writeCurrentCreditNoteAllocations([allocation], { isModificationNote: true, heldFloorAlerts: held as never });
 
     // The link was written, so only updatedAt moves; the total stays at the floor.
     expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { updatedAt: expect.any(Date) } }));
+    expect(held).toEqual([expect.objectContaining({ paymentId: "pay-1", creditNoteId: NOTE, xeroDerivedCents: 0, floorCents: 5_000 })]);
     expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
   });
 });

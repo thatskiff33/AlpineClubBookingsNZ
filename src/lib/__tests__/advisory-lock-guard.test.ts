@@ -2280,9 +2280,17 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
     expect(decide).toContain("status: payment.status, refundedAmountCents: payment.refundedAmountCents, updatedAt: payment.updatedAt");
     expect(decide).not.toMatch(/tx\.payment\.update\(|sendBankTransferFloorAlert|notifyXeroSyncError/);
     // The floor alerts go out after every write's commit, outside any transaction: additions and removals.
-    const afterTheWrites = ["bankTransferPaymentIdsByInvoiceId(", "writeCurrentCreditNoteAllocation(", "decidedPaymentOf(link, byInvoiceId)", "sendFloorAlerts(floorAlerts)"];
+    const afterTheWrites = ["bankTransferPaymentIdsByInvoiceId(", "writeCurrentCreditNoteAllocation(", "decidedPaymentOf(link, byInvoiceId)", "sendOrHold(floorAlerts, input.heldFloorAlerts)"];
     inOrder(between("export async function writeCurrentCreditNoteAllocations(", "export async function retireUnlistedCreditNoteAllocations("), afterTheWrites);
     inOrder(text.slice(text.indexOf("export async function retireUnlistedCreditNoteAllocations(")), afterTheWrites);
+    // #4449 verify, low 2: the sync holds the writes' and removals' alerts and sends them after its recount, outside any transaction.
+    const sync = stripComments(sources.find(({ rel }) => rel === "src/lib/xero-inbound/credit-note.ts")?.text ?? "");
+    inOrder(sync, [
+      "writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote, heldFloorAlerts })",
+      "heldFloorAlerts,",
+      "repairRefundedPaymentBusinessState(",
+      "sendFloorAlertsNotRecounted(heldFloorAlerts, recountedPaymentIds)",
+    ]);
   });
 
   it("keeps school held-reuse on global -> lodge -> re-read -> guarded claim", () => {
