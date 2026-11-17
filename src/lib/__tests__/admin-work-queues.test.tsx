@@ -135,6 +135,17 @@ describe("the officer work queue registry", () => {
     );
   });
 
+  it("titles the refund card with the page's registry name (#4968)", () => {
+    const [card] = getAdminWorkQueueCards({
+      counts: { ...ZERO_ADMIN_PENDING_COUNTS, refundAppeals: 1 },
+      clubToday: CLUB_DAY,
+      features: allOn,
+      permissionMatrix: matrix({ finance: "view" }),
+    });
+    expect(card?.key).toBe("refund-requests");
+    expect(card?.title).toBe(`${adminLink("refund-requests").label}: pending review`);
+  });
+
   it("counts both deletion flows on one queue", () => {
     expect(
       adminWorkQueueCount(queue("deletion-requests"), {
