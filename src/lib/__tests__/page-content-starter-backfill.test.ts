@@ -1055,6 +1055,14 @@ describe("starter privacy policy versus the recipient register (#5007)", () => {
         expect(item.split(note).length - 1, `${id} and "${note}"`).toBe(note === derived ? 1 : 0);
       }
     }
+    // The opening sentence quotes the same marking, so it is covered too: the
+    // phrase appears once there and once per item the register says the club
+    // turns on, and nowhere else in section 5.
+    const turnsOn = STARTER_PRIVACY_AVAILABILITY_NOTES["club-turns-on"].replace(/\.$/, "");
+    const opening = section(5).match(/<p>(.*?)<\/p>/)?.[1] ?? "";
+    expect(opening).toContain(`&ldquo;${turnsOn}&rdquo;`);
+    const turnsOnItems = Object.values(PRIVACY_RECIPIENTS).filter((r) => r.availability === "club-turns-on").length;
+    expect(section(5).split(turnsOn).length - 1).toBe(1 + turnsOnItems);
   });
 
   it("ties the register's availability to the module defaults the schema ships", () => {

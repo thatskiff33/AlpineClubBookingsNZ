@@ -148,9 +148,13 @@ export const STARTER_PRIVACY_RECIPIENT_ITEMS = Object.fromEntries(
   ]),
 ) as Record<MemberFacingRecipientId, string>;
 
+// The opening sentence quotes the marking, taken from the same place as each
+// item's own marking, so the words cannot differ between the two (#5007).
+const CLUB_TURNS_ON_MARKING = STARTER_PRIVACY_AVAILABILITY_NOTES["club-turns-on"].replace(/\.$/, "");
+
 const privacySharingSectionHtml = [
   `<div><h2>5. Who We Share Your Information With</h2>`,
-  `<p>We share your personal information with the service providers below where necessary to operate the System. A service marked &ldquo;Only if the club turns it on&rdquo; receives nothing unless the club has switched it on.</p>`,
+  `<p>We share your personal information with the service providers below where necessary to operate the System. A service marked &ldquo;${CLUB_TURNS_ON_MARKING}&rdquo; receives nothing unless the club has switched it on.</p>`,
   `<ul>${Object.values(STARTER_PRIVACY_RECIPIENT_ITEMS).join("")}</ul>`,
   `<p>We do not sell, rent, or trade your personal information to any third party for marketing or other unrelated purposes (IPP 11 &mdash; Limits on disclosure of personal information).</p>`,
   `<p>The System does not fix the country in which any of these providers processes information; that depends on the provider and on the club&rsquo;s account with it, so your information may be processed outside New Zealand. Where we disclose information to a provider outside New Zealand, we take reasonable steps to ensure it is required to protect the information consistently with the Privacy Act 2020 (IPP 12 &mdash; Disclosure of information outside New Zealand).</p>`,
