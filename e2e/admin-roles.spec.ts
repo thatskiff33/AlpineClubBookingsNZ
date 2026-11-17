@@ -24,8 +24,8 @@ test.describe.configure({ mode: "serial" });
 // The accessibility fixture audits the page a test is leaving, at the next
 // navigation and at teardown, so each page is settled before the test moves on
 // (#5155): after its URL is asserted, the page's own content in place of the
-// loading skeleton, and a non-empty <title>. Without this the audit raced the Members page's
-// soft navigation and reported document-title.
+// loading skeleton, and a non-empty <title>. Without this the audit raced the
+// Members page's soft navigation and reported document-title.
 async function expectSettled(page: Page, content: Locator) {
   await expect(page.locator("[data-route-loading]")).toHaveCount(0);
   await expect(content).toBeVisible();

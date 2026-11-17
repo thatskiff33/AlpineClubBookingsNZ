@@ -27,7 +27,7 @@ import { ADMIN_WRITE_VISIBLE_POLL } from "./helpers/public-cache";
   longer answers a 404 for an unknown id, though (#5155): it serves the full
   library, which runs and sends the app's sanitised `page_view` hits for a
   property that belongs to nobody. No real property is touched, but those hits
-  do leave, and the tests below wait for them rather than assume they never come.
+  do leave, and the soft-navigation test waits for them rather than assume none come.
 */
 
 test.describe.configure({ mode: "serial" });
