@@ -33,20 +33,26 @@ holds it on a reasoned allowlist that fails once a caller appears.
 
 ## Summary
 
-154 openers (an opener reached by two routes is counted twice). Rebasing onto
+157 openers (an opener reached by two routes is counted twice). Rebasing onto
 main on 14 Nov 2026 brought four the first run did not see: three new writers
 on Prisma's defaults, now on the constant, and the #4919 group-invoice email
 fence, which moved to `xero-group-settlement-invoice-email.ts` with its own
 options and is now the fourth exception.
 
+Re-run on 18 Nov 2026 after merging main: main added no lock(1) waiter. The
+first count missed three routes the reader already followed, where
+`modifyBookingBatch` runs inside a caller's transaction: once into the
+change-request approval and twice into the linked date move. Both openers were
+already on the list and already on the budget.
+
 | Before the follow-up | Openers | Now |
 | --- | ---: | --- |
-| Prisma defaults (`maxWait` 2 s / `timeout` 5 s) | 131 | constant |
+| Prisma defaults (`maxWait` 2 s / `timeout` 5 s) | 132 | constant |
 | 10 s / 30 s written out as literals | 4 | constant |
 | 10 s / 30 s under a local name | 4 | constant, or an alias of it |
 | `timeout` 30 s with the default `maxWait` | 4 | constant |
 | `timeout` 15 s only | 2 | constant (`privacy-retention-jobs` now READ COMMITTED, `INV-LOCK-005`) |
-| The #4933 constant or its alias | 5 | unchanged |
+| The #4933 constant or its alias | 7 | unchanged |
 | Deliberately different | 3 | unchanged, each with an exception comment |
 | #4919's email fence (10 s / 10 s), from main | 1 | unchanged, with an exception comment |
 
@@ -166,6 +172,7 @@ the opener's callback.
 | `lib/booking-cancel.ts` | \$transaction | `performBookingCancellation#3` | direct | defaults | budget |
 | `lib/booking-cancel.ts` | \$transaction | `performBookingCancellation#4` | direct | defaults | budget |
 | `lib/booking-change-request-execution.ts` | \$transaction | `approveAndExecuteLockedPeriodChangeRequest#1` | direct | defaults | budget |
+| `lib/booking-change-request-execution.ts` | \$transaction | `approveAndExecuteLockedPeriodChangeRequest#1` | `modifyBookingBatch` | defaults | budget |
 | `lib/booking-create.ts` | \$transaction | `createDraftBooking#1` | direct | shared budget | budget |
 | `lib/booking-create.ts` | withOptionalTransaction | `createConfirmedBooking#1` | direct | shared budget | budget |
 | `lib/booking-date-modification-service.ts` | \$transaction | `modifyBookingDates#1` | direct | defaults | budget |
@@ -178,6 +185,8 @@ the opener's callback.
 | `lib/booking-exception-request-service.ts` | \$transaction | `acquireGlobalBookingLock#1` | `acquireGlobalBookingLock` | defaults | budget |
 | `lib/booking-ledger-back-post.ts` | \$transaction | `lockBookingForBackPost#1` | `lockBookingForBackPost` → `backPostBooking` | 30 s / 120 s | exception |
 | `lib/booking-linked-date-move-service.ts` | \$transaction | `runLinkedDateMove#1` | direct | shared budget | alias |
+| `lib/booking-linked-date-move-service.ts` | \$transaction | `runLinkedDateMove#1` | `modifyBookingBatch` (primary leg) | shared budget | alias |
+| `lib/booking-linked-date-move-service.ts` | \$transaction | `runLinkedDateMove#1` | `modifyBookingBatch` (second leg) | shared budget | alias |
 | `lib/booking-request-corrections.ts` | \$transaction | `correctBookingRequest#1` | direct | defaults | budget |
 | `lib/booking-request-quotes.ts` | \$transaction | `respondToBookingRequestQuote#1` | direct | defaults | budget |
 | `lib/booking-request-quotes.ts` | \$transaction | `respondToBookingRequestQuote#2` | direct | defaults | budget |
