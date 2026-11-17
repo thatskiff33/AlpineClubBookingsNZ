@@ -456,6 +456,11 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
       source: "STORED", reason: null, storedSumCents: null, sharesSumCents: 3275, billedCents: 3275, lineCount: 2, shareCount: 2,
     });
     expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:3275:0:v1");
+    // #4525 (ALP-436): the manifest covers exactly the shares these lines itemise.
+    expect(mocks.recordSupplementaryInvoiceManifest).toHaveBeenCalledWith(expect.objectContaining({
+      anchor: { kind: "MODIFICATION", modificationId: "mod_lines" },
+      itemisedShareTaskIds: ["t1", "t2"],
+    }));
   });
 
   it("a share settled between a failed send and its retry never renders a line the retry does not bill: it falls back, same total", async () => {
@@ -484,14 +489,17 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     const first = { id: "t1", amountCents: 2275, settlementDirection: "CHARGE_TO_MEMBER", note: "owing", completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext };
     const run = async () => {
       mocks.startXeroSyncOperation.mockClear();
+      mocks.recordSupplementaryInvoiceManifest.mockClear();
       await createXeroSupplementaryInvoice({ format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: 2275, changeFeeCents: 0, bookingModificationId: "mod_lines" });
       const payload = mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
-      return { lines: payload.invoices[0].lineItems, record: payload.priceLines };
+      const recorded = mocks.recordSupplementaryInvoiceManifest.mock.calls[0]?.[0];
+      return { lines: payload.invoices[0].lineItems, record: payload.priceLines, itemisedShareTaskIds: recorded?.itemisedShareTaskIds };
     };
 
     mocks.manualRefundTaskFindMany.mockResolvedValue([first]);
     const attempt1 = await run();
     expect(attempt1.record).toMatchObject({ source: "STORED", shareCount: 1 });
+    expect(attempt1.itemisedShareTaskIds).toEqual(["t1"]);
 
     // A second share lands on the same anchor; the operation still bills 2275
     // (the restate could not join it, INV-PAY-070).
@@ -500,6 +508,8 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(attempt2.record).toMatchObject({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", sharesSumCents: 3275, billedCents: 2275 });
     expect(attempt2.lines[0].description).toBe("Booking modification - price adjustment (Booking bk1)");
     expect(lineTotalCents(attempt2.lines)).toBe(lineTotalCents(attempt1.lines));
+    // The single line itemises no share, so its manifest claims none (#4525, ALP-436).
+    expect(attempt2.itemisedShareTaskIds).toEqual([]);
   });
 
   it("a restated operation billing a raised figure falls back to the single line, with the reason (INV-PAY-070)", async () => {

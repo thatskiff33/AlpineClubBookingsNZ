@@ -27,10 +27,12 @@ import { frozenLineCodes, primaryInvoicePayloadHash, splitStayAndFeeCents, type 
  * of the task's one live review closure and no fee. A reduction netted against
  * a fee bills no component whole or as a slice: a conflict, never a guess.
  *
- * SETTLED REVIEW SHARES. An edit whose financial review settled before its
- * invoice was sent bills the edit's own movement plus each settled share
+ * SETTLED REVIEW SHARES. An edit whose lines itemise settled review shares
+ * bills the edit's own movement plus each itemised share
  * (`selectModificationDocumentLines`: the stored lines and the shares together
- * explain `priceDiffCents`). Each share's stay movement is posted by its task's
+ * explain `priceDiffCents`). Only the shares the sent lines itemise count: a
+ * share the single fallback line leaves out, or one settled after the lines
+ * were built, is not part of this invoice. Each share's stay movement is posted by its task's
  * review closure (R21), not by the edit's event, so each closure is a slice of
  * its own, keyed by its event: the stay lines equal the sum of the slices, and
  * a closure moves no fee.
@@ -65,9 +67,10 @@ export interface SupplementaryInvoicePlanInput {
    */
   sliceEvent: SliceEvent | null | "AMBIGUOUS";
   /**
-   * An edit's settled review shares' closures, one per share task, each read
-   * as a second ask's is (the one live closure, null or "AMBIGUOUS"). Empty
-   * for a second ask, which never itemises shares, and for an edit with none.
+   * The closures of the settled review shares this invoice itemised, one per
+   * share task, each read as a second ask's is (the one live closure, null or
+   * "AMBIGUOUS"). Empty for a second ask, which never itemises shares, for the
+   * single fallback line, and for an edit whose lines itemise none.
    */
   shareEvents?: ReadonlyArray<SliceEvent | null | "AMBIGUOUS">;
   /** The booking's posted BOOKING_REVENUE and FEE_REVENUE legs (`readBookingChargeLegs`). */

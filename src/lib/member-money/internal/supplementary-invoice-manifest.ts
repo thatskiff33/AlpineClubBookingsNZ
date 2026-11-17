@@ -3,7 +3,7 @@ import type { LineItem } from "xero-node";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
 import { exactPrefix } from "../../prisma-exact-prefix";
-import { loadEditReviewSettledShares } from "../../xero-modification-line-items";
+import { describeUniqueConstraintTarget } from "../../prisma-errors";
 import { CHARGE_LEG_SELECT, chargeLegsOf, readBookingChargeLegs } from "./booking-journal-read";
 import { memberMoneyEventKeys, reviewCloseKeyPrefix } from "./keys";
 import { planSupplementaryBookingInvoice, type SliceEvent, type SupplementaryAnchor } from "./supplementary-invoice-plan";
@@ -65,20 +65,22 @@ export async function readSupplementarySliceEvent(
 }
 
 /**
- * The closures of an edit's settled review shares, one per share task, in the
- * order the invoice itemises them: the same tasks its lines were built from
- * (`loadEditReviewSettledShares`). A second ask bills no shares.
+ * The closures of the settled review shares this invoice itemised, one per
+ * task, in the order its lines show them: exactly the tasks the sender
+ * rendered (`itemisedShareTaskIds` from `resolveModificationDocumentLineItems`),
+ * never every share settled by the time the manifest is written. A share the
+ * invoice did not itemise (the single fallback line, or one settled after the
+ * lines were built) is not part of this invoice. A second ask bills no shares.
  */
-export async function readSettledShareSliceEvents(
+export async function readItemisedShareSliceEvents(
   db: Pick<Prisma.TransactionClient, "memberMoneyJournal">,
   bookingId: string,
   anchor: SupplementaryAnchor,
-  loadShares: typeof loadEditReviewSettledShares = loadEditReviewSettledShares,
+  itemisedShareTaskIds: readonly string[],
 ): Promise<Array<SliceEvent | null | "AMBIGUOUS">> {
   if (anchor.kind !== "MODIFICATION") return [];
-  const shares = await loadShares(bookingId, anchor.modificationId);
   const events: Array<SliceEvent | null | "AMBIGUOUS"> = [];
-  for (const share of shares) events.push(await readReviewClosure(db, bookingId, share.taskId));
+  for (const taskId of itemisedShareTaskIds) events.push(await readReviewClosure(db, bookingId, taskId));
   return events;
 }
 
@@ -89,6 +91,8 @@ export async function recordSupplementaryInvoiceManifest(input: {
   legacyKey: string;
   lines: LineItem[];
   priceLines: unknown;
+  /** The tasks whose settled shares the sent lines itemise; empty for the single line. */
+  itemisedShareTaskIds: readonly string[];
   providerInvoiceId: string;
 }): Promise<void> {
   const { bookingId, providerInvoiceId } = input;
@@ -96,7 +100,7 @@ export async function recordSupplementaryInvoiceManifest(input: {
     const plan = planSupplementaryBookingInvoice({
       ...input,
       sliceEvent: await readSupplementarySliceEvent(prisma, bookingId, input.anchor),
-      shareEvents: await readSettledShareSliceEvents(prisma, bookingId, input.anchor),
+      shareEvents: await readItemisedShareSliceEvents(prisma, bookingId, input.anchor, input.itemisedShareTaskIds),
       postedLegs: await readBookingChargeLegs(prisma, bookingId),
     });
     const result = await prisma.$transaction((tx) => writeExportManifest(tx, {
@@ -119,7 +123,14 @@ export async function recordSupplementaryInvoiceManifest(input: {
     }
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      logger.info({ bookingId, providerInvoiceId }, "Another run recorded the supplementary invoice's manifest, or billed its slice, first; the first row stands");
+      // The coverage key (role, account, charge, slice) names `chargeIdentity`;
+      // the manifest's key does not. Each slice is keyed by the one event that
+      // moved it, so a second cover of a slice should be unreachable: say so.
+      if (describeUniqueConstraintTarget(error)?.includes("chargeidentity")) {
+        logger.warn({ bookingId, providerInvoiceId }, "A slice this supplementary invoice bills is already covered by another manifest; this manifest was not recorded");
+        return;
+      }
+      logger.info({ bookingId, providerInvoiceId }, "Another run recorded the supplementary invoice's manifest first; the first row stands");
       return;
     }
     logger.error({ err: error, bookingId, providerInvoiceId }, "Could not record the supplementary invoice's export manifest");

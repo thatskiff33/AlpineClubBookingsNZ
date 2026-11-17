@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The builders' modules load the client; the planners never query it. The
 // recorder's wiring test drives the journal read, the shares, the posted legs
@@ -8,7 +8,11 @@ const mocks = vi.hoisted(() => ({
   loadShares: vi.fn(),
   readBookingChargeLegs: vi.fn(),
   writeExportManifest: vi.fn(),
+  logInfo: vi.fn(),
+  logWarn: vi.fn(),
+  logError: vi.fn(),
 }));
+vi.mock("@/lib/logger", () => ({ default: { info: mocks.logInfo, warn: mocks.logWarn, error: mocks.logError, debug: vi.fn() } }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     memberMoneyJournal: { findMany: mocks.findMany },
@@ -27,9 +31,9 @@ vi.mock("@/lib/member-money/internal/store", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/internal/store")),
   writeExportManifest: mocks.writeExportManifest,
 }));
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import {
-  readSettledShareSliceEvents,
+  readItemisedShareSliceEvents,
   readSupplementarySliceEvent,
   recordSupplementaryInvoiceManifest,
 } from "@/lib/member-money/internal/supplementary-invoice-manifest";
@@ -288,21 +292,19 @@ describe("readSupplementarySliceEvent (ALP-436)", () => {
     await expect(readSupplementarySliceEvent(read([journal("old", true)]).db, BOOKING, anchor)).resolves.toBeNull();
   });
 
-  it("reads each settled share's one live closure for an edit, and none for a second ask", async () => {
+  it("reads the one live closure of each itemised share's task for an edit, and none for a second ask", async () => {
     const findMany = vi.fn()
       .mockResolvedValueOnce([journal("review-close:a:old", true), journal("review-close:a:live")])
       .mockResolvedValueOnce([]);
     const db = { memberMoneyJournal: { findMany } } as unknown as Pick<Prisma.TransactionClient, "memberMoneyJournal">;
-    const share = (taskId: string) => ({ taskId, sign: 1 as const, amountCents: 100, note: null });
-    const loadShares = vi.fn().mockResolvedValue([share("a"), share("b")]);
-    await expect(readSettledShareSliceEvents(db, BOOKING, { kind: "MODIFICATION", modificationId: MOD }, loadShares))
+    await expect(readItemisedShareSliceEvents(db, BOOKING, { kind: "MODIFICATION", modificationId: MOD }, ["a", "b"]))
       .resolves.toEqual([expect.objectContaining({ eventKey: "review-close:a:live" }), null]);
-    expect(loadShares).toHaveBeenCalledWith(BOOKING, MOD);
     expect(findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
       where: { event: { eventKey: { startsWith: "review-close:b:" } }, reversesJournalId: null },
     }));
-    await expect(readSettledShareSliceEvents(db, BOOKING, anchor, loadShares)).resolves.toEqual([]);
-    expect(loadShares).toHaveBeenCalledTimes(1);
+    await expect(readItemisedShareSliceEvents(db, BOOKING, anchor, ["a"])).resolves.toEqual([]);
+    await expect(readItemisedShareSliceEvents(db, BOOKING, { kind: "MODIFICATION", modificationId: MOD }, [])).resolves.toEqual([]);
+    expect(findMany).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a reversed modification visible so its planner can refuse it", async () => {
@@ -312,35 +314,104 @@ describe("readSupplementarySliceEvent (ALP-436)", () => {
 });
 
 describe("recordSupplementaryInvoiceManifest (ALP-436)", () => {
-  it("passes the settled shares' closures to the planner, so an itemised share is covered as its own slice", async () => {
-    const CLOSE = "review-close:task-a:line-1";
-    mocks.findMany
-      .mockResolvedValueOnce([{ event: { eventKey: EVENT }, reversedBy: null, lines: [leg("BOOKING_REVENUE", STAY, 4500), leg("FEE_REVENUE", FEE, 2000)] }])
-      .mockResolvedValueOnce([{ event: { eventKey: CLOSE }, reversedBy: null, lines: [leg("BOOKING_REVENUE", STAY, 1500)] }]);
-    mocks.loadShares.mockResolvedValueOnce([{ taskId: "task-a", sign: 1, amountCents: 1500, note: null }]);
-    mocks.readBookingChargeLegs.mockResolvedValueOnce([
-      leg("BOOKING_REVENUE", STAY, 14000), leg("BOOKING_REVENUE", STAY, 4500), leg("BOOKING_REVENUE", STAY, 1500), leg("FEE_REVENUE", FEE, 2000),
-    ]);
-    mocks.writeExportManifest.mockResolvedValueOnce("WRITTEN");
+  // Review task T settled a 1500 charge against edit E: its closure moved the
+  // stay charge by 1500. The journal and the settled-share table both hold it
+  // in every case below; only what the sent lines itemise differs.
+  const CLOSE_T = "review-close:task-t:line-1";
+  const journals: Record<string, { event: { eventKey: string }; reversedBy: null; lines: PostedRevenueLeg[] }> = {
+    [EVENT]: { event: { eventKey: EVENT }, reversedBy: null, lines: [leg("BOOKING_REVENUE", STAY, 4500), leg("FEE_REVENUE", FEE, 2000)] },
+    [CLOSE_T]: { event: { eventKey: CLOSE_T }, reversedBy: null, lines: [leg("BOOKING_REVENUE", STAY, 1500)] },
+  };
+  const singleLine = (cents: number): LineItem => ({ description: "Booking modification - price adjustment (Booking booking-)", quantity: 1, unitAmount: cents / 100, taxType: "OUTPUT2", accountCode: "201" });
+  const shareLine = (cents: number): LineItem => ({ description: "Agreed adjustment", quantity: 1, unitAmount: cents / 100, accountCode: "201" });
+  const record = (overrides: Partial<Parameters<typeof recordSupplementaryInvoiceManifest>[0]>) => recordSupplementaryInvoiceManifest({
+    bookingId: BOOKING,
+    anchor: { kind: "MODIFICATION", modificationId: MOD },
+    legacyKey: `xero-supplementary:${MOD}`,
+    lines: [stayLine(4500), changeFeeLineItem(2000, mapping)],
+    priceLines: { source: "STORED", shareCount: 0 },
+    itemisedShareTaskIds: [],
+    providerInvoiceId: "inv-1",
+    ...overrides,
+  });
+  const written = () => mocks.writeExportManifest.mock.calls.at(-1)?.[1];
 
-    await recordSupplementaryInvoiceManifest({
-      bookingId: BOOKING,
-      anchor: { kind: "MODIFICATION", modificationId: MOD },
-      legacyKey: `xero-supplementary:${MOD}`,
-      lines: [stayLine(4500), { description: "Agreed adjustment", quantity: 1, unitAmount: 15, accountCode: "201" }, changeFeeLineItem(2000, mapping)],
-      priceLines: [{ kind: "night" }],
-      providerInvoiceId: "inv-1",
+  beforeEach(() => {
+    for (const mock of Object.values(mocks)) mock.mockReset();
+    mocks.findMany.mockImplementation(async ({ where }: { where: { event: { eventKey: string | { startsWith: string } } } }) => {
+      const key = where.event.eventKey;
+      return Object.values(journals).filter(({ event }) =>
+        typeof key === "string" ? event.eventKey === key : event.eventKey.startsWith(key.startsWith));
     });
+    mocks.loadShares.mockResolvedValue([{ taskId: "task-t", sign: 1, amountCents: 1500, note: null }]);
+    mocks.readBookingChargeLegs.mockResolvedValue([
+      leg("BOOKING_REVENUE", STAY, 14000), leg("BOOKING_REVENUE", STAY, 4500), leg("FEE_REVENUE", FEE, 2000), leg("BOOKING_REVENUE", STAY, 1500),
+    ]);
+    mocks.writeExportManifest.mockResolvedValue("WRITTEN");
+  });
 
-    expect(mocks.loadShares).toHaveBeenCalledWith(BOOKING, MOD);
-    expect(mocks.writeExportManifest).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+  it("covers an itemised settled share as its own slice", async () => {
+    await record({ lines: [stayLine(4500), shareLine(1500), changeFeeLineItem(2000, mapping)], priceLines: { source: "STORED", shareCount: 1 }, itemisedShareTaskIds: ["task-t"] });
+    expect(written()).toMatchObject({
       documentRole: "SUPPLEMENTARY_BOOKING_INVOICE",
       outcome: "COVERED",
       coverage: [
-        expect.objectContaining({ account: "BOOKING_REVENUE", sliceKey: EVENT, coveredCents: 4500 }),
-        expect.objectContaining({ account: "BOOKING_REVENUE", sliceKey: CLOSE, coveredCents: 1500 }),
-        expect.objectContaining({ account: "FEE_REVENUE", chargeIdentity: FEE, coveredCents: 2000 }),
+        { account: "BOOKING_REVENUE", sliceKey: EVENT, coveredCents: 4500 },
+        { account: "BOOKING_REVENUE", sliceKey: CLOSE_T, coveredCents: 1500 },
+        { account: "FEE_REVENUE", chargeIdentity: FEE, coveredCents: 2000 },
       ],
-    }));
+    });
+  });
+
+  it("covers the single fallback line as the edit's own slice and fee, never the share it did not bill", async () => {
+    // E's lines total 4500; T settled after the operation was claimed and the
+    // figures were withheld, so 4500 + 1500 != 4500 and the sender fell back.
+    await record({
+      lines: [singleLine(4500), changeFeeLineItem(2000, mapping)],
+      priceLines: { source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", shareCount: 0 },
+      itemisedShareTaskIds: [],
+    });
+    expect(written()).toMatchObject({ outcome: "COVERED", reason: null });
+    expect(written()?.coverage).toEqual([
+      expect.objectContaining({ account: "BOOKING_REVENUE", sliceKey: EVENT, coveredCents: 4500 }),
+      expect.objectContaining({ account: "FEE_REVENUE", chargeIdentity: FEE, coveredCents: 2000 }),
+    ]);
+  });
+
+  it("covers an invoice whose lines were built before a share settled, and leaves the share to its own document", async () => {
+    await record({ priceLines: { source: "STORED", shareCount: 0 }, itemisedShareTaskIds: [] });
+    expect(written()).toMatchObject({ outcome: "COVERED" });
+    expect(written()?.coverage.map((row: { sliceKey?: string }) => row.sliceKey)).not.toContain(CLOSE_T);
+  });
+
+  it("lets the later second ask for that share cover its closure, a slice no edit manifest claimed", async () => {
+    await record({ itemisedShareTaskIds: [] });
+    const editSlices = written()?.coverage.map((row: { sliceKey?: string }) => row.sliceKey);
+    await record({
+      anchor: { kind: "SECOND_ASK", modificationId: MOD, taskId: "task-t" },
+      legacyKey: "review-task:task-t:supplementary-shortfall-invoice:1500:0:v1",
+      lines: [singleLine(1500)],
+      priceLines: { source: "FALLBACK_SINGLE_LINE", reason: "SECOND_ASK", shareCount: 0 },
+      providerInvoiceId: "inv-2",
+    });
+    expect(written()).toMatchObject({ outcome: "COVERED", coverage: [{ account: "BOOKING_REVENUE", sliceKey: CLOSE_T, coveredCents: 1500 }] });
+    expect(editSlices).not.toContain(CLOSE_T);
+  });
+
+  it("warns when a slice is already covered by another manifest, and notes a manifest-key race at info", async () => {
+    const p2002 = (fields: string[]) => new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002", clientVersion: "test",
+      meta: { driverAdapterError: { cause: { kind: "UniqueConstraintViolation", constraint: { fields } } } },
+    });
+    mocks.writeExportManifest.mockRejectedValueOnce(p2002(['"documentRole"', '"account"', '"chargeIdentity"', '"sliceKey"']));
+    await record({});
+    expect(mocks.logWarn).toHaveBeenCalledWith(expect.objectContaining({ bookingId: BOOKING }), expect.stringContaining("already covered by another manifest"));
+    expect(mocks.logInfo).not.toHaveBeenCalled();
+
+    mocks.writeExportManifest.mockRejectedValueOnce(p2002(['"documentRole"', '"legacyKey"']));
+    await record({});
+    expect(mocks.logInfo).toHaveBeenCalledWith(expect.objectContaining({ bookingId: BOOKING }), expect.stringContaining("recorded the supplementary invoice's manifest first"));
+    expect(mocks.logWarn).toHaveBeenCalledTimes(1);
+    expect(mocks.logError).not.toHaveBeenCalled();
   });
 });

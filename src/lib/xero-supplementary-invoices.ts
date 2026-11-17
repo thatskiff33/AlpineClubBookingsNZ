@@ -611,6 +611,7 @@ export async function createXeroSupplementaryInvoice(params: {
     legacyKey: invoiceIdempotencyKey,
     lines: lineItems,
     priceLines: itemised.record,
+    itemisedShareTaskIds: itemised.itemisedShareTaskIds,
     providerInvoiceId: createdInvoiceId,
   });
 
