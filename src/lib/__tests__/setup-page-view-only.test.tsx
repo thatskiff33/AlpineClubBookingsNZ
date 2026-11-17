@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
+import { getAdminPage } from "@/lib/admin-hubs";
 import { emptyAdminPermissionMatrix } from "@/lib/admin-permissions";
 import { ADMIN_VIEW_ONLY_SECTION_HEADING } from "@/components/admin/view-only-action";
 import { SetupPageClient } from "@/app/(admin)/admin/setup/setup-page-client";
@@ -106,7 +107,8 @@ describe("Setup support edit access (#4971)", () => {
     const alert = alerts.find((region) => region.id !== "setup-error")!;
     expect(banner).toHaveTextContent(ADMIN_VIEW_ONLY_SECTION_HEADING);
     expect(screen.getByText("Loading setup readiness")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Setup Wizard" })).toBeInTheDocument();
+    // The heading is the Setup page's registry label (#4968), not a typed string.
+    expect(screen.getByRole("heading", { name: getAdminPage("setup").label })).toBeInTheDocument();
     await act(async () => { settle(response(fails ? { error: "Readiness unavailable" } : body, !fails)); });
     expect(screen.getByTestId("admin-view-only-banner")).toBe(banner);
     expect(screen.getAllByRole("alert")).toEqual(alerts);

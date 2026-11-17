@@ -5,9 +5,10 @@ import {
   readMirotalkStoredSettings,
 } from "@/lib/mirotalk-config";
 import { VideoMeetingsSetup } from "./video-meetings-setup";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 export const metadata: Metadata = {
-  title: "Video meetings setup",
+  title: getAdminPage("video-meetings-setup").label,
 };
 
 /**
@@ -25,7 +26,7 @@ export default async function VideoMeetingsSetupPage() {
   return (
     <div className="max-w-4xl p-6">
       <BackLink href="/admin/integrations" label="Integrations" />
-      <h1 className="mt-2 mb-2 text-2xl font-bold">Video meetings</h1>
+      <h1 className="mt-2 mb-2 text-2xl font-bold">{getAdminPage("video-meetings-setup").label}</h1>
       <p className="mb-6 text-muted-foreground">
         Calendar events marked as a meeting carry a Join link to your club&apos;s
         MiroTalk server. Set where that server is, how the links behave, and the
