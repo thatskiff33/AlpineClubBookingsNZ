@@ -6082,9 +6082,10 @@ refuses any booking without an unresolved report, so a report lost to process
 teardown would leave a genuinely stranded member repairable only from a database
 session — the thing #2649 exists to remove. The `.catch` guard keeps the previous
 failure semantics exactly (a failed write is logged, and the operator-door
-response is still returned), and the census manifest records the sink move: this
-is the case where `writeSites` does not change at all because one sink loses a
-site and another gains one, which is why the per-sink pins exist.
+response is still returned), and the census records the sink move: the site
+total does not change at all, because one sink loses a site and another gains
+one, which is why the census's per-site ledger records each site's sink
+(`scripts/audit/audit-write-sites.ts`, #5211).
 
 Since #2649 that operator door is a button rather than a database session.
 `POST /api/admin/bookings/[id]/return-to-waitlist` (`bookings: edit`, `waitlist`
