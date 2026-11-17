@@ -28,7 +28,7 @@ export const PRIVACY_RECIPIENTS = {
   },
   xero: {
     name: "Xero",
-    dataSent: "Member contact details and accounting records, including invoice, payment and subscription references.",
+    dataSent: "Member name, email address, phone number, street and postal addresses, date of birth and accounting records, including invoice, payment and subscription references.",
     enablement: "The Xero integration module, saved credentials and an OAuth connection enable sync; switching the module off or disconnecting stops new sync, without deleting Xero records.",
     processing: "See the club's Xero account terms and Xero's privacy notice; the application does not fix a processing country.",
     memberFacing: true,
