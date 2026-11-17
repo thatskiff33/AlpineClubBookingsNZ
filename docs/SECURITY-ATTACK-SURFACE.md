@@ -1575,7 +1575,8 @@ to **any** scoped policy this app adds in future, not just these (#2279):
   #4808).** The preview and the builder moved under `/admin/lodge-ops`, and a
   page answers at its old path or its hub path depending on `ADMIN_HUBS_LIVE`,
   so both allowlists name both. `src/lib/csp.ts` reads them from the hub
-  registry rather than writing them out: `FRAME_SRC_SELF_PATHS` holds
+  registry, through the same twin rule (`withAdminHubTwins`) the module-gate
+  exemptions use, rather than writing them out: `FRAME_SRC_SELF_PATHS` holds
   `/admin/display/preview`, `/admin/lodge-ops/display/preview`,
   `/admin/display/builder` and `/admin/lodge-ops/display/builder`, and
   `TIGHT_IMG_SRC_PATHS` holds `/display` and the two preview paths, never the
