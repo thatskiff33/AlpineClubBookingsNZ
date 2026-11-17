@@ -70,6 +70,9 @@ let linkedMove: typeof import("@/lib/booking-linked-date-move-service");
 let linkedMoveQuote: typeof import("@/lib/adult-member-hosting-linked-move");
 let clubTimeServer: typeof import("@/lib/club-time/server");
 let memberCredit: typeof import("@/lib/member-credit");
+/** The edit's post-commit Xero queueing runs unawaited; teardown waits for it (#4234). */
+const pendingXeroWork: Promise<unknown>[] = [];
+let restoreXeroQueue: (() => void) | undefined;
 
 async function modificationIds(): Promise<string[]> {
   const rows = await prisma.bookingModification.findMany({
@@ -80,6 +83,7 @@ async function modificationIds(): Promise<string[]> {
 }
 
 async function clean(): Promise<void> {
+  while (pendingXeroWork.length > 0) await Promise.allSettled(pendingXeroWork.splice(0));
   const localIds = [...BOOKING_IDS, ...PAYMENT_IDS, ...(await modificationIds())];
   await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: localIds } } });
   await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: localIds } } });
@@ -264,6 +268,15 @@ async function bookingRows() {
     linkedMoveQuote = await import("@/lib/adult-member-hosting-linked-move");
     clubTimeServer = await import("@/lib/club-time/server");
     memberCredit = await import("@/lib/member-credit");
+    const xeroQueue = await import("@/lib/xero-booking-edit-settlement");
+    const queue = xeroQueue.queueXeroBookingEditSettlement;
+    // Pass-through: the harness imports every suite into one process.
+    const spy = vi.spyOn(xeroQueue, "queueXeroBookingEditSettlement").mockImplementation((input) => {
+      const pending = queue(input);
+      if (BOOKING_IDS.includes(input.bookingId)) pendingXeroWork.push(pending);
+      return pending;
+    });
+    restoreXeroQueue = () => spy.mockRestore();
 
     await clean();
     await teardownFixtures();
@@ -337,6 +350,7 @@ async function bookingRows() {
       await teardownFixtures();
     } finally {
       resetStripeRaceHooks();
+      restoreXeroQueue?.();
     }
   });
 
