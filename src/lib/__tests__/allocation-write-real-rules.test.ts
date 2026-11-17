@@ -25,7 +25,7 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/xero-sync", () => ({ upsertXeroObjectLink: mocks.upsert }));
 vi.mock("@/lib/xero-inbound/linked-refunded-total", () => ({ decideLinkedRefundedTotalCents: mocks.decideLinked }));
 vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/xero-inbound/credit-note-bank-transfer-floor")>()),
+  ...((await importOriginal()) as typeof import("@/lib/xero-inbound/credit-note-bank-transfer-floor")),
   sendBankTransferFloorAlert: mocks.sendFloorAlert,
 }));
 vi.mock("@/lib/club-format-settings", () => ({ getClubFormat: vi.fn(async () => ({ timeZone: "Pacific/Auckland" })) }));
