@@ -15,6 +15,7 @@ import type { BookingRequestPendingCounts } from "@/lib/admin-booking-request-pe
  * applies by hand, while approving a policy exception EXECUTES the reviewed
  * proposal.
  */
+import type { BookingRequestStatus } from "@prisma/client";
 import { adminHref } from "@/lib/admin-hubs";
 
 export const BOOKING_REQUESTS_TABS = [
@@ -134,4 +135,65 @@ export function buildBookingRequestsHref(
   }
 
   return `${adminHref("booking-requests")}?${params.toString()}`;
+}
+
+/**
+ * The one query key that carries a booking-requests tab's status filter
+ * (#4960 follow-up). The panels read their opening filter from it and
+ * `buildBookingRequestDatasetPath` writes it, so a link that names the filter
+ * any other way — the quote-accepted email once sent `filter=ACCEPTED` —
+ * silently opens the default queue instead.
+ */
+export const BOOKING_REQUESTS_STATUS_PARAM = "status";
+
+/**
+ * Every token the public-requests tab can filter on: each
+ * `BookingRequestStatus` (the API accepts exactly these) plus the two views
+ * `QUEUE` (the default) and `ALL`. Derived from the enum with a type-only
+ * import, so it stays client-safe and cannot name a status that does not exist.
+ */
+export type PublicBookingRequestFilter = BookingRequestStatus | "QUEUE" | "ALL";
+
+/**
+ * Keyed by the whole vocabulary rather than listed, so adding or removing a
+ * `BookingRequestStatus` is a compile error here (and, through the panel's
+ * `Record<PublicBookingRequestFilter, string>` labels, at the filter row).
+ * Without that, a new status the API accepts would open on `QUEUE` from a link,
+ * with nothing failing (INV-SSOT-001: unrepresentable, not policed).
+ */
+const PUBLIC_BOOKING_REQUEST_FILTER_TOKENS: Record<PublicBookingRequestFilter, true> = {
+  QUEUE: true,
+  NEW: true,
+  VERIFIED: true,
+  PRICED: true,
+  QUOTED: true,
+  QUOTE_SENT: true,
+  QUERY_PENDING: true,
+  MODIFICATION_REQUESTED: true,
+  ACCEPTED: true,
+  APPROVED: true,
+  DECLINED: true,
+  CANCELLED: true,
+  CONVERTED: true,
+  ALL: true,
+};
+
+export const DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER: PublicBookingRequestFilter = "QUEUE";
+
+function isPublicBookingRequestFilter(value: string | null): value is PublicBookingRequestFilter {
+  // `hasOwn`, not `in`: "toString" and "constructor" are not filters.
+  return value !== null && Object.hasOwn(PUBLIC_BOOKING_REQUEST_FILTER_TOKENS, value);
+}
+
+/** Link to the public-requests tab opened on `status`. */
+export function buildPublicBookingRequestsHref(status: PublicBookingRequestFilter) {
+  return buildBookingRequestsHref("public", { [BOOKING_REQUESTS_STATUS_PARAM]: status });
+}
+
+/** The filter the public-requests tab opens on for these query params. */
+export function readPublicBookingRequestFilter(
+  searchParams: Pick<URLSearchParams, "get">,
+): PublicBookingRequestFilter {
+  const value = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
+  return isPublicBookingRequestFilter(value) ? value : DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER;
 }

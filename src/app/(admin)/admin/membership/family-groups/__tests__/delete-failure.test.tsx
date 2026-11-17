@@ -8,7 +8,7 @@
 // error-message helper so an HTML error page cannot become a parse error.
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import {
@@ -80,13 +80,14 @@ function stubFetch() {
 
 async function clickDelete() {
   fireEvent.click(await screen.findByRole("button", { name: "Delete Smith Family" }));
+  // Delete asks first through the shared confirmation dialog (#4973).
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete group" }));
 }
 
 beforeEach(() => {
   listFetches = 0;
   installScrollIntoViewSpy();
   stubFetch();
-  vi.stubGlobal("confirm", () => true);
 });
 
 afterEach(async () => {

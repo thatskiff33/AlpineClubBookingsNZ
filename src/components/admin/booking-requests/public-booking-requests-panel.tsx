@@ -16,6 +16,11 @@ import { fetchOffPageQueueRecord, useAdminQueuePage } from "@/components/admin/u
 import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-note";
 import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
+import {
+  DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER,
+  readPublicBookingRequestFilter,
+  type PublicBookingRequestFilter,
+} from "@/lib/admin-booking-requests-path";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import {
@@ -352,7 +357,7 @@ interface PublicBookingRequestsPanelProps {
 
 const EMPTY_SEARCH_PARAMS: Record<string, string> = {};
 
-const FILTER_LABELS: Record<PublicRequestFilter, string> = {
+const FILTER_LABELS: Record<PublicBookingRequestFilter, string> = {
   QUEUE: "Queue",
   NEW: "Awaiting verification",
   VERIFIED: "Verified",
@@ -373,7 +378,7 @@ function buildPublicRequestsPath(
   basePath: string,
   currentSearch: string,
   fixedSearchParams: Record<string, string>,
-  status: PublicRequestFilter,
+  status: PublicBookingRequestFilter,
   requestId: string | null,
   page: number,
 ) {
@@ -382,7 +387,7 @@ function buildPublicRequestsPath(
     currentSearch,
     fixedSearchParams,
     status,
-    defaultStatus: "QUEUE",
+    defaultStatus: DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER,
     recordKey: "requestId",
     recordId: requestId,
     page,
@@ -408,7 +413,6 @@ export function PublicBookingRequestsPanel({
   const { hutLeaderLabel } = useClubIdentity();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialFilter = searchParams.get("status");
   const requestId = searchParams.get("requestId");
   /*
     #2887: the lodge badge follows `request.lodgeName` and nothing else.
@@ -431,8 +435,8 @@ export function PublicBookingRequestsPanel({
   */
   const [memberChoosesPayment, setMemberChoosesPayment] = useState(false);
   const [requests, setRequests] = useState<PublicBookingRequestData[]>([]);
-  const [filter, setFilter] = useState<PublicRequestFilter>(
-    isPublicRequestFilter(initialFilter) ? initialFilter : "QUEUE"
+  const [filter, setFilter] = useState<PublicBookingRequestFilter>(() =>
+    readPublicBookingRequestFilter(searchParams),
   );
   const queuePage = useAdminQueuePage({
     filterKey: filter,
@@ -1521,7 +1525,7 @@ export function PublicBookingRequestsPanel({
 
 
       <div className="flex flex-wrap gap-2">
-        {(Object.keys(FILTER_LABELS) as PublicRequestFilter[]).map((status) => (
+        {(Object.keys(FILTER_LABELS) as PublicBookingRequestFilter[]).map((status) => (
           <Button
             key={status}
             variant={filter === status ? "default" : "outline"}
@@ -1532,8 +1536,8 @@ export function PublicBookingRequestsPanel({
           </Button>
         ))}
         <DatasetResetButton
-          disabled={filter === "QUEUE" && page === 1}
-          onReset={() => { setFilter("QUEUE"); setPage(1); }}
+          disabled={filter === DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER && page === 1}
+          onReset={() => { setFilter(DEFAULT_PUBLIC_BOOKING_REQUEST_FILTER); setPage(1); }}
         />
       </div>
 

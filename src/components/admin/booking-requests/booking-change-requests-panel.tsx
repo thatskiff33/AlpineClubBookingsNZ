@@ -16,6 +16,7 @@ import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { bookingOwner } from "@/lib/booking-owner";
 import { ChangeRequestPaymentLine } from "@/components/admin/booking-requests/change-request-payment-line";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
+import { BOOKING_REQUESTS_STATUS_PARAM } from "@/lib/admin-booking-requests-path";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,7 +80,6 @@ function useInstantFormatter() {
     value ? clubTime.instantDateTime(new Date(value)) : null;
 }
 
-
 interface BookingChangeRequestsPanelProps {
   basePath?: string;
   fixedSearchParams?: Record<string, string>;
@@ -121,7 +121,7 @@ export function BookingChangeRequestsPanel({
   const formatDateTime = useInstantFormatter();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialFilter = searchParams.get("status");
+  const initialFilter = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
   const requestId = searchParams.get("requestId");
   const defaultFilter: RequestFilter = requestId ? "ALL" : "REQUESTED";
   const [requests, setRequests] = useState<BookingChangeRequestData[]>([]);
