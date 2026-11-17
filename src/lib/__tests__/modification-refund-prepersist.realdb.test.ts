@@ -2,6 +2,8 @@
  * #4992: every edit door commits its own-card refund debt before its after-commit
  * work can run. The edit services, payment allocator and recovery writer are
  * real; the inline entry throws to model a process stopping just after commit.
+ * #5212: a card payment with no Stripe record owes no card debt and no card
+ * refund payable; every door hands its reduction to the treasurer instead.
  * Runs only against the guarded, disposable realdb database.
  */
 import { Role, type PrismaClient } from "@prisma/client";
@@ -11,6 +13,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 // Type only: the helper loads `@/lib/prisma`, which must be built after DATABASE_URL
 // points at the race database (see beforeAll).
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
+import { memberMoneyEventKeys } from "@/lib/member-money";
 import { memberMoneyTestContext } from "./support/member-money-fixtures";
 import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-financial-history-teardown";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
@@ -47,6 +50,8 @@ let batches: typeof import("@/lib/booking-batch-modification-service");
 let removal: typeof import("@/lib/booking-guest-removal-service");
 let acceptance: typeof import("@/lib/booking-guest-acceptance-reprice");
 let keys: typeof import("@/lib/payment-recovery-keys");
+let handBackKeys: typeof import("@/lib/manual-refund-task-settlement-rules");
+let confirmation: typeof import("@/lib/booking-ledger-confirmation-sync");
 let clubTime: typeof import("@/lib/club-time");
 let restoreInline: (() => void) | undefined;
 let role: SuiteEnvironmentRoleDeclaration | undefined;
@@ -76,8 +81,15 @@ async function clean(): Promise<void> {
   await prisma.promoCode.deleteMany({ where: { id: PROMO } });
 }
 
-/** $200 paid by two captured slices; either guest's two nights cost $100. */
-async function seed(source: "STRIPE" | "INTERNET_BANKING" = "STRIPE"): Promise<void> {
+/**
+ * $200 paid by two captured slices; either guest's two nights cost $100.
+ * `NO_STRIPE_RECORD` (#5212) is a succeeded card payment with no intent and no
+ * captured transaction: nothing Stripe could refund. `journaled` posts the
+ * booking's charge to the member-money journal as its settle would, so an edit's
+ * card refund payable (R05) posts too.
+ */
+async function seed(shape: "STRIPE" | "INTERNET_BANKING" | "NO_STRIPE_RECORD" = "STRIPE", { journaled = false } = {}): Promise<void> {
+  const source = shape === "NO_STRIPE_RECORD" ? "STRIPE" : shape;
   await prisma.booking.create({ data: {
     id: BOOKING, memberId: OWNER, lodgeId: LODGE, checkIn: N1, checkOut: END,
     status: "PAID", totalPriceCents: 20_000, finalPriceCents: 20_000, hasNonMembers: true,
@@ -91,9 +103,9 @@ async function seed(source: "STRIPE" | "INTERNET_BANKING" = "STRIPE"): Promise<v
   }
   await prisma.payment.create({ data: {
     id: PAYMENT, bookingId: BOOKING, amountCents: 20_000, source, status: "SUCCEEDED",
-    ...(source === "STRIPE" ? { stripePaymentIntentId: "pi_race_4992_primary" } : {}),
+    ...(shape === "STRIPE" ? { stripePaymentIntentId: "pi_race_4992_primary" } : {}),
   } });
-  if (source === "STRIPE") {
+  if (shape === "STRIPE") {
     for (const [id, kind, cents, intent, capturedAt] of [
       [PRIMARY, "PRIMARY", 14_000, "pi_race_4992_primary", "2026-06-01T00:00:00.000Z"],
       [ADDITIONAL, "ADDITIONAL", 6_000, "pi_race_4992_additional", "2026-06-02T00:00:00.000Z"],
@@ -104,6 +116,75 @@ async function seed(source: "STRIPE" | "INTERNET_BANKING" = "STRIPE"): Promise<v
       } });
     }
   }
+  if (journaled) {
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      await confirmation.postStoredBookingConfirmationLedgerLines(tx, BOOKING, JOURNAL);
+    }, { timeout: 20_000 });
+  }
+}
+
+/**
+ * #5212: THE JOURNAL AND THE DEBTS AGREE. What the journal holds as refund
+ * payable on the booking is never more than the debts that will pay it (card
+ * refund debts not yet made, and open treasurer hand-backs), and each edit's
+ * card refund payable has that edit's card refund debt behind it, for the same
+ * amount. Returns the edits' card refund payables.
+ */
+async function expectJournalAndDebtsAgree(): Promise<Array<{ modificationId: string; faceCents: number }>> {
+  const payableLines = await prisma.memberMoneyLine.findMany({
+    where: { bookingId: BOOKING, account: "REFUND_PAYABLE" }, select: { side: true, amountCents: true },
+  });
+  const payableCents = payableLines.reduce((sum, line) => sum + (line.side === "CREDIT" ? line.amountCents : -line.amountCents), 0);
+  const cardDebts = await prisma.paymentRecoveryOperation.findMany({
+    where: { bookingId: BOOKING, type: "REFUND_BOOKING_MODIFICATION", status: { not: "SUCCEEDED" } }, select: { idempotencyKey: true, amountCents: true },
+  });
+  const handBacks = await prisma.manualRefundTask.aggregate({ where: { bookingId: BOOKING, status: "OPEN" }, _sum: { amountCents: true } });
+  const owedCents = cardDebts.reduce((sum, row) => sum + (row.amountCents ?? 0), 0) + (handBacks._sum.amountCents ?? 0);
+  expect(payableCents).toBeLessThanOrEqual(owedCents);
+
+  const cardPayables: Array<{ modificationId: string; faceCents: number }> = [];
+  for (const modification of await prisma.bookingModification.findMany({ where: { bookingId: BOOKING }, select: { id: true } })) {
+    const obligation = await prisma.memberMoneyObligation.findUnique({
+      where: { obligationKey: memberMoneyEventKeys.refundObligation("modification", modification.id) }, select: { faceCents: true },
+    });
+    if (!obligation) continue;
+    cardPayables.push({ modificationId: modification.id, faceCents: obligation.faceCents });
+    expect(cardDebts).toContainEqual({
+      idempotencyKey: keys.buildBookingModificationRefundRecoveryIdempotencyKey(modification.id), amountCents: obligation.faceCents,
+    });
+  }
+  return cardPayables;
+}
+
+/** #5212: the reduction went to the treasurer's queue as one bank-transfer task, with no card debt and no card refund payable. */
+async function handedBackWithNoCardDebt(cents = 10_000): Promise<void> {
+  const modification = await prisma.bookingModification.findFirstOrThrow({ where: { bookingId: BOOKING } });
+  expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId: BOOKING, type: "REFUND_BOOKING_MODIFICATION" } })).toBe(0);
+  const tasks = await prisma.manualRefundTask.findMany({ where: { bookingId: BOOKING } });
+  expect(tasks).toHaveLength(1);
+  expect(tasks[0]).toMatchObject({
+    status: "OPEN", paymentId: PAYMENT, amountCents: cents, raisedAmountCents: cents,
+    occurrenceKey: handBackKeys.editRefundHandBackOccurrenceKey(modification.id),
+  });
+  expect(tasks[0]!.reason).toContain("card payment with no Stripe record");
+  expect(await expectJournalAndDebtsAgree()).toEqual([]);
+}
+
+/** The accepted guest is now a member on the booking's existing code, so the re-price lowers the settled $200 price to nothing. */
+async function acceptLeavingGuest() {
+  await prisma.bookingGuest.update({ where: { id: LEAVING }, data: { memberId: GUEST_MEMBER, isMember: true, consentStatus: "CONFIRMED" } });
+  await prisma.promoCode.create({ data: { id: PROMO, code: "RACE4992", type: "FIXED_AMOUNT", valueCents: 10_000 } });
+  await prisma.promoRedemption.create({ data: { promoCodeId: PROMO, bookingId: BOOKING, memberId: OWNER, discountCents: 0, guestTargets: { create: { bookingId: BOOKING, bookingGuestId: LEAVING } } } });
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const { acquireLodgeCapacityLock } = await import("@/lib/capacity");
+    await acquireLodgeCapacityLock(tx, LODGE);
+    return acceptance.repriceBookingAfterGuestAcceptance(tx, {
+      bookingId: BOOKING, acceptedGuestId: LEAVING, actorMemberId: GUEST_MEMBER,
+      todayAtClub: clubTime.requireCalendarDate("2026-07-01"), format: CLUB_FORMAT_TEST, journal: JOURNAL,
+    });
+  }, { timeout: 20_000 });
 }
 
 async function debt(prefix: string, cents = 10_000) {
@@ -159,6 +240,8 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
     removal = await import("@/lib/booking-guest-removal-service");
     acceptance = await import("@/lib/booking-guest-acceptance-reprice");
     keys = await import("@/lib/payment-recovery-keys");
+    handBackKeys = await import("@/lib/manual-refund-task-settlement-rules");
+    confirmation = await import("@/lib/booking-ledger-confirmation-sync");
     clubTime = await import("@/lib/club-time");
     await clean();
     for (const [id, memberRole] of [[OWNER, Role.USER], [OFFICER, Role.ADMIN], [GUEST_MEMBER, Role.USER]] as const) {
@@ -269,22 +352,59 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
 
   it("guest acceptance re-price commits its frozen debt in the consent transaction", async () => {
     await seed();
-    // The accepted guest is now a member on the booking's existing code, so the
-    // re-price lowers the settled $200 price to nothing.
-    await prisma.bookingGuest.update({ where: { id: LEAVING }, data: { memberId: GUEST_MEMBER, isMember: true, consentStatus: "CONFIRMED" } });
-    await prisma.promoCode.create({ data: { id: PROMO, code: "RACE4992", type: "FIXED_AMOUNT", valueCents: 10_000 } });
-    await prisma.promoRedemption.create({ data: { promoCodeId: PROMO, bookingId: BOOKING, memberId: OWNER, discountCents: 0, guestTargets: { create: { bookingId: BOOKING, bookingGuestId: LEAVING } } } });
-    const result = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-      const { acquireLodgeCapacityLock } = await import("@/lib/capacity");
-      await acquireLodgeCapacityLock(tx, LODGE);
-      return acceptance.repriceBookingAfterGuestAcceptance(tx, {
-        bookingId: BOOKING, acceptedGuestId: LEAVING, actorMemberId: GUEST_MEMBER,
-        todayAtClub: clubTime.requireCalendarDate("2026-07-01"), format: CLUB_FORMAT_TEST, journal: JOURNAL,
-      });
-    }, { timeout: 20_000 });
+    const result = await acceptLeavingGuest();
     expect(result).toMatchObject({ repriced: true, pendingRefundAmountCents: 20_000 });
     await debt("guest_accept_refund", 20_000);
+  });
+
+  it("a card refund payable in the journal has the edit's card debt behind it, for the same amount (#5212)", async () => {
+    await seed("STRIPE", { journaled: true });
+    await expect(dates.modifyBookingDates({
+      bookingId: BOOKING, actor: { id: OFFICER, role: Role.ADMIN },
+      input: { checkIn: "2026-09-01", checkOut: "2026-09-02", settlementMethod: "card" }, ipAddress: "127.0.0.1",
+    })).rejects.toBe(CRASH);
+    const row = await debt("mod_dates_refund");
+    expect(await expectJournalAndDebtsAgree()).toEqual([{ modificationId: row.idempotencyKey.replace(keys.BOOKING_MODIFICATION_REFUND_RECOVERY_PREFIX, ""), faceCents: 10_000 }]);
+    expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING } })).toBe(0);
+  });
+
+  describe("a card payment with no Stripe record is paid back by hand, with no card refund payable (#5212)", () => {
+    beforeEach(() => seed("NO_STRIPE_RECORD", { journaled: true }));
+
+    it("date change", async () => {
+      await expect(dates.modifyBookingDates({
+        bookingId: BOOKING, actor: { id: OFFICER, role: Role.ADMIN },
+        input: { checkIn: "2026-09-01", checkOut: "2026-09-02", settlementMethod: "card" }, ipAddress: "127.0.0.1",
+      })).rejects.toBe(CRASH);
+      expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING } })).finalPriceCents).toBe(10_000);
+      await handedBackWithNoCardDebt();
+    });
+
+    it("batch edit", async () => {
+      await expect(batches.modifyBookingBatch(batchArgs())).rejects.toBe(CRASH);
+      expect(await prisma.bookingGuest.count({ where: { id: LEAVING } })).toBe(0);
+      await handedBackWithNoCardDebt();
+    });
+
+    it("guest removal", async () => {
+      const result = await remove("card");
+      expect(result).toMatchObject({ pendingRefundAmountCents: 0, refundAmountCents: 10_000, hasSucceededPayment: false });
+      await handedBackWithNoCardDebt();
+    });
+
+    it("guest acceptance re-price", async () => {
+      const result = await acceptLeavingGuest();
+      expect(result).toMatchObject({ repriced: true, pendingRefundAmountCents: 0, refundAmountCents: 20_000, bankTransferRefundPayee: "member" });
+      await handedBackWithNoCardDebt(20_000);
+    });
+
+    it("account credit is still the member's to choose, and owes nothing by hand or by card", async () => {
+      const result = await remove("credit");
+      expect(result).toMatchObject({ pendingRefundAmountCents: 0, accountCreditAmountCents: 10_000 });
+      expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING } })).toBe(0);
+      expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId: BOOKING, type: "REFUND_BOOKING_MODIFICATION" } })).toBe(0);
+      expect(await expectJournalAndDebtsAgree()).toEqual([]);
+    });
   });
 
   it("caller rollback after the batch reserve rolls the debt and edit back together", async () => {
