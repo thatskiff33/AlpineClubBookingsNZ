@@ -1,7 +1,4 @@
-import {
-  getExplicitGuestBedNightKeys,
-  type GuestNightInput,
-} from "@/lib/booking-guest-stay-ranges";
+import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
 import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import type { BookingGuestNightPriceSource } from "@prisma/client";
@@ -77,25 +74,6 @@ export function storedNightPriceDetailsByKey(
         priceCents: isNonNegativeIntegerCents(priceCents) ? priceCents : null,
         priceSource: entry.priceSource,
       });
-    }
-  }
-  return byKey;
-}
-
-export function storedNightPricesByKey(
-  nights: ReadonlyArray<GuestNightInput> | null | undefined,
-): Map<string, number | null> {
-  const byKey = new Map<string, number | null>();
-  for (const entry of nights ?? []) {
-    const priceCents =
-      entry instanceof Date || typeof entry === "string"
-        ? undefined
-        : "priceCents" in entry
-          ? entry.priceCents
-          : undefined;
-    const [key] = getExplicitGuestBedNightKeys({ nights: [entry] }) ?? [];
-    if (key !== undefined) {
-      byKey.set(key, isNonNegativeIntegerCents(priceCents) ? priceCents : null);
     }
   }
   return byKey;

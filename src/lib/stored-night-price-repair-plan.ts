@@ -93,9 +93,9 @@ export function unpricedNightsSummaryForGuest(
   let knownNightTotalCents = 0;
   for (const night of guest.nights) {
     // Keyed through the canonical helper, one row at a time, exactly as
-    // `storedNightPricesByKey` does - a price keyed even slightly differently
-    // from its night would never match it, and the failure would be silent
-    // (INV-DATE-020). The strict NULL test is what that projection deliberately
+    // `storedNightPriceDetailsByKey` does - a price keyed even slightly
+    // differently from its night would never match it, and the failure would
+    // be silent (INV-DATE-020). The strict NULL test is what that projection deliberately
     // collapses and this one needs: an absent price and an unusable one are the
     // same thing to a READER, and completely different things to a writer whose
     // whole safety rests on a `priceCents: null` fence.
