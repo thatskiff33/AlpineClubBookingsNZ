@@ -7,6 +7,7 @@ import type { PrismaClient } from "@prisma/client";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { writeExportManifest, type ExportManifestRow } from "@/lib/member-money/internal/store";
+import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 import { createMemberMoneyScratchDatabase, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -149,6 +150,25 @@ async function stored(bookingId: string) {
         { sliceKey: "modification:mod-a", coveredCents: 4500 },
         { sliceKey: "modification:mod-b", coveredCents: 3000 },
       ]);
+    });
+
+    it("keeps an edit's slice and a later second ask's closure slice apart, and refuses a second cover of the closure on the coverage key", async () => {
+      const id = await booking();
+      const closure = "review-close:task-t:line-1";
+      const secondAsk = (legacyKey: string): ExportManifestRow => supplementary(id, "unused", 1500, {
+        legacyKey,
+        coverage: [{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(id), sliceKey: closure, coveredCents: 1500, taxCode: "GST_INCLUSIVE_1500BP" }],
+      });
+      await write(row(id));
+      // The edit's single fallback line billed only its own movement; the share it did not itemise is billed later.
+      await expect(write(supplementary(id, "mod-e", 4500))).resolves.toBe("WRITTEN");
+      await expect(write(secondAsk("review-task:task-t:supplementary-shortfall-invoice:1500:0:v1"))).resolves.toBe("WRITTEN");
+      const refused = await write(secondAsk("another-key")).catch((error: unknown) => error);
+      expect(refused).toMatchObject({ code: "P2002" });
+      // What the recorder reads to tell this from a race on the manifest's own key.
+      expect(describeUniqueConstraintTarget(refused)).toContain("chargeidenti");
+      const slices = (await app.query(`SELECT "sliceKey" FROM "MemberMoneyExportCoverage" WHERE "chargeIdentity" = $1 ORDER BY "sliceKey"`, [stayOf(id)])).rows;
+      expect(slices).toEqual([{ sliceKey: "" }, { sliceKey: "modification:mod-e" }, { sliceKey: closure }]);
     });
 
     it("refuses a slice on the primary invoice's own cover", async () => {

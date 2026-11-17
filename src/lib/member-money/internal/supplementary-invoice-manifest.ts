@@ -123,10 +123,13 @@ export async function recordSupplementaryInvoiceManifest(input: {
     }
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      // The coverage key (role, account, charge, slice) names `chargeIdentity`;
-      // the manifest's key does not. Each slice is keyed by the one event that
-      // moved it, so a second cover of a slice should be unreachable: say so.
-      if (describeUniqueConstraintTarget(error)?.includes("chargeidentity")) {
+      // The coverage key (role, account, charge, slice) is reported as its
+      // index, "MemberMoneyExportCoverage_documentRole_account_chargeIdenti_key"
+      // (PostgreSQL's 63-character cut), or as its fields; both carry
+      // "chargeidenti" and the manifest's own key carries neither. Each slice is
+      // keyed by the one event that moved it, so a second cover of a slice
+      // should be unreachable: say so.
+      if (describeUniqueConstraintTarget(error)?.includes("chargeidenti")) {
         logger.warn({ bookingId, providerInvoiceId }, "A slice this supplementary invoice bills is already covered by another manifest; this manifest was not recorded");
         return;
       }

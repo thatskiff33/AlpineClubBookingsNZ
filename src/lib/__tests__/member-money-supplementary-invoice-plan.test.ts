@@ -399,16 +399,17 @@ describe("recordSupplementaryInvoiceManifest (ALP-436)", () => {
   });
 
   it("warns when a slice is already covered by another manifest, and notes a manifest-key race at info", async () => {
-    const p2002 = (fields: string[]) => new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+    // adapter-pg names the index, as the realdb suite shows for the coverage key.
+    const p2002 = (index: string) => new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
       code: "P2002", clientVersion: "test",
-      meta: { driverAdapterError: { cause: { kind: "UniqueConstraintViolation", constraint: { fields } } } },
+      meta: { driverAdapterError: { cause: { kind: "UniqueConstraintViolation", constraint: { index } } } },
     });
-    mocks.writeExportManifest.mockRejectedValueOnce(p2002(['"documentRole"', '"account"', '"chargeIdentity"', '"sliceKey"']));
+    mocks.writeExportManifest.mockRejectedValueOnce(p2002("MemberMoneyExportCoverage_documentRole_account_chargeIdenti_key"));
     await record({});
     expect(mocks.logWarn).toHaveBeenCalledWith(expect.objectContaining({ bookingId: BOOKING }), expect.stringContaining("already covered by another manifest"));
     expect(mocks.logInfo).not.toHaveBeenCalled();
 
-    mocks.writeExportManifest.mockRejectedValueOnce(p2002(['"documentRole"', '"legacyKey"']));
+    mocks.writeExportManifest.mockRejectedValueOnce(p2002("MemberMoneyExportManifest_documentRole_legacyKey_key"));
     await record({});
     expect(mocks.logInfo).toHaveBeenCalledWith(expect.objectContaining({ bookingId: BOOKING }), expect.stringContaining("recorded the supplementary invoice's manifest first"));
     expect(mocks.logWarn).toHaveBeenCalledTimes(1);
