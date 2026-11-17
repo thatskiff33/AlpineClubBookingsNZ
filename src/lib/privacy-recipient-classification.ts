@@ -38,7 +38,7 @@ export const PRIVACY_RECIPIENTS = {
   },
   xero: {
     name: "Xero",
-    dataSent: "Member name, email address, phone number, street and postal addresses, date of birth and accounting records, including invoice, payment and subscription references.",
+    dataSent: "Member name, email address, phone number, street and postal addresses and date of birth; membership type, age group and status, including a cancellation, as Xero contact groups; and accounting records, including invoice, payment and subscription references. Invoices and credit notes can also name the people on a booking with their age group, member status and stay dates, and carry the membership type billed, an internal member identifier and any reason an administrator records for a credit.",
     enablement: "The Xero integration module, saved credentials and an OAuth connection enable sync; switching the module off or disconnecting stops new sync, without deleting Xero records.",
     processing: "See the club's Xero account terms and Xero's privacy notice; the application does not fix a processing country.",
     memberFacing: true,

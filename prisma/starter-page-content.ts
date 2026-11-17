@@ -96,7 +96,7 @@ const STARTER_PRIVACY_RECIPIENT_COPY: Record<MemberFacingRecipientId, StarterRec
   },
   xero: {
     title: "Xero",
-    text: "Accounting and invoicing. Your name, email address, phone number, street and postal addresses, date of birth and accounting records, including invoice, payment and subscription references, are kept in step with Xero.",
+    text: "Accounting and invoicing. Your name, email address, phone number, street and postal addresses and date of birth are kept in step with Xero, and so are your membership type, age group and membership status, including a cancellation, as the club&rsquo;s Xero contact groups. The invoices and credit notes the System raises in Xero can name the people on a booking with their age group, whether they are members and their stay dates, and can carry the membership type you are billed for, an internal member identifier, booking, payment and subscription references, and any reason an administrator records for a credit.",
     notice: "See <a href=\"https://www.xero.com/about/legal/privacy/\" target=\"_blank\" rel=\"noopener noreferrer\">Xero&rsquo;s Privacy Policy</a>.",
   },
   google: {
