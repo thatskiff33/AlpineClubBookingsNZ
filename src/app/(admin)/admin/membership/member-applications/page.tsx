@@ -28,6 +28,7 @@ import ApprovalMappingPanel, {
   type ReviewRequestPayload,
 } from "./_components/approval-mapping-panel";
 import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
+import { getAdminPage } from "@/lib/admin-hubs";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 type ApplicationStatus =
@@ -612,7 +613,7 @@ export default function MemberApplicationsPage() {
             Membership
           </p>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">
-            Member Applications
+            {getAdminPage("member-applications").label}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Pending committee review: <strong>{pendingCount}</strong>

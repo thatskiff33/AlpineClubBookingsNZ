@@ -82,7 +82,7 @@ number is above zero and only to an admin who can open the page it links to:
 | Bookings With Unpaid Additions | A settled booking, finished or upcoming, has an upward change still uncollected | [Bookings](bookings.md) (pre-filtered) |
 | Membership Applications | A membership application is waiting for approval | [Member Applications](member-applications.md) |
 | Family Group Requests | A family group request is waiting for review | [Family Groups](family-groups.md) |
-| Pending Review Queue | Refund appeals or manual credit approvals are waiting | [Refunds & Credits](refund-requests.md) |
+| Refunds & Credits: pending review | Refund appeals or manual credit approvals are waiting | [Refunds & Credits](refund-requests.md) |
 | Manual Refund Tasks | The club owes a member a refund by hand and the task is still open | [Payments](payments.md) |
 | Membership Lifecycle Review | A cancellation or archive request is waiting | [Cancellation Requests](membership-cancellations.md) |
 | Account Deletion Requests | A member's self-service deletion or an admin-initiated member deletion is waiting; the number is both together | [Deletion Requests](deletion-requests.md) |

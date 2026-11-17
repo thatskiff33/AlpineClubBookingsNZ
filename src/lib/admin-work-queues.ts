@@ -1,6 +1,6 @@
 /**
  * The officer work queues: the ONE list of everything an administrator must act
- * on (#4962, `INV-SSOT-010` in docs/invariants/single-source-of-truth.md).
+ * on (#4962, `INV-SSOT-011` in docs/invariants/single-source-of-truth.md).
  *
  * The Admin Dashboard's attention cards and the sidebar's "Needs Attention"
  * section both render from `ADMIN_WORK_QUEUES`, and the command palette's
@@ -260,7 +260,8 @@ export const ADMIN_WORK_QUEUES: readonly AdminWorkQueue[] = [
     counts: ["refundAppeals", "creditApprovals"],
     tone: "danger",
     card: {
-      title: "Pending Review Queue",
+      // The page's registry name (#4968), as #5107 titled this card.
+      title: `${adminLink("refund-requests").label}: pending review`,
       describe: (counts) =>
         `${joinNonZero([
           [counts.refundAppeals, "refund appeal"],

@@ -393,6 +393,29 @@ by `chargeFamilyAxisKey()` / `chargeAxisDisplayName()` in
 
 ## INV-SSOT-010
 
+An admin page's heading is its menu name: the registry label,
+`getAdminPage(id).label` from `src/lib/admin-hubs`, which the sidebar and the
+command palette already show. A page reads the label rather than restating it.
+Contextual help titles are typed by hand and are not covered. A retired page name stays findable as a `keywords` entry on
+the page's registry definition, never as a second heading. #4968.
+
+- **A census holds it.** `admin-page-headings.test.ts` parses each registry
+  page's file as TSX and reads every `<h1>` and the `title` of a component that
+  renders one, following a server wrapper into the components it renders. A
+  heading must be a string literal equal to the label or
+  `getAdminPage("<id>").label`. Any other expression fails until the page is
+  excluded.
+- **Its exclusions live with it.** The census lists the pages it skips, each
+  with its reason (a club-configured label, a mode-dependent editor title), and
+  the pages it compares without case, because #4968 left case out of scope. A
+  test fails if any listed id stops being a registry page.
+- **Setup does not link to itself.** No Setup hub card opens `/admin/setup`, and
+  each Setup sub-hub returns by `adminLink("setup")`.
+  `admin-setup-hubs.test.tsx` checks the card arrays in `setup/hub-cards.ts` and
+  the rendered page.
+
+## INV-SSOT-011
+
 An officer work queue is defined once, in `ADMIN_WORK_QUEUES`
 (`src/lib/admin-work-queues.ts`), and counted once, in `getAdminPendingCounts`
 (`src/lib/admin-pending-counts.ts`). The admin dashboard's attention cards and
