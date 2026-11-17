@@ -27,6 +27,10 @@ passes anything other than:
 - a comment inside the options argument reading `INV-LOCK-006 exception:` and a
   reason.
 
+It matches those names by name, so it also fails when any of them is declared a
+second time anywhere in `src/`: a module cannot pass its own options off under
+an alias's name.
+
 One function waits for the key but has no caller yet,
 `raiseEditFinancialReviewTask` (`src/lib/edit-financial-review.ts`). The census
 holds it on a reasoned allowlist that fails once a caller appears.
