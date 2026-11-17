@@ -75,14 +75,6 @@ const ALLOWED: Array<{ file: string; line?: RegExp; reason: string }> = [
     line: /^"Bash\(npx \*\)",$|`npm exec` can download and run an unreviewed package/,
     reason: "the agent-rule hook's list of the download runners it blocks (#4462)",
   },
-  {
-    file: "scripts/audit/audit-writer-census-manifest.ts",
-    // Only the measurement notes themselves, which all say what was run to get
-    // a figure ("Re-measured with", "Taken from", "MEASURED", "on this tree"…).
-    line: /audit:census|npx tsx scripts\/audit\/audit-writer-census\.ts|^\/\/ `?npm run$|RE-MEASURED with `npm run$/,
-    reason:
-      "a dated measurement log: each note records the command that produced a figure at the time",
-  },
 ];
 
 function trackedFilesInScope(): string[] {

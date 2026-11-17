@@ -385,7 +385,7 @@ describe("panel contents (#108)", () => {
         "Booking Policies",
         "Fees",
         "Payments",
-        "Roster",
+        "Chore Roster",
         "Calendar",
       ]),
     );

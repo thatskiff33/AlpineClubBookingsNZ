@@ -5,25 +5,19 @@ import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BadgeCheck,
-  Bell,
-  BookOpenCheck,
   CheckCircle2,
   CircleAlert,
   CircleDashed,
   ExternalLink,
-  Landmark,
-  ListChecks,
   Loader2,
   PlayCircle,
-  Plug,
   RefreshCw,
   RotateCcw,
   SkipForward,
-  UserX,
-  type LucideIcon,
 } from "lucide-react";
-import { adminAnchorHref, adminHref, adminTabHref, adminLink } from "@/lib/admin-hubs";
+import { getAdminPage } from "@/lib/admin-hubs";
+import type { AdminHubSection } from "@/components/admin-hub-page";
+import { setupHubCards } from "./hub-cards";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -55,67 +49,6 @@ import type {
   SetupResponse,
   SetupStatus,
 } from "./setup-types";
-
-interface SetupHubCard {
-  href: string;
-  title: string;
-  description: string;
-  icon: LucideIcon;
-}
-
-const setupHubCards: SetupHubCard[] = [
-  {
-    href: "/admin/setup/foundations",
-    title: "Initial Setup",
-    description:
-      "Start with the installation checklist, club identity, modules, lodge records, and system health.",
-    icon: ListChecks,
-  },
-  {
-    href: "/admin/setup/finance",
-    title: "Finance",
-    description:
-      "Open finance reporting, Xero setup, sync tools, and the collapsed report-mapping editor.",
-    icon: Landmark,
-  },
-  // S1 (#4796): the next three cards open the pages the setup drill-downs
-  // they replaced were merged into.
-  {
-    href: adminHref("bookings-setup"),
-    title: "Bookings Setup",
-    description:
-      "Review booking policy, seasons, age groups, promo codes, inventory, and booking copy.",
-    icon: BookOpenCheck,
-  },
-  {
-    href: adminAnchorHref("health", "integration-readiness"),
-    title: "Integration Readiness",
-    description:
-      "Check external-provider readiness, Xero connection, modules, and delivery health.",
-    icon: Plug,
-  },
-  {
-    href: adminLink("membership-setup").href,
-    title: adminLink("membership-setup").label,
-    description:
-      "Configure membership types, member fields, and subscription lockout policy.",
-    icon: BadgeCheck,
-  },
-  {
-    href: adminTabHref("membership-cancellations", "settings"),
-    title: "Membership Cancellations",
-    description:
-      "Review cancellation settings and the cancellation request queue.",
-    icon: UserX,
-  },
-  {
-    href: adminHref("notifications"),
-    title: "Email Messages / Notifications",
-    description:
-      "Manage delivery rules, recipients, email templates, and member-facing message text.",
-    icon: Bell,
-  },
-];
 
 const SETUP_COMPLETE_MESSAGE = "Setup has been marked complete.";
 const SETUP_COMPLETE_BANNER_CLASS =
@@ -157,7 +90,7 @@ function canFollowCheckHref(permissionMatrix: AdminPermissionMatrix, href: strin
 }
 
 function getVisibleSetupHubCards(
-  cards: SetupHubCard[],
+  cards: AdminHubSection[],
   features: FeatureFlags,
   permissionMatrix: AdminPermissionMatrix,
 ) {
@@ -390,7 +323,9 @@ export function SetupPageClient({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Setup Wizard</h1>
+          <h1 className="text-3xl font-bold text-foreground">
+            {getAdminPage("setup").label}
+          </h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Finish first-install readiness for club configuration, booking rules,
             provider connections, and finance mappings.

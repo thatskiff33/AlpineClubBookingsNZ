@@ -487,7 +487,7 @@ describe("mandatory audit category (#2581)", () => {
   });
 
   it("keeps logAudit fire-and-forget: it neither throws nor writes, and it logs", async () => {
-    // The fourth boundary. `logAudit` is used by 241 sites that must not be able
+    // The fourth boundary. `logAudit` is used by many sites that must not be able
     // to break the business operation they are recording, so the assertion has
     // to surface as a log line rather than as a throw.
     expect(() =>
