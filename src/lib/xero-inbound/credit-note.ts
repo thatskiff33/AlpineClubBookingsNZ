@@ -374,7 +374,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     // here. Recount only - no link, pointer or allocation is written for them.
     const voidedMirrorPaymentIds = isIncludedRefundCreditNoteStatus(creditNote.status)
       ? []
-      : await findPaymentIdsWithCancelledRefundNoteMirror(creditNote.creditNoteID);
+      : await findPaymentIdsWithCancelledRefundNoteMirror(creditNote.creditNoteID!);
     const matchedPaymentIds = new Set(paymentCandidates.map((payment) => payment.id));
     // Audit-only entries naming the payments only this lookup found, so their
     // recount is attributed; never handed to a link write.
@@ -392,7 +392,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     const directPaymentIds = [...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id).concat(voidedMirrorPaymentIds);
     held.recountedPaymentIds = new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()]);
     const refundedPaymentRepair = await repairRefundedPaymentBusinessState({
-      creditNoteId: creditNote.creditNoteID,
+      creditNoteId: creditNote.creditNoteID!,
       creditNote: {
         status: creditNote.status ?? undefined,
         total: creditNote.total ?? undefined,
