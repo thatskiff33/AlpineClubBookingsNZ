@@ -114,6 +114,11 @@ const ADDITIVE_ARTIFACTS: readonly AdditiveArtifact[] = [
     remedy: "union-merge",
     why: "One row per migration, hand-appended by every schema lane, parsed row-by-row and order-independently. Measured at 86-90% pure-append across 37-40 merges (#3111), and blue-green-ledger-lint.test.ts already fails loudly on a duplicate row, so union cannot corrupt it silently.",
   },
+  {
+    path: "scripts/audit/audit-write-sites.ts",
+    remedy: "union-merge",
+    why: "One generated line per audit write site, sorted by id (#5211). A repeated id fails the census by name (it reads the file's text) and is a TS1117 compile error, and a resurrected deleted line fails the census by name, so union cannot corrupt it silently; regenerate on the merged tree.",
+  },
 ];
 
 /**
