@@ -214,7 +214,9 @@ The migration runs once. Two things can write the old text back afterwards:
 - importing a configuration bundle exported before this release. The import
   now skips a privacy body that exactly matches any of the four replaced
   starter texts and warns in the preview (#2511), but a starter body older than
-  those still imports.
+  those still imports. The import keeps the new text but can set the "Last
+  updated" date back, because the bundle's header is still written; re-check the
+  header.
 
 Re-export your configuration bundle after upgrading, and re-check `/privacy`
 after any bundle import.
