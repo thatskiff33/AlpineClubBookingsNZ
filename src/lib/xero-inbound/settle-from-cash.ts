@@ -89,6 +89,21 @@ export function receiptCountsInvoiceCorrections(
 }
 
 /**
+ * #4069 (`INV-PAY-157`): a captured bank-transfer PRIMARY receipt holding the
+ * figure its payment was born with (`STORED_FIGURE_RECEIPT_REASONS`), not cash
+ * read from Xero. The cash-cover reader (`booking-cash-evidence.ts`) cannot
+ * prove what such a receipt took, so it reads it as unknown.
+ */
+export function isStoredFigureBankReceipt(row: {
+  kind: PaymentTransactionKind;
+  source: PaymentSource;
+  status: PaymentStatus;
+  reason: string | null;
+}): boolean {
+  return isInternetBankingPrimary(row) && isCapturedTransactionStatus(row.status) && STORED_FIGURE_RECEIPT_REASONS.has(row.reason);
+}
+
+/**
  * Why a settle kept the stored figure instead of the invoice's cash: the
  * reasons its alert words (`IbSettlementKeptReason`, with that wording), and a
  * second instrument (#3638), whose own alert speaks for it.
