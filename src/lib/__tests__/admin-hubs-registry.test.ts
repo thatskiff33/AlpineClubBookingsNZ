@@ -2420,16 +2420,10 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/alpine-server/setup/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/chores/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/config-transfer/page.tsx": "#4968: its heading is the registry label",
-    "src/app/(admin)/admin/display/builder/page.tsx": "#4968: its heading is the registry label",
-    "src/app/(admin)/admin/display/layouts/page.tsx": "#4968: its heading is the registry label",
-    "src/app/(admin)/admin/display/reference/page.tsx": "#4968: its heading is the registry label",
-    "src/app/(admin)/admin/display/setup/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/roster/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/system/backups/setup/page.tsx": "#4968: its heading is the registry label",
     "src/app/(admin)/admin/video-meetings/setup/page.tsx": "#4968: its heading is the registry label",
-    "src/app/(admin)/admin/display/setup/display-setup-wizard.tsx":
-      "#4968: the wizard card is titled with the page's registry label, as its page heading is",
     "src/app/(admin)/admin/system/backups/setup/backup-setup-wizard.tsx":
       "#4968: the wizard card is titled with the page's registry label, as its page heading is",
     "src/components/admin/booking-policies/booking-periods-section.tsx":
@@ -2460,18 +2454,22 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/lodge-ops/display/page.tsx":
       "C11 part 1 (#4808): the hub's cards are adminHref, titled with their pages' registry labels",
     "src/app/(admin)/admin/lodge-ops/display/builder/page.tsx":
-      "C11 part 1 (#4808): its back link is adminLink, the Advanced mode links adminHref",
+      "#4968: its heading is the registry label; C11 part 1 (#4808): its back link is adminLink, the Advanced mode links adminHref",
     "src/app/(admin)/admin/lodge-ops/display/devices/page.tsx": "C11 part 1 (#4808): its back link is adminLink",
     "src/app/(admin)/admin/lodge-ops/display/layouts/page.tsx":
-      "C11 part 1 (#4808): its back link is adminLink, the builder's hard link adminHref",
+      "#4968: its heading is the registry label; C11 part 1 (#4808): its back link is adminLink, the builder's hard link adminHref",
     "src/app/(admin)/admin/lodge-ops/display/preview/page.tsx": "C11 part 1 (#4808): its back link is adminLink",
-    "src/app/(admin)/admin/lodge-ops/display/reference/page.tsx": "C11 part 1 (#4808): its back link is adminLink",
+    "src/app/(admin)/admin/lodge-ops/display/reference/page.tsx":
+      "#4968: its heading is the registry label; C11 part 1 (#4808): its back link is adminLink",
     "src/app/(admin)/admin/lodge-ops/display/settings/page.tsx": "C11 part 1 (#4808): it redirects to Display Devices' adminHref",
     "src/app/(admin)/admin/lodge-ops/display/setup/display-wizard-state.ts":
       "C11 part 1 (#4808): DISPLAY_WIZARD_HREF is Display Setup's adminHref",
     "src/app/(admin)/admin/lodge-ops/display/setup/display-wizard-steps.tsx":
       "C11 part 1 (#4808): the builder, preview, Devices and lodge display links are adminHref",
-    "src/app/(admin)/admin/lodge-ops/display/setup/page.tsx": "C11 part 1 (#4808): its back link is adminLink",
+    "src/app/(admin)/admin/lodge-ops/display/setup/page.tsx":
+      "#4968: its heading is the registry label; C11 part 1 (#4808): its back link is adminLink",
+    "src/app/(admin)/admin/lodge-ops/display/setup/display-setup-wizard.tsx":
+      "#4968: the wizard card is titled with the page's registry label, as its page heading is",
     "src/app/(admin)/admin/lodge-ops/display/templates/page.tsx":
       "C11 part 1 (#4808): its back link is adminLink, the preview and builder window.open targets adminHref",
     "src/app/(admin)/admin/lodge-ops/lodges/page.tsx": "C11 part 1 (#4808): a new lodge opens its setup at adminHref",
