@@ -118,7 +118,7 @@ export const PRIVACY_RECIPIENTS = {
   },
   servernz: {
     name: "Alpine Central Server",
-    dataSent: "The club's owned lodge listings, booking officer contact details and callback address; no member directory is uploaded. Listings can be shared with other connected clubs.",
+    dataSent: "The club's owned lodge listings, booking officer contact details and callback address; no member directory is uploaded. Listings can be shared with other connected clubs. When a member ticks Share with all clubs on a message-board post, that post, its images, the member's name and an internal member identifier are also sent, and other connected clubs show the post.",
     enablement: "The serverNZ module, configured server, API key and sync opt-in enable sharing; it is off unless configured. Disable the module or sync opt-in to stop new sync; the central operator controls copies already shared.",
     processing: "The club chooses its central server address; ask that operator where it processes and shares listings and for its privacy notice.",
     memberFacing: true,
