@@ -91,10 +91,15 @@ does not record a refund (#4315).
    run may already have created a document. **Reset stale running** does the
    same for every stuck operation at once.
    A stuck inbound `WEBHOOK_RECONCILE` operation needs none of this: **Replay** its
-   event and that attempt takes the operation over. A crashed event stays
-   Processing and is not retried by itself, so it waits for a Replay. The
-   automatic retry takes the operation over only for an event that has already
-   ended Failed. Mark failed still works on it.
+   event and that attempt takes the operation over. An event whose worker
+   crashed is no longer left waiting: once it has been **Processing** for 15
+   minutes the automatic worker resets it and processes it again, taking the
+   operation over too. **Replay** does the same at once for an event already
+   past those 15 minutes, and is refused while it is still being processed.
+   An event that has stopped the server three times running is not retried by
+   itself again: it stays **Processing**, an error is logged on each run, and
+   only **Replay** retries it. Mark failed still works on the operation, and
+   lets the automatic retry start counting again.
    Mark one **resolved** only after you have fixed it in Xero yourself: it is
    then treated as done and is never retried or recreated automatically,
    though the repair tool still lists it for information. You cannot resolve
@@ -274,6 +279,9 @@ one button that reaches Xero at all only asks it a question.
 
 1. Open **Xero Setup** (`/admin/xero/setup`, back-linked from **Integrations**) to
    configure account and item **mappings** and run one-time import/link tools.
+   The **Xero Mappings** shortcuts in Finance Setup and the setup checklist open
+   its **Account mapping** step (`?step=mapping`); if an earlier step is still
+   unfinished, the wizard opens that step first.
 2. **Import Members from Xero** maps each contact group to an age tier and can send
    invite emails; **Repair Canonical Links** and **Scan for Duplicates & Family
    Groups** clean up the link ledger.
@@ -434,6 +442,14 @@ Attention** entry and a Stuck States item. The default is 24 hours. Use
 **Edit → Save/Cancel** to choose 1–720 hours. A connection that has never received
 a webhook gets the full threshold from its connection time. No quiet-period
 warning appears while disconnected or while the Xero module is disabled.
+
+**Refund notes voided before #4288 (#4336).** A club that ran a version before
+#4341 may hold refund credit notes that Xero voided but the app still counts.
+The owner finds them with the read-only report
+`pnpm run xero:revived-refund-note-report`, then uses **Sync from Xero now** on
+each listed booking. **Sync everything from Xero now** does not revisit them.
+What each line needs and what happens next:
+[MAINTENANCE.md](../MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
 
 Webhook receipt history and the quiet-period policy remain local to each
 installation during configuration transfer, like the Xero connection itself.

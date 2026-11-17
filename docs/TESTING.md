@@ -692,11 +692,14 @@ That is not a loss: before #2693 they were loaded with `allowJs: true,
 checkJs: false`, which produced no diagnostics either. Their names are pinned in
 `src/lib/__tests__/typecheck-project-coverage.test.ts`, so a new JavaScript
 test fails that contract until it is either written in TypeScript (the default)
-or named there deliberately. Four JavaScript modules that TypeScript tests
-import — `eslint.config.mjs`, `scripts/ci/server-only-boundary-selftest.mjs`,
-`scripts/sync-user-guide-wiki.mjs` and `load/lib/contention-invariant.js` —
-carry a sibling `.d.mts` / `.d.ts` declaring their exports; the same contract
-pins each pair.
+or named there deliberately. The JavaScript modules that TypeScript tests
+import — `eslint.config.mjs`, `scripts/ci/check-allow-builds.mjs`,
+`scripts/ci/server-only-boundary-selftest.mjs`,
+`scripts/sync-user-guide-wiki.mjs`, the k6 harness's pure helpers under
+`load/lib/` (`contention-invariant.js`, `stay-window.js`, `target-guard.js` and
+`volume-users.js`) and the Stripe stub `load/stripe-stub/server.mjs` — carry a
+sibling `.d.mts` / `.d.ts` declaring their exports; the same contract pins each
+pair.
 
 Put a supported new Vitest test under `src/` or `scripts/` and the existing
 patterns cover it; put one somewhere else and you must add the pattern.
@@ -1411,6 +1414,10 @@ the explanation appears elsewhere on the page. Nearly all use
 the current list); `policy-exception-requests-panel.tsx` and `roster-editor.tsx`
 call the same failure primitive directly through `useActionAttention`. Since #2934 every one of them focuses and scrolls through
 `src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
+A component that holds its own failure takes the message and the counter that
+re-fires an identical repeat from `useActionFailure`
+(`src/hooks/use-action-failure.ts`); test a repeat by failing twice with the
+same message and asserting the alert holds focus each time.
 
 Assert that contract with the shared helper, never by hand:
 
@@ -2011,14 +2018,18 @@ on. Expect a batch of realdb files to
 take as long as running them one after another. Inside one file the old rules
 still apply: a suite owns its own fixtures and queued work.
 
-CI runs every one of these files in the advisory `realdb-all` job (#4458), in
-one `vitest run` on one Postgres service, with `RUN_CONCURRENCY_RACE_TESTS=1`.
+CI runs every one of these files in the `realdb-all` job,
+`Real-PostgreSQL suites (all)` (#4458), in one `vitest run` on one Postgres
+service, with `RUN_CONCURRENCY_RACE_TESTS=1`. It blocks a merge through the
+required `verify` check, whose same-attempt poll fails unless this job succeeded
+(#4907); it is not a branch-protection context of its own.
 The file list is `scripts/ci/realdb-files.mjs`: every `*.realdb.test.*` file
 under `src/` minus `scripts/ci/realdb-quarantine.txt`, which names a suite that
 is red for a known reason, or cannot share the process, with its issue or PR.
 Add a realdb file and it joins the job with no edit. `realdb-ci-coverage-census.test.ts` fails when a file is
 neither run nor quarantined, when the job stops setting
-`RUN_CONCURRENCY_RACE_TESTS=1`, or when any other job names `realdb-all`. The
+`RUN_CONCURRENCY_RACE_TESTS=1`, when any job `needs:` it or it gains a
+job-level `if:` or `needs:`, or when anything but `verify`'s poll names it. The
 job points `DATA_MIGRATION_VERIFICATION_DATABASE_URL` at the same race service
 (those three suites create scratch databases of their own), and its last step,
 `scripts/ci/check-realdb-ran.mjs`, reads Vitest's JSON report and fails when a
@@ -2027,7 +2038,9 @@ gate is unset skips green otherwise. The seed suite
 (`booking-ledger-history-seed`) is quarantined because
 `scripts/booking-ledger-seed-gate.sh` runs it against a database of its own. The
 per-file steps in `migration-drift` and `data-migration-verification` stay: they
-are required checks and this job is not.
+report sooner, inside their own required checks. A flaky suite now blocks every
+pull request, so quarantine it with its issue rather than loosening the no-skip
+check.
 
 ## Mocking a money seam: never in a test that asserts its money
 

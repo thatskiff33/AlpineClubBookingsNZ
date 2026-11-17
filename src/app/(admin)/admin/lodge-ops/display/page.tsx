@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -24,7 +25,6 @@ import {
   DISPLAY_TERM_LAYOUT,
   DISPLAY_TERM_TEMPLATE,
 } from "@/lib/lodge-display/display-terminology";
-import { adminHref } from "@/lib/admin-hubs";
 
 // Lobby Display hub (fork issue #109): one sidebar entry opens this landing
 // page of cards instead of the old four-item sidebar group. Mirrors the
@@ -36,17 +36,22 @@ import { adminHref } from "@/lib/admin-hubs";
 // and defined none of them, and the hub is the first place an operator meets
 // all three. The definitions come from `display-terminology.ts` so the hub, the
 // Reference page and `docs/guides/display.md` cannot drift apart.
+//
+// Each card is titled with its destination's registry label, the name the
+// command palette shows for that page, and links with `adminHref` of its id.
+// The builder's `hardNavigate` guard in `display-builder-csp-static.test.ts`
+// reads `adminHref` of a relaxed page from source as an entry point.
 const sections: AdminHubSection[] = [
   {
     href: adminHref("display-devices"),
-    title: "Devices",
+    title: getAdminPage("display-devices").label,
     description:
       "Pair lobby screens per lodge, assign templates, and set each device's refresh interval.",
     icon: Tv,
   },
   {
     href: adminHref("display-builder"),
-    title: "Visual builder",
+    title: getAdminPage("display-builder").label,
     description: `${DISPLAY_TERM_BOARD.oneLiner} Compose one by picking a shape and dropping modules into zones — no HTML. Writes a valid Layout + Template for you.`,
     icon: LayoutTemplate,
     // The builder's Live preview needs the route-scoped `frame-src 'self'`
@@ -57,19 +62,19 @@ const sections: AdminHubSection[] = [
   },
   {
     href: adminHref("display-layouts"),
-    title: "Layouts (Advanced)",
+    title: getAdminPage("display-layouts").label,
     description: `${DISPLAY_TERM_LAYOUT.oneLiner} Advanced mode: author one by hand.`,
     icon: LayoutTemplate,
   },
   {
     href: adminHref("display-templates"),
-    title: "Templates",
+    title: getAdminPage("display-templates").label,
     description: `${DISPLAY_TERM_TEMPLATE.oneLiner} Author one here, or restore the built-in boards.`,
     icon: LayoutTemplate,
   },
   {
     href: adminHref("display-reference"),
-    title: "Reference",
+    title: getAdminPage("display-reference").label,
     description:
       "The read-only display vocabulary: embeddable modules, area conditions, and CSS tokens.",
     icon: BookOpen,

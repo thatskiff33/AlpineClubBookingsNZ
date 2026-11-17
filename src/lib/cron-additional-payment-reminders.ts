@@ -2,7 +2,6 @@ import type { Prisma } from "@prisma/client";
 
 import {
   ADDITIONAL_PAYMENT_FINAL_REMINDER_DAYS_BEFORE_CHECK_IN,
-  ADDITIONAL_PAYMENT_REMINDER_DAYS,
   ADDITIONAL_PAYMENT_RESEND_COOLDOWN_MINUTES,
   additionalPaymentEpisodeStartedAt,
   creditReleaseStampBoundary,
@@ -27,6 +26,7 @@ import {
 import type { GeneralCronJobName } from "@/lib/general-cron-runner";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
 import {
   buildAdditionalOwedPaymentWhere,
   buildAdditionalOwedWhere,
@@ -96,9 +96,13 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
   const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
 
   const chaseStartsAt = await resolveAdditionalPaymentChaseStartedAt();
+  // The club's wait before the first reminder (#4932), read once per run. A
+  // change moves only when a reminder is due; the episode stamps still allow
+  // one first reminder per obligation, so nothing is sent twice.
+  const { additionalPaymentReminderDays: reminderDays } = await getBookingTimingSettings();
 
   const result: AdditionalPaymentReminderResult = {
-    reminderDays: ADDITIONAL_PAYMENT_REMINDER_DAYS,
+    reminderDays,
     finalReminderDaysBeforeCheckIn:
       ADDITIONAL_PAYMENT_FINAL_REMINDER_DAYS_BEFORE_CHECK_IN,
     chaseStartsAt,
@@ -197,6 +201,7 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
       now,
       today,
       chaseStartsAt,
+      reminderDays,
     });
     if (!dueOnRead) {
       result.skippedBookingIds.push(found.id);
@@ -262,7 +267,7 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
         }
       }
 
-      const due = resolveChaseFor({ booking, now, today, chaseStartsAt });
+      const due = resolveChaseFor({ booking, now, today, chaseStartsAt, reminderDays });
       if (!due) break;
 
       const prepared = await prepareCreditReleaseReminder({
@@ -406,7 +411,7 @@ const CHASE_JOB_NAME: GeneralCronJobName = "additional-payment-reminders";
  *
  * Run rows are pruned after 90 days, which can only move the cutover FORWARD to
  * the oldest surviving run — still months behind any obligation this job chases
- * (they are chased three days after they are raised), so the pruning cannot
+ * (they are chased within days of being raised), so the pruning cannot
  * resurrect the backlog or silence a live obligation.
  *
  * A read failure returns null, and the caller then sends nothing this pass: not
@@ -495,6 +500,7 @@ function resolveChaseFor(params: {
   now: Date;
   today: Date;
   chaseStartsAt: Date;
+  reminderDays: number;
 }): DueAdditionalPaymentReminder | null {
   const payment = params.booking.payment;
   if (!payment) return null;
@@ -532,6 +538,7 @@ function resolveChaseFor(params: {
         reminderSentAt: payment.additionalReminderSentAt,
         finalReminderSentAt: payment.additionalFinalReminderSentAt,
         askReason: payment.transactions[0]?.reason ?? null,
+        reminderDays: params.reminderDays,
         chaseStartsAt: params.chaseStartsAt,
       });
   if (!kind) return null;

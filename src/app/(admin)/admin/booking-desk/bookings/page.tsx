@@ -4,7 +4,8 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { bookingOwner } from "@/lib/booking-owner";
 import { clubFormat } from "@/lib/club-format-server";
 import { BookingFilters } from "@/components/admin/booking-filters";
-import { BookingsPagination } from "@/components/admin/bookings-pagination";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { formatAdminListRange, setAdminListPageParam } from "@/lib/admin-list-page";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
@@ -45,6 +46,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { lodgeOrderBy } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { BOOKING_REQUESTS_STATUS_PARAM, buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import {
   BOOKING_MONEY_RECONCILIATION_COPY,
@@ -219,7 +221,7 @@ export default async function AdminBookingsPage({
   // scope and the published diagnostics filters all describe the same query, so
   // they must all describe the same day. `club` was resolved once above.
   const clubDay = adminBookingsClubDay(club);
-  const { bookings, total, page, totalPages, sortBy, sortDir } =
+  const { bookings, total, page, pageSize, totalPages, sortBy, sortDir } =
     await listAdminBookings(
       query,
       { bedAllocationEnabled: showBedAllocation },
@@ -343,9 +345,7 @@ export default async function AdminBookingsPage({
   const currentBookingsPath = buildPathWithSearch(adminHref("bookings"), currentSearchParams);
 
   function withPage(nextParams: URLSearchParams, targetPage: number) {
-    nextParams.delete("page");
-    if (targetPage > 1) nextParams.set("page", String(targetPage));
-    const queryString = nextParams.toString();
+    const queryString = setAdminListPageParam(nextParams, targetPage).toString();
     return queryString ? `${adminHref("bookings")}?${queryString}` : adminHref("bookings");
   }
 
@@ -628,10 +628,7 @@ export default async function AdminBookingsPage({
             aria-label="Bookings"
             className="min-w-[56rem]"
             toolbar={
-              <p>
-                Showing {bookings.length} of {total} bookings found
-                {totalPages > 1 ? ` (page ${page} of ${totalPages})` : ""}
-              </p>
+              <p>{total} bookings found</p>
             }
           >
             <TableHeader>
@@ -747,7 +744,7 @@ export default async function AdminBookingsPage({
                         </Link>
                         {booking.requiresAdminReview ? (
                           <Link
-                            href={`${adminHref("booking-requests")}?tab=approvals&bookingId=${booking.id}&status=ALL`}
+                            href={buildBookingRequestsHref("approvals", { bookingId: booking.id, [BOOKING_REQUESTS_STATUS_PARAM]: "ALL" })}
                             className="inline-flex rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             <MiniChip tone="warning" icon={Eye}>Review</MiniChip>
@@ -822,11 +819,12 @@ export default async function AdminBookingsPage({
               })}
             </TableBody>
           </AdminDataTable>
-          <BookingsPagination
+          <Pagination
             page={page}
             totalPages={totalPages}
-            total={total}
             hrefForPage={pageHref}
+            aria-label="Bookings pagination"
+            summary={formatAdminListRange({ page, pageSize, total })}
           />
         </div>
       )}

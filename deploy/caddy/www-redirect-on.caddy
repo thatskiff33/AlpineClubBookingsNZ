@@ -1,0 +1,10 @@
+# CADDY_WWW_REDIRECT=on (the default): `www.<DOMAIN>` redirects to <DOMAIN>,
+# keeping the full path and query, so a session established on one origin is
+# never orphaned on the other (the session cookie is host-only). Imported at
+# the top level of the Caddyfile. Needs a DNS record for `www.<DOMAIN>`, or
+# Caddy cannot obtain its certificate; set CADDY_WWW_REDIRECT=off to drop the
+# site when the club has no such record. The alternative is
+# `www-redirect-off.caddy`.
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}

@@ -66,7 +66,13 @@ export function isFragmentName(name) {
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/;
 export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-const UNRELEASED_HEADING = /^## Unreleased[ \t]*$/;
+/**
+ * The pending-changes heading. `CHANGELOG.md` and `docs/UPGRADING.md` both
+ * collect the next release's material under it; `upgrade-docs.mjs` takes the
+ * upgrade guide's from here (#4983, `INV-SSOT`).
+ */
+export const UNRELEASED_TITLE = "## Unreleased";
+const UNRELEASED_HEADING = new RegExp(`^${UNRELEASED_TITLE}[ \\t]*$`);
 const ANY_HEADING = /^## /;
 /** A top-level changelog entry bullet. Continuation paragraphs are indented. */
 const ENTRY_BULLET = /^- /;
@@ -113,10 +119,27 @@ export function releaseHeading(version, date) {
 }
 
 /**
+ * The date in `heading`, or `null` when it is not `releaseHeading(version, date)`
+ * with a well-formed date. `releaseSection` finds a section by version alone, so
+ * a hand-edited heading (`## 0.14.0 (2026-11-20)`) reaches callers that read the date.
+ */
+export function releaseHeadingDate(heading, version) {
+  const prefix = releaseHeading(version, "");
+  const text = heading.trimEnd();
+  const date = text.startsWith(prefix) ? text.slice(prefix.length) : null;
+  return date !== null && DATE_PATTERN.test(date) ? date : null;
+}
+
+/** `text` as lines, whatever its line endings. */
+export function toLines(text) {
+  return text.replace(/\r\n/g, "\n").split("\n");
+}
+
+/**
  * `{ start, end }` of the first `## ` section whose heading line passes
  * `isHeading`: `start` is the heading, `end` the next `## ` heading or EOF.
  */
-function locateSection(lines, isHeading) {
+export function locateSection(lines, isHeading) {
   const start = lines.findIndex(isHeading);
   if (start < 0) return null;
   const nextOffset = lines.slice(start + 1).findIndex((line) => ANY_HEADING.test(line));
@@ -132,7 +155,7 @@ const isVersionHeading = (version) => (line) => line.startsWith(`## ${version} `
  * `cut-release.mjs` publishes it as the GitHub release notes.
  */
 export function releaseSection(changelog, version) {
-  const lines = changelog.replace(/\r\n/g, "\n").split("\n");
+  const lines = toLines(changelog);
   const found = locateSection(lines, isVersionHeading(version));
   if (!found) return null;
   return {
@@ -147,7 +170,7 @@ export function releaseSection(changelog, version) {
  * release while direct entries still wait there.
  */
 export function classifyUnreleased(changelog) {
-  const lines = changelog.replace(/\r\n/g, "\n").split("\n");
+  const lines = toLines(changelog);
   const found = locateSection(lines, (line) => UNRELEASED_HEADING.test(line));
   return found ? classifyUnreleasedSection(lines.slice(found.start + 1, found.end)) : null;
 }

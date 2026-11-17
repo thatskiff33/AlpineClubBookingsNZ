@@ -20,7 +20,7 @@ const REQUIRED_WRITER_SHAPES = new Map<string, RegExp[]>([
     [/bookingGuestNight\.create\([\s\S]*?data:\s*\{[\s\S]*?priceSource:\s*"SOLD"/],
   ],
   [
-    "prisma/demo-seed.ts",
+    "prisma/demo-seed-writers.ts",
     [/bookingGuestNight\.create\([\s\S]*?data:\s*\{[\s\S]*?priceSource:\s*"SOLD"/],
   ],
   [
@@ -99,7 +99,7 @@ const REQUIRED_WRITER_SITE_COUNTS = new Map<
 >([
   ["src/lib/school-pending-adult-resolution.ts", { direct: 1, nested: 0 }],
   ["e2e/setup/seed-second-lodge.ts", { direct: 1, nested: 0 }],
-  ["prisma/demo-seed.ts", { direct: 1, nested: 0 }],
+  ["prisma/demo-seed-writers.ts", { direct: 1, nested: 0 }],
   ["src/app/api/bookings/[id]/guests/route.ts", { direct: 0, nested: 1 }],
   ["src/lib/booking-create-guests.ts", { direct: 0, nested: 1 }],
   ["src/lib/booking-date-modification-service.ts", { direct: 2, nested: 0 }],

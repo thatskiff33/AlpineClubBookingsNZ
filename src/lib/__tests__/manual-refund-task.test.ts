@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => ({
   // `member-credit.test.ts`'s; here it asks the route's real `giveBackCentsOf`
   // against the applied credit a case sets (none by default) and gives that back.
   giveBackAppliedCredit: vi.fn(),
+  lockMemberCreditLedger: vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined),
   appliedCredit: { cents: 0, payment: null as null | { id: string; creditAppliedCents: number } },
   // #3791: the booking as the give-back reads it, under the ledger lock.
   bookingFindUniqueOrThrow: vi.fn(),
@@ -104,6 +105,8 @@ const mocks = vi.hoisted(() => ({
   planKeptLateCaptureXeroRecord: vi.fn(),
   finishKeptLateCaptureXeroRecord: vi.fn(),
   settleKeptLateCaptureRecordOnApproval: vi.fn(),
+  // #5061 follow-up (`INV-PAY-154`): the dispute hold on the payment an account credit is allocated against.
+  paymentDisputedCaptureCents: vi.fn(),
 }));
 
 // #3599: the credit rows' ledger lines are posted by one sync, proved in its own
@@ -130,6 +133,10 @@ vi.mock("@/lib/booking-ledger-hand-back", () => ({
   postHandBackLedgerLine: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: (...a: unknown[]) => mocks.paymentDisputedCaptureCents(...(a as [])),
+}));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/email", () => ({ sendAdminXeroSyncErrorAlert: (...a: unknown[]) => mocks.sendAdminXeroSyncErrorAlert(...(a as [])) }));
 vi.mock("@/lib/prisma", () => ({
@@ -234,7 +241,7 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: (...a: unknown[]) => mocks.recordBookingEvent(...a),
 }));
-vi.mock("@/lib/payment-reconciliation", () => ({
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     status: number;
     constructor(message: string, status = 400) {
@@ -280,6 +287,8 @@ vi.mock("@/lib/member-credit", () => {
     createBookingModificationCredit: (...a: unknown[]) =>
       mocks.createBookingModificationCredit(...a),
     giveBackAppliedCredit: (...a: unknown[]) => mocks.giveBackAppliedCredit(...a),
+    // #5171 review: the owner's member key the card arm takes before the Payment row.
+    lockMemberCreditLedger: (...a: unknown[]) => mocks.lockMemberCreditLedger(...a),
     // #3835: the applied rows a cancelled booking's netting reads - none here.
     deriveBookingAppliedCreditCents: async () => mocks.appliedCredit.cents,
     SchoolHasNoCreditAccountError,
@@ -291,10 +300,12 @@ vi.mock("@/lib/member-credit", () => {
 });
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { chooseEditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
+import { SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE } from "@/lib/manual-refund-task-settlement-refusal";
 import { closeKeptCaptureReturn, postRefundObligation } from "@/lib/member-money/doors";
 import { EDIT_REFUND_HAND_BACK_DISMISS_AFTER_CANCEL_MESSAGE } from "@/lib/manual-refund-task-settlement-rules";
 import { editRefundHandBackDismissAfterCancelMessage } from "@/lib/manual-refund-task-copy";
-import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
+import { GROUP_MIRROR_HAND_BACK_EXCEEDS_CASH_MESSAGE, REVIEW_CREDIT_DISPUTED_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
 import { GROUP_ORGANISER_HAND_BACK_DISMISS_MESSAGE } from "@/lib/group-organiser-hand-back-rules";
 import { completionMessage } from "@/lib/manual-refund-task-copy";
 import { loadCancellationPolicy } from "@/lib/cancellation";
@@ -312,6 +323,7 @@ import { requireCalendarDate } from "@/lib/club-time";
 import { bookingCancelCardRefundRecoveryWhere, buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
 import { deletedBookingModificationRefundReason } from "@/lib/deleted-booking-modification-payment";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import { requireClubTimeZone } from "@/lib/club-time/zone";
 import { REVIEW_CANCELLATION_ORGANISER_PAID_BY_BANK_MESSAGE, REVIEW_REFUND_EXCEEDS_UNPROMISED_CASH_MESSAGE } from "@/lib/edit-financial-review-refund-refusals";
 
 const tx = {
@@ -536,6 +548,7 @@ function offerUnpricedNight() {
 beforeEach(() => {
     vi.clearAllMocks();
     mocks.readSupersededCaptureHeldBack.mockResolvedValue({ byTransaction: new Map(), totalCents: 0 });
+    mocks.paymentDisputedCaptureCents.mockResolvedValue({ cents: 0, disputes: [] });
     mocks.appliedCredit.cents = 0;
   mocks.appliedCredit.payment = null;
   mocks.giveBackAppliedCredit.mockImplementation(
@@ -2277,6 +2290,33 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       tx,
       "payment-9"
     );
+  });
+
+  it("MUTATION: refuses account credit against a disputed card payment (#5061 follow-up, INV-PAY-154)", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        paymentId: null,
+        booking: {
+          memberId: "member-1",
+          status: "CANCELLED",
+          payment: { id: "payment-9", status: "SUCCEEDED", amountCents: 20000, refundedAmountCents: 0 },
+        },
+      })
+    );
+    mocks.paymentDisputedCaptureCents.mockResolvedValue({ cents: 20000, disputes: [] });
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Credited to the member account.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 4500,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }, CLUB_FORMAT_TEST)
+    ).rejects.toMatchObject({ status: 409, message: REVIEW_CREDIT_DISPUTED_MESSAGE });
+    expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
   });
 
   it("MUTATION: refuses a credit whose modification already carries one, before it claims the task (owner decision D-3032-1)", async () => {
@@ -4291,6 +4331,90 @@ describe("#3194 - a review raised before the member paid still refunds to their 
       mocks.planStripeRefundAllocation.mock.invocationCallOrder[0]
     ).toBeLessThan(mocks.manualRefundTaskUpdateMany.mock.invocationCallOrder[0]);
     expect(result.stripeRefundId).toBe("re_test");
+  });
+
+  it("MUTATION #4879: plans the card refund around a live superseded capture, read under the payment row", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ paymentId: null, payment: null, booking: paidBooking() })
+    );
+    const heldBack = new Map([["txn-superseded", 6_500]]);
+    mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: heldBack, totalCents: 6_500 });
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the August card receipt.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 7300,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    expect(mocks.lockPaymentForRefundedTotal).toHaveBeenCalledWith(tx, "payment-9");
+    expect(mocks.readSupersededCaptureHeldBack).toHaveBeenCalledWith(tx, "payment-9");
+    expect(mocks.planStripeRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "payment-9", heldBackByTransaction: heldBack })
+    );
+    const lockOrder = mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder;
+    const readOrder = mocks.readSupersededCaptureHeldBack.mock.invocationCallOrder[0]!;
+    expect(lockOrder.some((order) => order < readOrder)).toBe(true);
+    expect(readOrder).toBeLessThan(mocks.planStripeRefundAllocation.mock.invocationCallOrder[0]!);
+  });
+
+  it("MUTATION #5171 review: takes the owner's member-credit key before the card arm's Payment row", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ paymentId: null, payment: null, booking: paidBooking() })
+    );
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the August card receipt.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 7300,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST);
+
+    // INV-LOCK-002: member credit before the Payment row, as the give-back and re-price after the claim need.
+    expect(mocks.lockMemberCreditLedger).toHaveBeenCalledWith("member-1", tx);
+    expect(mocks.lockMemberCreditLedger.mock.invocationCallOrder[0]).toBeLessThan(mocks.lockPaymentForRefundedTotal.mock.invocationCallOrder[0]!);
+  });
+
+  it("MUTATION #5171 review: the read-only preview plans the card arm without the member key or the Payment row", async () => {
+    const route = await chooseEditReviewSettlementRoute({
+      task: editReviewTask({ paymentId: null, payment: null, booking: paidBooking() }) as unknown as Parameters<typeof chooseEditReviewSettlementRoute>[0]["task"],
+      amountCents: 7300,
+      hasIssuedXeroInvoice: false,
+      direction: "REFUND_TO_MEMBER",
+      club: { zone: requireClubTimeZone("Pacific/Auckland"), format: CLUB_FORMAT_TEST },
+      store: tx as unknown as Parameters<typeof chooseEditReviewSettlementRoute>[0]["store"],
+      readOnlyPreview: true,
+    });
+
+    expect(route?.kind).toBe("stripe-refund");
+    expect(mocks.readSupersededCaptureHeldBack).toHaveBeenCalledWith(tx, "payment-9");
+    expect(mocks.lockMemberCreditLedger).not.toHaveBeenCalled();
+    expect(mocks.lockPaymentForRefundedTotal).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION #5171 review: names the superseded capture when only its hold-back refuses the card refund", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ paymentId: null, payment: null, booking: paidBooking() })
+    );
+    mocks.readSupersededCaptureHeldBack.mockResolvedValueOnce({ byTransaction: new Map([["txn-superseded", 6_500]]), totalCents: 6_500 });
+    mocks.planStripeRefundAllocation.mockResolvedValueOnce({ slices: [], totalRefundableCents: 5_000 });
+
+    await expect(resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the August card receipt.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 7300,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    }, CLUB_FORMAT_TEST)).rejects.toMatchObject({ message: SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE, status: 409 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
 
   it("persists the refund debt against that same payment, inside the transaction", async () => {

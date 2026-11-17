@@ -62,6 +62,7 @@ const mockValidateMinimumStay = vi.fn();
 
 // Shared tx mock used by booking route
 const mockTx = {
+  $queryRaw: vi.fn().mockResolvedValue([{ held: true }]),
   $executeRaw: mockExecuteRaw,
   // #2364: the hosting review is reconciled inside the booking write, so
   // every prisma/tx double a booking path runs against needs this client.
@@ -222,8 +223,10 @@ vi.mock("@/lib/email", () => ({
   sendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+}));
+vi.mock("@/lib/xero-booking-invoices", () => ({
   createXeroInvoiceForBooking: vi.fn().mockResolvedValue("inv-1"),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({

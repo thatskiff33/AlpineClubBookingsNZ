@@ -712,31 +712,37 @@ export const AUDIT_CENSUS_TOTALS = {
   // charge-backed recovery is held because Stripe shows a refund made outside the app since the
   // debt arose (INV-PAY-145), an awaited `createAuditLog` under `payment`. RE-MEASURED with
   // `pnpm run audit:census`.
-  // 523 -> 526 (#4432): `XERO_SYNC_NOW` twice (the officer's sync-now outcome and its failure)
+  // 523 -> 526 (subscription-category-decoupling rework, merged onto main
+  // 69ade2d95, 29 Oct 2026): the three Subscription Categories admin-CRUD
+  // writers (create/update/delete), all `admin` category via `auditLog.create`.
+  // 526 -> 528 (#4432): `XERO_SYNC_NOW` twice (the officer's sync-now outcome and its failure)
   // and `XERO_WEBHOOK_THRESHOLD_UPDATED`, each an awaited `createAuditLog` with a literal `xero`
-  // category at the call site. RE-MEASURED with `pnpm run audit:census`.
-  // 526 -> 528 (#4457): `privacy.retention.settings_updated` (`admin`) and
+  // category at the call site.
+  // 528 -> 530 (#4457): `privacy.retention.settings_updated` (`admin`) and
   // `privacy.retention.member_anonymised` (`privacy`, so only membership:view readers see
   // which member was anonymised), each an awaited `createAuditLog` with a literal category.
-  // RE-MEASURED with `pnpm run audit:census` after merging #4555.
-  // 528 -> 529 (#4533): `booking-change-request.create` for the promo correction request an
+  // 530 -> 531 (#4533): `booking-change-request.create` for the promo correction request an
   // officer raises from Edit Booking on a finished stay, a `logAudit` with a literal `booking`
-  // category, like the member's own request. RE-MEASURED with `pnpm run audit:census`.
-  // 529 -> 530 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
+  // category, like the member's own request.
+  // 531 -> 532 (#4426): `xero.refund_credit_note.late_note_not_recorded`, the one row a refund
   // credit-note create writes when Xero answers after its job was resolved by hand recording a
-  // note, an awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
-  // 530 -> 531 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, the one row an
+  // note, an awaited `createAuditLog` with a literal `xero` category.
+  // 532 -> 533 (main-sync, 2 Nov 2026): RE-MEASURED with `pnpm run audit:census` on the
+  // merged tree.
+  // 533 -> 534 (#4655): `xero.organiser_adjustment_note.late_note_not_recorded`, the one row an
   // organiser adjustment's credit-note create writes when Xero answers after its job was reset
   // and the row may not take the note, an awaited `createAuditLog` with a literal `xero` category.
-  // RE-MEASURED with `pnpm run audit:census`.
-  // 531 -> 532 (#4680): `xero.organiser_adjustment_note.run_stood_down`, the one row an organiser
+  // RE-MEASURED with `pnpm run audit:census` on the merged tree (second main-sync, 2 Nov 2026).
+  // 534 -> 537 (third main-sync, 7 Nov 2026): main's own #4680, #4686 and
+  // triyder/AlpineClubBookingsNZ#97 landed independently of this branch and are
+  // disjoint from its subscription-category writers already counted above.
+  // #4680 is `xero.organiser_adjustment_note.run_stood_down`, the one row an organiser
   // adjustment run writes when it finds, before a money-moving Xero call after recording its note,
   // that a stale reset took its claim, an awaited `createAuditLog` with a literal `xero` category.
-  // RE-MEASURED with `pnpm run audit:census`.
-  // 532 -> 533 (#4686): `xero.operation.late_partial_not_recorded`, the one row a Xero operation's
+  // #4686 is `xero.operation.late_partial_not_recorded`, the one row a Xero operation's
   // part-success writes when its attempt lost its claim and its Xero object was not recorded, an
-  // awaited `createAuditLog` with a literal `xero` category. RE-MEASURED with `pnpm run audit:census`.
-  // 533 -> 534 (triyder/AlpineClubBookingsNZ#97): `LODGE_CENTRAL_LINK_UPDATED` from the new
+  // awaited `createAuditLog` with a literal `xero` category.
+  // triyder/AlpineClubBookingsNZ#97 is `LODGE_CENTRAL_LINK_UPDATED` from the new
   // `/api/admin/alpine-server/lodge-links` PUT, the setup page's link dialog. The
   // Central lodge card's own site is unchanged; both pass their audit writer to the
   // shared `saveCentralLodgeLinks`. Categorised `admin` at the site, like the card's.
@@ -765,7 +771,22 @@ export const AUDIT_CENSUS_TOTALS = {
   // 542 -> 543 (#4618): `LOGIN_SECURITY_OFFICER_TWO_FACTOR_UPDATED`, the officer
   // two-factor policy save, `tx.auditLog.create` in the route's transaction like the
   // password-policy writer beside it, `security`. RE-MEASURED with `pnpm run audit:census`.
-  writeSites: 543,
+  // 543 -> 545 (#4915): `member.data_exported`, the member's own download, and
+  // `member.subject_access_exported`, a Full Admin's report on one person; both
+  // `createAuditLog`, both `privacy`. RE-MEASURED with `pnpm run audit:census`.
+  // 545 -> 548 (#4496, subscription-category-decoupling): the three Subscription
+  // Categories admin-CRUD writers (create, update, archive), `tx.auditLog.create`, all
+  // `admin`. RE-MEASURED with `pnpm run audit:census` on the merged tree.
+  // 548 -> 549 (ALP-588): a booking's fresh email copy - `booking.email.freshCopySent`
+  // after an actual send (`booking-fresh-email-copy.ts`), `createAuditLog`,
+  // `communication`. The archive of each exhausted failure it supersedes goes through
+  // the Archive button's own writer, which moved into one helper
+  // (`writeEmailFailureReviewAudit`), so it adds no site. RE-MEASURED with
+  // `pnpm run audit:census`.
+  // 549 -> 550 (#4963): `email.failure.requeued`, an officer's Try again on an exhausted
+  // email failure, awaited on the requeue's own transaction (`email-failure-review.ts`),
+  // `communication`. RE-MEASURED with `pnpm run audit:census` on the merged tree.
+  writeSites: 550,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -992,7 +1013,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // 172 -> 174 (#4516): the refused reservation and the OPERATOR release, above.
     // 174 -> 176 (#4368): the two dead card refund settlements.
     // 176 -> 177 (#4916): the after-stay dietary clear's count row. 177 -> 179 (#4851): the group organiser's close and re-arm.
-    createAuditLog: { total: 179, uncategorised: 0 },
+    // 179 -> 181 (#4915): the two subject access writers.
+    // 181 -> 182 (ALP-588): the booking fresh-copy send; its superseded-failure archive reuses the Archive button's writer.
+    // 182 -> 183 (#4963): Try again on an exhausted email failure.
+    createAuditLog: { total: 183, uncategorised: 0 },
     // 8 -> 9 (#2581 child 2 review): `recordAgeUpParentEmailHandoffAudit`
     // moved off its hand-built `prisma.auditLog.create`, the last one in `src/`.
     // Same row, same dedupe keys (`action` + `subjectMemberId` + `outcome`) —
@@ -1034,7 +1058,9 @@ export const AUDIT_CENSUS_TOTALS = {
     // club-identity writer.
     // 77 -> 78 (#4618): the officer two-factor policy save, in its route's
     // transaction, the same form as the password-policy writer.
-    "auditLog.create": { total: 78, uncategorised: 0 },
+    // 78 -> 81 (#4496, subscription-category-decoupling): the three new
+    // Subscription Categories admin-CRUD writers, above.
+    "auditLog.create": { total: 81, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -1371,7 +1397,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // booking officer's contact - and no member.
     // 110/107 -> 108 (hand sync of `main` f1ecdb5ff into epic #3789): #3819's
     // one and #52's two removals are disjoint. RE-MEASURED on the composed tree.
-    admin: 113, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
+    admin: 116, // 108/109 -> 110 (central-server lane, 20 Oct 2026): #62 and #58 are disjoint from upstream's. RE-MEASURED.
     // 110 -> 111 (#4457): `privacy.retention.settings_updated`. A deliberate +1 to the
     // support:view-only population: it records only retention settings, never a member.
     // 111 -> 112 (triyder/AlpineClubBookingsNZ#97): the setup page's link dialog row,
@@ -1379,6 +1405,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // 112 -> 113 (#4918): `PRIVACY_HOSTING_SETTINGS_UPDATED`. A deliberate +1 to the
     // support:view-only population: it records only the club's two public hosting
     // disclosure values (before and after), never a member's data. RE-MEASURED.
+    // 113 -> 116 (#4496, subscription-category-decoupling): the three new
+    // Subscription Categories admin-CRUD writers, all `admin` — officer-only
+    // config, no member data, readable with support:view like every sibling
+    // writer in this category. RE-MEASURED with `pnpm run audit:census` on the merged tree.
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -1519,7 +1549,13 @@ export const AUDIT_CENSUS_TOTALS = {
     // 20 -> 21 (epic #2992 federation): club_post_image.upload. Still a
     // membership+support read; it records only who uploaded and how many
     // bytes, never what the picture was of.
-    communication: 21,
+    // 21 -> 22 (ALP-588): booking.email.freshCopySent. The superseded
+    // exhausted-failure archive reuses the existing email.failure.reviewed
+    // writer, so adds no site. Still a membership+support read; neither
+    // records a message body, token or link.
+    // 22 -> 23 (#4963): email.failure.requeued, beside the archive row
+    // (email.failure.reviewed) it pairs with; the same membership+support read.
+    communication: 23,
     // 14 -> 15 (#2627): `member.deletion_approval_claim_released`. Still a
     // membership+support read, like every other deletion-decision row beside it,
     // so this widens nobody's access.
@@ -1538,7 +1574,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 21 -> 22 (#4457): `privacy.retention.member_anonymised`, readable only with membership:view.
     // 22 -> 23 (#4916): `privacy.retention.booking_dietary_cleared`, a count with no value or guest id,
     // filed with the other retention rows so it needs membership:view too.
-    privacy: 23,
+    // 23 -> 25 (#4915): the member's download and the Full Admin subject access report.
+    privacy: 25,
     // UNCHANGED by #2581 child 2. `system` is for genuine platform events with
     // no narrower business domain, and none of the 82 was one.
     system: 4,
@@ -2780,7 +2817,7 @@ export const MEMBER_RECORD_ADMIN_SURFACES_2755: readonly string[] = [
  *    less about their own cancellation than they knew when they asked for it.
  *  - The **remaining member-admin surface writers** are each about a specific
  *    narrower domain that already answers to its own gate: a dependant link is
- *    `family`, an export is `privacy`, and a credential email is `security` by
+ *    `family`, an export or a subject access report is `privacy`, and a credential email is `security` by
  *    #2581 decision 3 (the domain is the CREDENTIAL, not the mailing).
  *
  * None of that is settled beyond challenge — it is recorded so a challenge has to
@@ -2795,6 +2832,9 @@ export const OFFICER_DRIVEN_MEMBER_VISIBLE_WRITERS_2755: Readonly<
   "src/app/api/admin/members/[id]/dependents/link/route.ts::POST.linkedMember#0":
     "family",
   "src/app/api/admin/members/export/route.ts::GET#0": "privacy",
+  // A copy of the subject's own record released by a Full Admin (#4915): the
+  // subject sees that it left, which is the check on a mistaken identity check.
+  "src/app/api/admin/members/subject-access/route.ts::GET#0": "privacy",
   "src/app/api/admin/members/send-password-reset/route.ts::POST#0": "security",
   "src/app/api/admin/members/send-setup-invite/route.ts::POST.batchResults#0":
     "security",

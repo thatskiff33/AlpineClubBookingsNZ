@@ -4,17 +4,20 @@ import type { AgeTier } from "@prisma/client";
 import { useEffect, useLayoutEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { adminHref } from "@/lib/admin-hubs";
+import { useConfirm } from "@/components/confirm-dialog";
+import { seasonDeleteConfirmation } from "../../../_lib/season-delete-confirmation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, describedByFieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MoneyInput } from "@/components/ui/money-input";
 import { useClubFormat } from "@/components/club-format-provider";
-import { type ClubDateFormat, formatStayDateOrNull, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
+import { calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
 import { formatCents } from "@/lib/pricing";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import {
@@ -52,7 +55,7 @@ import {
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
-import { readSeasonSchedule } from "../../../_lib/season-schedule";
+import { formatSeasonEdge, readSeasonSchedule } from "../../../_lib/season-schedule";
 import { MissingHutRatesNotice } from "./missing-hut-rates-notice";
 
 // The Hut Fees section of the consolidated /admin/fees console (#1933, E7):
@@ -105,15 +108,6 @@ const FALLBACK_TIERS: AgeTierSetting[] = [
   { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
 ];
 
-// CT-4 (#2870): a season edge is a CALENDAR DATE and calendar dates take no
-// timezone — the API serialises the `@db.Date` column as UTC midnight, and the
-// kernel's calendar-date formatter pins "UTC" over that encoding, so the
-// projection is the identity for every club. It used to be read through
-// APP_TIME_ZONE, which for a club behind UTC named the previous day.
-function formatSeasonEdge(value: string, format: ClubDateFormat): string {
-  return formatStayDateOrNull(value, format) ?? value;
-}
-
 /*
   #2264 — ONE hint per membership type's rate table, not one per rate cell: the
   grid is nested `.map()`s, so a per-cell hint would repeat the same example
@@ -144,6 +138,7 @@ function withoutKey(
 }
 
 export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
+  const { confirm, confirmDialog } = useConfirm();
   /*
     The club's RECORDED currency, not the build's (#3564; INV-CONFIG-006).
     This label was the transitional constant from `@/config/operational`,
@@ -592,6 +587,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       flatWholeLodgeNightCents: flatWholeLodgeCents,
       ...(editingId ? {} : { lodgeId: scopedLodgeId }),
     };
+    const fallback = "Failed to save season";
 
     try {
       const url = editingId
@@ -606,42 +602,47 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to save season");
+        raiseError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
 
       if (activeScopeRef.current !== requestedScope) return;
 
       resetForm();
       fetchSeasons();
-    } catch (err) {
-      raiseError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      raiseError(fallback);
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(season: Season) {
     if (!lodgeScopeReady) return;
     const requestedScope = scopedLodgeId;
-    if (!confirm("Are you sure you want to delete this season?")) return;
-
+    if (!(await confirm(seasonDeleteConfirmation(season.name)))) return;
+    const fallback = "Failed to delete";
+    setError("");
     try {
-      const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/admin/seasons/${season.id}`, { method: "DELETE" });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to delete");
+        raiseError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
       if (activeScopeRef.current !== requestedScope) return;
       fetchSeasons();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      // The request never arrived. The browser's own wording ("Failed to fetch",
+      // "Load failed") says nothing useful to an officer, so show the screen's sentence.
+      raiseError(fallback);
     }
   }
 
   async function handleToggleActive(season: Season) {
     if (!lodgeScopeReady) return;
     const requestedScope = scopedLodgeId;
+    const fallback = "Failed to update";
+    setError("");
     try {
       const res = await fetch(`/api/admin/seasons/${season.id}`, {
         method: "PUT",
@@ -649,13 +650,14 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
         body: JSON.stringify({ active: !season.active }),
       });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to update");
+        raiseError(await apiErrorMessageFromResponse(res, fallback));
+        return;
       }
       if (activeScopeRef.current !== requestedScope) return;
       fetchSeasons();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+    } catch {
+      // The request never arrived: see handleDelete.
+      raiseError(fallback);
     }
   }
 
@@ -772,7 +774,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                 >
                   New season from this
                 </ViewOnlyActionButton>
-                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" aria-label={`Delete ${season.name}`} onClick={() => handleDelete(season.id)}>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" aria-label={`Delete ${season.name}`} onClick={() => handleDelete(season)}>
                   Delete
                 </ViewOnlyActionButton>
               </div>
@@ -887,6 +889,7 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
       tabIndex={-1}
       className="focus:outline-none"
     >
+      {confirmDialog}
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
           {/*

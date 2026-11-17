@@ -1445,6 +1445,11 @@ describe("AID-6B booking/membership pack: the search argument schemas (#2376)", 
       "1999-08-14",
       "2026-13-01",
       "2026-08-32",
+      // Right shape, but the day does not exist. The regex alone lets these
+      // through to PostgreSQL, where they fail as `query_failed` (ALP-580).
+      "2026-02-30",
+      "2026-02-29",
+      "2026-04-31",
       "today",
       "",
     ]) {
@@ -1456,6 +1461,19 @@ describe("AID-6B booking/membership pack: the search argument schemas (#2376)", 
         }),
         `${JSON.stringify(nightFrom)} was accepted`,
       ).toBe(false);
+    }
+  });
+
+  it("still accepts a real day, including a leap day and a month's last day", () => {
+    for (const nightFrom of ["2028-02-29", "2026-02-28", "2026-04-30", "2026-12-31"]) {
+      expect(
+        accepts(DIAGNOSTICS_BOOKING_SEARCH_TOOL_ID, {
+          kind: "lodge_nights",
+          lodgeId: RECORD,
+          nightFrom,
+        }),
+        `${JSON.stringify(nightFrom)} was refused`,
+      ).toBe(true);
     }
   });
 
@@ -2461,6 +2479,15 @@ describe("AID-6B booking/membership pack: null is not zero (#2376)", () => {
       FINANCE_UNPARSEABLE_VALUE,
     );
     expect(search({ check_in: "2026-08-14" }).checkIn).toBe("2026-08-14");
+    // Right shape, no such day (ALP-580): the sentinel, not a date a consumer
+    // would parse into an Invalid Date. A leap day is a real one and passes.
+    expect(search({ check_in: "2026-02-30" }).checkIn).toBe(
+      FINANCE_UNPARSEABLE_VALUE,
+    );
+    expect(search({ check_in: "2026-02-29" }).checkIn).toBe(
+      FINANCE_UNPARSEABLE_VALUE,
+    );
+    expect(search({ check_in: "2028-02-29" }).checkIn).toBe("2028-02-29");
     expect(search({ booking_ref: "not a record id at all" }).bookingRef).toBe(
       FINANCE_UNPARSEABLE_VALUE,
     );
@@ -2834,7 +2861,7 @@ describe("AID-6B booking/membership pack: read-only (#2376)", () => {
       "stripe",
       "@/lib/stripe",
       "xero-node",
-      "@/lib/xero",
+      "@/lib/xero-api-client",
       "@aws-sdk/client-ses",
       "nodemailer",
       "@sentry/node",

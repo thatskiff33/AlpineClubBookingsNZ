@@ -57,7 +57,7 @@ const WEBSITE_PAGE_CARDS = {
   },
   "mountain-conditions": {
     description:
-      "Configure Snow.nz condition widgets and public mountain condition content.",
+      "Review the cached Whakapapa (Mt Ruapehu) conditions report shown by the {{skifield-whakapapa}} token.",
     icon: Mountain,
   },
   "image-manager": {

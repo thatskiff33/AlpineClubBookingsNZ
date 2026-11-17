@@ -1,7 +1,7 @@
 import "server-only";
 
 import { SchoolHasNoCreditAccountError } from "@/lib/member-credit";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { RefundAllocationRacedError } from "@/lib/payment-transactions";
 import { CARD_SHORTFALL_NOTHING_TO_ALLOCATE_MESSAGE } from "@/lib/cancel-card-refund-shortfall-settle";
 import {
@@ -9,8 +9,9 @@ import {
   XeroAppliedCreditOperationBusyError,
 } from "@/lib/xero-applied-credit-operation-serialization";
 
-/** #4872: a hand-back refused only because a replaced card payment's own refund still owns part of the payment. */
-const SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE =
+/** #4872: a hand-back refused only because a replaced card payment's own refund still owns part of the payment.
+ * #5171 review: the edit review's card refund names the same cause with this sentence (`INV-SSOT`). */
+export const SUPERSEDED_HOLD_BACK_REFUSAL_MESSAGE =
   "Part of this payment is still being refunded on a card payment that was replaced. Try again once that refund has completed.";
 
 /**

@@ -1,5 +1,6 @@
 import { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
 
+import { CARD_REFUND_OPERATION_ORDER_BY, RECORDED_CARD_REFUND_ORDER_BY } from "@/lib/card-refund-tie-order";
 import { CARD_REFUND_OPERATION_WHERE } from "@/lib/open-card-refund-owed";
 import { netCollectedScopedPayments, summarizeCollectedCash, type CollectedCashSummary, type NetCollectedPaymentRow } from "@/lib/payment-net-collected";
 import {
@@ -155,6 +156,8 @@ export const netCollectedCaptureEvidenceSelect = Prisma.validator<Prisma.Payment
 export const netCollectedCardRefundSelect = Prisma.validator<Prisma.PaymentSelect>()({
   recoveryOperations: {
     where: CARD_REFUND_OPERATION_WHERE,
+    // #4284: one order on a `createdAt` tie; the attribution re-sorts by the same comparators.
+    orderBy: CARD_REFUND_OPERATION_ORDER_BY,
     select: {
       id: true,
       type: true,
@@ -168,6 +171,7 @@ export const netCollectedCardRefundSelect = Prisma.validator<Prisma.PaymentSelec
     },
   },
   refunds: {
+    orderBy: RECORDED_CARD_REFUND_ORDER_BY,
     select: { stripeRefundId: true, paymentTransactionId: true, amountCents: true, status: true, createdAt: true, stripeCreatedAt: true },
   },
 });

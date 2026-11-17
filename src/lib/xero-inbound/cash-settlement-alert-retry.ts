@@ -18,16 +18,48 @@ const pendingMarkerWhere = {
   AND: [{ snapshot: { path: ["alertSentAt"], equals: Prisma.JsonNull } }],
 } satisfies Prisma.BookingEventWhereInput;
 
+/**
+ * A settlement-figure marker whose alert email ran out of retries (#4446). The
+ * count and the stuck-states rows both read it (#4959, `INV-SSOT`).
+ */
+const exhaustedMarkerWhere = {
+  ...pendingMarkerWhere,
+  AND: [
+    ...pendingMarkerWhere.AND,
+    { snapshot: { path: ["alertUndeliveredCount"], gte: CASH_SETTLEMENT_ALERT_MAX_UNDELIVERED } },
+  ],
+} satisfies Prisma.BookingEventWhereInput;
+
 /** Durable counterpart to the email-delivery escalation, which ages out. */
 export async function countExhaustedCashSettlementAlerts(): Promise<number> {
-  return prisma.bookingEvent.count({
-    where: {
-      ...pendingMarkerWhere,
-      AND: [
-        ...pendingMarkerWhere.AND,
-        { snapshot: { path: ["alertUndeliveredCount"], gte: CASH_SETTLEMENT_ALERT_MAX_UNDELIVERED } },
-      ],
-    },
+  return prisma.bookingEvent.count({ where: exhaustedMarkerWhere });
+}
+
+/** The booking whose settlement-figure alert was never delivered (#4959). */
+export interface ExhaustedCashSettlementAlert {
+  id: string;
+  createdAt: Date;
+  booking: Prisma.BookingGetPayload<{ select: typeof EXHAUSTED_ALERT_BOOKING_SELECT }>;
+}
+
+const EXHAUSTED_ALERT_BOOKING_SELECT = {
+  id: true,
+  checkIn: true,
+  checkOut: true,
+  ...BOOKING_OWNER_NAME_SELECT,
+} satisfies Prisma.BookingSelect;
+
+/**
+ * The oldest `take` of {@link countExhaustedCashSettlementAlerts}'s markers, each
+ * with its booking and owner, for the stuck-states rows. Never its snapshot: the
+ * figures are Xero's and the screen sends the officer to the booking for them.
+ */
+export async function listExhaustedCashSettlementAlerts(take: number): Promise<ExhaustedCashSettlementAlert[]> {
+  return prisma.bookingEvent.findMany({
+    where: exhaustedMarkerWhere,
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take,
+    select: { id: true, createdAt: true, booking: { select: EXHAUSTED_ALERT_BOOKING_SELECT } },
   });
 }
 

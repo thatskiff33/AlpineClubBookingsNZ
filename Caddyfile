@@ -45,8 +45,9 @@
 	# dependence on a browser precedence rule.
 	#
 	# Every other path keeps a GUARANTEED DENY set at the edge, including
-	# /finance-legacy* (a reverse-proxied third-party upstream) and /images/*,
-	# neither of which the app's own middleware covers. Deliberately NOT the
+	# /images/* and, when CADDY_LEGACY_ROUTES=on, /finance-legacy* (a
+	# reverse-proxied third-party upstream), neither of which the app's own
+	# middleware covers. Deliberately NOT the
 	# set-if-absent `?X-Frame-Options` form: that would downgrade a guaranteed
 	# edge control into an advisory one on every route, so any upstream emitting
 	# a permissive value would win.
@@ -65,7 +66,8 @@
 	#     below. The deferred rewrite lives in a ResponseWriter wrapper that is
 	#     unwound when a handler returns an ERROR, so Caddy's error chain writes
 	#     the response without it: a 502 when an upstream is down (including
-	#     /finance-legacy*), the 413 from the request_body cap below, any 5xx.
+	#     an opted-in /finance-legacy*), the 413 from the request_body cap
+	#     below, any 5xx.
 	#     Those responses never reach Next either, so they carry no CSP and no
 	#     `frame-ancestors` fallback — the eager set is the only thing that makes
 	#     DENY GUARANTEED on them. On a normal proxied response the deferred pair
@@ -152,44 +154,24 @@
 		rewrite * /api/images/uploaded{path}
 		import /etc/caddy/deploy/tacbookings-active.caddy
 	}
-	handle /finance-legacy* {
-		forward_auth app:3000 {
-			uri /api/finance/legacy-dashboard/auth
-		}
-		reverse_proxy 172.26.3.200:8501
-	}
+	# A legacy finance dashboard's `/finance-legacy*` route, opt-in and off by
+	# default (CADDY_LEGACY_ROUTES, docker-compose.yml; #4981). It stays HERE,
+	# inside this site, so the header directives above cover it and its 502s.
+	import /etc/caddy/deploy/legacy-routes-{$CADDY_LEGACY_ROUTES:off}.caddy
 	import /etc/caddy/deploy/tacbookings-active.caddy
 }
 
-# Canonicalize the www host onto the apex so a session established on one origin
-# is never orphaned on the other (the session cookie is host-only). Mirrors the
-# bookings./dashboard. redirects below; preserves the full path + query via {uri}.
-www.{$DOMAIN} {
-	redir https://{$DOMAIN}{uri} permanent
-}
-
-bookings.{$DOMAIN} {
-	@root path /
-	redir @root https://{$DOMAIN}/dashboard permanent
-	redir * https://{$DOMAIN}{uri} permanent
-}
-
-dashboard.{$DOMAIN} {
-	header {
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		# Disabled: the legacy XSS auditor is removed from modern browsers and
-		# enabling it could introduce information leaks in older ones. CSP is the control.
-		X-XSS-Protection "0"
-		Referrer-Policy "strict-origin-when-cross-origin"
-		Permissions-Policy "camera=(), microphone=(), geolocation=()"
-		Strict-Transport-Security "max-age=63072000; includeSubDomains"
-	}
-	redir * https://{$DOMAIN}/finance-legacy{uri} permanent
-}
+# Extra hostnames, each a per-installation setting rather than an edit to this
+# file (see CADDY_TLS_MODE above for why), and each needing its own DNS record:
+#   CADDY_WWW_REDIRECT  on (default) redirects www.<DOMAIN> to <DOMAIN>.
+#   CADDY_LEGACY_ROUTES off (default); on adds the bookings. and dashboard.
+#                       hosts of a legacy finance dashboard, with the
+#                       /finance-legacy* route imported above.
+import /etc/caddy/deploy/www-redirect-{$CADDY_WWW_REDIRECT:on}.caddy
+import /etc/caddy/deploy/legacy-hosts-{$CADDY_LEGACY_ROUTES:off}.caddy
 
 # MiroTalk video-meeting host. MEET_HOST must be the EXACT public hostname you
-# browse to (e.g. meet.lwtc.org.nz) — it is NOT necessarily a subdomain of
+# browse to (e.g. meet.example.org) — it is NOT necessarily a subdomain of
 # $DOMAIN, so it is its own variable. MIROTALK_UPSTREAM is where MiroTalk is
 # reachable FROM THE CADDY CONTAINER: host.docker.internal:3010 for a MiroTalk
 # started with its own `docker run` (needs the extra_hosts entry on the caddy
