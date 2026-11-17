@@ -91,3 +91,11 @@ verifyDepsBeforeRun: error
 # (docs/agents/CODEX_WORKFLOW.md, "Require an isolated dependency tree"). This
 # is pnpm 11's default for a project; it is written down so nobody turns it on.
 enableGlobalVirtualStore: false
+
+# Reviewed patches pnpm applies at install, each to one exact package@version
+# (#5252: picomatch's unfixed GHSA-fc5q-39xc-vjpf). Each one is bound by a
+# record in dependency-mitigations.d/, which says why it exists and when it
+# retires; the lockfile records each patch's hash.
+patchedDependencies:
+  picomatch@2.3.2: patches/picomatch@2.3.2.patch
+  picomatch@4.0.7: patches/picomatch@4.0.7.patch
