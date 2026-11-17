@@ -221,7 +221,9 @@ describe("getAdminPendingCounts", () => {
   });
 
   it("names all four Booking Requests counts unavailable when their one read fails, and loads the rest", async () => {
-    mocks.newBookingPolicyExceptionRequestCount.mockRejectedValue(
+    // Once only: four counters each making their own read would see one
+    // failure and three successes, so this proves the four share one read.
+    mocks.newBookingPolicyExceptionRequestCount.mockRejectedValueOnce(
       new Error("connection reset"),
     );
 
