@@ -253,7 +253,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
     updatedAt: STORED_AT,
     booking: { organiserSettled: false },
   };
-  const target = { payment: { id: "pay-1", invoiceId: "inv-1" } };
+  const target = { payment: { id: "pay-1", invoiceId: "inv-1", creditNoteId: NOTE } };
   const asRead = { id: "pay-1", status: "PARTIALLY_REFUNDED", refundedAmountCents: 5_000, updatedAt: STORED_AT };
   const movedOn = () => (paymentUpdate.mock.calls[0]?.[0] as { data: { updatedAt: Date } }).data.updatedAt;
 
@@ -327,6 +327,28 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
     await expect(writeCurrentCreditNoteAllocation(link, target)).resolves.toEqual({ written: true, floorAlert: alert });
     expect(mocks.floor).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ creditNoteId: NOTE, xeroDerivedCents: 15_000 }));
     expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION (#4449 verify, low 2): a write that leaves the total where it was sends no floor alert; the recount after it is the one", async () => {
+    // $50 recorded on the payment, its note still in the outbox: the stored total and the detail are $50, Xero shows $0.
+    // The recount's own alert for this state is pinned in xero-credit-note-repairs.test.ts ("#4162 MUTATION ... it alerts instead").
+    const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 5_000 };
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.floor.mockResolvedValue({ cents: 5_000, alert });
+    await expect(writeCurrentCreditNoteAllocation(link, target)).resolves.toEqual({ written: true, floorAlert: null });
+    mocks.paymentFindMany.mockResolvedValue([{ id: "pay-1", xeroInvoiceId: "inv-1", source: "INTERNET_BANKING" }]);
+    await writeCurrentCreditNoteAllocations([link], { isModificationNote: true });
+    expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
+  });
+
+  it("a write that moves the total and is held at the floor alerts once", async () => {
+    const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 2_000 };
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.floor.mockResolvedValue({ cents: 2_000, alert });
+    mocks.paymentFindMany.mockResolvedValue([{ id: "pay-1", xeroInvoiceId: "inv-1", source: "INTERNET_BANKING" }]);
+    await writeCurrentCreditNoteAllocations([link], { isModificationNote: true });
+    expect(mocks.sendFloorAlert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendFloorAlert).toHaveBeenCalledWith(alert, expect.anything());
   });
 
   it("a total falling to nothing on a payment never captured returns it to its uncaptured state", async () => {
@@ -419,6 +441,17 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
       await expect(retireRemoved(true)).resolves.toBe(1);
       expect(steps).toEqual(["lock Payment", "lock allocation", "write allocation"]);
       expect(paymentUpdate).toHaveBeenCalledWith({ where: asRead, data: { refundedAmountCents: 0, status: "SUCCEEDED", updatedAt: expect.any(Date) } });
+    });
+
+    it("#4449 verify, nit 3: a removal's floor alert names its note, read from the link before the removal rewrites it", async () => {
+      mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+      mocks.floor.mockImplementation(async (_tx: unknown, input: { creditNoteId: string | null; xeroDerivedCents: number }) => ({
+        cents: 2_000,
+        alert: { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: input.creditNoteId, creditNoteNumber: null, xeroDerivedCents: input.xeroDerivedCents, floorCents: 2_000 },
+      }));
+      await expect(retireRemoved(true)).resolves.toBe(1);
+      expect(mocks.floor).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ creditNoteId: NOTE }));
+      expect(mocks.sendFloorAlert).toHaveBeenCalledWith(expect.objectContaining({ creditNoteId: NOTE }), expect.anything());
     });
 
     it("any other note's removal takes the allocation row only", async () => {

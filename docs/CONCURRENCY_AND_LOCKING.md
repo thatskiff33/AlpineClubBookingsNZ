@@ -8407,7 +8407,8 @@ It writes through a claim on the row as re-read (status, refunded total,
 and always moves `updatedAt` forward, so a lock-free recount that read the
 links before this write loses its claim and decides again. A lost claim
 throws and rolls the allocation write back, so nothing is half-written. The
-floor alert goes out after the commit. Budget:
+floor alert goes out after the commit, and only when the write moved the total;
+otherwise the recount after it in the same sync is the one alert. Budget:
 `PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS`. No provider call runs in it and it
 takes no advisory key, so `INV-LOCK-003`'s registry gains no entry. Order
 (`INV-LOCK-002`): the kept settle takes `lock(1)`, lodge, member, then the

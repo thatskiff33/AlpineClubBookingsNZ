@@ -249,6 +249,23 @@ async function syncNote(ids: NoteIds, noteCents: number): Promise<void> {
 }
 
 /**
+ * The inbound credit-note sync of a newer reading of the AUTHORISED note that
+ * no longer lists the invoice: the REAL removal (`retireUnlistedCreditNoteAllocations`),
+ * which turns the allocation off under the payment's Payment row (#4449 verify).
+ */
+async function removeAllocation(ids: NoteIds, noteCents: number): Promise<number> {
+  const { xeroCreditNoteSnapshotMetadata } = await import("@/lib/xero-refund-note-status");
+  return allocations.retireUnlistedCreditNoteAllocations({
+    creditNoteId: ids.noteId,
+    isModificationNote: true,
+    status: "AUTHORISED",
+    readingMetadata: xeroCreditNoteSnapshotMetadata({ status: "AUTHORISED", updatedDateUTC: new Date("2026-06-30T12:00:00.000Z"), total: noteCents / 100 }),
+    priorSnapshots: [],
+    listedInvoiceIds: new Set(),
+  });
+}
+
+/**
  * Xero reports the invoice PAID with an unquantifiable amount paid, so the cash
  * is incomplete and the settle keeps the stored $300, captured at that figure.
  */
@@ -491,6 +508,75 @@ async function paymentFigures() {
     }
 
     await expectCancelCredits(20_000);
+  }, 60_000);
+
+  it("REMOVAL, SETTLE FIRST: the correction's allocation removed while the settle holds its locks waits on the Payment row, and its total, decided second, is what a writer queued on lock(1) reads", async () => {
+    await bookInvoicedAndCutTo(20_000);
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+    await syncNote(CORRECTION, 10_000);
+
+    const receipt = await holdReceiptRow();
+    const settling = settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
+    let removing: Promise<number> | null = null;
+    let reading: Promise<number> | null = null;
+    try {
+      const [settlePid] = await untilQueuedBehind(receipt.pid);
+      // The settle has counted the correction; the newer reading removes its allocation now.
+      let removed = false;
+      removing = removeAllocation(CORRECTION, 10_000).finally(() => {
+        removed = true;
+      });
+      await untilQueuedBehind(settlePid, { unless: () => removed });
+      reading = readQueuedOnCancelLocks();
+      await untilQueuedBehind(settlePid, { count: removed ? 1 : 2 });
+      receipt.release();
+      // The settle committed $100; the removal, second on the Payment row, set nothing refunded.
+      expect(await reading).toBe(0);
+      expect(await removing).toBe(1);
+    } finally {
+      receipt.release();
+      await receipt.done;
+      await settling;
+      await removing?.catch(() => undefined);
+      await reading?.catch(() => undefined);
+    }
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 0, status: "SUCCEEDED" });
+  }, 60_000);
+
+  it("REMOVAL FIRST: the removal holds the Payment row while the settle waits on it, and the keep, second, counts no correction, before a writer queued on lock(1) reads it", async () => {
+    await bookInvoicedAndCutTo(20_000);
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+    await syncNote(CORRECTION, 10_000);
+    const link = allocationLink(CORRECTION, 10_000);
+
+    // Hold the allocation row, so the removal parks on it after it has taken the Payment row.
+    const allocationRow = await holdLocks((tx) =>
+      tx.$queryRaw`
+        SELECT 1 FROM "XeroObjectLink"
+        WHERE "localModel" = ${link.localModel} AND "localId" = ${link.localId} AND "xeroObjectType" = ${link.xeroObjectType}
+          AND "xeroObjectId" = ${link.xeroObjectId} AND "role" = ${link.role}
+        FOR UPDATE`,
+    );
+    let settling: ReturnType<typeof settleKept> | null = null;
+    let reading: Promise<number> | null = null;
+    const removing = removeAllocation(CORRECTION, 10_000);
+    try {
+      const [removePid] = await untilQueuedBehind(allocationRow.pid);
+      settling = settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
+      const [settlePid] = await untilQueuedBehind(removePid);
+      reading = readQueuedOnCancelLocks();
+      await untilQueuedBehind(settlePid);
+      allocationRow.release();
+      expect(await reading).toBe(0);
+      expect(await removing).toBe(1);
+    } finally {
+      allocationRow.release();
+      await allocationRow.done;
+      await removing.catch(() => undefined);
+      await settling;
+      await reading?.catch(() => undefined);
+    }
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 0, status: "SUCCEEDED" });
   }, 60_000);
 
   it("A CORRECTION SYNCED BEFORE THE SETTLE: the keep counts it in its own transaction, so a writer queued on lock(1) reads $200 of net and the cancel credits $200", async () => {

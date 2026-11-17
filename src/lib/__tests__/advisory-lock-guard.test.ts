@@ -2256,7 +2256,7 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
       "prisma.$transaction(",
       "lockPaymentForRefundedTotal(tx, payment.id)",
       "writeLockedAllocation(tx, link, readingAt)",
-      "decideBankTransferRefundedTotal(tx, payment, link, written)",
+      "decideBankTransferRefundedTotal(tx, payment, written)",
       "PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS",
     ]);
     expect(write).not.toMatch(/sendBankTransferFloorAlert|sendFloorAlerts|getClubFormat|notifyXeroSyncError/);

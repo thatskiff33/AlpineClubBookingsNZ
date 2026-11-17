@@ -37,6 +37,9 @@ import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 
 const RETIRED_ALLOCATION_ROLES = [NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE] as const;
 
+/** #4449: the bank-transfer payment an allocation write decides, its invoice, and the note the alert names. */
+type DecidedPayment = { id: string; invoiceId: string; creditNoteId: string | null };
+
 /** The snapshot time an allocation link records, beside the amount it applied. */
 export function creditNoteAllocationSnapshotStamp(
   creditNote: XeroCreditNoteSnapshotSource,
@@ -89,14 +92,14 @@ function storedAllocationStampIsNewer(storedMetadata: unknown, readingAt: Date |
  */
 export async function writeCurrentCreditNoteAllocation(
   link: XeroObjectLinkInput,
-  options: { payment?: { id: string; invoiceId: string } } = {},
+  options: { payment?: DecidedPayment } = {},
 ): Promise<{ written: boolean; floorAlert: BankTransferFloorAlert | null }> {
   const readingAt = readRefundNoteSnapshotAt(link.metadata);
   const { payment } = options;
   return prisma.$transaction(async (tx) => {
     if (payment) await lockPaymentForRefundedTotal(tx, payment.id);
     const written = await writeLockedAllocation(tx, link, readingAt);
-    const floorAlert = payment ? await decideBankTransferRefundedTotal(tx, payment, link, written) : null;
+    const floorAlert = payment ? await decideBankTransferRefundedTotal(tx, payment, written) : null;
     return { written, floorAlert };
   }, payment ? PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS : undefined);
 }
@@ -159,11 +162,15 @@ async function writeLockedAllocation(tx: Prisma.TransactionClient, link: XeroObj
  * moves, and also whenever this transaction wrote the link: `updatedAt` then
  * moves too, so a lock-free recount that read the links before this write
  * loses its claim on the row it read and decides again.
+ *
+ * The floor's alert is returned only when this write moves the refunded total
+ * (#4449 verify): a write that leaves it where it was alerts nothing, and the
+ * recount after it in the same sync stays the one alert for a total Xero
+ * shows below the detail.
  */
 async function decideBankTransferRefundedTotal(
   tx: Prisma.TransactionClient,
-  target: { id: string; invoiceId: string },
-  link: XeroObjectLinkInput,
+  target: DecidedPayment,
   linkWritten: boolean,
 ): Promise<BankTransferFloorAlert | null> {
   const payment = await tx.payment.findUnique({
@@ -176,13 +183,14 @@ async function decideBankTransferRefundedTotal(
   const decided = await decideXeroRefundedColumns(tx, {
     payment,
     decidedCents: linked.get(payment.id) ?? 0,
-    creditNoteId: readString(asRecord(link.metadata)?.creditNoteId) ?? null,
+    creditNoteId: target.creditNoteId,
   });
+  const floorAlert = decided.refundedAmountCents !== payment.refundedAmountCents ? decided.floorAlert : null;
   const changes = {
     ...(decided.refundedAmountCents !== payment.refundedAmountCents ? { refundedAmountCents: decided.refundedAmountCents } : {}),
     ...(decided.status && decided.status !== payment.status ? { status: decided.status } : {}),
   };
-  if (Object.keys(changes).length === 0 && !linkWritten) return decided.floorAlert;
+  if (Object.keys(changes).length === 0 && !linkWritten) return floorAlert;
   // A claim on the row as re-read under its lock (`INV-LOCK-002`). The lock
   // means nothing can move it in between, so a lost claim is a broken
   // invariant: thrown, it rolls back the allocation write with it, and the
@@ -194,7 +202,7 @@ async function decideBankTransferRefundedTotal(
     data: { ...changes, updatedAt },
   });
   if (claimed.count !== 1) throw new Error(`Refunded-total claim lost under the Payment row lock (#4449): ${payment.id}`);
-  return decided.floorAlert;
+  return floorAlert;
 }
 
 /**
@@ -229,11 +237,17 @@ async function bankTransferPaymentIdsByInvoiceId(
   return byInvoiceId;
 }
 
-/** The payment a link's write decides (`bankTransferPaymentIdsByInvoiceId`), if any. */
-function decidedPaymentOf(link: { metadata?: unknown }, byInvoiceId: ReadonlyMap<string, string>): { payment?: { id: string; invoiceId: string } } {
-  const invoiceId = readString(asRecord(link.metadata)?.invoiceId);
+/**
+ * The payment a link's write decides (`bankTransferPaymentIdsByInvoiceId`), if
+ * any, with the allocated invoice and the note, read from the link as stored:
+ * a removal's own write carries only its snapshot stamp, so its alert names
+ * the note from here.
+ */
+function decidedPaymentOf(link: { metadata?: unknown }, byInvoiceId: ReadonlyMap<string, string>): { payment?: DecidedPayment } {
+  const metadata = asRecord(link.metadata);
+  const invoiceId = readString(metadata?.invoiceId);
   const id = invoiceId ? byInvoiceId.get(invoiceId) : undefined;
-  return id && invoiceId ? { payment: { id, invoiceId } } : {};
+  return id && invoiceId ? { payment: { id, invoiceId, creditNoteId: readString(metadata?.creditNoteId) ?? null } } : {};
 }
 
 /** Floor alerts go out after every write's commit, outside any transaction. */
