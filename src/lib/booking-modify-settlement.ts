@@ -239,7 +239,12 @@ export async function applyPaymentAdjustments(
     zeroDollarCardIncrease;
   // #4299: the one home's answer, or the organiser's combined invoice standing for it.
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
-  let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
+  // #5039 (`INV-MOD-042`): a paid edit's fee is recorded here, on its one
+  // payment write below (#3980), whatever was captured - a card, a bank
+  // transfer, or nothing at all (credit or a promotion paid it). An unpaid
+  // booking never arrives with a fee (`lateNoticeChangeFee`), and a caller that
+  // records the fee on the amount owed itself (#3750) already did.
+  const feeRecordedHereCents = changeFeeCents > 0 && !changeFeeRecordedByCaller ? changeFeeCents : 0;
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
@@ -300,10 +305,7 @@ export async function applyPaymentAdjustments(
   const { reissuedAsk, ...unpaidAskSettlement } = await settleReductionAgainstUnpaidAsk(tx, {
     booking,
     reduction,
-    changeFeeCents,
-    hasSettledPayment,
     hasIssuedXeroInvoice,
-    changeFeeRecordedByCaller, // a caller that records the fee itself (a finished-stay correction) did so once
   });
   if (reissuedAsk.amountCents > 0) {
     additionalAsk = reissuedAsk;
@@ -311,7 +313,7 @@ export async function applyPaymentAdjustments(
   }
 
   // #3502: the zero-dollar increase joins the settled arm, reaching only its
-  // `netAmountCents > 0` branch (refusal, sizing, the fee recorded, `INV-PAY-047`).
+  // `netAmountCents > 0` branch (refusal, sizing, `INV-PAY-047`).
   if ((hasSettledPayment || zeroDollarCardIncrease) && booking.payment) {
     if (settlementOptions && netAmountCents < 0) {
       if (selectedSettlement.settlementMethod === "credit") {
@@ -383,11 +385,6 @@ export async function applyPaymentAdjustments(
       }
     }
 
-    // #3954 x #3750: once - a caller that records it on the amount owed did.
-    // A paid booking's fee, including a credit-paid booking's fee-only
-    // increase, is recorded here. An unpaid booking never arrives with a fee:
-    // `lateNoticeChangeFee` returned zero.
-    if (changeFeeCents > 0 && !changeFeeRecordedByCaller) feeRecordedHereCents = changeFeeCents;
   } else if (xeroAdditionalAmountCents > 0) {
     additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
   }
