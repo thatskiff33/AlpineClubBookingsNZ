@@ -970,8 +970,8 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
     expect(sql.match(/\$oldest\$([\s\S]*?)\$oldest\$/)?.[1]).toBe(nthCmsBlock(auditRetentionSql, 1));
     const earliest = sql.match(/\$earliest\$([\s\S]*?)\$earliest\$/)?.[1];
     expect(earliest).toBe(nthCmsBlock(genericiseSql, 1));
-    // The body #4031's migration replaced, so it is the last one the chain can
-    // leave behind.
+    // The body #4031's migration guarded, that is, the one it replaced on every
+    // install that ran it.
     expect(earliest).toBe(auditRetentionSql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]);
     // Four alternatives in this order, and no fifth.
     expect(sql.match(/\$(previous|older|oldest|earliest)\$(?=[\s\S]*?\$\1\$)/g)).toHaveLength(4);
