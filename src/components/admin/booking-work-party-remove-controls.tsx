@@ -170,13 +170,14 @@ export function BookingWorkPartyRemoveControls({
                   New total: <strong>{money(figures.newFinalPriceCents)}</strong>{" "}
                   (was {money(figures.previousFinalPriceCents)})
                 </p>
-                <p>
-                  Added to what is owed on the booking:{" "}
-                  <strong>{money(figures.priceDiffCents)}</strong>
-                </p>
-                {figures.billedToOrganiserCents > 0 && (
+                {figures.billedToOrganiserCents > 0 ? (
                   <p>
                     Invoiced to the group organiser: <strong>{money(figures.billedToOrganiserCents)}</strong>
+                  </p>
+                ) : (
+                  <p>
+                    Added to what is owed on the booking:{" "}
+                    <strong>{money(figures.priceDiffCents)}</strong>
                   </p>
                 )}
                 {figures.additionalAmountCents > 0 && (

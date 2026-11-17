@@ -437,7 +437,7 @@ describe("the officer-only internal-code admission (census)", () => {
     const service = readFileSync(path.join(root, "lib", "booking-batch-modification-service.ts"), "utf8");
     const plan = readFileSync(path.join(root, "lib", "booking-modify-plan.ts"), "utf8");
     expect(service).toContain(
-      "skipBookingLifecycleRules: dates.skipBookingLifecycleRules || Boolean(officerWorkPartyCorrection),",
+      "skipBookingLifecycleRules: dates.skipBookingLifecycleRules || workPartyCorrectionSkipsBedCheck(officerWorkPartyCorrection, booking.status),",
     );
     // Inside calculateModifiedPricing the flag gates the capacity branch and
     // nothing else; a second use would also skip it for a correction.

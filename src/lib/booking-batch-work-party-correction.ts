@@ -1,3 +1,5 @@
+import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
+
 /**
  * Fork #119: the batch service's work-party correction argument — its type,
  * the money rule recorded with it, and the guard that keeps it on its one
@@ -26,10 +28,10 @@ export type OfficerWorkPartyCorrection = {
   readonly direction: "add" | "remove";
 };
 
-/** The money rule a work-party correction carries, recorded with it. */
+/** The money rule a work-party correction carries, recorded with it: an Add's, or (fork #130) a Remove's. */
 const OFFICER_WORK_PARTY_MONEY_RULE = {
-  changeFee: "none",
-  reduction: "returned in full",
+  add: { changeFee: "none", reduction: "returned in full" },
+  remove: { changeFee: "none", increase: "owed on the booking" },
 } as const;
 
 /** The only request fields a work-party correction may carry. */
@@ -65,7 +67,7 @@ export function assertOfficerWorkPartyCorrectionCall(call: {
  * fee.
  */
 export function workPartyCorrectionRecord(correction: OfficerWorkPartyCorrection) {
-  return { ...correction, ...OFFICER_WORK_PARTY_MONEY_RULE };
+  return { ...correction, ...OFFICER_WORK_PARTY_MONEY_RULE[correction.direction] };
 }
 
 /**
@@ -79,4 +81,19 @@ export function workPartyCorrectionCodeDay<T extends string>(
   today: T,
 ): T {
   return correction && checkInDay < today ? checkInDay : today;
+}
+
+/**
+ * Fork #127/#130: whether the pricing pass may skip the bed check. A
+ * correction moves no guest or night, so a booking whose status already holds
+ * its beds claims none (a started stay's slept nights, or an officer's
+ * overbooking, would otherwise fail it). A booking that holds none yet, such
+ * as PAYMENT_PENDING, can become PAID through the $0 auto-pay, so it takes the
+ * check like any edit.
+ */
+export function workPartyCorrectionSkipsBedCheck(
+  correction: OfficerWorkPartyCorrection | null | undefined,
+  status: string,
+): boolean {
+  return Boolean(correction) && isCapacityHoldingBookingStatus(status);
 }

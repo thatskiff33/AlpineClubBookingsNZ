@@ -819,9 +819,11 @@ therefore reaches every night inside its window, including nights already
 slept, and no night outside it. The booking's other codes are re-priced as on
 any edit (`INV-MONEY-039`) but judged on the earlier of today and the
 check-in day, so a code that lapsed during the stay is kept, never billed back.
-A correction moves no guest or night, so it claims no bed: the capacity pass is
-skipped (its own flag, not `skipBookingLifecycleRules`), future stays
-included. The money is fork #129's: no change fee, an Add's
+A correction moves no guest or night, so on a booking whose status already
+holds its beds the pricing pass skips the bed check (through
+`skipBookingLifecycleRules`, which there gates only capacity; a census pins
+that). A booking holding none yet takes the check, as a $0 settle makes it
+PAID. The money is fork #129's: no change fee, an Add's
 reduction returned in full and untiered, a Remove's increase owed on the
 booking, with credit already given and refunds already paid left alone. Every
 other in-progress edit still refuses a promo change (`INV-MOD-019`).

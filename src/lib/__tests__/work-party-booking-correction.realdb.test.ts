@@ -1714,6 +1714,57 @@ async function batchRefusal(params: {
     }
   }, 120_000);
 
+  it("security review: a booking that holds no beds yet takes the bed check, so the $0 auto-pay cannot overbook", async () => {
+    // One bed, taken by a paid booking. This booking is PAYMENT_PENDING with
+    // credit applied, so the work party's discount would settle it at $0 and
+    // the edit would move it to PAID: a bed it does not hold yet.
+    await prisma.lodgeSettings.update({ where: { id: LODGE_ID }, data: { capacity: 1 } });
+    await prisma.booking.create({
+      data: {
+        id: OTHER_BOOKING_ID,
+        memberId: OFFICER_ID,
+        lodgeId: LODGE_ID,
+        checkIn: STARTED_STAY.nights[0]!,
+        checkOut: CHECK_OUT,
+        status: "PAID",
+        totalPriceCents: 0,
+        finalPriceCents: 0,
+        guests: {
+          create: {
+            firstName: "Other",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: false,
+            stayStart: STARTED_STAY.nights[0]!,
+            stayEnd: CHECK_OUT,
+            priceCents: 0,
+          },
+        },
+      },
+    });
+    try {
+      await seed("unpaid-credit");
+      const before = await snapshot();
+      expect(await correctionRefusal()).not.toBeNull();
+      expect(await snapshot()).toEqual(before);
+      expect((await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { status: true } })).status).toBe("PAYMENT_PENDING");
+    } finally {
+      await prisma.bookingGuest.deleteMany({ where: { bookingId: OTHER_BOOKING_ID } });
+      await prisma.booking.deleteMany({ where: { id: OTHER_BOOKING_ID } });
+      await prisma.lodgeSettings.update({ where: { id: LODGE_ID }, data: { capacity: 10 } });
+    }
+  }, 90_000);
+
+  it("fork #130 organiser-paid joiner: Remove is refused like any rise on a card-paid joiner, with nothing written", async () => {
+    await seed("organiser-paid");
+    stripeRefundsFail();
+    const added = await apply(await quote());
+    expect(added, JSON.stringify(added)).toMatchObject({ outcome: "applied" });
+    const before = await snapshot();
+    expect(await removalRefusal()).toEqual({ status: 409, message: expect.stringContaining("group organiser") });
+    expect(await snapshot()).toEqual(before);
+  }, 90_000);
+
   it("records the work party and its money rule on the modification and its audit row", async () => {
     await seed("paid");
     const result = await apply(await quote());
