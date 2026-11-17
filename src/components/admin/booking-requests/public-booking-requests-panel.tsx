@@ -70,7 +70,7 @@ import {
   type SchoolChildTier,
 } from "@/lib/school-booking-constants";
 import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
-import { isPublicRequestFilter, type PublicRequestFilter } from "./public-booking-request-filters";
+import { FILTER_LABELS } from "./public-booking-request-filters";
 
 const SCHOOL_CHILD_TIER_LABELS: Record<SchoolChildTier, string> = {
   INFANT: "Infants",
@@ -356,23 +356,6 @@ interface PublicBookingRequestsPanelProps {
 }
 
 const EMPTY_SEARCH_PARAMS: Record<string, string> = {};
-
-const FILTER_LABELS: Record<PublicBookingRequestFilter, string> = {
-  QUEUE: "Queue",
-  NEW: "Awaiting verification",
-  VERIFIED: "Verified",
-  PRICED: "Priced",
-  QUOTED: "Quoted",
-  QUOTE_SENT: "Quote sent",
-  QUERY_PENDING: "Query",
-  MODIFICATION_REQUESTED: "Modify",
-  ACCEPTED: "Accepted",
-  APPROVED: "Approved",
-  DECLINED: "Declined",
-  CANCELLED: "Cancelled",
-  CONVERTED: "Converted",
-  ALL: "All",
-};
 
 function buildPublicRequestsPath(
   basePath: string,

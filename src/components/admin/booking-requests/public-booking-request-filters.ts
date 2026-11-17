@@ -1,41 +1,22 @@
-// The public booking request queue's filter values and their guard, moved
-// verbatim from `public-booking-requests-panel.tsx` so that file shrinks below
-// its length on main (#4926: past the hard ceiling a file may only stay or
-// shrink). Pure data: no state, no fetch.
+// The public booking request queue's filter labels, moved verbatim from
+// `public-booking-requests-panel.tsx` so that file stays below its length on
+// main (#4926: past the hard ceiling a file may only stay or shrink). The
+// filter values themselves are `PublicBookingRequestFilter`. Pure data.
+import type { PublicBookingRequestFilter } from "@/lib/admin-booking-requests-path";
 
-export type PublicRequestFilter =
-  | "QUEUE"
-  | "NEW"
-  | "VERIFIED"
-  | "PRICED"
-  | "QUOTED"
-  | "QUOTE_SENT"
-  | "QUERY_PENDING"
-  | "MODIFICATION_REQUESTED"
-  | "ACCEPTED"
-  | "APPROVED"
-  | "DECLINED"
-  | "CANCELLED"
-  | "CONVERTED"
-  | "ALL";
-
-const publicRequestFilters = new Set<PublicRequestFilter>([
-  "QUEUE",
-  "NEW",
-  "VERIFIED",
-  "PRICED",
-  "QUOTED",
-  "QUOTE_SENT",
-  "QUERY_PENDING",
-  "MODIFICATION_REQUESTED",
-  "ACCEPTED",
-  "APPROVED",
-  "DECLINED",
-  "CANCELLED",
-  "CONVERTED",
-  "ALL",
-]);
-
-export function isPublicRequestFilter(value: string | null): value is PublicRequestFilter {
-  return publicRequestFilters.has(value as PublicRequestFilter);
-}
+export const FILTER_LABELS: Record<PublicBookingRequestFilter, string> = {
+  QUEUE: "Queue",
+  NEW: "Awaiting verification",
+  VERIFIED: "Verified",
+  PRICED: "Priced",
+  QUOTED: "Quoted",
+  QUOTE_SENT: "Quote sent",
+  QUERY_PENDING: "Query",
+  MODIFICATION_REQUESTED: "Modify",
+  ACCEPTED: "Accepted",
+  APPROVED: "Approved",
+  DECLINED: "Declined",
+  CANCELLED: "Cancelled",
+  CONVERTED: "Converted",
+  ALL: "All",
+};

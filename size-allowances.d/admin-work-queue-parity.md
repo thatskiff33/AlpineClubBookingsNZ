@@ -133,7 +133,7 @@ reason: the only growth is the `notifyAdminQueueChanged` call at each
   this component is its own piece of work.
 
 function: src/components/admin/booking-requests/public-booking-requests-panel.tsx#PublicBookingRequestsPanel
-lines: 2324
+lines: 2323
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
