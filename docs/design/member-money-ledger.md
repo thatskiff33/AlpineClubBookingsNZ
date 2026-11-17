@@ -568,6 +568,24 @@ replay records it from the operation's stored lines. The frozen mapping keeps
 the Xero tax type and the journal's tax codes side by side, untranslated. No
 delivery record or dispatcher exists yet.
 
+The second role, `CAPTURE_RECEIPT`, records the cents each existing capture
+sender stores, and those senders still send exactly what they sent before: the
+primary invoice's Stripe payment, a change capture's receipt legs, a
+supplementary invoice's payment, a kept late capture's payment and a PARTIAL
+invoice repair. Once a sender has stored a Xero payment id it calls
+`recordCaptureReceiptManifest` with the payment's own idempotency key, which is
+both the manifest's legacy key and its coverage row's `applicationKey`. The pure
+`planCaptureReceipt` covers those cents against the capture's live R06
+`STRIPE_CLEARING` debit (`memberMoneyEventKeys.capture`) less what other
+receipts already cover, so several receipts may name one capture while the
+primary invoice still bills each component once. More cents than are left is
+`CAPTURE_CENTS`; a payment naming no capture, or a capture with no live receipt,
+is `CAPTURE_NOT_JOURNALLED`; either covers nothing. Only cents a stored payment
+sent are coverage, never the unsent rest of a capture. Bank, cash,
+credit-release and refund-note payments are not this role. The recorder holds
+the capture's `PaymentTransaction` row in its own short transaction, and a
+failure is logged without changing the send.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |
