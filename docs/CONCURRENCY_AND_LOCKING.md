@@ -2872,7 +2872,8 @@ mispricing a booking.
   of its own; it runs in a short transaction of its own that holds this row lock
   and nothing else, then reads the capture's receipt and the cents other receipts
   already cover, and inserts the manifest. So two receipts of one capture are
-  planned one after the other and cannot both spend its cash. No advisory key and
+  planned one after the other and cannot both spend its cash
+  (`capture-receipt-manifest.realdb.test.ts` races two on PostgreSQL). No advisory key and
   no `lock(1)` (`INV-LOCK-001`: a manifest changes no booking status or settlement
   money). Counterpart writers: every ordinary update of that row (its status,
   refunded total or Xero link), each of which waits at most for this short
