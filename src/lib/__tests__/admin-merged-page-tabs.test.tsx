@@ -9,7 +9,7 @@ import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 // The tabs that hold a merged page (S1 #4796), on their real pages.
 //
 // Each tab keeps the gate its page had: the Suggestions tab of Family Groups
-// and the Settings tab of Membership Cancellations are `membership`, as the
+// and the Settings tab of Cancellation Requests are `membership`, as the
 // pages they were (`/admin/family-suggestions`, `/admin/membership-cancellation`)
 // were, and each stays read-only for a membership:view admin. The page-level
 // admission is the route map's, proven by the parity census and the area pin;
@@ -147,7 +147,7 @@ describe("Family Groups' Suggestions tab", () => {
   });
 });
 
-describe("Membership Cancellations' Settings tab", () => {
+describe("Cancellation Requests' Settings tab", () => {
   beforeEach(() => {
     stubFetchRoutes({
       "/api/admin/membership-cancellation-settings": {
@@ -168,7 +168,7 @@ describe("Membership Cancellations' Settings tab", () => {
     render(<MembershipCancellationsPage />);
 
     expect(await screen.findByRole("heading", { level: 2, name: "Requests" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Membership Cancellations" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Cancellation Requests" })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Save Cancellation Settings/i }),
     ).not.toBeInTheDocument();

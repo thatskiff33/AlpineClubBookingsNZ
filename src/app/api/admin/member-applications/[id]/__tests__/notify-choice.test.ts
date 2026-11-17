@@ -16,17 +16,9 @@ vi.mock("@/lib/session-guards", () => ({ requireAdmin: h.requireAdmin }));
 vi.mock("@/lib/nomination", () => ({
   approveMemberApplication: h.approveMemberApplication,
   rejectMemberApplication: h.rejectMemberApplication,
-  // Defined inside the factory (not a top-level binding) so the hoisted mock can
-  // reference it. The route uses `instanceof MembershipApplicationError`; the
-  // happy paths here never throw it.
-  MembershipApplicationError: class MembershipApplicationError extends Error {
-    status: number;
-    constructor(message: string, status: number) {
-      super(message);
-      this.status = status;
-    }
-  },
 }));
+// The route's `instanceof MembershipApplicationError` reads the real class from
+// `@/lib/member-application-fields`; the happy paths here never throw it.
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));

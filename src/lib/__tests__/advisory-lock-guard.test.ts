@@ -1314,7 +1314,12 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // Inventory row and stated residual in docs/CONCURRENCY_AND_LOCKING.md; the
   // serialisation itself is proven against real PostgreSQL by
   // `edit-financial-review-races.realdb.test.ts`.
-  "src/lib/xero-operation-outbox.ts": 1,
+  //
+  // #4930 (`INV-SSOT-008`): the enqueue and `lockSupplementaryInvoiceAnchor`
+  // moved, verbatim, out of `xero-operation-outbox.ts` into their own module so
+  // the outbox stops closing an import loop. Same statement, key, callers and
+  // transaction client; only the file changed.
+  "src/lib/xero-supplementary-invoice-enqueue.ts": 1,
   //
   // #3641 (`INV-PAY-104`): the ONE site is now `lockSupplementaryInvoiceAnchor`,
   // which both the enqueue and the late-capture re-queue
@@ -1718,7 +1723,11 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // "Try the card again" (`lockDeadCardRefundRow`), after their lock(1) and
   // before the payment is read, as "Paid another way" takes it. #4851: and by
   // `closeGroupCardRefundPaidAnotherWay` and `tryOrganiserChildCardRefundAgain`,
-  // the same helper, no new key.
+  // the same helper, no new key. #4879: and by the edit review's card arm
+  // (`chooseEditReviewSettlementRoute` through `planEditReviewCardRefund`),
+  // after its lock(1), booking row and the
+  // owner's member-credit key, before it reads the superseded-capture hold-back
+  // and plans; its still-owed preview takes no row lock; no new key.
   // Order: lock(1) -> lodge -> member credit -> Payment -> refund, recovery and
   // transaction rows. See docs/CONCURRENCY_AND_LOCKING.md -> the #3640
   // paragraph and its #4217 sequel.

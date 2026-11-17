@@ -106,6 +106,7 @@ import {
   type AdminNavPanelKey,
 } from "@/lib/admin-nav-panels";
 import { getContentPanelSections } from "@/lib/admin-appearance-pages";
+import { totalBookingRequestsPending } from "@/lib/admin-booking-requests-path";
 import {
   HubMenuLinks,
   MenuRoleSwitcher,
@@ -297,7 +298,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
     label: "Lodge Operations",
     items: [
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
-      { href: "/admin/roster", label: "Roster", icon: ClipboardList },
+      { ...adminLink("roster"), icon: ClipboardList },
       {
         href: "/admin/lodge",
         label: "Lodge Kiosk",
@@ -792,14 +793,9 @@ function SidebarLinks({
   if (counts.familyRequests > 0) {
     badges[adminHref("family-groups")] = counts.familyRequests;
   }
-  const bookingRequestCount =
-    counts.bookingReviews +
-    counts.bookingChangeRequests +
-    // #2526: a NEW-booking policy exception lives in its own table, so it is a
-    // separate term; a MODIFICATION exception is already a BookingChangeRequest
-    // and is inside the term above.
-    counts.newBookingPolicyExceptionRequests +
-    counts.publicBookingRequests;
+  // The same four per-tab counts the Booking Requests page badges (#4969), so
+  // the tab badges add up to this one.
+  const bookingRequestCount = totalBookingRequestsPending(counts);
   if (bookingRequestCount > 0) {
     badges[adminHref("booking-requests")] = bookingRequestCount;
   }

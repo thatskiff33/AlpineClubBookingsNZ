@@ -6,6 +6,7 @@ import {
 } from "./helpers/accessibility";
 import { storageStatePath } from "./helpers/auth";
 import { unnoncedInlineScripts } from "./helpers/csp";
+import { expectStatusAfterAdminWrite } from "./helpers/public-cache";
 import { E2E_ADMIN } from "../prisma/e2e-fixtures";
 import { must } from "../src/lib/indexed-access";
 
@@ -742,17 +743,25 @@ test.describe("unpublishing a CMS page", () => {
       await setPublished(request, id, true);
       expect((await request.get(PROBE_PATH)).status()).toBe(200);
 
+      // Polled, not asserted on the very next request: the route applies its
+      // invalidation as the response finishes, so the next request can beat it
+      // (#5205). The bound is far below the 300-second backstop, so a pass is
+      // still the write clearing the store.
       await setPublished(request, id, false);
-      expect(
-        (await request.get(PROBE_PATH)).status(),
+      await expectStatusAfterAdminWrite(
+        request,
+        PROBE_PATH,
+        404,
         "a hidden page must 404 at once — a 200 here means the stored copy outlived the write",
-      ).toBe(404);
+      );
 
       await setPublished(request, id, true);
-      expect(
-        (await request.get(PROBE_PATH)).status(),
+      await expectStatusAfterAdminWrite(
+        request,
+        PROBE_PATH,
+        200,
         "republishing must restore it just as immediately",
-      ).toBe(200);
+      );
     } finally {
       // Leave the site as this spec found it.
       await setPublished(request, id, false);
@@ -767,8 +776,8 @@ test.describe("unpublishing a CMS page", () => {
  * one rather than an extra assertion there: unpublish proves the stored copy is
  * cleared when a page is HIDDEN, and deletion is the lifecycle step that had no
  * supported writer at all until MC-03D. The failure mode is the same and it is
- * the whole point of the case — a 200 on the request immediately after the
- * delete means the stored copy outlived the write, and on a quiet site it would
+ * the whole point of the case — a 200 still answering seconds after the
+ * delete (the case polls briefly, #5205) means the stored copy outlived the write, and on a quiet site it would
  * keep answering for hours, because `revalidate = 300` hands a stale entry to
  * the requester before regeneration starts rather than blocking on it.
  *
@@ -872,11 +881,15 @@ test.describe("deleting a CMS page", () => {
       // wrong thing.
       expect(removedBody.publicCacheCleared).toBe(true);
 
-      // The assertion the measurement gate is for. No sleep.
-      expect(
-        (await request.get(PROBE_PATH)).status(),
+      // The assertion the measurement gate is for. No sleep: a poll bounded far
+      // below the backstop, because the next request can beat the invalidation
+      // the route applies as its response finishes (#5205).
+      await expectStatusAfterAdminWrite(
+        request,
+        PROBE_PATH,
+        404,
         "a deleted page must 404 at once — a 200 here means the stored copy outlived the write",
-      ).toBe(404);
+      );
 
       // What a visitor actually gets on the request after that: the 404 itself is
       // stored, which is fine for this address because it is inside the

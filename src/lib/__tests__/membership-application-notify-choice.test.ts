@@ -70,9 +70,14 @@ vi.mock("@/lib/age-tier", () => ({
 }));
 
 vi.mock("@/lib/email", () => emailMock);
-vi.mock("@/lib/xero", () => xeroMock);
+vi.mock("@/lib/xero-token-store", () => ({ isXeroConnected: xeroMock.isXeroConnected }));
+vi.mock("@/lib/xero-contacts", () => ({ findOrCreateXeroContact: xeroMock.findOrCreateXeroContact }));
 vi.mock("@/lib/xero-operation-outbox", () => xeroOutboxMock);
 vi.mock("@/lib/membership-subscription-billing", () => subscriptionBillingMock);
+// #4986: approval reads the Xero module; Xero on, so these pin the usual path.
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -88,9 +93,7 @@ vi.mock("@/lib/induction", () => ({
 
 vi.mock("server-only", () => ({}));
 
-vi.mock("bcryptjs", () => ({
-  hash: vi.fn().mockResolvedValue("hashed-secret"),
-}));
+
 
 import { prisma } from "@/lib/prisma";
 import {

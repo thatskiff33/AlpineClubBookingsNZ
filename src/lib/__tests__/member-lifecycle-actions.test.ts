@@ -125,10 +125,14 @@ vi.mock("@/lib/session-guards", () => ({
     session: { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } },
   }),
 }));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-contact-groups", () => ({
   getXeroContactGroupMemberships: vi.fn(),
-  isXeroConnected: vi.fn(),
   syncManagedXeroContactGroupForMember: vi.fn(),
+}));
+vi.mock("@/lib/xero-token-store", () => ({
+  isXeroConnected: vi.fn(),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   updateXeroContact: vi.fn(),
 }));
 vi.mock("@/lib/xero-contact-sync", () => ({
@@ -1716,9 +1720,12 @@ describe("admin member lifecycle request list (#1938)", () => {
     ).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { action: "DELETE", status: "REQUESTED" },
+        // INV-OPS-020: the deletion queue's pending filter reads oldest first too.
+        orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
       }),
     );
     expect(result.total).toBe(1);
+    expect(result.totalPages).toBe(1);
     expect(result.pendingCount).toBe(2);
     expect(result.requests[0]).toMatchObject({
       id: "request-1",
@@ -1767,7 +1774,10 @@ describe("admin member lifecycle request list (#1938)", () => {
     expect(
       mockPrisma.memberLifecycleActionRequest.findMany,
     ).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { action: "DELETE" } }),
+      expect.objectContaining({
+        where: { action: "DELETE" },
+        orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
+      }),
     );
   });
 
@@ -1784,6 +1794,8 @@ describe("admin member lifecycle request list (#1938)", () => {
     ).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { action: "ARCHIVE", status: "REQUESTED" },
+        // INV-OPS-020: the archive queue's pending filter reads oldest first.
+        orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
       }),
     );
   });

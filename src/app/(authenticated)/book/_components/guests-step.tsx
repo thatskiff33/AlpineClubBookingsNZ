@@ -17,9 +17,9 @@ import { formatStayDate } from "@/lib/club-time";
 import {
   describeMemberGuestWizardHelper,
   memberGuestConsentPreviewColumns,
-} from "./member-guest-preview";
+} from "@/components/book/member-guest-preview";
 import { CapacityShortNotice } from "./capacity-short-notice";
-import { DependantIdentityResolution } from "./dependant-identity-resolution";
+import { DependantIdentityResolution } from "@/components/book/dependant-identity-resolution";
 import type { OwnDependantCollision } from "@/lib/booking-dependant-identity";
 import { normalizePersonFullName } from "@/lib/person-name-normalization";
 import {
@@ -27,7 +27,7 @@ import {
   type FamilyMember,
   type GroupPaymentMode,
   type PriceQuote,
-} from "./types";
+} from "@/components/book/booking-wizard-types";
 
 interface GuestsStepProps {
   // NZ date-only lodge nights (#2474).
@@ -294,7 +294,7 @@ export function GuestsStep({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>
+        <CardTitle headingLevel={2}>
           Add Guests
           {checkIn && checkOut && (
             <span className="ml-2 text-sm font-normal text-muted-foreground">

@@ -1,3 +1,5 @@
+import { isXeroInvoicingEnabled } from "@/lib/xero-invoicing-guard";
+import { SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE } from "@/lib/xero-invoicing-off";
 import { readOrganiserExtraAdjustmentPayload } from "@/lib/organiser-extra-adjustment-payload";
 import { ORGANISER_COMBINED_INVOICE_PLACE_MESSAGE, ORGANISER_COMBINED_INVOICE_PLACE_REFUSAL } from "@/lib/organiser-billing";
 import type { XeroContactUpdateData } from "@/lib/xero-contacts";
@@ -12,16 +14,21 @@ import {
   subscriptionInvoiceChargeId,
   XERO_OUTBOX_APPLIED_CREDIT_ALLOCATION_TYPE,
   XERO_OUTBOX_APPLIED_CREDIT_DEALLOCATION_TYPE,
-  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
-  XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE,
   XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE,
   XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
-  XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
 } from "@/lib/xero-operation-outbox-payload";
 import { XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE } from "@/lib/xero-card-refund-reversal-outbox";
+import {
+  cardRefundReversalInvoiceRequeuePayload,
+  groupSettlementInvoiceRequeuePayload,
+  keptLateCaptureInvoiceRequeuePayload,
+  releasedLateCaptureChangeInvoiceRequeuePayload,
+  subscriptionInvoiceRequeuePayload,
+  type RetryableOperation,
+} from "@/lib/xero-operation-retry-requeue-payloads";
 import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { getModificationNetAmountCents } from "@/lib/xero-booking-repair-analysis";
 import type { Prisma, XeroSyncOperation } from "@prisma/client";
@@ -102,39 +109,43 @@ import {
 } from "@/lib/subscription-charge-already-paid";
 
 /**
- * The `@/lib/xero` module namespace, named because an `import()` type written
- * inline in a PARAMETER annotation is one of the two shapes Semgrep cannot
- * parse (#3318) - the module is still loaded dynamically, at the one call site
- * that does it.
+ * The Xero document services a retry calls, each from its focused module
+ * (#4930: the `@/lib/xero` facade that bundled them is gone). They are still
+ * loaded dynamically, at the one call site that does it; the type is named
+ * because an `import()` type written inline in a PARAMETER annotation is one of
+ * the two shapes Semgrep cannot parse (#3318).
  */
-type XeroModule = typeof import("@/lib/xero");
+type XeroModule = Awaited<ReturnType<typeof loadXeroDocumentServices>>;
 
-type RetryableOperation = Pick<
-  XeroSyncOperation,
-  | "id"
-  | "status"
-  | "replayable"
-  | "direction"
-  | "entityType"
-  | "operationType"
-  | "localModel"
-  | "localId"
-  | "requestPayload"
-  | "responsePayload"
-  | "xeroObjectId"
-  | "xeroObjectNumber"
-  // #3635: REQUIRED, so a caller whose select forgot it fails to compile
-  // instead of silently offering a resolved row for retry.
-  | "manuallyResolvedAt"
-> & {
-  // #1354: enqueue-time queue type (never updated afterward) — the only
-  // reliable delta-mode marker once a handler has overwritten requestPayload.
-  // Optional so row shapes selected before #1354 stay assignable; callers
-  // that omit it simply fall back to payload-based delta detection.
-  queueType?: XeroSyncOperation["queueType"];
-  lastErrorCode?: XeroSyncOperation["lastErrorCode"]; // #4688: optional; Retry's own refusal reads the stored row
-  lastErrorMessage?: XeroSyncOperation["lastErrorMessage"]; // #3993: a paid-off allocation or a shortfall before create
-};
+async function loadXeroDocumentServices() {
+  const [bookingInvoices, contacts, creditNotes, entranceFees, payments, membershipSync, modificationNotes, refundNotes, supplementary] = await Promise.all([
+    import("@/lib/xero-booking-invoices"),
+    import("@/lib/xero-contacts"),
+    import("@/lib/xero-credit-notes"),
+    import("@/lib/xero-entrance-fee-invoices"),
+    import("@/lib/xero-invoice-payments"),
+    import("@/lib/xero-membership-sync"),
+    import("@/lib/xero-modification-credit-notes"),
+    import("@/lib/xero-refund-note-settlement"),
+    import("@/lib/xero-supplementary-invoices"),
+  ]);
+  return {
+    allocateCreditNoteToInvoice: creditNotes.allocateCreditNoteToInvoice,
+    checkMembershipStatus: membershipSync.checkMembershipStatus,
+    createUnappliedXeroCreditNote: creditNotes.createUnappliedXeroCreditNote,
+    createUnappliedXeroCreditNoteForModification: creditNotes.createUnappliedXeroCreditNoteForModification,
+    createXeroCreditNote: creditNotes.createXeroCreditNote,
+    createXeroCreditNoteForModification: modificationNotes.createXeroCreditNoteForModification,
+    createXeroEntranceFeeInvoice: entranceFees.createXeroEntranceFeeInvoice,
+    createXeroInvoiceForBooking: bookingInvoices.createXeroInvoiceForBooking,
+    createXeroPaymentForInvoice: payments.createXeroPaymentForInvoice,
+    createXeroSupplementaryInvoice: supplementary.createXeroSupplementaryInvoice,
+    findOrCreateXeroContact: contacts.findOrCreateXeroContact,
+    finishRefundCreditNoteSettlement: refundNotes.finishRefundCreditNoteSettlement,
+    updateXeroBookingInvoiceForBooking: bookingInvoices.updateXeroBookingInvoiceForBooking,
+    updateXeroContact: contacts.updateXeroContact,
+  };
+}
 
 export class XeroOperationRetryError extends Error {
   status: number;
@@ -144,163 +155,6 @@ export class XeroOperationRetryError extends Error {
     this.name = "XeroOperationRetryError";
     this.status = status;
   }
-}
-
-/**
- * #3642: the combined group invoice's outbox rows (its CREATE and both VOIDs)
- * go back to the outbox on Retry; they are never run inline, because their
- * handlers fence on `lock(1)` and the outbox claim is the one execution
- * authority. Returns the payload to queue them with, or null for any other
- * row. The CREATE's is rebuilt from the row itself — its worker overwrote the
- * queued payload with the invoice it sent — and its attempt lives in the
- * correlation key, which Retry leaves alone. A VOID keeps its queued payload.
- */
-function groupSettlementInvoiceRequeuePayload(
-  operation: RetryableOperation,
-): Record<string, unknown> | null {
-  if (
-    operation.direction !== "OUTBOUND" ||
-    operation.entityType !== "INVOICE" ||
-    operation.localModel !== "GroupBookingSettlement" ||
-    !operation.localId
-  ) {
-    return null;
-  }
-  if (
-    operation.operationType === "CREATE" &&
-    operation.queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE
-  ) {
-    return {
-      queueType: XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_TYPE,
-      settlementId: operation.localId,
-    };
-  }
-  const queued = readQueuedOutboxPayload(operation.requestPayload);
-  if (
-    operation.operationType === "UPDATE" &&
-    queued?.queueType === XERO_OUTBOX_GROUP_SETTLEMENT_INVOICE_VOID_TYPE
-  ) {
-    return { ...queued };
-  }
-  return null;
-}
-
-/**
- * #3635: a kept late capture's invoice is replayed from its queued payload,
- * which its worker keeps: back to PENDING, where the worker re-uses an invoice
- * already raised (the task's link) and records only a missing payment. FAILED
- * or PARTIAL (the payment failed); null for any other row.
- */
-/**
- * #4369 (`INV-PAY-151`): a failed card refund's Stripe reversal is replayed
- * from its queued payload, back to PENDING. The worker re-uses an invoice
- * already raised and records only a missing payment. A voided invoice is
- * completed and not raised again. FAILED or PARTIAL; null for any other row.
- * This must run before the generic invoice repair, which would send it as a
- * booking invoice.
- */
-function cardRefundReversalInvoiceRequeuePayload(
-  operation: RetryableOperation,
-): Record<string, unknown> | null {
-  if (
-    operation.direction !== "OUTBOUND" ||
-    operation.entityType !== "INVOICE" ||
-    operation.operationType !== "CREATE" ||
-    operation.localModel !== "Payment"
-  ) {
-    return null;
-  }
-  const queued = readQueuedOutboxPayload(operation.requestPayload);
-  return queued?.queueType === XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE
-    ? {
-        queueType: queued.queueType,
-        bookingId: queued.bookingId,
-        paymentId: queued.paymentId,
-        closeTaskId: queued.closeTaskId,
-        amountCents: queued.amountCents,
-        closedOn: queued.closedOn,
-      }
-    : null;
-}
-
-function keptLateCaptureInvoiceRequeuePayload(
-  operation: RetryableOperation,
-): Record<string, unknown> | null {
-  if (
-    operation.direction !== "OUTBOUND" ||
-    operation.entityType !== "INVOICE" ||
-    operation.operationType !== "CREATE" ||
-    operation.localModel !== "ManualRefundTask"
-  ) {
-    return null;
-  }
-  const queued = readQueuedOutboxPayload(operation.requestPayload);
-  return queued?.queueType === XERO_OUTBOX_KEPT_LATE_CAPTURE_INVOICE_TYPE
-    ? {
-        queueType: queued.queueType,
-        bookingId: queued.bookingId,
-        manualRefundTaskId: queued.manualRefundTaskId,
-        paymentIntentId: queued.paymentIntentId,
-        capturedCents: queued.capturedCents,
-        capturedOn: queued.capturedOn,
-      }
-    : null;
-}
-
-/**
- * #3924 round 9 (`INV-PAY-122`; owner, 8 Oct 2026: "Raise a refund note for
- * all"): a FAILED change invoice RELEASED FOR A LATE CAPTURE - its queued
- * payload names the capture (`paymentIntentId`) - goes back to the outbox on
- * its own row, with the payload it was queued with, never through the inline
- * replay. The inline replay mints a new row that does not name the capture, so
- * the capture's receipt (`readLateCaptureXeroReceipt`) never sees the invoice,
- * and the worker's note step, which reads the capture off its own row, never
- * queues the bank-transfer note a "Paid another way" close waits for. Run from
- * this row, the worker sends under the same Xero idempotency key, records the
- * invoice on this row, and queues that note. A second ask is left to its own
- * branch.
- *
- * Round 10: only for an approval task's capture, and never one already
- * linked in Xero (`late-capture-change-invoice-retry.ts`).
- */
-function releasedLateCaptureChangeInvoiceRequeuePayload(
-  operation: RetryableOperation,
-): Record<string, unknown> | null {
-  if (
-    operation.status !== "FAILED" ||
-    operation.direction !== "OUTBOUND" ||
-    operation.entityType !== "INVOICE" ||
-    operation.operationType !== "CREATE" ||
-    operation.localModel !== "BookingModification"
-  ) {
-    return null;
-  }
-  const queued = readQueuedOutboxPayload(operation.requestPayload);
-  if (
-    queued?.queueType !== XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE ||
-    !queued.paymentIntentId ||
-    queued.shortfallReviewTaskId
-  ) {
-    return null;
-  }
-  // The whole stored payload: the charge day it already read
-  // (`keptLateCaptureDay`) rides with it, so the retry's document date never drifts.
-  return asRecord(operation.requestPayload);
-}
-
-/**
- * #3971 (`INV-INT-026`): a FAILED membership subscription invoice goes back to
- * the outbox as its bare queue type - the charge is `localId`, and a pre-fix
- * row holds a blanked `chargeId`. It keeps its correlation key, so the
- * active-key index refuses it while another attempt for the charge is live.
- */
-function subscriptionInvoiceRequeuePayload(operation: RetryableOperation) {
-  const queueType = operation.queueType ?? readQueueType(operation.requestPayload);
-  return operation.direction === "OUTBOUND" && operation.entityType === "INVOICE" &&
-    operation.operationType === "CREATE" && subscriptionInvoiceChargeId(operation) &&
-    queueType === XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE
-    ? { queueType }
-    : null;
 }
 
 /** #3971: never from here a second invoice or email, nor a charge needing none. */
@@ -1583,6 +1437,11 @@ export async function retryXeroSyncOperation(
   const subscriptionInvoicePayload = subscriptionInvoiceRequeuePayload(operation);
   const subscriptionChargeId = subscriptionInvoiceChargeId(operation);
   if (subscriptionInvoicePayload && subscriptionChargeId && operation.status === "FAILED") {
+    // #4986 (`INV-INT-040`): the route gate already hides Xero Operations while
+    // the module is off; this refuses the requeue itself, in the same words.
+    if (!(await isXeroInvoicingEnabled())) {
+      throw new XeroOperationRetryError(SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE, 409);
+    }
     await refuseSubscriptionInvoiceRetryWithNothingToDo(subscriptionChargeId);
     await requeueOutboxRowForRetry(
       operation,
@@ -1594,7 +1453,7 @@ export async function retryXeroSyncOperation(
     return { message: "Queued the membership subscription invoice for retry." };
   }
 
-  const xero = await import("@/lib/xero");
+  const xero = await loadXeroDocumentServices();
   const createdByMemberId = options?.createdByMemberId ?? undefined;
 
   if (operation.status === "PARTIAL") {

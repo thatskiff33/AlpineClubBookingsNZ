@@ -26,6 +26,7 @@ const ALLOWED: Record<string, string> = {
   "src/lib/database-roles.ts": "least-privilege provisioning (INSERT/SELECT grants, no rows)",
   "src/lib/member-merge-snapshot-columns.ts": "member-merge classification strings",
   "src/lib/privacy-retention-classification.ts": "privacy schedule classification strings; no journal access",
+  "src/lib/subject-access-export-coverage.ts": "#4915: the access export's coverage map keys; no journal access",
   "scripts/verify-member-money-journal.ts": "operator verifier in a READ ONLY transaction",
   "src/lib/booking-ledger-capture-kinds.ts": "#4516: the one capture-kind map names each kind's receipt cash account and origin; no row read or written",
 };
@@ -72,6 +73,15 @@ const READERS: Record<string, { reason: string; importOnly: boolean }> = {
     reason: "the pure JOURNAL comparison of the journal's charges with the bridged lines",
     importOnly: false,
   },
+  // #4915: the subject access export copies the subject's own journal lines and obligations into their file.
+  "src/lib/subject-access-export-sections.ts": {
+    reason: "the subject's own journal lines for their privacy access file (read-only)",
+    importOnly: false,
+  },
+  "src/lib/subject-access-export-additional.ts": {
+    reason: "the face value of the subject's own obligations for their privacy access file (read-only)",
+    importOnly: false,
+  },
 };
 /**
  * M3b (#4627): THE POSTING CALLERS, exactly. Each posts through
@@ -110,6 +120,8 @@ const DOORS: Record<string, string> = {
   "src/lib/booking-ledger-back-post.ts": "R26: lines a door could not post, filled in for a booking already in the journal",
   // #4628 (M3c): through `postPendingBookingJournal`, from the lines the confirmation would post.
   "src/lib/booking-ledger-pending-charge.ts": "R01 at a bank-transfer binding; R02/R04 for a charge still pending",
+  // #4525 (M13): an export manifest, not a journal row, through the same door.
+  "src/lib/xero-booking-invoices.ts": "M13: the primary invoice's export manifest, after its link",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -161,8 +173,8 @@ const BOUNDARY = "src/lib/member-money/";
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
-/** M3b's door entry points (#4627), and M3c's pending charge (#4628). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn)\b/;
+/** M3b's door entry points (#4627), M3c's pending charge (#4628), and M13's invoice manifest (#4525). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's

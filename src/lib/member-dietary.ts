@@ -84,7 +84,7 @@ export interface DietaryAccessGrant {
  */
 type MemberGrantRecord = {
   readonly kind: "member";
-  readonly purpose: "self" | "self-data-export" | "membership-admin" | "member-merge";
+  readonly purpose: "self" | "self-data-export" | "membership-admin" | "member-merge" | "subject-access-export";
   readonly actorMemberId: string;
   /**
    * The members this grant may read: the subject for a self grant, the two
@@ -92,6 +92,7 @@ type MemberGrantRecord = {
    * membership administration.
    */
   readonly memberIds: readonly string[] | null;
+  readonly exportGuestId?: string;
 };
 
 type BookingGuestGrantRecord = {
@@ -163,6 +164,16 @@ export function grantSelfDataExportDietaryAccess(
   return mintGrant("self-data-export", session.user.id, [session.user.id]);
 }
 
+/** Full Admin responding to a verified access request; never a parent self-service grant. */
+export async function grantOfficerSubjectAccessDietaryAccess(
+  actorMemberId: string,
+  subject: { memberId?: string; guestId?: string },
+): Promise<DietaryAccessGrant | null> {
+  if (!(await actorIsFullAdmin(prisma, actorMemberId))) return null;
+  return registerGrant({ kind: "member", purpose: "subject-access-export", actorMemberId,
+    memberIds: subject.memberId ? [subject.memberId] : [], exportGuestId: subject.guestId });
+}
+
 type GrantDb = Prisma.TransactionClient | PrismaClient;
 
 /**
@@ -212,18 +223,6 @@ export async function grantMemberMergeDietaryAccess(
 }
 
 /**
- * What a PERSISTED record (an audit row, a log) may say about a dietary value:
- * that one is recorded, never what it is (`INV-PRIV-022`).
- */
-export const DIETARY_VALUE_REDACTION = "[REDACTED]";
-
-export function redactDietaryValueForRecord(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "string" && value.trim() === "") return null;
-  return DIETARY_VALUE_REDACTION;
-}
-
-/**
  * Member merge reads Member rows from a client that OMITS the column, so the
  * field merge would see it blank on both sides and the loser's value would die
  * with the loser row. This attaches both values through this door so the
@@ -260,24 +259,6 @@ export async function attachMergeDietaryRequirements<T extends { id: string }>(
       : { ...row }) as R & { dietaryRequirements?: string };
   };
   return [attach(master), attach(loser)];
-}
-
-/**
- * A merge diff row as a PERSISTED record (or an OFF screen) may hold it: the
- * dietary row keeps its field and source, and its three values become
- * "recorded / not recorded". Every other row is returned untouched, because
- * `INV-PRIV-011` lets an audit row keep names and addresses.
- */
-export function redactDietaryMergeRow<
-  R extends { field: string; master: unknown; loser: unknown; result: unknown },
->(row: R): R {
-  if (row.field !== "dietaryRequirements") return row;
-  return {
-    ...row,
-    master: redactDietaryValueForRecord(row.master),
-    loser: redactDietaryValueForRecord(row.loser),
-    result: redactDietaryValueForRecord(row.result),
-  };
 }
 
 function grantRecord(grant: unknown): GrantRecord | undefined {
@@ -635,14 +616,21 @@ export async function readOwnBookingGuestDietaryForExport(
   db: BookingGuestDb = prisma,
 ): Promise<OwnBookingGuestDietaryExportRow[]> {
   const record = grantRecord(grant);
-  if (!record || record.kind !== "member" || record.purpose !== "self-data-export") {
+  if (!record || record.kind !== "member" || !["self-data-export", "subject-access-export"].includes(record.purpose)) {
     throw new Error("Own booking dietary values need the subject's data-export grant");
   }
   // The subject's own guest rows on ANY booking (their own, or somebody else's
   // they were added to), identified by the stay dates only: another member's
   // booking id is not the subject's data.
   const rows = await db.bookingGuest.findMany({
-    where: { memberId: record.actorMemberId, dietaryRequirements: { not: null } },
+    where: {
+      // An officer grant may name one exact non-member guest row instead (#4915).
+      OR: [
+        { memberId: { in: [...(record.memberIds ?? [])] } },
+        ...(record.exportGuestId ? [{ id: record.exportGuestId, memberId: null }] : []),
+      ],
+      dietaryRequirements: { not: null },
+    },
     select: { stayStart: true, stayEnd: true, dietaryRequirements: true },
     orderBy: [{ stayStart: "asc" }, { id: "asc" }],
   });

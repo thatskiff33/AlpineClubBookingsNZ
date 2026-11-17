@@ -844,7 +844,7 @@ enforces is:
 
 > Current size debt may stay. New debt and debt growth may not appear silently.
 
-**No ceiling is written down.** For each file a change touches, the check reads
+**No per-file ceiling is written down.** For each file a change touches, the check reads
 how long that file was on `origin/main` and compares. From that:
 
 - a file that was **within** its budget may not go over it;
@@ -857,6 +857,12 @@ how long that file was on `origin/main` and compares. From that:
 - an already-over-budget file **may** grow if the change says so out loud, in a
   per-pull-request allowance that names the file, its new length and why
   splitting is worse — see "When a file legitimately has to grow" below;
+- but never past its **hard ceiling** of three times its budget — 2,100 lines
+  for a domain module, 750 for a route handler, 1,500 for a page shell (owner
+  decision, 11 Nov 2026,
+  [#4926](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4926)). No
+  allowance can take a file past it, and a file already past it may only stay
+  the same length or shrink. No file is exempt;
 - a file **renamed within** the budgeted scope keeps its predecessor's ceiling,
   so moving an oversized module does not read as a pile of brand-new debt. A
   file renamed **into** the scope from outside it — from `prisma/`, `scripts/`,
@@ -870,6 +876,13 @@ how long that file was on `origin/main` and compares. From that:
   unfetched `origin/main`. The same goes for a run that finds **no production
   files at all**: "scanned and found nothing wrong" and "scanned nothing" are
   the same empty result and must not be the same message.
+
+Every run on a change also prints `Size debt change from this PR: +N lines`
+(or a negative number), pass or fail: how far the change moves the tree-wide
+figure `--report` totals. A run of small declared increases is invisible one
+change at a time; the tree-wide total, from `--report`, is not. A file moved out
+of the budgeted scope counts as debt removed, exactly as `--report` would count
+it, so check the diff before reading a negative figure as a split.
 
 ```bash
 pnpm run quality:budget                    # verify (also a step in CI's `verify` job)
@@ -1025,7 +1038,20 @@ format and the rules. In short:
 - it may **not** cover a new file, a file renamed into the budgeted scope, or a
   file crossing its budget for the first time. Each is refused by name. An
   allowance lets an already-over-budget file grow; it is not a way to arrive
-  over budget.
+  over budget;
+- it may **not** take a file past its **hard ceiling** of three times its
+  budget (2,100 / 750 / 1,500 lines), refused as `allowance-over-hard-ceiling`.
+
+**The hard ceiling** (owner decision, 11 Nov 2026,
+[#4926](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4926)) exists
+because an escape judged one change at a time needs a limit on the total. As
+measured in #4926 at 11 Nov 2026, `src/lib/payment-recovery.ts` went from 1,881
+lines on 21 Aug 2026 to 3,617 through 33 allowances, each step reasonable on its
+own. The multiple is
+`HARD_CEILING_MULTIPLE` in `scripts/lib/file-size-budget.ts`. A file at or past
+the ceiling can only stay or shrink, so the next change that needs it longer
+splits a cohesive part out first. There is no exemption mechanism — the owner
+chose that over naming `src/lib/bed-allocation.ts` as one.
 
 **`pnpm run quality:budget:update` is gone** (#2979) — if you remember typing it,
 or find it in an old branch or an old pull request comment, the allowance above
@@ -1112,7 +1138,8 @@ reason: the guard belongs inside the claim it protects until #4516 splits the
 
 The same rules apply as for a file allowance: the recorded length must be the
 function's real length, it is one-shot, an unneeded one fails, and it may not
-cover a new function or carry one over 300 for the first time.
+cover a new function or carry one over 300 for the first time. The hard ceiling
+is a file rule; a function allowance has no upper bound of its own.
 [`size-allowances.d/README.md`](../size-allowances.d/README.md) has the format.
 
 ### Quality report
@@ -1166,7 +1193,7 @@ were off by two orders of magnitude.
 | `src/lib/contextual-help.ts` (deleted) | Split (#2689) into 16 modules under `src/lib/contextual-help/`. `index.ts` **is** the registry (path matching, longest-prefix resolution, fallbacks, question attachment) rather than a barrel, and keeps the same three exported accessors; entry content sits in one module per **admin sidebar section** (`admin/*.ts`, matching `buildAdminNavSections` in `admin-sidebar.tsx`) — plus one `appearance-and-website` module split off Setup & Configuration, because `/admin/appearance` is an item in that section rather than a section of its own and folding its seven pages back would take that module to ~810 lines, over budget — with `finance.ts`, `questions-*.ts`, `fallbacks.ts`, and the two leaves `types.ts` and `booking-status-glossary.ts`. Content stayed TypeScript by owner decision — the typed shape is the schema check. Largest module 580 LOC. The structural move was proved value-for-value for every one of the 68 resolved paths: a JSON dump keyed by path — both scopes, both fallbacks, nested resolution and `normalisePath` — was byte-identical before and after (106,917 bytes, same sha256). The same PR then reconciled the shadowed second `/admin/notifications` entry against the live page and folded its accurate delivery-mode field into the surviving entry. The registry now has 68 entries with 68 unique paths (67 admin, one finance), and a permanent test rejects any future duplicate as unreachable text. |
 | `src/lib/admin-bed-allocation.ts` (deleted) | Split (#2688) into eighteen modules named for one responsibility each, all under the 700-LOC budget, with **no barrel** — every one of its 31 non-test importers names the module it depends on, because a re-export facade would have left the monolith in place under a new name and recreated the same dependency magnet. The two barrel rows in this table are precedents for a *published API*, not for hiding a split. It had grown to 55 exports over 80 functions covering room and bed inventory, board assembly, allocation writing, range assignment, audit recording and date arithmetic. The modules, by concern: leaves `-admin-contract` (shared error and db-client types), `-display-names` (how a member and a guest are named), `-admin-settings` (the settings read/write bound to `prisma`), `-date-range` (the board's lodge-night range and its parse); wire shapes `-board-payload` (types only) and `-range-report` (client-safe); pure `-warnings` (the board's warnings); reads `-board-records` (queries and DTO serialisers) and `-board` (payload assembly, officer-card counter); writers `-placement` (the shared write chokepoint all three manual paths pass through, carrying the D-12 consent refusal and the ADR-001 whole-lodge-hold refusal), `-manual-writes` (single night, bulk nights, same-date move, delete), `-range-assign` (#2251 range assignment) with `-range-audit` (its audit record, which stores counts, night runs and booking ids but never other bookings' guest or member names), `-auto-allocate` ("Run auto allocation"), `-approval` (approval plus the #776 booking row lock), `-bunk-pairing` (the #1675 bunk rule and its room-row lock), `-rooms` (room inventory, config import, delete guards) and `-beds` (bed inventory, retire/delete guards). Every function body moved verbatim; the live sizes are whatever the tree currently carries, not a number recorded here. |
 | `src/lib/payment-link.ts` | Split (#2956) by responsibility into the core record module — token resolution, the refusal vocabulary, the payable/paid status tests and the two revocation helpers — plus `payment-link-context` (what the public pay page shows), `payment-link-intent` (the Stripe intent a token may mint, and its recovery error), `payment-link-reissue` (the expired-link "email me a fresh one" mint) and `payment-link-split-guest` (the split non-member child's mint and on-demand issue). **No compatibility barrel**, on the `admin-bed-allocation` precedent above: the core imports none of the four, each flow module imports the core, and every caller names the module it depends on. Every function body moved verbatim; the one deliberate unification was the born-expired test, which two mint sites had written with different operators and which now lives once in `payment-link-expiry.ts`. Live sizes are whatever the tree carries. |
-| `src/lib/bed-allocation.ts` | **Accepted, oversized, and deliberately not split** (owner decision, 9 Aug 2026, #2688). It is 13 exports across 69 functions: a small public surface around one first-fit allocation algorithm whose function bodies are long because the algorithm is. That is cohesion, not sprawl, and the budget is a signal about sprawl. Splitting it would produce files that must be read together to follow one algorithm, which makes capacity code — money code — harder to reason about, not easier. The sibling that WAS split, `admin-bed-allocation.ts`, was the opposite shape: 55 exports over 80 functions of unrelated responsibilities. Grow this file only with the algorithm; a genuinely independent concern with its own API and tests may still be extracted, and anything else is a reason to re-read this row rather than to add here. The ratchet holds its ceiling at whatever length `origin/main` currently carries for it. |
+| `src/lib/bed-allocation.ts` | **Accepted, oversized, and deliberately not split** (owner decision, 9 Aug 2026, #2688). It is 13 exports across 69 functions: a small public surface around one first-fit allocation algorithm whose function bodies are long because the algorithm is. That is cohesion, not sprawl, and the budget is a signal about sprawl. Splitting it would produce files that must be read together to follow one algorithm, which makes capacity code — money code — harder to reason about, not easier. The sibling that WAS split, `admin-bed-allocation.ts`, was the opposite shape: 55 exports over 80 functions of unrelated responsibilities. It is past the hard ceiling of 2,100 lines, which applies to it like any other file (owner decision, 11 Nov 2026, [#4926](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/4926), replacing #2688's "grow this file only with the algorithm"): it may stay or shrink, and the next change that needs it longer must first extract a cohesive part — a genuinely independent concern with its own API and tests is the natural candidate. |
 | `src/lib/email.ts` | Split (#1137) into a re-export facade over cohesive `src/lib/email/` modules (`core`, `admin-alerts`, `account`, `booking`, `membership`, `family`, `waitlist`, `groups`, `booking-requests`, `chores`, `ses-feedback`, plus non-re-exported `internal` plumbing). The `admin-alerts` surface was itself split (#1210) by **domain/source** — `admin-alerts.ts` is now a barrel re-exporting `admin-alerts-shared` (plumbing + `getAdminEmails`), `admin-alerts-booking`, `admin-alerts-membership`, `admin-alerts-finance`, and `admin-alerts-ops`. When an alerts/email module next exceeds the ~700 LOC soft cap, split it along the **domain axis** (booking/capacity, membership lifecycle, finance/Xero/payments, ops) — not by audience, which is fuzzy because most alerts fan out to all admins — and keep the facade barrel's exports byte-identical so `src/lib/email.ts` and every importer keep resolving. |
 | `src/lib/xero-hardening.ts` | Accepted as-is for now: central Xero hardening policy and diagnostics boundary. The `xero-hardening-canonical-links.ts` ↔ `xero-hardening-report.ts` clone pair (112 duplicated lines / 2 clones, jscpd 2026-07-07) is recorded as accepted under this same disposition (#1524 C4, owner-ticked 2026-07; same subsystem call as #1208 items 5/6). |
 | `src/lib/finance-sync-xero-datasets.ts` | Split (#1531, #1524 C3) into a re-export barrel over cohesive `src/lib/finance-sync-xero-datasets/` modules (`constants`, `types`, `date-format`, `report-snapshot`, `invoice-helpers`, `open-invoices`, `aged-invoices-snapshot`, `open-invoices-snapshot`, `report-sync`, `monthly-facts`, `chart-of-accounts`, `invoice-sync`). Behavior-preserving verbatim motion with an acyclic import graph (`constants`/`types`/`date-format` are leaves; the sync orchestrators sit on top); the barrel re-exports the unchanged public surface (29 functions/consts + the `FinanceMonthlyFactsWindowInput` type). The self-duplicated clone regions were deduped: the accounts-receivable and accounts-payable invoice builders now share one generic `buildFinanceOpenInvoicesSnapshot` (each snapshot's persisted invoice shape is supplied verbatim by the caller, keeping `expectedPaymentDate`/`plannedPaymentDate` divergent), and the aged + open-invoice builders share `updateContactDueDateRange`/`compareOpenInvoicePayloadsByDueDate`/`deriveSnapshotCurrency`. jscpd (min-tokens 70) dropped from 186 duplicated lines / 7 clones to 38 / 3 (2026-07-08); the 3 residual clones are the intentionally-separate AR-vs-AP payload literals plus two short prefix regions whose further extraction would over-abstract. |
@@ -1186,7 +1213,7 @@ spelling to copy unless a runbook explicitly gives you another one. (One does:
 command `./node_modules/.bin/tsx --conditions=react-server ...` in full. That is
 correct and supported — what is never correct is a bare `pnpm exec tsx`.) The reason
 is not tidiness.
-`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and `@/lib/stripe`
+`@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero-api-client` and `@/lib/stripe`
 each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
 the production build refuse to ship any of them to a member's browser. Since
 #3204 the club-timezone seed and the two environment-role readers carry it too,
@@ -2028,13 +2055,16 @@ frozen booking through the same writer a review closure uses. It moves no cash,
 card charge, account credit or Xero document. A second apply changes nothing.
 
 Run it only from the image that contains this change, after that colour is the
-only one serving, and never during a mixed-colour window. Point `DATABASE_URL`
-at a non-production copy for the dry-run. Name the database yourself:
+only one serving, and never during a mixed-colour window. The census and the
+dry-run write nothing (the dry-run's preview is rolled back), so either can be
+pointed at a non-production copy or at the live database. The apply writes, and
+it settles only the database `DATABASE_URL` names, so it is run against the live
+database. Name the database yourself:
 
 ```bash
-DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup
-DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --dry-run
-DATABASE_URL=<non-prod copy> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
+DATABASE_URL=<database> pnpm run bookings:edit-review-cleanup
+DATABASE_URL=<database> pnpm run bookings:edit-review-cleanup -- --dry-run
+DATABASE_URL=<live database> pnpm run bookings:edit-review-cleanup -- --apply --actor <memberId>
 ```
 
 The before-values are on the booking's `PRICE_REBASE` history row and the audit
@@ -2796,6 +2826,136 @@ pnpm run xero:bank-refund-void-count --json
 The buckets and what each one leads to are in
 [`xero/ARCHITECTURE.md` -> "Voided bank-transfer refund notes (#4162)"](xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162).
 
+### Find refund notes Xero voided that the app still counts (#4336)
+
+Before #4288 (PR #4341), an older "live" reading of a refund credit note could
+be written after the treasurer voided the note in Xero, and the write erased
+the app's record of the void. The app then counts the refund as documented
+while Xero credits nothing. No local data can find these, so
+`scripts/xero-revived-refund-note-report.ts` asks Xero again.
+
+**When to run it:** once, on the live deployment, after upgrading from any
+version before #4341 (v0.13.2 or earlier). Run it from the app's own
+environment: it needs the app's `AUTH_SECRET` and `DATABASE_URL` to read the
+stored Xero login, and refuses before reading anything if it cannot.
+
+```bash
+pnpm run xero:revived-refund-note-report                      # counts, and cents per payment source
+pnpm run xero:revived-refund-note-report --list               # also each payment, booking and note
+pnpm run xero:revived-refund-note-report --json               # JSON on stdout; logs go to stderr
+pnpm run xero:revived-refund-note-report --resume-from <id>   # carry on a run that stopped early
+```
+
+**What it reads.** Every active refund-note link (both the payment's own role
+and a refund request's), outside any transaction, then each distinct note once
+from Xero, one call every 1.5 seconds, in note-id order. Each listed line shows:
+
+- the payment, booking and payment source;
+- the link role, and the refund request for a request's own note;
+- the note's number and id;
+- Xero's status and `UpdatedDateUTC`, and the status the app records;
+- for the payment's own note, the cents the app counts toward its refunded
+  total; for a refund request's own note, the note's value instead, shown
+  apart because the refunded total never counts it;
+- whether `Payment.xeroRefundCreditNoteId` names the note.
+
+The list comes first; the run ends with the count and the cents per payment
+source. A note Xero reports live is not listed. A link the app already records
+as VOIDED or DELETED is counted in its own line, outside the list and its
+totals. It needs no action: the app already treats the note as cancelled, and
+for the payment's own refund note the nightly link cleanup (#4161) also
+retires the link. A note Xero cannot find, or that could not be read, goes on
+a separate "could not read" list.
+
+**What it writes.** It changes no booking, payment, credit, link or Xero
+record. It can write API-usage rows and, if the Xero token needs refreshing,
+the new token, its refresh lease and a credential audit row; a failed refresh
+alerts the admins, as it would for the app.
+
+**Limits, and carrying on.** A minute rate limit waits and retries. The run
+stops, printing what it read so far, on Xero's daily limit or once the app's
+own share of it is used (85% of the app's 1,000-call daily budget, counting
+everything else the app called that day, which leaves the rest to the outbox
+and the inbound sync), if Xero needs reconnecting, or after three failed reads
+in a row. Its reads never arm the outage pause; that pause lives in memory in
+each process, so the report and the running app never see each other's.
+
+Whenever a run leaves a note unread (a failed read, or a stop before the note
+was reached), the output says **THE LIST IS INCOMPLETE** and prints
+`To carry on, run again with --resume-from <id>` (`resumeFrom` in the JSON).
+That id is the earliest note the run did not read, so the next run retries
+every failed read before it moves on; a note after it that was already read
+can be read and listed again, and the later run's line is the one to act on.
+A note Xero answers for, even "no such note", counts as read and is not
+retried. A club with more distinct refund notes than one day's share, roughly
+600 to 800 on a quiet day, takes several days.
+
+How to finish a multi-day walk:
+
+1. Run the report. If it says **THE LIST IS INCOMPLETE**, keep its output and
+   run it again the next day with the `--resume-from` id it printed.
+2. A resumed run says its output, totals included, is **this run only**: keep
+   every day's output together. Do not add the parts' totals together: a note
+   read again after an earlier failure appears in two parts. For a grand
+   total, count each note id once across the parts, using the latest part's
+   line.
+3. The walk is finished when a resumed run prints "This was the last part:
+   every note from <id> to the end was read; the notes before it were covered
+   by earlier runs", with no **THE LIST IS INCOMPLETE** line (exit code 0,
+   `walkFinished: true` in the JSON). A run from the beginning that reads
+   everything says neither and has `complete: true`.
+4. If a run prints **NO PROGRESS**, check its "Read from Xero" count. If it is
+   0 and the run stopped on the daily limit, wait until tomorrow and run the
+   same command. Otherwise the note it resumed from is stuck: do not re-run
+   with the same id. Ask a maintainer, giving the note id privately. A
+   maintainer can move past it by resuming from the next note id in the
+   `--list` output; the stuck note is then checked by hand.
+
+If the note a resume id names has since left the active set (handled with
+**Sync from Xero now**, say), the run starts at the next note after it and
+says so; every note before the id was covered by earlier runs. An id that was
+never a refund note on any link is refused. Exit code 0 means nothing in this
+run's scope is left to read; 2 means a note is; 1 is an error or a refused
+argument.
+
+**Could not read.** A read that failed is retried by the next run (above). A
+note Xero sent without a status is reported and not retried: ask a
+maintainer. A note **Xero says does not exist** will never be readable, so do
+not wait for it. First check that Xero is connected to the organisation the
+note was raised in (**Admin → Finance → Xero Sync**). If it is, the app's link
+points at nothing: **Sync from Xero now** on that booking fails, reporting
+the note was not found, and no tool in the app retires such a link yet
+(#5233, which needs an owner decision on the rule). Ask a maintainer to look
+at it, giving the payment and note ids privately.
+
+**Privacy.** The output names members' payments and refunds by id and amount.
+It goes to your terminal only. Never post it in an issue, a pull request or
+any public place.
+
+**What to do with each line.** Open the booking and use **Sync from Xero now**
+([guide](guides/xero.md#pick-up-a-change-made-in-xero-now)). It re-reads every
+credit note on an active link of the booking's payment, in both roles, and a
+VOIDED or DELETED reading always applies (#4288). Then:
+
+- the link goes inactive, and if `Payment.xeroRefundCreditNoteId` named the
+  note it is moved to another live refund note or cleared;
+- **bank transfer:** the recount never takes the refunded total below the
+  payment's own refund history. The nightly voided-note follow-up (#4162) picks
+  the void up the night after and, with `XERO_ENABLE_BANK_REFUND_VOID_WRITES`
+  set, puts the refund back on the treasurer's list
+  ([runbook](xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162));
+- **card:** the refunded total is raise-only, so it stays. Where the remaining
+  notes no longer cover it, the refund-ledger-divergence alert fires, and the
+  nightly credit reconciliation can then raise a fresh refund note for the
+  uncovered amount, subject to its usual checks;
+- **a refund request's own note:** no total is recounted and nothing re-raises
+  it. An officer decides whether to raise a fresh note (#4214).
+
+The sync may answer **Already in step** even when it changed a link, because it
+compares money records, not links. Run the report again afterwards: a handled
+line no longer appears. **Sync everything from Xero now** does not revisit
+these notes.
+
 ### Audit bank-transfer receipts settled at a stale figure (#3979)
 
 Before #3979 the inbound Xero settle kept the figure an Internet Banking payment
@@ -3191,7 +3351,7 @@ dump file first; the script never touches S3 itself.
 To fetch a backup safely, use read-only S3 credentials from a workstation (never
 the production host) to copy one object out of the backup bucket. The backups
 live under the `tacbookings_s3backup/` prefix of the configured bucket. Read the
-destination **bucket** and **region** from **Admin → Integrations → Database
+destination **bucket** and **region** from **Admin → Monitoring & Support → Database
 Backups** (`/admin/backups`) — since #2095 the backup configuration lives in the
 encrypted in-app store, not in `BACKUP_S3_*` environment variables. Use your OWN
 read-only S3 credentials (from your operator secret store) rather than the app's
@@ -3254,7 +3414,11 @@ Every production deploy ships a tagged release (#4465), cut with
 [`scripts/release/cut-release.mjs`](../scripts/release/cut-release.mjs). `main`
 only moves through pull requests, so the release is cut in two phases with the
 release-prep pull request between them — the order v0.13.2 was cut in. Both
-phases print their whole plan and change nothing without `--execute`.
+phases print their whole plan and change nothing without `--execute`. The
+deploy script enforces the rule (#4978, `INV-OPS-019`): it refuses a commit no
+annotated `vX.Y.Z` tag on `origin` points at, unless
+`ALLOW_UNTAGGED_DEPLOY_COMMIT=1` and a written `UNTAGGED_DEPLOY_COMMIT_REASON`
+are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-that-is-not-a-release-4978).
 
 1. From a clean checkout of `origin/main`, prepare the release-prep commit:
 
@@ -3270,7 +3434,16 @@ phases print their whole plan and change nothing without `--execute`.
    local tag for the version that `origin` does not have, and a release that
    is prepared but not yet tagged (`package.json` ahead of `origin`'s latest
    tag, with that version's section in `CHANGELOG.md`) — publish that one, or
-   fold late fragments into it, rather than planning a lower version. The version is the
+   fold late fragments into it, rather than planning a lower version. It also
+   refuses, dry run included, while the upgrade documents are not ready
+   (`scripts/release/upgrade-docs.mjs`, #4979): `docs/UPGRADING.md` must have
+   exactly one `## Unreleased`, with only its fixed guide sections above it and
+   no release-specific `(#NNNN)` section there, and
+   `docs/PRODUCTION_UPGRADE_RUNBOOK.md`'s opening paragraph must either say
+   "This runbook is release-agnostic" or name a release no older than the
+   version being cut (the census in step 3 holds the release-prep pull request
+   to the same threshold, through `package.json`). Fix them in a pull request
+   to `main`, then re-run. The version is the
    latest `vX.Y.Z` tag **on `origin`** (never this clone's tags) plus a minor
    bump when any fragment
    is named `*.feature.md`, or a patch bump otherwise
@@ -3278,8 +3451,9 @@ phases print their whole plan and change nothing without `--execute`.
    overrides it and `--date YYYY-MM-DD` overrides the release date. With
    `--execute` it creates `release/v<version>`, sets `package.json`'s
    `"version"` (`pnpm-lock.yaml` does not record it), compiles the changelog
-   (step 2) and commits. It never pushes. If it stops part way it prints how to
-   inspect the branch or abandon it.
+   (step 2), files the release documents (step 3) and commits. It never
+   pushes. If it stops part way it prints how to inspect the branch or abandon
+   it.
 2. The compile step runs `scripts/release/compile-changelog.mjs` — on its own:
 
    ```bash
@@ -3308,18 +3482,75 @@ phases print their whole plan and change nothing without `--execute`.
    If a file removal fails during apply, the compiler restores the original
    changelog and fragments so you can fix the I/O cause and retry. If that
    restoration itself fails, stop and inspect the named files before retrying.
-3. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
-   guide, and `docs/ARCHITECTURE.md` for dependency, release, GHCR, migration,
+3. The same commit brings the release documents up to date (#4979, #4983).
+   **A release's upgrade steps are filed under that release**: the tool
+   records the release boundary in the upgrade guide and the release notes as
+   well as the changelog, so nobody rolls them by hand.
+
+   - **The upgrade guide is folded.** `release:cut prepare` renames
+     `docs/UPGRADING.md`'s `## Unreleased` block to
+     `## v<previous> → v<version>`, `<previous>` being the same latest tag on
+     `origin`, and leaves a fresh, empty `## Unreleased` above it. When
+     nothing was waiting, the new section says the release has no manual
+     upgrade steps, so every tag has a section. Text above `## Unreleased`
+     and every released section are left untouched. It refuses a guide that
+     already has the version's section, one with a step added since the
+     previous tag to a released section that tag already had, or any tracked
+     document (bar `CHANGELOG.md` and `changelog.d/`) that links the guide's
+     `#unreleased` anchor: the link would be left on the empty section, so
+     link the step's own heading instead. Prose that says "see Unreleased"
+     with no link is not found: name the step instead. A release section that
+     arrives whole between two tags, such as a fork merging an upstream
+     release, is not a late step. It reads the previous tag's guide from that
+     tag's commit and refuses when the commit is not in the clone (a shallow
+     clone), rather than skip the check. Read the folded section: it should
+     open with `### Upgrade checklist for this release`, the ordered
+     before / during / after list, and the plan says so when it does not.
+     `--amend` moves steps added under the fresh `## Unreleased` to the end
+     of the untagged release's section.
+   - **A notes stub is written.** `docs/releases/v<version>.md` links the
+     version's changelog and upgrade-guide sections. It carries an unfinished
+     marker (`<!-- release-notes:unfinished -->`), a note saying it is a stub
+     and a placeholder paragraph, and `publish` refuses while any of the three
+     is still in the page. `docs/releases/README.md` lists the page first under
+     "Published release notes". The documentation hub links the index, not a
+     version, so it needs no edit.
+   - **The runbook stays release-agnostic.**
+     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair; its §7 and §8
+     are blank templates an operator fills in offline. If it has been
+     re-scoped to one release, re-scope it to the new tag, templates included.
+     Never write a rehearsal date, result or "confirmed by" into it: only the
+     owner attests a rehearsal, and not in the public repository.
+   - **Every windowed migration is reached.** A census
+     (`src/lib/__tests__/upgrade-docs-scope.test.ts`) fails a pull request when
+     a windowed ledger row is not named in the runbook's
+     [§2.4](PRODUCTION_UPGRADE_RUNBOOK.md#24-windowed-migration-deploy-sequence).
+     It cannot judge the checklist. List the ledger's windowed rows with
+     `awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`
+     and confirm that each one added since the previous tag is reached from the
+     checklist's "During the window" part. The checklist links; it never copies
+     a migration's text.
+
+   The dry run lists each of these. The fold files only what sits under
+   `## Unreleased`: an upgrade step written anywhere else is left where it is,
+   so move any such step under `## Unreleased` in a pull request before you
+   prepare. Then, before merging the release-prep pull request, read the new
+   upgrade section and drop any step that no longer applies, and write the
+   notes page, deleting the marker, the stub note and the placeholder.
+4. Check `README.md`, `DEPLOYMENT.md`, `CONFIGURATION.md`, this maintenance
+   guide, `docs/ARCHITECTURE.md`, `docs/UPGRADING.md` and
+   `docs/PRODUCTION_UPGRADE_RUNBOOK.md` for dependency, release, GHCR, migration,
    validation, and public/private workflow drift.
-4. Confirm any new or changed migrations that touch hot tables or potentially
+5. Confirm any new or changed migrations that touch hot tables or potentially
    breaking SQL are represented in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`, or
    document why no ledger entry is needed.
-5. Run local release validation without live provider credentials, then rely on
+6. Run local release validation without live provider credentials, then rely on
    GitHub Actions for Docker image build, static analysis, secret scanning,
    dependency review, and GHCR publication.
-6. Push `release/v<version>` and open the release-prep pull request from the
-   template (`pnpm run pr:check <body-file>` first). It merges like any other.
-7. After it merges, tag the merged commit and publish the GitHub release:
+7. Push `release/v<version>` and open the release-prep pull request from the
+   template (`pnpm run pr:check <body-file>` first), with the notes page
+   written. It merges like any other.
+8. After it merges, tag the merged commit and publish the GitHub release:
 
    ```bash
    git fetch origin main
@@ -3334,8 +3565,16 @@ phases print their whole plan and change nothing without `--execute`.
    repositories are refused. It refuses when:
 
    - the commit is not on `origin/main`'s **first-parent** chain — only a
-     commit CI pushed to `main` has GHCR images, so only its tag can be
-     deployed (a release-prep branch commit inside a merge never was);
+     commit pushed to `main` gets a CI run that publishes GHCR images (a
+     release-prep branch commit inside a merge never was);
+   - its `ci.yml` push run on `main` has not published its images: GitHub
+     reports no run whose `Publish GHCR images` job succeeded, because the run
+     is still going, failed, was cancelled by hand, or never started
+     (`INV-OPS-021`). The refusal names the commit and the run. Wait for the
+     run, or re-run it with `gh run rerun <run-id>` and publish once that job
+     succeeds. The check runs in the dry run too, on the commit that would be
+     tagged (on a resume, the tagged commit), and refuses when GitHub's
+     answer cannot be read — a fine-grained token needs **Actions: Read**;
    - `origin` already has the version's tag on another commit, or the version
      is not newer than `origin`'s latest tag — nothing new was prepared;
    - `CHANGELOG.md` has no section for the version, or still has entries
@@ -3350,13 +3589,32 @@ phases print their whole plan and change nothing without `--execute`.
      be folded into a patch release: carry it, or revert the release-prep
      merge and prepare again as minor. Or **carry** them:
      `pnpm run release:cut publish --carry-late-fragments --execute` publishes
-     anyway and lists them as carried into the next release.
+     anyway and lists them as carried into the next release;
+   - `docs/UPGRADING.md` has no `## v<previous> → v<version>` section, or still
+     has upgrade steps under `## Unreleased` — a pull request with its own
+     upgrade step merged while the release-prep one was open. They would ship
+     in this tag but read as the next release's. Fold them:
+     `pnpm run release:cut prepare --amend --execute` moves them into the
+     untagged version's section (and rolls the guide if prep never did).
+     `--carry-late-fragments` does **not** carry upgrade steps, because a
+     step a club never sees under its release is the harm this check stops;
+   - `docs/UPGRADING.md` has more `### ` steps in an already-released section
+     than the previous tag's copy of that section — a late pull request merged
+     its step into the wrong section. Rewording a released step's title adds no
+     step, so it is not refused. `prepare` refuses this too, before it has
+     written anything: move the step under `## Unreleased` in a pull request,
+     then run `prepare` again. After a refused `publish`, move it the same way,
+     then fold it with `--amend`;
+   - `docs/releases/v<version>.md` is missing, or still carries the unfinished
+     marker, the stub note or the placeholder paragraph. Write the page through
+     a pull request, then publish.
 
    The dry run also checks `gh auth status` and that `gh` can reach the
-   repository, and says which release body it will use: the section itself,
-   or — over 120,000 characters, below GitHub's 125,000 limit — a short body
-   with the entry count and a link to the section in `CHANGELOG.md` at the
-   tag. With `--execute` it writes the body to a file, creates the annotated
+   repository, prints the CI run that published the commit's images, and
+   says which release body it will use: the section itself, or — over
+   120,000 characters, below GitHub's 125,000 limit — a short body with the
+   entry count and a link to the section in `CHANGELOG.md` at the tag. With
+   `--execute` it writes the body to a file, creates the annotated
    `v<version>` tag, and only then pushes the tag and runs
    `gh release create`. A failure prints the re-run, always with
    `--commit <sha>` of the commit being tagged, and the re-run resumes: a
@@ -3371,7 +3629,7 @@ phases print their whole plan and change nothing without `--execute`.
    version's notes.
    Add validation evidence, migration notes, image names and non-blocking
    maintainability follow-ups to the published release by hand.
-8. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
+9. Deploy the tag (`DEPLOYMENT.md`, "Cut the release first").
 
 ## GitHub Actions Availability
 

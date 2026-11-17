@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { formatCents } from "@/lib/utils";
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,10 +43,17 @@ import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { ApiRefusalError, apiErrorMessageFromBody, readApiObjectOrNull, refusalMessageOr } from "@/lib/api-error-message";
 import { useClubFormat } from "@/components/club-format-provider";
 import { buildBookingDetailPath } from "@/lib/booking-email-contract";
 import { adminHref } from "@/lib/admin-hubs";
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  adminListPage,
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
@@ -185,7 +193,7 @@ function getOfferEmailSummary(delivery: OfferEmailDelivery) {
     case "queued":
       return "Offer email queued";
     case "retrying":
-      return `Offer email retrying (${delivery.attempts ?? "?"}/3)`;
+      return `Offer email retrying (${delivery.attempts ?? "?"}/${EMAIL_RETRY_MAX_ATTEMPTS})`;
     case "exhausted":
       return "Offer email retry exhausted";
     case "undeliverable":
@@ -259,7 +267,7 @@ export default function AdminWaitlistPage() {
   // Memoized so the React Compiler treats the derived string as immutable
   // when it is passed to helpers and used as a loadEntries dependency.
   const queryString = useMemo(() => searchParams.toString(), [searchParams]);
-  const queryPage = parsePositiveInteger(searchParams.get("page"), 1);
+  const queryPage = parseAdminListPageParam(searchParams.get("page"));
   const queryPageSize = parsePageSize(searchParams.get("pageSize"));
   const fromParam = searchParams.get("from") ?? "";
   const toParam = searchParams.get("to") ?? "";
@@ -347,10 +355,7 @@ export default function AdminWaitlistPage() {
   }
   usePublishDiagnosticsViewState(publishedView);
 
-  const totalPages = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
-  const resultStart =
-    pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1;
-  const resultEnd = Math.min(pagination.page * pagination.pageSize, pagination.total);
+  const totalPages = Math.max(1, adminListPage(pagination).totalPages);
 
   useEffect(() => {
     setFrom(fromParam);
@@ -369,7 +374,7 @@ export default function AdminWaitlistPage() {
 
       if (!res.ok) {
         failure = diagnosticsPageErrorCodeForStatus(res.status);
-        throw new Error(apiErrorMessageFromBody(data, "Failed to load waitlist"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(data, "Failed to load waitlist"));
       }
 
       const nextEntries = Array.isArray(data.entries)
@@ -393,7 +398,7 @@ export default function AdminWaitlistPage() {
         total: 0,
       });
       failure = failure ?? DIAGNOSTICS_PAGE_NETWORK_ERROR_CODE;
-      setError(err instanceof Error ? err.message : "Failed to load waitlist");
+      setError(refusalMessageOr(err, "Failed to load waitlist"));
       setErrorAttention((value) => value + 1);
     } finally {
       setLoadErrorCode(failure);
@@ -444,7 +449,7 @@ export default function AdminWaitlistPage() {
         params.delete("to");
       }
 
-      params.set("page", "1");
+      setAdminListPageParam(params, 1);
       params.set("pageSize", String(pagination.pageSize));
     });
   }
@@ -455,7 +460,7 @@ export default function AdminWaitlistPage() {
     updateQuery((params) => {
       params.delete("from");
       params.delete("to");
-      params.delete("page");
+      setAdminListPageParam(params, 1);
       params.delete("pageSize");
     });
   }
@@ -464,18 +469,18 @@ export default function AdminWaitlistPage() {
     from === "" &&
     to === "" &&
     queryPage === 1 &&
-    queryPageSize === 25;
+    queryPageSize === ADMIN_LIST_DEFAULT_PAGE_SIZE;
 
   function handlePageSizeChange(nextPageSize: string) {
     updateQuery((params) => {
-      params.set("page", "1");
+      setAdminListPageParam(params, 1);
       params.set("pageSize", nextPageSize);
     });
   }
 
   function handlePageChange(nextPage: number) {
     updateQuery((params) => {
-      params.set("page", String(Math.max(1, Math.min(totalPages, nextPage))));
+      setAdminListPageParam(params, Math.max(1, Math.min(totalPages, nextPage)));
       params.set("pageSize", String(pagination.pageSize));
     });
   }
@@ -502,7 +507,14 @@ export default function AdminWaitlistPage() {
           ...(notifyMember !== undefined ? { notifyMember } : {}),
         }),
       });
-      const data = (await res.json()) as Record<string, unknown>;
+      const data = res.ok
+        ? ((await res.json()) as Record<string, unknown>)
+        : await readApiObjectOrNull(res);
+      // A refusal with no readable body (an HTML page from the proxy) says
+      // nothing about whether this capacity write landed, so it takes the
+      // unverified-outcome copy below, like a request that got no answer
+      // (#2668, ALP-589).
+      if (!data) throw new Error("Unreadable force-confirm refusal");
 
       if (res.ok && data.success) {
         setOverbookDialog(null);
@@ -533,7 +545,7 @@ export default function AdminWaitlistPage() {
         });
       } else {
         setForceConfirmReport(null);
-        setError(readString(data.error) || "Failed to force-confirm booking");
+        setError(apiErrorMessageFromBody(data, "Failed to force-confirm booking"));
         setErrorAttention((value) => value + 1);
       }
     } catch {
@@ -834,7 +846,7 @@ export default function AdminWaitlistPage() {
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Showing {resultStart}-{resultEnd} of {pagination.total}
+            {formatAdminListRange(pagination)}
           </p>
           <AdminDataTable>
             <TableHeader>

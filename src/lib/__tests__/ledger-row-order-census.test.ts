@@ -82,7 +82,7 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "each captured row is judged on its own (its line, its event, its amount); the findings are a set, not a sequence.",
   "src/lib/payment-reconciliation.ts > settleBookingPaymentInTransaction":
     "the ids of the rows the officer settle is about to write, a set the receipt hook selects by membership (`includes`).",
-  // #4993 (INV-PAY-155): the stale saved-card claim recovery's locked re-read.
+  // #4993 (INV-PAY-157): the stale saved-card claim recovery's locked re-read.
   "src/lib/saved-card-charge-claim.ts > recoverStaleSavedCardClaims":
     "reads only each row's status and asks whether ANY row on the payment is captured (`.some`); a captured row anywhere skips the recovery, whatever the order.",
   "src/lib/xero-inbound/invoice-paid-effects.ts > syncInternetBankingPaymentsForPaidInvoice":
@@ -183,7 +183,7 @@ const EXISTENCE_READS: Record<string, string> = {
     "tests stampedTransaction to throw the Xero invoice refusal; no row id is consumed.",
   "src/lib/payment-reconciliation.ts > reverseManualBookingPayment > settledStripeTransaction":
     "tests settledStripeTransaction to refuse reversing after a card capture; no row id is consumed.",
-  "src/lib/xero-booking-edit-settlement.ts > readInternetBankingReceiptCaptured > captured":
+  "src/lib/xero-booking-edit-receipt.ts > readInternetBankingReceiptCaptured > captured":
     "returns captured !== null as the receipt-captured boolean; no row id is consumed.",
   "src/lib/xero-inbound/invoice-paid-effects.ts > syncInternetBankingPaymentsForPaidInvoice > existingPrimary":
     "tests !existingPrimary before creating a primary receipt only when none exists; no row id is consumed.",

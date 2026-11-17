@@ -1,4 +1,6 @@
+import ts from "typescript";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { NextConfig } from "next";
@@ -60,7 +62,6 @@ import {
   adminHubOwnedPaths,
 } from "@/lib/admin-hubs/security-map";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
-import { xeroSectionId } from "@/app/(admin)/admin/finance/xero/_components/types";
 import { BANK_REFUND_VOIDS_ANCHOR } from "@/components/admin/bank-refund-voids-to-answer-panel";
 
 // ---------------------------------------------------------------------------
@@ -643,6 +644,7 @@ describe("the hub prefix census", () => {
       "/admin/membership/membership-types",
       "/admin/membership/member-fields",
       "/admin/membership/subscription-lockout",
+      "/admin/membership/subscription-categories",
     ]);
     expect(adminHubOwnedPaths("members")).not.toContain("/admin/membership");
     expect(TODAYS_SOURCES.routeMapPrefixes).not.toContain("/admin/membership");
@@ -808,6 +810,7 @@ describe("the entries' shape", () => {
       "site-content",
       "site-style",
       "stuck-states",
+      "subscription-categories",
       "subscription-lockout",
       "subscriptions",
       "testing-route-error",
@@ -1100,6 +1103,15 @@ describe("isInexactAdminPagePath", () => {
   });
 });
 
+/** #4959: the Stuck States signals whose card links to their own named rows. */
+const STUCK_STATE_ROW_ANCHORS = [
+  "payment-group-settlement-refund-unexecuted",
+  "payment-cancelled-refund-unrecorded",
+  "payment-recovery-exhausted",
+  "payment-group-settlement-stale",
+  "booking-unnamed-placeholder-guests",
+];
+
 describe("tabs and anchors", () => {
   it("links a tab, the default one without a query, and a section", () => {
     expect(adminTabHref("family-groups", "suggestions")).toBe("/admin/family-groups?tab=suggestions");
@@ -1110,14 +1122,6 @@ describe("tabs and anchors", () => {
     expect(adminAnchorHref("health", "integration-readiness")).toBe(
       "/admin/health#integration-readiness",
     );
-    expect(adminAnchorHref("xero", "xero-section-mappings")).toBe("/admin/xero#xero-section-mappings");
-  });
-
-  it("declares Xero's mappings anchor as the id its card is given (C5 #4802)", () => {
-    // The card writes `id={xeroSectionId("mappings")}`; the links go through the
-    // registry. One spelling, or a renamed section would leave every link short.
-    expect(xeroSectionId("mappings")).toBe("xero-section-mappings");
-    expect(getAdminPage("xero").anchors).toEqual([xeroSectionId("mappings")]);
   });
 
   it("reads a tab, falling back to the first for anything it does not declare", () => {
@@ -1142,28 +1146,87 @@ describe("tabs and anchors", () => {
       ADMIN_PAGES.filter((page) => page.tabs.length > 0 || page.anchors.length > 0)
         .map((page) => [page.id, [...page.tabs], [...page.anchors]]),
     ).toEqual([
-      ["xero", [], ["xero-section-mappings"]],
       ["membership-cancellations", ["requests", "settings"], []],
       ["family-groups", ["groups", "suggestions"], []],
       ["health", [], ["integration-readiness"]],
-      ["stuck-states", [], ["bank-refund-voids"]],
+      ["stuck-states", [], ["bank-refund-voids", ...STUCK_STATE_ROW_ANCHORS]],
     ]);
   });
 
-  /** The page's own file, and everything beside it in its directory's `_components`. */
-  function pageSources(page: AdminHubPage): string {
-    const file = PAGE_FILE_BY_PATH.get(diskPath(page))!;
-    const dir = path.join(process.cwd(), path.dirname(file));
-    const components = path.join(dir, "_components");
-    const besides = fs.existsSync(components)
-      ? fs.readdirSync(components)
-          .filter((name) => /\.tsx?$/.test(name))
-          .map((name) => path.join(components, name))
-      : [];
-    return [path.join(dir, path.basename(file)), ...besides]
-      .map((abs) => stripComments(fs.readFileSync(abs, "utf8")))
-      .join("\n");
+  /**
+   * Follow static value imports/re-exports within the entry file's directory,
+   * including relative and @/ paths and index barrels. An unimported sibling is
+   * not page source. This proves import reachability, not conditional rendering;
+   * shared components outside this directory still need COMPONENT_ANCHORS below.
+   * An anchor whose element id is minted by a helper, rather than written as a
+   * string literal, is deliberately not supported: the census looks for the
+   * literal, so such an anchor fails until its element writes the id out.
+   */
+  function reachableSources(entry: string): string {
+    const file = path.resolve(entry);
+    const dir = path.dirname(file);
+    const sources = new Map<string, string>();
+    function visit(file: string) {
+      if (sources.has(file)) return;
+      const source = stripComments(fs.readFileSync(file, "utf8"));
+      sources.set(file, source);
+      const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+      for (const node of parsed.statements) {
+        if (!(ts.isImportDeclaration(node) || ts.isExportDeclaration(node))) continue;
+        if (ts.isImportDeclaration(node) ? node.importClause?.isTypeOnly : node.isTypeOnly) continue;
+        const specifier = node.moduleSpecifier;
+        if (!specifier || !ts.isStringLiteral(specifier)) continue;
+        const name = specifier.text;
+        const base = name.startsWith("@/")
+          ? path.resolve("src", name.slice(2))
+          : name.startsWith(".") ? path.resolve(path.dirname(file), name) : null;
+        if (!base || !base.startsWith(dir + path.sep)) continue;
+        const resolved = [base, base + ".ts", base + ".tsx", path.join(base, "index.ts"), path.join(base, "index.tsx")]
+          .find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+        if (resolved) visit(resolved);
+      }
+    }
+    visit(file);
+    return [...sources.values()].join("\n");
   }
+
+  /** The page's own file, and what it reaches by static imports in its directory. */
+  function pageSources(page: AdminHubPage): string {
+    return reachableSources(PAGE_FILE_BY_PATH.get(diskPath(page))!);
+  }
+
+  it("follows a page's static imports and no unimported sibling, on a fixture tree", () => {
+    // A fixture, not a production page: the census logic is proved without
+    // depending on which real components a page happens to import today.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "page-sources-"));
+    const dir = path.join(root, "app");
+    try {
+      fs.mkdirSync(path.join(dir, "_components", "barrel"), { recursive: true });
+      const write = (name: string, body: string) => fs.writeFileSync(path.join(dir, name), body);
+      write("page.tsx", [
+        'import { Used } from "./_components/used";',
+        'import { Barreled } from "./_components/barrel";',
+        'import type { TypeOnly } from "./_components/type-only";',
+        'import { Outside } from "../outside";',
+        'export default function Page() { return <Used id="page-literal" />; }',
+      ].join("\n"));
+      write("_components/used.tsx", 'import { Page } from "../page";\nexport const Used = "reached-used";');
+      write("_components/barrel/index.ts", 'export * from "../deep";');
+      write("_components/deep.tsx", 'export const Barreled = "reached-deep";');
+      write("_components/type-only.tsx", 'export type TypeOnly = "skipped-type-only";');
+      write("_components/unimported.tsx", 'export const Sibling = "skipped-sibling";');
+      fs.writeFileSync(path.join(root, "outside.tsx"), "export const Outside = 1;");
+      const reached = reachableSources(path.join(dir, "page.tsx"));
+      expect(reached).toContain("page-literal");
+      expect(reached).toContain("reached-used");
+      expect(reached).toContain("reached-deep");
+      expect(reached).not.toContain("skipped-type-only");
+      expect(reached).not.toContain("skipped-sibling");
+      expect(reached).not.toContain("Outside = 1");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("has each tabbed page render the shared tab shell for itself, with every tab", () => {
     // `AdminPageTabs` reads `?tab=` through `parseAdminPageTab`; the tabs a page
@@ -1181,17 +1244,13 @@ describe("tabs and anchors", () => {
   });
 
   /**
-   * An anchor whose element id is minted by a helper, not written out: the
-   * expression the page must render instead, pinned equal to the anchor above.
-   */
-  const MINTED_ANCHORS: Record<string, string> = {
-    "xero-section-mappings": 'id={xeroSectionId("mappings")}',
-  };
-
-  /**
    * An anchor whose element is a shared component's, outside the page's
    * directory: the page must render the component, and the component must give
    * its element the id through the registry-typed constant pinned below.
+   *
+   * #4959: each Stuck States signal's table row is the item's own element. The
+   * page renders `<TableRow id={item.id}`, and the dashboard module writes each
+   * signal's id out as a literal, so the anchor is the id the card links to.
    */
   const COMPONENT_ANCHORS: Record<
     string,
@@ -1202,6 +1261,12 @@ describe("tabs and anchors", () => {
       file: "src/components/admin/bank-refund-voids-to-answer-panel.tsx",
       id: "id={BANK_REFUND_VOIDS_ANCHOR}",
     },
+    ...Object.fromEntries(
+      STUCK_STATE_ROW_ANCHORS.map((anchor) => [
+        anchor,
+        { renders: "<TableRow id={item.id}", file: "src/lib/stuck-state-dashboard.ts", id: `id: "${anchor}"` },
+      ]),
+    ),
   };
 
   /** Why `anchor` is not rendered by `page`, or `null` when it is. */
@@ -1213,9 +1278,7 @@ describe("tabs and anchors", () => {
       const own = stripComments(fs.readFileSync(path.join(process.cwd(), component.file), "utf8"));
       return own.includes(component.id) ? null : `${page.id}: ${component.file} has no ${component.id}`;
     }
-    const minted = MINTED_ANCHORS[anchor];
-    const found = minted === undefined ? source.includes(`"${anchor}"`) : source.includes(minted);
-    return found ? null : `${page.id}: no "${anchor}"`;
+    return source.includes(`"${anchor}"`) ? null : `${page.id}: no "${anchor}"`;
   }
 
   it("has each anchored page render every anchor as an element id", () => {
@@ -1229,7 +1292,7 @@ describe("tabs and anchors", () => {
     // The panel writes `id={BANK_REFUND_VOIDS_ANCHOR}`; its stuck-state row links
     // with adminAnchorHref. One spelling, typed against the registry.
     expect(BANK_REFUND_VOIDS_ANCHOR).toBe("bank-refund-voids");
-    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR]);
+    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR, ...STUCK_STATE_ROW_ANCHORS]);
     expect(adminAnchorHref("stuck-states", BANK_REFUND_VOIDS_ANCHOR)).toBe(
       "/admin/stuck-states#bank-refund-voids",
     );
@@ -1714,6 +1777,7 @@ describe("buildAdminUrlRules", () => {
       ["/admin/site-content", "/admin/website/site-content"],
       ["/admin/site-style", "/admin/website/site-style"],
       ["/admin/stuck-states", "/admin/system/stuck-states"],
+      ["/admin/subscription-categories", "/admin/membership/subscription-categories"],
       ["/admin/subscription-lockout", "/admin/membership/subscription-lockout"],
       ["/admin/subscriptions", "/admin/finance/subscriptions"],
       ["/admin/testing/route-error", "/admin/system/testing/route-error"],
@@ -1909,6 +1973,8 @@ describe("the registry is inert", () => {
   const REGISTRY_DIR = "src/lib/admin-hubs/";
   /** Every file outside the registry that may import it, and why. */
   const IMPORTERS: Record<string, string> = {
+    "src/app/(admin)/admin/booking-desk/bed-allocation/page.tsx": "#4972: the empty-lodge alert links to Lodges",
+    "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the step parameter and the webhooks and mapping step ids with the shortcuts",
     "src/lib/admin-permissions.ts":
       "C2: the route map's page half, the admission paths and the landing page are generated",
     "src/config/feature-routes.ts": "C2: the admin page module gates are generated",
@@ -1958,14 +2024,14 @@ describe("the registry is inert", () => {
       "S1: its cards link with adminHref; its id is the registry's anchor",
     "src/app/(admin)/admin/setup/setup-page-client.tsx":
       "S1: the cards for the merged setup pages link with adminHref; C8: and the Notifications & Email card; " +
-      "C9: the Membership & Members card is adminLink",
+      "#4968: its heading is the registry label",
     "src/app/(admin)/admin/messages/notifications/page.tsx":
       "S1: the cancellation settings card links the Settings tab; C8: its other cards link with adminHref; " +
       "#4878: the Delivery Rules and Recipients titles are the registry labels",
     "src/components/admin/membership-cancellation-blocker-notice.tsx":
       "S1: the settings link is the queue's Settings tab",
     "src/lib/setup-readiness.ts":
-      "S1: the cancellation step links the Settings tab; C5: Xero setup, and the mappings anchor and label; " +
+      "S1: the cancellation step links the Settings tab; C5: Xero setup and its label; #4972: the mappings step opens Xero Setup at its mapping step; " +
       "C6: the booking policies, age tier and seasons steps; C7: the System Health steps; " +
       "C9: the members step",
     "src/lib/__tests__/admin-feature-search-index.test.ts":
@@ -2003,7 +2069,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/website/mountain-conditions/page.tsx":
       "C4: its back link is adminLink",
     "src/app/(admin)/admin/setup/foundations/page.tsx":
-      "C4: the Club Identity card links with adminHref; C7: and the System Health card",
+      "#4968: its title is the registry label and its back link adminLink; its cards moved to setup/hub-cards.ts",
     "src/app/(admin)/admin/rules/booking-policies/cancellation/page.tsx":
       "C4: the public-pages link is adminHref; C6: its back link is adminLink",
     "src/lib/analytics-privacy-policy.ts": "C4: the privacy-policy editor link is adminHref",
@@ -2022,7 +2088,7 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/xero/_components/health-diagnostics-panel.tsx":
       "C5: the member-grouping link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/webhook-amber-badge.tsx":
-      "C5: the webhook setup link is adminHref",
+      "C5: the webhook setup link is adminHref; #4972: it is built by the shared Xero Setup step helper",
     "src/app/(admin)/admin/finance/xero/_components/xero-setup-page-client.tsx":
       "C5: its back link is adminHref",
     "src/app/(admin)/admin/finance/xero/setup/xero-completion-steps.tsx":
@@ -2031,7 +2097,7 @@ describe("the registry is inert", () => {
       "C5: the Xero setup card is adminHref; C7: and the backup setup and AI assistant cards",
     "src/app/(admin)/admin/modules/page.tsx": "C5: the Xero module setup link is adminHref",
     "src/app/(admin)/admin/setup/finance/page.tsx":
-      "C5: the Xero cards are adminHref and the mappings card adminAnchorHref",
+      "#4968: its heading is the registry label and its back link adminLink; its cards moved to setup/hub-cards.ts",
     "src/app/(admin)/admin/stripe/setup/page.tsx": "C5: the payments link is adminHref",
     "src/components/admin/booking-requests/booking-approvals-panel.tsx":
       "C5: the refunds link is adminHref; C10: the booking record and the changes tab",
@@ -2067,7 +2133,8 @@ describe("the registry is inert", () => {
       "C9: the unreachable-members rows use adminHref; " +
       "C10: the Bookings, Waitlist, Bed Allocation and Booking Requests links",
     "src/lib/xero-record-activity.ts":
-      "C5: the payments back link is adminLink; C9: the member back links and C10: the Bookings links are adminHref",
+      "C5: the payments back link is adminLink; C9: the member back links and C10: the Bookings links are adminHref; " +
+      "#4968: the cancellations back link reads the registry label",
     "src/lib/xero-record-links.ts": "C5: a Xero record's URL is adminHref",
     "src/lib/contextual-help/admin/finance.ts":
       "C5: the Finance pages' help is keyed by each page's registry old path; C6: and the fee console's",
@@ -2092,9 +2159,14 @@ describe("the registry is inert", () => {
       "C5: the member back-link labels are the registry's",
     "src/lib/__tests__/admin-moved-page-literals.test.ts":
       "C5: no production code spells a moved page's old URL as a literal",
+    "src/lib/__tests__/admin-hub-card-titles.test.ts":
+      "a hub card that opens a whole page is titled with its registry label",
+    "src/app/(admin)/admin/display/page.tsx": "its cards are titled with their pages' registry labels",
     "src/lib/__tests__/xero-oauth-return-path.test.ts":
       "C5: the OAuth return-path check accepts both Xero landing pages at either place",
-    "src/app/(admin)/admin/rules/booking-policies/page.tsx": "C6: its cards link with adminHref",
+    "src/lib/__tests__/xero-setup-links.test.ts":
+      "#4972: the Xero Setup step shortcuts open the mapping and webhooks steps",
+    "src/app/(admin)/admin/rules/booking-policies/page.tsx": "C6: its cards link with adminHref; #4968: three card titles read the registry label",
     "src/app/(admin)/admin/rules/booking-policies/adult-member-hosting/page.tsx":
       "C6: its back link is adminLink",
     "src/app/(admin)/admin/rules/booking-policies/group-discount/page.tsx":
@@ -2107,6 +2179,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/rules/fee-configuration/page.tsx": "C6: it redirects to the fee console's adminHref",
     "src/lib/__tests__/fee-configuration-redirect.test.ts":
       "C6: pins the Fee Configuration stub's redirect to the fee console's adminHref",
+    "src/app/(admin)/admin/rules/fees/_components/finance-fees-sections.tsx":
+      "#4496: the Subscription Categories links are adminHref",
     "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": "C6: the Seasons link is adminHref",
     "src/app/(admin)/admin/rules/seasons/page.tsx": "C6: the Fees link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/mappings-panel.tsx":
@@ -2129,6 +2203,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/system/backups/backups-client.tsx": "C7: the backup setup link is adminHref",
     "src/app/(admin)/admin/system/backups/setup/backup-wizard-steps.tsx":
       "C7: the Database Backups link is adminHref",
+    "src/app/(admin)/admin/system/health/_components/email-deliverability-section.tsx":
+      "#4963: an exhausted failure's member link is adminHref, from the stored member id only",
     "src/app/(admin)/admin/system/health/_components/health-dashboard.tsx":
       "C7: the Email Deliverability and Background Jobs cards link with adminHref",
     "src/app/(admin)/admin/system/stuck-states/page.tsx": "C7: the System Health link is adminHref",
@@ -2162,6 +2238,8 @@ describe("the registry is inert", () => {
       "C8: saving and cancelling return to Member Notices at its adminHref",
     "src/components/admin/club-posts/club-posts-admin.tsx":
       "C8: the Message Board's tab links and search form address it at its adminHref",
+    "src/app/(admin)/admin/membership/subscription-categories/page.tsx":
+      "#4496: added after C8, registered in MEMBERS_HUB; its Fees link is adminHref; #4968: its heading is the registry label",
     "src/app/(admin)/admin/finance/xero/_components/contact-sync-panel.tsx":
       "C9: the affected-member link is adminHref",
     "src/app/(admin)/admin/finance/xero/_components/erased-member-contacts-panel.tsx":
@@ -2173,9 +2251,12 @@ describe("the registry is inert", () => {
       "C9: the return-to is adminHref",
     "src/app/(admin)/admin/membership/family-groups/page.tsx":
       "C9: router.replace of its own address uses adminHref",
-    "src/app/(admin)/admin/membership/induction/page.tsx": "C9: the settings link is adminHref",
+    "src/app/(admin)/admin/membership/induction/page.tsx":
+      "C9: the settings link is adminHref; #4968: its heading is the registry label",
     "src/app/(admin)/admin/membership/induction/settings/page.tsx":
-      "C9: the back link is adminHref, and its words stay Induction Register",
+      "C9: the back link is adminHref; #4968: it is adminLink, so its words are the registry label",
+    "src/app/(admin)/admin/membership/member-applications/page.tsx":
+      "C9: router.replace of its own address (filter and page) uses adminHref; #4968: its heading is the registry label",
     "src/app/(admin)/admin/membership/member-fields/page.tsx": "C9: its back link is adminLink",
     "src/app/(admin)/admin/membership/members/[id]/_components/member-dependents-card.tsx":
       "C9: the dependent link is adminHref",
@@ -2194,9 +2275,10 @@ describe("the registry is inert", () => {
       "C9: router.replace of the members list uses adminHref",
     "src/app/(admin)/admin/membership/members/page.tsx": "C9: its own address is adminHref",
     "src/app/(admin)/admin/membership/membership-cancellations/page.tsx":
-      "C9: its own address and the member links are adminHref",
+      "C9: its own address and the member links are adminHref; #4968: its heading is the registry label",
     "src/app/(admin)/admin/membership/membership-setup/page.tsx": "C9: its cards are adminLink",
-    "src/app/(admin)/admin/membership/subscription-lockout/page.tsx": "C9: its back link is adminLink",
+    "src/app/(admin)/admin/membership/subscription-lockout/page.tsx":
+      "C9: its back link is adminLink; #4968: its heading is the registry label",
     "src/app/(admin)/admin/privacy-retention/privacy-retention-client.tsx": "C9: the member link is adminHref",
     "src/app/(admin)/admin/rules/promo-codes/promo-redemptions-panel.tsx": "C9: the member link is adminHref",
     "src/components/admin/booking-requests/booking-change-request-finished-stay.tsx":
@@ -2208,7 +2290,8 @@ describe("the registry is inert", () => {
     "src/lib/email/admin-alerts-membership.ts": "C9: the review URLs are adminHref",
     "src/lib/xero-admin-health.ts": "C9: the unlinked-members link is adminHref",
     "src/app/(admin)/admin/booking-desk/bookings/page.tsx":
-      "C10: its own address and its links are adminHref; C9: the member link is adminHref",
+      "C10: its own address and its links are adminHref; C9: the member link is adminHref; " +
+      "#4968: its heading is the registry label",
     "src/app/(admin)/admin/booking-desk/booking-requests/page.tsx": "C10: its own address is adminHref",
     "src/app/(authenticated)/book/_hooks/use-booking-wizard.ts":
       "C10: finishing the wizard opens Book on Behalf at its adminHref",
@@ -2234,6 +2317,48 @@ describe("the registry is inert", () => {
     "src/lib/unpaid-finished-stays-hrefs.ts": "C10: the unpaid-stays links are adminHref",
     "src/lib/__tests__/booking-requests-stub-redirect.test.ts":
       "C10: pins each stub's target and buildBookingRequestsHref in both switch states",
+    "src/lib/__tests__/admin-page-headings.test.ts":
+      "#4968: every page heading is its registry label",
+    "src/lib/__tests__/admin-leaf-back-links.test.tsx": "#4968: the induction back link reads the registry label",
+    "src/lib/__tests__/admin-setup-hubs.test.tsx":
+      "#4968: no setup card links to the page it is shown on",
+    "src/lib/__tests__/setup-page-view-only.test.tsx":
+      "#4968: the Setup heading assertion reads the registry label",
+    "src/app/(admin)/admin/setup/hub-cards.ts":
+      "#4968: the setup cards, titled with registry labels and linked with adminHref; C9: the Membership & Members card is adminHref; #4972: the Xero Mappings card opens Xero Setup at its mapping step",
+    "src/app/(admin)/admin/alpine-server/setup/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/chores/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/config-transfer/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/builder/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/layouts/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/reference/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/setup/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/roster/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/system/backups/setup/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/video-meetings/setup/page.tsx": "#4968: its heading is the registry label",
+    "src/app/(admin)/admin/display/setup/display-setup-wizard.tsx":
+      "#4968: the wizard card is titled with the page's registry label, as its page heading is",
+    "src/app/(admin)/admin/system/backups/setup/backup-setup-wizard.tsx":
+      "#4968: the wizard card is titled with the page's registry label, as its page heading is",
+    "src/components/admin/booking-policies/booking-periods-section.tsx":
+      "#4968: the card title is the Booking Periods registry label, as the page heading is",
+    "src/components/admin/booking-policies/minimum-night-stay-section.tsx":
+      "#4968: the card title is the Minimum Stay registry label, as the page heading is",
+    "src/components/admin/booking-policies/__tests__/list-editor-focus-return.test.tsx":
+      "#4968: finds the Booking Periods card by its registry label",
+    "src/components/admin/booking-policies/__tests__/list-scope-switch.test.tsx":
+      "#4968: checks the Booking Periods and Minimum Stay card titles by their registry labels",
+    "src/components/admin/booking-policies/__tests__/row-action-focus-return.test.tsx":
+      "#4968: finds the Booking Periods and Minimum Stay cards by their registry labels",
+    "e2e/admin-retroactive-booking.spec.ts":
+      "#4968: waits for the Book on Behalf heading by its registry label",
+    "e2e/book-on-behalf-nonmember.spec.ts":
+      "#4968: waits for the Book on Behalf heading by its registry label",
+    "e2e/dual-hat-booking.spec.ts":
+      "#4968: waits for the Book on Behalf heading by its registry label",
+    "e2e/config-transfer.spec.ts":
+      "#4968: waits for the Export & Import heading by its registry label",
     "e2e/helpers/admin-url.ts":
       "C17: the browser suite's one source of admin URLs re-exports adminHref and adminTabHref",
     "e2e/admin-hubs.spec.ts":

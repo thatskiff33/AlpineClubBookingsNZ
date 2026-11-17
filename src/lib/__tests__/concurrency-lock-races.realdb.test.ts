@@ -314,6 +314,11 @@ import "./refused-card-refund-retry.realdb.test";
 // write, the retry's fresh key, and a held row rolling the write back. Skipped
 // unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4104-` fixtures.
 import "./card-refund-failed-later.realdb.test";
+// #4284 reuses it to prove the card-refund owed figure reads a createdAt tie
+// the same in either physical order: the same tied rows written in opposite
+// orders, read through the real Net Collected select. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4284-` fixtures.
+import "./card-refund-owed-tie-order.realdb.test";
 // #4097 reuses it to prove an own-card cancel whose card refund plan carries
 // less than the refund due raises one hand-back task for the rest in its claim,
 // which "Refunds owed" counts until the treasurer pays it back (its BANK_REFUND
@@ -671,7 +676,7 @@ import "./saved-card-charge-worth.realdb.test";
 // for one row have one winner. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4646-` fixtures.
 import "./saved-card-async-capture-adopt.realdb.test";
-// #4993 (`INV-PAY-155`) reuses it to prove a saved-card claim stranded
+// #4993 (`INV-PAY-157`) reuses it to prove a saved-card claim stranded
 // CONFIRMED by an interrupted charge is handed back to PENDING once, its hold
 // the claim marker and its attempt row untouched; a young claim and a captured
 // one are left; and recovery racing the capture's adoption resolves either way
@@ -819,6 +824,13 @@ import "./superseded-refund-cancel-hold-back.realdb.test";
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
 // `race-4872-` fixtures.
 import "./superseded-refund-4872-hold-back.realdb.test";
+// #4879 reuses it to prove an edit financial review's card refund and a "Paid
+// another way" close leave a live superseded capture to its own refund, while
+// closing that superseded refund itself still records it on its own charge,
+// including when the door queues behind the hand-off on the Payment row.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4879-` fixtures.
+import "./superseded-refund-other-doors-hold-back.realdb.test";
 // #4685 reuses it to prove an account-credit Xero note stamps the one credit it
 // was raised for, by id, and that a row queued without the id still stamps.
 // Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
@@ -851,6 +863,11 @@ import "./stripe-dispute-cancel.realdb.test";
 // racing takeovers or a racing Mark failed, and the abandoned attempt's late
 // outcome refused. It owns and cleans its own `race-alp546-` fixtures.
 import "./xero-inbound-abandoned-operation.realdb.test";
+// INV-INT-039 (#4921) reuses it to prove the automatic worker takes over a
+// stored Xero inbound event a dead worker left PROCESSING past the webhook
+// lease, clearing its dedup row, and that racing workers apply it exactly once.
+// It owns and cleans its own `race-alp642-` fixtures.
+import "./xero-inbound-stale-event-takeover.realdb.test";
 // #4851 reuses it to prove Stuck States' settlement of a dead refund out of the
 // group organiser's card: a refund Stripe already holds is recorded and nobody is
 // paid again, a bank close raises the mirror and its no-Xero-note hand-back, a
@@ -859,6 +876,10 @@ import "./xero-inbound-abandoned-operation.realdb.test";
 // whole-group row flips and mirrors. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1;
 // it owns and cleans its own `race-4851-` fixtures.
 import "./card-refund-group-settle.realdb.test";
+// The #5061 follow-up proves the same for an edit that lowers the price (date
+// change, guest removal, batch edit): one treasurer task, no money moved. It
+// owns and cleans its own `race-5061e-` fixtures.
+import "./stripe-dispute-edit.realdb.test";
 // #2374 (AID-5) deliberately is NOT imported here, unlike the two suites above.
 // `ai-diagnostics-select-only-role.realdb.test.ts` provisions and drops a cluster
 // ROLE and revokes `TEMPORARY ... FROM PUBLIC` on the shared throwaway database

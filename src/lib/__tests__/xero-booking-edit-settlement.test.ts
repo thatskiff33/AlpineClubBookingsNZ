@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => mocks);
+vi.mock("@/lib/xero-supplementary-invoice-enqueue", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: mocks.enqueueXeroSupplementaryInvoiceOperation,
+}));
 
 // #3979: the queue reads whether a bank receipt was captured, only when the
 // aggregate status alone would refuse an invoice correction. Default: one was
@@ -778,6 +781,100 @@ describe("a card refund is recorded before its Xero note is queued (#3993)", () 
       const laterAt = source.indexOf(later);
       expect(earlierAt, file).toBeGreaterThanOrEqual(0);
       expect(laterAt, file).toBeGreaterThan(earlierAt);
+    }
+  });
+});
+
+// #5061 follow-up (`INV-PAY-154`, review of #5151): a reduction whose refund a
+// Stripe dispute holds is with the treasurer and no money has moved, so its
+// cash share raises no Xero note - as the disputed cancel posts nothing. A
+// modification note against the card-paid invoice would be refused (it owes
+// nothing, #3993) and, on a lost dispute, record a refund that never happens.
+describe("a refund held for a Stripe dispute raises no Xero cash note (#5061 follow-up)", () => {
+  const heldReduction = {
+    hasIssuedXeroInvoice: true,
+    originalPaymentStatus: "SUCCEEDED",
+    priceDiffCents: -20_000,
+    settlementMethod: "card" as const,
+    settlementAmountCents: 20_000,
+    refundedThroughStripe: false,
+    refundHeldForDispute: true,
+  };
+
+  it("classifies the held cash as no Xero action, naming the treasurer", () => {
+    const { financialAction } = classifyXeroBookingEditSettlement(heldReduction);
+    expect(financialAction).toEqual({ type: "none", reason: expect.stringContaining("treasurer") });
+  });
+
+  it("MUTATION: without the hold the same edit raises a bank-transfer modification note for the cash", () => {
+    const { financialAction } = classifyXeroBookingEditSettlement({ ...heldReduction, refundHeldForDispute: false });
+    expect(financialAction).toMatchObject({
+      type: "modification-credit-note",
+      refundAmountCents: 20_000,
+      refundMethod: "internet-banking",
+    });
+  });
+
+  it("keeps an applied-credit give-back's own note: that is not card money", () => {
+    const { financialAction } = classifyXeroBookingEditSettlement({ ...heldReduction, appliedCreditGiveBackCents: 4_000 });
+    expect(financialAction).toMatchObject({
+      type: "modification-credit-note",
+      refundAmountCents: 0,
+      allocatedGiveBackCents: 4_000,
+    });
+  });
+
+  it("the queue enqueues no credit note of either kind for the held cash", async () => {
+    await queueXeroBookingEditSettlement({ ...heldReduction, bookingId: "booking-d", bookingModificationId: "mod-d", paymentId: "pay-d" });
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroModificationAccountCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("the guest-removal door carries the hold to the queue", async () => {
+    const { queueGuestRemovalXeroSettlement } = await import("@/lib/booking-guest-removal-xero");
+    const settlement = {
+      bookingId: "booking-d",
+      bookingModificationId: "mod-d",
+      hasIssuedXeroInvoice: true,
+      paymentStatus: "SUCCEEDED",
+      priceDiffCents: -20_000,
+      xeroRefundAmountCents: 20_000,
+      settlementMethod: "card",
+      hasSucceededPayment: true,
+      paymentId: "pay-d",
+      refundHeldForDispute: true,
+      appliedCreditGivenBackCents: 0,
+      xeroAdditionalAmountCents: 0,
+      zeroDollarAutoPaid: false,
+      organiserChildRefund: null,
+    } as unknown as Parameters<typeof queueGuestRemovalXeroSettlement>[0];
+    await queueGuestRemovalXeroSettlement(settlement, { createdByMemberId: "officer", additionalPaymentIntentId: null });
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+
+    // MUTATION: the same removal with no dispute refunds the card and queues its refund note.
+    mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({ queueOperationId: null });
+    await queueGuestRemovalXeroSettlement(
+      { ...settlement, refundHeldForDispute: false },
+      { createdByMemberId: "officer", additionalPaymentIntentId: null },
+    );
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith("pay-d", 20_000, expect.anything());
+  });
+
+  it("every other edit door passes the hold to its Xero leg", () => {
+    const repoRoot = resolve(__dirname, "../../..");
+    const doors: Array<[string, string]> = [
+      ["src/lib/booking-date-modification-service.ts", "refundHeldForDispute: result.refundHeldForDispute,"],
+      ["src/lib/booking-batch-modification-service.ts", "refundHeldForDispute: result.refundHeldForDispute,"],
+      ["src/lib/booking-guest-acceptance-reprice.ts", "refundHeldForDispute: reprice.refundHeldForDispute,"],
+    ];
+    for (const [file, wiring] of doors) {
+      const source = readFileSync(resolve(repoRoot, file), "utf8");
+      const queueAt = source.indexOf("queueXeroBookingEditSettlement({");
+      const wiringAt = source.indexOf(wiring, queueAt);
+      expect(queueAt, file).toBeGreaterThanOrEqual(0);
+      expect(wiringAt, file).toBeGreaterThan(queueAt);
     }
   });
 });
