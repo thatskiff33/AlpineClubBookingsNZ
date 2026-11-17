@@ -444,10 +444,13 @@ export function elementByMarker(attribute: string, id: string | undefined) {
  * a disabled, `inert` or hidden element silently refuses it, and the caller's
  * next fallback is only reached by asking.
  *
- * By default a non-focusable target gets `tabindex="-1"` only for the call
- * (the bed-allocation dialogs' behaviour, which leaves no attribute behind).
- * `keepTabIndex` leaves it in place, as every other primitive here does, so a
- * region keeps the focus it was given.
+ * A non-focusable target gets `tabindex="-1"` so it can take focus. By default
+ * (the bed-allocation dialogs' behaviour) the attribute is removed again once
+ * focus has moved on, so it leaves none behind. It cannot be removed while the
+ * target holds focus: that makes it non-focusable, and a browser drops focus
+ * from it to the page at once (#5183). `keepTabIndex` leaves it in place for
+ * good, as every other primitive here does, so a region keeps the focus it
+ * was given.
  */
 export function focusConnectedTarget(
   target: HTMLElement | null | undefined,
@@ -457,8 +460,19 @@ export function focusConnectedTarget(
   const hadTabIndex = target.hasAttribute("tabindex");
   ensureFocusable(target);
   target.focus({ preventScroll: true });
-  if (!hadTabIndex && !keepTabIndex) target.removeAttribute("tabindex");
-  return document.activeElement === target;
+  const landed = document.activeElement === target;
+  if (!hadTabIndex && !keepTabIndex && target.hasAttribute("tabindex")) {
+    if (landed) {
+      target.addEventListener(
+        "blur",
+        () => target.removeAttribute("tabindex"),
+        { once: true },
+      );
+    } else {
+      target.removeAttribute("tabindex");
+    }
+  }
+  return landed;
 }
 
 /**

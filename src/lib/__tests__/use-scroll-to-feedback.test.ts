@@ -388,17 +388,52 @@ describe("use-scroll-to-feedback", () => {
       expect(document.activeElement).toBe(other);
     });
 
-    it("leaves no tabindex behind on a shared dialog-style focus, and reports a refusal", () => {
-      const target = document.createElement("div");
-      document.body.append(target);
-      expect(focusConnectedTarget(target)).toBe(true);
-      expect(target.hasAttribute("tabindex")).toBe(false);
+    // Two animation frames: where a browser, and jsdom 31, drop focus from an
+    // element that has stopped being focusable (#5183).
+    const twoFrames = () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
 
+    it("keeps focus on a shared dialog-style focus, and leaves no tabindex behind once focus moves on", async () => {
+      const target = document.createElement("div");
+      const other = document.createElement("input");
+      document.body.append(target, other);
+      expect(focusConnectedTarget(target)).toBe(true);
+
+      // Removing the attribute while the target holds focus makes it
+      // non-focusable, so the browser would drop focus to the page.
+      await twoFrames();
+      expect(document.activeElement).toBe(target);
+      expect(target.getAttribute("tabindex")).toBe("-1");
+
+      other.focus();
+      expect(target.hasAttribute("tabindex")).toBe(false);
+    });
+
+    it("reports a refusal, and leaves nothing behind on a target that took no focus", () => {
       const disabled = document.createElement("button");
       disabled.disabled = true;
       document.body.append(disabled);
       expect(focusConnectedTarget(disabled)).toBe(false);
+      expect(disabled.hasAttribute("tabindex")).toBe(false);
       expect(focusConnectedTarget(null)).toBe(false);
+    });
+
+    it("leaves a control that is already focusable, and its own tabindex, alone", () => {
+      const button = document.createElement("button");
+      const region = document.createElement("div");
+      region.setAttribute("tabindex", "-1");
+      document.body.append(button, region);
+
+      expect(focusConnectedTarget(button)).toBe(true);
+      expect(button.hasAttribute("tabindex")).toBe(false);
+      button.blur();
+      expect(button.hasAttribute("tabindex")).toBe(false);
+
+      expect(focusConnectedTarget(region)).toBe(true);
+      region.blur();
+      expect(region.getAttribute("tabindex")).toBe("-1");
     });
 
     it("consumes the anchor, so a close with no fresh open moves nothing", () => {
