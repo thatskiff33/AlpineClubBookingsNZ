@@ -524,6 +524,34 @@ describe("duplicates, missing findings and extra advisories", () => {
     expectRefused(judge({ stdout }), "exactly one advisory");
   });
 
+  // #5252 security lens: JSON.parse keeps the last of two duplicate keys, so a
+  // duplicated key could hide an unpatched finding. Real pnpm output never
+  // repeats a key; these pin the defence in depth.
+  const hidden = '{ "version": "3.0.1", "paths": [".>chokidar>anymatch>picomatch"], "dev": true, "optional": false, "bundled": false }';
+
+  it("refuses a duplicated \"findings\" key that hides an unpatched copy", () => {
+    const stdout = pretty(measuredReport()).replace('"findings": [', `"findings": [${hidden}],\n        "findings": [`);
+    expect(advisoryOf(JSON.parse(stdout)).findings.map((f) => f.version)).toEqual(["4.0.7", "2.3.2"]);
+    expectRefused(judge({ stdout }), 'the raw report carries the "findings" key 2 times, not once');
+  });
+
+  it("refuses a duplicated \"version\" key that hides an unpatched version", () => {
+    const stdout = pretty(measuredReport()).replace('"version": "2.3.2"', '"version": "3.0.1", "version": "2.3.2"');
+    expect(findingOf(JSON.parse(stdout), "2.3.2")).toBeDefined();
+    expectRefused(judge({ stdout }), 'the raw report carries the "version" key 3 times for 2 findings');
+  });
+
+  it("counts keys only, so free text quoting \"findings\" or \"version\" changes nothing", () => {
+    const report = measuredReport();
+    // Inside a JSON string a quote is escaped, so only text ENDING in a quoted
+    // word puts the raw substring `"version"` into the report (`\"version"`).
+    advisoryOf(report).title = 'a title saying "findings": [] and ending "version';
+    findingOf(report, "2.3.2").paths = [ESLINT_PATH];
+    const stdout = pretty(report);
+    expect(stdout.split('"version"').length - 1).toBe(3);
+    expect(judge({ report, stdout }).outcome).toBe("mitigated");
+  });
+
   it("refuses a report with the advisory missing but a high counted", () => {
     const report = measuredReport();
     report.advisories = {};

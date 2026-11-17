@@ -8,6 +8,7 @@
   and goes red again sooner if anything about the dependencies changes.
 
   Nothing a club or member does reaches this library: the patterns it matches
-  come from this project's own configuration, never from a visitor. Two
+  come from this project's configuration or the tools' own defaults, never
+  from a visitor. Two
   libraries that only development tools use, `qs` and `minimatch`, were also
   moved to fixed versions to clear five lesser advisories.

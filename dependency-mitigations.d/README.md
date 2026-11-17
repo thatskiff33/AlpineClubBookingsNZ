@@ -133,6 +133,12 @@ reasons printed under it and a pointer back to this page:
   optional, carries the recorded dev flag, and reports exactly the recorded
   set of dependency paths (order aside; a path listed twice is refused). A
   mismatch names each path added and each removed.
+- **No duplicated key hides a finding.** `JSON.parse` keeps only the last of
+  two duplicate keys, so the raw report is also scanned for keys: `"findings"`
+  must be a key exactly once, and `"version"` exactly once per finding. Only
+  strings in key position count, so free text that quotes those words changes
+  nothing. Real pnpm output never repeats a key; this is defence in depth
+  (#5252 security lens).
 - **The record is well-formed and unique.** Exact key set (an unknown key is
   refused, so nobody can invent a looser one), and exactly one record names
   that GHSA. A stray file in this directory refuses every record.

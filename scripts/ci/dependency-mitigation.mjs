@@ -287,6 +287,55 @@ function yamlBlock(text, key) {
   return block;
 }
 
+/**
+ * How many times each name appears as an object KEY in the JSON report inside
+ * `stdout`, counting every occurrence (JSON.parse keeps only the last of two
+ * duplicate keys, so a duplicated `"findings"` or `"version"` could hide a
+ * finding from the parsed object). Only strings in key position count, so a
+ * title or path that happens to contain `"version"` changes nothing.
+ *
+ * The report is located as `extractJson` in the wrapper locates it (a line that
+ * starts with `{`, else the first `{`, to the last `}`); that text parsed, so it
+ * is valid JSON and this scan only needs to tell strings, escapes and keys
+ * apart. Returns undefined when no such text parses.
+ */
+function jsonKeyCounts(stdout) {
+  const text = String(stdout ?? "");
+  const end = text.lastIndexOf("}");
+  const starts = [];
+  for (let i = text.indexOf("{"); i !== -1 && i < end; i = text.indexOf("{", i + 1)) {
+    if (i === 0 || text[i - 1] === "\n") starts.push(i);
+  }
+  const first = text.indexOf("{");
+  if (first !== -1 && !starts.includes(first)) starts.push(first);
+  const json = starts
+    .map((start) => text.slice(start, end + 1))
+    .find((candidate) => {
+      try {
+        JSON.parse(candidate);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  if (json === undefined) return undefined;
+  const counts = new Map();
+  for (let i = 0; i < json.length; i++) {
+    if (json[i] !== '"') continue;
+    let j = i + 1;
+    while (json[j] !== '"') j += json[j] === "\\" ? 2 : 1;
+    const raw = json.slice(i, j + 1);
+    let k = j + 1;
+    while (/\s/.test(json[k] ?? "")) k++;
+    if (json[k] === ":") {
+      const key = JSON.parse(raw);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    i = j;
+  }
+  return counts;
+}
+
 /** Why the report is not exactly the reviewed one; empty when it is. */
 function reportProblems({ report, stdout, exitCode, record }) {
   const problems = [];
@@ -325,6 +374,19 @@ function reportProblems({ report, stdout, exitCode, record }) {
   const findings = advisory.findings;
   if (!Array.isArray(findings) || findings.length === 0 || !findings.every((finding) => sameKeys(finding, FINDING_KEYS))) {
     return [...problems, "the advisory must carry one or more findings, each of the reviewed shape."];
+  }
+  // #5252 (security lens): a duplicated key would let JSON.parse drop a whole
+  // findings list or a finding's version, hiding a copy from the checks below.
+  // Real pnpm output never repeats a key; this is defence in depth.
+  const keys = jsonKeyCounts(stdout);
+  if (keys === undefined) {
+    return [...problems, "the raw report could not be re-read to count its keys, so it is not trusted."];
+  }
+  if ((keys.get("findings") ?? 0) !== 1) {
+    problems.push(`the raw report carries the "findings" key ${keys.get("findings") ?? 0} times, not once; a duplicated key can hide findings.`);
+  }
+  if ((keys.get("version") ?? 0) !== findings.length) {
+    problems.push(`the raw report carries the "version" key ${keys.get("version") ?? 0} times for ${findings.length} findings; a duplicated key can hide a version.`);
   }
   // #5252: the findings must be exactly the covered copies — one finding per
   // covered version, no version the record does not name, none it names missing.
