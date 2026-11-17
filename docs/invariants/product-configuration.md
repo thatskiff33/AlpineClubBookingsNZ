@@ -39,6 +39,10 @@ home for that explanation and is not repeated here.
 - **Where the operator does have to act, the unconfigured state is visible** —
   the readiness badge, the setup checklist or the system health page — instead
   of failing silently at the point of use.
+- **Published images contain no club-varying browser configuration.** Deliver
+  such values from the deployment at runtime, never through `NEXT_PUBLIC_*`
+  build arguments. Browser Sentry uses a public no-store endpoint; missing or
+  unavailable configuration means no browser reports or replay (#4982).
 - Decided on #2717 (a distinct configurable Xero EXPENSE mapping with a safe
   fallback), generalised in #2720. Those issues hold the narrative, the options
   and the rejected alternatives; this entry holds only the rule.

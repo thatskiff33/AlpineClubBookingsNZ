@@ -3,7 +3,9 @@
  * superseded-capture hold-back, or is named here with the reason it does not.
  *
  * An empty map is the default and changes nothing, so tests are not in this
- * census. The three doors #4879 still owns are the only exemptions.
+ * census. #4879 brought the edit-review card plan and the "Paid another way"
+ * close under the rule; the group cancellation is the only exemption, because
+ * it cannot reach a superseded capture's charge (`INV-PAY-150`).
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
@@ -20,14 +22,10 @@ const NAMES = [
 
 /** file:function → why this call does not pass the hold-back yet. */
 const EXEMPT: Record<string, string> = {
-  "src/lib/edit-financial-review-settlement.ts:planStripeRefundAllocation":
-    "#4879 owns the edit-review card plan",
-  "src/lib/card-refund-paid-another-way.ts:applyLocalRefundAllocation":
-    "#4879 owns the Paid another way close, which must not hold a superseded refund back from itself",
   "src/lib/group-cancel.ts:foldMirrorRefundIntoLedger":
-    "#4879 owns the group cancellation; an organiser-settled child payment is outside this rule",
+    "#4879: an organiser-settled child payment's rows are bank receipts, never a superseded capture's charge",
   "src/lib/group-cancel.ts:applyLocalRefundAllocation":
-    "#4879 owns the group cancellation's allocation",
+    "#4879: the group cancellation allocates only over an organiser-settled child's bank receipts",
 };
 
 function productionFiles(): string[] {
@@ -96,7 +94,7 @@ describe("every card planner passes the superseded-capture hold-back (#4872)", (
     expect(calls.length).toBeGreaterThan(0);
   });
 
-  it("passes the hold-back, or is a named #4879 exemption", () => {
+  it("passes the hold-back, or is a named exemption", () => {
     const missing = calls.filter((call) => !call.passes && EXEMPT[call.key] === undefined);
     expect(missing.map((call) => call.key)).toEqual([]);
   });
