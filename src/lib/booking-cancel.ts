@@ -9,7 +9,7 @@ import {
   failOutstandingAdditionalAskUnderRowLock,
   hasOutstandingAdditionalPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
-import { isXeroConnected } from "./xero";
+import { isXeroConnected } from "./xero-token-store";
 import { daysUntilDate, getRefundTier, loadCancellationPolicy } from "./cancellation";
 import { sendAdminManualRefundTaskAlert, sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
@@ -69,7 +69,7 @@ import {
 } from "@/lib/payment-recovery";
 import { paidByOrganiserCard, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { cancellationHandBackReason, disputedCancellationHandBackReason } from "@/lib/manual-refund-task-copy";
-import { disputedCaptureCents, paymentCaptureIntentIds } from "@/lib/stripe-dispute-hold";
+import { paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
 import { runOrganiserChildRefundDebtNow } from "@/lib/organiser-child-refund-executor";
 import {
   findGroupCancellationChildDebt,
@@ -1629,7 +1629,7 @@ async function performBookingCancellation(
     // and disposition come from their one home, shared with the preview (`cancelRefundDisposition`).
     // #4911 (`INV-PAY-154`): an OPEN or LOST dispute on any of its captures, read under the claim's locks - a capture
     // the bank has taken back is handed to the treasurer, never refunded to the card or held as credit.
-    const disputeHold = await disputedCaptureCents(tx, await paymentCaptureIntentIds(tx, payment));
+    const disputeHold = await paymentDisputedCaptureCents(tx, payment);
     const disputed = disputeHold.cents > 0;
     const disposition = cancelRefundDisposition({ paymentSource: payment.source, organiserCard: organiserCard !== null,
       organiserByBank: paidByOrganiserInternetBanking({ ...fresh, payment }), manuallyMarkedPaid: Boolean(payment.manuallyMarkedPaidAt), disputed, requested: refundMethod });

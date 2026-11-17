@@ -15,8 +15,8 @@ import {
   dismissalMessage,
   nightPricesRecordedMessage,
 } from "@/lib/manual-refund-task-copy";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
-  ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
   resolveManualRefundTask,
 } from "@/lib/manual-refund-task-resolution";

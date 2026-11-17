@@ -9,6 +9,8 @@ import { Alert } from "@/components/ui/alert"
 import { FocusedActionError } from "@/components/focused-action-error"
 import { Button } from "@/components/ui/button"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
+import { Pagination } from "@/components/admin/admin-pagination"
+import { formatAdminListRange } from "@/lib/admin-list-page"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -45,7 +47,6 @@ import { MemberEditorDialog } from "./_components/member-editor-dialog"
 import { MemberExportControl } from "./_components/member-export-control"
 import { MemberFilterToolbar } from "./_components/member-filter-toolbar"
 import { MemberImportDialog } from "./_components/member-import-dialog"
-import { MemberPagination } from "./_components/member-pagination"
 import { MemberPasswordActionDialog } from "./_components/member-password-action-dialog"
 import { MemberTable } from "./_components/member-table"
 import { XeroGroupsRefreshHint } from "./_components/xero-groups-refresh-hint"
@@ -95,6 +96,10 @@ export default function MembersPage() {
   const [xeroRecoveryAttention, setXeroRecoveryAttention] = useState(0)
   const [xeroRecoveryMemberId, setXeroRecoveryMemberId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  // The name of every member the list has shown this visit. A ticked member
+  // stays ticked across pages, searches and filters, so the bulk dialogs name a
+  // selection from here, not only from the page that is loaded now (#4973).
+  const [memberNames, setMemberNames] = useState<Map<string, string>>(() => new Map())
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
@@ -138,6 +143,13 @@ export default function MembersPage() {
       }
       const data = (await res.json()) as MembersResponse
       setMembers(data.members)
+      setMemberNames((seen) => {
+        const next = new Map(seen)
+        for (const member of data.members) {
+          next.set(member.id, `${member.firstName} ${member.lastName}`.trim() || member.email)
+        }
+        return next
+      })
       setTotal(data.total)
       setTotalPages(data.totalPages)
       return true
@@ -350,17 +362,6 @@ export default function MembersPage() {
     setBulkDialogOpen(true)
   }
 
-  const memberNames = useMemo(
-    () =>
-      new Map(
-        members.map((member) => [
-          member.id,
-          `${member.firstName} ${member.lastName}`.trim() || member.email,
-        ]),
-      ),
-    [members],
-  )
-
   const handleMembershipChanged = (changed: number) => {
     showSuccess(`Changed membership type for ${changed} member(s)`)
     setSelectedIds(new Set())
@@ -549,10 +550,13 @@ export default function MembersPage() {
           onToggleSort={toggleSort}
           onOpenPasswordActionDialog={openPasswordActionDialog}
         />
-        <MemberPagination
+        <Pagination
+          as="div"
+          aria-label="Members pagination"
           page={page}
           totalPages={totalPages}
           onPageChange={setPage}
+          summary={formatAdminListRange({ page, pageSize, total })}
         />
       </div>
 
@@ -571,6 +575,7 @@ export default function MembersPage() {
         open={bulkDialogOpen}
         action={bulkAction}
         selectedIds={selectedIds}
+        memberNames={memberNames}
         onOpenChange={setBulkDialogOpen}
         onUpdated={handleBulkUpdated}
         onError={setError}

@@ -11,7 +11,7 @@ import {
 import type { ClubFormat } from "@/lib/club-format";
 import type { CalendarDate } from "@/lib/club-time";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { prisma } from "@/lib/prisma";
 import { recordReviewClosurePricing } from "@/lib/stored-night-price-repair-store";
 import type { BookingJournalContext } from "@/lib/member-money/doors";

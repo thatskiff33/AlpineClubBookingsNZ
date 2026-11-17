@@ -30,8 +30,11 @@ vi.mock("@/lib/session-guards", async () => ({
   requireActiveSessionUser: mocks.requireActiveSessionUser,
 }));
 
-vi.mock("@/lib/nomination", () => ({
+vi.mock("@/lib/member-application-fields", () => ({
   MembershipApplicationError: mocks.MockMembershipApplicationError,
+}));
+
+vi.mock("@/lib/nomination", () => ({
   refreshMemberApplicationNominations: mocks.refreshMemberApplicationNominations,
   replaceMemberApplicationNominator: mocks.replaceMemberApplicationNominator,
 }));

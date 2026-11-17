@@ -14,7 +14,7 @@ vi.mock("@/lib/late-capture-xero-receipt", () => ({
   readPaidAnotherWayLateCaptureXeroReceipt: vi.fn(),
 }));
 vi.mock("@/lib/payment-transactions", () => ({ lockPaymentForRefundedTotal: async () => undefined, isStripeTransaction: () => true }));
-vi.mock("@/lib/payment-reconciliation", () => ({
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     constructor(message: string, readonly status: number) { super(message); }
   },

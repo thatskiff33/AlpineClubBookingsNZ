@@ -735,7 +735,7 @@ positive delta -> additional payment or supplementary Xero invoice
   asked nothing, and an ask a cancel landing mid-mint could not see is retired
   FAILED by the minter - the door's, the recovery runner's or a currency
   re-issue's - #4316, INV-ADDPAY-044)
-uncollected additional payment -> reminder at +3 days, reminder 2 days before
+uncollected additional payment -> reminder at +`additionalPaymentReminderDays` (default 3), reminder 2 days before
   check-in, admin re-send on demand; stops at check-out (never auto-cancelled);
   a credit-release request is instead reminded weekly, four times after the request, past check-out,
   and so is a request an edit merged into once the stay has ended (INV-ADDPAY-048)
@@ -1026,8 +1026,8 @@ policy-exception requests".
 
 **An abandoned hold expires (#2553).** A request nobody ever decides used to hold
 its beds forever. Every request that actually reserves beds is therefore stamped
-at creation with an immutable `holdExpiresAt`: seven days
-(`POLICY_EXCEPTION_HOLD_TTL_DAYS`), never past the start of the first night it is
+at creation with an immutable `holdExpiresAt`: the club's
+`policyExceptionHoldDays` (default seven, read only then), never past the start of the first night it is
 holding, and never less than 24 hours
 (`POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS`) so a late request still gets a real
 review window. The deadline is stamped once and never rewritten, so a member's
@@ -1784,12 +1784,21 @@ payment is going back (`previousPaymentRefunding`), and `confirm-payment`
 answers 409 `SUPERSEDED_CARD_PAYMENT_REFUNDING`, also for a captured intent of
 the booking its pointer has moved past. Neither reuse arm hands out an intent
 a superseded row still names; one being paid answers `PAYMENT_PROCESSING` in
-its own words. After a card success the `/pay` link asks the server what it
-did and never shows the pay buttons again, whether the confirmation resolved in
-the page or a redirect method returned the payer to the link with
-`payment_intent` and `redirect_status` in the address (#4955). The door's 410
-for a booking already paid carries `BOOKING_ALREADY_PAID`, which the link reads
-as paid (the webhook settled first); its other 410s stay unconfirmed.
+its own words. After a redirect method returns the payer with `payment_intent`
+and `redirect_status` in the address, or an in-page confirmation resolves
+`processing`, every card surface asks the server what it did and never shows
+the pay buttons again (#4955). An in-page `succeeded` is asked about too on the
+`/pay` link, booking page and pay step; the additional payment and group settle
+cards take Stripe.js's word there, backed by the webhook. The server checks
+are: the `/pay` link its `checkCardSuccess`, the booking page and pay step `confirm-payment` (a
+`processing` intent, or a returned success it cannot vouch for, asks
+`create-payment-intent`, which settles a succeeded intent or hands it back),
+the additional payment `confirm-modification-payment` then its secret door,
+and the group settle its settle route. Each return URL names its surface
+(`stripe_return`), so a surface never checks another's intent. The `/pay`
+door's 410 for a booking already paid carries `BOOKING_ALREADY_PAID`, which
+the link reads as paid (the webhook settled first); its other 410s stay
+unconfirmed.
 
 Saved-card provenance (#3269, `INV-PAY-053`). Two writers put a
 `stripePaymentMethodId` on a `Payment` row and only one of them saves a card:
@@ -2480,15 +2489,19 @@ OPEN   -> WON           charge.dispute.closed, Stripe status won
 OPEN   -> LOST          charge.dispute.closed, Stripe status lost
 OPEN   -> CLOSED_OTHER  charge.dispute.closed with no funds taken (warning_closed, prevented)
 (none) -> WON / LOST / CLOSED_OTHER   a closed event arriving first
+LOST   -> WON           a newer closed event, Stripe status won (a lost dispute reversed)
 ```
 
-WON, LOST and CLOSED_OTHER are terminal: a later or older event never reopens
-the row, and a replay changes nothing. `funds_withdrawn` and `funds_reinstated`
+WON, LOST and CLOSED_OTHER are closed: no event reopens the row, an older
+event changes nothing, and a replay changes nothing; only a newer closed event
+replaces one closed status with another. `funds_withdrawn` and `funds_reinstated`
 add to the row's withdrawn and reinstated cents. OPEN and LOST hold the
-payment's captures: no card refund or account credit, and a paid cancel goes to
-the treasurer as a hand-back task. WON and CLOSED_OTHER hold nothing. The opened
-alert is sent once ever on the first record, the closed alert once ever on the
-first terminal status. To verify: `stripe-dispute.test.ts`.
+payment's captures: no card refund or account credit, and a paid cancel or a
+price-lowering edit goes to the treasurer as a hand-back task. WON and
+CLOSED_OTHER hold nothing. The opened alert is sent once ever on the first
+record, the closed alert once ever on the first closed status, and a third once
+ever on LOST -> WON, owed by a marker written in the same transaction as the
+status. To verify: `stripe-dispute.test.ts`, `stripe-dispute-edit.realdb.test.ts`.
 
 ### Manual refund task lifecycle (#2262)
 
@@ -4004,13 +4017,37 @@ on `FAILED` alone. An installation whose role nobody has declared, and a live
 installation that has declared a local capture mailbox, both land on `FAILED`
 instead, carrying a `deliveryBlockReason`: those are configuration faults, so they
 stay retryable and go out by themselves once the deployment is corrected —
-PROVIDED the row still holds a rendered body. It does not for the twenty-six
+PROVIDED the row still holds a rendered body. It does not for the
 `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose logged recipient is
 redacted, because a live sign-in link, a door code or a payment link must not sit
 at rest; and the retry cron selects only rows that still hold one. Such a row is
-therefore written AT `attempts = 3`, which drops it out of the retry query and
-into the operator's email-failure review queue for a manual re-send, and its
-`errorMessage` says exactly that rather than promising it will self-heal.
+therefore written AT the retry ceiling (`attempts = 3`, the one constant
+`EMAIL_RETRY_MAX_ATTEMPTS` in `src/lib/email/retry-selection.ts`), which drops it
+out of the retry query and into the operator's email-failure review queue, and
+its `errorMessage` says so rather than promising it will self-heal. The queue cannot resend it: it says why
+on the row and links its booking or member, and the officer sends a fresh
+message from there (or from Token Email Recovery for its three templates). For
+the three booking emails below whose booking still exists, the row links
+straight to that booking's fresh-copy section instead.
+
+An exhausted `FAILED` row that still holds a body can be handed back to the
+cron with **Try again** (#4963): one status-guarded `updateMany` (id, `FAILED`,
+`attempts >= 3`, `RETAINS_REPLAYABLE_EMAIL_BODY`, and not a booking-scoped
+template with no `bookingId`, which the cron retires on sight with its body kept,
+#2258) sets `attempts` to one below the ceiling (2) and dates `lastAttemptAt` past the backoff, then
+writes an `email.failure.requeued` audit row. A row naming a booking that has
+since been deleted is refused before that write (`EmailLog.bookingId` has no
+foreign key, and the cron would read the missing booking as nothing suppressed
+and send). A press that matches nothing (another press won, the cron sent it, or
+no requeueable body is left) is refused with 409 and writes no audit row. The
+route never sends: the cron's next run selects the row and re-runs its suppression, No-emails
+and authority checks before its guarded claim. `deliveryBlockReason` is left for
+that run's terminal write to clear. Archive and Try again are both audit rows,
+and the newer of the two decides whether the row shows as archived; an archive
+older than the row's `lastAttemptAt` (one that raced a Try again and lost to the
+cron's next failure) does not count. Pinned by
+`email-failure-requeue.test.ts` and, against a real database,
+`email-failure-requeue.realdb.test.ts`.
 A copy that has explicitly declared a capture mailbox transmits into it normally
 and its rows are ordinary `SENT`.
 
@@ -4024,6 +4061,24 @@ revoked authority or stale mailbox -> detail CTA removed, bearer/page action pre
 unknown legacy authority -> retired for manual review
 application rollback -> old worker cannot select quarantined new-version booking body
 exhausted or suppressed -> admin-visible failure/suppression
+exhausted + body retained -> operator requeue (Try again) -> retryable failed
+```
+
+An exhausted failure of `booking-confirmed`, `pre-arrival-reminder` or
+`split-guest-payment-link` is never replayed, so the queue offers no **Try
+again** for it. An officer with bookings edit access sends a fresh copy from the
+booking page instead (ALP-588), which the failure's row links to: rendered again from
+the booking's current owner and data through its normal sender and `sendEmail`,
+with the payment link re-issued by the existing revoke-and-remint workflow. Only
+an outcome of `sent` archives that booking's earlier exhausted failures of the
+same email (an `email.failure.reviewed` audit row each) and writes
+`booking.email.freshCopySent`; the old `FAILED` rows stay as history. A
+pre-arrival copy sent inside the daily window also stamps
+`preArrivalReminderSentAt`, so the cron does not send a second.
+
+```text
+exhausted sensitive booking email -> fresh copy sent -> earlier failures archived + audit row
+exhausted sensitive booking email -> fresh copy withheld or failed -> nothing archived, nothing recorded
 ```
 
 The organiser's extra-invoice notice (#4299) starts as a durable `FAILED` row
@@ -4219,6 +4274,13 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
      row on the anchor it holds; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
+  PROCESSING left by a dead worker past the webhook lease -> RECEIVED
+  (INV-INT-039): the worker's takeover before it selects a batch, or a
+  Replay, in one updateMany guarded on status and the stale updatedAt (one
+  winner, a loser skips or answers 409); the winner deletes its xero dedup
+  row in the same transaction, so the reprocess applies the event; after
+  three dead attempts on its RUNNING WEBHOOK_RECONCILE row the worker leaves
+  it PROCESSING for Replay
   its WEBHOOK_RECONCILE row is this attempt's own (INV-INT-038): an INBOUND
   row left RUNNING past the stale threshold by a dead attempt is re-claimed
   in place under a fresh startedAt (one guarded write, one winner; the dead
@@ -4775,6 +4837,9 @@ PROCESSING -> FAILED  (#4858: a superseded refund with no stored plan, still owi
                        did not make - another door's since it was raised: the
                        same hold, nothing sent; INV-PAY-145)
 PROCESSING -> FAILED  (attempts spent: DEAD, alerted once; still owed)
+(none) -> PENDING     (a booking edit's own-card refund: written with its frozen
+                       plan in the edit's transaction, before the attempt; the
+                       edit closes it SUCCEEDED once Stripe made it; #4992)
 (none) -> PENDING     (a refund Stripe accepted, then failed: a new row per
                        Stripe refund, card_refund_failed_later_<refund>, under
                        the Payment row lock; INV-PAY-128)
@@ -4861,11 +4926,11 @@ A refund Stripe answers `failed` or `canceled` on a booking edit, a cancellation
 or an approved refund request never closes its row (#4083, #4096, #4102,
 `INV-PAY-128`). Stripe answers a repeated key with the original refusal for 24
 hours, so whoever reads a refusal moves that slice to a fresh idempotency key
-(`refused1`, `refused2`, ...). An edit freezes its plan before Stripe and queues
-its whole read plan after success or throw if any slice is unmade (#3984,
-`INV-PAY-146`), even if the webhook has since recorded a refund. A cancellation
-re-plans its pre-persisted row the same way while it is still `PENDING` with no
-attempt. An approved refund request also queues its whole plan after the attempt:
+(`refused1`, `refused2`, ...). An edit freezes its plan and writes its row in
+its own transaction, before Stripe (#3984, #4992, `INV-PAY-146`); like a
+cancellation, it re-plans that pre-persisted row while it is still `PENDING`
+with no attempt, and a throw marks the slices made before it, even if the
+webhook has since recorded a refund. An approved refund request also queues its whole plan after the attempt:
 refused slices on their next key, unanswered ones keep their key, made ones
 marked with their refund (`madeRefundId`). If no row can be written once Stripe
 was asked by a refund-request approval, its approval
@@ -4881,14 +4946,15 @@ it, and the row's amount stays the plan's total; the ledger census's in-flight
 refund reads only its unmade slices, and the retries-exhausted alert what the
 row still owes once it is marked failed, netting the refunds its final attempt
 recorded. The officers are alerted once per refused slice - by the write that
-first moves it off the key it was planned under (a cancellation's re-plan, the
-runner's, or an edit's or refund request's row when it is written), or by the
-edit door when no row could be written - and again if the retries run out.
+first moves it off the key it was planned under (a pre-persisted door's
+re-plan - a cancellation's or a booking edit's (#4992) - the runner's, or a
+refund request's row when it is written) - and again if the retries run out.
 
 Every other card refund door keeps a refusal owed too (#4103, `INV-PAY-130`). A
-door whose row is written before its attempt - the edit financial review, the
-treasurer-approved late capture, the duplicate capture and the capacity race,
-as the cancellation does - re-plans that row while it is `PENDING` with no
+door whose row is written before its attempt - a booking edit's own-card
+refund (written in the edit's transaction with its frozen plan, #4992), the
+edit financial review, the treasurer-approved late capture, the duplicate
+capture and the capacity race, as the cancellation does - re-plans that row while it is `PENDING` with no
 attempt, once per refusal (compare-and-set on the row's plan), including a
 refusal before a later slice threw, and never closes it. The superseded-payment
 runner asks under its row's key first and moves a refusal to a one-slice plan on

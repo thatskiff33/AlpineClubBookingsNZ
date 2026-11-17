@@ -459,8 +459,8 @@ describe("#3368: the three families stage 4 (#3369) has to answer for", () => {
 const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-editor-data.ts:236",
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer.ts:38",
-  "src/app/(authenticated)/bookings/[id]/page.tsx:205",
-  "src/app/(authenticated)/bookings/page.tsx:196",
+  "src/app/(authenticated)/bookings/[id]/page.tsx:210",
+  "src/app/(authenticated)/bookings/page.tsx:201",
   "src/app/api/bookings/[id]/additional-payment-secret/route.ts:87",
   "src/app/api/bookings/[id]/arrival-time/route.ts:140",
   "src/app/api/bookings/[id]/arrival-time/route.ts:248",
@@ -476,30 +476,30 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/bookings/[id]/confirm-payment/route.ts:94",
   "src/app/api/bookings/[id]/exception-requests/route.ts:138",
   "src/app/api/bookings/[id]/guests/route.ts:352",
-  "src/app/api/bookings/[id]/modify-quote/route.ts:366",
+  "src/app/api/bookings/[id]/modify-quote/route.ts:367",
   "src/app/api/bookings/[id]/notes/route.ts:48",
   "src/app/api/bookings/[id]/refund-request/route.ts:273",
   "src/app/api/bookings/[id]/refund-request/route.ts:50",
   "src/app/api/bookings/[id]/requested-room/options/route.ts:85",
-  "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:67",
+  "src/app/api/bookings/[id]/send-guest-payment-link/route.ts:63",
   "src/app/api/payments/create-payment-intent/route.ts:176",
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:132",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:1078",
+  "src/lib/booking-batch-modification-service.ts:956",
   "src/lib/booking-cancel.ts:2549",
   "src/lib/booking-cancel.ts:571",
-  "src/lib/booking-date-modification-service.ts:395",
+  "src/lib/booking-date-modification-service.ts:343",
   "src/lib/booking-delete.ts:121",
   "src/lib/booking-delete.ts:70",
   "src/lib/booking-email-authority.ts:115",
-  "src/lib/booking-guest-removal-service.ts:426",
-  "src/lib/booking-guest-removal-service.ts:653",
+  "src/lib/booking-guest-removal-service.ts:429",
+  "src/lib/booking-guest-removal-service.ts:656",
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:624",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
-  "src/lib/group-booking.ts:277",
+  "src/lib/group-booking.ts:276",
   "src/lib/kiosk-access.ts:230",
   "src/lib/manual-refund-task-queue-payload.ts:366",
   "src/lib/requested-room-write.ts:63",
@@ -523,8 +523,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1356",
-  "src/lib/payment-recovery.ts:2768",
-  "src/lib/payment-recovery.ts:2820",
+  "src/lib/payment-recovery.ts:2776",
+  "src/lib/payment-recovery.ts:2828",
   "src/lib/xero-admin-health.ts:423",
 ];
 
@@ -798,7 +798,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `booking.findUniqueOrThrow`/`findMany` selects, and Booking declares
   // `organisation`.
   "src/lib/booking-owner-name.ts:12",
-  "src/lib/cron-additional-payment-reminders.ts:439",
+  "src/lib/cron-additional-payment-reminders.ts:444",
   "src/lib/cron-confirm-pending.ts:193",
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:885",
   // #3740: `resolveManualRefundTask`'s select, moved out of that module to keep
@@ -815,8 +815,14 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // build. The walk cannot root it only because the literal names no delegate.
   "src/lib/member-lodge-roster.ts:112",
   "src/lib/payment-link.ts:81",
-  "src/lib/payment-reconciliation.ts:103",
-  "src/lib/stuck-state-dashboard.ts:629",
+  "src/lib/payment-reconciliation.ts:104",
+  // The pre-arrival reminder's include, moved out of the daily cron so the
+  // officer's fresh-copy action reads the booking the same way. Verified by
+  // hand: written `satisfies Prisma.BookingInclude`, read back through
+  // `Prisma.BookingGetPayload`, and passed as `include` to `booking.findMany`
+  // and `booking.findUnique`; Booking declares `organisation`.
+  "src/lib/pre-arrival-reminder-email.ts:72",
+  "src/lib/stuck-state-dashboard.ts:653",
   "src/lib/xero-booking-repair-types.ts:246",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",
 ];

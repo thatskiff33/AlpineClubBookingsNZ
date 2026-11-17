@@ -81,6 +81,29 @@ describe("CardTitle default rendering (unchanged by #2796)", () => {
   });
 });
 
+describe('CardTitle headingLevel="none" (#4951)', () => {
+  // "none" is a call site's recorded decision that this title is not part of
+  // the page outline. It must render exactly what an omitted prop renders, or
+  // classifying a title as "none" would itself be a visual or semantic change.
+  it("renders byte-for-byte what an omitted headingLevel renders", () => {
+    const omitted = render(<CardTitle className="mt-2">Roster assignments</CardTitle>);
+    const none = render(
+      <CardTitle headingLevel="none" className="mt-2">
+        Roster assignments
+      </CardTitle>
+    );
+    expect(none.container.innerHTML).toBe(omitted.container.innerHTML);
+    expect(none.container.innerHTML).toBe(
+      '<div class="font-semibold leading-none tracking-tight mt-2">Roster assignments</div>'
+    );
+  });
+
+  it("exposes no heading to assistive technology", () => {
+    render(<CardTitle headingLevel="none">Roster assignments</CardTitle>);
+    expect(screen.queryByRole("heading")).toBeNull();
+  });
+});
+
 describe("CardTitle opt-in heading semantics", () => {
   it("adds role=heading at the exact level asked for, and only then", () => {
     const { container } = render(

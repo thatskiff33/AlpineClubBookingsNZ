@@ -6,7 +6,7 @@ import { transactionContendedResponse } from "@/lib/transaction-contended-respon
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
-import { isXeroConnected } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero-token-store";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
 import { sendEmail } from "@/lib/email";
 import {

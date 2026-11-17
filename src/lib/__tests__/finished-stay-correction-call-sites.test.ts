@@ -59,6 +59,11 @@ describe("finishedStayCorrection call sites (#3750)", () => {
   it("is named only by the executor and the modules that implement the mode", () => {
     expect(naming("finishedStayCorrection")).toEqual([
       "src/lib/booking-batch-modification-service.ts",
+      // #5151: the batch service's transaction-result type, moved verbatim to
+      // its own type-only module for the size ceiling (#5145). It declares the
+      // result's `finishedStayCorrection` field; it runs nothing and passes the
+      // flag nowhere.
+      "src/lib/booking-batch-modification-transaction-result.ts",
       "src/lib/booking-change-request-execution.ts",
       "src/lib/booking-edit-policy.ts",
       // #3750: reads the modification row's recorded `finishedStayCorrection`

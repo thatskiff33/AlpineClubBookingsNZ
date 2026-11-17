@@ -16,6 +16,12 @@ date-only lodge night (no times), matching the rules in
 [`money.md`](../invariants/money.md) and
 [`booking-dates-and-capacity.md`](../invariants/booking-dates-and-capacity.md).
 
+Officers with Bookings edit access can also send a new booking confirmation,
+pre-arrival reminder or separate guest payment link from the booking's
+**Send a fresh copy of a booking email** panel. See
+[Email Deliverability](email-deliverability.md#send-a-fresh-copy-of-a-booking-email)
+for recipients, link replacement and failure history.
+
 ## When you'd use it
 
 - A member calls to ask about their booking and you need to find it by name or
@@ -285,8 +291,10 @@ booking is refused with a message pointing there; settle it as described in
 
 ### Read the results table
 
-1. The toolbar shows "Showing N of M bookings found". Sort any sortable column
-   (Member, Last Updated, Stay, Guests, Total, Status) by clicking its header.
+1. The toolbar shows the count, "M bookings found"; when there is more than one
+   page, the pager below the table gives the range ("Showing 26–50 of 101").
+   Sort any sortable column (Member, Last Updated, Stay, Guests, Total,
+   Status) by clicking its header.
 2. Each row shows the member, the stay dates and nights, the guest count
    (total and how many are non-members), the price, the status chip, and the
    payment method. A **Review** chip on the Status cell links straight to the

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import type { AgeTier } from "@prisma/client";
-import { z } from "zod";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
@@ -11,7 +10,7 @@ import { transactionContendedResponse } from "@/lib/transaction-contended-respon
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { ROLE_VALUES } from "@/lib/member-roles";
+import { bulkUpdateSchema } from "./schema";
 import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
@@ -64,19 +63,6 @@ import {
 } from "@/lib/deleted-account";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
-
-const bulkUpdateSchema = z.object({
-  ids: z.array(z.string()).min(1, "At least one member ID is required").max(100),
-  action: z.enum(["deactivate", "reactivate", "set-role"]),
-  role: z.enum(ROLE_VALUES).optional(),
-  accessRoles: z.array(z.string().trim().min(1).max(120)).optional(),
-}).refine(
-  (data) =>
-    data.action !== "set-role" ||
-    data.role !== undefined ||
-    data.accessRoles !== undefined,
-  { message: "Role is required for set-role action", path: ["role"] }
-);
 
 /**
  * POST /api/admin/members/bulk-update
@@ -400,6 +386,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Keep the consequence warning in src/app/(admin)/admin/membership/members/_components/member-bulk-dialog.tsx aligned.
     // #1756: shared-double placements swept by a deactivate or an ORG grant that
     // leaves ADULT, collected inside the transaction and alerted on after commit.
     const sweptSharesByMember: Array<{
@@ -581,7 +568,7 @@ export async function POST(req: NextRequest) {
           }
         }
       }
-      // Remove family group memberships for deactivated members
+      // Remove family group memberships for deactivated members (the dialog's Deactivate sentence says so).
       if (action === "deactivate") {
         await tx.familyGroupMember.deleteMany({
           where: { memberId: { in: idsToUpdate } },

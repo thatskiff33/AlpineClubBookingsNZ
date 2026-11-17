@@ -196,12 +196,23 @@ let harnessRole: { restore: () => void } | undefined;
     const refunded = (id: string) => prisma.paymentTransaction.findUniqueOrThrow({ where: { id }, select: { refundedAmountCents: true } }).then((row) => row.refundedAmountCents);
     const madeOn = (paymentIntentId: string) => made.filter((refund) => refund.paymentIntentId === paymentIntentId).reduce((sum, refund) => sum + refund.amountCents, 0);
 
+    /**
+     * #4992: the edit freezes its plan and writes its row inside its own
+     * transaction (`reserveModificationRefundDebts`, under the Payment row with
+     * the hold-back read), then sends that plan after commit. Driven here the
+     * way a date-change door drives it.
+     */
     async function editRefund(cents = SLICE_CENTS) {
-      const { executeBookingModificationRefund } = await import("@/lib/booking-modification-settlement");
+      const { executeBookingModificationRefund, reserveModificationRefundDebts } = await import("@/lib/booking-modification-settlement");
+      const ownCardRefund = await prisma.$transaction((tx) => reserveModificationRefundDebts(tx, {
+        door: "dateChange", plan: null, bookingId: BOOKING_ID, bookingModificationId: MOD_ID, pendingRefundAmountCents: cents,
+        // Only its id is read for an own-card refund; the organiser-child fields apply to a child's plan.
+        payment: { id: PAYMENT_ID } as never,
+      }));
       return executeBookingModificationRefund({
-        format: CLUB_FORMAT_TEST, bookingId: BOOKING_ID,
-        result: { pendingRefundAmountCents: cents, paymentId: PAYMENT_ID, bookingModificationId: MOD_ID, organiserChildRefund: null } as never,
-        idempotencyKeyPrefix: `mod_dates_refund_${BOOKING_ID}`, failureMessage: "race-4872 edit refund failed", recoveryFailureMessage: "race-4872 edit enqueue failed",
+        format: CLUB_FORMAT_TEST, bookingId: BOOKING_ID, door: "dateChange",
+        result: { pendingRefundAmountCents: cents, paymentId: PAYMENT_ID, bookingModificationId: MOD_ID, organiserChildRefund: null, ownCardRefund } as never,
+        failureMessage: "race-4872 edit refund failed",
       });
     }
 
@@ -209,7 +220,7 @@ let harnessRole: { restore: () => void } | undefined;
       const guards = await import("@/lib/session-guards");
       const formatServer = await import("@/lib/club-format-server");
       const { bindClubFormat } = await import("@/lib/club-format-bound");
-      const xero = await import("@/lib/xero");
+      const xero = await import("@/lib/xero-token-store");
       const guard = vi.spyOn(guards, "requireAdmin").mockResolvedValue({ ok: true, session: { user: { id: MEMBER_ID } } } as never);
       const format = vi.spyOn(formatServer, "clubFormat").mockResolvedValue(bindClubFormat(CLUB_FORMAT_TEST));
       const connected = vi.spyOn(xero, "isXeroConnected").mockResolvedValue(false);

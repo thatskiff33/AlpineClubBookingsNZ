@@ -9,12 +9,11 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   createXeroContactForMember,
-  findPotentialXeroContactsForMember,
-  flushMemberSubscriptionHistory,
-  syncMemberSubscriptionHistoryForLinkedContact,
   XeroContactCreatePartialSuccessError,
   XeroContactValidationError,
-} from "@/lib/xero";
+} from "@/lib/xero-contacts";
+import { findPotentialXeroContactsForMember } from "@/lib/xero-duplicate-contacts";
+import { flushMemberSubscriptionHistory, syncMemberSubscriptionHistoryForLinkedContact } from "@/lib/xero-membership-sync";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { buildXeroContactUrl } from "@/lib/xero-links";

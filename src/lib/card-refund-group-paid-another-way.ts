@@ -59,7 +59,7 @@ import {
   recordOrganiserChildRefundInTransaction,
 } from "@/lib/organiser-child-refund-executor";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import {
   groupSettlementIdForRefundRecoveryKey,
   isGroupSettlementRefundRecoveryKey,

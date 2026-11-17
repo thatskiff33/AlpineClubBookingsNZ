@@ -7,11 +7,11 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { isFullAdmin } from "@/lib/access-roles";
 import { classifyIssueReportScreenshot } from "@/lib/issue-report-screenshot-access";
+import { adminListPageQueryFields } from "@/lib/admin-list-page";
 
 const querySchema = z.object({
   status: z.enum(["OPEN", "RESOLVED", "ALL"]).optional().default("OPEN"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 });
 
 /**

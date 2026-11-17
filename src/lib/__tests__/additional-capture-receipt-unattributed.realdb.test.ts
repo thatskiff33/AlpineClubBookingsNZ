@@ -49,7 +49,7 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
 
 let prisma: PrismaClient;
 let observerClient: PrismaClient;
-let outbox: typeof import("@/lib/xero-operation-outbox");
+let supplementary: typeof import("@/lib/xero-supplementary-invoice-enqueue");
 
 async function clean(): Promise<void> {
   await prisma.xeroSyncOperation.deleteMany({
@@ -147,7 +147,7 @@ async function untilQueuedBehind(blockerPid: number): Promise<number> {
     assertSafeRaceDbUrl(RACE_DB_URL, "Unattributed change capture receipt");
     process.env.DATABASE_URL = RACE_DB_URL;
     ({ prisma } = (await import("@/lib/prisma")) as unknown as { prisma: PrismaClient });
-    outbox = await import("@/lib/xero-operation-outbox");
+    supplementary = await import("@/lib/xero-supplementary-invoice-enqueue");
     const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
       import("@prisma/client"),
       import("@/lib/prisma-adapter"),
@@ -195,7 +195,7 @@ async function untilQueuedBehind(blockerPid: number): Promise<number> {
     await plannedReceipt();
 
     // The review's "covers the ask" plan: the change's invoice, asked to record the payment.
-    await outbox.enqueueXeroSupplementaryInvoiceOperation(
+    await supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, priceDiffCents: 8_000, changeFeeCents: 0, bookingModificationId: MODIFICATION_ID },
       { recordPayment: true },
     );
@@ -221,7 +221,7 @@ async function untilQueuedBehind(blockerPid: number): Promise<number> {
       async (tx) => {
         const rows = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
         holderPid = rows[0]?.pid ?? 0;
-        await outbox.lockSupplementaryInvoiceAnchor(tx, BOOKING_ID);
+        await supplementary.lockSupplementaryInvoiceAnchor(tx, BOOKING_ID);
         locked();
         await held;
         await plannedReceipt(tx);
@@ -231,7 +231,7 @@ async function untilQueuedBehind(blockerPid: number): Promise<number> {
     await lockTaken;
 
     // The repair tool's ordinary arm: paid, naming no capture.
-    const waiting = outbox.enqueueXeroSupplementaryInvoiceOperation(
+    const waiting = supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, priceDiffCents: 8_000, changeFeeCents: 0, bookingModificationId: MODIFICATION_ID },
       { recordPayment: true },
     );
@@ -275,7 +275,7 @@ async function untilQueuedBehind(blockerPid: number): Promise<number> {
       },
     });
 
-    await outbox.enqueueXeroSupplementaryInvoiceOperation(
+    await supplementary.enqueueXeroSupplementaryInvoiceOperation(
       { bookingId: BOOKING_ID, priceDiffCents: 5_000, changeFeeCents: 0, bookingModificationId: NEW_MODIFICATION_ID },
       { recordPayment: true, paymentIntentId: NEW_INTENT },
     );

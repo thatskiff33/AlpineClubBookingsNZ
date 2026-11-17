@@ -1,1 +1,0 @@
-- **Two-factor sign-in loads the signed-in page fully (#4060).** Accepted codes now open the resolved destination with a fresh page load, addressing the blank destination observed in isolated browser tests. Enrollment still keeps recovery codes on screen until the member presses **Continue**.

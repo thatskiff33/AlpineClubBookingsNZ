@@ -13,11 +13,8 @@ import {
 } from "@/lib/transaction-contended-response";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
-import {
-  checkMembershipStatus,
-  findOrCreateXeroContact,
-  XeroContactValidationError,
-} from "@/lib/xero";
+import { checkMembershipStatus } from "@/lib/xero-membership-sync";
+import { findOrCreateXeroContact, XeroContactValidationError } from "@/lib/xero-contacts";
 import {
   enqueueXeroBookingInvoiceOperation,
   processQueuedXeroOutboxOperations,

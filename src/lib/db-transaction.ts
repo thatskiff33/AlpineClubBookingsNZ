@@ -26,13 +26,15 @@ export type PrismaTransactionClient = Omit<
  * The interactive-transaction budget of every writer that waits for the global
  * key `pg_advisory_xact_lock(1)` (`INV-LOCK-006`) - the one definition.
  *
- * Prisma counts the wait for that key against `maxWait` / `timeout`, and its
- * defaults (2 s / 5 s) lose to any legitimate holder that runs longer: bed-range
- * assignment and group settlement are the longest, and run on this budget
- * themselves, so a writer on it can outlast either of them. When it does run
- * out Prisma answers P2028 (P2034 for a lost write conflict), NOTHING IS
- * COMMITTED, and the caller answers "busy, try again" as a retryable 503
- * through `isTransactionContention` rather than as a refusal.
+ * The wait for that key happens inside the callback, so it counts against
+ * `timeout` (the transaction body), and Prisma's default of 5 s loses to any
+ * legitimate holder that runs longer: bed-range assignment and group settlement
+ * are the longest, and run on this budget themselves, so a writer on it can
+ * outlast either of them. `maxWait` limits only how long the transaction waits
+ * to start (for a pooled connection, 2 s by default); it does not bound the
+ * lock wait. When either runs out Prisma answers P2028 (P2034 for a lost write
+ * conflict), NOTHING IS COMMITTED, and the caller answers "busy, try again" as
+ * a retryable 503 through `isTransactionContention` rather than as a refusal.
  *
  * The trade-off: a waiter holds its pooled connection for as long as it waits,
  * so a wider budget swaps opaque failures for pool pressure under a burst

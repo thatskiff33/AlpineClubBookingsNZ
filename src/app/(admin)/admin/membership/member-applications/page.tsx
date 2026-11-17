@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { Button } from "@/components/ui/button";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
+import { adminHref } from "@/lib/admin-hubs";
+import { parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -20,6 +27,8 @@ import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import ApprovalMappingPanel, {
   type ReviewRequestPayload,
 } from "./_components/approval-mapping-panel";
+import { getAdminPage } from "@/lib/admin-hubs";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 type ApplicationStatus =
   | "PENDING_NOMINATORS"
@@ -101,6 +110,17 @@ const filters: Array<{ label: string; value: string }> = [
   { label: "All", value: "" },
 ];
 
+const DEFAULT_FILTER = "PENDING_ADMIN";
+const MEMBER_APPLICATIONS_HREF = adminHref("member-applications");
+
+/** The filter a `?status=` value names; `ALL` is the unfiltered list. */
+function filterFromStatusParam(value: string | null): string {
+  if (value === "ALL") return "";
+  return filters.some((option) => option.value === value && value !== "")
+    ? (value as string)
+    : DEFAULT_FILTER;
+}
+
 /**
  * Submission, confirmation, review and token-expiry stamps — real INSTANTS,
  * projected through the club's persisted zone (CT-4, #2870; INV-CONFIG-002).
@@ -153,7 +173,18 @@ export default function MemberApplicationsPage() {
   // Approve/decline/refresh/replace all write membership-area routes; a
   // view-only membership admin browses applications but cannot act (#1997).
   const canEditMembership = useAdminAreaEditAccess("membership");
-  const [filter, setFilter] = useState("PENDING_ADMIN");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [filter, setFilter] = useState(() =>
+    filterFromStatusParam(searchParams.get("status")),
+  );
+  // INV-OPS-020: the route caps each read at one page; the page and filter
+  // are mirrored into the URL so a refresh or shared link keeps the place.
+  const queuePage = useAdminQueuePage({
+    filterKey: filter,
+    initialPage: parseAdminListPageParam(searchParams.get("page")),
+  });
+  const { page, setPage, receive, beginLoad } = queuePage;
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -162,32 +193,69 @@ export default function MemberApplicationsPage() {
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [searchingReplacementKey, setSearchingReplacementKey] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [error, setErrorMessage] = useState("");
+  const [errorAttentionKey, setErrorAttentionKey] = useState(0);
+  const [loadError, setLoadError] = useState("");
+  const successRef = useRef<HTMLDivElement>(null);
+  // Only action failures request attention; background loads use loadError.
+  function setError(value: string) {
+    setErrorMessage(value);
+    if (value) setErrorAttentionKey((key) => key + 1);
+  }
   const [message, setMessage] = useState("");
+  useActionAttention({
+    error,
+    errorTarget: null, // FocusedActionError owns failure focus after dialog cleanup.
+    success: message,
+    successTarget: successRef,
+  });
   // #1786: which action is waiting on the admin's notify-or-not choice, and
   // whether the dialog is open. The choice is kept set while the dialog fades
   // out so its copy never flickers to the other action's wording.
   const [reviewChoice, setReviewChoice] = useState<ReviewChoice | null>(null);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
 
+  const currentParams = new URLSearchParams(searchParams.toString());
+  currentParams.delete("status");
+  if (filter !== DEFAULT_FILTER) currentParams.set("status", filter || "ALL");
+  setAdminListPageParam(currentParams, page);
+  const currentQuery = currentParams.toString();
+  const currentPath = currentQuery
+    ? `${MEMBER_APPLICATIONS_HREF}?${currentQuery}`
+    : MEMBER_APPLICATIONS_HREF;
+
+  useEffect(() => {
+    router.replace(currentPath, { scroll: false });
+  }, [currentPath, router]);
+
   async function loadApplications(nextFilter = filter) {
+    // A slower read for a page or filter the officer has left must not replace
+    // the list now shown, nor its error or loading end (INV-OPS-020).
+    const isCurrent = beginLoad();
     setLoading(true);
-    setError("");
+    setLoadError("");
 
     try {
       const params = new URLSearchParams();
       if (nextFilter) {
         params.set("status", nextFilter);
       }
+      params.set("page", String(page));
       const response = await fetch(`/api/admin/member-applications?${params.toString()}`);
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not load member applications.");
+        // Read the refusal safely, then drop it if the officer has moved on.
+        const refusal = await apiErrorMessageFromResponse(response, "Could not load member applications.");
+        if (!isCurrent()) return;
+        setLoadError(refusal);
         return;
       }
 
-      setApplications(data.applications || []);
+      const data = await response.json();
+      if (!isCurrent()) return;
+
+      const rows: ApplicationRecord[] = data.applications || [];
+      setApplications(rows);
+      receive(data, rows.length);
       setPendingCount(data.pendingCount || 0);
       setNotes((prev) => {
         const next = { ...prev };
@@ -199,16 +267,23 @@ export default function MemberApplicationsPage() {
         return next;
       });
     } catch {
-      setError("Could not load member applications.");
+      if (isCurrent()) setLoadError("Could not load member applications.");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
   useEffect(() => {
     loadApplications(filter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter]);
+  }, [filter, page]);
+
+  // A new view retires the last action's error (it described the old view); the
+  // attention key is untouched, so clearing never takes focus.
+  function changeFilter(value: string) {
+    setErrorMessage("");
+    setFilter(value);
+  }
 
   // #1786/E10: the approval panel validates the joining-fee decision + mapping
   // payload and hands it here; this opens the notify-choice dialog. The
@@ -264,12 +339,12 @@ export default function MemberApplicationsPage() {
           ...(mappingPreviewToken ? { mappingPreviewToken } : {}),
         }),
       });
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not update the application.");
+        setError(await apiErrorMessageFromResponse(response, "Could not update the application."));
         return;
       }
+
+      const data = await response.json();
 
       const warnings =
         Array.isArray(data.warnings) && data.warnings.length > 0
@@ -300,12 +375,12 @@ export default function MemberApplicationsPage() {
         `/api/admin/member-applications/${applicationId}/nominations/refresh`,
         { method: "POST" }
       );
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not refresh the nomination workflow.");
+        setError(await apiErrorMessageFromResponse(response, "Could not refresh the nomination workflow."));
         return;
       }
+
+      const data = await response.json();
 
       const warnings =
         Array.isArray(data.warnings) && data.warnings.length > 0
@@ -336,12 +411,12 @@ export default function MemberApplicationsPage() {
       const response = await fetch(
         `/api/admin/members?q=${encodeURIComponent(query)}&active=true&pageSize=5`
       );
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not search members.");
+        setError(await apiErrorMessageFromResponse(response, "Could not search members."));
         return;
       }
+
+      const data = await response.json();
 
       setReplacementResults((prev) => ({
         ...prev,
@@ -372,12 +447,12 @@ export default function MemberApplicationsPage() {
           body: JSON.stringify({ memberId: member.id }),
         }
       );
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not replace the nominator.");
+        setError(await apiErrorMessageFromResponse(response, "Could not replace the nominator."));
         return;
       }
+
+      const data = await response.json();
 
       const warnings =
         Array.isArray(data.warnings) && data.warnings.length > 0
@@ -536,7 +611,7 @@ export default function MemberApplicationsPage() {
             Membership
           </p>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">
-            Member Applications
+            {getAdminPage("member-applications").label}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Pending committee review: <strong>{pendingCount}</strong>
@@ -549,29 +624,39 @@ export default function MemberApplicationsPage() {
               key={option.value}
               type="button"
               variant={filter === option.value ? "default" : "outline"}
-              onClick={() => setFilter(option.value)}
+              onClick={() => changeFilter(option.value)}
             >
               {option.label}
             </Button>
           ))}
           <DatasetResetButton
-            disabled={filter === "PENDING_ADMIN"}
-            onReset={() => setFilter("PENDING_ADMIN")}
+            disabled={filter === DEFAULT_FILTER && page === 1}
+            onReset={() => { changeFilter(DEFAULT_FILTER); setPage(1); }}
           />
         </div>
       </div>
 
-      {message && (
-        <div className="rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11">
-          {message}
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      <div
+        id="member-applications-success"
+        ref={successRef}
+        role="status"
+        aria-atomic="true"
+        className={message ? "rounded-md border border-success-6 bg-success-3 px-4 py-3 text-sm text-success-11" : "sr-only"}
+      >
+        {message}
+      </div>
+      <FocusedActionError
+        id="member-applications-error"
+        error={error}
+        attentionKey={errorAttentionKey}
+      />
+      <div
+        role="alert"
+        aria-atomic="true"
+        className={loadError ? "rounded-md border border-danger-6 bg-danger-3 p-3 text-sm text-danger-11" : "sr-only"}
+      >
+        {loadError}
+      </div>
 
       {loading ? (
         <Card>
@@ -759,6 +844,10 @@ export default function MemberApplicationsPage() {
           ))}
         </div>
       )}
+
+      {queuePage.pagination ? (
+        <Pagination {...queuePage.pagination} aria-label="Member application pages" />
+      ) : null}
 
       {/* #1786: per-action applicant-email choice, mirroring the #1769a pattern.
           The applicant approved/rejected email always sends (the applicant email
