@@ -55,7 +55,7 @@ function recipientRows(): string[] {
   return Object.entries(PRIVACY_RECIPIENTS).map(([id, entry]) => {
     const namespaces = Object.entries(CREDENTIAL_RECIPIENTS)
       .filter(([, recipient]) => recipient === id).map(([namespace]) => `\`${namespace}\``).join(", ") || "None";
-    return `| ${id} | [${entry.name}](${entry.privacyUrl}) | ${namespaces} | ${entry.dataSent} | ${entry.enablement} | ${entry.processing} | ${entry.memberFacing ? "Yes" : "No"} |`;
+    return `| ${id} | [${entry.name}](${entry.privacyUrl}) | ${namespaces} | ${entry.dataSent} | ${entry.enablement} | ${entry.processing} | ${entry.memberFacing ? "Yes" : "No"} | \`${entry.availability}\` |`;
   });
 }
 

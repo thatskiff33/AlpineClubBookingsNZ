@@ -22,7 +22,7 @@
 // #4914's 20261214010000_correct_starter_privacy_retention_and_hosting,
 // #4031's 20261119010000_correct_starter_privacy_audit_retention and #1945's
 // 20260717180000_genericise_starter_lodge_copy wrote.
-import type { PRIVACY_RECIPIENTS } from "../src/lib/privacy-recipient-classification";
+import { PRIVACY_RECIPIENTS } from "../src/lib/privacy-recipient-classification";
 
 export type StarterPageContent = {
   slug: string;
@@ -50,25 +50,103 @@ type MemberFacingRecipientId = {
   [Id in keyof typeof PRIVACY_RECIPIENTS]: (typeof PRIVACY_RECIPIENTS)[Id]["memberFacing"] extends true ? Id : never;
 }[keyof typeof PRIVACY_RECIPIENTS];
 
+// What section 5 says about when a service receives anything, derived from the
+// register's `availability` so it is defined in one place (#5007): the register
+// says whether a service is always used, needs the club to turn it on, or is on
+// unless the club turns it off, and the policy follows it.
+export const STARTER_PRIVACY_AVAILABILITY_NOTES = {
+  always: "",
+  "club-turns-on": "Only if the club turns it on.",
+  "club-turns-off": "On unless the club turns it off.",
+} as const satisfies Record<(typeof PRIVACY_RECIPIENTS)[keyof typeof PRIVACY_RECIPIENTS]["availability"], string>;
+
+type StarterRecipientCopy = {
+  title: string;
+  /** What the service receives and does. Never says when it is switched on. */
+  text: string;
+  /** The privacy-notice sentence, last in the item. */
+  notice?: string;
+};
+
 // Section 5's list, one item per member-facing register entry (#5007). Keyed by
 // register id, so a new member-facing recipient does not compile until the
-// starter policy names it. Optional services say "Only if the club turns it on."
-// Locations are never stated here: the register fixes none, and the hosting
-// entry reads the club's own settings through {{data-hosting}}.
-export const STARTER_PRIVACY_RECIPIENT_ITEMS: Record<MemberFacingRecipientId, string> = {
-  hosting: `<li><strong>Hosting provider</strong> &mdash; Runs the System and stores its database, uploaded files and server logs, which include your personal information. {{data-hosting}}</li>`,
-  backup: `<li><strong>Amazon S3 (database backups)</strong> &mdash; Compressed copies of the database, stored in Amazon S3 with restricted access. Only if the club turns it on. See <a href="https://aws.amazon.com/privacy/" target="_blank" rel="noopener noreferrer">AWS Privacy Notice</a>.</li>`,
-  email: `<li><strong>Email service</strong> &mdash; Delivers the System&rsquo;s emails, so it receives your name, email address and each message, which can include booking details and sign-in links. The club uses either Amazon Simple Email Service (SES) or its own email relay. If the club uses Amazon SES, see <a href="https://aws.amazon.com/privacy/" target="_blank" rel="noopener noreferrer">AWS Privacy Notice</a>.</li>`,
-  stripe: `<li><strong>Stripe</strong> &mdash; Payment processing. Stripe receives payment amounts, the payer&rsquo;s name and email address and booking or subscription references. Card details go from your browser directly to Stripe. See <a href="https://stripe.com/privacy" target="_blank" rel="noopener noreferrer">Stripe&rsquo;s Privacy Policy</a>.</li>`,
-  xero: `<li><strong>Xero</strong> &mdash; Accounting and invoicing. Your name, email address, phone number, street and postal addresses, date of birth and accounting records, including invoice, payment and subscription references, are kept in step with Xero. See <a href="https://www.xero.com/about/legal/privacy/" target="_blank" rel="noopener noreferrer">Xero&rsquo;s Privacy Policy</a>.</li>`,
-  google: `<li><strong>Google</strong> &mdash; Website analytics (Google Analytics 4) and Google sign-in. Analytics loads only after you accept analytics cookies and receives usage events and browser and device details, not your name or email address. If you choose to sign in with Google, Google exchanges your identity details with the System. Only if the club turns it on. See <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google&rsquo;s Privacy Policy</a>.</li>`,
-  anthropic: `<li><strong>Anthropic</strong> &mdash; The AI help assistant and AI Diagnostics. The assistant receives your questions, the conversation and the page context it is allowed to use. AI Diagnostics receives officers&rsquo; troubleshooting questions and the records they look up, which can include your personal information. Only if the club turns it on. See <a href="https://privacy.anthropic.com/" target="_blank" rel="noopener noreferrer">Anthropic&rsquo;s Privacy Policy</a>.</li>`,
-  sentry: `<li><strong>Sentry</strong> &mdash; Error reporting. Sentry receives error reports and diagnostic details, filtered to reduce personal information, and, if the club also turns on session replay, masked recordings of how a page was used. Only if the club turns it on. See <a href="https://sentry.io/privacy/" target="_blank" rel="noopener noreferrer">Sentry&rsquo;s Privacy Policy</a>.</li>`,
-  "breached-passwords": `<li><strong>Have I Been Pwned</strong> &mdash; Checks whether a new password has appeared in a known data breach. It receives only the first five characters of a scrambled (hashed) form of the password, never the password itself or who you are. On unless the club turns it off. See <a href="https://haveibeenpwned.com/Privacy" target="_blank" rel="noopener noreferrer">Have I Been Pwned&rsquo;s Privacy Policy</a>.</li>`,
-  addy: `<li><strong>Addy</strong> &mdash; Address lookup. Addy receives the address you type while searching and the address you pick. Only if the club turns it on. See <a href="https://www.addysolutions.com/privacy-policy" target="_blank" rel="noopener noreferrer">Addy&rsquo;s Privacy Policy</a>.</li>`,
-  mirotalk: `<li><strong>Video-meeting server</strong> &mdash; Video meetings, run on a meeting server the club chooses. It receives your display name and network details and, when you join a meeting, your audio and video. Only if the club turns it on.</li>`,
-  servernz: `<li><strong>Alpine Central Server</strong> &mdash; Shares the club&rsquo;s lodge listings and the booking officer&rsquo;s contact details with other connected clubs. If you choose to share a message-board post with all clubs, the post, its pictures, your name and an internal member identifier are sent to the server, and the post appears on those clubs&rsquo; boards. No member list is uploaded. Only if the club turns it on.</li>`,
+// starter policy names it. The marking of optional services comes from the
+// register (STARTER_PRIVACY_AVAILABILITY_NOTES), never from the text here. Locations
+// are never stated here: the register fixes none, and the hosting entry reads
+// the club's own settings through {{data-hosting}}.
+const STARTER_PRIVACY_RECIPIENT_COPY: Record<MemberFacingRecipientId, StarterRecipientCopy> = {
+  hosting: {
+    title: "Hosting provider",
+    text: "Runs the System and stores its database, uploaded files and server logs, which include your personal information. {{data-hosting}}",
+  },
+  backup: {
+    title: "Amazon S3 (database backups)",
+    text: "Compressed copies of the database, stored in Amazon S3 with restricted access.",
+    notice: "See <a href=\"https://aws.amazon.com/privacy/\" target=\"_blank\" rel=\"noopener noreferrer\">AWS Privacy Notice</a>.",
+  },
+  email: {
+    title: "Email service",
+    text: "Delivers the System&rsquo;s emails, so it receives your name, email address and each message, which can include booking details and sign-in links. The club uses either Amazon Simple Email Service (SES) or its own email relay.",
+    notice: "If the club uses Amazon SES, see <a href=\"https://aws.amazon.com/privacy/\" target=\"_blank\" rel=\"noopener noreferrer\">AWS Privacy Notice</a>.",
+  },
+  stripe: {
+    title: "Stripe",
+    text: "Payment processing. Stripe receives payment amounts, the payer&rsquo;s name and email address and booking or subscription references. Card details go from your browser directly to Stripe.",
+    notice: "See <a href=\"https://stripe.com/privacy\" target=\"_blank\" rel=\"noopener noreferrer\">Stripe&rsquo;s Privacy Policy</a>.",
+  },
+  xero: {
+    title: "Xero",
+    text: "Accounting and invoicing. Your name, email address, phone number, street and postal addresses, date of birth and accounting records, including invoice, payment and subscription references, are kept in step with Xero.",
+    notice: "See <a href=\"https://www.xero.com/about/legal/privacy/\" target=\"_blank\" rel=\"noopener noreferrer\">Xero&rsquo;s Privacy Policy</a>.",
+  },
+  google: {
+    title: "Google",
+    text: "Website analytics (Google Analytics 4) and Google sign-in. Analytics loads only after you accept analytics cookies and receives usage events and browser and device details, not your name or email address. If you choose to sign in with Google, Google exchanges your identity details with the System.",
+    notice: "See <a href=\"https://policies.google.com/privacy\" target=\"_blank\" rel=\"noopener noreferrer\">Google&rsquo;s Privacy Policy</a>.",
+  },
+  anthropic: {
+    title: "Anthropic",
+    text: "The AI help assistant and AI Diagnostics. The assistant receives your questions, the conversation and the page context it is allowed to use. AI Diagnostics receives officers&rsquo; troubleshooting questions and the records they look up, which can include your personal information.",
+    notice: "See <a href=\"https://privacy.anthropic.com/\" target=\"_blank\" rel=\"noopener noreferrer\">Anthropic&rsquo;s Privacy Policy</a>.",
+  },
+  sentry: {
+    title: "Sentry",
+    text: "Error reporting. Sentry receives error reports and diagnostic details, filtered to reduce personal information, and, if the club also turns on session replay, masked recordings of how a page was used.",
+    notice: "See <a href=\"https://sentry.io/privacy/\" target=\"_blank\" rel=\"noopener noreferrer\">Sentry&rsquo;s Privacy Policy</a>.",
+  },
+  "breached-passwords": {
+    title: "Have I Been Pwned",
+    text: "Checks whether a new password has appeared in a known data breach. It receives only the first five characters of a scrambled (hashed) form of the password, never the password itself or who you are.",
+    notice: "See <a href=\"https://haveibeenpwned.com/Privacy\" target=\"_blank\" rel=\"noopener noreferrer\">Have I Been Pwned&rsquo;s Privacy Policy</a>.",
+  },
+  addy: {
+    title: "Addy",
+    text: "Address lookup. Addy receives the address you type while searching and the address you pick.",
+    notice: "See <a href=\"https://www.addysolutions.com/privacy-policy\" target=\"_blank\" rel=\"noopener noreferrer\">Addy&rsquo;s Privacy Policy</a>.",
+  },
+  mirotalk: {
+    title: "Video-meeting server",
+    text: "Video meetings, run on a meeting server the club chooses. It receives your display name and network details and, when you join a meeting, your audio and video.",
+  },
+  servernz: {
+    title: "Alpine Central Server",
+    text: "Shares the club&rsquo;s lodge listings and the booking officer&rsquo;s contact details with other connected clubs. If you choose to share a message-board post with all clubs, the post, its pictures, your name and an internal member identifier are sent to the server, and the post appears on those clubs&rsquo; boards. No member list is uploaded.",
+  },
 };
+
+function renderStarterRecipientItem(id: MemberFacingRecipientId): string {
+  const copy = STARTER_PRIVACY_RECIPIENT_COPY[id];
+  const note = STARTER_PRIVACY_AVAILABILITY_NOTES[PRIVACY_RECIPIENTS[id].availability];
+  const sentences = [copy.text, note, copy.notice].filter((sentence) => sentence);
+  return `<li><strong>${copy.title}</strong> &mdash; ${sentences.join(" ")}</li>`;
+}
+
+export const STARTER_PRIVACY_RECIPIENT_ITEMS = Object.fromEntries(
+  (Object.keys(STARTER_PRIVACY_RECIPIENT_COPY) as MemberFacingRecipientId[]).map((id) => [
+    id,
+    renderStarterRecipientItem(id),
+  ]),
+) as Record<MemberFacingRecipientId, string>;
 
 const privacySharingSectionHtml = [
   `<div><h2>5. Who We Share Your Information With</h2>`,

@@ -5,6 +5,7 @@ import { tokensForContext } from "../token-catalogue";
 import { PRIVACY_RECIPIENTS } from "../privacy-recipient-classification";
 import { STARTER_PRIVACY_BODY_4915 } from "../config-transfer/starter-privacy-cleaned-bodies";
 import {
+  STARTER_PRIVACY_AVAILABILITY_NOTES,
   STARTER_PRIVACY_RECIPIENT_ITEMS,
   starterPageContent,
 } from "../../../prisma/starter-page-content";
@@ -1027,6 +1028,44 @@ describe("starter privacy policy versus the recipient register (#5007)", () => {
     expect(Object.keys(STARTER_PRIVACY_RECIPIENT_ITEMS).sort()).toEqual(memberFacing.map(([id]) => id).sort());
     const listed = section(5).match(/<li>.*?<\/li>/g) ?? [];
     expect(listed).toEqual(Object.values(STARTER_PRIVACY_RECIPIENT_ITEMS));
+  });
+
+  it("marks each service from the register's availability, once, and no other way", () => {
+    const notes = Object.values(STARTER_PRIVACY_AVAILABILITY_NOTES).filter((note) => note !== "");
+    for (const [id, item] of Object.entries(STARTER_PRIVACY_RECIPIENT_ITEMS)) {
+      const derived = STARTER_PRIVACY_AVAILABILITY_NOTES[PRIVACY_RECIPIENTS[id as keyof typeof PRIVACY_RECIPIENTS].availability];
+      for (const note of notes) {
+        // Exactly the derived note appears, and exactly once: a note typed into
+        // the service's own text would make a second copy that could drift.
+        expect(item.split(note).length - 1, `${id} and "${note}"`).toBe(note === derived ? 1 : 0);
+      }
+    }
+  });
+
+  it("ties the register's availability to the module defaults the schema ships", () => {
+    const schema = readFileSync(join(process.cwd(), "prisma", "schema.prisma"), "utf8");
+    const modules = schema.match(/^model ClubModuleSettings \{[\s\S]*?\n\}/m)?.[0] ?? "";
+    expect(modules).not.toBe("");
+    // Recipients that only receive data once a club turns a module on: each of
+    // their modules ships off, so the starter policy marks them "only if".
+    const offByDefault: Record<string, string[]> = {
+      xero: ["xeroIntegration"],
+      google: ["analytics", "googleLogin"],
+      anthropic: ["aiAssistant", "aiDiagnostics"],
+      addy: ["addressAutocomplete"],
+      servernz: ["alpineCentralServer"],
+    };
+    for (const [id, fields] of Object.entries(offByDefault)) {
+      expect(PRIVACY_RECIPIENTS[id as keyof typeof PRIVACY_RECIPIENTS].availability, id).toBe("club-turns-on");
+      for (const field of fields) {
+        expect(modules, `${field} must ship off`).toMatch(new RegExp(`\\b${field}\\s+Boolean\\s+@default\\(false\\)`));
+      }
+    }
+    // The breached-password check ships on, so it is marked "unless".
+    expect(PRIVACY_RECIPIENTS["breached-passwords"].availability).toBe("club-turns-off");
+    expect(schema).toMatch(/\bbreachedPasswordCheck\s+Boolean\s+@default\(true\)/);
+    // Stripe has no module switch and setup requires it, so it is not marked.
+    expect(PRIVACY_RECIPIENTS.stripe.availability).toBe("always");
   });
 
   it("links each provider to the privacy notice the register records", () => {
