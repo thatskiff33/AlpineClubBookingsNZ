@@ -16,7 +16,7 @@
  * reading still lists, so an older sync cannot turn the removed allocation
  * back on after the newer one switched it off.
  */
-import { PaymentSource, PaymentStatus, type Prisma } from "@prisma/client";
+import { PaymentSource, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
@@ -31,10 +31,9 @@ import {
   REFUND_NOTE_SNAPSHOT_AT_KEY,
   xeroCreditNoteSnapshotMetadata,
 } from "@/lib/xero-refund-note-status";
-import { getNextRefundedPaymentStatus } from "./amounts";
 import { type BankTransferFloorAlert, bankTransferFloorCents, sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
-import { uncapturedPrimaryStatus } from "./modification-note-refunds";
+import { refundedTotalStatus } from "./modification-note-refunds";
 
 const RETIRED_ALLOCATION_ROLES = [NOTE_ALLOCATION_ROLE, ROLELESS_ALLOCATION_ROLE] as const;
 
@@ -150,8 +149,7 @@ async function writeLockedAllocation(tx: Prisma.TransactionClient, link: XeroObj
  * it, under the Payment row lock this transaction holds: clamped to the
  * payment, held at its own refund detail (`bankTransferFloorCents`,
  * `INV-ADDPAY-021`), and its status as the recount derives it
- * (`getNextRefundedPaymentStatus`; a total falling to nothing on a payment
- * never captured returns it to its uncaptured state, `uncapturedPrimaryStatus`).
+ * (`refundedTotalStatus`).
  * Written only when either changes.
  */
 async function decideBankTransferRefundedTotal(
@@ -171,14 +169,7 @@ async function decideBankTransferRefundedTotal(
     xeroDerivedCents: Math.min(Math.max(linked.get(payment.id) ?? 0, 0), payment.amountCents),
     creditNoteId,
   });
-  let status = getNextRefundedPaymentStatus(payment.status, payment.amountCents, floored.cents);
-  if (
-    status === PaymentStatus.SUCCEEDED &&
-    (payment.status === PaymentStatus.REFUNDED || payment.status === PaymentStatus.PARTIALLY_REFUNDED) &&
-    !payment.booking.organiserSettled
-  ) {
-    status = (await uncapturedPrimaryStatus(payment.id, tx)) ?? status;
-  }
+  const status = await refundedTotalStatus(payment, floored.cents, tx);
   const data = {
     ...(floored.cents !== payment.refundedAmountCents ? { refundedAmountCents: floored.cents } : {}),
     ...(status && status !== payment.status ? { status } : {}),

@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   decideLinked: vi.fn(),
   floor: vi.fn(),
   sendFloorAlert: vi.fn(),
-  uncapturedPrimaryStatus: vi.fn(),
+  refundedTotalStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -40,7 +40,8 @@ vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", () => ({
   bankTransferFloorCents: mocks.floor,
   sendBankTransferFloorAlert: mocks.sendFloorAlert,
 }));
-vi.mock("@/lib/xero-inbound/modification-note-refunds", () => ({ uncapturedPrimaryStatus: mocks.uncapturedPrimaryStatus }));
+// The recount's status rule (`refundedTotalStatus`) is pinned through the recount's own suite.
+vi.mock("@/lib/xero-inbound/modification-note-refunds", () => ({ refundedTotalStatus: mocks.refundedTotalStatus }));
 vi.mock("@/lib/club-format-settings", () => ({ getClubFormat: vi.fn(async () => ({ timeZone: "Pacific/Auckland" })) }));
 
 import {
@@ -49,6 +50,7 @@ import {
   writeCurrentCreditNoteAllocations,
 } from "@/lib/xero-inbound/retire-unlisted-credit-note-allocations";
 import { xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
+import { getNextRefundedPaymentStatus } from "@/lib/xero-inbound/amounts";
 
 const NOTE = "cn-removed-allocation";
 const EARLY = "2026-06-30T11:00:00.000Z";
@@ -271,6 +273,7 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
       return new Map([["pay-1", 15_000]]);
     });
     mocks.floor.mockImplementation(async (_tx: unknown, input: { xeroDerivedCents: number }) => ({ cents: input.xeroDerivedCents, alert: null }));
+    mocks.refundedTotalStatus.mockImplementation(async (row: typeof payment, cents: number) => getNextRefundedPaymentStatus(row.status, row.amountCents, cents));
     mocks.transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         $executeRaw: mocks.lock,
@@ -308,8 +311,9 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
 
   it("a total falling to nothing on a payment never captured returns it to its uncaptured state", async () => {
     mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
-    mocks.uncapturedPrimaryStatus.mockResolvedValue("PENDING");
+    mocks.refundedTotalStatus.mockResolvedValue("PENDING");
     await writeCurrentCreditNoteAllocation(link, { paymentId: "pay-1" });
+    expect(mocks.refundedTotalStatus).toHaveBeenCalledWith(payment, 0, expect.anything());
     expect(paymentUpdate).toHaveBeenCalledWith({ where: { id: "pay-1", status: "PARTIALLY_REFUNDED", refundedAmountCents: 5_000 }, data: { refundedAmountCents: 0, status: "PENDING" } });
   });
 

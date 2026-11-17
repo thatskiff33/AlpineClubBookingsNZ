@@ -10,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { isCapturedTransactionStatus, latestTransactionOfKind } from "@/lib/payment-transaction-status";
 import { type AccountCreditAllocationTarget } from "./types";
+import { getNextRefundedPaymentStatus } from "./amounts";
 import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-credit-modification-notes";
 import { paymentsCountingInvoiceCorrections } from "./linked-refunded-total";
 import { NOT_CARD_REFUND_REVERSAL_INVOICE_LINK } from "@/lib/xero-card-refund-reversal-outbox";
@@ -166,3 +167,25 @@ export async function uncapturedPrimaryStatus(
   return latestTransactionOfKind(rows, PaymentTransactionKind.PRIMARY)?.status ?? null;
 }
 
+/**
+ * #3979 (`INV-PAY-126`): the status a payment's new refunded total gives it
+ * (`getNextRefundedPaymentStatus`), except that a total falling to nothing on
+ * a payment nothing was ever captured on undoes an older fold (an invoice
+ * correction counted as a refund), never a refund given back: the payment
+ * returns to its uncaptured state, never to SUCCEEDED. An organiser-settled
+ * child is the #3653 mirror's, and a payment with no rows keeps today's
+ * answer. The refunded-total recount and (#4449) the allocation write both
+ * decide by it.
+ */
+export async function refundedTotalStatus(
+  payment: { id: string; status: PaymentStatus; amountCents: number; booking: { organiserSettled: boolean } },
+  refundedAmountCents: number,
+  db: Pick<Prisma.TransactionClient, "paymentTransaction"> = prisma,
+): Promise<PaymentStatus | null> {
+  const next = getNextRefundedPaymentStatus(payment.status, payment.amountCents, refundedAmountCents);
+  const unrefunds =
+    next === PaymentStatus.SUCCEEDED &&
+    (payment.status === PaymentStatus.REFUNDED || payment.status === PaymentStatus.PARTIALLY_REFUNDED);
+  if (!unrefunds || payment.booking.organiserSettled) return next;
+  return (await uncapturedPrimaryStatus(payment.id, db)) ?? next;
+}
