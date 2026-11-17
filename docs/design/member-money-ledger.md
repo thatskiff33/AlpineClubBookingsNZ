@@ -581,7 +581,10 @@ the edit's event: each closure is a slice of its own, keyed by its event, the
 stay lines must equal the sum of the slices, and a closure moving a fee or a
 give-back share netted against the charge is a conflict. Only the shares the
 sent lines itemise count: one the single fallback line leaves out, or one
-settled after the lines were built, is billed by its own document. The
+settled after the lines were built, is not covered by this invoice's manifest:
+a second ask covers it when one is raised; when the ask was withheld because
+this invoice was in flight, the closure stays uncovered and the officer's
+uncollected-share record stands. The
 change-fee line must equal the fee the event posted and the edit's
 fee component's live gross, and is covered whole. A reduction netted against a
 fee (`REDUCTION_NETTED`), a missing, reversed or ambiguous event, or any other
