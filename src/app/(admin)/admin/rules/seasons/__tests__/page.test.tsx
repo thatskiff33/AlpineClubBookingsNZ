@@ -21,7 +21,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -158,7 +158,6 @@ describe("Seasons page: the windows in order, with their holes", () => {
   });
 
   it("keeps focus on the page after deleting the focused season", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true));
     let removed = false;
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "DELETE") {
@@ -171,6 +170,9 @@ describe("Seasons page: the windows in order, with their holes", () => {
     const remove = await screen.findByRole("button", { name: "Delete Winter 2026" });
     remove.focus();
     fireEvent.click(remove);
+    // The delete asks first (#4973); the focus check starts once it is confirmed.
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete season" }));
     await waitFor(() => expect(remove).not.toBeInTheDocument());
     const heading = screen.getByRole("heading", { name: "Seasons", level: 1 });
     await waitFor(() => {
@@ -348,5 +350,29 @@ describe("Seasons page: navigable without seeing it", () => {
     expect(
       screen.queryByRole("button", { name: /Delete Winter 2026/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("season deletion confirmation (#4973)", () => {
+  it("names the season and lost nightly rates; cancel sends no delete", async () => {
+    mockApi([season()]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Winter 2026");
+    expect(dialog).toHaveTextContent(/nightly rates.*deleted/i);
+    expect(dialog).toHaveTextContent(/cannot be undone.*season and its rates would need to be set up again/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+  });
+  it("deletes the selected season only after confirmation", async () => {
+    mockApi([season()]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete season" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/admin/seasons/season-winter", { method: "DELETE" }));
   });
 });

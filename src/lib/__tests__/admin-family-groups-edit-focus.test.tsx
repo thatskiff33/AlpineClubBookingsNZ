@@ -11,7 +11,7 @@
 // exist only while the form is open.
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 // NOT bare `@testing-library/react`: since CT-4 (#2870) this tree reads the
 // club's zone from `ClubTimeProvider`, and `useClubTime()` throws without one —
 // deliberately, so a tree that forgot to mount it fails loudly instead of
@@ -410,7 +410,6 @@ describe("FamilyGroupsPage action failures (#4975)", () => {
   });
 
   it("focuses a refused partner-invite revoke, and focuses it again when it repeats", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true));
     stubFetchWithInvite(409, { error: "The invitation was just claimed." });
     render(<FamilyGroupsPage />);
     await screen.findByText("partner@club.test");
@@ -420,6 +419,9 @@ describe("FamilyGroupsPage action failures (#4975)", () => {
       const revoke = screen.getByRole("button", { name: "Revoke" });
       revoke.focus();
       fireEvent.click(revoke);
+      // Revoke asks first through the shared confirmation dialog (#4973).
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Revoke invitation" }));
       await waitFor(() => expect(alert).toHaveTextContent("The invitation was just claimed."));
       await expectRecoveryAlertToHoldFocus(alert);
     }
