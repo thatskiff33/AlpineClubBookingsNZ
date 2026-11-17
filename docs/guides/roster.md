@@ -7,7 +7,7 @@ Audience: Operator
 The daily board that assigns the people in the lodge to its chores for a chosen
 day. It auto-suggests a roster from your [chore templates](chores.md) and who is
 here, lets you tweak it, confirm it, print it, and email each guest their
-chores. Find it at **Admin → Lodge Operations → Roster** (`/admin/roster`).
+chores. Find it at **Admin → Lodge Operations → Chore Roster** (`/admin/roster`).
 
 "Here" means the lodge day, not the night. Everyone who stays a night is in the
 lodge from midday on the day they arrive until midday on the day they leave, so
@@ -34,7 +34,7 @@ module is on.
 
 ### Pick a day
 
-1. Go to **Admin → Lodge Operations → Roster**. Use the **Date** field or the
+1. Go to **Admin → Lodge Operations → Chore Roster**. Use the **Date** field or the
    calendar to choose a day. The calendar colours each day by roster status —
    **Needs roster**, **Suggested (unconfirmed)**, **Confirmed — some guests need
    chores**, and **Confirmed** — and the **Who's at the lodge** panel shows who is
@@ -151,7 +151,7 @@ to guess it.
 ## Related links
 
 - Back to the [documentation hub](../README.md).
-- Sibling guides: [Chore Templates](chores.md), [Hut Leaders](hut-leaders.md),
+- Sibling guides: [Chores](chores.md), [Hut Leaders](hut-leaders.md),
   [Rooms & Beds](rooms-beds.md), [Lodge Kiosk](lodge.md).
 - Reference: the roster/chores model in
   [Admin and Lodge](../ARCHITECTURE.md#admin-and-lodge).

@@ -1,4 +1,4 @@
-# Member Applications
+# Applications
 
 Audience: Operator
 
