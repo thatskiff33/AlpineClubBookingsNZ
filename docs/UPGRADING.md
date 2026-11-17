@@ -136,25 +136,34 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
-### Upgrade checklist for this release
+### Find refund notes Xero voided that the app still counts (#4336)
 
-The order to work in, from the release you run now to this one. Every step
-points at the section that explains it; none of them repeats it. The
-production runbook ([`PRODUCTION_UPGRADE_RUNBOOK.md`](PRODUCTION_UPGRADE_RUNBOOK.md)) is the procedure these steps
-fit into.
+**Who needs it.** A deployment that ran any version before #4341 (v0.13.2 or
+earlier) with Xero connected. Before #4341, an older "live" reading of a refund
+credit note could undo the app's record that the treasurer had voided it in
+Xero, so the app may count a refund as documented while Xero credits nothing.
 
-#### Before the deploy
+**What to do, once, after the upgrade.** No migration runs and nothing changes
+on its own. From the live app's environment, run the read-only report:
 
-1. Be on v0.14.0 or later before you upgrade to this release. v0.14.0 added
-   the `{{data-hosting}}` token the new starter privacy text uses, and a club
-   that skips it shows the token as raw text. Deploy v0.14.0 first if you run
-   an older release:
-   [Starter privacy policy lists its recipients and names your host (#5007)](#starter-privacy-policy-lists-its-recipients-and-names-your-host-5007).
+```bash
+pnpm run xero:revived-refund-note-report --list
+```
 
-#### After the deploy
+It asks Xero about every refund note the app has an active link to, about 40 a
+minute, and lists each one Xero reports VOIDED or DELETED. It changes no
+booking, payment, credit, link or Xero record. It can write API-usage rows
+and, if the Xero token needs refreshing, the new token, its refresh lease and
+a credential audit row; a failed refresh alerts the admins, as it would for
+the app. Its output names members' payments, so keep it off any public place.
+For each line, open the booking and use **Sync from Xero now**, then run the
+report again. If the run stops early (a club with more refund notes than one
+day's share of Xero calls), carry on the next day with the
+`--resume-from <id>` it prints. What each line leads to:
+[MAINTENANCE.md](MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
 
-1. Do the after-the-deploy part of each of these sections:
-   - [Starter privacy policy lists its recipients and names your host (#5007)](#starter-privacy-policy-lists-its-recipients-and-names-your-host-5007)
+**Rollback.** Nothing to undo: the report changes no booking, payment,
+credit, link or Xero record.
 
 ### Starter privacy policy lists its recipients and names your host (#5007)
 

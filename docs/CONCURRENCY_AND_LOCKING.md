@@ -7361,6 +7361,16 @@ Stripe call:
   provider preflight (`processBookingModificationRefundOperation`). A manual
   hand-back reads the hold-back after its claim and after any credit
   give-back, so a member-ledger lock still comes before the Payment row.
+  Since #4879 an edit review's card arm (`chooseEditReviewSettlementRoute`,
+  through `planEditReviewCardRefund`)
+  takes the booking owner's member-credit key and then the Payment row
+  (`lockPaymentForRefundedTotal`) after its `lock(1)` and booking row, and reads
+  the hold-back before it plans. The member key comes first because the
+  completion's credit give-back and re-price take it after the claim; it is
+  re-entrant, so they take it again at no cost. The still-owed preview, which
+  holds no `lock(1)`, takes neither and reads in its rolled-back snapshot. A
+  "Paid another way" close reads it under the Payment row it already holds,
+  after its claim. No new advisory key and no new lock order.
   After commit the edit sends that plan, closes the row on that plan once
   every slice is made, and otherwise leaves it owed: refusals moved, made
   slices marked, unanswered slices on their original key. The

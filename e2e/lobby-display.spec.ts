@@ -85,6 +85,12 @@ test("a display pairs through the real admin flow and a revoke sends it back to 
 
   // ── Revoke → the display returns to the pairing screen ──
   await page.getByRole("button", { name: "Revoke" }).click();
+  // #4973: Revoke asks first. Confirm in the dialog, scoped so the row's own
+  // Revoke button (hidden behind the open dialog) is not what gets clicked.
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Revoke", exact: true })
+    .click();
   await expect(page.getByText("Revoked")).toBeVisible();
 
   // A revoked token is rejected on its next request: a reload lands the TV
