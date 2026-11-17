@@ -33,16 +33,21 @@ import { MappingsPanel } from "../mappings-panel";
 
 const MAPPINGS_URL = "/api/admin/xero/account-mappings";
 
+/** The reference reads the panel makes alongside the account mappings, all succeeding. */
+function referenceRead(url: string) {
+  if (url.startsWith("/api/admin/xero/chart-of-accounts")) return { accounts: [], cache: null };
+  if (url.startsWith("/api/admin/xero/items")) return { items: [], cache: null };
+  if (url.startsWith("/api/admin/xero/item-code-mappings")) return { hutFees: {}, entranceFees: {} };
+  if (url.startsWith("/api/admin/membership-types")) return { membershipTypes: [] };
+  if (url.startsWith("/api/admin/age-tier-settings")) return { settings: [] };
+  throw new Error(`unexpected fetch ${url}`);
+}
+
 /** Every reference read succeeds except the account mappings themselves. */
 function failMappingsRead() {
   mockFetchJson.mockImplementation(async (url: string) => {
     if (url.startsWith(MAPPINGS_URL)) throw new Error("Xero is unreachable");
-    if (url.startsWith("/api/admin/xero/chart-of-accounts")) return { accounts: [], cache: null };
-    if (url.startsWith("/api/admin/xero/items")) return { items: [], cache: null };
-    if (url.startsWith("/api/admin/xero/item-code-mappings")) return { hutFees: {}, entranceFees: {} };
-    if (url.startsWith("/api/admin/membership-types")) return { membershipTypes: [] };
-    if (url.startsWith("/api/admin/age-tier-settings")) return { settings: [] };
-    throw new Error(`unexpected fetch ${url}`);
+    return referenceRead(url);
   });
 }
 
@@ -107,6 +112,41 @@ describe("MappingsPanel — auto-load runs once per opening (#5203)", () => {
     expect(mappingsRequests()).toBe(1);
     rerender(panel(true, true));
     await settle();
+    expect(mappingsRequests()).toBe(2);
+  });
+
+  it("reopening while a load is still in flight waits for it instead of starting a second request", async () => {
+    // The first mappings read hangs until the test rejects it; any later one
+    // fails at once. This pins the latch's `busy` guard: without it the reopen
+    // would fire a second, concurrent request.
+    let rejectFirstRead: (error: Error) => void = () => {};
+    const firstRead = new Promise<never>((_resolve, reject) => {
+      rejectFirstRead = reject;
+    });
+    let mappingsReads = 0;
+    mockFetchJson.mockImplementation(async (url: string) => {
+      if (url.startsWith(MAPPINGS_URL)) {
+        mappingsReads += 1;
+        if (mappingsReads === 1) return firstRead;
+        throw new Error("Xero is unreachable");
+      }
+      return referenceRead(url);
+    });
+
+    const { rerender } = render(panel(true));
+    await waitFor(() => expect(mappingsRequests()).toBe(1));
+
+    rerender(panel(false));
+    rerender(panel(true));
+    await settle();
+    expect(mappingsRequests()).toBe(1);
+
+    await act(async () => {
+      rejectFirstRead(new Error("Xero is unreachable"));
+    });
+    await screen.findByText("Xero is unreachable");
+    await settle();
+    // Once the first read settles the reopened section loads once, not in a loop.
     expect(mappingsRequests()).toBe(2);
   });
 });
