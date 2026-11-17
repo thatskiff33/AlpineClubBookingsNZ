@@ -2289,7 +2289,7 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
       "writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote, heldFloorAlerts })",
       "heldFloorAlerts,",
       "repairRefundedPaymentBusinessState(",
-      "sendFloorAlertsNotRecounted(heldFloorAlerts, recountedPaymentIds)",
+      "sendFloorAlertsNotRecounted(heldFloorAlerts, new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()]))",
     ]);
   });
 

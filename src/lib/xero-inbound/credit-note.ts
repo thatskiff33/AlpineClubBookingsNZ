@@ -348,8 +348,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
   // turn a removed allocation back on by listing its invoice again.
   // #4449 (`INV-PAY-126`): a modification note's write decides its bank-transfer payment's refunded total under the Payment row.
   const isModificationNote = resolvedCreditNoteLinks.some((link) => link.role === "MODIFICATION_CREDIT_NOTE");
-  // #4449 (verify low 2): the writes' and removals' floor alerts wait for the recount below, which alerts the payments it decides.
-  const heldFloorAlerts: BankTransferFloorAlert[] = [];
+  const heldFloorAlerts: BankTransferFloorAlert[] = []; // #4449: sent after the recount below, for payments it did not decide
   await writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote, heldFloorAlerts });
   // #4447: the invoices this reading no longer lists, in the same pass as the
   // writes above and before the recount. A stored snapshot that refuses the
@@ -394,12 +393,7 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       role: "REFUND_CREDIT_NOTE",
     }));
 
-  const recountedPaymentIds = new Set([
-    ...paymentCandidates.map((payment) => payment.id),
-    ...voidedMirrorPaymentIds,
-    ...accountCreditPayments.map((payment) => payment.id),
-    ...modificationRefundAmountsByPaymentId.keys(),
-  ]);
+  const directPaymentIds = [...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id).concat(voidedMirrorPaymentIds);
   const refundedPaymentRepair = await repairRefundedPaymentBusinessState({
     creditNoteId: creditNote.creditNoteID,
     creditNote: {
@@ -409,16 +403,11 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
       remainingCredit: creditNote.remainingCredit ?? undefined,
       creditNoteNumber: creditNote.creditNoteNumber ?? undefined, // #4230: named in the bank-transfer floor's alert
     },
-    directPaymentIds: [
-      ...paymentCandidates.map((payment) => payment.id),
-      ...voidedMirrorPaymentIds,
-      ...accountCreditPayments.map((payment) => payment.id),
-    ],
+    directPaymentIds,
     modificationRefundAmountsByPaymentId,
     recomputeModificationRefundAmounts: resolveCurrentModificationRefunds,
   });
-  // The recount floored and alerted every payment it decided; the rest are the writes' and removals' to alert.
-  await sendFloorAlertsNotRecounted(heldFloorAlerts, recountedPaymentIds);
+  await sendFloorAlertsNotRecounted(heldFloorAlerts, new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()]));
 
   const accountCreditAllocationRepair =
     accountCreditPayments.length > 0 || appliedCreditPayments.length > 0
