@@ -51,6 +51,13 @@ import {
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { SortHeader } from "@/components/admin/sort-header";
 import { Pagination } from "@/components/admin/admin-pagination";
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  adminListPage,
+  formatAdminListRange,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page";
 import { StatusChip } from "@/components/ui/status-chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
@@ -161,11 +168,6 @@ const subscriptionSortColumns = new Set<SubscriptionSortBy>([
 /** Where this page is served under the switch: its own address, as officers see it. */
 const SUBSCRIPTIONS_HREF = adminHref("subscriptions");
 
-function parsePageParam(value: string | null) {
-  const page = Number(value);
-  return Number.isInteger(page) && page > 0 ? page : 1;
-}
-
 /**
  * `fallbackYear` is passed in rather than read from a module constant (CT-4,
  * #2870): the club's current season now comes from the zone the provider carries,
@@ -265,8 +267,8 @@ export default function SubscriptionsPage() {
   const [xeroContactGroup, setXeroContactGroup] = useState(searchParams.get("xeroContactGroup") || "all");
   const [sortBy, setSortBy] = useState<SubscriptionSortBy>(() => getSortBy(searchParams.get("sortBy")));
   const [sortDir, setSortDir] = useState<SortDir>(() => getSortDir(searchParams.get("sortDir")));
-  const [page, setPage] = useState(() => parsePageParam(searchParams.get("page")));
-  const [pageSize] = useState(25);
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")));
+  const [pageSize] = useState(ADMIN_LIST_DEFAULT_PAGE_SIZE);
   const [data, setData] = useState<Subscription[]>([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
@@ -313,8 +315,8 @@ export default function SubscriptionsPage() {
         `/api/admin/xero/sync-memberships?seasonYear=${seasonYear}&mode=${mode}`,
         { method: "POST" }
       );
-      const data = await res.json();
       if (res.ok) {
+        const data = await res.json();
         setSyncMessage({
           type: "success",
           text:
@@ -324,10 +326,10 @@ export default function SubscriptionsPage() {
         });
         fetchData();
       } else {
-        setSyncMessage({ type: "error", text: data.error || "Sync failed" });
+        setSyncMessage({ type: "error", text: await apiErrorMessageFromResponse(res, "Sync failed") });
       }
     } catch {
-      setSyncMessage({ type: "error", text: "Sync failed — check Xero connection" });
+      setSyncMessage({ type: "error", text: "Sync failed" });
     } finally {
       setSyncing(null);
       setSyncActionPending(false);
@@ -382,12 +384,15 @@ export default function SubscriptionsPage() {
           }),
         },
       );
-      const json = await res.json();
       if (res.ok) {
+        const json = await res.json();
         setSyncMessage({ type: "success", text: json.message || "Subscription updated." });
         fetchData();
       } else {
-        setSyncMessage({ type: "error", text: json.error || "Manual payment failed." });
+        setSyncMessage({
+          type: "error",
+          text: await apiErrorMessageFromResponse(res, "Manual payment failed."),
+        });
       }
     } catch {
       setSyncMessage({ type: "error", text: "Manual payment failed." });
@@ -413,7 +418,7 @@ export default function SubscriptionsPage() {
     if (xeroContactGroup !== "all") params.set("xeroContactGroup", xeroContactGroup);
     if (sortBy !== "member") params.set("sortBy", sortBy);
     if (sortDir !== getDefaultSortDir(sortBy)) params.set("sortDir", sortDir);
-    if (page > 1) params.set("page", String(page));
+    setAdminListPageParam(params, page);
     return params;
   }, [seasonYear, status, ageTier, xeroContactGroup, sortBy, sortDir, page, searchParams]);
 
@@ -464,7 +469,7 @@ export default function SubscriptionsPage() {
   }, [ageTier, buildSubscriptionsSearchParams, page, pageSize, sortBy, sortDir, status]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
-  const totalPages = Math.ceil(total / pageSize);
+  const { totalPages } = adminListPage({ page, pageSize, total });
   // The manual mark-paid action column only exists for finance-edit users.
   const columnCount = canEditFinance ? 9 : 8;
 
@@ -722,7 +727,7 @@ export default function SubscriptionsPage() {
         toolbar={
           loadError ? null : (
             <p>
-              Showing {data.length} of {total} subscription{total === 1 ? "" : "s"}
+              {total} subscription{total === 1 ? "" : "s"}
             </p>
           )
         }
@@ -884,7 +889,7 @@ export default function SubscriptionsPage() {
         page={page}
         totalPages={totalPages}
         onPageChange={setPage}
-        summary={`Showing ${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, total)} of ${total}`}
+        summary={formatAdminListRange({ page, pageSize, total })}
       />
     </div>
   );

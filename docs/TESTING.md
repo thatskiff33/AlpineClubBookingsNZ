@@ -692,11 +692,14 @@ That is not a loss: before #2693 they were loaded with `allowJs: true,
 checkJs: false`, which produced no diagnostics either. Their names are pinned in
 `src/lib/__tests__/typecheck-project-coverage.test.ts`, so a new JavaScript
 test fails that contract until it is either written in TypeScript (the default)
-or named there deliberately. Four JavaScript modules that TypeScript tests
-import — `eslint.config.mjs`, `scripts/ci/server-only-boundary-selftest.mjs`,
-`scripts/sync-user-guide-wiki.mjs` and `load/lib/contention-invariant.js` —
-carry a sibling `.d.mts` / `.d.ts` declaring their exports; the same contract
-pins each pair.
+or named there deliberately. The JavaScript modules that TypeScript tests
+import — `eslint.config.mjs`, `scripts/ci/check-allow-builds.mjs`,
+`scripts/ci/server-only-boundary-selftest.mjs`,
+`scripts/sync-user-guide-wiki.mjs`, the k6 harness's pure helpers under
+`load/lib/` (`contention-invariant.js`, `stay-window.js`, `target-guard.js` and
+`volume-users.js`) and the Stripe stub `load/stripe-stub/server.mjs` — carry a
+sibling `.d.mts` / `.d.ts` declaring their exports; the same contract pins each
+pair.
 
 Put a supported new Vitest test under `src/` or `scripts/` and the existing
 patterns cover it; put one somewhere else and you must add the pattern.
@@ -1411,6 +1414,10 @@ the explanation appears elsewhere on the page. Nearly all use
 the current list); `policy-exception-requests-panel.tsx` and `roster-editor.tsx`
 call the same failure primitive directly through `useActionAttention`. Since #2934 every one of them focuses and scrolls through
 `src/hooks/use-scroll-to-feedback.ts` — see "Attention after an action" below.
+A component that holds its own failure takes the message and the counter that
+re-fires an identical repeat from `useActionFailure`
+(`src/hooks/use-action-failure.ts`); test a repeat by failing twice with the
+same message and asserting the alert holds focus each time.
 
 Assert that contract with the shared helper, never by hand:
 
@@ -1688,10 +1695,36 @@ So:
    member of the set, or a real one missing. Commit `5a5e4e748` (#2649) found a
    census claiming "at least nine other producers" that was really six, with two
    of the named ones refuted outright.
-4. **Prefer a census that enumerates over one that only counts.** Listing the
-   entries by name puts two concurrent additions on the same lines, so git
-   raises a conflict and a human classifies both — which is exactly the review a
-   bare integer skipped.
+4. **Prefer a census that enumerates over one that only counts, and publish no
+   total (#5211).** List one entry per line, sorted, with nothing else on the
+   line: two branches adding different entries then merge cleanly AND the merged
+   list is exactly right, which a bare integer never is. Do not pin the length
+   of a list that ordinary feature work grows, and do not quote a total in a
+   comment or document; each is a shared line every lane edits. Pin a number
+   only as a review gate on a small set that changes when someone makes a
+   decision, and say so beside it.
+
+The audit-writer and view-only censuses work this way. A new audit write site
+regenerates `scripts/audit/audit-write-sites.ts` with
+`pnpm run audit:census --write`, which adds that site's line; review it,
+because the line states the category the row is filed under. Each line also
+carries the site's action and the reviewed records that name it, and the census
+compares per function by sink and action, naming every attribute that
+changed, so its failure says NEW, REMOVED, REMOVED+NEW,
+RENUMBERED (ordinals shifted by an earlier addition; nobody's readership
+changed), RECLASSIFIED, SINK MOVED or REVIEW RECORD CHANGED. Two sites in one
+function sharing an action are told apart only by order. The ledger is
+`merge=union`: two lanes whose lines sort together merge cleanly, and the cases
+union cannot get right fail loudly rather than silently. Two lanes appending to
+the SAME function both write `<fn>#1`; with different actions union keeps both
+lines, a repeated key that the census names (and `tsc` refuses), and with the
+identical action and category git merges the identical line and the census
+fails on the missing `#2`. Either way, regenerate on the merged tree, which is
+why the census must run on the composed tree before merging. A new
+`ViewOnlyActionButton` under a section banner needs no entry; one that keeps its
+own per-button reason adds or updates its file's line in `KEEPS_OWN_REASON` in
+`view-only-banner-contract.test.ts`. Neither census has a total to re-measure,
+and each refuses one coming back in its documents.
 
 Censuses reading balanced call arguments or object bodies share
 [`balancedBrackets`](../src/lib/__tests__/support/balanced-brackets.ts).
@@ -2011,14 +2044,18 @@ on. Expect a batch of realdb files to
 take as long as running them one after another. Inside one file the old rules
 still apply: a suite owns its own fixtures and queued work.
 
-CI runs every one of these files in the advisory `realdb-all` job (#4458), in
-one `vitest run` on one Postgres service, with `RUN_CONCURRENCY_RACE_TESTS=1`.
+CI runs every one of these files in the `realdb-all` job,
+`Real-PostgreSQL suites (all)` (#4458), in one `vitest run` on one Postgres
+service, with `RUN_CONCURRENCY_RACE_TESTS=1`. It blocks a merge through the
+required `verify` check, whose same-attempt poll fails unless this job succeeded
+(#4907); it is not a branch-protection context of its own.
 The file list is `scripts/ci/realdb-files.mjs`: every `*.realdb.test.*` file
 under `src/` minus `scripts/ci/realdb-quarantine.txt`, which names a suite that
 is red for a known reason, or cannot share the process, with its issue or PR.
 Add a realdb file and it joins the job with no edit. `realdb-ci-coverage-census.test.ts` fails when a file is
 neither run nor quarantined, when the job stops setting
-`RUN_CONCURRENCY_RACE_TESTS=1`, or when any other job names `realdb-all`. The
+`RUN_CONCURRENCY_RACE_TESTS=1`, when any job `needs:` it or it gains a
+job-level `if:` or `needs:`, or when anything but `verify`'s poll names it. The
 job points `DATA_MIGRATION_VERIFICATION_DATABASE_URL` at the same race service
 (those three suites create scratch databases of their own), and its last step,
 `scripts/ci/check-realdb-ran.mjs`, reads Vitest's JSON report and fails when a
@@ -2027,7 +2064,9 @@ gate is unset skips green otherwise. The seed suite
 (`booking-ledger-history-seed`) is quarantined because
 `scripts/booking-ledger-seed-gate.sh` runs it against a database of its own. The
 per-file steps in `migration-drift` and `data-migration-verification` stay: they
-are required checks and this job is not.
+report sooner, inside their own required checks. A flaky suite now blocks every
+pull request, so quarantine it with its issue rather than loosening the no-skip
+check.
 
 ## Mocking a money seam: never in a test that asserts its money
 

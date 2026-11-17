@@ -1374,9 +1374,10 @@ describe("review finding source/schema contracts", () => {
   it("proves the least-privilege database roles against a real PostgreSQL in a required job (#4453)", () => {
     // The roles' guarantees — no UPDATE or DELETE of a ledger line or audit row
     // by any route, migrations still run, pg_dump still works — are claims about
-    // PostgreSQL's privilege checks. The advisory realdb-all job alone cannot
-    // block a merge (#4453 review, O-F7), so the proof has its own step in the
-    // required migration-drift job, after the race database exists.
+    // PostgreSQL's privilege checks. The realdb-all job could not block a merge
+    // when this was written (#4453 review, O-F7; #4907 later gated it through
+    // `verify`), so the proof has its own step in the required migration-drift
+    // job, after the race database exists.
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const proofStep = workflow.indexOf(
       "name: Prove the least-privilege database roles against dedicated PostgreSQL"
@@ -1409,9 +1410,10 @@ describe("review finding source/schema contracts", () => {
 
   it("proves the member-money journal's enforcement against a real PostgreSQL in a required job (#4513)", () => {
     // The verifier's pins are the catalog's deparsed text and the journal's
-    // refusals are PostgreSQL's own; the advisory realdb-all job alone cannot
-    // block a merge, so the proof has its own step in the required
-    // migration-drift job, after the race database exists.
+    // refusals are PostgreSQL's own; the realdb-all job could not block a merge
+    // when this was written (#4907 later gated it through `verify`), so the
+    // proof has its own step in the required migration-drift job, after the
+    // race database exists.
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const proofStep = workflow.indexOf(
       "name: Prove the member-money journal's enforcement against dedicated PostgreSQL"
@@ -1450,8 +1452,9 @@ describe("review finding source/schema contracts", () => {
 
   it("proves the member-money posting command against a real PostgreSQL in a required job (#4626)", () => {
     // Whether a built batch commits is decided by the journal's deferred
-    // checks at COMMIT, as the application role; the advisory realdb-all job
-    // cannot block a merge, so the proof has its own required step.
+    // checks at COMMIT, as the application role; the realdb-all job could not
+    // block a merge when this was written (#4907 later gated it through
+    // `verify`), so the proof has its own required step.
     const workflow = readRepoFile(".github/workflows/ci.yml");
     const proofStep = workflow.indexOf("name: Prove the member-money posting command against dedicated PostgreSQL");
     expect(proofStep).toBeGreaterThan(-1);
@@ -1486,6 +1489,22 @@ describe("review finding source/schema contracts", () => {
     expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
     expect(suite).toContain("reserveMemberMoneyRefund");
     expect(suite).toContain("open_reservation_without_funding");
+  });
+
+  it("proves the member-money export manifest against a real PostgreSQL in a required job (#4525)", () => {
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    const proofStep = workflow.indexOf("name: Prove the member-money export manifest against dedicated PostgreSQL");
+    expect(proofStep).toBeGreaterThan(workflow.indexOf("name: Prove the member-money application engine against dedicated PostgreSQL"));
+    expect(proofStep).toBeLessThan(workflow.indexOf("\n  data-migration-verification:\n"));
+    const step = workflow.slice(proofStep, workflow.indexOf("\n      - name:", proofStep + 1));
+    expect(step).toContain('RUN_CONCURRENCY_RACE_TESTS: "1"');
+    expect(step).toContain("pnpm exec vitest run src/lib/__tests__/member-money-export-manifest.realdb.test.ts");
+    expect(step).not.toContain("continue-on-error");
+    expect(step).not.toMatch(/\n\s+if:/);
+    const suite = readRepoFile("src/lib/__tests__/member-money-export-manifest.realdb.test.ts");
+    expect(suite).toContain('process.env.RUN_CONCURRENCY_RACE_TESTS === "1"');
+    expect(suite).toContain("coverage_total_mismatch");
+    expect(suite).toContain("conflict_with_coverage");
   });
 
   it("executes the email-override annotation strip against a real PostgreSQL in CI (#2269, #2418)", () => {

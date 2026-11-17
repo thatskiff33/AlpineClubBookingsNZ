@@ -332,7 +332,7 @@ export async function buildPromoHandBackGroup(
         bookingId: editedChild!,
         paymentId: payment.id,
         bookingModificationId: modificationId,
-        adjusted: { refundAmountCents: 1_500, hasSucceededPayment: false },
+        adjusted: { refundAmountCents: 1_500, hasSucceededPayment: false, refundHeldForDispute: false },
         editLabel: "night re-price",
         booking: child, // #3949: an organiser-settled IB child, so the organiser is the payee
       }),

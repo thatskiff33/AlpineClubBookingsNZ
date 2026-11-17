@@ -2,6 +2,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { chromiumSpecFiles } from "./e2e-spec-shard.mjs";
+import { PLAYWRIGHT_RESULTS_FILE } from "./playwright-results-file.mjs";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 
@@ -25,4 +26,17 @@ it("does not repeat mobile on another shard", async () => {
   vi.stubEnv("E2E_SHARD", "2/3");
   const { default: config } = await import("../../playwright.config");
   expect(config.projects?.some((project) => project.name === "mobile")).toBe(false);
+});
+
+it("adds machine-readable results only in CI and retains the existing reporters", async () => {
+  vi.stubEnv("CI", "true");
+  const { default: ci } = await import("../../playwright.config");
+  expect(ci.reporter).toEqual([
+    ["list"], ["html", { open: "never" }], ["github"],
+    ["json", { outputFile: PLAYWRIGHT_RESULTS_FILE }],
+  ]);
+  vi.resetModules();
+  vi.stubEnv("CI", "");
+  const { default: local } = await import("../../playwright.config");
+  expect(local.reporter).toEqual([["list"], ["html", { open: "never" }]]);
 });

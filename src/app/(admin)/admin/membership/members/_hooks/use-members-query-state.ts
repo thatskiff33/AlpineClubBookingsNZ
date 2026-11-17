@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
+import {
+  ADMIN_LIST_DEFAULT_PAGE_SIZE,
+  parseAdminListPageParam,
+  setAdminListPageParam,
+} from "@/lib/admin-list-page"
 import type { Filters } from "../_types"
 import { emptyFilters, getInitialLifecycleStatus } from "../_utils"
 
@@ -20,8 +25,8 @@ export function useMembersQueryState() {
   const searchParams = useSearchParams()
   const [search, setSearch] = useState(searchParams.get("q") || "")
   const [debouncedSearch, setDebouncedSearch] = useState(search)
-  const [page, setPage] = useState(parseInt(searchParams.get("page") || "1", 10))
-  const [pageSize] = useState(25)
+  const [page, setPage] = useState(() => parseAdminListPageParam(searchParams.get("page")))
+  const [pageSize] = useState(ADMIN_LIST_DEFAULT_PAGE_SIZE)
   const [sortBy, setSortBy] = useState(searchParams.get("sortBy") || "name")
   const [sortDir, setSortDir] = useState<"asc" | "desc">(
     (searchParams.get("sortDir") as "asc" | "desc") || "asc"
@@ -52,7 +57,7 @@ export function useMembersQueryState() {
     const params = new URLSearchParams(searchParams.toString())
     for (const key of MEMBERS_DATASET_QUERY_KEYS) params.delete(key)
     if (debouncedSearch) params.set("q", debouncedSearch)
-    if (page > 1) params.set("page", String(page))
+    setAdminListPageParam(params, page)
     if (sortBy !== "name") params.set("sortBy", sortBy)
     if (sortDir !== "asc") params.set("sortDir", sortDir)
     Object.entries(filters).forEach(([key, value]) => {

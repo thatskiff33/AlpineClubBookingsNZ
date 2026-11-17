@@ -32,15 +32,24 @@ import {
   type BoundClubTime,
 } from "@/lib/club-time";
 import {
+  CHECKING_PAYMENT_MESSAGE,
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE,
   isExistingCardTransactionStatusUnconfirmed,
   isPaymentProcessing,
   isPaymentReceivedFinalisationPending,
   isPaymentReceivedStatusUnconfirmed,
   isSupersededCardPaymentRefunding,
+  PAYMENT_PROCESSING_HEADING,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
   SUPERSEDED_CARD_PAYMENT_REFUNDING_LINK_MESSAGE,
 } from "@/lib/payment-recovery-contract";
+
+/**
+ * The page's one h1 on every screen that has no title of its own - the loading
+ * view, the "Checking your payment..." view and a link that will not load
+ * (#4951). One definition, so a rename cannot leave the three out of step.
+ */
+export const PAY_LINK_PAGE_HEADING = "Payment Link";
 
 export interface Narrative {
   state: string;
@@ -191,7 +200,9 @@ export function NarrativeCard({
   return (
     <Card className="w-full max-w-lg">
       <CardHeader>
-        <CardTitle>{narrative.headline}</CardTitle>
+        {/* The narrative card is the whole /pay/[token] page in every state
+            that renders it, so its title is the page's one h1. */}
+        <CardTitle headingLevel={1}>{narrative.headline}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className={`flex items-start gap-2 ${wrap}`}>
@@ -244,16 +255,6 @@ export function CardPaymentUnavailableNotice() {
   );
 }
 
-/** #4955: a redirect method came back declined or cancelled; shown above the pay options. */
-export function RedirectFailedNotice() {
-  return (
-    <div className="flex items-start gap-2 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-sm text-warning-11">
-      <AlertTriangle className="h-5 w-5 shrink-0" />
-      <p>Your payment did not go through. You have not been charged. Choose how to pay below.</p>
-    </div>
-  );
-}
-
 /**
  * The whole card while the server is asked what a payment did (#4300, #4955).
  * It replaces the card form, or the page on a redirect return, so the status
@@ -263,9 +264,12 @@ export function RedirectFailedNotice() {
 export function CheckingPaymentCard() {
   return (
     <Card className="w-full max-w-lg">
+      {/* This card replaces the whole page, so it carries the page's one h1
+          (#4951); the status line below is not a heading. */}
+      <h1 className="sr-only">{PAY_LINK_PAGE_HEADING}</h1>
       <CardContent className="py-8 text-center">
         <StatusRegion id="payment-link-check-status" visible visibleClassName="text-muted-foreground" outcomeKey>
-          Checking your payment...
+          {CHECKING_PAYMENT_MESSAGE}
         </StatusRegion>
       </CardContent>
     </Card>
@@ -305,7 +309,7 @@ export function paymentRecoveryForRefusal(data: Record<string, unknown>): Paymen
   if (isExistingCardTransactionStatusUnconfirmed(data)) {
     return { heading: "Card transaction found - check payment status", message: EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_MESSAGE };
   }
-  if (isPaymentProcessing(data)) return { heading: "Payment being processed", message: data.error };
+  if (isPaymentProcessing(data)) return { heading: PAYMENT_PROCESSING_HEADING, message: data.error };
   if (isSupersededCardPaymentRefunding(data)) {
     return { heading: "Card payment being returned", message: SUPERSEDED_CARD_PAYMENT_REFUNDING_LINK_MESSAGE };
   }

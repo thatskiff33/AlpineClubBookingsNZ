@@ -9,6 +9,7 @@ import { formatDateOnly } from "@/lib/date-only";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
 import type { Prisma } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
+import { adminListPageField } from "@/lib/admin-list-page";
 import {
   BENEFICIAL_PROMO_ALLOCATION_FILTER,
   isBeneficialPromoAllocation,
@@ -27,7 +28,7 @@ const redemptionsQuerySchema = z.object({
   from: dateOnlyStringSchema.optional(),
   to: dateOnlyStringSchema.optional(),
   lodgeId: z.string().min(1).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: adminListPageField,
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });
 

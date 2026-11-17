@@ -1,6 +1,5 @@
 "use client";
 
-import type { AgeTier } from "@prisma/client";
 import { useCallback, useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -9,6 +8,7 @@ import { useLodgeCapacitySettingsHref } from "@/components/admin/lodge-capacity-
 import { GuestForm, type GuestData } from "@/components/guest-form";
 import { partyNeedsSupervisionJustification } from "@/components/book/member-guest-preview";
 import { Button } from "@/components/ui/button";
+import { FocusedActionError } from "@/components/focused-action-error";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import {
   NonMemberContactForm,
   type NonMemberOwner,
@@ -34,6 +35,11 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { AdminDependantIdentityResolution } from "@/components/book/admin-dependant-identity-resolution";
 import { useAdminDependantIdentity } from "./_hooks/use-admin-dependant-identity";
+import type {
+  FamilyMember,
+  PriceQuote,
+  SelectedMember,
+} from "./_lib/admin-book-types";
 import {
   DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE,
   type BookerDependant,
@@ -46,7 +52,7 @@ import {
   formatStayDateOrNull,
 } from "@/lib/club-time";
 
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 import { formatCents } from "@/lib/utils";
 import { CreditCard, Landmark } from "lucide-react";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
@@ -79,38 +85,6 @@ function countStayNights(checkIn: string | null, checkOut: string | null): numbe
   const from = checkIn === null ? null : parseCalendarDate(checkIn);
   const to = checkOut === null ? null : parseCalendarDate(checkOut);
   return from && to ? countClubNights(from, to) : 0;
-}
-
-interface FamilyMember {
-  id: string;
-  firstName: string;
-  lastName: string;
-  ageTier: AgeTier;
-  relationship: "self" | "partner" | "dependent";
-}
-
-interface PriceQuote {
-  guests: {
-    ageTier: string;
-    isMember: boolean;
-    nights: number;
-    priceCents: number;
-  }[];
-  totalPriceCents: number;
-  availableCreditCents?: number;
-}
-
-interface SelectedMember {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  ageTier: string;
-  // Set when the owner is an inline-created non-login NON_MEMBER (#1935): the
-  // notify dialog defaults to "don't notify" and reworded, and a placeholder
-  // (no-email) owner is never emailed at all.
-  isNonMember?: boolean;
-  isPlaceholderEmail?: boolean;
 }
 
 export default function AdminBookPage() {
@@ -178,7 +152,10 @@ export default function AdminBookPage() {
   const [memberReviewJustification, setMemberReviewJustification] = useState("");
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
-  const [error, setError] = useState("");
+  // Every message here is the result of an officer's action — a step, a quote,
+  // a create or a draft — so it is announced and focused, and a repeat of the
+  // same refusal is announced again (#4975).
+  const actionFailure = useActionFailure();
   // The admin-audience `reason` a XERO_LOCK_DATE_CHECK_FAILED 503 carries
   // (#2105) — drives the "Go to Xero setup" link on a reconnect-required cause.
   const [errorReason, setErrorReason] = useState<string | null>(null);
@@ -363,7 +340,7 @@ export default function AdminBookPage() {
     setAppliedPromos([]);
     setExpectedArrivalTime(null);
     setUseCredit(false);
-    setError("");
+    actionFailure.clear();
     setAllowPastDates(false);
     setOverCapacityNights(null);
     setAvailableBeds(lodgeCapacity);
@@ -397,7 +374,7 @@ export default function AdminBookPage() {
     setAppliedPromos([]);
     setExpectedArrivalTime(null);
     setUseCredit(false);
-    setError("");
+    actionFailure.clear();
     setFamilyMembers([]);
     setOwnDependants([]);
     setAllowPastDates(false);
@@ -455,7 +432,7 @@ export default function AdminBookPage() {
       setOverCapacityNights(null);
       setHostingConfirmMessage(null);
     },
-    setError,
+    setError: actionFailure.fail,
   });
 
   function handleLodgeChange(nextLodgeId: string | null) {
@@ -477,7 +454,7 @@ export default function AdminBookPage() {
     setPriceQuote(null);
     setAppliedPromos([]);
     setUseCredit(false);
-    setError("");
+    actionFailure.clear();
     setAllowPastDates(false);
     setOverCapacityNights(null);
     setAvailableBeds(lodgeCapacity);
@@ -496,7 +473,7 @@ export default function AdminBookPage() {
       activeLodgeIdRef.current === requestedLodgeId;
     setCheckIn(ci);
     setCheckOut(co);
-    setError("");
+    actionFailure.clear();
     // A prior 409 confirm panel belongs to the previous dates/party; a stale
     // one must not offer a pre-authorised overbook of the new selection.
     setOverCapacityNights(null);
@@ -549,13 +526,13 @@ export default function AdminBookPage() {
 
   async function handleGuestsDone() {
     if (guests.length === 0) {
-      setError("Add at least one guest");
+      actionFailure.fail("Add at least one guest");
       return;
     }
 
     for (const g of guests) {
       if (!g.firstName.trim() || !g.lastName.trim()) {
-        setError("All guests must have first and last names");
+        actionFailure.fail("All guests must have first and last names");
         return;
       }
     }
@@ -570,7 +547,7 @@ export default function AdminBookPage() {
       step while any of it is unanswered, in the SAME words the server refuses in.
     */
     if (dependantIdentity.unresolvedCollisions.length > 0) {
-      setError(DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE);
+      actionFailure.fail(DEPENDANT_IDENTITY_UNRESOLVED_ON_BEHALF_MESSAGE);
       return;
     }
 
@@ -583,7 +560,7 @@ export default function AdminBookPage() {
     // party's uncovered nights, and this party's may be entirely different.
     setHostingConfirmMessage(null);
     setAdultMemberHostingReason("");
-    setError("");
+    actionFailure.clear();
     const requestedLodgeId = lodgeId;
     if (!requestedLodgeId || !checkIn || !checkOut || !selectedMember) {
       /*
@@ -591,7 +568,7 @@ export default function AdminBookPage() {
         With a failed or forbidden lodge list the selector is not rendered, so
         "Choose a lodge" pointed at nothing and read as operator error.
       */
-      setError(
+      actionFailure.fail(
         requestedLodgeId
           ? "Choose dates and a booking owner before continuing"
           : "The lodge list could not be loaded, so this booking cannot say which lodge it is for. Retry above, then choose dates and a booking owner.",
@@ -633,11 +610,11 @@ export default function AdminBookPage() {
         setPriceQuote(data);
         setStep("review");
       } else {
-        setError(data.error || "Failed to calculate price");
+        actionFailure.fail(data.error || "Failed to calculate price");
       }
     } catch (quoteError) {
       if (quoteError instanceof DOMException && quoteError.name === "AbortError") return;
-      if (ownsQuote()) setError("Failed to calculate price");
+      if (ownsQuote()) actionFailure.fail("Failed to calculate price");
     } finally {
       if (ownsQuote()) setPriceLoading(false);
       if (quoteAbortRef.current === controller) quoteAbortRef.current = null;
@@ -664,7 +641,7 @@ export default function AdminBookPage() {
   // Every on-behalf confirm asks whether the member is emailed before it posts
   // (#1695 / #1685 pattern). The "Confirm Booking" button opens the dialog.
   function handleConfirmClick() {
-    setError("");
+    actionFailure.clear();
     setOverCapacityNights(null);
     // A walk-in placeholder owner (#1935) has no deliverable address, so there
     // is no email choice to make — create without emailing (the server also
@@ -682,7 +659,7 @@ export default function AdminBookPage() {
     hostingReason?: string;
   }) {
     setSubmitting(true);
-    setError("");
+    actionFailure.clear();
     setErrorReason(null);
     const checkInStr = checkIn!;
     const checkOutStr = checkOut!;
@@ -764,14 +741,14 @@ export default function AdminBookPage() {
     // XERO_PERIOD_LOCKED / XERO_LOCK_DATE_CHECK_FAILED and every other error
     // surface verbatim in the existing banner. A reconnect-required lock-date
     // check failure additionally offers a link to the Xero setup page (#2105).
-    setError(data.error || "Failed to create booking");
+    actionFailure.fail(data.error || "Failed to create booking");
     setErrorReason(typeof data.reason === "string" ? data.reason : null);
     setSubmitting(false);
   }
 
   async function handleSaveAsDraft(opts: { hostingReason?: string } = {}) {
     setSavingDraft(true);
-    setError("");
+    actionFailure.clear();
     const checkInStr = checkIn!;
     const checkOutStr = checkOut!;
 
@@ -828,7 +805,7 @@ export default function AdminBookPage() {
       setSavingDraft(false);
       return;
     }
-    setError(data.error || "Failed to save draft");
+    actionFailure.fail(data.error || "Failed to save draft");
     setSavingDraft(false);
   }
 
@@ -928,7 +905,7 @@ export default function AdminBookPage() {
         first, always" stays the shape everywhere else. See
         `docs/ARCHITECTURE.md` for the whole rule.
       */}
-      <h1 className="mb-6 text-3xl font-bold">Book on Behalf of Member</h1>
+      <h1 className="mb-6 text-3xl font-bold">{getAdminPage("book").label}</h1>
       {viewOnlyBanner}
       <div className="space-y-6">
 
@@ -967,18 +944,18 @@ export default function AdminBookPage() {
         <NonMemberContactForm onSelected={handleNonMemberSelected} />
       )}
 
-      {error && (
-        <div className="rounded-md bg-danger-3 p-3 text-sm text-danger-11">
-          <p>{error}</p>
-          {errorReason === "reconnect_required" && (
-            <p className="mt-1">
-              <Link href={adminHref("xero-setup")} className="font-medium underline">
-                Go to Xero setup
-              </Link>
-            </p>
-          )}
-        </div>
-      )}
+      <FocusedActionError
+        id="admin-book-action-error"
+        error={actionFailure.error}
+        attentionKey={actionFailure.attentionKey}
+        action={
+          errorReason === "reconnect_required" ? (
+            <Link href={adminHref("xero-setup")} className="font-medium underline">
+              Go to Xero setup
+            </Link>
+          ) : null
+        }
+      />
 
       {/* Step indicator — only show after member selected */}
       {selectedMember && (

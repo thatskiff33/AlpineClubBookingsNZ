@@ -1265,6 +1265,9 @@ test/demo mode or disabled:
 | `DEMO_SEED_PASSWORD`    | Optional local-only password for `pnpm run db:seed:demo` users.   |
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
+The seed runs once, on a new install, after migrations:
+`docker compose run --rm seed` on a Docker-only server, or `pnpm run db:seed`
+on a developer machine (#4977). Upgrades never run it.
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
 `SEED_ADMIN_PASSWORD` is unset, or if the lodge kiosk account is missing and
 `SEED_LODGE_PASSWORD` is unset. Before it writes anything, it checks the
@@ -1921,7 +1924,7 @@ action; scoped admins cannot merge.
 | `LOCALE`                           | **A first-start seed only, since #3563**, on exactly the same terms as `CURRENCY` above and edited on the same screen. `NEXT_PUBLIC_LOCALE` is no longer read at all (#3567); the first start warns if only it is set. It decides how numbers and dates are WRITTEN — whether a date reads 14/03/2026 or 3/14/2026 — and is not the language the site is in. Store a BCP 47 language tag (`en-NZ`, `de-CH`): a language subtag of two or three letters, then the country. `en-NZ` is the generic default. Not the same thing as `LANG` / `LC_ALL` below, which are the container's own POSIX locale. |
 | `LANG`, `LC_ALL`                   | **Pinned in the image to `en_US.UTF-8`, beside `TZ` (#3252).** These are the container's own POSIX locale, which Node's bundled ICU reads to choose the default collation and number/date formats for `localeCompare`, `toLocaleString` and friends when a call names no locale. Before #3252 nothing pinned them, so the resolved locale was whatever the base image happened to provide; `en_US` matches what the unpinned image resolved, so pinning it changes no displayed order or format. Every stored identity (proposal fingerprints, confirm tokens, lock-key order) is locale-proof regardless, through `compareOrdinal` (`INV-EXCEPT-036`), so this pin is defence in depth for display only. Override in `docker-compose.yml`'s `environment:` if a club wants a different display collation; set both, because `LC_ALL` wins over `LANG`. Not the club's time zone (`TZ` above) and not the in-app `LOCALE` formatting setting. |
 | ~~`NEXT_PUBLIC_GA_MEASUREMENT_ID`~~ | **Removed as configuration (#2573).** The GA4 measurement id, the consent-banner mode and the banner wording now live **only** in the database, entered in-app at Admin → Integrations → Google Analytics. Nothing in the app reads the environment variable, there is no fallback to it, and its value is **not** imported automatically — so after deploying this release Google Analytics stays inactive until an authorised admin saves a valid measurement id in-app. Remove the variable from your environment. See the Google Analytics section below. |
-| ~~`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`~~ | **Removed as configuration (#2087).** Google OAuth credentials now live **only** in the encrypted `IntegrationCredential` store, entered and verified in-app (Admin → Integrations → Google sign-in). Any legacy `GOOGLE_CLIENT_*` env vars are **detected, warned about, and ignored** — re-enter the credentials in the wizard, then remove the env vars. This reverses the earlier #2035 "bootstrap-class secret, never in the DB" posture by owner decision (epic #2078). See the Google sign-in section below. |
+| ~~`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`~~ | **Removed as configuration (#2087).** Google OAuth credentials now live **only** in the encrypted `IntegrationCredential` store, entered and verified in-app (Admin → Integrations → Google Sign-in Setup). Any legacy `GOOGLE_CLIENT_*` env vars are **detected, warned about, and ignored** — re-enter the credentials in the wizard, then remove the env vars. This reverses the earlier #2035 "bootstrap-class secret, never in the DB" posture by owner decision (epic #2078). See the Google sign-in section below. |
 | `LOG_LEVEL`                        | Pino log level such as `debug`, `info`, `warn`, `error`, or `fatal`.                                 |
 | `APP_ENVIRONMENT_ROLE`             | **Required, and the only authority for whether this installation is the club's live site.** Exactly `production` or `non-production`. See "Environment Role" below — and note it is **not** `APP_RUNTIME_ROLE` on the next line. |
 | `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose (`web-blue`, `web-green`, `cron-leader`, `staging`). Names which container **slot** this is. **Never read to decide whether this installation is production** — that is `APP_ENVIRONMENT_ROLE` above (`INV-CONFIG-003`). |
@@ -2016,15 +2019,20 @@ resolve `UNKNOWN`. Four things stop that becoming a silent outage:
    checklist's **Production Or Non-Production** step reports `blocked` with the
    repair. A boot that resolves non-production says that too, at info level, and
    names which source decided it.
-4. **Confirm the answer after the deploy, from the message rather than the
-   tick.** On `/admin/setup` the **Production Or Non-Production** step must read
-   *production*. A non-production installation shows a green tick there too, since
-   both are validly configured states and the checklist cannot know which one this
-   installation is meant to be — so the tick means "answered", and the message
-   means "which answer".
+4. **Confirm the answer after the deploy.** On `/admin/setup` the **Production
+   Or Non-Production** step must read *production*, with a green tick. A
+   deployment that declares non-production shows an amber warning there instead
+   (#4980) — "If this is the club's live site, members are getting no email and
+   Xero contact addresses are being replaced." — until an administrator
+   acknowledges it as a real copy. A copy forced by the safer override alone stays
+   complete, because an administrator chose it inside the app.
 
 For a deployment brought up by hand rather than through the deploy script, set
-`APP_ENVIRONMENT_ROLE` in the Compose `.env` before starting the app. The base
+`APP_ENVIRONMENT_ROLE` in the Compose `.env` before starting the app. For the
+club's live site, `DEPLOYMENT.md` → "First Bootstrap" runs
+`bash scripts/check-environment-role.sh` before the first `docker compose up`; it
+sources the same `scripts/lib/environment-role-check.sh` the deploy runs at step
+3, and refuses anything but exactly `production` (#4980). The base
 `docker-compose.yml` passes it through with **no default** on purpose: a default
 would be exactly the silent inference this design removes.
 `docker-compose.staging.yml` hard-codes `non-production`, so a staging or E2E
@@ -2757,6 +2765,18 @@ read `MemberAccessRole` rows.
 | `SES_SNS_ALLOW_SIGNATURE_V1`             | Temporarily permit legacy SNS SignatureVersion 1 (SHA1). Default rejects v1; enable SignatureVersion 2 on the SNS topic and leave this unset in production.   |
 | `BULK_SENDMAIL_LIMIT`                    | Admin bulk-communication sends allowed per hour (default `1`).                                                                                               |
 
+**SNS delivery policy for SES feedback (#4921).** The SES/SNS route answers
+503 while an earlier attempt at the same notification still holds its
+15-minute processing lease, and takes the notification over only on a
+redelivery after the lease has run out. SNS's default HTTP/S delivery policy
+retries 3 times, 20 seconds apart, so a notification whose first attempt
+crashed is dropped before then. Set an HTTP/S delivery policy on the
+subscription (or topic) that keeps retrying past 15 minutes, within SNS's
+3,600-second hard limit, and attach a dead-letter queue. For example:
+`{"healthyRetryPolicy":{"minDelayTarget":20,"maxDelayTarget":120,"numRetries":30,"numNoDelayRetries":0,"numMinDelayRetries":3,"numMaxDelayRetries":20,"backoffFunction":"exponential"}}`
+retries for roughly 50 minutes. See
+[Amazon SNS message delivery retries](https://docs.aws.amazon.com/sns/latest/dg/sns-message-delivery-retries.html).
+
 ## Address Autocomplete
 
 | Variable          | Description                                     |
@@ -2777,13 +2797,28 @@ rate-limited, or temporarily unavailable.
 
 | Variable                                  | Description                                                                                                      |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `SENTRY_DSN`                              | Server/edge Sentry DSN.                                                                                          |
-| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN.                                                                                              |
+| `SENTRY_DSN`                              | Server/edge Sentry DSN, read at runtime.                                                                         |
+| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN, read at runtime through a public no-store endpoint; blank disables browser reporting.        |
 | `SENTRY_ORG`                              | Sentry organization slug for source map uploads.                                                                 |
 | `SENTRY_PROJECT`                          | Sentry project slug for source map uploads.                                                                      |
 | `SENTRY_AUTH_TOKEN`                       | Sentry auth token for source map uploads during build.                                                           |
 | `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` | Optional in-process cooldown for Sentry event deduplication, shared by the cron/webhook bridge and the auth-bounce anomaly alert (#1669); defaults to 300000 ms. |
 | `AUTH_BOUNCE_AUDIT_MAX_WRITES_PER_MINUTE` | Optional per-process cap on durable auth-bounce `AuditLog` rows per minute (#1669); suppressed rows are tallied onto the next written row. Defaults to 10. |
+
+Both DSNs belong in the deployment's `.env`, including when using published
+images or `--build-and-push-images`. Restart/redeploy after changing them; no
+image rebuild is needed. New page loads fetch only `NEXT_PUBLIC_SENTRY_DSN`
+from `/api/observability/browser-config` before initializing browser reporting.
+Failed or empty configuration leaves reporting and replay off. Errors before
+that fetch completes are not reported. Replay still needs the separate club
+privacy opt-in; its default remains off.
+
+**Upgrade action:** before deploying the first release with runtime browser
+Sentry, set `NEXT_PUBLIC_SENTRY_DSN` in `.env` if browser reports are wanted.
+This applies to the maintainer's deployment too: published images no longer
+supply the upstream destination. Leaving it blank deliberately disables browser
+reports. Sentry DSNs are environment settings, not in-app credentials; upload
+credentials remain build-time settings.
 
 ## Cron, Waitlist, And Backups
 
@@ -2809,9 +2844,9 @@ rate-limited, or temporarily unavailable.
 > **Backups are configured in-app, not by environment (#2095).** The S3 bucket,
 > region, access key/secret, retention window, restore-validation shadow
 > database URL, and the enabled switch all live in the encrypted
-> `IntegrationCredential` store and are managed at **Admin → Integrations →
-> Database Backups**. First-time setup uses the guided wizard
-> (`/admin/backups/setup` — S3 credentials → destination → nightly schedule → a
+> `IntegrationCredential` store and are managed at **Admin →
+> Monitoring & Support → Database Backups**. First-time setup uses the guided
+> wizard (**Admin → Integrations → Backup Setup**, `/admin/backups/setup` — S3 credentials → destination → nightly schedule → a
 > real verification run); the flat page (`/admin/backups`) is the post-setup
 > editing surface. The legacy `BACKUP_ENABLED`,
 > `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY_ID`,

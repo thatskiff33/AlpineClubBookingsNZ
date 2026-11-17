@@ -31,6 +31,12 @@ which is expected: you are on a release, not on a branch. For a production host,
 keeps the host checkout on a branch called `main` held at the release, because
 the deploy script expects that. To work on the code itself, `git switch main`.
 
+The copied `.env` declares `APP_ENVIRONMENT_ROLE=non-production`, which is right
+for a local checkout. The club's live site sets `APP_ENVIRONMENT_ROLE=production`
+instead; [`DEPLOYMENT.md` → "First Bootstrap"](../DEPLOYMENT.md#first-bootstrap)
+checks it before anything starts, and
+[`guides/environment-role.md`](guides/environment-role.md) explains why.
+
 Use Node.js 24 LTS and pnpm 11 (the version pinned in `package.json`
 `packageManager`; see
 [`CONTRIBUTING.md` → "Package manager: pnpm"](../CONTRIBUTING.md#package-manager-pnpm)
@@ -76,7 +82,7 @@ deployment secret store, or the in-app integration wizards.
 
 After the first administrator can sign in, the club name, short name, and
 hut-leader label can also be overridden at runtime from Admin > Appearance >
-Club Identity — cross-linked from Admin > Setup > Initial Setup as "Club
+Club Identity — cross-linked from Admin > Setup > Foundations Setup as "Club
 Identity". A blank field falls back to the configured default, and the change
 reaches the public site and emails within a few seconds.
 
@@ -159,7 +165,7 @@ docker compose --env-file .env.staging -p tacbookings-staging \
 docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml run --rm migrate
 docker compose --env-file .env.staging -p tacbookings-staging \
-  -f docker-compose.yml -f docker-compose.staging.yml exec app ./node_modules/.bin/tsx --conditions=react-server prisma/seed.ts
+  -f docker-compose.yml -f docker-compose.staging.yml run --rm seed
 ```
 
 The Docker-only app listens on `http://localhost:3001` by default.
