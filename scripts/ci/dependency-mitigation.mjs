@@ -16,8 +16,15 @@ import path from "node:path";
  * (`audit-dependencies.mjs`) say MITIGATED instead of VULNERABILITY FOUND —
  * and only while every fact the approval was given on was still true. GitHub
  * withdrew that advisory on 23 Oct 2026 and the record and patch were retired
- * (#3851). The mechanism stays, with no live records, for the next advisory
- * that has no fix; with none, this module changes no verdict.
+ * (#3851). The mechanism stays for the next advisory that has no fix; with no
+ * record, this module changes no verdict.
+ *
+ * #5252 (owner decision, 18 Nov 2026) widened ONE rule: a record may cover an
+ * advisory reported against more than one installed copy, when every copy the
+ * audit reports is an exact `package@version` the record lists with its own
+ * patch, dev flag and exact set of dependency paths. Everything else (one
+ * advisory and nothing else, exact versions, patch and input hashes, the
+ * 14-day cap) is unchanged.
  *
  * ## When a record is accepted
  *
@@ -36,7 +43,7 @@ import path from "node:path";
  * It does not filter the report. The raw advisory is still printed, in full,
  * and the counts are still the counts. It does not change the threshold, read
  * an environment variable, or accept anything after the expiry. It covers ONLY
- * the copy `pnpm audit` can see: copies of the same package compiled into
+ * the copies `pnpm audit` can see: copies of the same package compiled into
  * other packages' bundles are neither patched nor audited, and the record's
  * `knownUncoveredCopies` lists them so the verdict says so on every run.
  *
@@ -90,18 +97,26 @@ const FINDING_KEYS = ["version", "paths", "dev", "optional", "bundled"];
 const RECORD_SHAPE = {
   issue: "integer",
   advisory: { ghsa: "string", url: "string", package: "string", range: "string", severity: "string" },
-  covers: { version: "string", auditPath: "string", dev: "boolean" },
+  covers: "covered-copy-list",
   upstream: { source: "string", commit: "string" },
   ownerDecisions: "url-list",
   expires: "string",
-  patch: { path: "string", sha256: "string" },
   reviewedInputs: Object.fromEntries(REVIEWED_INPUTS.map((name) => [name, "string"])),
   scope: "string",
   knownUncoveredCopies: "copy-list",
 };
 const COPY_KEYS = ["copy", "files", "reachedThrough"];
+/**
+ * One covered copy (#5252): an exact installed version, its own patch, its dev
+ * flag, and every dependency path the audit reports for it, sorted. The paths
+ * are listed rather than hashed so a mismatch can name exactly which paths were
+ * added and which removed.
+ */
+const COVERED_COPY_KEYS = ["version", "dev", "patch", "auditPaths"];
+const PATCH_KEYS = ["path", "sha256"];
 
 const SHA256 = /^[0-9a-f]{64}$/;
+const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const GHSA = /^GHSA(-[23456789cfghjmpqrvwx]{4}){3}$/;
 const COMMIT = /^[0-9a-f]{40}$/;
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
@@ -121,6 +136,45 @@ function sameKeys(value, keys) {
 }
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+/**
+ * Problems with the `covers` list's shape; empty when it is well-formed. The
+ * single-copy object shape (`covers: { version, auditPath, dev }` beside a
+ * top-level `patch`, #3843) is retired: there is one shape, and it is a list.
+ */
+function coveredCopyProblems(covers, fileName) {
+  if (!Array.isArray(covers) || covers.length === 0) {
+    return [`${fileName}: \`covers\` must list one or more covered copies, each { ${COVERED_COPY_KEYS.join(", ")} }; the single-copy object shape is retired (#5252).`];
+  }
+  const problems = [];
+  covers.forEach((copy, i) => {
+    const at = `${fileName}: \`covers[${i}]\``;
+    if (!sameKeys(copy, COVERED_COPY_KEYS)) {
+      problems.push(`${at} must have exactly ${COVERED_COPY_KEYS.join(", ")}.`);
+      return;
+    }
+    if (typeof copy.version !== "string" || !EXACT_VERSION.test(copy.version)) problems.push(`${at}.version must be one exact version.`);
+    if (typeof copy.dev !== "boolean") problems.push(`${at}.dev must be a boolean.`);
+    if (!sameKeys(copy.patch, PATCH_KEYS) || typeof copy.patch.path !== "string" || typeof copy.patch.sha256 !== "string") {
+      problems.push(`${at}.patch must have exactly ${PATCH_KEYS.join(", ")}.`);
+    } else {
+      if (!PATCH_PATH.test(copy.patch.path) || copy.patch.path.includes("..")) problems.push(`${at}.patch.path must be a file directly under patches/.`);
+      if (!SHA256.test(copy.patch.sha256)) problems.push(`${at}.patch.sha256 \`${copy.patch.sha256}\` is not a lowercase SHA256 digest.`);
+    }
+    const paths = copy.auditPaths;
+    if (!Array.isArray(paths) || paths.length === 0 || !paths.every((p) => typeof p === "string" && p.startsWith(".>"))) {
+      problems.push(`${at}.auditPaths must list one or more dependency paths exactly as pnpm audit --json prints them, each starting ".>".`);
+    } else if (!paths.every((p, j) => j === 0 || paths[j - 1] < p)) {
+      problems.push(`${at}.auditPaths must be sorted, with no duplicates, so one tree has one record.`);
+    }
+  });
+  if (problems.length > 0) return problems;
+  const versions = covers.map((copy) => copy.version);
+  if (new Set(versions).size !== versions.length) problems.push(`${fileName}: \`covers\` names a version more than once.`);
+  const patches = covers.map((copy) => copy.patch.path);
+  if (new Set(patches).size !== patches.length) problems.push(`${fileName}: each covered copy needs its own patch file; \`covers\` repeats one.`);
+  return problems;
+}
 
 /** Problems with one record's shape and values; empty when it is well-formed. */
 function recordProblems(record, fileName) {
@@ -157,6 +211,8 @@ function recordProblems(record, fileName) {
       if (!Array.isArray(value) || !value.every(okCopy)) {
         problems.push(`${fileName}: \`${key}\` must be a list of { ${COPY_KEYS.join(", ")} }.`);
       }
+    } else if (kind === "covered-copy-list") {
+      problems.push(...coveredCopyProblems(value, fileName));
     }
   }
   if (problems.length > 0) return problems;
@@ -166,8 +222,12 @@ function recordProblems(record, fileName) {
   if (!GHSA.test(record.advisory.ghsa)) problems.push(`${fileName}: \`advisory.ghsa\` is not a GHSA identifier.`);
   if (record.advisory.severity !== "high") problems.push(`${fileName}: only a high-severity advisory can be mitigated; a critical one never can.`);
   if (!COMMIT.test(record.upstream.commit)) problems.push(`${fileName}: \`upstream.commit\` must be a full 40-character commit hash.`);
-  if (!PATCH_PATH.test(record.patch.path) || record.patch.path.includes("..")) problems.push(`${fileName}: \`patch.path\` must be a file directly under patches/.`);
-  for (const digest of [record.patch.sha256, ...Object.values(record.reviewedInputs)]) {
+  for (const copy of record.covers) {
+    if (!copy.auditPaths.every((p) => p.endsWith(`>${record.advisory.package}`))) {
+      problems.push(`${fileName}: every dependency path of ${record.advisory.package}@${copy.version} must end at ${record.advisory.package}.`);
+    }
+  }
+  for (const digest of Object.values(record.reviewedInputs)) {
     if (!SHA256.test(digest)) problems.push(`${fileName}: \`${digest}\` is not a lowercase SHA256 digest.`);
   }
   // Round-trip, so an impossible date ("2026-02-30", "T24:00:00Z") is refused
@@ -263,16 +323,56 @@ function reportProblems({ report, stdout, exitCode, record }) {
   if (advisory.vulnerable_versions !== want.range) problems.push(`the advisory's range is ${advisory.vulnerable_versions}, not ${want.range}.`);
   if (advisory.severity !== want.severity) problems.push(`the advisory's severity is ${advisory.severity}, not ${want.severity}.`);
   const findings = advisory.findings;
-  if (!Array.isArray(findings) || findings.length !== 1 || !sameKeys(findings[0], FINDING_KEYS)) {
-    return [...problems, "the advisory must carry exactly one finding of the reviewed shape."];
+  if (!Array.isArray(findings) || findings.length === 0 || !findings.every((finding) => sameKeys(finding, FINDING_KEYS))) {
+    return [...problems, "the advisory must carry one or more findings, each of the reviewed shape."];
   }
-  const finding = findings[0];
-  if (finding.version !== record.covers.version) problems.push(`the affected version is ${finding.version}, not ${record.covers.version}.`);
-  if (!Array.isArray(finding.paths) || finding.paths.length !== 1 || finding.paths[0] !== record.covers.auditPath) {
-    problems.push(`the affected paths are ${JSON.stringify(finding.paths)}, not exactly ["${record.covers.auditPath}"].`);
+  // #5252: the findings must be exactly the covered copies — one finding per
+  // covered version, no version the record does not name, none it names missing.
+  const covered = new Map(record.covers.map((copy) => [copy.version, copy]));
+  const seen = new Set();
+  for (const finding of findings) {
+    const label = `${want.package}@${finding.version}`;
+    if (seen.has(finding.version)) {
+      problems.push(`the advisory reports ${label} in more than one finding.`);
+      continue;
+    }
+    seen.add(finding.version);
+    const copy = covered.get(finding.version);
+    if (copy === undefined) {
+      problems.push(`the affected version ${finding.version} is not a covered copy (the record covers ${[...covered.keys()].join(", ")}).`);
+      continue;
+    }
+    problems.push(...pathProblems(label, finding.paths, copy.auditPaths));
+    if (finding.dev !== copy.dev || finding.bundled !== false || finding.optional !== false) {
+      problems.push(`${label}: the finding's dev/bundled/optional flags are not the reviewed ones.`);
+    }
   }
-  if (finding.dev !== record.covers.dev || finding.bundled !== false || finding.optional !== false) {
-    problems.push("the finding's dev/bundled/optional flags are not the reviewed ones.");
+  for (const version of covered.keys()) {
+    if (!seen.has(version)) problems.push(`the covered copy ${want.package}@${version} is not in the report; a record lists exactly the copies the audit reports.`);
+  }
+  return problems;
+}
+
+/**
+ * Why one finding's dependency paths are not exactly the recorded ones; empty
+ * when they are. Names each path added and each removed, so a reviewer sees
+ * what changed in the tree rather than only that something did.
+ */
+function pathProblems(label, reported, recorded) {
+  if (!Array.isArray(reported) || !reported.every((p) => typeof p === "string")) {
+    return [`${label}: the affected paths are not a list of strings.`];
+  }
+  const problems = [];
+  const got = new Set(reported);
+  if (got.size !== reported.length) problems.push(`${label}: the report lists one dependency path more than once.`);
+  const want = new Set(recorded);
+  const added = [...got].filter((p) => !want.has(p)).sort();
+  const removed = recorded.filter((p) => !got.has(p));
+  if (added.length > 0 || removed.length > 0) {
+    problems.push(
+      `${label}: the affected paths are not exactly the ${recorded.length} recorded (${reported.length} reported); ` +
+        `added ${JSON.stringify(added)}, removed ${JSON.stringify(removed)}.`,
+    );
   }
   return problems;
 }
@@ -287,10 +387,12 @@ function inputProblems({ record, root, fsImpl }) {
       return undefined;
     }
   };
-  const target = `${record.advisory.package}@${record.covers.version}`;
-  const patch = read(record.patch.path);
-  if (patch === undefined) problems.push(`the patch ${record.patch.path} is missing.`);
-  else if (sha256(patch) !== record.patch.sha256) problems.push(`the patch ${record.patch.path} is not the reviewed one (SHA256 ${sha256(patch)}).`);
+  // Every covered copy carries its own patch, and each is checked on its own.
+  for (const copy of record.covers) {
+    const patch = read(copy.patch.path);
+    if (patch === undefined) problems.push(`the patch ${copy.patch.path} is missing.`);
+    else if (sha256(patch) !== copy.patch.sha256) problems.push(`the patch ${copy.patch.path} is not the reviewed one (SHA256 ${sha256(patch)}).`);
+  }
 
   const inputs = Object.fromEntries(REVIEWED_INPUTS.map((name) => [name, read(name)]));
   const workspace = inputs["pnpm-workspace.yaml"];
@@ -298,11 +400,16 @@ function inputProblems({ record, root, fsImpl }) {
   if (workspace === undefined || lock === undefined) {
     return [...problems, "pnpm-workspace.yaml or pnpm-lock.yaml is missing."];
   }
-  if (!yamlBlock(workspace.toString("utf8"), "patchedDependencies").includes(`${target}: ${record.patch.path}`)) {
-    problems.push(`pnpm-workspace.yaml does not register ${record.patch.path} for ${target}.`);
-  }
-  if (!yamlBlock(lock.toString("utf8"), "patchedDependencies").includes(`${target}: ${record.patch.sha256}`)) {
-    problems.push(`pnpm-lock.yaml does not record the reviewed patch hash for ${target}.`);
+  const registered = yamlBlock(workspace.toString("utf8"), "patchedDependencies");
+  const locked = yamlBlock(lock.toString("utf8"), "patchedDependencies");
+  for (const copy of record.covers) {
+    const target = `${record.advisory.package}@${copy.version}`;
+    if (!registered.includes(`${target}: ${copy.patch.path}`)) {
+      problems.push(`pnpm-workspace.yaml does not register ${copy.patch.path} for ${target}.`);
+    }
+    if (!locked.includes(`${target}: ${copy.patch.sha256}`)) {
+      problems.push(`pnpm-lock.yaml does not record the reviewed patch hash for ${target}.`);
+    }
   }
   for (const [name, bytes] of Object.entries(inputs)) {
     if (sha256(bytes) !== record.reviewedInputs[name]) {
@@ -381,6 +488,7 @@ export function formatMitigatedReport(result) {
   const { file, record } = result.mitigation;
   const advisory = Object.values(result.report.advisories)[0];
   const counts = result.report.metadata.vulnerabilities;
+  const copies = record.covers.map((copy) => `${advisory.module_name}@${copy.version}`);
   return {
     exitCode: 0,
     // A GitHub Actions warning annotation, so a MITIGATED pass shows on the
@@ -390,19 +498,22 @@ export function formatMitigatedReport(result) {
       workflowCommand(
         "warning",
         "Dependency audit MITIGATED (NOT CLEAN)",
-        `${advisory.github_advisory_id} ${advisory.module_name}@${record.covers.version}, expires ${record.expires}`,
+        `${advisory.github_advisory_id} ${copies.join(", ")}, expires ${record.expires}`,
       ),
     ],
     lines: [
       "Dependency audit: MITIGATED — NOT CLEAN. One reviewed high-severity advisory is still " +
-        "reported; an owner-approved patch covers the one copy the audit can see.",
-      `  - ${advisory.module_name}@${record.covers.version} (${advisory.severity}) ` +
+        `reported; owner-approved patches cover the ${copies.length === 1 ? "one copy" : `${copies.length} copies`} the audit can see.`,
+      `  - ${advisory.module_name} (${advisory.severity}) ` +
         `${advisory.vulnerable_versions} — ${advisory.github_advisory_id}: ${advisory.title}`,
-      `    path: ${record.covers.auditPath}${record.covers.dev ? " (dev)" : ""}`,
+      ...record.covers.flatMap((copy) => [
+        `    ${advisory.module_name}@${copy.version}: ${copy.auditPaths.length} dependency ` +
+          `path${copy.auditPaths.length === 1 ? "" : "s"}, exactly as recorded${copy.dev ? " (dev)" : ""}.`,
+        `      Patch: ${copy.patch.path}, SHA256 ${copy.patch.sha256} — matches, and is registered ` +
+          "in pnpm-workspace.yaml and pnpm-lock.yaml.",
+      ]),
       `  Counts: ${[...SEVERITIES].reverse().map((s) => `${s} ${counts[s]}`).join(", ")}.`,
       `  Record: ${file} (issue #${record.issue}).`,
-      `  Patch: ${record.patch.path}, SHA256 ${record.patch.sha256} — matches, and is registered ` +
-        "in pnpm-workspace.yaml and pnpm-lock.yaml.",
       "  Reviewed inputs: pnpm-workspace.yaml and pnpm-lock.yaml match their recorded SHA256.",
       `  Upstream fix applied: ${record.upstream.source} at ${record.upstream.commit}.`,
       ...record.ownerDecisions.map((url) => `  Owner decision: ${url}`),

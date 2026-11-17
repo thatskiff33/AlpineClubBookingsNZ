@@ -1,86 +1,65 @@
 {
-  "issue": 3843,
+  "issue": 5252,
   "advisory": {
-    "ghsa": "GHSA-vfj7-8cjw-p6xm",
-    "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
-    "package": "braces",
-    "range": "<=3.0.3",
+    "ghsa": "GHSA-fc5q-39xc-vjpf",
+    "url": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "range": "<=4.0.7",
     "severity": "high"
   },
-  "covers": {
-    "version": "3.0.3",
-    "auditPath": ".>eslint-config-next>@next/eslint-plugin-next>fast-glob>micromatch>braces",
-    "dev": true
-  },
+  "covers": [
+    {
+      "version": "4.0.7",
+      "dev": false,
+      "patch": {
+        "path": "patches/picomatch@4.0.7.patch",
+        "sha256": "350015b98a77b7edb80679e2f609526023fadcf6758d0c319476e042aee118d9"
+      },
+      "auditPaths": [
+        ".>@sentry/nextjs>@rollup/plugin-commonjs>@rollup/pluginutils>picomatch",
+        ".>@sentry/nextjs>@rollup/plugin-commonjs>fdir>picomatch",
+        ".>@sentry/nextjs>@rollup/plugin-commonjs>picomatch"
+      ]
+    },
+    {
+      "version": "2.3.2",
+      "dev": true,
+      "patch": {
+        "path": "patches/picomatch@2.3.2.patch",
+        "sha256": "f99a151c7a2286155b062aec0ee2cc9927a4d833725ff9d2e0afc2e4c41f2a5b"
+      },
+      "auditPaths": [
+        ".>eslint-config-next>@next/eslint-plugin-next>fast-glob>micromatch>picomatch"
+      ]
+    }
+  ],
   "upstream": {
-    "source": "https://github.com/micromatch/braces/pull/72",
-    "commit": "d0d575e55e74a4e0218e5248fafb79efc3e54ebb"
+    "source": "https://github.com/micromatch/picomatch/pull/246",
+    "commit": "f03bec2c02e46f063fbfdc161aae1d0f854b2565"
   },
   "ownerDecisions": [
-    "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5966475564",
-    "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5966882860"
+    "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5252#issuecomment-6955952331"
   ],
   "expires": "2026-10-10T00:00:00Z",
-  "patch": {
-    "path": "patches/braces@3.0.3.patch",
-    "sha256": "efe68ba795beee43343e2ed8d246fef6f0d6715d01d05b178bfada678ff7f937"
-  },
   "reviewedInputs": {
-    "pnpm-workspace.yaml": "fe9a64321abd38d541b4d07ff3d8910019e140ebd307ab12eb3878be4b8f31c9",
-    "pnpm-lock.yaml": "63b3707625cc1155626c29936cb8ce0aaa8dcea16eeba6f8c77565d597e01e93"
+    "pnpm-workspace.yaml": "54bc90758506694966e0fcbbe91e166696028ff290887dc341a44db29d044a46",
+    "pnpm-lock.yaml": "8df6e3ead548dba0c2a30f1bdd76a0b42e12f608c2b1e8170fdb0b6678038315"
   },
-  "scope": "This mitigation covers ONLY the braces@3.0.3 package that pnpm installs and audits, on the path above. Nine further copies of braces are compiled into other packages' own files, where no pnpm patch reaches and pnpm audit cannot see them; they are known, unpatched and out of reach of this record, and are listed below. The reachability trace at https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3843#issuecomment-5966944832 found that none of them can receive input from outside the club's own developers and build, which is the condition the owner's second decision set for this record.",
+  "scope": "SYNTHETIC FIXTURE for scripts/ci/dependency-mitigation.test.mjs: two covered copies trimmed from the measured #5252 report (three of the 74 paths of picomatch@4.0.7, the one path of picomatch@2.3.2). This mitigation covers ONLY the copies pnpm installs and audits; the bundled copies below are not covered.",
   "knownUncoveredCopies": [
     {
-      "copy": "rollup@4.62.2",
-      "files": [
-        "dist/shared/index.js",
-        "dist/es/shared/watch.js"
-      ],
-      "reachedThrough": "@sentry/nextjs (a production dependency) and its @rollup/plugin-commonjs, used at build time"
-    },
-    {
-      "copy": "prisma@7.10.0",
-      "files": [
-        "build/cli.js"
-      ],
-      "reachedThrough": "the prisma CLI (a production dependency), run by developers and deploy scripts"
-    },
-    {
-      "copy": "@prisma/fetch-engine@7.10.0",
-      "files": [
-        "dist/chunk-PPPJF3PE.js",
-        "dist/chunk-HWBBHXY6.js"
-      ],
-      "reachedThrough": "prisma > @prisma/engines"
-    },
-    {
-      "copy": "@prisma/get-platform@7.10.0",
-      "files": [
-        "dist/chunk-IL63DMPY.js"
-      ],
-      "reachedThrough": "prisma > @prisma/engines and @prisma/fetch-engine"
-    },
-    {
-      "copy": "@prisma/get-platform@7.2.0",
-      "files": [
-        "dist/chunk-3UEKS5W6.js"
-      ],
-      "reachedThrough": "prisma > @prisma/dev"
-    },
-    {
-      "copy": "vite@8.3.0",
+      "copy": "vite@8.3.6",
       "files": [
         "dist/node/chunks/node.js"
       ],
-      "reachedThrough": "vitest (a development dependency, the unit test runner)"
+      "reachedThrough": "synthetic: vitest and @sentry/nextjs"
     },
     {
-      "copy": "tsx@4.23.15",
+      "copy": "rollup@4.62.2",
       "files": [
-        "dist/cli.mjs"
+        "dist/shared/index.js"
       ],
-      "reachedThrough": "tsx (a development dependency, runs repository scripts) and vite"
+      "reachedThrough": "synthetic: @sentry/nextjs at build time"
     }
   ]
 }
