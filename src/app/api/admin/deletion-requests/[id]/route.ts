@@ -92,6 +92,7 @@ import { DIETARY_ERASURE_PATCH } from "@/lib/member-dietary";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { deletionCleanupRecovery } from "@/lib/deletion-cleanup-recovery";
 
 // Route-private: a Next.js route module's export surface is its handlers.
 const DELETION_CLAIM_RELEASE_FULL_ADMIN_MESSAGE =
@@ -123,43 +124,6 @@ const CANCELLABLE_DELETION_BOOKING_STATUSES = [
   "PAYMENT_PENDING",
   "CONFIRMED",
 ] as const;
-
-function deletionCleanupRecovery(input: {
-  cancelledBookings: number;
-  cancellationPending: boolean;
-  retryBookingId: string | null;
-  cancellationStatusUnconfirmed?: boolean;
-  cancellationPostProcessingUnconfirmed?: boolean;
-  reviewBookingId?: string | null;
-  blocker?: {
-    code: string;
-    message: string;
-    remedy: string;
-  };
-}) {
-  return {
-    code: "DELETION_CLEANUP_PARTIAL",
-    error:
-      "Account deletion cleanup is incomplete. The member was not anonymised and no approval receipt was sent. Retry only the remaining cleanup.",
-    cancelledBookings: input.cancelledBookings,
-    cancellationPending: input.cancellationPending,
-    retryBookingId: input.retryBookingId,
-    ...(input.cancellationStatusUnconfirmed
-      ? { cancellationStatusUnconfirmed: true }
-      : {}),
-    ...(input.cancellationPostProcessingUnconfirmed
-      ? { cancellationPostProcessingUnconfirmed: true }
-      : {}),
-    ...(input.reviewBookingId
-      ? { reviewBookingId: input.reviewBookingId }
-      : {}),
-    ...(input.blocker ? { blocker: input.blocker } : {}),
-    remainingCleanupPending: true,
-    memberAnonymised: false,
-    memberDataAnonymised: false,
-    approvalReceiptSent: false,
-  };
-}
 
 async function readFinalDeletionDecision(
   requestId: string,

@@ -108,6 +108,7 @@ import { storedSchoolTeacherListSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { cleanNullableString, cleanString } from "@/lib/member-application-fields";
 import { DAY_MS, resolveRequestBookingHoldUntil } from "@/lib/booking-request-hold";
 
 export const BOOKING_REQUEST_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
@@ -176,15 +177,6 @@ export class BookingRequestDeclineCommittedError extends BookingRequestError {
     this.holdReleaseStatusUnconfirmed = input.holdReleaseStatusUnconfirmed;
     this.cause = input.cause;
   }
-}
-
-function cleanString(value?: string | null) {
-  return value?.replace(/[\r\n]/g, " ").trim() || "";
-}
-
-function cleanNullableString(value?: string | null) {
-  const trimmed = cleanString(value);
-  return trimmed || null;
 }
 
 /**

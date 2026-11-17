@@ -5,7 +5,6 @@ import { SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contr
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
-import { z } from "zod";
 
 import { requireAdmin } from "@/lib/session-guards";
 import {
@@ -42,9 +41,8 @@ import {
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
-  type NightAvailability,
 } from "@/lib/capacity";
-import { overCapacityNights, wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
+import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -64,19 +62,11 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
-
-const confirmPendingGuestsSchema = z.object({
-  allowOverbook: z.boolean().optional(),
-  // #1769b (#1705 semantics): per-action member-email choice. This route is
-  // requireAdmin()-only, so no actor gate is needed. Absent = notify (default);
-  // false suppresses the confirmation email (only sent on the zero-amount and
-  // charged-card outcomes). A non-boolean value is rejected with 400.
-  notifyMember: z.boolean().optional(),
-});
-
-/** This 409 carries dates alone; the ONE definition supplies them (#2930). */
-const getOverbookedNightDates = (nightDetails: NightAvailability[]): string[] =>
-  overCapacityNights({ nightDetails }).map((night) => night.date);
+import {
+  confirmPendingGuestsSchema,
+  getOverbookedNightDates,
+  lockedClaimRefusalBody,
+} from "@/lib/admin-confirm-pending-guests-shapes";
 
 /**
  * Admin override: "Confirm pending guests now".
@@ -330,19 +320,7 @@ export async function POST(
       }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
       if ("error" in zeroResult) {
-        return NextResponse.json(
-          {
-            error: zeroResult.error,
-            ...("code" in zeroResult ? { code: zeroResult.code } : {}),
-            ...("overbookDates" in zeroResult
-              ? { overbookDates: zeroResult.overbookDates }
-              : {}),
-            ...("blockedNights" in zeroResult
-              ? { blockedNights: zeroResult.blockedNights }
-              : {}),
-          },
-          { status: zeroResult.status }
-        );
+        return NextResponse.json(lockedClaimRefusalBody(zeroResult), { status: zeroResult.status });
       }
 
       await settleHostingCoverageAfterCommit({ bookingId });
@@ -604,19 +582,7 @@ export async function POST(
     }
 
     if ("error" in claim) {
-      return NextResponse.json(
-        {
-          error: claim.error,
-          ...("code" in claim ? { code: claim.code } : {}),
-          ...("overbookDates" in claim
-            ? { overbookDates: claim.overbookDates }
-            : {}),
-          ...("blockedNights" in claim
-            ? { blockedNights: claim.blockedNights }
-            : {}),
-        },
-        { status: claim.status }
-      );
+      return NextResponse.json(lockedClaimRefusalBody(claim), { status: claim.status });
     }
 
     // #2576 §9: drain what the claim recorded, now that it has committed.

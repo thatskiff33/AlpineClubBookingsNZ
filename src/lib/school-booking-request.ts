@@ -157,6 +157,7 @@ import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
 export { schoolTeacherSchema } from "@/lib/school-teacher-schema";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { cleanNullableString, cleanString } from "@/lib/member-application-fields";
 
 /**
  * Bound a school party by the lodge's bed count — `INV-CAP`, and ONE
@@ -243,14 +244,6 @@ export interface StoredTeacher {
 // ---------------------------------------------------------------------------
 // Small helpers (kept local to avoid cross-module coupling)
 // ---------------------------------------------------------------------------
-
-function cleanString(value?: string | null) {
-  return value?.replace(/[\r\n]/g, " ").trim() || "";
-}
-
-function cleanNullableString(value?: string | null) {
-  return cleanString(value) || null;
-}
 
 function parseSchoolTeachers(raw: unknown): StoredTeacher[] {
   const parsed = storedSchoolTeacherListSchema.safeParse(raw);

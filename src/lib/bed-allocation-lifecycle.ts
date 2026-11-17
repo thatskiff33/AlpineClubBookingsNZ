@@ -38,6 +38,7 @@ import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
 import { resolveEffectiveBedAllocationSettings } from "@/lib/bed-allocation-settings";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { sweepGuestName } from "@/lib/bed-allocation-sweep-name";
 import { assertGlobalLockHeld } from "@/lib/global-lock-held";
 import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
@@ -1557,10 +1558,6 @@ type SweepAllocationRow = Prisma.BedAllocationGetPayload<{
 
 function sweepBedNightKey(bedId: string, stayDate: Date): string {
   return `${bedId}:${formatDateOnly(stayDate)}`;
-}
-
-function sweepGuestName(guest: { firstName: string; lastName: string }): string {
-  return `${guest.firstName} ${guest.lastName}`.trim();
 }
 
 /** Distinct swept lodge nights, ascending — for the admin alert. */

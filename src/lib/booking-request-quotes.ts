@@ -81,6 +81,7 @@ import { clubFormatValues } from "@/lib/club-format-server";
 import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 import { pendingAdultReservationNightsMatch, releasePendingAdultNights, reservePendingAdultNights } from "@/lib/booking-request-pending-adult-reservations";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { cleanNullableString } from "@/lib/member-application-fields";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -238,11 +239,6 @@ const quoteOptionsSchema = z.array(
     ),
   })
 );
-
-function cleanNullableString(value?: string | null) {
-  const trimmed = value?.replace(/[\r\n]/g, " ").trim() ?? "";
-  return trimmed || null;
-}
 
 function getNightCount(checkIn: Date, checkOut: Date) {
   return Math.max(0, Math.ceil((checkOut.getTime() - checkIn.getTime()) / DAY_MS));

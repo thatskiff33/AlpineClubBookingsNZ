@@ -132,6 +132,7 @@ import {
   recordPartPaymentInClaim,
 } from "@/lib/internet-banking-part-payment-at-cancel";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { appendReturnedCreditSentence } from "@/lib/booking-cancel-credit-sentence";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
@@ -2799,20 +2800,6 @@ export async function paymentHasCaptureEvidence(
     select: { id: true },
   });
   return paymentShowsCaptureEvidence(payment, Boolean(capturedTransaction), booking); // #3949: an IB organiser child's mirror counts
-}
-
-// #1547: every cancel branch that restores applied credit appends this line to
-// the CANCELLED narrative event when a positive amount was returned, so the
-// member/admin story reflects the restore. Money stays in cents internally; the
-// sentence renders the club's configured currency (#3325).
-function appendReturnedCreditSentence(
-  reason: string,
-  creditRestoredCents: number,
-  format: ClubFormat,
-): string {
-  return creditRestoredCents > 0
-    ? `${reason} ${formatCents(creditRestoredCents, format)} of applied account credit was returned.`
-    : reason;
 }
 
 async function cancelOutstandingPaymentIntents({

@@ -69,43 +69,12 @@ import {
   TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
   transactionContendedResponse,
 } from "@/lib/transaction-contended-response";
-
-class PaymentIntentCapacityError extends Error {
-  constructor() {
-    super("Not enough beds available for your dates. Please choose different dates.");
-    this.name = "PaymentIntentCapacityError";
-  }
-}
-
-/**
- * The booking moved out of the status this request read before the pay
- * transaction could claim it — a concurrent cancel, admin action or a second
- * pay attempt. Nothing was written (the transaction rolls back), so this is a
- * plain conflict, not a failure.
- */
-class PaymentIntentConflictError extends Error {
-  constructor() {
-    super("This booking is no longer payable. Reload the booking and try again.");
-    this.name = "PaymentIntentConflictError";
-  }
-}
-
-/** #3864: another tab attached an intent beside the one retired; nothing spent. */
-class CreditElectionIntentConflictError extends Error {}
-
-/**
- * Defence in depth (#2266): a DRAFT carrying an unresolved admin review must
- * not become payable here. The writers park review-flagged drafts to
- * AWAITING_REVIEW (booking-create and the modify path alike), so this state
- * should not exist — but the no-adult review rule is a child-safety gate, so
- * the pay door checks it too rather than trusting every writer forever.
- */
-class PaymentIntentReviewPendingError extends Error {
-  constructor() {
-    super("This booking needs admin review before it can be paid.");
-    this.name = "PaymentIntentReviewPendingError";
-  }
-}
+import {
+  CreditElectionIntentConflictError,
+  PaymentIntentCapacityError,
+  PaymentIntentConflictError,
+  PaymentIntentReviewPendingError,
+} from "@/lib/payment-intent-route-errors";
 
 /**
  * #3638: the one refusal for a card payment on a booking being paid by

@@ -7,19 +7,10 @@ call or the budget argument, which has to sit at the site. Files that would have
 crossed their budget for the first time were tightened instead, so every entry
 here was already over its budget on `main`.
 
-file: src/app/api/admin/booking-exception-requests/[id]/route.ts
-lines: 837
-reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
-  its import in this route's own catch, ordered against the route's other error
-  answers (captured-payment and committed-step recovery answers stay first).
-  Moving it out would split one route's error mapping across two files.
-
-file: src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts
-lines: 981
-reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
-  its import in this route's own catch, ordered against the route's other error
-  answers (captured-payment and committed-step recovery answers stay first).
-  Moving it out would split one route's error mapping across two files.
+A file already past three times its budget on `main` cannot take an allowance
+(#5145). Each of those moved a schema, type, error class or pure helper into a
+sibling module instead, so it ends no longer than it is on `main` and has no
+entry here.
 
 file: src/app/api/admin/bookings/[id]/exclusive-hold/route.ts
 lines: 432
@@ -49,13 +40,6 @@ reason: the INV-LOCK-006 contention answers: the review claim's catch, and a
   reviewRecorded facts on its 503. Moving them out would split one route's
   error mapping across two files.
 
-file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1314
-reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
-  its import in this route's own catch, ordered against the route's other error
-  answers (captured-payment and committed-step recovery answers stay first).
-  Moving it out would split one route's error mapping across two files.
-
 file: src/app/api/admin/hut-leaders/route.ts
 lines: 468
 reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
@@ -64,28 +48,21 @@ reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call 
   Moving it out would split one route's error mapping across two files.
 
 file: src/app/api/admin/members/[id]/xero-push/route.ts
-lines: 398
+lines: 397
 reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
   its import in this route's own catch, ordered against the route's other error
   answers (captured-payment and committed-step recovery answers stay first).
   Moving it out would split one route's error mapping across two files.
 
 file: src/app/api/admin/members/bulk-update/route.ts
-lines: 759
-reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
-  its import in this route's own catch, ordered against the route's other error
-  answers (captured-payment and committed-step recovery answers stay first).
-  Moving it out would split one route's error mapping across two files.
-
-file: src/app/api/admin/refund-requests/[id]/route.ts
-lines: 768
+lines: 746
 reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
   its import in this route's own catch, ordered against the route's other error
   answers (captured-payment and committed-step recovery answers stay first).
   Moving it out would split one route's error mapping across two files.
 
 file: src/app/api/admin/xero/force-sync/route.ts
-lines: 349
+lines: 346
 reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
   its import in this route's own catch, ordered against the route's other error
   answers (captured-payment and committed-step recovery answers stay first).
@@ -113,14 +90,7 @@ reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call 
   Moving it out would split one route's error mapping across two files.
 
 file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
-lines: 561
-reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
-  its import in this route's own catch, ordered against the route's other error
-  answers (captured-payment and committed-step recovery answers stay first).
-  Moving it out would split one route's error mapping across two files.
-
-file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1603
+lines: 559
 reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
   its import in this route's own catch, ordered against the route's other error
   answers (captured-payment and committed-step recovery answers stay first).
@@ -147,21 +117,8 @@ reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call 
   answers (captured-payment and committed-step recovery answers stay first).
   Moving it out would split one route's error mapping across two files.
 
-file: src/app/api/bookings/route.ts
-lines: 1898
-reason: #4933's contention answer on the draft, confirmed and waitlist paths of
-  booking create, each in its own catch ahead of the path's other error
-  answers. The shared helper already holds the response; what stays is the call.
-
 file: src/app/api/payments/charge-saved-method/route.ts
 lines: 699
-reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
-  its import in this route's own catch, ordered against the route's other error
-  answers (captured-payment and committed-step recovery answers stay first).
-  Moving it out would split one route's error mapping across two files.
-
-file: src/app/api/payments/create-payment-intent/route.ts
-lines: 936
 reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
   its import in this route's own catch, ordered against the route's other error
   answers (captured-payment and committed-step recovery answers stay first).
@@ -175,7 +132,7 @@ reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call 
   Moving it out would split one route's error mapping across two files.
 
 file: src/lib/admin-member-detail-service.ts
-lines: 1768
+lines: 1773
 reason: the INV-LOCK-006 budget on this service's transactions plus a contention
   rethrow in its own catch, which otherwise reported P2028 as a failure. The
   rethrow has to sit in the catch it escapes from; there is no seam to move it to.
@@ -185,12 +142,6 @@ lines: 844
 reason: the INV-LOCK-006 budget on this service's transactions plus a contention
   rethrow in its own catch, which otherwise reported P2028 as a failure. The
   rethrow has to sit in the catch it escapes from; there is no seam to move it to.
-
-file: src/lib/bed-allocation-lifecycle.ts
-lines: 2594
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
 
 file: src/lib/bed-allocation-move.ts
 lines: 1442
@@ -204,24 +155,6 @@ reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
   must be written at the transaction call so the budget census can read it, and
   a wrapper would hide it from that census; the module already exceeded its budget.
 
-file: src/lib/booking-cancel.ts
-lines: 2881
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
-
-file: src/lib/booking-create.ts
-lines: 2080
-reason: #4933's budget on the draft and confirmed create transactions, with the
-  two comments saying why the defaults lost and that a caller's tx keeps its
-  own budget. Both belong at the transaction call, where the census reads them.
-
-file: src/lib/booking-date-modification-service.ts
-lines: 2255
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
-
 file: src/lib/booking-delete.ts
 lines: 754
 reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
@@ -230,24 +163,6 @@ reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
 
 file: src/lib/booking-exception-execution.ts
 lines: 1036
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
-
-file: src/lib/booking-exception-request-service.ts
-lines: 2488
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
-
-file: src/lib/booking-request-quotes.ts
-lines: 2234
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
-
-file: src/lib/booking-request.ts
-lines: 3101
 reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
   must be written at the transaction call so the budget census can read it, and
   a wrapper would hide it from that census; the module already exceeded its budget.
@@ -271,19 +186,13 @@ reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
   a wrapper would hide it from that census; the module already exceeded its budget.
 
 file: src/lib/group-booking.ts
-lines: 1969
+lines: 1968
 reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
   must be written at the transaction call so the budget census can read it, and
   a wrapper would hide it from that census; the module already exceeded its budget.
 
 file: src/lib/group-cancel.ts
 lines: 1133
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
-
-file: src/lib/group-settlement.ts
-lines: 1685
 reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
   must be written at the transaction call so the budget census can read it, and
   a wrapper would hide it from that census; the module already exceeded its budget.
@@ -300,20 +209,8 @@ reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
   must be written at the transaction call so the budget census can read it, and
   a wrapper would hide it from that census; the module already exceeded its budget.
 
-file: src/lib/payment-reconciliation.ts
-lines: 2902
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
-
-file: src/lib/school-booking-request.ts
-lines: 3231
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
-
 file: src/lib/seasonal-membership-assignments.ts
-lines: 1736
+lines: 1955
 reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
   must be written at the transaction call so the budget census can read it, and
   a wrapper would hide it from that census; the module already exceeded its budget.
@@ -330,12 +227,6 @@ reason: the INV-LOCK-006 budget on this service's transactions plus a contention
   rethrow in its own catch, which otherwise reported P2028 as a failure. The
   rethrow has to sit in the catch it escapes from; there is no seam to move it to.
 
-file: src/lib/xero-inbound/invoice-paid-effects.ts
-lines: 2107
-reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
-  must be written at the transaction call so the budget census can read it, and
-  a wrapper would hide it from that census; the module already exceeded its budget.
-
 ## Function allowances
 
 The function-length ratchet (#4927) judges the same growth one level down. Each
@@ -344,12 +235,6 @@ contention answer or budget argument as its file, at the site that needs it.
 
 function: src/app/api/admin/booking-exception-requests/[id]/route.ts#PATCH
 lines: 487
-reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
-  ordered against its other error answers; lifting the catch out is the
-  handler split its own issue has to plan.
-
-function: src/app/api/admin/bookings/[id]/confirm-pending-guests/route.ts#POST
-lines: 883
 reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   ordered against its other error answers; lifting the catch out is the
   handler split its own issue has to plan.
@@ -385,7 +270,7 @@ reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   handler split its own issue has to plan.
 
 function: src/app/api/admin/members/bulk-update/route.ts#POST
-lines: 675
+lines: 676
 reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   ordered against its other error answers; lifting the catch out is the
   handler split its own issue has to plan.
@@ -409,7 +294,7 @@ reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   handler split its own issue has to plan.
 
 function: src/app/api/bookings/[id]/guests/[guestId]/route.ts#DELETE
-lines: 498
+lines: 496
 reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   ordered against its other error answers; lifting the catch out is the
   handler split its own issue has to plan.
@@ -428,12 +313,6 @@ reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
 
 function: src/app/api/bookings/[id]/waitlist-confirm/route.ts#POST
 lines: 505
-reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
-  ordered against its other error answers; lifting the catch out is the
-  handler split its own issue has to plan.
-
-function: src/app/api/bookings/route.ts#POST
-lines: 1643
 reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   ordered against its other error answers; lifting the catch out is the
   handler split its own issue has to plan.
@@ -465,20 +344,6 @@ reason: the INV-LOCK-006 budget is an argument on the lock(1) transaction this
 
 function: src/lib/admin-roster-service.ts#updateAdminRosterForDate
 lines: 480
-reason: the INV-LOCK-006 budget is an argument on the lock(1) transaction this
-  function opens, and a contended rollback is rethrown past its local catch
-  so the route can answer 503; both sit at the site, and splitting the
-  function is a refactor of its own.
-
-function: src/lib/booking-create.ts#createDraftBooking
-lines: 332
-reason: the INV-LOCK-006 budget is an argument on the lock(1) transaction this
-  function opens, and a contended rollback is rethrown past its local catch
-  so the route can answer 503; both sit at the site, and splitting the
-  function is a refactor of its own.
-
-function: src/lib/booking-create.ts#createConfirmedBooking
-lines: 1123
 reason: the INV-LOCK-006 budget is an argument on the lock(1) transaction this
   function opens, and a contended rollback is rethrown past its local catch
   so the route can answer 503; both sit at the site, and splitting the

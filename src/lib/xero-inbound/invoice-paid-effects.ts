@@ -21,10 +21,7 @@ import {
   raiseSecondInstrumentSettlementAlert,
   recordSecondInstrumentMarkerInTransaction,
 } from "@/lib/xero-inbound/settlement-conflicts";
-import {
-  applyGroupSettlementSucceededFromInvoice,
-  type GroupSettlementMismatch,
-} from "@/lib/group-settlement";
+import { applyGroupSettlementSucceededFromInvoice } from "@/lib/group-settlement";
 import { GROUP_SETTLEMENT_INVOICE_ROLE } from "@/lib/group-settlement-invoice-binding";
 import { alertGroupSettlementInvoice } from "@/lib/group-settlement-invoice-alerts";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
@@ -76,6 +73,7 @@ import {
 } from "@/lib/xero-inbound/settle-from-cash-notice";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { groupSettlementMismatchMessage } from "@/lib/xero-inbound/group-settlement-mismatch-message";
 
 function isPaidXeroInvoice(invoice: Invoice): boolean {
   const status = String(invoice.status ?? "").toUpperCase();
@@ -1861,24 +1859,6 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
   }
 
   return result;
-}
-
-/** The operator instruction for a paid invoice the app did not apply (#1033, #3642). */
-function groupSettlementMismatchMessage(
-  invoiceId: string,
-  mismatch: GroupSettlementMismatch | undefined,
-  format: ClubFormat
-): string {
-  if (mismatch?.reason === "collected") {
-    return `Group settlement invoice ${invoiceId} was paid ${formatCents(mismatch.collectedCents, format)}, but the settlement it pays is ${formatCents(mismatch.recordedCents, format)}. No bookings were settled; reconcile manually (collect or refund the difference, then settle the group).`;
-  }
-  if (
-    mismatch?.reason === "invoice_superseded" ||
-    mismatch?.reason === "intent_superseded"
-  ) {
-    return `Group settlement invoice ${invoiceId} was paid, but the settlement no longer uses that invoice. No bookings were settled; refund or credit the organiser in Xero, or apply the payment by hand.`;
-  }
-  return `Group settlement invoice ${invoiceId} was paid, but a child booking changed while it was open so the total no longer matches. No bookings were settled; reconcile manually (short-pay/refund the difference or re-issue the settlement).`;
 }
 
 /**

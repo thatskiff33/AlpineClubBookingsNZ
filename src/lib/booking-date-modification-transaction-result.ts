@@ -1,6 +1,7 @@
 // The date edit's transaction result, moved verbatim from
 // `booking-date-modification-service.ts` to keep that file under its size
-// ceiling (#5145). Types only.
+// ceiling (#5145). Types only. `DateModificationResponse` followed for the
+// same reason when the lock(1) budget follow-up grew the service by a line.
 import type { Booking, BookingGuest, Payment, PaymentSource, PaymentStatus } from "@prisma/client";
 
 import type { BookingModificationPaymentContext } from "@/lib/booking-modification-settlement";
@@ -54,3 +55,26 @@ export type DateModificationTransactionResult =
     // was auto-confirmed at $0, so the primary Xero invoice must be created.
     zeroDollarAutoPaid: boolean;
   };
+
+export type DateModificationResponse = {
+  booking: ModifiedBooking;
+  priceDiffCents: number;
+  changeFeeCents: number;
+  refundAmountCents: number;
+  accountCreditAmountCents: number;
+  /** #3809: applied credit the reduction gave back, as account credit. */
+  appliedCreditGivenBackCents: number;
+  settlementMethod: BookingModificationSettlementMethod | null;
+  policyRetainedAmountCents: number;
+  additionalAmountCents: number;
+  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
+  billedToOrganiserCents: number;
+  additionalPaymentClientSecret: string | null;
+  stripeRefundId: string | null;
+  promoRemoved: boolean;
+  promoCoverage: PromoCoverageNotice | null;
+  choreWarnings: string[];
+  // Admin override (issue #1668): true when an over-capacity target was
+  // explicitly confirmed. Always false on the standard (hard-blocked) path.
+  capacityOverridden: boolean;
+};
