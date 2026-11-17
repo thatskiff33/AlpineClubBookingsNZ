@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { adminHref } from "@/lib/admin-hubs"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
@@ -14,6 +14,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { fetchJson } from "./api"
+import { useAutoLoadOncePerOpening } from "./use-auto-load-once-per-opening"
 import {
   allHutFeeCellKeys,
   filterHutFeeRateTypes,
@@ -169,9 +170,14 @@ export function MappingsPanel({
     }
   }, [])
 
-  useEffect(() => {
-    if (connected && open && !accountMappings && !loading) void fetchMappings()
-  }, [accountMappings, connected, fetchMappings, loading, open])
+  // Auto-load once per opening: a failed load stays shown until the admin
+  // presses Refresh, instead of re-firing each time `loading` settles (#5203).
+  useAutoLoadOncePerOpening({
+    active: connected && open,
+    needed: !accountMappings,
+    busy: loading,
+    load: fetchMappings,
+  })
 
   // Failure wins, success positions at the top, and neither runs for a
   // passive re-render — the shared action-attention rule (#2934).
