@@ -38,7 +38,7 @@ const sections = [
     icon: MessageSquareText,
   },
   {
-    // The Settings tab of Membership Cancellations since S1 (#4796).
+    // The Settings tab of Cancellation Requests since S1 (#4796).
     href: adminTabHref("membership-cancellations", "settings"),
     title: "Membership Cancellation",
     description:

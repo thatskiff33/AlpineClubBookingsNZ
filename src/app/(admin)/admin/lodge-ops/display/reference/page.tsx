@@ -22,7 +22,7 @@ import {
   BUILT_IN_DISPLAY_TEMPLATES,
 } from "@/lib/lodge-display/built-in-seeds";
 import { DISPLAY_GLOSSARY } from "@/lib/lodge-display/display-terminology";
-import { adminLink } from "@/lib/admin-hubs";
+import { adminLink, getAdminPage } from "@/lib/admin-hubs";
 
 // LTV-034 (#80) — read-only Modules / Conditions / CSS-tokens reference (ADR-003
 // §3, "Navigation & terminology"). Everything on this page is presentation over
@@ -391,7 +391,7 @@ export default function AdminDisplayReferencePage() {
     <div className="space-y-6 p-6">
       <div>
         <BackLink {...adminLink("display")} />
-        <h1 className="mt-2 text-2xl font-bold">Reference</h1>
+        <h1 className="mt-2 text-2xl font-bold">{getAdminPage("display-reference").label}</h1>
         <p className="text-muted-foreground">
           The lobby display vocabulary: the modules you can embed, the conditions
           that gate areas, and the CSS tokens you can reference in authored CSS.
