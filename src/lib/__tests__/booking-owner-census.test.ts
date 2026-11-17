@@ -501,7 +501,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:275",
   "src/lib/kiosk-access.ts:230",
-  "src/lib/manual-refund-task-queue-payload.ts:400",
+  "src/lib/manual-refund-task-queue-payload.ts:404",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:344",
   "src/lib/waitlist-cross-lodge.ts:532",
@@ -805,7 +805,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // it in budget. Verified by hand: written through
   // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits
   // under its `booking` relation, which declares it.
-  "src/lib/manual-refund-task-resolution-select.ts:57",
+  "src/lib/manual-refund-task-resolution-select.ts:58",
   // Added when the member lodge roster (#2942, from `main`) was routed through
   // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what
   // this list asks for: `MEMBER_ROSTER_BOOKING_SELECT` is written
