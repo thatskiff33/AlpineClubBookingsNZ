@@ -12,12 +12,6 @@ reason: one import line, so the back link comes from the hub registry.
   Splitting the devices page is a refactor of its own and would not shrink
   this hunk.
 
-file: src/app/(admin)/admin/lodge-ops/display/reference/page.tsx
-lines: 611
-reason: one import line, so the back link comes from the hub registry.
-  Splitting the reference page is a refactor of its own and would not shrink
-  this hunk.
-
 file: src/app/(admin)/admin/lodge-ops/display/templates/page.tsx
 lines: 1134
 reason: one import line, so the back link and the preview and builder openers
