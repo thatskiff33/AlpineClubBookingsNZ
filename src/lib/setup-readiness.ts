@@ -17,6 +17,7 @@ import {
 import { usableClubCurrencyCode } from "@/lib/club-format";
 import { clubFormatXeroBaseCurrencyMismatch } from "@/lib/club-format-copy";
 import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
+import { SEED_COMMAND_DETAILS } from "@/lib/seed-commands";
 /*
   TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
   `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
@@ -29,7 +30,6 @@ import { xeroBaseCurrencyMismatch } from "@/lib/xero-base-currency";
   report.
 */
 import type { EnvironmentRoleResolution } from "@/lib/environment-role";
-import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 // Type-only for the same reason as the line above, so this module keeps no
 // runtime edge to anything that reads a database.
 import type { WithheldApplicationEmail } from "@/lib/environment-safety-withheld";
@@ -43,9 +43,11 @@ import {
 import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
 import { XERO_REQUIRED_REPORT_OAUTH_SCOPES, detectLegacyProviderEnv } from "@/lib/xero-config";
 import { authSecretWeaknessReason } from "@/lib/integration-crypto";
+import { BROWSER_SENTRY_OFF_DETAIL, getBrowserSentryDsn } from "@/lib/observability/browser-sentry-config";
 import { DATA_ENCRYPTION_KEYS_ENV, DATA_ENCRYPTION_LEGACY_KEY_ENV } from "@/lib/data-encryption-key-material";
 import { buildDataEncryptionKeyCheck, type DataKeyRingSource, type DataKeyUsageSnapshot } from "@/lib/setup-readiness-data-keys";
 import { buildDatabaseRoleCheck, type DatabaseRoleSnapshot } from "@/lib/setup-readiness-database-role";
+import { describeEnvironmentRoleDeclaration, describeEnvironmentRoleOverride } from "@/lib/setup-readiness-environment-role";
 
 export const SETUP_STEP_IDS = [
   "club-config",
@@ -951,42 +953,6 @@ function buildClubTimeZoneCheck(
 }
 
 /**
- * Plain-English state of the deployment declaration, for the readiness details.
- *
- * The raw value in the `invalid` case has ALREADY been stripped of control
- * characters and capped by `sanitizeEnvironmentRoleRawValue`, which is why it can
- * be quoted straight into a line that ends up in an operator's terminal.
- */
-function describeEnvironmentRoleDeclaration(
-  declaration: EnvironmentRoleDeclaration,
-): string {
-  switch (declaration.kind) {
-    case "production":
-      return "Deployment declaration: APP_ENVIRONMENT_ROLE=production.";
-    case "non-production":
-      return "Deployment declaration: APP_ENVIRONMENT_ROLE=non-production.";
-    case "invalid":
-      return `Deployment declaration: APP_ENVIRONMENT_ROLE is set to "${declaration.raw}", which is not one of the two accepted values (production, non-production), so it is refused rather than guessed at.`;
-    case "absent":
-      return "Deployment declaration: APP_ENVIRONMENT_ROLE is not set.";
-  }
-}
-
-/** Plain-English state of the database safer override. */
-function describeEnvironmentRoleOverride(
-  resolution: EnvironmentRoleResolution,
-): string {
-  switch (resolution.databaseOverride.kind) {
-    case "force-non-production":
-      return "Safer override: ON — an administrator has forced this installation to behave as non-production. It can be switched off at /admin/environment, which hands the decision back to the deployment declaration and never makes an installation production on its own.";
-    case "none":
-      return "Safer override: off — nothing in the database is forcing this installation to be treated as non-production.";
-    case "unreadable":
-      return "Safer override: could not be read. The EnvironmentSafetySettings table is most likely missing because the migration has not been applied on this database yet — run prisma migrate deploy (or pnpm run db:migrate in development), then check again.";
-  }
-}
-
-/**
  * The withheld-email line, which is the ONLY signal that separates a live club
  * that is not sending from a copy nobody is using (ENV-SAFETY 1, #3034).
  *
@@ -1336,11 +1302,11 @@ function buildSeedAdminCheck(
       message:
         adminCount > 0
           ? `${adminCount} administrator account${adminCount === 1 ? "" : "s"} found.`
-          : "Run the seed command after setting SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD.",
+          : "Run the seed command after setting SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD.",
       details:
         adminCount > 0
           ? ["Admin login is available."]
-          : ["Command: pnpm run db:seed"],
+          : [...SEED_COMMAND_DETAILS],
       href: adminHref("members"),
     },
     progress,
@@ -1839,29 +1805,34 @@ function buildSentryCheck(
   env: Env,
   progress: SetupProgressState,
 ): SetupStepCheck {
+  // The browser DSN is judged by its runtime resolver, so Setup agrees with the
+  // public config route and System Health on whether browser Sentry is on.
+  const browserSentryOn = getBrowserSentryDsn(env) !== null;
   const missing = [
     "SENTRY_DSN",
-    "NEXT_PUBLIC_SENTRY_DSN",
     "SENTRY_ORG",
     "SENTRY_PROJECT",
   ].filter((name) => !hasEnv(env, name));
+  const complete = browserSentryOn && missing.length === 0;
 
   return applyProgress(
     {
       id: "sentry",
       title: "Sentry",
       description:
-        "Server, edge, browser error reporting, and source-map configuration.",
-      status: missing.length === 0 ? "complete" : "warning",
+        "Server, edge, browser error reporting, and source-map configuration. Both DSNs are read at runtime.",
+      status: complete ? "complete" : "warning",
       required: false,
       message:
-        missing.length === 0
+        complete
           ? "Sentry variables are present."
           : "Sentry can stay disabled, but production diagnostics will be limited.",
-      details:
-        missing.length === 0
-          ? ["Sentry DSN/project variables are set; values are not displayed."]
-          : missing.map((name) => `${name} is missing`),
+      details: [
+        browserSentryOn
+          ? "Browser Sentry is configured at runtime; new pages use this deployment's browser DSN."
+          : BROWSER_SENTRY_OFF_DETAIL,
+        ...missing.map((name) => `${name} is missing`),
+      ],
       href: adminHref("health"),
       action: {
         type: "provider-test",
@@ -2235,31 +2206,6 @@ export function buildSetupReadiness(
     categories,
     generatedAt: (input.now ?? new Date()).toISOString(),
   };
-}
-
-export function renderSetupCheckReport(readiness: SetupReadiness): string {
-  const lines = [
-    `Setup readiness: ${readiness.status}`,
-    `Complete ${readiness.summary.complete}/${readiness.summary.total}, warnings ${readiness.summary.warning}, blocked ${readiness.summary.blocked}, skipped ${readiness.summary.skipped}`,
-    "",
-  ];
-
-  for (const category of readiness.categories) {
-    lines.push(`${category.title} (${category.status})`);
-    for (const check of category.checks) {
-      const progressLabel =
-        check.progress === "open" ? "" : `, ${check.progress}`;
-      lines.push(
-        `- ${check.title}: ${check.status}${progressLabel} - ${check.message}`,
-      );
-      for (const detail of check.details) {
-        lines.push(`  ${detail}`);
-      }
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n").trimEnd();
 }
 
 export function getSetupRequiredEnvNames(): string[] {

@@ -17,6 +17,7 @@ import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-no
 import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
+import { BOOKING_REQUESTS_STATUS_PARAM } from "@/lib/admin-booking-requests-path";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -128,7 +129,7 @@ export function BookingApprovalsPanel({
   const clubTime = useClubTime();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialFilter = searchParams.get("status");
+  const initialFilter = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
   const focusedBookingId = searchParams.get("bookingId");
   const defaultFilter: ReviewFilter = focusedBookingId ? "ALL" : "PENDING";
   const [bookings, setBookings] = useState<BookingReviewData[]>([]);

@@ -11,9 +11,12 @@ import {
   POINTER_NOTE_END,
   POINTER_NOTE_START,
   readFragments,
+  releaseHeading,
+  releaseHeadingDate,
   releaseSection,
   retiredAllowancePaths,
   releaseDateToday,
+  toLines,
 } from "./compile-changelog.mjs";
 
 const NOTE_BODY = "Entries for the next release live in `changelog.d/` — one file per PR.";
@@ -829,6 +832,22 @@ describe("compile-changelog", () => {
     expect(classifyUnreleased("# Changelog\n\n## 0.1.0 - 2026-01-01\n")).toBeNull();
   });
 
+  it("reads the date back from a compiled heading, and refuses a hand-edited one", () => {
+    expect(releaseHeadingDate(releaseHeading("0.14.0", "2026-11-20"), "0.14.0")).toBe("2026-11-20");
+    expect(releaseHeadingDate("## 0.14.0 - 2026-11-20  ", "0.14.0")).toBe("2026-11-20");
+    // releaseSection finds a section by version alone, so these reach a reader of the date.
+    expect(releaseHeadingDate("## 0.14.0 (2026-11-20)", "0.14.0")).toBeNull();
+    expect(releaseHeadingDate("## 0.14.0 - 2026-11-20)", "0.14.0")).toBeNull();
+    expect(releaseHeadingDate("## 0.14.0 - soon", "0.14.0")).toBeNull();
+    expect(releaseHeadingDate("## 0.14.0 -", "0.14.0")).toBeNull();
+    expect(releaseHeadingDate("## 0.14.1 - 2026-11-20", "0.14.0")).toBeNull();
+  });
+
+  it("splits text into lines whatever its line endings", () => {
+    expect(toLines("a\r\nb\nc")).toEqual(["a", "b", "c"]);
+    expect(toLines("")).toEqual([""]);
+  });
+
   it("rejects a malformed version or date", () => {
     const root = makeRepo();
     expect(() => compileChangelog({ repoRoot: root, version: "v0.14", log: silentLog() })).toThrow(
@@ -903,7 +922,7 @@ describe("compile-changelog", () => {
   });
 
   it("names no time zone in the release tooling (#4571, INV-CONFIG-002)", () => {
-    for (const file of ["scripts/release/compile-changelog.mjs", "scripts/release/cut-release.mjs"]) {
+    for (const file of ["scripts/release/compile-changelog.mjs", "scripts/release/cut-release.mjs", "scripts/release/release-notes.mjs", "scripts/release/upgrade-docs.mjs"]) {
       expect(fs.readFileSync(file, "utf8"), file).not.toMatch(/timeZone:\s*["'][A-Za-z]+\/[A-Za-z_]+["']/);
     }
   });

@@ -1068,6 +1068,26 @@ own account (`two-factor-navigation.spec.ts`), and the persona's comment in
 in as Pip (`PASSKEY_ENROLLEE`). Test this by running the two specs in both
 orders against one fresh seed.
 
+### 8. The request after an admin write can beat the cache clear (issue #5205)
+
+An admin write route clears the public caches with `revalidatePath` and
+`revalidateTag`. In a Route Handler, Next applies those as the response
+finishes, not before it is sent. A spec that sends its next request in the same
+instant can still be answered from the stored copy. On this repository's CI the
+specs nearly always lost that race and passed; on a faster runner
+`static-cms-pages`, `analytics-consent` and `raw-css-secret-reflection` failed
+on changes that touched none of them.
+
+A spec that asserts "the public site shows what the admin just saved" polls for
+it, never on the first request and never after a sleep. The three specs above
+share one 10-second bound in `e2e/helpers/public-cache.ts`. For a stored CMS
+page that the spec warmed just before the write, a pass inside it is still the
+write clearing the store, because the page could not age out in under 300
+seconds. For a page served from the tagged layout caches it only waits for the
+change: those entries live 15 seconds from their last rebuild, which a spec
+does not control, so the unit tier pins those invalidations.
+`club-identity-smoke.spec.ts` keeps its own, longer wait for the same reason.
+
 ### What is deliberately NOT the fix
 
 Bumping `retries`, widening a `toBeVisible` timeout, `page.waitForTimeout`, or

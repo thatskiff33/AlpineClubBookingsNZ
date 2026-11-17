@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { FocusedActionError } from "@/components/focused-action-error"
 import { Badge } from "@/components/ui/badge"
@@ -88,8 +88,9 @@ export function SetupPanels({
     }) => {
       if (options?.refreshFromXero) setRefreshingGroups(true)
       else setLoadingGroups(true)
+      // Every attempt replaces the passive notice, so a failure shows once.
+      setLoadError("")
       if (options?.pressed) clearActionError()
-      else setLoadError("")
       try {
         const result = await loadAdminXeroContactGroups({
           refreshFromXero: options?.refreshFromXero,
@@ -124,8 +125,19 @@ export function SetupPanels({
     [clearActionError, failAction, onRefreshDiagnostics]
   )
 
+  // Auto-load the groups once while the list is empty (re-armed when the section
+  // opens, Xero reconnects or Reset clears the list). After a failed or empty load
+  // nothing more is requested until the admin presses Load or Refresh; without
+  // this latch the effect re-fired each time `loadingGroups` settled (ALP-591).
+  const autoLoadAttemptedRef = useRef(false)
   useEffect(() => {
-    if (connected && open && contactGroups.length === 0 && !loadingGroups && !refreshingGroups) void loadContactGroups()
+    if (!connected || !open) {
+      autoLoadAttemptedRef.current = false
+      return
+    }
+    if (autoLoadAttemptedRef.current || contactGroups.length > 0 || loadingGroups || refreshingGroups) return
+    autoLoadAttemptedRef.current = true
+    void loadContactGroups()
   }, [connected, contactGroups.length, loadContactGroups, loadingGroups, open, refreshingGroups])
 
   // #2108: load active membership types (for the type selects) once the section
@@ -407,7 +419,7 @@ export function SetupPanels({
                 <Button onClick={() => void importMembers()} disabled={syncing !== null || !groupMappings.some(isGroupMapped)}>
                   {syncing === "import" ? "Importing..." : "Import Members"}
                 </Button>
-                <Button variant="outline" onClick={() => { setContactGroups([]); setGroupMappings([]) }}>Reset</Button>
+                <Button variant="outline" onClick={() => { autoLoadAttemptedRef.current = false; setContactGroups([]); setGroupMappings([]) }}>Reset</Button>
               </div>
             </>
           )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { adminHref } from "@/lib/admin-hubs";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Tabs,
@@ -18,8 +18,14 @@ import { PolicyExceptionRequestsPanel } from "@/components/admin/booking-request
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
+  BOOKING_REQUEST_PENDING_COUNTS_PATH,
+  BOOKING_REQUESTS_STATUS_PARAM,
   BOOKING_REQUESTS_TABS,
+  bookingRequestsTabCounts,
+  firstBookingRequestsTabWithWork,
+  readBookingRequestPendingCounts,
   type BookingRequestsTab,
+  type BookingRequestsTabCounts,
 } from "@/lib/admin-booking-requests-path";
 import { setAdminListPageParam } from "@/lib/admin-list-page";
 
@@ -47,16 +53,60 @@ function parseBookingRequestsTab(value: string | null): BookingRequestsTab {
     : "approvals";
 }
 
+/**
+ * The tab triggers, rendered by walking BOOKING_REQUESTS_TABS, so the order an
+ * officer sees is the order the landing rule ("the first tab with work") reads.
+ * Typed over the tab union, so a new tab cannot be added without a label.
+ */
+const TAB_LABELS: Record<BookingRequestsTab, string> = {
+  approvals: "Approvals",
+  changes: "Changes",
+  exceptions: "Policy Exceptions",
+  public: "Public Requests",
+};
+
+/**
+ * Whether the URL already says where to open: a tab (other than `allowedTab`,
+ * the one a panel may have written for itself), a record, or a status filter.
+ */
+function hasLandingTarget(
+  searchParams: URLSearchParams,
+  allowedTab?: BookingRequestsTab,
+): boolean {
+  const tab = searchParams.get("tab");
+  return (
+    (tab !== null && tab !== allowedTab) ||
+    searchParams.has("bookingId") ||
+    searchParams.has("requestId") ||
+    searchParams.has(BOOKING_REQUESTS_STATUS_PARAM)
+  );
+}
+
+function TabCountBadge({ count }: { count: number | undefined }) {
+  if (!count || count <= 0) return null;
+  return (
+    <Badge
+      variant="secondary"
+      className="border-warning-6 bg-warning-3 text-warning-11"
+    >
+      {count}
+    </Badge>
+  );
+}
+
 export default function BookingRequestsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = parseBookingRequestsTab(searchParams.get("tab"));
   const canEditBookings = useAdminAreaEditAccess("bookings");
 
-  // Pending public-request count, so admins can see at a glance that
-  // verified non-member requests are waiting on the Public Requests tab
-  // (issue #779 — they previously looked under Approvals/Bookings/Waitlist).
-  const [publicQueueCount, setPublicQueueCount] = useState(0);
+  // One pending count per tab, from the same helper the sidebar badge adds up
+  // (#4969), so the four tab badges are counted exactly as it is. Null until
+  // loaded, and left null if the read fails: the badges are best-effort, and a
+  // page with no counts behaves exactly as before (Approvals, no badges).
+  const [tabCounts, setTabCounts] = useState<BookingRequestsTabCounts | null>(
+    null,
+  );
 
   // The public request form is UNLISTED BY DEFAULT (#2421, #2818 decision 1):
   // its page ships with an empty menu title, so no page a visitor can browse to
@@ -72,47 +122,66 @@ export default function BookingRequestsPage() {
     setPublicRequestUrl(`${window.location.origin}/booking-requests`);
   }, []);
 
-  // Pending booking-policy exception count (#2526), so an officer can see at a
-  // glance that a member is waiting on a decision that gates a real booking.
-  const [exceptionQueueCount, setExceptionQueueCount] = useState(0);
-
+  // Read once, when the page opens. The badges do not follow an action taken
+  // on the page: refreshing counts after an action is outside #4969's scope,
+  // so a badge catches up on reload.
   useEffect(() => {
     let active = true;
-    fetch("/api/admin/booking-exception-requests?status=REQUESTED&pageSize=1")
+    fetch(BOOKING_REQUEST_PENDING_COUNTS_PATH)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (active && data && typeof data.total === "number") {
-          setExceptionQueueCount(data.total);
+        const counts = readBookingRequestPendingCounts(data);
+        if (active && counts) {
+          setTabCounts(bookingRequestsTabCounts(counts));
         }
       })
       .catch(() => {
-        /* badge is best-effort; ignore fetch errors */
+        /* badges are best-effort; ignore fetch errors */
       });
     return () => {
       active = false;
     };
   }, []);
 
+  // A link that opens this page with no tab (the sidebar's from another page,
+  // the dashboard card's, a typed address) opens on the first tab with work
+  // (#4969), so an officer who followed the sidebar badge never lands on an
+  // empty Approvals while the work sits on another tab. Decided once per
+  // mount, when the counts first arrive, and only for a link that named no
+  // tab, record (bookingId/requestId) or status filter — a status filter
+  // belongs to the tab it was set on and means nothing on another. Once the
+  // page has opened, the address names the tab (a bookmark taken from it keeps
+  // that tab), and the sidebar link followed from this same page goes to
+  // Approvals as it always has, with the tab badges showing where the work is.
+  //
+  // The link is judged as it was opened, not as it reads when the counts
+  // arrive: the Approvals panel mounts at once and writes `?tab=approvals`
+  // into the URL as its own canonical address, so the live URL never looks
+  // bare by then. What does block the move is the officer acting first —
+  // choosing a tab, or a filter or record on Approvals, while the counts load.
+  // `replace`, not `push`, so Back still leaves the page in one step.
+  const openedFromBareLink = useRef(!hasLandingTarget(searchParams));
+  const officerChoseTab = useRef(false);
+  const landingTabDecided = useRef(false);
   useEffect(() => {
-    let active = true;
-    fetch("/api/admin/booking-requests?status=QUEUE&pageSize=1")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (active && data && typeof data.total === "number") {
-          setPublicQueueCount(data.total);
-        }
-      })
-      .catch(() => {
-        /* badge is best-effort; ignore fetch errors */
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+    if (landingTabDecided.current || tabCounts === null) return;
+    landingTabDecided.current = true;
+    if (!openedFromBareLink.current || officerChoseTab.current) return;
+    if (hasLandingTarget(searchParams, "approvals")) return;
+    const landingTab = firstBookingRequestsTabWithWork(tabCounts);
+    if (landingTab === "approvals") return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", landingTab);
+    router.replace(`${adminHref("booking-requests")}?${params.toString()}`, {
+      scroll: false,
+    });
+  }, [tabCounts, searchParams, router]);
 
   function handleTabChange(value: string) {
+    officerChoseTab.current = true;
     const nextTab = parseBookingRequestsTab(value);
     const params = new URLSearchParams(searchParams.toString());
+    const status = params.get(BOOKING_REQUESTS_STATUS_PARAM);
 
     params.set("tab", nextTab);
     // Each tab's queue pages on its own (INV-OPS-020); a page from one tab
@@ -121,24 +190,24 @@ export default function BookingRequestsPage() {
 
     if (nextTab === "approvals") {
       params.delete("requestId");
-      if (params.get("status") === "REQUESTED") {
-        params.delete("status");
+      if (status === "REQUESTED") {
+        params.delete(BOOKING_REQUESTS_STATUS_PARAM);
       }
     } else if (nextTab === "changes") {
       params.delete("bookingId");
-      if (params.get("status") === "PENDING") {
-        params.delete("status");
+      if (status === "PENDING") {
+        params.delete(BOOKING_REQUESTS_STATUS_PARAM);
       }
     } else if (nextTab === "exceptions") {
       // The exception queue keeps its own in-panel status filter and has no
       // per-record deep link, so nothing from a sibling tab carries over.
       params.delete("bookingId");
       params.delete("requestId");
-      params.delete("status");
+      params.delete(BOOKING_REQUESTS_STATUS_PARAM);
     } else {
       params.delete("bookingId");
-      if (params.get("status") === "PENDING" || params.get("status") === "REQUESTED") {
-        params.delete("status");
+      if (status === "PENDING" || status === "REQUESTED") {
+        params.delete(BOOKING_REQUESTS_STATUS_PARAM);
       }
     }
 
@@ -167,30 +236,12 @@ export default function BookingRequestsPage() {
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="grid h-auto w-full grid-cols-2 sm:w-auto sm:grid-cols-4">
-          <TabsTrigger value="approvals">Approvals</TabsTrigger>
-          <TabsTrigger value="changes">Changes</TabsTrigger>
-          <TabsTrigger value="exceptions" className="gap-2">
-            Policy Exceptions
-            {exceptionQueueCount > 0 && (
-              <Badge
-                variant="secondary"
-                className="border-warning-6 bg-warning-3 text-warning-11"
-              >
-                {exceptionQueueCount}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="public" className="gap-2">
-            Public Requests
-            {publicQueueCount > 0 && (
-              <Badge
-                variant="secondary"
-                className="border-warning-6 bg-warning-3 text-warning-11"
-              >
-                {publicQueueCount}
-              </Badge>
-            )}
-          </TabsTrigger>
+          {BOOKING_REQUESTS_TABS.map((tabValue) => (
+            <TabsTrigger key={tabValue} value={tabValue} className="gap-2">
+              {TAB_LABELS[tabValue]}
+              <TabCountBadge count={tabCounts?.[tabValue]} />
+            </TabsTrigger>
+          ))}
         </TabsList>
         <TabsContent value="approvals" className="mt-6">
           {activeTab === "approvals" && canEditBookings !== undefined ? (

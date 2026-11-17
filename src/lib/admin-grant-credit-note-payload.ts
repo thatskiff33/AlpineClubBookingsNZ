@@ -23,6 +23,22 @@ export function isAdminGrantNoteMappingKey(value: unknown): value is AdminGrantN
   return typeof value === "string" && MAPPING_KEYS.some((key) => key === value);
 }
 
+/**
+ * The one builder of the queued request (#5221, `INV-SSOT`). Approval stores
+ * it, and the worker spreads it under a contact repair's rewrite, so the row
+ * keeps every field the outbox and the officer's Retry read from it.
+ */
+export function buildAdminGrantCreditNotePayload(
+  grant: Omit<AdminGrantCreditNotePayload, "queueType">,
+): AdminGrantCreditNotePayload {
+  return {
+    queueType: XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE,
+    amountCents: grant.amountCents,
+    mappingKey: grant.mappingKey,
+    memberCreditId: grant.memberCreditId,
+  };
+}
+
 /** A positive integer amount, a credit id, and one of the two mapping keys. */
 export function readAdminGrantCreditNotePayload(value: unknown): AdminGrantCreditNotePayload | null {
   const payload = asRecord(value);
@@ -31,10 +47,5 @@ export function readAdminGrantCreditNotePayload(value: unknown): AdminGrantCredi
   const memberCreditId = readString(payload.memberCreditId);
   if (amountCents === null || !Number.isInteger(amountCents) || amountCents <= 0) return null;
   if (!memberCreditId || !isAdminGrantNoteMappingKey(payload.mappingKey)) return null;
-  return {
-    queueType: XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE,
-    amountCents,
-    mappingKey: payload.mappingKey,
-    memberCreditId,
-  };
+  return buildAdminGrantCreditNotePayload({ amountCents, mappingKey: payload.mappingKey, memberCreditId });
 }

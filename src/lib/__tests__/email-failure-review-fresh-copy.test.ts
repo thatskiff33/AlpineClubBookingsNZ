@@ -10,8 +10,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockPrisma, mockCreateAuditLog } = vi.hoisted(() => ({
   mockPrisma: {
-    emailLog: { findMany: vi.fn(), findUnique: vi.fn() },
+    emailLog: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn() },
     auditLog: { findMany: vi.fn() },
+    booking: { findMany: vi.fn() },
   },
   mockCreateAuditLog: vi.fn(),
 }));
@@ -19,6 +20,9 @@ const { mockPrisma, mockCreateAuditLog } = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mockCreateAuditLog }));
 
+import { BOOKING_FRESH_COPY_TEMPLATES } from "@/lib/booking-fresh-email-copy-templates";
+import { SENSITIVE_EMAIL_LOG_TEMPLATES } from "@/lib/email/internal";
+import { EMAIL_RETRY_MAX_ATTEMPTS } from "@/lib/email/retry-selection";
 import {
   archiveSupersededEmailFailures,
   getExhaustedEmailFailureReviewQueue,
@@ -46,22 +50,46 @@ beforeEach(() => {
 });
 
 describe("exhausted failure queue fresh-copy link", () => {
-  it("links only booking-scoped failures of the fresh-copy emails", async () => {
-    mockPrisma.emailLog.findMany.mockResolvedValue([
+  it("links only booking-scoped failures of the fresh-copy emails whose booking still exists", async () => {
+    const rows = [
       failure(),
       failure({ id: "log-2", templateName: "split-guest-payment-link", bookingId: "child 1" }),
       failure({ id: "log-3", templateName: "member-welcome" }),
       failure({ id: "log-4", templateName: "pre-arrival-reminder", bookingId: null }),
+      failure({ id: "log-5", templateName: "booking-confirmed", bookingId: "deleted-booking" }),
+      failure({ id: "log-6", templateName: "booking-confirmed", bookingId: "soft-deleted" }),
+    ];
+    // The window scan, then the requeueable-body filter: these emails keep no body.
+    mockPrisma.emailLog.findMany.mockResolvedValueOnce(rows).mockResolvedValueOnce([]);
+    mockPrisma.emailLog.count.mockResolvedValue(rows.length);
+    mockPrisma.booking.findMany.mockResolvedValue([
+      { id: "booking-1", deletedAt: null },
+      { id: "child 1", deletedAt: null },
+      { id: "soft-deleted", deletedAt: new Date("2026-06-30T00:00:00.000Z") },
     ]);
 
     const queue = await getExhaustedEmailFailureReviewQueue();
 
-    expect(queue.failures.map((row) => [row.id, row.freshCopyHref])).toEqual([
-      ["log-1", "/bookings/booking-1#fresh-email-copies"],
-      ["log-2", "/bookings/child%201#fresh-email-copies"],
-      ["log-3", null],
-      ["log-4", null],
+    expect(queue.failures.map((row) => [row.id, row.freshCopyHref, row.recovery])).toEqual([
+      ["log-1", "/bookings/booking-1#fresh-email-copies", "fresh_copy"],
+      ["log-2", "/bookings/child%201#fresh-email-copies", "fresh_copy"],
+      ["log-3", null, "retired"],
+      ["log-4", null, "sensitive"],
+      // A deleted booking has no page to send from (#4963's dangling bookingId).
+      ["log-5", null, "sensitive"],
+      // A soft-deleted booking still has a row, but its page refuses a fresh copy.
+      ["log-6", null, "sensitive"],
     ]);
+  });
+
+  // Try again is safe for these emails only because they keep no body. That
+  // rests on each one being on the sensitive list: drop one from it and its
+  // body would be kept, the row would read as retryable, and Try again would
+  // replay a door code or a payment link.
+  it("every fresh-copy email is one whose body is never kept", () => {
+    for (const template of BOOKING_FRESH_COPY_TEMPLATES) {
+      expect(SENSITIVE_EMAIL_LOG_TEMPLATES.has(template), template).toBe(true);
+    }
   });
 });
 
@@ -85,6 +113,8 @@ describe("archiveSupersededEmailFailures", () => {
           bookingId: { in: ["booking-1"] },
           templateName: { in: ["booking-confirmed"] },
           status: "FAILED",
+          // Only rows at the retry ceiling: one still being retried is not superseded.
+          attempts: { gte: EMAIL_RETRY_MAX_ATTEMPTS },
           createdAt: { lt: sendStartedAt },
         }),
       }),
@@ -103,7 +133,7 @@ describe("archiveSupersededEmailFailures", () => {
       }),
     );
     // History is kept: the archive is an audit row, never an EmailLog write.
-    expect(Object.keys(mockPrisma.emailLog)).toEqual(["findMany", "findUnique"]);
+    expect(Object.keys(mockPrisma.emailLog)).toEqual(["findMany", "findUnique", "count"]);
     expect(mockPrisma.emailLog.findUnique).not.toHaveBeenCalled();
   });
 

@@ -486,15 +486,15 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:127",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:996",
+  "src/lib/booking-batch-modification-service.ts:959",
   "src/lib/booking-cancel.ts:2548",
   "src/lib/booking-cancel.ts:570",
-  "src/lib/booking-date-modification-service.ts:394",
+  "src/lib/booking-date-modification-service.ts:342",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
   "src/lib/booking-email-authority.ts:115",
-  "src/lib/booking-guest-removal-service.ts:427",
-  "src/lib/booking-guest-removal-service.ts:654",
+  "src/lib/booking-guest-removal-service.ts:429",
+  "src/lib/booking-guest-removal-service.ts:656",
   "src/lib/booking-linked-date-move-service.ts:245",
   "src/lib/booking-member-night-conflicts.ts:369",
   "src/lib/booking-modify-validation.ts:624",
@@ -822,7 +822,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // `Prisma.BookingGetPayload`, and passed as `include` to `booking.findMany`
   // and `booking.findUnique`; Booking declares `organisation`.
   "src/lib/pre-arrival-reminder-email.ts:72",
-  "src/lib/stuck-state-dashboard.ts:629",
+  "src/lib/stuck-state-dashboard.ts:653",
   "src/lib/xero-booking-repair-types.ts:246",
   "src/lib/xero-inbound/settlement-conflicts.ts:155",
 ];

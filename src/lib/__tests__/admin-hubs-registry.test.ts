@@ -1103,6 +1103,15 @@ describe("isInexactAdminPagePath", () => {
   });
 });
 
+/** #4959: the Stuck States signals whose card links to their own named rows. */
+const STUCK_STATE_ROW_ANCHORS = [
+  "payment-group-settlement-refund-unexecuted",
+  "payment-cancelled-refund-unrecorded",
+  "payment-recovery-exhausted",
+  "payment-group-settlement-stale",
+  "booking-unnamed-placeholder-guests",
+];
+
 describe("tabs and anchors", () => {
   it("links a tab, the default one without a query, and a section", () => {
     expect(adminTabHref("family-groups", "suggestions")).toBe("/admin/family-groups?tab=suggestions");
@@ -1140,7 +1149,7 @@ describe("tabs and anchors", () => {
       ["membership-cancellations", ["requests", "settings"], []],
       ["family-groups", ["groups", "suggestions"], []],
       ["health", [], ["integration-readiness"]],
-      ["stuck-states", [], ["bank-refund-voids"]],
+      ["stuck-states", [], ["bank-refund-voids", ...STUCK_STATE_ROW_ANCHORS]],
     ]);
   });
 
@@ -1238,6 +1247,10 @@ describe("tabs and anchors", () => {
    * An anchor whose element is a shared component's, outside the page's
    * directory: the page must render the component, and the component must give
    * its element the id through the registry-typed constant pinned below.
+   *
+   * #4959: each Stuck States signal's table row is the item's own element. The
+   * page renders `<TableRow id={item.id}`, and the dashboard module writes each
+   * signal's id out as a literal, so the anchor is the id the card links to.
    */
   const COMPONENT_ANCHORS: Record<
     string,
@@ -1248,6 +1261,12 @@ describe("tabs and anchors", () => {
       file: "src/components/admin/bank-refund-voids-to-answer-panel.tsx",
       id: "id={BANK_REFUND_VOIDS_ANCHOR}",
     },
+    ...Object.fromEntries(
+      STUCK_STATE_ROW_ANCHORS.map((anchor) => [
+        anchor,
+        { renders: "<TableRow id={item.id}", file: "src/lib/stuck-state-dashboard.ts", id: `id: "${anchor}"` },
+      ]),
+    ),
   };
 
   /** Why `anchor` is not rendered by `page`, or `null` when it is. */
@@ -1273,7 +1292,7 @@ describe("tabs and anchors", () => {
     // The panel writes `id={BANK_REFUND_VOIDS_ANCHOR}`; its stuck-state row links
     // with adminAnchorHref. One spelling, typed against the registry.
     expect(BANK_REFUND_VOIDS_ANCHOR).toBe("bank-refund-voids");
-    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR]);
+    expect(getAdminPage("stuck-states").anchors).toEqual([BANK_REFUND_VOIDS_ANCHOR, ...STUCK_STATE_ROW_ANCHORS]);
     expect(adminAnchorHref("stuck-states", BANK_REFUND_VOIDS_ANCHOR)).toBe(
       "/admin/stuck-states#bank-refund-voids",
     );
@@ -2183,6 +2202,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/system/backups/backups-client.tsx": "C7: the backup setup link is adminHref",
     "src/app/(admin)/admin/system/backups/setup/backup-wizard-steps.tsx":
       "C7: the Database Backups link is adminHref",
+    "src/app/(admin)/admin/system/health/_components/email-deliverability-section.tsx":
+      "#4963: an exhausted failure's member link is adminHref, from the stored member id only",
     "src/app/(admin)/admin/system/health/_components/health-dashboard.tsx":
       "C7: the Email Deliverability and Background Jobs cards link with adminHref",
     "src/app/(admin)/admin/system/stuck-states/page.tsx": "C7: the System Health link is adminHref",

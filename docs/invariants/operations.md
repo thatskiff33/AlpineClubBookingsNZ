@@ -591,7 +591,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
   A GENERAL "did a reclassification ship without a backfill" check is
-  **not available**: the audit-writer census pins only 130 of its 548 write sites
+  **not available**: the audit-writer census pins only 130 of its 549 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
@@ -899,3 +899,33 @@ token needs Actions read access.
 - Enforced by `scripts/ci/main-push-runs-complete.test.ts`, which evaluates
   each workflow's group for a push and a pull request, and by the
   `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
+
+## INV-OPS-022
+
+A Docker-only install can create its first admin with Docker alone, and the
+commands that do it are the ones CI runs. `DEPLOYMENT.md` "First Bootstrap"
+gives the seed as one plain line, `docker compose run --rm seed`, after the
+database roles are provisioned and switched on in `.env` and before the web
+slots start. The `seed` service runs on the builder image, the same image and
+build as `migrate`, because the runner image holds no source. It sits behind a
+profile, so `docker compose up` never starts it and an upgrade never runs it.
+It connects as the application role with a bounded pool counted in the
+connection budget, and reads the `SEED_` secrets from `.env` through
+`environment:` only, never as a build argument or on the command line.
+
+Every operator doc that tells somebody how to seed a Compose install names that
+service; none runs the seed in the app container (`exec app`), whose image
+cannot run it. The setup checklist names the Docker and developer commands from
+`src/lib/seed-commands.ts`. `.env.example` is copied by the first step, so no
+line gives Compose an empty value followed by a comment: Compose reads the
+comment as the value.
+
+- Why: #4977. "First Bootstrap" had lost its seed step, three docs gave an
+  `exec app` command that fails in the runner image, and CI seeded from the
+  host, so no check ran what an operator is told to run.
+- Enforced by `scripts/ci/first-install-smoke.mjs`, which reads the steps out of
+  `DEPLOYMENT.md` and runs them on an empty database in the
+  `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
+  nothing written; a second run must change no seeded value (bar the built-in
+  displays' `updatedAt`, refreshed from code by design). Also enforced by
+  `first-install-seed-contract.test.ts`.
