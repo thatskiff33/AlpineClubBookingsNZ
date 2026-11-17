@@ -126,8 +126,7 @@ const cancellationLedger = vi.hoisted(() => ({ postCancellationLedgerLines: vi.f
 // `stripe-dispute-hold.test.ts` and `stripe-dispute-cancel.realdb.test.ts`.
 vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
-  disputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
-  paymentCaptureIntentIds: async () => [],
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
 }));
 
 vi.mock("@/lib/booking-ledger-cancellation-sync", () => cancellationLedger);
@@ -2887,7 +2886,7 @@ describe("cancelBooking credit refunds", () => {
     // A thrown call, or (#4083, `INV-PAY-128`) a refund Stripe refused, records
     // an inline error and leaves the pre-persisted recovery operation open; the
     // cancel queues nothing new, the debt committed with the claim.
-    it.each(OWN_CARD_REFUND_STATES)("$label", async ({ answer, queued, destination }) => {
+    it.each(OWN_CARD_REFUND_STATES)("$label", async ({ answer, rowOpen, destination }) => {
       primeOwnCardRefund(mocks.refundPaymentTransactions, answer);
       const method = destination === "own" ? "card" : "card_pending";
 
@@ -2905,12 +2904,12 @@ describe("cancelBooking credit refunds", () => {
       expect(mocks.logAudit).toHaveBeenCalledWith(
         expect.objectContaining({ metadata: expect.objectContaining({ refundMethod: "card" }) }),
       );
-      expect(mocks.recordBookingCancellationRefundRecoveryInlineError).toHaveBeenCalledTimes(queued ? 1 : 0);
-      expect(mocks.markBookingCancellationRefundRecoverySucceeded).toHaveBeenCalledTimes(queued ? 0 : 1);
+      expect(mocks.recordBookingCancellationRefundRecoveryInlineError).toHaveBeenCalledTimes(rowOpen ? 1 : 0);
+      expect(mocks.markBookingCancellationRefundRecoverySucceeded).toHaveBeenCalledTimes(rowOpen ? 0 : 1);
       // #4145: REFUNDED only with the close that recorded the refund made; one
       // still owed is the runner's to record when its close moves the row.
       const refunded = mocks.recordBookingEvent.mock.calls.filter(([event]) => event.type === "REFUNDED");
-      expect(refunded).toEqual(queued ? [] : [[{ bookingId: "booking_1", type: "REFUNDED", actorMemberId: "member_1", amountCents: 5000, reason: "50% refunded to the original payment method." }]]);
+      expect(refunded).toEqual(rowOpen ? [] : [[{ bookingId: "booking_1", type: "REFUNDED", actorMemberId: "member_1", amountCents: 5000, reason: "50% refunded to the original payment method." }]]);
     });
 
     it("#4145: writes no REFUNDED event when its close loses the row - the runner's close recorded it", async () => {

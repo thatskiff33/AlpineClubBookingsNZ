@@ -624,8 +624,8 @@ new ADR:
 - `GroupDiscountSetting` and `BookingDefaults.nonMemberHoldDays` /
   `waitlistCrossLodgeOrder`: booking policy knobs that are club fairness
   decisions, edited club-wide on the booking-policies page.
-- Skifield conditions (`WhakapapaReportCache`, the `skifieldConditions`
-  module): public-website content, not lodge UI. A per-lodge/per-field
+- Skifield conditions (`WhakapapaReportCache`, the `skifieldConditions` and
+  `skifieldWhakapapa` modules): public-website content, not lodge UI. A per-lodge/per-field
   conditions widget would be a future enhancement, not a scoping change.
 - Maintenance-report policy and questions (`MaintenanceReportSettings`
   singleton, `MaintenanceReportQuestion`): the club asks the same bounded
@@ -943,6 +943,13 @@ setup wizard: a second copy bought no reachable safety, pushed a 913-line file
 past its size ceiling, and made the wizard reject any incomplete test fixture —
 it broke a passing back-link test on a lodge row that simply had not bothered to
 include `doorCode`.
+
+Booking fresh email copies (`booking-fresh-email-copy.ts`, ALP-588) use the
+selected booking's persisted `lodgeId` for confirmations and pre-arrival
+reminders. The shared reminder projection carries that same lodge to the
+sender. Split payment links delegate to `issueSplitGuestPaymentLink`, which
+uses each split child's lodge and existing per-lodge mint lock. These actions
+never accept a lodge from the caller.
 
 ## Presentation Rule
 

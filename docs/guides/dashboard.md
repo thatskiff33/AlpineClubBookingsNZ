@@ -73,7 +73,7 @@ The dashboard has no settings — it is read-only. The cards it can show:
 | Card | Appears when | Opens |
 | --- | --- | --- |
 | Pending Review Queue | Refund appeals or manual credit approvals are waiting | [Refunds & Credits](refund-requests.md) |
-| Booking Requests | New booking reviews or change requests are waiting | [Booking Requests](booking-requests.md) |
+| Booking Requests | Any Booking Requests queue has work waiting: new booking reviews, change requests, policy exceptions or public requests. The card names each queue that has some | [Booking Requests](booking-requests.md), on the first tab with work |
 | Unpaid Finished Stays | A stay ended but is still payment-pending | [Bookings](bookings.md) (pre-filtered) |
 | Finished Stays With Unpaid Additions | A settled past stay has an upward change still uncollected | [Bookings](bookings.md) (pre-filtered) |
 | Account Deletion Requests | A member self-service deletion is pending | [Deletion Requests](deletion-requests.md) |

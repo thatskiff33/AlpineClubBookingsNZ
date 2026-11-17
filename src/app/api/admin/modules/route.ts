@@ -120,7 +120,7 @@ export async function PUT(request: Request) {
       return NextResponse.json(
         {
           error:
-            "Verify Google sign-in in the setup wizard (Admin → Integrations → Google) before enabling it.",
+            "Verify Google sign-in in the setup wizard (Admin → Integrations → Google Sign-in Setup) before enabling it.",
         },
         { status: 409 },
       );

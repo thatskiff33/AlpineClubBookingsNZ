@@ -9,7 +9,7 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { Pagination } from "@/components/admin/admin-pagination";
 import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
 import { adminHref } from "@/lib/admin-hubs";
-import { parseAdminListPageParam } from "@/lib/admin-list-page";
+import { parseAdminListPageParam, setAdminListPageParam } from "@/lib/admin-list-page";
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -27,6 +27,7 @@ import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import ApprovalMappingPanel, {
   type ReviewRequestPayload,
 } from "./_components/approval-mapping-panel";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 type ApplicationStatus =
   | "PENDING_NOMINATORS"
@@ -215,9 +216,8 @@ export default function MemberApplicationsPage() {
 
   const currentParams = new URLSearchParams(searchParams.toString());
   currentParams.delete("status");
-  currentParams.delete("page");
   if (filter !== DEFAULT_FILTER) currentParams.set("status", filter || "ALL");
-  if (page > 1) currentParams.set("page", String(page));
+  setAdminListPageParam(currentParams, page);
   const currentQuery = currentParams.toString();
   const currentPath = currentQuery
     ? `${MEMBER_APPLICATIONS_HREF}?${currentQuery}`
@@ -241,13 +241,16 @@ export default function MemberApplicationsPage() {
       }
       params.set("page", String(page));
       const response = await fetch(`/api/admin/member-applications?${params.toString()}`);
-      const data = await response.json();
-      if (!isCurrent()) return;
-
       if (!response.ok) {
-        setLoadError(data.error || "Could not load member applications.");
+        // Read the refusal safely, then drop it if the officer has moved on.
+        const refusal = await apiErrorMessageFromResponse(response, "Could not load member applications.");
+        if (!isCurrent()) return;
+        setLoadError(refusal);
         return;
       }
+
+      const data = await response.json();
+      if (!isCurrent()) return;
 
       const rows: ApplicationRecord[] = data.applications || [];
       setApplications(rows);
@@ -335,12 +338,12 @@ export default function MemberApplicationsPage() {
           ...(mappingPreviewToken ? { mappingPreviewToken } : {}),
         }),
       });
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not update the application.");
+        setError(await apiErrorMessageFromResponse(response, "Could not update the application."));
         return;
       }
+
+      const data = await response.json();
 
       const warnings =
         Array.isArray(data.warnings) && data.warnings.length > 0
@@ -371,12 +374,12 @@ export default function MemberApplicationsPage() {
         `/api/admin/member-applications/${applicationId}/nominations/refresh`,
         { method: "POST" }
       );
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not refresh the nomination workflow.");
+        setError(await apiErrorMessageFromResponse(response, "Could not refresh the nomination workflow."));
         return;
       }
+
+      const data = await response.json();
 
       const warnings =
         Array.isArray(data.warnings) && data.warnings.length > 0
@@ -407,12 +410,12 @@ export default function MemberApplicationsPage() {
       const response = await fetch(
         `/api/admin/members?q=${encodeURIComponent(query)}&active=true&pageSize=5`
       );
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not search members.");
+        setError(await apiErrorMessageFromResponse(response, "Could not search members."));
         return;
       }
+
+      const data = await response.json();
 
       setReplacementResults((prev) => ({
         ...prev,
@@ -443,12 +446,12 @@ export default function MemberApplicationsPage() {
           body: JSON.stringify({ memberId: member.id }),
         }
       );
-      const data = await response.json();
-
       if (!response.ok) {
-        setError(data.error || "Could not replace the nominator.");
+        setError(await apiErrorMessageFromResponse(response, "Could not replace the nominator."));
         return;
       }
+
+      const data = await response.json();
 
       const warnings =
         Array.isArray(data.warnings) && data.warnings.length > 0

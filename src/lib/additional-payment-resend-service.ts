@@ -18,6 +18,7 @@ import { sendAdditionalPaymentReminderEmail } from "@/lib/email";
 import type { EmailSendOutcome } from "@/lib/email/core";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
 import { buildAdditionalOwedPaymentWhere } from "@/lib/unpaid-finished-stays";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
@@ -254,6 +255,8 @@ export async function resendAdditionalPaymentEmail(params: {
     episodeStartedAt,
     reminderSentAt: payment.additionalReminderSentAt,
     finalReminderSentAt: payment.additionalFinalReminderSentAt,
+    // The cron's own wait (#4932), so the two senders read the same rule.
+    reminderDays: (await getBookingTimingSettings()).additionalPaymentReminderDays,
     // The first-deploy guard is about the cron mailing a backlog in bulk. This
     // is one admin deciding to contact one member, which the guard's own
     // documentation names as the way a pre-cutover delta IS chased, so the

@@ -1,3 +1,4 @@
+import { initializeBrowserSentry } from "@/lib/observability/browser-sentry-client";
 import * as Sentry from "@sentry/nextjs";
 import {
   redactSensitiveJson,
@@ -10,93 +11,93 @@ import {
   SENTRY_PRIVACY_INIT_OPTIONS,
 } from "@/lib/sentry-privacy-options";
 
-Sentry.init({
-  // Sentry 11's dataCollection defaults collect IPs, cookies and bodies; keep v10's.
-  ...SENTRY_PRIVACY_INIT_OPTIONS,
-  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN || "",
+void initializeBrowserSentry(dsn => {
+  Sentry.init({
+    // Sentry 11's dataCollection defaults collect IPs, cookies and bodies; keep v10's.
+    ...SENTRY_PRIVACY_INIT_OPTIONS,
+    dsn,
 
-  environment: process.env.NODE_ENV || "development",
+    environment: process.env.NODE_ENV || "development",
 
-  // Performance tracing
-  tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+    // Performance tracing
+    tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
 
-  // Replay is started only by SentryReplayPolicy after a club setting opts in.
-  // No error-triggered recording or buffering before that decision.
-  replaysSessionSampleRate: 0,
-  replaysOnErrorSampleRate: 0,
+    // Replay is started only by SentryReplayPolicy after a club setting opts in.
+    // No error-triggered recording or buffering before that decision.
+    replaysSessionSampleRate: 0,
+    replaysOnErrorSampleRate: 0,
 
-  integrations: [
-    // Console breadcrumbs come from Sentry's default consoleIntegration since
-    // v11, which removed this option (MIGRATION.md, @sentry/browser).
-    Sentry.breadcrumbsIntegration({
-      dom: true,
-      fetch: true,
-      history: true,
-    }),
-  ],
+    integrations: [
+      // Console breadcrumbs come from Sentry's default consoleIntegration since
+      // v11, which removed this option (MIGRATION.md, @sentry/browser).
+      Sentry.breadcrumbsIntegration({
+        dom: true,
+        fetch: true,
+        history: true,
+      }),
+    ],
 
-  // Scrub sensitive data from Sentry payloads
-  beforeSend(event) {
-    if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return null;
+    // Scrub sensitive data from Sentry payloads
+    beforeSend(event) {
+      if (event.message) {
+        event.message = redactSensitiveText(event.message);
+      }
 
-    if (event.message) {
-      event.message = redactSensitiveText(event.message);
-    }
+      if (event.request?.url) {
+        event.request.url = redactSensitiveText(event.request.url);
+      }
 
-    if (event.request?.url) {
-      event.request.url = redactSensitiveText(event.request.url);
-    }
+      if (event.request?.query_string) {
+        event.request.query_string = redactSensitiveQueryParams(
+          event.request.query_string
+        ) as typeof event.request.query_string;
+      }
 
-    if (event.request?.query_string) {
-      event.request.query_string = redactSensitiveQueryParams(
-        event.request.query_string
-      ) as typeof event.request.query_string;
-    }
+      if (event.request?.data) {
+        event.request.data = redactSensitiveJson(event.request.data);
+      }
 
-    if (event.request?.data) {
-      event.request.data = redactSensitiveJson(event.request.data);
-    }
+      if (event.extra) {
+        event.extra = redactSensitiveJson(event.extra) as typeof event.extra;
+      }
 
-    if (event.extra) {
-      event.extra = redactSensitiveJson(event.extra) as typeof event.extra;
-    }
+      if (event.breadcrumbs) {
+        event.breadcrumbs = redactSensitiveJson(
+          event.breadcrumbs
+        ) as typeof event.breadcrumbs;
+      }
 
-    if (event.breadcrumbs) {
-      event.breadcrumbs = redactSensitiveJson(
-        event.breadcrumbs
-      ) as typeof event.breadcrumbs;
-    }
+      if (event.exception?.values) {
+        event.exception.values = redactSensitiveJson(
+          event.exception.values
+        ) as typeof event.exception.values;
+      }
 
-    if (event.exception?.values) {
-      event.exception.values = redactSensitiveJson(
-        event.exception.values
-      ) as typeof event.exception.values;
-    }
+      // #4610: no event carries the breached-password range prefix; one the
+      // scrub cannot vouch for comes back null and is dropped.
+      return scrubBreachedPasswordRangeDeep(event);
+    },
 
-    // #4610: no event carries the breached-password range prefix; one the
-    // scrub cannot vouch for comes back null and is dropped.
-    return scrubBreachedPasswordRangeDeep(event);
-  },
+    beforeBreadcrumb(breadcrumb) {
+      // #4610: a fetch breadcrumb to the breached-password range is dropped.
+      const kept = dropBreachedPasswordRangeBreadcrumb(breadcrumb);
+      return kept && (redactSensitiveJson(kept) as typeof breadcrumb);
+    },
 
-  beforeBreadcrumb(breadcrumb) {
-    // #4610: a fetch breadcrumb to the breached-password range is dropped.
-    const kept = dropBreachedPasswordRangeBreadcrumb(breadcrumb);
-    return kept && (redactSensitiveJson(kept) as typeof breadcrumb);
-  },
-
-  // Filter out noisy errors. `ignoreErrors` string patterns are SUBSTRING
-  // matches against the event message, so these match the digest Next puts in
-  // the thrown Error's message. `notFound()` throws
-  // `NEXT_HTTP_ERROR_FALLBACK;404` (`HTTP_ERROR_FALLBACK_ERROR_CODE` in
-  // `next/dist/client/components/http-access-fallback/http-access-fallback`),
-  // NOT the pre-15 `NEXT_NOT_FOUND`; the prefix alone also covers `forbidden()`
-  // /`unauthorized()` (`;403`/`;401`).
-  ignoreErrors: [
-    "NEXT_HTTP_ERROR_FALLBACK",
-    "NEXT_REDIRECT",
-    "ResizeObserver loop",
-    "Network request failed",
-  ],
+    // Filter out noisy errors. `ignoreErrors` string patterns are SUBSTRING
+    // matches against the event message, so these match the digest Next puts in
+    // the thrown Error's message. `notFound()` throws
+    // `NEXT_HTTP_ERROR_FALLBACK;404` (`HTTP_ERROR_FALLBACK_ERROR_CODE` in
+    // `next/dist/client/components/http-access-fallback/http-access-fallback`),
+    // NOT the pre-15 `NEXT_NOT_FOUND`; the prefix alone also covers `forbidden()`
+    // /`unauthorized()` (`;403`/`;401`).
+    ignoreErrors: [
+      "NEXT_HTTP_ERROR_FALLBACK",
+      "NEXT_REDIRECT",
+      "ResizeObserver loop",
+      "Network request failed",
+    ],
+  });
 });
 
 // Instrument Next.js router transitions for performance tracing

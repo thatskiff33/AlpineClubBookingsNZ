@@ -27,8 +27,9 @@ import { XERO_ORPHANED_STALE_RUNNING_ERROR_CODE } from "@/lib/xero-operation-err
 import { isStaleRunningXeroOperation } from "@/lib/xero-stale-operations";
 import { startXeroSyncOperation } from "@/lib/xero-sync";
 
-const DIRECTION = "INBOUND";
-const OPERATION_TYPE = "WEBHOOK_RECONCILE";
+/** The operation row's identity, also read by the stale-event takeover's attempt cap (`INV-INT-039`). */
+export const INBOUND_RECONCILE_DIRECTION = "INBOUND";
+export const INBOUND_RECONCILE_OPERATION_TYPE = "WEBHOOK_RECONCILE";
 
 /** Rounds of insert-then-take-over before giving up: each lost round means another writer moved the row. */
 const START_ROUNDS = 3;
@@ -66,9 +67,9 @@ export async function startInboundReconcileOperation(
   for (let round = 0; round < START_ROUNDS; round += 1) {
     try {
       return await startXeroSyncOperation({
-        direction: DIRECTION,
+        direction: INBOUND_RECONCILE_DIRECTION,
         entityType: input.entityType,
-        operationType: OPERATION_TYPE,
+        operationType: INBOUND_RECONCILE_OPERATION_TYPE,
         correlationKey,
         replayable: true,
         requestPayload: input.requestPayload,
@@ -85,7 +86,7 @@ export async function startInboundReconcileOperation(
     if (!active) continue;
     held = active.id;
     const now = new Date();
-    if (active.direction !== DIRECTION || active.operationType !== OPERATION_TYPE || !isStaleRunningXeroOperation(active, now)) {
+    if (active.direction !== INBOUND_RECONCILE_DIRECTION || active.operationType !== INBOUND_RECONCILE_OPERATION_TYPE || !isStaleRunningXeroOperation(active, now)) {
       throw new XeroInboundReconcileInFlightError(correlationKey, active.id);
     }
     const taken = await takeOverAbandonedOperation(active, now);
@@ -108,8 +109,8 @@ async function takeOverAbandonedOperation(
   const [taken] = await prisma.xeroSyncOperation.updateManyAndReturn({
     where: {
       id: abandoned.id,
-      direction: DIRECTION,
-      operationType: OPERATION_TYPE,
+      direction: INBOUND_RECONCILE_DIRECTION,
+      operationType: INBOUND_RECONCILE_OPERATION_TYPE,
       status: "RUNNING",
       startedAt: abandoned.startedAt,
     },

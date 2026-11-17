@@ -52,6 +52,12 @@ const minterDb = vi.hoisted(() => {
   };
   return db;
 });
+// #5061 follow-up: no capture here is disputed; the edit's hold is proved in
+// `stripe-dispute-edit.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+}));
 vi.mock("@/lib/prisma", async () => {
   const { vi: hoistedVi } = await import("vitest");
   minterDb.recoveryFindUnique = hoistedVi.fn(async (args?: { where?: { id?: string } }) =>
@@ -700,6 +706,7 @@ describe("#3954: the save refuses options sized before the offset", () => {
           requiresSettlementMethod: true,
           returnsToOrganiser: false,
           organiserRefundByBankTransfer: false,
+          refundHeldForDispute: false,
         },
         settlementMethod: "card",
         todayAtClub: TODAY,
@@ -749,6 +756,7 @@ describe("#3954: after commit, the minter cancels what the reduction retired, th
       bookingId: "booking_3954",
       result: {
         ...result,
+        ownCardRefund: null, // #4992: the minter never reads the edit's card-refund reservation
         paymentId: "payment_1",
         paymentCustomerId: "cus_1",
         memberEmail: "member@example.invalid",
@@ -1752,6 +1760,7 @@ describe("#3954 retry nets it off: an ask whose mint failed and waits on its rec
       bookingId: "booking_3954",
       result: {
         ...result,
+        ownCardRefund: null, // #4992: the minter never reads the edit's card-refund reservation
         paymentId: "payment_1",
         paymentCustomerId: "cus_1",
         memberEmail: "member@example.invalid",
