@@ -15,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { PolicyFeedback } from "./policy-feedback"
 import {
   isPolicyScopeReady,
+  POLICY_SCOPE_NOT_READY_REASON,
   PolicyScopeSelect,
   usePolicyScopeOptions,
 } from "./policy-scope-select"
@@ -32,6 +33,8 @@ import { dateOnlyFromIsoString } from "@/lib/date-only"
 import { formatStayDateOrNull } from "@/lib/club-time"
 import { useClubFormat } from "@/components/club-format-provider"
 import { DAY_LABELS, type MinStayPolicy } from "./types"
+
+const SAVE_FALLBACK = "Failed to save"
 
 /**
  * One open minimum-stay editor's draft. Like the booking-periods section, the
@@ -141,7 +144,7 @@ function MinStayForm({
     // The section renders its own `PolicyFeedback` above the list, so the
     // success copy is set by the parent when the form closes.
     successMessage: "",
-    saveErrorFallback: "Failed to save",
+    saveErrorFallback: SAVE_FALLBACK,
     // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
     // logs and revalidates unconditionally. Creating is the first-save
     // exception: there is no persisted row for the draft to be unchanged FROM.
@@ -478,7 +481,7 @@ export function MinimumNightStaySection() {
   const submitMinStay = useCallback(
     async (draft: MinStayDraft): Promise<MinStayDraft> => {
       if (!policyScopeReady) {
-        throw new ApiRefusalError("Choose an available policy scope before saving")
+        throw new ApiRefusalError(POLICY_SCOPE_NOT_READY_REASON)
       }
       setError("")
       setSuccess("")
@@ -504,7 +507,7 @@ export function MinimumNightStaySection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const message = await apiErrorMessageFromResponse(res, "Failed to save")
+        const message = await apiErrorMessageFromResponse(res, SAVE_FALLBACK)
         if (res.status === 409) {
           const refreshed = await refreshAfterMutation()
           setError(

@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 import { useSectionEditState } from "@/hooks/use-section-edit-state"
-import { ApiRefusalError } from "@/lib/api-error-message"
+import { ApiRefusalError, apiErrorMessageFromBody } from "@/lib/api-error-message"
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy"
 
 export interface RosterGuest {
@@ -307,7 +307,7 @@ export function RosterEditor({
           ? PERMISSION_COPY
           : response.status >= 500
             ? NETWORK_COPY
-            : (typeof errorBody.error === "string" ? errorBody.error : REFUSED_COPY)
+            : apiErrorMessageFromBody(errorBody, REFUSED_COPY)
         if (typeof details.rowKey === "string") {
           const rowKey = details.rowKey
           setRowErrors({ [rowKey]: message })

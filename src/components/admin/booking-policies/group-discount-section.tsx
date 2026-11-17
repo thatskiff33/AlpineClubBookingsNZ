@@ -17,6 +17,9 @@ import {
 } from "@/components/admin/view-only-action"
 import { PolicyFeedback } from "./policy-feedback"
 
+const LOAD_FALLBACK = "Failed to fetch group discount"
+const SAVE_FALLBACK = "Failed to save"
+
 // Reference implementation of the canonical settings-section pattern
 // (`AGENTS.md`): loads read-only, a per-section Edit reveals Save/Cancel, no
 // control auto-persists, Cancel reverts to the saved snapshot, and Save
@@ -93,7 +96,7 @@ export function GroupDiscountSection() {
     initial: GROUP_DISCOUNT_DEFAULTS,
     load: async (signal) => {
       const res = await fetch(ENDPOINT, { signal })
-      if (!res.ok) throw new Error("Failed to fetch group discount")
+      if (!res.ok) throw new Error(LOAD_FALLBACK)
       return toDraft(await res.json())
     },
     save: async (draft) => {
@@ -111,13 +114,13 @@ export function GroupDiscountSection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        throw await apiRefusalFromResponse(res, "Failed to save")
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK)
       }
       return toDraft(await res.json())
     },
     successMessage: "Group discount settings saved",
-    loadErrorFallback: "Failed to fetch group discount",
-    saveErrorFallback: "Failed to save",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     // `allowPristineSave` stays at its default (false): an unchanged draft must
     // not re-PUT, because the write route logs `group-discount.update` and
     // revalidates the public pages unconditionally, so a no-op save would leave

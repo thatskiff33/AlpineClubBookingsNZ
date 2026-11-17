@@ -28,6 +28,9 @@ import {
 } from "@/app/(admin)/admin/system/backups/backup-status";
 import { apiErrorMessageFromResponse, apiRefusalFromResponse } from "@/lib/api-error-message";
 
+const LOAD_FALLBACK = "Could not load config.";
+const SAVE_FALLBACK = "Could not save local backup settings.";
+
 /**
  * Local (on-host) database backups.
  *
@@ -131,7 +134,7 @@ export function LocalBackupCard({
     },
     load: async () => {
       const res = await fetch(STATUS_URL, { cache: "no-store" });
-      if (!res.ok) throw await apiRefusalFromResponse(res, "Could not load config.");
+      if (!res.ok) throw await apiRefusalFromResponse(res, LOAD_FALLBACK);
       const data = (await res.json()) as BackupStatus;
       return {
         localEnabled: data.localEnabled,
@@ -153,14 +156,14 @@ export function LocalBackupCard({
       });
       if (res.status === 403) throw new ForbiddenSaveError();
       if (!res.ok) {
-        throw await apiRefusalFromResponse(res, "Could not save local backup settings.");
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       await onSaved();
       return { localEnabled: draft.localEnabled, localPath: draft.localPath };
     },
     successMessage: "Local backup settings saved.",
-    loadErrorFallback: "Could not load config.",
-    saveErrorFallback: "Could not save local backup settings.",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     // The directory is MANDATORY once the switch is on — a local backup with
     // nowhere to write is a tick that silently does nothing. The server refuses
     // the same combination; this only stops the officer submitting it.

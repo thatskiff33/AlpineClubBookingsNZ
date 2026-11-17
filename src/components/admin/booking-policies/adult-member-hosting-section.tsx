@@ -25,6 +25,7 @@ import {
 import { PolicyFeedback } from "./policy-feedback"
 import {
   isPolicyScopeReady,
+  POLICY_SCOPE_NOT_READY_REASON,
   PolicyScopeSelect,
   usePolicyScopeOptions,
 } from "./policy-scope-select"
@@ -33,6 +34,9 @@ import type {
   AdultMemberHostingPolicy,
   AdultMemberHostScopeSetValue,
 } from "./types"
+
+const LOAD_FALLBACK = "Failed to load the adult-member hosting policy"
+const SAVE_FALLBACK = "Failed to save"
 
 const ENDPOINT = "/api/admin/booking-policies/adult-member-hosting"
 
@@ -252,7 +256,7 @@ export function AdultMemberHostingSection() {
       )
       if (!res.ok) {
         setLoadedScope(UNLOADED_SCOPE)
-        throw new Error("Failed to load the adult-member hosting policy")
+        throw new Error(LOAD_FALLBACK)
       }
       const policy = parsePolicy(await res.json().catch(() => null))
       if (!policy) {
@@ -266,7 +270,7 @@ export function AdultMemberHostingSection() {
     },
     save: async (draft) => {
       if (!policyScopeReady) {
-        throw new ApiRefusalError("Choose an available policy scope before saving")
+        throw new ApiRefusalError(POLICY_SCOPE_NOT_READY_REASON)
       }
       const scope = scopeRef.current
       const res = await fetch(ENDPOINT, {
@@ -287,7 +291,7 @@ export function AdultMemberHostingSection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const message = await apiErrorMessageFromResponse(res, "Failed to save")
+        const message = await apiErrorMessageFromResponse(res, SAVE_FALLBACK)
         if (res.status === 409) {
           // Somebody else moved the row. Drop this scope back to UNKNOWN so no
           // further write can be sent from a stale token, then pull the current
@@ -304,8 +308,8 @@ export function AdultMemberHostingSection() {
       return toDraft(policy)
     },
     successMessage: "Adult-member hosting policy saved",
-    loadErrorFallback: "Failed to load the adult-member hosting policy",
-    saveErrorFallback: "Failed to save",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     // First save exception (#2142): until a row is persisted there is nothing
     // for the draft to be unchanged FROM — the GET synthesised it — so a first
     // save can store the club's choice even when it matches the built-in

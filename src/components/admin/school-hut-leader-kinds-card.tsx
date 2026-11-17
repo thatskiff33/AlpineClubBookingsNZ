@@ -22,6 +22,9 @@ import {
   type SchoolHutLeaderKinds,
 } from "@/lib/school-hut-leader-kinds";
 
+const LOAD_FALLBACK = "Failed to load who can be hut leader for school bookings";
+const SAVE_FALLBACK = "Failed to save";
+
 const ENDPOINT = "/api/admin/lodge-settings/school-hut-leaders";
 
 /** What each tick means, in the order the setting lists them (#3819). */
@@ -50,7 +53,7 @@ async function readKinds(lodgeId: string, asSaveStep = false): Promise<SchoolHut
   });
   if (!res.ok) {
     if (asSaveStep && res.status === 403) throw new ForbiddenSaveError();
-    throw new Error("Failed to load who can be hut leader for school bookings");
+    throw new Error(LOAD_FALLBACK);
   }
   return ((await res.json()) as { kinds: SchoolHutLeaderKinds }).kinds;
 }
@@ -91,13 +94,13 @@ export function SchoolHutLeaderKindsCard({
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        throw await apiRefusalFromResponse(res, "Failed to save");
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       return ((await res.json()) as { kinds: SchoolHutLeaderKinds }).kinds;
     },
     successMessage: "Saved who can be hut leader for school bookings",
-    loadErrorFallback: "Failed to load who can be hut leader for school bookings",
-    saveErrorFallback: "Failed to save",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
   });
 
   const draft = section.draft;

@@ -18,6 +18,7 @@ import { PolicyPreview } from "./policy-preview"
 import { PolicyFeedback } from "./policy-feedback"
 import {
   isPolicyScopeReady,
+  POLICY_SCOPE_NOT_READY_REASON,
   PolicyScopeSelect,
   usePolicyScopeOptions,
 } from "./policy-scope-select"
@@ -347,7 +348,7 @@ export function BookingPeriodsSection() {
   const submitPeriod = useCallback(
     async (draft: PeriodDraft): Promise<PeriodDraft> => {
       if (!policyScopeReady) {
-        throw new ApiRefusalError("Choose an available policy scope before saving")
+        throw new ApiRefusalError(POLICY_SCOPE_NOT_READY_REASON)
       }
       setError("")
       setSuccess("")

@@ -35,6 +35,9 @@ import {
 } from "@/lib/session-max-age";
 import { apiErrorMessageFromBody, ApiRefusalError } from "@/lib/api-error-message";
 
+const LOAD_FALLBACK = "Failed to load password policy";
+const SAVE_FALLBACK = "Failed to save password policy";
+
 // Self-contained password-policy card for the Login & Security page (epic #2030,
 // child #2033; edit-gated in #2103). Kept fully independent — it loads and saves
 // its own state via /api/admin/security/password-policy — so the sibling
@@ -115,7 +118,7 @@ export function PasswordPolicyCard() {
       });
       const body = (await response.json()) as SettingsResponse | { error?: string };
       if (!response.ok || !("policy" in body)) {
-        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to load password policy"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, LOAD_FALLBACK));
       }
       return toDraft(body.policy);
     },
@@ -129,13 +132,13 @@ export function PasswordPolicyCard() {
       const body = (await response.json()) as SettingsResponse | { error?: string };
       if (!response.ok || !("policy" in body)) {
         if (response.status === 403) throw new ForbiddenSaveError();
-        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to save password policy"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, SAVE_FALLBACK));
       }
       return toDraft(body.policy);
     },
     successMessage: "Password policy saved.",
-    saveErrorFallback: "Failed to save password policy",
-    loadErrorFallback: "Failed to load password policy",
+    saveErrorFallback: SAVE_FALLBACK,
+    loadErrorFallback: LOAD_FALLBACK,
     isValid: (draft) =>
       isMinLengthValid(draft.minPasswordLength) &&
       isSessionMaxAgeValid(draft.sessionMaxAgeHours),

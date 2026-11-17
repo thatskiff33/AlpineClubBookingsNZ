@@ -24,6 +24,9 @@ import {
 } from "@/components/admin/view-only-action";
 import { PolicyFeedback } from "@/components/admin/booking-policies/policy-feedback";
 
+const LOAD_FALLBACK = "Failed to load member-guest settings";
+const SAVE_FALLBACK = "Failed to save";
+
 /**
  * The member-guest policy card on Admin › Bookings setup ("+ Add Member
  * Guest", epic #2305, MG2 #2307; owner decisions D-3, D-17, D-18 and MG2-M-1/
@@ -136,7 +139,7 @@ export function MemberGuestSettingsCard({
     initial: MEMBER_GUEST_SETTINGS_SEED,
     load: async (signal) => {
       const res = await fetch(ENDPOINT, { signal });
-      if (!res.ok) throw new Error("Failed to load member-guest settings");
+      if (!res.ok) throw new Error(LOAD_FALLBACK);
       const payload = (await res.json()) as SettingsPayload;
       if (payload.bounds) {
         setBounds({
@@ -159,13 +162,13 @@ export function MemberGuestSettingsCard({
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        throw await apiRefusalFromResponse(res, "Failed to save");
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       return toDraft((await res.json()) as SettingsPayload);
     },
     successMessage: "Member guest settings saved",
-    loadErrorFallback: "Failed to load member-guest settings",
-    saveErrorFallback: "Failed to save",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     // First save must be reachable on a never-saved club (#2142); after that,
     // an unchanged draft must not re-PUT — the route audits unconditionally,
     // and a no-op save would still record a privacy-posture re-affirmation the

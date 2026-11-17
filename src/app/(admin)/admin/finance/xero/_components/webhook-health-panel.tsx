@@ -13,6 +13,9 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { ForbiddenSaveError, useSectionEditState } from "@/hooks/use-section-edit-state";
 import { XeroSyncNowButton } from "@/components/admin/xero-sync-now-button";
 
+const LOAD_FALLBACK = "Could not load webhook health.";
+const SAVE_FALLBACK = "Could not save the warning threshold.";
+
 type Health = { connected: boolean; silent: boolean; hours: number; lastReceivedAt: string | null };
 const ENDPOINT = "/api/admin/xero/webhook-health";
 
@@ -23,7 +26,7 @@ export function WebhookHealthPanel() {
   const section = useSectionEditState<{ hours: number }>({
     load: async (signal) => {
       const response = await fetch(ENDPOINT, { signal });
-      if (!response.ok) throw new Error("Could not load webhook health.");
+      if (!response.ok) throw new Error(LOAD_FALLBACK);
       const result: Health = await response.json();
       setHealth(result);
       return { hours: result.hours };
@@ -31,15 +34,15 @@ export function WebhookHealthPanel() {
     save: async (draft) => {
       const response = await fetch(ENDPOINT, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
       if (response.status === 403) throw new ForbiddenSaveError();
-      if (!response.ok) throw new Error("Could not save the warning threshold.");
+      if (!response.ok) throw new Error(SAVE_FALLBACK);
       const result: Health = await response.json();
       setHealth(result);
       return { hours: result.hours };
     },
     isValid: (draft) => silentWebhookHoursSchema.safeParse(draft.hours).success,
     successMessage: "Webhook warning threshold saved.",
-    loadErrorFallback: "Could not load webhook health.",
-    saveErrorFallback: "Could not save the warning threshold.",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
   });
   return <section className="my-6 space-y-3 rounded-lg border p-4" {...section.sectionRegionProps}>
     <AdminViewOnlySectionBanner canEdit={canEdit}>Finance edit access is required to change webhook monitoring.</AdminViewOnlySectionBanner>

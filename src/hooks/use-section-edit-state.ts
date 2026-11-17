@@ -130,7 +130,12 @@ export type UseSectionEditStateOptions<T extends object> = LoadOptions<T> & {
   save: (draft: T, saved: T | null) => Promise<T>;
   /** Success message, or a function of the saved value when it is conditional. */
   successMessage: string | ((saved: T) => string);
-  /** Shown for a failed save that is not an `ApiRefusalError` or a 403. */
+  /**
+   * Shown for a failed save that is not an `ApiRefusalError` or a 403. Required.
+   * The options are a union on `load`, so on a card with no `load` the compiler
+   * words a forgotten `saveErrorFallback` as a missing `load`; this is the
+   * property to add.
+   */
   saveErrorFallback: string;
   /**
    * Override the dirty check. The default is a shallow comparison of the

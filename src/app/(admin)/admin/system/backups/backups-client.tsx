@@ -40,6 +40,9 @@ import {
   type BackupStatus,
 } from "@/app/(admin)/admin/system/backups/backup-status";
 
+const LOAD_FALLBACK = "Could not load config.";
+const SAVE_FALLBACK = "Could not save configuration.";
+
 interface ConfigDraft {
   enabled: boolean;
   retentionDays: number;
@@ -413,7 +416,7 @@ function S3BackupCard({
     },
     load: async () => {
       const res = await fetch(STATUS_URL, { cache: "no-store" });
-      if (!res.ok) throw await apiRefusalFromResponse(res, "Could not load config.");
+      if (!res.ok) throw await apiRefusalFromResponse(res, LOAD_FALLBACK);
       const data = (await res.json()) as BackupStatus;
       return {
         enabled: data.enabled,
@@ -438,7 +441,7 @@ function S3BackupCard({
       });
       if (res.status === 403) throw new ForbiddenSaveError();
       if (!res.ok) {
-        throw await apiRefusalFromResponse(res, "Could not save configuration.");
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       await onSaved();
       // Re-seed from the freshly persisted values.
@@ -450,8 +453,8 @@ function S3BackupCard({
       };
     },
     successMessage: "Backup configuration saved.",
-    loadErrorFallback: "Could not load config.",
-    saveErrorFallback: "Could not save configuration.",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     isValid: (draft) =>
       draft.retentionDays >= 1 &&
       draft.retentionDays <= 3650 &&

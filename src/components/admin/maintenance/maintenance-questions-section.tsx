@@ -39,6 +39,9 @@ import {
   MAX_MAINTENANCE_QUESTIONS,
 } from "@/lib/maintenance-report-limits";
 
+const LOAD_FALLBACK = "Failed to load the questions";
+const SAVE_FALLBACK = "Failed to save the questions";
+
 /**
  * The bounded question-set editor (#2780, owner decision 2: "a bounded editor,
  * not a general form builder"). Club-wide. Lodge Operations.
@@ -139,7 +142,7 @@ export function MaintenanceQuestionsSection() {
   const section = useSectionEditState<Draft>({
     load: async (signal) => {
       const res = await fetch(ENDPOINT, { signal });
-      if (!res.ok) throw new Error("Failed to load the questions");
+      if (!res.ok) throw new Error(LOAD_FALLBACK);
       return toDraft(((await res.json()) as { questions: ServerQuestion[] }).questions);
     },
     save: async (draft) => {
@@ -162,13 +165,13 @@ export function MaintenanceQuestionsSection() {
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        throw await apiRefusalFromResponse(res, "Failed to save the questions");
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       return toDraft(((await res.json()) as { questions: ServerQuestion[] }).questions);
     },
     successMessage: "Questions saved",
-    loadErrorFallback: "Failed to load the questions",
-    saveErrorFallback: "Failed to save the questions",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     isDirty: questionsDiffer,
     isValid: isValidDraft,
   });

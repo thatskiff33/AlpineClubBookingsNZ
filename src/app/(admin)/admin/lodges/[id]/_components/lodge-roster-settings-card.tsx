@@ -28,6 +28,9 @@ import {
   DISPLAY_NAME_GRANULARITY_VALUES,
 } from "@/lib/display-name-granularity";
 
+const LOAD_FALLBACK = "The roster name setting could not be read.";
+const SAVE_FALLBACK = "That setting could not be saved.";
+
 /**
  * How much of a name the MEMBER LODGE ROSTER shows, for this one lodge (#2942,
  * owner decision D2).
@@ -101,7 +104,7 @@ export function LodgeRosterSettingsCard({ lodgeId }: { lodgeId: string }) {
         cache: "no-store",
       });
       if (!response.ok) {
-        throw new Error("The roster name setting could not be read.");
+        throw new Error(LOAD_FALLBACK);
       }
       return toDraft((await response.json()) as RosterSettingsResponse);
     },
@@ -118,13 +121,13 @@ export function LodgeRosterSettingsCard({ lodgeId }: { lodgeId: string }) {
       });
       if (!response.ok) {
         if (response.status === 403) throw new ForbiddenSaveError();
-        throw await apiRefusalFromResponse(response, "That setting could not be saved.");
+        throw await apiRefusalFromResponse(response, SAVE_FALLBACK);
       }
       return toDraft((await response.json()) as RosterSettingsResponse);
     },
     successMessage: "Roster name detail saved.",
-    loadErrorFallback: "The roster name setting could not be read.",
-    saveErrorFallback: "That setting could not be saved.",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     // Only the level is editable, so only the level can make the draft dirty.
     // The default and the module flag arrive from the server and go back
     // unchanged; comparing them would be comparing a fact with itself.
