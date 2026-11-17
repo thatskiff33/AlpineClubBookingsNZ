@@ -63,9 +63,6 @@ async function loadPendingReviewUnderEligibilityLocks(
   return current;
 }
 
-// Approve/decline a booking request: a bookings write. Explicit bookings:edit
-// matches the area the route-area matrix already infers for /api/admin/bookings
-// (#1997), pairing the queue's view-only UI gating with a route-level guard.
 /** The claim found the review already decisioned: someone else got there first. */
 function alreadyReviewedResponse(): NextResponse {
   return NextResponse.json({ error: "This booking has already been reviewed" }, { status: 409 });
@@ -121,6 +118,9 @@ function rejectedCancellationFailedResponse(err: unknown, bookingId: string): Ne
   );
 }
 
+// Approve/decline a booking request: a bookings write. Explicit bookings:edit
+// matches the area the route-area matrix already infers for /api/admin/bookings
+// (#1997), pairing the queue's view-only UI gating with a route-level guard.
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },

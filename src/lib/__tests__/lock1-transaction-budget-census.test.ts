@@ -58,6 +58,25 @@ function budgetAliases(): Set<string> {
   return aliases;
 }
 
+/**
+ * Where each budget name is declared (`const`, `let` or `var`), by file. The
+ * census matches an opener's options by name alone, so a second declaration of
+ * an alias name (a local `const X = { maxWait: 2_000 }` in another module) would
+ * otherwise pass as the budget there.
+ */
+function declarationsOf(
+  names: ReadonlySet<string>,
+  files: ReadonlyArray<{ rel: string; text: string }>,
+): Map<string, string[]> {
+  const found = new Map<string, string[]>([...names].map((name) => [name, []]));
+  for (const { rel, text } of files) {
+    for (const match of withoutComments(text).matchAll(/\b(?:const|let|var)\s+([A-Z][A-Z0-9_]*)\b/g)) {
+      found.get(match[1])?.push(rel);
+    }
+  }
+  return found;
+}
+
 type Verdict = "budget" | "exception" | string;
 
 /**
@@ -134,6 +153,27 @@ describe("INV-LOCK-006: every lock(1) waiter runs on the shared transaction budg
     expect([...aliases].sort()).toEqual(
       [CONSTANT, "ADDITIONAL_ASK_QUEUE_TRANSACTION_OPTIONS", "LINKED_MOVE_TRANSACTION_BUDGET"].sort(),
     );
+  });
+
+  it("declares each budget name once, so no module can shadow one with its own options", () => {
+    const declarations = declarationsOf(aliases, sources);
+    const repeated = [...declarations].filter(([, files]) => files.length !== 1);
+    expect(repeated).toEqual([]);
+    expect(declarations.get(CONSTANT)).toEqual(["src/lib/db-transaction.ts"]);
+  });
+});
+
+describe("the census's alias declaration check", () => {
+  it("catches a module that reuses an alias name for its own options", () => {
+    const files = [
+      { rel: "src/lib/queue.ts", text: `export const QUEUE_OPTIONS = ${CONSTANT};` },
+      { rel: "src/lib/other.ts", text: "const QUEUE_OPTIONS = { maxWait: 2_000, timeout: 5_000 };" },
+      { rel: "src/lib/notes.ts", text: "// const QUEUE_OPTIONS = mentioned in a comment only" },
+    ];
+    expect(declarationsOf(new Set(["QUEUE_OPTIONS"]), files).get("QUEUE_OPTIONS")).toEqual([
+      "src/lib/queue.ts",
+      "src/lib/other.ts",
+    ]);
   });
 });
 
