@@ -130,7 +130,7 @@ const STARTER_PRIVACY_RECIPIENT_COPY: Record<MemberFacingRecipientId, StarterRec
   },
   servernz: {
     title: "Alpine Central Server",
-    text: "Shares the club&rsquo;s lodge listings and the booking officer&rsquo;s contact details with other connected clubs. If you choose to share a message-board post with all clubs, the post, its pictures, your name and an internal member identifier are sent to the server, and the post appears on those clubs&rsquo; boards. No member list is uploaded.",
+    text: "Shares the club&rsquo;s lodge listings and the booking officer&rsquo;s contact details with other connected clubs. If you choose to share a message-board post with all clubs, the post, its pictures, your name and an internal member identifier are sent to the server so the post can be shown on other connected clubs&rsquo; boards. No member list is uploaded.",
   },
 };
 
