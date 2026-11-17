@@ -126,7 +126,7 @@ const DOORS: Record<string, string> = {
   "src/lib/additional-capture-receipt-send.ts": "M13: a change capture's receipt legs, each leg's capture receipt",
   "src/lib/xero-supplementary-invoices.ts": "M13: a supplementary invoice's Stripe payment, its capture receipt",
   "src/lib/xero-kept-late-capture-invoice.ts": "M13: a kept late capture's payment, its capture receipt",
-  "src/lib/xero-operation-retry.ts": "M13: a PARTIAL invoice repair's payment, its capture receipt",
+  "src/lib/capture-receipt-senders.ts": "M13: the primary invoice's Stripe payment (raised or replayed) and a PARTIAL repair's payment, their capture receipts",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE

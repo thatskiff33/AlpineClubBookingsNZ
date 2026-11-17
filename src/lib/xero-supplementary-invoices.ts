@@ -419,8 +419,7 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   let createdInvoiceId: string;
-  // #4525 (Ledger M13): the Stripe payment this invoice records, once Xero returns its id.
-  let sentPayment: { paymentId: string; key: string; reference: string; bankCode: string } | null = null;
+  let sentPayment: { paymentId: string; key: string; reference: string; bankCode: string } | null = null; // #4525: once Xero returns its id
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: organiserBilling?.organiserMemberId ?? bookingOwner(booking).memberId,
@@ -519,14 +518,7 @@ export async function createXeroSupplementaryInvoice(params: {
           }
         );
         paymentResponseBody = paymentResponse.body.payments?.[0] ?? null;
-        if (paymentResponseBody?.paymentID) {
-          sentPayment = {
-            paymentId: paymentResponseBody.paymentID,
-            key: paymentIdempotencyKey,
-            reference: paymentReference,
-            bankCode: stripeBankCode,
-          };
-        }
+        if (paymentResponseBody?.paymentID) sentPayment = { paymentId: paymentResponseBody.paymentID, key: paymentIdempotencyKey, reference: paymentReference, bankCode: stripeBankCode };
       } catch (error) {
         paymentError = error;
         // Non-fatal: invoice exists, payment recording is for reconciliation convenience
@@ -623,20 +615,9 @@ export async function createXeroSupplementaryInvoice(params: {
   // Read off this row's queued payload, so only the outbox path runs it - an
   // officer's retry of a FAILED one goes back through the outbox (round 9).
   const releasedForIntent = queuedRequestPayload?.paymentIntentId;
-  // #4525 (Ledger M13): the payment's capture receipt, after the row stored its link. A
-  // payment whose capture the queued payload does not name records a conflict. Never throws.
-  if (sentPayment) {
-    await recordCaptureReceiptManifest({
-      bookingId,
-      paymentIntentId: typeof releasedForIntent === "string" && releasedForIntent ? releasedForIntent : null,
-      applicationKey: sentPayment.key,
-      amountCents: netAmountCents,
-      providerPaymentId: sentPayment.paymentId,
-      invoiceId: createdInvoiceId,
-      reference: sentPayment.reference,
-      bankCode: sentPayment.bankCode,
-    });
-  }
+  // #4525 (Ledger M13): the payment's capture receipt, after the row stored its link; a capture the queued payload does not name is a conflict.
+  if (sentPayment) await recordCaptureReceiptManifest({ bookingId, paymentIntentId: typeof releasedForIntent === "string" && releasedForIntent ? releasedForIntent : null,
+    applicationKey: sentPayment.key, amountCents: netAmountCents, providerPaymentId: sentPayment.paymentId, invoiceId: createdInvoiceId, reference: sentPayment.reference, bankCode: sentPayment.bankCode });
   if (typeof releasedForIntent === "string" && releasedForIntent) {
     await queueWaitingPaidAnotherWayNote(releasedForIntent).catch((error: unknown) =>
       logger.error(

@@ -71,7 +71,7 @@ import {
 } from "@/lib/xero-sync";
 import { holdsXeroOperationClaim } from "@/lib/xero-operation-claim";
 import logger from "@/lib/logger";
-import { recordCaptureReceiptManifest } from "@/lib/member-money/doors";
+import { recordRepairCaptureReceipt } from "@/lib/capture-receipt-senders";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
   parseRefundMethod,
@@ -784,52 +784,6 @@ function parsePartialInvoiceRepairInput(
   }
 
   return null;
-}
-
-/**
- * #4525 (Ledger M13): a PARTIAL invoice repair's capture receipt, once the
- * payment id is stored (sent now, or an earlier run's link). The capture is the
- * booking payment's for a primary invoice, else the one the stored payload
- * names; when neither names one nothing is recorded and the repair still
- * closes. The bank code is read from the payment operation the repair stored.
- * Never throws.
- */
-async function recordRepairCaptureReceipt(
-  operation: Pick<RetryableOperation, "localModel" | "localId" | "requestPayload">,
-  repair: { invoiceId: string; amountCents: number; idempotencyKey: string; reference: string },
-  providerPaymentId: string,
-): Promise<void> {
-  let capture: { bookingId: string; paymentIntentId: string } | null = null;
-  try {
-    capture = await partialRepairCapture(operation);
-  } catch (error) {
-    logger.error({ err: error, localModel: operation.localModel, localId: operation.localId }, "Could not name the capture a repaired invoice payment records");
-  }
-  if (!capture) return;
-  await recordCaptureReceiptManifest({
-    ...capture,
-    applicationKey: repair.idempotencyKey,
-    amountCents: repair.amountCents,
-    providerPaymentId,
-    invoiceId: repair.invoiceId,
-    reference: repair.reference,
-  });
-}
-
-async function partialRepairCapture(
-  operation: Pick<RetryableOperation, "localModel" | "localId" | "requestPayload">,
-): Promise<{ bookingId: string; paymentIntentId: string } | null> {
-  if (operation.localModel === "Payment" && operation.localId) {
-    const payment = await prisma.payment.findUnique({
-      where: { id: operation.localId },
-      select: { bookingId: true, stripePaymentIntentId: true },
-    });
-    return payment?.stripePaymentIntentId ? { bookingId: payment.bookingId, paymentIntentId: payment.stripePaymentIntentId } : null;
-  }
-  const payload = asRecord(operation.requestPayload);
-  const bookingId = readString(payload?.bookingId);
-  const paymentIntentId = readString(payload?.paymentIntentId);
-  return bookingId && paymentIntentId ? { bookingId, paymentIntentId } : null;
 }
 
 function parseRefundCreditNoteRepairInput(
