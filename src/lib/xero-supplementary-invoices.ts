@@ -19,6 +19,7 @@ import { sendGroupOrganiserExtraInvoiceEmail } from "@/lib/email/groups";
 import { ORGANISER_EXTRA_WAIVED_UNRAISED_CODE, organiserExtraWaivedBeforeRaised, readOrganiserExtraState } from "@/lib/organiser-extra-state";
 import { bookingOwner } from "@/lib/booking-owner";
 import logger from "@/lib/logger";
+import { recordCaptureReceiptManifest } from "@/lib/member-money/doors";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { asRecord } from "@/lib/xero-json";
 import { buildXeroSupplementaryInvoiceKey } from "@/lib/xero-supplementary-invoice-key";
@@ -418,6 +419,8 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   let createdInvoiceId: string;
+  // #4525 (Ledger M13): the Stripe payment this invoice records, once Xero returns its id.
+  let sentPayment: { paymentId: string; key: string; reference: string; bankCode: string } | null = null;
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: organiserBilling?.organiserMemberId ?? bookingOwner(booking).memberId,
@@ -468,6 +471,7 @@ export async function createXeroSupplementaryInvoice(params: {
     if (recordPayment) {
       try {
         const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+        const paymentReference = `Stripe payment for booking modification ${bookingId.slice(0, 8)}`;
         // The recorded payment is the NET — exactly what the additional
         // Stripe PaymentIntent captured (#1356). Recording anything larger
         // than the capture overstates the Stripe clearing account.
@@ -501,7 +505,7 @@ export async function createXeroSupplementaryInvoice(params: {
                   account: { code: stripeBankCode },
                   amount: netAmountCents / 100,
                   date: supplementaryPaymentDate,
-                  reference: `Stripe payment for booking modification ${bookingId.slice(0, 8)}`,
+                  reference: paymentReference,
                 }],
               },
               undefined,
@@ -515,6 +519,14 @@ export async function createXeroSupplementaryInvoice(params: {
           }
         );
         paymentResponseBody = paymentResponse.body.payments?.[0] ?? null;
+        if (paymentResponseBody?.paymentID) {
+          sentPayment = {
+            paymentId: paymentResponseBody.paymentID,
+            key: paymentIdempotencyKey,
+            reference: paymentReference,
+            bankCode: stripeBankCode,
+          };
+        }
       } catch (error) {
         paymentError = error;
         // Non-fatal: invoice exists, payment recording is for reconciliation convenience
@@ -611,6 +623,20 @@ export async function createXeroSupplementaryInvoice(params: {
   // Read off this row's queued payload, so only the outbox path runs it - an
   // officer's retry of a FAILED one goes back through the outbox (round 9).
   const releasedForIntent = queuedRequestPayload?.paymentIntentId;
+  // #4525 (Ledger M13): the payment's capture receipt, after the row stored its link. A
+  // payment whose capture the queued payload does not name records a conflict. Never throws.
+  if (sentPayment) {
+    await recordCaptureReceiptManifest({
+      bookingId,
+      paymentIntentId: typeof releasedForIntent === "string" && releasedForIntent ? releasedForIntent : null,
+      applicationKey: sentPayment.key,
+      amountCents: netAmountCents,
+      providerPaymentId: sentPayment.paymentId,
+      invoiceId: createdInvoiceId,
+      reference: sentPayment.reference,
+      bankCode: sentPayment.bankCode,
+    });
+  }
   if (typeof releasedForIntent === "string" && releasedForIntent) {
     await queueWaitingPaidAnotherWayNote(releasedForIntent).catch((error: unknown) =>
       logger.error(

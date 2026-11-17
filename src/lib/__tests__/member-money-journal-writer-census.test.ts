@@ -121,7 +121,12 @@ const DOORS: Record<string, string> = {
   // #4628 (M3c): through `postPendingBookingJournal`, from the lines the confirmation would post.
   "src/lib/booking-ledger-pending-charge.ts": "R01 at a bank-transfer binding; R02/R04 for a charge still pending",
   // #4525 (M13): an export manifest, not a journal row, through the same door.
-  "src/lib/xero-booking-invoices.ts": "M13: the primary invoice's export manifest, after its link",
+  "src/lib/xero-booking-invoices.ts": "M13: the primary invoice's export manifest, after its link, and its Stripe payment's capture receipt",
+  // #4525 (M13): each capture sender's receipt manifest, after it stores a Xero payment id.
+  "src/lib/additional-capture-receipt-send.ts": "M13: a change capture's receipt legs, each leg's capture receipt",
+  "src/lib/xero-supplementary-invoices.ts": "M13: a supplementary invoice's Stripe payment, its capture receipt",
+  "src/lib/xero-kept-late-capture-invoice.ts": "M13: a kept late capture's payment, its capture receipt",
+  "src/lib/xero-operation-retry.ts": "M13: a PARTIAL invoice repair's payment, its capture receipt",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -173,8 +178,8 @@ const BOUNDARY = "src/lib/member-money/";
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
-/** M3b's door entry points (#4627), M3c's pending charge (#4628), and M13's invoice manifest (#4525). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest)\b/;
+/** M3b's door entry points (#4627), M3c's pending charge (#4628), and M13's invoice and capture-receipt manifests (#4525). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordCaptureReceiptManifest)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's

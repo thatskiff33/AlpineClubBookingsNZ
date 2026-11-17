@@ -84,7 +84,7 @@ import {
   selectLoadedBookingMoneyBuildUp,
 } from "@/lib/booking-money-build-up";
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
-import { asRecord } from "@/lib/xero-json";
+import { asRecord, readString } from "@/lib/xero-json";
 import { bookingWorthCents, isCapturedPaymentStatus, recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { CHANGE_FEE_LINE_DESCRIPTION, invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 import {
@@ -101,7 +101,7 @@ import {
 } from "@/lib/xero-primary-invoice-fee-gap";
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
-import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest } from "@/lib/member-money/doors";
+import { planPrimaryInvoiceManifest, recordCaptureReceiptManifest, recordPrimaryInvoiceManifest } from "@/lib/member-money/doors";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -273,6 +273,10 @@ export async function createXeroInvoiceForBooking(
         { kind: "REPLAY", bookingId, storedLines: await readStoredPrimaryInvoiceLines(options.syncOperation.id) },
         booking.payment.xeroInvoiceId,
       );
+    }
+    // #4525 (Ledger M13): and the capture receipt of the Stripe payment that run stored, from its response.
+    if (options?.syncOperation) {
+      await recordStoredPrimaryInvoicePaymentReceipt(options.syncOperation.id, booking.payment, bookingId, booking.payment.xeroInvoiceId);
     }
     // #3955 review X4 (round 3), #3980: a prior run that persisted the link but
     // died before or inside its gap check re-runs it here, from what the invoice
@@ -753,12 +757,7 @@ export async function createXeroInvoiceForBooking(
         date: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
         reference: stripePaymentReference,
       };
-      const paymentIdempotencyKey = buildXeroIdempotencyKey(
-        "payment",
-        booking.payment.id,
-        "invoice-payment",
-        "v1"
-      );
+      const paymentIdempotencyKey = primaryInvoicePaymentKey(booking.payment.id);
 
       try {
         const paymentResponse = await callXeroApi(
@@ -1174,12 +1173,71 @@ export async function createXeroInvoiceForBooking(
           : []),
       ],
     });
+    // #4525 (Ledger M13): the Stripe payment's capture receipt, once its link is stored. Never throws.
+    // An earlier run's payment found on the invoice is recorded as that run sent it, under the same key.
+    const storedPaymentCents = providerAmountToCents(paymentResponseBody?.amount)
+      ?? (shouldRecordStripeInvoicePayment ? invoicePaymentCents : null);
+    if (paymentResponseBody?.paymentID && storedPaymentCents !== null) {
+      await recordCaptureReceiptManifest({
+        bookingId,
+        paymentIntentId: booking.payment.stripePaymentIntentId ?? null,
+        applicationKey: primaryInvoicePaymentKey(booking.payment.id),
+        amountCents: storedPaymentCents,
+        providerPaymentId: paymentResponseBody.paymentID,
+        invoiceId: createdInvoice.invoiceID,
+        reference: stripePaymentReference,
+        bankCode: paymentResponseBody.account?.code ?? (existingStripePayment ? null : bankCode),
+      });
+    }
 
     return createdInvoice.invoiceID;
   } catch (error) {
     await failXeroSyncOperation(operationClaim!, error);
     throw error;
   }
+}
+
+/** The primary invoice's Stripe payment key: one per Payment, whichever run sends it. */
+function primaryInvoicePaymentKey(paymentId: string): string {
+  return buildXeroIdempotencyKey("payment", paymentId, "invoice-payment", "v1");
+}
+
+/**
+ * #4525 (Ledger M13): the replay's capture receipt for the Stripe payment the
+ * run that raised the invoice stored, read from the payment Xero returned to it
+ * (the operation's stored `responsePayload.payment`), before this replay
+ * completes the operation over it. Nothing is rebuilt and nothing is sent; a
+ * manifest already recorded keeps its first row. The invoice's other payment
+ * links (a PARTIAL repair's, which records its own receipt, or the inbound
+ * sync's bank payments) are not this payment.
+ */
+async function recordStoredPrimaryInvoicePaymentReceipt(
+  syncOperationId: string,
+  payment: { id: string; stripePaymentIntentId: string | null },
+  bookingId: string,
+  invoiceId: string,
+): Promise<void> {
+  let stored: Record<string, unknown> | null = null;
+  try {
+    const operation = await prisma.xeroSyncOperation.findUnique({ where: { id: syncOperationId }, select: { responsePayload: true } });
+    stored = asRecord(asRecord(operation?.responsePayload)?.payment);
+  } catch (error) {
+    logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice payment");
+    return;
+  }
+  const providerPaymentId = readString(stored?.paymentID);
+  const amountCents = providerAmountToCents(stored?.amount);
+  if (!providerPaymentId || amountCents === null) return;
+  await recordCaptureReceiptManifest({
+    bookingId,
+    paymentIntentId: payment.stripePaymentIntentId,
+    applicationKey: primaryInvoicePaymentKey(payment.id),
+    amountCents,
+    providerPaymentId,
+    invoiceId,
+    reference: readString(stored?.reference) ?? primaryInvoiceStripePaymentReference(payment.stripePaymentIntentId),
+    bankCode: readString(asRecord(stored?.account)?.code),
+  });
 }
 
 

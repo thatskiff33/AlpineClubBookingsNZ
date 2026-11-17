@@ -40,6 +40,10 @@ const mocks = vi.hoisted(() => ({
   // #4494: the unpaid payload a gap invoice's payment overlapping the credit-release sweep's share is sent with.
   unpaidGapPayloadIfOverlapping: vi.fn(),
 }));
+// #4525 (M13): each leg's capture receipt; the recorder has its own suite.
+const captureReceipts = vi.hoisted(() => ({ record: vi.fn() }));
+vi.mock("@/lib/member-money/doors", () => ({ recordCaptureReceiptManifest: captureReceipts.record }));
+
 vi.mock("@/lib/credit-release-xero-payment", () => ({
   CREDIT_RELEASE_PAYMENT_ROLE: "CREDIT_RELEASE_PAYMENT",
   unpaidGapPayloadIfOverlapping: mocks.unpaidGapPayloadIfOverlapping,
@@ -650,6 +654,15 @@ describe("recordAdditionalCaptureReceipt", () => {
         responsePayload: expect.objectContaining({ unrecordedCents: 0, paymentIds: ["xero_payment_1", "xero_payment_2"] }),
       }),
     );
+    // #4525 (M13): one capture receipt per leg, each under that leg's own payment key and cents.
+    const keyOf = (invoiceId: string) => `payment-intent:pi_change:additional-capture-payment:${invoiceId}:v1`;
+    expect(captureReceipts.record.mock.calls.map(([input]) => input)).toEqual([
+      { bookingId: "booking_1", paymentIntentId: "pi_change", applicationKey: keyOf(CHANGE), amountCents: 5000,
+        providerPaymentId: "xero_payment_1", invoiceId: CHANGE, reference: "Stripe pi_change" },
+      { bookingId: "booking_1", paymentIntentId: "pi_change", applicationKey: keyOf(PRIMARY), amountCents: 3000,
+        providerPaymentId: "xero_payment_2", invoiceId: PRIMARY, reference: "Stripe pi_change" },
+    ]);
+    expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]!);
   });
 
   it("waits for a later invoice still on its way, even when the first could take the whole capture", async () => {
@@ -804,6 +817,8 @@ describe("recordAdditionalCaptureReceipt", () => {
     expectRefused("figures-changed");
     expect(mocks.failXeroSyncOperation.mock.calls[0][3].lastErrorMessage).toContain("Already recorded: xero_payment_leg1");
     expect(seam.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    // #4525 (M13): a refused receipt finishes nothing, so it records no capture receipt either.
+    expect(captureReceipts.record).not.toHaveBeenCalled();
   });
 
   it("refuses, recording nothing, when a paying invoice names the capture and what it bills cannot be read", async () => {

@@ -21,6 +21,7 @@ import { asRecord } from "@/lib/xero-json";
 import type { cardSettleAppliedCreditCents } from "@/lib/xero-primary-invoice-fee-gap";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 import type { AdditionalCaptureReceiptProviders, AdditionalCaptureReceiptRefusal } from "@/lib/additional-capture-xero-receipt";
+import { recordCaptureReceiptManifest } from "@/lib/member-money/doors";
 
 type CardSettlePayment = Parameters<typeof cardSettleAppliedCreditCents>[1];
 type XeroClient = Awaited<ReturnType<AdditionalCaptureReceiptProviders["getAuthenticatedXeroClient"]>>;
@@ -187,6 +188,8 @@ export async function completeRecordedReceipt(
     bookingId: string;
     operationId: string;
     syncOperation: XeroOperationClaim;
+    reference: string;
+    paymentKey: (invoiceId: string) => string;
     alertOfficer: (paymentIntentId: string, operationId: string, message: string) => Promise<void>;
   },
   recorded: { paymentIds: string[]; recoveredExisting: boolean },
@@ -208,6 +211,21 @@ export async function completeRecordedReceipt(
     xeroObjectUrl: buildXeroInvoiceUrl(plan.invoiceId),
     extraLinks: plan.legs.map((leg, index) => receiptLegLink(input, leg, index, recorded.paymentIds[index] ?? firstPaymentId)),
   });
+  // #4525 (Ledger M13): each leg's capture receipt, under that leg's payment key. Only the
+  // legs' cents: an unrecorded rest is the officer's below, never coverage. Never throws.
+  for (const [index, leg] of plan.legs.entries()) {
+    const providerPaymentId = recorded.paymentIds[index];
+    if (!providerPaymentId) continue;
+    await recordCaptureReceiptManifest({
+      bookingId: input.bookingId,
+      paymentIntentId: input.paymentIntentId,
+      applicationKey: input.paymentKey(leg.invoiceId),
+      amountCents: leg.amountCents,
+      providerPaymentId,
+      invoiceId: leg.invoiceId,
+      reference: input.reference,
+    });
+  }
   if (unrecordedCents > 0) {
     const format = await clubFormatValues();
     const placed = plan.legs.map((leg) => `${formatCents(leg.amountCents, format)} on ${leg.invoiceId}`).join(", ");

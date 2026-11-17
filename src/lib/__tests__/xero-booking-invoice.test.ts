@@ -250,6 +250,13 @@ vi.mock("@/lib/prisma", () => ({
   prisma: mocks.prisma,
 }));
 
+// #4525 (M13): the Stripe payment's capture receipt; its recorder has its own suite.
+const captureReceipts = vi.hoisted(() => ({ record: vi.fn() }));
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  recordCaptureReceiptManifest: captureReceipts.record,
+}));
+
 vi.mock("@/lib/email", () => ({
   sendPasswordResetEmail: vi.fn(),
 }));
@@ -1022,6 +1029,52 @@ describe("createXeroInvoiceForBooking", () => {
 
     // #4010 review: the repair records the payment this run TRIED to write,
     // which the floor below must never raise to an earlier unmatched payment.
+    describe("#4525 (M13): the Stripe payment's capture receipt", () => {
+      it("records the payment Xero stored, under the key and with the cents it was sent, after the operation stored its link", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
+        mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({ body: { payments: [{ paymentID: "xpay_1", amount: 70 }] } });
+
+        await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+        const [, sent, key] = mocks.xeroClientInstance.accountingApi.createPayment.mock.calls[0] as [string, { reference: string; account: { code: string }; amount: number }, string];
+        expect(captureReceipts.record).toHaveBeenCalledTimes(1);
+        expect(captureReceipts.record).toHaveBeenCalledWith({
+          bookingId: "booking_1", paymentIntentId: "pi_1", applicationKey: key, amountCents: sent.amount * 100,
+          providerPaymentId: "xpay_1", invoiceId: "inv_1", reference: sent.reference, bankCode: sent.account.code,
+        });
+        expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder.at(-1)!);
+      });
+
+      it("records nothing when Xero refuses the payment, and the invoice still stands", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
+        mocks.xeroClientInstance.accountingApi.createPayment.mockRejectedValue(new Error("Xero rejected the payment"));
+        await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+        expect(captureReceipts.record).not.toHaveBeenCalled();
+      });
+
+      it("records nothing for an Internet Banking payment, which Xero reconciles itself", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking({ source: "INTERNET_BANKING" }));
+        await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+        expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
+        expect(captureReceipts.record).not.toHaveBeenCalled();
+      });
+
+      it("on a replay, records the payment the raising run stored, from its operation's response, and sends nothing", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking({ xeroInvoiceId: "inv_9", xeroInvoiceNumber: "INV-9" }));
+        const storedPayment = { paymentID: "xpay_9", amount: 70, reference: "Stripe pi_1", account: { code: "606" } };
+        mocks.prisma.xeroSyncOperation.findUnique.mockImplementation(async (args: { select?: Record<string, boolean> }) =>
+          (args?.select?.responsePayload ? { responsePayload: { payment: storedPayment } } : { invoiceEmailDelivery: null }));
+        try {
+          await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_9");
+        } finally {
+          mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue({ invoiceEmailDelivery: null });
+        }
+        expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
+        expect(captureReceipts.record).toHaveBeenCalledWith(expect.objectContaining({
+          paymentIntentId: "pi_1", amountCents: 7000, providerPaymentId: "xpay_9", invoiceId: "inv_9", reference: "Stripe pi_1", bankCode: "606",
+        }));
+      });
+    });
+
     describe("#4010: the attempted payment is stored beside the floored cash", () => {
       it.each([
         { earlierPaidCents: 6_000, capturedCents: 8_000, attempted: 4_000, floored: 6_000 },
