@@ -18,4 +18,6 @@
   return to the tab, or finish a decision on a queue page, instead of only
   when the admin area first loads. If the counts cannot be loaded it says
   "Couldn't load counts" with a Retry button rather than showing nothing, and
-  the dashboard names any count it could not read.
+  the dashboard names any count it could not read. The Booking Requests
+  page's tab badges now refresh at the same moments, so they keep adding up
+  to the sidebar's Booking Requests number after you act.
