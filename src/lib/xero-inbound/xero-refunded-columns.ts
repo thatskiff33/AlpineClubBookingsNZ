@@ -9,20 +9,19 @@
  * - a bank transfer is held at its own refund detail (`bankTransferFloorCents`,
  *   `INV-ADDPAY-021`), the alert returned, never sent, so a writer inside a
  *   transaction sends it after its commit; any other source passes through;
- * - the status the total implies (`getNextRefundedPaymentStatus`) from the
- *   status the writer leaves the payment in. A total falling to nothing never
- *   un-refunds a card payment (F5, #1353), and on any other payment never
- *   captured returns it to its uncaptured state (`uncapturedPrimaryStatus`,
- *   #3979), never SUCCEEDED, unless it is an organiser-settled child (#3653).
+ * - the status, from the status the writer leaves the payment in, by the one
+ *   refunded-total status rule (`refundedTotalStatus`: a total falling to
+ *   nothing on a payment never captured returns it to its uncaptured state,
+ *   #3979), except that a total falling to nothing never un-refunds a card
+ *   payment (F5, #1353).
  *
  * A card payment's raise-only floor and organiser-child cap move cents the
  * recount alone decides; it applies them to `decidedCents` before this step.
  * Reads on the caller's client; writes nothing and takes no lock.
  */
 import { PaymentSource, PaymentStatus, type Prisma } from "@prisma/client";
-import { getNextRefundedPaymentStatus } from "./amounts";
 import { type BankTransferFloorAlert, bankTransferFloorCents } from "./credit-note-bank-transfer-floor";
-import { uncapturedPrimaryStatus } from "./modification-note-refunds";
+import { refundedTotalStatus } from "./modification-note-refunds";
 
 export type XeroRefundedColumns = {
   refundedAmountCents: number;
@@ -35,9 +34,16 @@ export async function decideXeroRefundedColumns(
   store: Prisma.TransactionClient,
   input: {
     /** `status` is the one the writer leaves the payment in (the kept settle: SUCCEEDED, as it captures). */
-    payment: { id: string; bookingId: string; source: PaymentSource; amountCents: number; refundedAmountCents: number; status: PaymentStatus };
-    /** Asked only when a total falls to nothing on a refunded payment, as the recount always asked it. */
-    isOrganiserSettled: () => boolean;
+    /** `booking` is read only when a total falls to nothing on a refunded payment (`refundedTotalStatus`). */
+    payment: {
+      id: string;
+      bookingId: string;
+      source: PaymentSource;
+      amountCents: number;
+      refundedAmountCents: number;
+      status: PaymentStatus;
+      booking: { organiserSettled: boolean };
+    };
     /** The links' figure: `decideLinkedRefundedTotalCents`, plus a recount's note being synced and its card-only rules. */
     decidedCents: number;
     creditNoteId: string | null;
@@ -52,13 +58,10 @@ export async function decideXeroRefundedColumns(
     creditNoteId: input.creditNoteId,
     creditNoteNumber: input.creditNoteNumber ?? null,
   });
-  let status = getNextRefundedPaymentStatus(payment.status, payment.amountCents, floored.cents);
-  if (status === PaymentStatus.SUCCEEDED && (payment.status === PaymentStatus.REFUNDED || payment.status === PaymentStatus.PARTIALLY_REFUNDED)) {
-    if (payment.source === PaymentSource.STRIPE) {
-      status = null;
-    } else if (!input.isOrganiserSettled()) {
-      status = (await uncapturedPrimaryStatus(payment.id, store)) ?? status;
-    }
-  }
+  const unrefundsCardPayment =
+    payment.source === PaymentSource.STRIPE &&
+    floored.cents <= 0 &&
+    (payment.status === PaymentStatus.REFUNDED || payment.status === PaymentStatus.PARTIALLY_REFUNDED);
+  const status = unrefundsCardPayment ? null : await refundedTotalStatus(payment, floored.cents, store);
   return { refundedAmountCents: floored.cents, status, floorAlert: floored.alert };
 }

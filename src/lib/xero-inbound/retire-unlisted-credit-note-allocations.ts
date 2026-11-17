@@ -175,7 +175,6 @@ async function decideBankTransferRefundedTotal(
   const linked = await decideLinkedRefundedTotalCents(tx, [payment]);
   const decided = await decideXeroRefundedColumns(tx, {
     payment,
-    isOrganiserSettled: () => payment.booking.organiserSettled,
     decidedCents: linked.get(payment.id) ?? 0,
     creditNoteId: readString(asRecord(link.metadata)?.creditNoteId) ?? null,
   });

@@ -198,8 +198,7 @@ async function keptRefundedTotal(
   // #4449 (`INV-SSOT`): the clamp, floor and status step every writer from Xero takes, from the status
   // the keep leaves the payment in: captured, so SUCCEEDED before any refund.
   const decided = await decideXeroRefundedColumns(tx, {
-    payment: { ...payment, source: PaymentSource.INTERNET_BANKING, status: PaymentStatus.SUCCEEDED },
-    isOrganiserSettled: () => false,
+    payment: { ...payment, source: PaymentSource.INTERNET_BANKING, status: PaymentStatus.SUCCEEDED, booking: { organiserSettled: false } },
     decidedCents: linked.get(payment.id) ?? 0,
     creditNoteId: null,
   });

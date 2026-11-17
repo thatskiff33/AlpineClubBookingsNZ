@@ -288,7 +288,6 @@ export async function repairRefundedPaymentBusinessState(input: {
     // its uncaptured state) are the one step the kept settle and the allocation write take too.
     const decided = await decideXeroRefundedColumns(prisma, {
       payment,
-      isOrganiserSettled: () => payment.booking.organiserSettled,
       decidedCents: effectiveRefundedTotalCents,
       creditNoteId: input.creditNoteId,
       creditNoteNumber: input.creditNote.creditNoteNumber ?? null,
