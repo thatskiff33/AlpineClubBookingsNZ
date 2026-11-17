@@ -19,8 +19,9 @@
 // The privacy page is now written by
 // 20261222030000_rewrite_starter_privacy_recipients (#5007), which guards on the
 // bodies #4915's 20261220010000_correct_starter_privacy_subject_access,
-// #4914's 20261214010000_correct_starter_privacy_retention_and_hosting and
-// #4031's 20261119010000_correct_starter_privacy_audit_retention wrote.
+// #4914's 20261214010000_correct_starter_privacy_retention_and_hosting,
+// #4031's 20261119010000_correct_starter_privacy_audit_retention and #1945's
+// 20260717180000_genericise_starter_lodge_copy wrote.
 import type { PRIVACY_RECIPIENTS } from "../src/lib/privacy-recipient-classification";
 
 export type StarterPageContent = {

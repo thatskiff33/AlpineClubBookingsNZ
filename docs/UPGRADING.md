@@ -175,7 +175,7 @@ because that colour already knows the token.
 **What changes.** The migration rewrites the privacy page's body only where it
 still holds, byte for byte, the starter text that #4915 wrote (the text an
 unedited page holds after the #4914 and #4915 corrections) or the earlier text
-from #4914 or #4031. On such a page:
+from #4914, #4031 or #1945. On such a page:
 
 - section 5 lists every outside service in the
   [recipient register](PRIVACY_RECIPIENTS.md) that can receive members'
@@ -203,9 +203,9 @@ The migration runs once. Two things can write the old text back afterwards:
 - an admin who had **Privacy** open in the Page Content editor *before* the
   upgrade and presses Save *afterwards*;
 - importing a configuration bundle exported before this release. The import
-  now skips a privacy body that exactly matches any of the three replaced
-  starter texts and warns in the preview (#2511), but an older starter body
-  still imports.
+  now skips a privacy body that exactly matches any of the four replaced
+  starter texts and warns in the preview (#2511), but a starter body older than
+  those still imports.
 
 Re-export your configuration bundle after upgrading, and re-check `/privacy`
 after any bundle import.

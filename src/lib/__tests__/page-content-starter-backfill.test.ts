@@ -951,6 +951,7 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
   const subjectAccessSql = readFileSync(PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH, "utf8");
   const retentionHostingSql = readFileSync(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH, "utf8");
   const auditRetentionSql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
+  const genericiseSql = readFileSync(GENERICISE_LODGE_COPY_MIGRATION_PATH, "utf8");
 
   it("only updates the privacy row, and never inserts or deletes", () => {
     expect(statements.match(/UPDATE\s+"PageContent"/g)).toHaveLength(1);
@@ -959,13 +960,21 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
     expect(statements).toContain(`WHERE "slug" = ${sqlQuote("privacy")}`);
   });
 
-  it("guards on exactly the bodies #4915, #4914 and #4031 wrote, so edited rows are untouched", () => {
+  it("guards on exactly the bodies #4915, #4914, #4031 and #1945 wrote, so edited rows are untouched", () => {
     expect(statements).toContain(`AND "contentHtml" IN ($previous$`);
-    // #4915's body is what the chain leaves on an unedited page. #4914's and
-    // #4031's are what a stale editor save or an old bundle can restore.
+    // #4915's body is what the chain leaves on an unedited page. #4914's,
+    // #4031's and #1945's are what a stale editor save or an old bundle can
+    // restore.
     expect(sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]).toBe(nthCmsBlock(subjectAccessSql, 1));
     expect(sql.match(/\$older\$([\s\S]*?)\$older\$/)?.[1]).toBe(nthCmsBlock(retentionHostingSql, 1));
     expect(sql.match(/\$oldest\$([\s\S]*?)\$oldest\$/)?.[1]).toBe(nthCmsBlock(auditRetentionSql, 1));
+    const earliest = sql.match(/\$earliest\$([\s\S]*?)\$earliest\$/)?.[1];
+    expect(earliest).toBe(nthCmsBlock(genericiseSql, 1));
+    // The body #4031's migration replaced, so it is the last one the chain can
+    // leave behind.
+    expect(earliest).toBe(auditRetentionSql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]);
+    // Four alternatives in this order, and no fifth.
+    expect(sql.match(/\$(previous|older|oldest|earliest)\$(?=[\s\S]*?\$\1\$)/g)).toHaveLength(4);
   });
 
   it("writes the current privacy seed copy", () => {
@@ -974,16 +983,18 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
 
   it("moves each starter header to the seed's header and keeps any other", () => {
     expect(statements).toContain(
-      `WHEN "headerText" IN (${sqlQuote(privacyHeaderOn("14 November 2026"))}, ${sqlQuote(privacyHeaderOn("12 November 2026"))}, ${sqlQuote(privacyHeaderOn("17 October 2026"))})`,
+      `WHEN "headerText" IN (${sqlQuote(privacyHeaderOn("14 November 2026"))}, ${sqlQuote(privacyHeaderOn("12 November 2026"))}, ${sqlQuote(privacyHeaderOn("17 October 2026"))}, ${sqlQuote(privacyHeaderOn("1 April 2026"))})`,
     );
     // The seed date and the migration's THEN value are the same string.
     expect(statements).toContain(`THEN ${sqlQuote(page.headerText)}`);
     expect(page.headerText).toContain("Last updated 17 November 2026");
     expect(statements).toContain(`ELSE "headerText"`);
-    // The three starter headers are the ones the earlier migrations wrote.
+    // The four starter headers are the ones the earlier migrations wrote, and
+    // the one the policy backfill planted with the #1945 body.
     expect(subjectAccessSql).toContain(`THEN ${sqlQuote(privacyHeaderOn("14 November 2026"))}`);
     expect(retentionHostingSql).toContain(`THEN ${sqlQuote(privacyHeaderOn("12 November 2026"))}`);
     expect(auditRetentionSql).toContain(`THEN ${sqlQuote(privacyHeaderOn("17 October 2026"))}`);
+    expect(auditRetentionSql).toContain(`WHEN "headerText" = ${sqlQuote(privacyHeaderOn("1 April 2026"))}`);
   });
 
   it("uses the UTC statement clock, never the session clock", () => {
@@ -991,8 +1002,9 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
     expect(statements).not.toMatch(/CURRENT_TIMESTAMP|\bnow\(\)|LOCALTIMESTAMP/i);
   });
 
-  it("sorts after the #4031, #4914 and #4915 migrations it follows", () => {
+  it("sorts after the #1945, #4031, #4914 and #4915 migrations it follows", () => {
     const stamp = (path: string) => path.split(/[\\/]/).at(-2)!;
+    expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > stamp(GENERICISE_LODGE_COPY_MIGRATION_PATH)).toBe(true);
     expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > stamp(PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH)).toBe(true);
     expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > stamp(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH)).toBe(true);
     expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > "20261119010000").toBe(true);

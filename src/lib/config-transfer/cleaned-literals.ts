@@ -39,6 +39,7 @@
 // and the migrations can never drift apart silently.
 
 import {
+  STARTER_PRIVACY_BODY_1945,
   STARTER_PRIVACY_BODY_4031,
   STARTER_PRIVACY_BODY_4914,
   STARTER_PRIVACY_BODY_4915,
@@ -194,6 +195,21 @@ export const CLEANED_LITERALS: readonly CleanedLiteral[] = [
     issue: "#5007",
     describe:
       "the starter privacy policy that said members' data is held in Sydney",
+  },
+  {
+    // #5007: the same migration also rewrites the body #1945 wrote (guarded as
+    // `$earliest$`), the text #4031's migration replaced on every install that
+    // ran it. It still says members' data is held in Sydney, that backups are
+    // encrypted and that audit logs are pruned after 90 days, and an old bundle
+    // or a stale editor save can restore it.
+    entity: "page-content",
+    key: "privacy",
+    field: "contentHtml",
+    literal: STARTER_PRIVACY_BODY_1945,
+    migration: "20261222030000_rewrite_starter_privacy_recipients",
+    issue: "#5007",
+    describe:
+      "the starter privacy policy that said members' data is held in Sydney and audit logs are pruned after 90 days",
   },
 ];
 

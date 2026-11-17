@@ -6,13 +6,13 @@ import type { DataMigrationVerification } from "./types";
  * #5007 (release 2 of #4918): the starter privacy policy's sections 5 and 6
  * are rewritten from the recipient register, naming the host through
  * `{{data-hosting}}`. The guard is equality on the whole previous body: the
- * #4915 body the chain leaves on an unedited page, or the #4914 or #4031 body a
- * stale editor save or an old config bundle can restore. Any edited page keeps
- * every byte.
+ * #4915 body the chain leaves on an unedited page, or the #4914, #4031 or #1945
+ * body a stale editor save or an old config bundle can restore. Any edited page
+ * keeps every byte.
  *
- * The three bodies are READ OUT OF THIS MIGRATION'S `$previous$`, `$older$` and
- * `$oldest$` blocks rather than restated here, so the fixture seeds exactly the
- * bytes the guard names.
+ * The four bodies are READ OUT OF THIS MIGRATION'S `$previous$`, `$older$`,
+ * `$oldest$` and `$earliest$` blocks rather than restated here, so the fixture
+ * seeds exactly the bytes the guard names.
  */
 const MIGRATION = "20261222030000_rewrite_starter_privacy_recipients";
 const migrationSql = readFileSync(
@@ -23,25 +23,32 @@ const migrationSql = readFileSync(
 const previousBody = migrationSql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1] ?? "";
 const olderBody = migrationSql.match(/\$older\$([\s\S]*?)\$older\$/)?.[1] ?? "";
 const oldestBody = migrationSql.match(/\$oldest\$([\s\S]*?)\$oldest\$/)?.[1] ?? "";
+const earliestBody = migrationSql.match(/\$earliest\$([\s\S]*?)\$earliest\$/)?.[1] ?? "";
 if (
   !previousBody.includes("The file lists exclusions") ||
   !olderBody.includes("Admin note:") ||
   olderBody.includes("The file lists exclusions") ||
-  !oldestBody.includes("Retained for 90 days")
+  !oldestBody.includes("Retained for 90 days") ||
+  // #1945's section 7 says audit logs are "then automatically pruned"; #4031's
+  // replaced that with the per-kind schedule.
+  !earliestBody.includes("then automatically pruned") ||
+  oldestBody.includes("then automatically pruned")
 ) {
   // A silent "" would make the stale-restore cases and the suffix mutant test
   // nothing.
-  throw new Error(`${MIGRATION}: could not read the #4915, #4914 and #4031 bodies from its guard.`);
+  throw new Error(`${MIGRATION}: could not read the #4915, #4914, #4031 and #1945 bodies from its guard.`);
 }
 
-// One marker per kind of body: the admin note both #4915 and #4914 carry, #4031's
-// email-log promise, and the new text's hosting token.
+// One marker per kind of body: the admin note both #4915 and #4914 carry, the
+// 90-day email-log promise that #4031's and #1945's bodies both carry, and the
+// new text's hosting token.
 const PREVIOUS_MARKER = "hosting provider, region, backup store";
 const OLDEST_MARKER = "Retained for 90 days";
 const NEW_MARKER = "{{data-hosting}}";
 const CLUB_NOTE = "<p>Our club also keeps paper sign-in sheets for one season.</p>";
 const CLUB_HEADER = "Our privacy promise to members.";
 const OLDEST_HEADER_DATE = "Last updated 17 October 2026";
+const EARLIEST_HEADER_DATE = "Last updated 1 April 2026";
 const OLDER_HEADER_DATE = "Last updated 12 November 2026";
 const PREVIOUS_HEADER_DATE = "Last updated 14 November 2026";
 const NEW_HEADER_DATE = "Last updated 17 November 2026";
@@ -59,22 +66,24 @@ const headerState = `
     position('${PREVIOUS_HEADER_DATE}' IN "headerText") > 0 AS "previousDate",
     position('${OLDER_HEADER_DATE}' IN "headerText") > 0 AS "olderDate",
     position('${OLDEST_HEADER_DATE}' IN "headerText") > 0 AS "oldestDate",
+    position('${EARLIEST_HEADER_DATE}' IN "headerText") > 0 AS "earliestDate",
     position('${NEW_HEADER_DATE}' IN "headerText") > 0 AS "newDate"
   FROM "PageContent" WHERE "slug" = 'privacy'
 `;
 
 /** The header row `headerState` returns for each date the header can hold. */
-const headerOn = (date: "previous" | "older" | "oldest" | "new") => ({
+const headerOn = (date: "previous" | "older" | "oldest" | "earliest" | "new") => ({
   previousDate: date === "previous",
   olderDate: date === "older",
   oldestDate: date === "oldest",
+  earliestDate: date === "earliest",
   newDate: date === "new",
 });
 
 const verification: DataMigrationVerification = {
   migration: "20261222030000_rewrite_starter_privacy_recipients",
   intent:
-    "Replace an unedited starter privacy page (the #4915, #4914 or #4031 body) with sections 5 and 6 built from the recipient register and the hosting setting, and leave every edited privacy page untouched.",
+    "Replace an unedited starter privacy page (the #4915, #4914, #4031 or #1945 body) with sections 5 and 6 built from the recipient register and the hosting setting, and leave every edited privacy page untouched.",
   idempotentReRun: true,
   cases: [
     {
@@ -135,6 +144,27 @@ const verification: DataMigrationVerification = {
         },
         {
           claim: "the #4031 starter header moves to this release's date",
+          sql: headerState,
+          rows: [headerOn("new")],
+        },
+      ],
+    },
+    {
+      name: "an install whose privacy page holds the #1945 body again, restored by a stale editor save or an old bundle",
+      seed: `
+        UPDATE "PageContent"
+        SET "contentHtml" = ${dollarQuoted(earliestBody)},
+            "headerText" = replace("headerText", '${PREVIOUS_HEADER_DATE}', '${EARLIEST_HEADER_DATE}')
+        WHERE "slug" = 'privacy';
+      `,
+      expectations: [
+        {
+          claim: "the unedited #1945 body is rewritten too, so its old hosting claims and audit-log line do not survive a restore",
+          sql: bodyState,
+          rows: [{ previous: false, oldest: false, rewritten: true }],
+        },
+        {
+          claim: "the #1945 starter header moves to this release's date",
           sql: headerState,
           rows: [headerOn("new")],
         },
@@ -267,6 +297,13 @@ const verification: DataMigrationVerification = {
         "An install whose page was restored to the #4031 body keeps telling members their data is in Sydney and that backups are encrypted.",
       find: `$older$, $oldest$`,
       replace: `$older$, $oldest$<dropped>`,
+    },
+    {
+      name: "drop the #1945 alternative from the guard",
+      harm:
+        "An install whose page was restored to the #1945 body keeps telling members their data is in Sydney, that backups are encrypted and that audit logs are pruned after 90 days.",
+      find: `$oldest$, $earliest$`,
+      replace: `$oldest$, $earliest$<dropped>`,
     },
     {
       name: "forget the 14 November starter header",
