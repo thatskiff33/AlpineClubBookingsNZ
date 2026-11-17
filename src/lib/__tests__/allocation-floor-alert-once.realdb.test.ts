@@ -35,6 +35,8 @@ const PAYMENT_ID = `${P}-payment`;
 const PRIMARY_ID = `${P}-primary`;
 const INVOICE_ID = `${P}-invoice`;
 const NOTE_ID = `${P}-note`;
+// A second invoice the note was allocated to, with no payment of its own; its link sorts after the payment's.
+const OTHER_INVOICE_ID = `${P}-zinvoice`;
 const MODIFICATION_ID = `${P}-modification`;
 const PAYMENT_CENTS = 50_000;
 const NOTE_CENTS = 4_000;
@@ -54,7 +56,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: { in: [BOOKING_ID, PAYMENT_ID] } }, { targetId: BOOKING_ID }, { metadata: { path: ["creditNoteId"], equals: NOTE_ID } }] } });
-      await prisma.xeroObjectLink.deleteMany({ where: { OR: [{ localId: { in: [PAYMENT_ID, BOOKING_ID, MODIFICATION_ID] } }, { xeroObjectId: { in: [INVOICE_ID, NOTE_ID] } }] } });
+      await prisma.xeroObjectLink.deleteMany({ where: { OR: [{ localId: { in: [PAYMENT_ID, BOOKING_ID, MODIFICATION_ID] } }, { xeroObjectId: { in: [INVOICE_ID, OTHER_INVOICE_ID, NOTE_ID] } }] } });
       await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID, MODIFICATION_ID] } } });
       await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
       await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -100,7 +102,7 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
      * (a bank refund, or an invoice correction) in the rows its builder leaves,
      * optionally already allocated to the invoice.
      */
-    async function seed(input: { storedCents: number; detailCents: number; correction?: boolean; receiptReason?: string; allocated?: boolean }) {
+    async function seed(input: { storedCents: number; detailCents: number; correction?: boolean; receiptReason?: string; allocated?: boolean; alsoOther?: boolean }) {
       await prisma.booking.create({
         data: { id: BOOKING_ID, memberId: MEMBER_ID, lodgeId: LODGE_ID, checkIn: CHECK_IN, checkOut: CHECK_OUT, status: "CONFIRMED", totalPriceCents: PAYMENT_CENTS, finalPriceCents: PAYMENT_CENTS },
       });
@@ -139,6 +141,14 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
           },
         });
       }
+      if (input.alsoOther) {
+        await prisma.xeroObjectLink.create({
+          data: {
+            localModel: "BookingModification", localId: MODIFICATION_ID, xeroObjectType: "ALLOCATION", xeroObjectId: `${NOTE_ID}:${OTHER_INVOICE_ID}:${NOTE_CENTS}`,
+            role: "MODIFICATION_CREDIT_NOTE_ALLOCATION", active: true, metadata: { creditNoteId: NOTE_ID, invoiceId: OTHER_INVOICE_ID, amountCents: NOTE_CENTS },
+          },
+        });
+      }
     }
 
     /** The REAL inbound sync of the AUTHORISED note, allocated to the invoice or (`listed: false`) to nothing. */
@@ -167,7 +177,10 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
     const refunded = async () =>
       (await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { refundedAmountCents: true } })).refundedAmountCents;
     const allocationActive = async () =>
-      (await prisma.xeroObjectLink.findFirst({ where: { xeroObjectType: "ALLOCATION", localId: MODIFICATION_ID, role: "MODIFICATION_CREDIT_NOTE_ALLOCATION" }, select: { active: true } }))?.active ?? null;
+      (await prisma.xeroObjectLink.findFirst({
+        where: { xeroObjectType: "ALLOCATION", localId: MODIFICATION_ID, role: "MODIFICATION_CREDIT_NOTE_ALLOCATION", xeroObjectId: { contains: `:${INVOICE_ID}:` } },
+        select: { active: true },
+      }))?.active ?? null;
 
     it("a listed write that leaves the total at the floor: no alert from the write, one from the recount", async () => {
       // $100 handed back and recorded; the $40 note's links say less: held at $100, unmoved.
@@ -211,6 +224,42 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
       await sync(false);
       expect(await refunded()).toBe(10_000);
       expect(floorAlerts).toHaveLength(1);
+    });
+
+    it("MUTATION (send only on success): the recount throws after a removal held at the floor: one alert naming the note, the error still thrown, and the retry sends no second", async () => {
+      await seed({ storedCents: 10_000, detailCents: 10_000, allocated: true });
+      const repairs = await import("@/lib/xero-inbound/credit-note-repairs");
+      const failure = new Error("race-4449a recount failed");
+      const spy = vi.spyOn(repairs, "repairRefundedPaymentBusinessState").mockRejectedValueOnce(failure);
+      await expect(sync(false)).rejects.toBe(failure);
+      spy.mockRestore();
+      // The removal committed; nothing else will alert this payment.
+      expect(await allocationActive()).toBe(false);
+      expect(floorAlerts).toHaveLength(1);
+      expect(floorAlerts[0]!.operation).toBe(`inbound-credit-note-repair:${NOTE_ID}`);
+
+      // The retried sync cannot see the removal again (its link is off) and does not recount the payment.
+      await sync(false);
+      expect(floorAlerts).toHaveLength(1);
+    });
+
+    it("MUTATION (send only on success): a later removal in the loop throws after an earlier one committed: the earlier removal's alert goes out once", async () => {
+      await seed({ storedCents: 10_000, detailCents: 10_000, allocated: true, alsoOther: true });
+      const xeroSync = await import("@/lib/xero-sync");
+      const original = xeroSync.upsertXeroObjectLink;
+      const failure = new Error("race-4449a second removal failed");
+      const spy = vi.spyOn(xeroSync, "upsertXeroObjectLink").mockImplementation((async (...args: Parameters<typeof original>) => {
+        if (args[0].xeroObjectId.includes(OTHER_INVOICE_ID) && args[0].active === false) throw failure;
+        return original(...args);
+      }) as never);
+      try {
+        await expect(sync(false)).rejects.toBe(failure);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(await allocationActive()).toBe(false);
+      expect(floorAlerts).toHaveLength(1);
+      expect(floorAlerts[0]!.operation).toBe(`inbound-credit-note-repair:${NOTE_ID}`);
     });
 
     it("a removal not held at the floor: no alert", async () => {

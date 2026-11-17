@@ -48,7 +48,7 @@ import {
   retireUnlistedCreditNoteAllocations,
   writeCurrentCreditNoteAllocation,
   writeCurrentCreditNoteAllocations,
-  sendFloorAlertsNotRecounted,
+  withHeldFloorAlerts,
 } from "@/lib/xero-inbound/retire-unlisted-credit-note-allocations";
 import { xeroCreditNoteSnapshotMetadata } from "@/lib/xero-refund-note-status";
 import { getNextRefundedPaymentStatus } from "@/lib/xero-inbound/amounts";
@@ -343,17 +343,43 @@ describe("the allocation write decides its bank-transfer payment's refunded tota
     mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
     mocks.floor.mockResolvedValue({ cents: 5_000, alert });
     mocks.paymentFindMany.mockResolvedValue([{ id: "pay-1", xeroInvoiceId: "inv-1", source: "INTERNET_BANKING" }]);
-    const held: unknown[] = [];
-    await writeCurrentCreditNoteAllocations([link], { isModificationNote: true, heldFloorAlerts: held as never });
-    expect(held).toEqual([alert]);
-    expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
     // The recount decided pay-1 and alerted it: nothing more.
-    await sendFloorAlertsNotRecounted(held as never, new Set(["pay-1"]));
+    await withHeldFloorAlerts(async (held) => {
+      await writeCurrentCreditNoteAllocations([link], { isModificationNote: true, heldFloorAlerts: held.alerts });
+      expect(held.alerts).toEqual([alert]);
+      held.recountedPaymentIds = new Set(["pay-1"]);
+    });
     expect(mocks.sendFloorAlert).not.toHaveBeenCalled();
     // A payment the recount did not decide: the write's alert, once.
-    await sendFloorAlertsNotRecounted(held as never, new Set(["pay-other"]));
+    await withHeldFloorAlerts(async (held) => {
+      await writeCurrentCreditNoteAllocations([link], { isModificationNote: true, heldFloorAlerts: held.alerts });
+      held.recountedPaymentIds = new Set(["pay-other"]);
+    });
     expect(mocks.sendFloorAlert).toHaveBeenCalledTimes(1);
     expect(mocks.sendFloorAlert).toHaveBeenCalledWith(alert, expect.anything());
+  });
+
+  it("MUTATION (#4449 verify 3): a sync that throws still sends its held alerts, and the send never masks the error", async () => {
+    const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: NOTE, creditNoteNumber: null, xeroDerivedCents: 0, floorCents: 5_000 };
+    mocks.decideLinked.mockResolvedValue(new Map([["pay-1", 0]]));
+    mocks.floor.mockResolvedValue({ cents: 5_000, alert });
+    mocks.paymentFindMany.mockResolvedValue([{ id: "pay-1", xeroInvoiceId: "inv-1", source: "INTERNET_BANKING" }]);
+    const failure = new Error("the recount failed");
+    await expect(
+      withHeldFloorAlerts(async (held) => {
+        await writeCurrentCreditNoteAllocations([link], { isModificationNote: true, heldFloorAlerts: held.alerts });
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(mocks.sendFloorAlert).toHaveBeenCalledTimes(1);
+    // A send that itself fails is logged, and the sync's own error still propagates.
+    mocks.sendFloorAlert.mockRejectedValueOnce(new Error("mail down"));
+    await expect(
+      withHeldFloorAlerts(async (held) => {
+        await writeCurrentCreditNoteAllocations([link], { isModificationNote: true, heldFloorAlerts: held.alerts });
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
   });
 
   it("with no holder, a write held at the floor sends its alert itself, once", async () => {

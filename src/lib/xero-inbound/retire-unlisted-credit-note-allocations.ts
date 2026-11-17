@@ -18,6 +18,7 @@
  */
 import { PaymentSource, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { lockPaymentForRefundedTotal, PAYMENT_ROW_WAIT_TRANSACTION_OPTIONS } from "@/lib/payment-transactions";
 import { type XeroObjectLinkInput, upsertXeroObjectLink } from "@/lib/xero-sync";
@@ -165,7 +166,7 @@ async function writeLockedAllocation(tx: Prisma.TransactionClient, link: XeroObj
  *
  * The floor's alert is returned whenever the total is held at the floor,
  * moved or not; which writer sends it is the sync's choice
- * (`sendFloorAlertsNotRecounted`), so each payment is alerted once.
+ * (`withHeldFloorAlerts`), so each payment is alerted once per sync attempt.
  */
 async function decideBankTransferRefundedTotal(
   tx: Prisma.TransactionClient,
@@ -257,28 +258,47 @@ async function sendFloorAlerts(alerts: readonly BankTransferFloorAlert[]): Promi
 }
 
 /**
- * #4449 (`INV-ADDPAY-021`, verify low 2): one floor alert per payment per
- * inbound credit-note sync. The allocation writes and removals hold their
- * alerts (`heldFloorAlerts`); after the sync's own recount
- * (`repairRefundedPaymentBusinessState`), which floors and alerts every
- * payment it decides, the held alerts go out only for the payments it did not
- * decide. That covers a removed invoice's payment, which the recount never
- * reads, and an invoice correction's payment whose receipt counts no
- * correction (`resolveModificationRefundAmountsByPaymentId` leaves it out).
- * Held alerts are lost with a sync that fails before this; its retry's write
- * finds the payment still held at the floor and holds the alert again.
+ * #4449 (`INV-ADDPAY-021`, verify low 2): the floor alerts an inbound
+ * credit-note sync's allocation writes and removals hold, and the payments
+ * its recount (`repairRefundedPaymentBusinessState`) decides, which the sync
+ * records just before that recount runs.
  */
-export async function sendFloorAlertsNotRecounted(
-  alerts: readonly BankTransferFloorAlert[],
-  recountedPaymentIds: ReadonlySet<string>,
-): Promise<void> {
-  await sendFloorAlerts(alerts.filter((alert) => !recountedPaymentIds.has(alert.paymentId)));
+export type HeldFloorAlerts = { alerts: BankTransferFloorAlert[]; recountedPaymentIds: ReadonlySet<string> };
+
+/**
+ * #4449: one floor alert per payment per sync attempt. `run` is the sync from
+ * its allocation writes to its recount: the writes and removals push each
+ * alert into `held` as soon as their own transaction returns, and the recount
+ * floors and alerts every payment it decides. Whether `run` returns or throws,
+ * the held alerts then go out for the payments the recount did not decide (all
+ * of them when it failed before recording that set), so a sync that fails
+ * after its writes still alerts those payments - a removal's among them, which
+ * a retry cannot see again because its link is off - and the recount's own
+ * alerts come with the retry. A retried attempt alerts a listed write's
+ * payment again, as the recount's own alerts on a retry do. The send never
+ * masks `run`'s error.
+ */
+export async function withHeldFloorAlerts<T>(run: (held: HeldFloorAlerts) => Promise<T>): Promise<T> {
+  const held: HeldFloorAlerts = { alerts: [], recountedPaymentIds: new Set() };
+  try {
+    return await run(held);
+  } finally {
+    await sendFloorAlertsNotRecounted(held.alerts, held.recountedPaymentIds);
+  }
 }
 
-/** Without `heldFloorAlerts` the alerts are sent after the writes; with it, they are held for the caller. */
-async function sendOrHold(alerts: BankTransferFloorAlert[], held: BankTransferFloorAlert[] | undefined): Promise<void> {
-  if (held) held.push(...alerts);
-  else await sendFloorAlerts(alerts);
+/** The held alerts for payments the recount did not decide; a failure to send is logged, never thrown. */
+async function sendFloorAlertsNotRecounted(alerts: readonly BankTransferFloorAlert[], recountedPaymentIds: ReadonlySet<string>): Promise<void> {
+  try {
+    await sendFloorAlerts(alerts.filter((alert) => !recountedPaymentIds.has(alert.paymentId)));
+  } catch (err) {
+    logger.error({ err, paymentIds: alerts.map((alert) => alert.paymentId) }, "Failed to send held bank-transfer floor alerts (#4449)");
+  }
+}
+
+/** With a holder each alert is pushed into it at once; without one they are collected and sent after the writes. */
+function holdOrCollect(alert: BankTransferFloorAlert | null, held: BankTransferFloorAlert[] | undefined, collected: BankTransferFloorAlert[]): void {
+  if (alert) (held ?? collected).push(alert);
 }
 
 /**
@@ -286,7 +306,7 @@ async function sendOrHold(alerts: BankTransferFloorAlert[], held: BankTransferFl
  * `writeCurrentCreditNoteAllocation`. #4449 (`INV-PAY-126`): a modification
  * note's write names the payment `bankTransferPaymentIdsByInvoiceId` finds,
  * whose refunded total that write decides; its floor alert is held for the
- * sync (`sendFloorAlertsNotRecounted`) or, with no holder, sent after the loop.
+ * sync (`withHeldFloorAlerts`) as soon as it returns or, with no holder, sent after the loop.
  */
 export async function writeCurrentCreditNoteAllocations(
   links: readonly XeroObjectLinkInput[],
@@ -296,9 +316,9 @@ export async function writeCurrentCreditNoteAllocations(
   const floorAlerts: BankTransferFloorAlert[] = [];
   for (const link of links) {
     const { floorAlert } = await writeCurrentCreditNoteAllocation(link, decidedPaymentOf(link, byInvoiceId));
-    if (floorAlert) floorAlerts.push(floorAlert);
+    holdOrCollect(floorAlert, input.heldFloorAlerts, floorAlerts);
   }
-  await sendOrHold(floorAlerts, input.heldFloorAlerts);
+  await sendFloorAlerts(floorAlerts);
 }
 
 /**
@@ -309,7 +329,7 @@ export async function retireUnlistedCreditNoteAllocations(input: {
   creditNoteId: string;
   /** #4449: a modification note's removal decides its bank-transfer payment's total, as its write does. */
   isModificationNote: boolean;
-  /** #4449: where its floor alerts are held for the sync (`sendFloorAlertsNotRecounted`); without it they are sent. */
+  /** #4449: where its floor alerts are held for the sync (`withHeldFloorAlerts`) as each returns; without it they are sent. */
   heldFloorAlerts?: BankTransferFloorAlert[];
   status: unknown;
   readingMetadata: unknown;
@@ -327,6 +347,8 @@ export async function retireUnlistedCreditNoteAllocations(input: {
       role: { in: [...RETIRED_ALLOCATION_ROLES] },
       metadata: { path: ["creditNoteId"], equals: input.creditNoteId },
     },
+    // One order, so a removal that fails part-way has turned off a known prefix.
+    orderBy: [{ xeroObjectId: "asc" }, { localModel: "asc" }, { localId: "asc" }, { role: "asc" }],
     select: {
       localModel: true,
       localId: true,
@@ -360,8 +382,8 @@ export async function retireUnlistedCreditNoteAllocations(input: {
       decidedPaymentOf(link, byInvoiceId),
     );
     if (turnedOff) retired += 1;
-    if (floorAlert) floorAlerts.push(floorAlert);
+    holdOrCollect(floorAlert, input.heldFloorAlerts, floorAlerts);
   }
-  await sendOrHold(floorAlerts, input.heldFloorAlerts);
+  await sendFloorAlerts(floorAlerts);
   return retired;
 }
