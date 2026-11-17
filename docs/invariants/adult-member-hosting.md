@@ -53,7 +53,7 @@ on" with "we could not tell which lodge this is".
 ### INV-HOST-004
 
 **Who may host.** An active, uncancelled, unarchived **ADULT** `Member` who is
-linked to a guest row on that exact night. Three consequences, each deliberate:
+linked to a guest row on that exact night. Each consequence is deliberate:
 
 - **Booking ownership never proves attendance.** The owner counts only through a
   participant row linked to them, and only on the nights that row covers. The
@@ -61,25 +61,22 @@ linked to a guest row on that exact night. Three consequences, each deliberate:
   accident.
 - **The member LINK is authoritative, not the guest row's `isMember` flag**,
   which is a pricing-time snapshot. A row whose member cannot be resolved is
-  treated as a non-member guest — the safe direction, since that means it needs
-  hosting rather than provides it.
+  treated as a non-member guest — the safe direction: it needs hosting rather
+  than provides it.
 - **Child, youth, infant and NOT_APPLICABLE (organisation) members cannot
   host.** They are still members in good standing, so their OWN nights never
   need covering: the minors rule (`requiresAdminReview`) owns children, and this
   rule is about non-member guest-nights only.
-- **A membership that has lapsed is not a membership.** An inactive, cancelled
-  or archived member cannot host AND their own nights need hosting: the safe
-  direction above is applied to a member who is resolvable but no longer in good
-  standing, because for this rule they are functionally a non-member (D-R3). The
-  standing test is the single predicate both sides are built from, so a
-  participant cannot fall between them and escape the rule entirely — which is
-  what happened before the #2364 review. It is keyed off standing only, never
-  `ageTier`, so an active organisation member is unchanged.
+- **A lapsed membership is not a membership.** An inactive, cancelled or
+  archived member cannot host AND their own nights need hosting: for this rule
+  they are functionally a non-member (D-R3). The standing test is the single
+  predicate both sides are built from, so a participant cannot fall between them
+  and escape the rule. It is keyed off standing only, never `ageTier`, so an
+  active organisation member is unchanged.
 - **An unaccepted member-guest invite cannot host.** `consentStatus: PENDING` is
   not operationally present (D-12) — the kiosk, the arrival roster, bed
-  allocation and the arrival emails all leave that row out — so counting it as a
-  host would let a member suppress the review with an adult who never agreed to
-  come, and the lodge would then receive the non-member guests unaccompanied.
+  allocation and the arrival emails all leave that row out — so counting it
+  would let a member suppress the review with an adult who never agreed to come.
   The review clears by itself the moment the invite is accepted.
 
 ### INV-HOST-005
@@ -329,37 +326,33 @@ reports where each came from.
 **Same-owner coverage (#2576).** `SAME_BOOKING_OWNER` reuses every definition
 `SAME_BOOKING` already has — qualifying adult member, exact guest-night, membership
 standing, age, member-guest consent, exceptions, reason and evidence structures —
-and adds only WHERE the host may be. Its rules:
+and adds only WHERE the host may be:
 
 - **The relationship is the exact `Booking.memberId`.** An administrator entering
   bookings on behalf of different members never links them.
-- **Only genuinely confirmed active attendance counts.** Drafts, holds,
+- **Only confirmed active attendance counts.** Drafts, holds,
   payment-pending, waitlist entries and offers, bookings awaiting review or an
   exception, bumped, cancelled, archived and expired bookings supply nothing, read
-  through the canonical lifecycle helpers rather than a second status list.
+  through the canonical lifecycle helpers, never a second status list.
 - **Exact lodge and exact NZ lodge-night.** Lodge A on Friday covers neither Lodge
-  B on Friday nor Lodge A on Saturday, so a stay may be partly covered.
-- **Coverage is existential, not an assignment.** Evidence records the source
-  booking observed at evaluation time; it never becomes a stored authorisation, so
-  another eligible source keeps the dependent booking compliant with no incident
-  and no loss-of-coverage message.
+  B on Friday nor Lodge A on Saturday; a stay may be partly covered.
+- **Coverage is existential, not an assignment.** Nothing stores a dependency
+  on a particular person or booking: both `where` builders are re-derived from
+  live rows at every evaluation, and evidence naming the source observed never
+  becomes an authorisation, so another eligible source keeps the dependent
+  compliant with no incident or loss-of-coverage message.
 - **Ownership is never attendance.** A booking owned by an adult member supplies
-  nothing unless a qualifying adult member is actually recorded as attending the
-  relevant lodge-night. Any qualifying adult member participant may cover, not only
-  the account holder.
+  nothing unless a qualifying adult member is recorded as attending that
+  lodge-night; any qualifying adult participant may cover, not only the account
+  holder.
 - **No capacity is consumed twice** (§15). The covering adult arrives as a
   `hostOnly` participant: their real attendance on their own booking is evidence
   for the dependent booking, and they are never duplicated as a guest on it. The
   source booking's own guests remain that booking's question.
-- **Re-evaluation stays bounded** to the same `memberId`, lodge and nights. The
+- **Re-evaluation stays bounded** to the same `memberId`, lodge and nights; the
   lodge-wide sweep #2575 rejected is not built. A queue item names one owner, one
-  lodge and an explicit night list, so no shape of item can express a wider sweep,
-  and a malformed night list yields no work rather than an unbounded read.
-- **Coverage is existential, not an assignment.** Stated again because it is the
-  invariant most easily broken by an optimisation: nothing stores a permanent
-  dependency on a particular person or booking, both `where` builders are re-derived
-  from live rows at every evaluation, and evidence naming the source observed once
-  never becomes an authorisation.
+  lodge and an explicit night list, so no item can express a wider sweep, and a
+  malformed night list yields no work rather than an unbounded read.
 
 ### INV-HOST-024
 
@@ -418,109 +411,98 @@ compliant indefinitely.
 ### INV-HOST-028
 
 - **An authorised officer is ASKED TO CONFIRM, then ALLOWED and ESCALATED** (§7).
-  §7 requires the override to carry the permission, an explicit confirmation, a
-  mandatory reason, the affected bookings and nights, and an audit event — and an
-  override that is never asked for cannot carry a confirmation or a reason. So an
-  officer change that would strand a dependent raises
+  An officer change that would strand a dependent raises
   `SameOwnerCoverageOverrideRequiredError` (409, `requiresOverrideReason: true`)
-  naming what would be stranded. That is a block on the UNCONFIRMED change, not on
-  the officer: they re-submit with `hostingCoverageOverride`
-  (`{ acknowledged: true, reason, strandedStateKey }`, minimum 10 characters) and
-  it proceeds as `OFFICER_OVERRIDE` recorded against their member id with their
-  reason on the incident. `strandedStateKey` is the versioned digest of the changed
-  source booking plus the sorted dependent-booking/exact-night set the officer was
-  shown. The retry re-derives it from authoritative rows under the per-owner lock; a
-  changed non-empty set rolls the whole mutation back and returns a fresh prompt,
-  so confirmation of one set is never authority over a new booking or night. If
-  coverage improved to no stranded bookings while the prompt was open, the change
-  proceeds without manufacturing an override audit or an empty confirmation prompt.
-  Unknown nested override fields are rejected. Where nothing would be stranded they
-  are asked nothing. The affected
-  booking keeps its status, its beds and its payments and gets an urgent compliance
-  incident; nothing in the coverage machinery writes `Booking.status`, so automatic
-  cancellation is forbidden in as many words. Nothing automated can ever be gated by
-  this: only surfaces going through `hostingCoverageActorOptions` with a live officer
-  session can raise it, and every cron, webhook and lifecycle path passes `ESCALATE`.
-  Approving a pending modification-policy exception uses this same two-step path:
-  the first attempt stays pending and returns the exact affected bookings and
-  nights, while the retry carries its own private `hostingCoverageOverride` reason.
-  The member-facing approval explanation is never reused as that authority. The
-  booking detail's officer edit and cancellation controls consume the same strict
-  client-only prompt contract. They bind the prompt to the complete rejected
-  mutation — including shift pricing mode, refund method and the explicit email
-  choice — and retire it permanently if any proposal field changes. A retry reuses
-  that exact proposal without asking the email question again; a refreshed 409
-  replaces the key/list and clears only the private reason and confirmation. The
-  affected booking details render only for `viewerAuthorizationRole === "ADMIN"`;
-  member self-removal and ordinary draft confirmation never gain this override UI.
+  naming what would be stranded: a block on the UNCONFIRMED change, not the
+  officer, since §7's override needs the permission, an explicit confirmation,
+  a mandatory reason, the affected bookings and nights, and an audit event.
+  Re-submitted with `hostingCoverageOverride`
+  (`{ acknowledged: true, reason, strandedStateKey }`, reason at least 10
+  characters, unknown nested fields rejected), it proceeds as
+  `OFFICER_OVERRIDE`, recorded against their member id with their reason on the
+  incident. `strandedStateKey` digests (versioned) the changed source booking
+  and the sorted dependent-booking/exact-night set shown. The retry re-derives
+  it from authoritative rows under the per-owner lock: a changed non-empty set
+  rolls the mutation back with a fresh prompt; an emptied set proceeds with no
+  override audit. With nothing stranded, nothing is asked.
+
+  The affected booking keeps its status, beds and payments, gaining an urgent
+  compliance incident; nothing in the coverage machinery writes `Booking.status`
+  (no automatic cancellation). Only surfaces using `hostingCoverageActorOptions`
+  with a live officer session can raise it; every cron, webhook and lifecycle
+  path passes `ESCALATE`.
+
+  Approving a pending modification-policy exception takes the same two steps:
+  the first attempt stays pending, returning the affected bookings and nights;
+  the retry carries its own private override reason, never the member-facing
+  approval explanation. The booking detail's officer edit and cancel controls
+  use the same strict client-only prompt, bound to the whole rejected
+  mutation (including shift pricing mode, refund method and email choice) and
+  retired if any proposal field changes. A retry reuses that proposal, not re-asking
+  about email; a refreshed 409 replaces the key/list, clearing
+  only the private reason and confirmation. Affected booking details render only
+  when `viewerAuthorizationRole === "ADMIN"`; member self-removal and ordinary
+  draft confirmation never gain this override UI.
 
 ### INV-HOST-029
 
-- **A change to one PERSON's standing records the check it owes** (§8). "Membership
-  becoming inactive, lapsed, cancelled or archived" heads §8's list, and only the
-  evaluator half of it is automatic (an archived or cancelled member stops
-  qualifying). `enqueueHostingCoverageReevaluationForMember` is the other half, called
-  in the same transaction as the archive, account-deletion anonymisation (before
+- **A change to one PERSON's standing records the check it owes** (§8). The
+  evaluator half is automatic (an archived or cancelled member stops qualifying).
+  `enqueueHostingCoverageReevaluationForMember` is the other half, called in the
+  same transaction as the archive, account-deletion anonymisation (before
   deactivation and guest unlink remove the attendance evidence), membership
   cancellation, single or bulk active/age-tier changes, consent approval,
-  subscription settlement/reversal and member merge repoints. It fans out over the
-  bookings that person ATTENDS — not owns (§2)
-  — on live current-or-future stays, one bounded item per booking naming THAT
-  booking's owner, lodge and nights, so the drain can never widen it into the
-  lodge-wide sweep #2575 rejected. Gated on `ENFORCED` and deliberately NOT on the
-  scope: a lapse removes cover under `SAME_BOOKING` just as surely, and the drain
-  reconciles through the shared evaluator, which honours whichever scopes the lodge
-  has on. Member-guest consent loss reaches the same place through the shared removal
-  path, which reconciles inside the caller's transaction. Each high-level enqueue
-  invocation first proves its exact source owners and non-null actor under one sorted,
-  de-duplicated `Member FOR KEY SHARE NOWAIT` statement. A missing member, contended
-  row, changed source owner/lodge, or final attribution outside that private proof
-  rejects the complete outer mutation with the fixed safe 409; a later call in one
-  bulk transaction also fails fast and rolls back the earlier work rather than
-  waiting while it holds a different participant set (#2597).
-  Before even its first attendance read or empty return, the shared standing
-  fan-out locks its subject member `FOR UPDATE NOWAIT`. That exact strength fences
-  the lodge-only booking-request hold's linked-member `KEY SHARE`; `FOR NO KEY
-  UPDATE` would not conflict and is forbidden. The hold takes its lodge key,
-  re-reads the transaction-current request links, locks their exact sorted member
-  ids, and re-reads every row as existing, active and unarchived before its
-  versioned request claim or any guest creation. Hold-first makes the standing
-  mutation retry so its next attempt includes the committed guest. Standing-first
-  makes the hold wait and then refuse the inactive/archive row before creation in
-  every consequence mode, including `DISABLED` and review-required. Account
-  deletion inherits the same central fence after its existing global → affected
-  lodge → member-lifecycle prefix; it carries no route-only duplicate.
-  Under its target `Member FOR UPDATE`, deletion also re-checks the complete Xero
-  contact-create reservation/recovery blocker plus every RUNNING member CONTACT
-  UPDATE before anonymising. A member UPDATE first commits a short `FOR KEY
-  SHARE` reservation, calls Xero outside transactions, then completes its
-  operation and canonical link together under that Member `FOR UPDATE`. Retries
-  rebuild from the current Member only; a missing/deleted member never falls
-  back to stored pre-deletion PII. The symmetric create reservation, manual Link
-  and provider-returned local-link paths re-read
-  the canonical deleted-member marker under their own Member lock before any
-  provider call or attribution. A deleted account can therefore neither send its
-  pre-deletion profile to Xero nor regain a contact link. Manual Link commits the
-  Member pointer and FK-less canonical CONTACT ledger row in the same transaction,
-  so member merge cannot leave a ledger row naming a deleted losing identity.
-  Account deletion deactivates that CONTACT ledger in the same anonymisation
-  transaction that clears the Member pointer.
-  A canonical link commit also CLOSES the provider-created create it just
-  completed, in that same transaction: a `FAILED` member CONTACT create that
-  proves Xero made contact X, where X is now the member's link, becomes
-  `SUCCEEDED` through a status-guarded claim. Nothing else is touched — a
-  `RUNNING` reservation is live provider work, and a create that made a
-  *different* contact stays open because Xero then holds a duplicate for this
-  member that an operator must adjudicate. Without this the blocker predicates,
-  which never consult `Member.xeroContactId`, kept refusing member merge and
-  account deletion for a member who had already been recovered. Merge, deletion
-  and the member detail display read that blocker through one predicate, so a
-  refused member can never render as reconciled, and each refusal names the
-  blocking operation and the Admin → Xero → Operations screen that clears it.
-  Only an explicit `repairExistingLink` may reserve a CREATE for an
-  already-linked member, and repair re-resolves by exact non-archived name
-  before creating, so a live same-named contact is re-linked rather than
-  duplicated.
+  subscription settlement/reversal and member merge repoints. It fans out over
+  the live current-or-future bookings that person ATTENDS — not owns (§2) — one
+  bounded item per booking naming that booking's owner, lodge and nights, never
+  the lodge-wide sweep #2575 rejected. It is gated on `ENFORCED`, not on the
+  scope: a lapse removes `SAME_BOOKING` cover too, and the drain honours the
+  lodge's enabled scopes. Member-guest consent loss reaches the same place
+  through the shared removal path, inside the caller's transaction.
+
+  **The participant fence (#2597).** Each high-level enqueue first proves its
+  exact source owners and non-null actor under one sorted, de-duplicated
+  `Member FOR KEY SHARE NOWAIT` statement. A missing member, contended row,
+  changed source owner/lodge, or final attribution outside that proof rejects the
+  whole outer mutation with the fixed safe 409; a later call in one bulk
+  transaction also fails fast and rolls back the earlier work. Before its first
+  attendance read or empty return, the standing fan-out locks its subject member
+  `FOR UPDATE NOWAIT`, the strength that fences the lodge-only booking-request
+  hold's linked-member `KEY SHARE`; `FOR NO KEY UPDATE` is forbidden. The hold
+  takes its lodge key, re-reads the transaction-current request links, locks
+  their exact sorted member ids, and re-reads each as existing, active and
+  unarchived before its versioned request claim or any guest creation.
+  Hold-first makes the standing mutation retry and include the committed guest;
+  standing-first makes the hold wait, then refuse the inactive or archived row
+  before creation in every consequence mode, including `DISABLED` and
+  review-required. Account deletion inherits this fence after its global →
+  affected lodge → member-lifecycle prefix, with no route-only duplicate.
+
+  **Deletion and Xero contacts (#2623).** Under its target `Member FOR UPDATE`,
+  deletion re-checks the complete Xero contact-create reservation/recovery
+  blocker and every RUNNING member CONTACT UPDATE before anonymising. A member
+  UPDATE commits a short `FOR KEY SHARE` reservation, calls Xero outside
+  transactions, then completes its operation and canonical link together under
+  that Member `FOR UPDATE`; retries rebuild from the current Member only, never
+  stored pre-deletion PII. The create reservation, manual Link and
+  provider-returned local-link paths re-read the canonical deleted-member marker
+  under their own Member lock before any provider call or attribution, so a
+  deleted account neither sends its pre-deletion profile to Xero nor regains a
+  contact link. Manual Link commits the Member pointer and FK-less canonical
+  CONTACT ledger row in one transaction; deletion deactivates that ledger in the
+  anonymisation transaction that clears the pointer.
+
+  A canonical link commit also moves, in the same transaction and through a
+  status-guarded claim, a `FAILED` member CONTACT create that proves Xero made
+  contact X, where X is now the member's link, to `SUCCEEDED`. Nothing else is
+  touched: a `RUNNING` reservation is live provider work, and a create that made
+  a *different* contact stays open for an operator to adjudicate the duplicate.
+  Merge, deletion and the member detail display read the blocker through one
+  predicate, so a refused member never renders as reconciled, and each refusal
+  names the blocking operation and the Admin → Xero → Operations screen that
+  clears it. Only an explicit `repairExistingLink` may reserve a CREATE for an
+  already-linked member, and it re-resolves by exact non-archived name first, so
+  a live same-named contact is re-linked rather than duplicated.
 
 ### INV-HOST-030
 
@@ -587,39 +569,36 @@ compliant indefinitely.
 
 ### INV-HOST-033
 
-- **One active incident per booking; owner notification is fenced, at-least-once delivery** (§16). The partial
-  unique index `HostingCoverageIncident_active_booking_unique` makes the first an
-  invariant against a concurrent second opener rather than a hope; the loser folds
-  into the winner instead of surfacing a constraint violation. The stored `stateKey`
-  is a fixed-width digest of the material-identity key, so a large party cannot
-  outrun the column and make two different problems compare equal. The owner's
-  notification takes a short delivery lease with an opaque claimant token before
-  the send, but `notifiedStateKey` is stamped only after transport reports success.
-  Immediately before provider input is read, a guarded update renews the lease only
-  while the incident is unresolved, unnotified, and that exact state/token is still
-  current. An expired-but-unreclaimed claimant can therefore continue, while a
-  successor token and the old worker race on the row and only one wins. A final exact
-  read then freezes recipient data and the incident's own evidence at the renewed
-  timestamp; a stale or reclaimed worker calls no provider and never substitutes a
-  later live booking review into an older claim. Completion and release match the
-  same token, so a stale sender cannot complete or clear a successor's lease. Missing email,
-  placeholder/bounce suppression and a deliberate per-booking `noEmails` switch are
-  terminal while the incident stays visible to officers. An unreadable `noEmails`
-  flag is transient: the notification lease is released and the exact queue claim
-  fails, because `hosting-coverage-lost` deliberately has no independent EmailLog
-  retry authority. The provider stays outside transactions, leaving only the narrow
-  race after the final token read rather than holding a transaction across delivery.
-  At most one exact claimant is active for each renewed lease. There is still one
-  unavoidable post-provider ambiguity: if the provider accepts the message and the
-  process dies before `notifiedStateKey` is stamped, the next lease may send the same
-  transition again. The provider has no idempotency-key contract; stamping before
-  transport would trade that rare duplicate for a permanently lost notice. This is
-  therefore at-least-once delivery with one durable success stamp, not an
-  exactly-once email guarantee. A crashed sender's lease expires after 15 minutes.
-  The re-evaluation queue uses the
-  same 15-minute token fencing for completion and failure, claims serial work one row
-  at a time, and excludes ids already attempted by that drain: a slow later item is
-  not pre-leased and a released failure cannot burn several attempts in one pass.
+- **One active incident per booking; owner notification is fenced, at-least-once
+  delivery** (§16). The partial unique index
+  `HostingCoverageIncident_active_booking_unique` enforces the first against a
+  concurrent second opener, which folds into the winner rather than surfacing a
+  constraint violation. The stored `stateKey` is a fixed-width digest of the
+  material-identity key, so a large party cannot outrun the column and make two
+  problems compare equal.
+
+  The notification takes a short delivery lease with an opaque claimant token
+  before the send; `notifiedStateKey` is stamped only after transport reports
+  success. Immediately before provider input is read, a guarded update renews
+  the lease only while the incident is unresolved, unnotified and that exact
+  state/token is current, so an expired-but-unreclaimed claimant may continue
+  and races any successor on the row, one winning. A final exact read freezes
+  recipient data and the incident's own evidence at the renewed timestamp; a
+  stale or reclaimed worker calls no provider and never substitutes a later live
+  booking review into an older claim. Completion and release match the same
+  token. Missing email, placeholder/bounce suppression and a per-booking
+  `noEmails` switch are terminal while the incident stays visible to officers;
+  an unreadable `noEmails` flag is transient — the lease is released and the
+  exact queue claim fails, because `hosting-coverage-lost` has no independent
+  EmailLog retry authority. The provider stays outside transactions. A provider
+  acceptance followed by a crash before the stamp may be resent: this is
+  at-least-once delivery with one durable success stamp, never exactly-once. A
+  crashed sender's lease expires after 15 minutes.
+
+  The re-evaluation queue uses the same 15-minute token fencing for completion
+  and failure, claims serial work one row at a time, and excludes ids that drain
+  already attempted, so a slow later item is not pre-leased and a released
+  failure cannot burn several attempts in one pass. Background: #2576.
 
 ### INV-HOST-034
 
@@ -716,133 +695,69 @@ compliant indefinitely.
 ### INV-HOST-041
 
 - **A cancellation NOBODY ASKED FOR re-checks supervision too, and can never be
-  refused for it** (#3209, §8). The confirming half above has a mirror: a booking
-  stops supplying cover the moment it leaves CONFIRMED or PAID, so a writer that
-  flips one to a terminal status owes the same re-read a confirming writer owes.
-  Four did not do it — the group organiser cancel, the Internet Banking hold
-  expiry, the Stripe capacity-failed void and the cross-lodge price-drift unwind —
-  and the first two freed the beds correctly, so the cancellation read as fully
-  reconciled while the qualifying adult vanished from another booking of the same
-  owner with no incident, no owner email and nothing in the officer queue. All four
-  now reconcile inside their own cancelling transaction, so the obligation commits
-  with the cancellation, and drain afterwards scoped to the booking that was
-  cancelled — per child on a group cancel, because every joiner is a different
-  owner and the organiser's own drain cannot reach them.
+  refused for it** (#3209, §8). A booking stops supplying cover the moment it
+  leaves CONFIRMED or PAID, so a writer that flips one to a terminal status owes
+  a confirming writer's re-read. The group organiser cancel, the Internet
+  Banking hold expiry, the Stripe capacity-failed void and the cross-lodge
+  price-drift unwind reconcile inside their own cancelling transaction, then
+  drain scoped to the cancelled booking (per child on a group cancel).
 
-  They reconcile through `reconcileHostingReviewForSystemCancellation`, and that is
-  the second half of the rule. These transitions have no actor to ask and no caller
-  to answer. `HostingDependentCoverageDisposition` in
-  `adult-member-hosting-review.ts` states the rule in as many words — "§8's list of
-  changes that cannot reasonably be blocked includes every automated path" — and
-  the seam is what makes it hold as code rather than only as intent. (`INV-HOST-028`
-  is a different rule and does not cover this: it is about
-  `SameOwnerCoverageOverrideRequiredError` and an authorised officer, not about
-  `AdultMemberHostingRequiredError`.)
+  They reconcile through `reconcileHostingReviewForSystemCancellation`: these
+  transitions have no actor to ask, and §8's unblockable changes include every
+  automated path (`HostingDependentCoverageDisposition`,
+  `adult-member-hosting-review.ts`). `INV-HOST-028` does not cover this. The seam
+  **removes the refusal rather than catching it**: `enforcement: "REVIEW_ONLY"`
+  travels into the sibling loop, so a #738 split sibling the cancellation leaves
+  uncovered RECORDS its hazard in the same transaction instead of raising
+  `AdultMemberHostingRequiredError` and rolling the cancellation back. Beside
+  §13's school carve-out, the one other `REVIEW_ONLY` position is the post-commit
+  incident drain; `INV-HOST-020`'s census names all three and makes a fourth
+  state which it is. Nothing is caught: a participant retry or database failure
+  propagates to existing re-drive boundaries.
 
-  **The seam REMOVES the refusal rather than catching it**, by passing
-  `enforcement: "REVIEW_ONLY"`, and the distinction is load-bearing. The dependent
-  disposition is the default `ESCALATE`; the booking itself is already terminal and
-  so has no hazard of its own; what remains is the sibling loop, where a #738 split
-  sibling left uncovered by this very cancellation would otherwise raise
-  `AdultMemberHostingRequiredError` at an ENFORCED lodge and roll the cancellation
-  back — wedging an expired Internet Banking hold, because the next run re-reads the
-  same rows and refuses again, deterministically, every fifteen minutes. `REVIEW_ONLY`
-  travels into the sibling loop by design, so the sibling RECORDS its hazard in the
-  same transaction instead. Catching the refusal was tried first and was wrong: the
-  refusal is raised by the SIBLING while the fallback enqueued for the cancelled
-  SOURCE, and at the default host scope (`sameBookingOwner: false`) a terminal source
-  yields an empty dependent list — so at the configuration most clubs run, the catch
-  recorded nothing at all. This is the second position in the tree that reaches for
-  `REVIEW_ONLY` for that reason rather than for §13's school carve-out; the other is
-  the post-commit incident drain, where refusing would roll back the incident that is
-  the point of the call. `INV-HOST-020`'s census names all three and makes a fourth
-  state which it is. Nothing is caught: a participant retry and a database failure
-  propagate to the callers' existing re-drive boundaries.
+  `adult-member-hosting-call-sites.test.ts` finds terminal flips **by the write
+  itself** (a `booking.update`/`updateMany` `data:` assigning CANCELLED, EXPIRED
+  or BUMPED) and requires a seam in the **enclosing function**; a file spreading
+  `RELEASE_WHOLE_LODGE_HOLD_UPDATE` with no detected flip must say why;
+  exemptions are keyed `file::function`, naming the status flipped FROM. Being
+  textual, it cannot prove same-branch placement; a reviewer does.
 
-  `adult-member-hosting-call-sites.test.ts` holds both halves. It finds terminal
-  status flips **by the write itself** — a `data:` object assigning CANCELLED,
-  EXPIRED or BUMPED inside a `booking.update`/`updateMany` — and requires a seam
-  within the **enclosing function**, not merely somewhere in the file. Both
-  refinements were paid for by real misses: keying on
-  `RELEASE_WHOLE_LODGE_HOLD_UPDATE`, which `booking-status.ts` claimed was "spread
-  into every terminal status flip", left ten cancelling writers invisible, and a
-  whole-file search passed `payment-reconciliation.ts` while its capacity-failed
-  void reached no seam at all. The constant is kept as a secondary signal: a file
-  that spreads it but shows no detected flip has to say why, so a flip written in a
-  shape the reader misses cannot make the sweep quietly vacuous. Exemptions are
-  keyed `file::function` and each names the status the writer really flips FROM.
-  What the sweep cannot do is prove the seam sits on the same control-flow branch as
-  the flip; that needs reachability analysis rather than text, so it is a floor and a
-  reviewer still decides.
+  **A refusal is deterministic, so even the group re-drive would wedge on it**:
+  `resumeInterruptedOrganiserCancels` (#1236) re-runs the idempotent cleanup for
+  `ORGANISER_PAYS` groups with a CANCELLED organiser booking past a short grace
+  and `organiserSettled` children still active, whatever `GroupBooking.status`
+  says, using the cancel loop's own `ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES`
+  (`booking-status.ts`, `INV-SSOT`).
 
-  **A re-drive DOES exist for the group case, and the argument above does not rest
-  on its absence.** `cron-group-settlement-reaper.ts` →
-  `resumeInterruptedOrganiserCancels` (#1236) selects `ORGANISER_PAYS` groups whose
-  ORGANISER BOOKING is CANCELLED, older than a short grace, still holding
-  `organiserSettled` children in the active set, and re-invokes the same idempotent
-  cleanup. `GroupBooking.status` is not in that query, so a group already fenced
-  CANCELLED is re-driven like any other, and the child status set it looks for is
-  the same `ORGANISER_CANCEL_ACTIVE_CHILD_STATUSES` the cancel loop claims — one
-  declaration in `booking-status.ts` since #3209 rather than the identical copy in
-  each module (`INV-SSOT`), so the two can never drift. The reason a refusal still must not reach
-  these paths is that it is DETERMINISTIC: a re-drive re-reads the same rows and
-  refuses again, forever, which is a wedge rather than a recovery.
 ### INV-HOST-042
 
-- **WHICH LODGE decides that no supervision work is owed is a question about the
-  RELATED bookings, not only the changed one** (#3209). Clubs configure adult-member
-  hosting per lodge — a lodge row overrides the club-wide row — so one member can
-  hold a booking at a lodge that has the rule off and another, related to it, at a
-  lodge that enforces it. The #738 split-sibling relation the engine fans out over
-  (`hostingSiblingWhere`: direct parent or direct child, same member) carries no
-  lodge clause at all, so "the booking that just changed is at a lodge with the rule
-  off" says nothing about the booking whose answer depends on it.
+- **Whether supervision work is owed is decided by the RELATED bookings' lodges
+  too, not only the changed one's** (#3209). A lodge row overrides the club-wide
+  row, and the #738 split-sibling relation (`hostingSiblingWhere`: direct parent
+  or child, same member) has no lodge clause, so a change at a lodge with the
+  rule off can strand a sibling at a lodge that enforces it. The gate is in
+  `reconcileAdultMemberHostingReviewWithSiblings`, the entry point every such
+  writer shares, and skips only when this booking's lodge is inactive **and** no
+  related booking sits at an active one.
 
-  `reconcileAdultMemberHostingReviewWithSiblings` used to return on exactly that
-  half-question, before the sibling fan-out ran, so the related booking at the
-  enforcing lodge was never re-read when this change took its cover away: no review
-  recorded on it, nothing in the officer queue, and the member never told. All eleven
-  writers that reach the engine through that entry point inherited the gap, which is
-  why the fix is in the entry point and in no writer. The gate now skips only when
-  this booking's lodge is inactive **and** no related booking sits at an active one.
+  **The same-owner half needs no widening:** `sameOwnerCoverageDependentWhere`
+  pins `lodgeId` to the changed booking's lodge and
+  `settleSameOwnerDependentCoverage` re-reads that lodge's mode, so skipping
+  under an inactive lodge misses nothing ("keeps the dependent cohort at the
+  changed booking's own lodge", `adult-member-hosting-same-owner.test.ts`).
 
-  **The same-owner half needs no such widening, and that is a property of the query
-  rather than an assumption.** `sameOwnerCoverageDependentWhere` pins `lodgeId` to
-  the changed booking's own lodge, so a same-owner dependent is always at this lodge,
-  and `settleSameOwnerDependentCoverage` re-reads this lodge's mode and returns on
-  the same test — skipping it under an inactive lodge can therefore miss nothing.
-  "keeps the dependent cohort at the changed booking's own lodge" in
-  `adult-member-hosting-same-owner.test.ts` pins the clause so that sentence cannot
-  quietly stop being true.
-
-  **Reachable today?** No, and the honest answer matters more than a scary one. Every
-  parent/child pair the product can currently create is written at one lodge —
-  `booking-create.ts` sets the split child's `lodgeId` to its parent's, and a group
-  joiner's booking belongs to a different member and so is not a sibling at all — and
-  `Booking.lodgeId` is never written after create, which
-  `bed-allocation-lock-topology-contract.test.ts` -> "no writer moves a Booking
-  between lodges" fails the build over. So this was latent: a wrong rule that the
-  current data shape happened not to exercise, found while fixing `INV-HOST-041` and
-  fixed in the same pull request rather than filed, because the next feature that
-  relates two bookings across lodges would have shipped the silent failure.
-
-  **`INV-LOCK-002` and #2623 T5 both survive it, deliberately.** The gate must not
-  start charging a club that owes nothing the `Member FOR KEY SHARE NOWAIT`
-  participant proof — that is the whole of T5, and paying it would put the fixed
-  `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409, which tells a member to check their
-  payment status, back in front of ordinary booking writes at every non-participating
-  lodge. So the widened question is answered with reads that take no lock: one
-  indexed read of this booking's parent and children over `Booking(parentBookingId)`,
-  and a policy read only for lodges that are **not** this booking's own — which is
-  none at all for a pair at one lodge. When the answer is yes the fenced body runs
-  whole, so the Member rows are still acquired before any coverage-owner advisory key
-  (including the one the sibling's own evaluation takes under the sibling's lodge
-  policy), and deciding to skip acquires nothing and so can leave nothing held out of
-  order. Both halves are pinned behaviourally in
-  `adult-member-hosting-same-owner.test.ts` -> "the mode gate reads the RELATED
-  bookings' lodges too", and the skip's `failFastCoverageOwner` flag structurally in
-  `adult-member-hosting-call-sites.test.ts` -> "keeps the un-fenced return fail-fast
-  on the coverage-owner key".
+  **`INV-LOCK-002` and #2623 T5 both hold.** A club that owes nothing never pays
+  the `Member FOR KEY SHARE NOWAIT` participant proof (T5), so the widened
+  question takes no lock: one indexed read of this booking's parent and children
+  over `Booking(parentBookingId)`, and a policy read only for lodges other than
+  this booking's own. When work is owed the fenced body runs whole, acquiring the
+  Member rows before any coverage-owner advisory key (including the one the
+  sibling's evaluation takes under its lodge policy); a skip acquires nothing.
+  Pinned behaviourally in `adult-member-hosting-same-owner.test.ts` → "the mode
+  gate reads the RELATED bookings' lodges too", and the skip's
+  `failFastCoverageOwner` flag structurally in
+  `adult-member-hosting-call-sites.test.ts` → "keeps the un-fenced return
+  fail-fast on the coverage-owner key". History and reachability: #3209.
 
 ## Optional Group Trip cover (#3037, epic #2943)
 
@@ -885,104 +800,44 @@ compliant indefinitely.
 ### INV-HOST-043
 
 - **Group Trip identity is `GroupBooking.organiserBookingId` and
-  `GroupBookingJoin.bookingId`, resolved in one module, and the container's own
-  status governs joining rather than cover.** `src/lib/group-trip-identity.ts` is
-  the single home, and `Booking.parentBookingId` is forbidden as an identity
-  source: it is the #738 split-booking relationship, neither necessary nor
-  sufficient for Group Trip membership, so reading grouping off it produces a
-  sibling set that is wrong in both directions.
+  `GroupBookingJoin.bookingId`, resolved in one module
+  (`src/lib/group-trip-identity.ts`), and the container's own status governs
+  joining rather than cover.** `Booking.parentBookingId`, the #738 split
+  relation, is forbidden as an identity source.
 
-  **ONE CARVE-OUT, WITH ITS FENCE NAMED: the second half of a #738 split pair
-  inherits the first half's Group Trip** (owner decision, 31 August 2026). A
-  member joining a Group Trip with a mixed party becomes two `Booking` rows —
-  `createConfirmedBooking` writes the member half, hangs the non-member half off
-  it by `parentBookingId`, and writes the `GroupBookingJoin` row against the
-  member half only, because one party is one joiner on the roster and the
-  `(groupBookingId, joinerMemberId)` unique pair says so. Without the carve-out
-  the half carrying the NON-MEMBER GUESTS, the rows this rule exists to judge,
-  belonged to no Group Trip and received no cover: the join preflight judged the
-  undivided party and said yes, and the reconciler judged the child and said no,
-  seconds apart. A split pair is one party, so its two halves share one trip.
+  **One carve-out: the second half of a #738 split pair inherits the first
+  half's Group Trip** (owner decision, 31 August 2026). **The fence:** a booking
+  inherits only from a row that is already its `SAME_BOOKING` split sibling —
+  `booking.parentBookingId`, owned by the same member, not cancelled, bumped or
+  soft-deleted — and ONE WAY, so a parent never inherits from a child, a #796
+  group joiner inherits nothing, and a `parentBookingId` relation in any other
+  configuration supplies and receives nothing. Inheriting governs only what a
+  booking RECEIVES: an inheriting child is no Group Trip source. A Group Trip fan-out reconciles each dependent through
+  `reconcileAdultMemberHostingReviewWithSiblings`, whose `loadHostingSiblingIds`
+  walk reaches the inheriting child.
+  `inheritedSplitPairGroupTrip` is the one implementation, typed to receive only
+  `Pick<LoadedHostingBooking, "parentBookingId">` so it cannot follow children;
+  decoy-sibling fixtures pin the choice within the sibling set.
 
-  **The fence, which is the whole safety of it.** `parentBookingId` is still
-  categorically not a Group Trip identity source, and a booking still never
-  borrows identity from an unrelated parent. Inheritance happens only from a row
-  that is already a `SAME_BOOKING` split sibling — `booking.parentBookingId`,
-  owned by the SAME member, not cancelled, not bumped, not soft-deleted — and is
-  followed ONE WAY, so a parent never inherits from a child. A #796 group
-  joiner, which hangs off the organiser's booking by the same column while
-  belonging to a different member, therefore inherits nothing and needs nothing:
-  it carries its own roster row. Inheriting also governs only what a booking
-  RECEIVES: the source and dependent sets are relation-based, so an inheriting
-  child supplies nothing and is not itself a Group Trip source — the right answer
-  as well as the safe one, since it carries only non-member guests. **What it
-  obliges of #3039:** the dependent set is relation-based too, so a Group Trip
-  fan-out finds the split PARENT and not the inheriting CHILD — the child is
-  reached only through the existing `SAME_BOOKING` sibling fan-out
-  (`loadHostingSiblingIds`, which `reconcileAdultMemberHostingReviewWithSiblings`
-  already walks), so the group fan-out must reconcile each dependent through
-  THAT entry point rather than reconciling the row directly, or the half carrying
-  the non-member guests is never re-evaluated.
-  `inheritedSplitPairGroupTrip` is the one
-  implementation, and `adult-member-hosting-group-trip-cover.test.ts` pins every
-  clause of this paragraph, including that a booking related by
-  `parentBookingId` in any OTHER configuration supplies and receives nothing.
+  **Every evaluator applies the carve-out:** `evaluateProposalPartyViolations`
+  uses the shared `readInheritedSplitPairGroupTrip`, never a second copy.
 
-  **Two guards hold the fence, and the stronger one is the type.**
-  `inheritedSplitPairGroupTrip` takes its subject as
-  `Pick<LoadedHostingBooking, "parentBookingId">` — it is never handed the
-  evaluated booking's own `id`, so it cannot be widened to follow children
-  without someone changing the signature, which no accidental tidy does. The
-  behavioural fence is the second guard and catches what the type cannot: a
-  widening of the choice WITHIN the sibling set, such as taking the first sibling
-  rather than the parent, or the first sibling that happens to be in a trip.
-  Both of those shapes are pinned by fixtures that put a decoy sibling in a trip
-  beside a parent that is in none.
+  **The roster row comes first:** `createConfirmedBooking` claims the
+  `GroupBookingJoin` row before it creates and reconciles the split child, and
+  `verifyAndCreateNonMemberJoin` claims its row before it reconciles. Pre-persist,
+  `groupTripIdentityForJoin` takes identity from the redeemed container, whose
+  id the member join hands its preflight.
 
-  **EVERY evaluator applies the carve-out, or two of them disagree about the one
-  booking it exists for.** A split child is modifiable like any other booking, so
-  the persisted reconciler is not the only path that asks the hosting rule about
-  it: `evaluateProposalPartyViolations` re-judges a proposed party server-side
-  and FREEZES the answer into a policy-exception request, which an officer
-  reviews and which reserves beds under `HOLD`. An evaluator that resolves
-  identity from the two canonical relations alone answers "no Group Trip" for
-  precisely the split child — so it would invent a hosting violation on the one
-  shape the rule was taught to get right, and approval reproduces the same
-  evaluation, so the #2525 drift gate compares the phantom with itself. The
-  shared reader `readInheritedSplitPairGroupTrip` exists so the second path
-  applies the SAME fence rather than a second copy of it, and
-  `adult-member-hosting-call-sites.test.ts` pins that the exception path calls
-  it and that `inheritedSplitPairGroupTrip` has exactly one definition tree-wide.
+  **`GroupBooking.status`** (`OPEN`/`CLOSED`/`CANCELLED`) decides only whether
+  new bookings may join; source and dependent sets are never filtered on it;
+  whether a booking is live is `Booking.status`'s question. The
+  paid-up-adult lockout (`PAID_UP_ADULT_MEMBER_REQUIRED`) stays per-booking.
 
-  The two write paths keep their roster row ahead of the rule for the same
-  reason: `createConfirmedBooking` claims the `GroupBookingJoin` row BEFORE it
-  creates and reconciles the split child, and `verifyAndCreateNonMemberJoin`
-  claims its row before it reconciles at all. A reconciliation that ran first
-  would read a brand-new booking as belonging to no Group Trip.
-
-  `GroupBooking.status`
-  (`OPEN`/`CLOSED`/`CANCELLED`) decides whether new bookings may join; a CLOSED
-  container is the normal state of a settled party and a cancelled container does
-  not cancel the joiners' own bookings, so filtering the source or dependent set
-  on it would strip cover from live compliant bookings and drop bookings that
-  still need reconciling. Whether a booking is really happening stays a question
-  about `Booking.status`. Identity is also available PRE-PERSIST for a join —
-  `groupTripIdentityForJoin` takes it from the container the joiner redeemed a
-  code for — because both join paths must answer the hosting rule before the
-  `Booking` row exists. The separate paid-up-adult lockout
-  (`PAID_UP_ADULT_MEMBER_REQUIRED`) remains per-booking and is not widened across
-  a Group Trip. Enforced structurally by
-  `src/lib/__tests__/adult-member-hosting-call-sites.test.ts` and
-  `src/lib/__tests__/group-trip-identity.test.ts`, and behaviourally by
-  `src/lib/__tests__/adult-member-hosting-group-trip-cover.test.ts`, which also
-  pins two of the write orderings the pre-persist half depends on: the non-member
-  verify claims its `GroupBookingJoin` row before it reconciles hosting, and the
-  member join hands its preflight the container id it already holds. The third —
-  `createConfirmedBooking` writing the roster row before it creates and
-  reconciles the split child — is pinned structurally in
-  `adult-member-hosting-call-sites.test.ts`, because both orders typecheck and
-  every behavioural suite passes either way, so a later tidy moving the block
-  back would otherwise be green everywhere.
+  Enforced by `adult-member-hosting-call-sites.test.ts` (the exception path's
+  call, one definition tree-wide, `createConfirmedBooking`'s order),
+  `group-trip-identity.test.ts` and
+  `adult-member-hosting-group-trip-cover.test.ts` (every carve-out clause, both
+  join orderings). History: #3037, #3038.
 
 ### INV-HOST-044
 
@@ -990,416 +845,240 @@ compliant indefinitely.
   own.** Where a club has enabled `SAME_GROUP_TRIP`, qualifying adult members
   attending another live booking in the same Group Trip enter the evaluation as
   `hostScope: "SAME_GROUP_TRIP"`, `hostOnly: true` participants built by the
-  canonical `toHostingParticipants`. Three consequences, and each is a rule
-  rather than an implementation note.
+  canonical `toHostingParticipants`.
 
-  **Host-only means no bed, participant, price, payment or responsibility
-  moves.** The adult's real attendance on their own booking is recognised as
-  evidence; they are never duplicated as a guest here, and their own booking's
-  uncovered guest-nights stay that booking's hazard, judged when it is
-  reconciled. Two separately owned bookings keep two separate lifecycles.
+  **Host-only:** no bed, participant, price, payment or responsibility moves.
+  The adult is never duplicated as a guest here; their own booking's uncovered
+  guest-nights stay that booking's hazard, and two separately owned bookings
+  keep two lifecycles.
 
-  **Counted once means the source read excludes what a narrower scope already
-  loaded.** `loadSameGroupTripHosts` is passed the split-sibling ids
-  (`SAME_BOOKING`) and the same-owner source ids (`SAME_BOOKING_OWNER`) and
-  excludes them in the query. Coverage itself would survive a duplicate — hosts
-  are counted into a set of member ids — but the frozen snapshot would not:
-  `coveredByScopes` would credit a scope that supplied nothing new, and that
-  field is what the kiosk cover-source display reads. The exclusion is keyed on
-  the rows actually read, so with the same-owner scope OFF the same booking is
-  legitimately picked up as a Group Trip source instead; the union of cover is
-  the same either way, and only the credited scope differs.
+  **Counted once:** `loadSameGroupTripHosts` excludes in its query the
+  split-sibling (`SAME_BOOKING`) and same-owner (`SAME_BOOKING_OWNER`) source
+  ids actually read, so the snapshot's `coveredByScopes`, which the kiosk reads,
+  never credits a scope that supplied nothing new. With the same-owner scope OFF
+  the same booking is legitimately a Group Trip source instead.
 
-  **Bounded by `SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT`, which is deliberately
-  NOT the same-owner number.** Twenty-five bookings on one account at one lodge
-  is a data problem; twenty-five bookings in one Group Trip is a club trip, so
-  borrowing that ceiling would truncate ordinary large parties. One booking needs
-  at least one bed, so the population is bounded above by the lodge's capacity —
-  the bound is argued from that shape and never from how big any particular
-  club's lodge is, which `INV-CONFIG-001` forbids the codebase to encode. A
-  writer truncates, which errs towards the rule; an evidence caller passes its
-  own ceiling and is refused with
-  `HostingGroupTripSourceCeilingExceededError` rather than handed a quietly short
-  host list that would fabricate a live blocker. The diagnostic pack IMPORTS the
-  writer's constant rather than restating the number beside a promise that the
-  two agree.
+  **Bounded by `SAME_GROUP_TRIP_COVERAGE_SOURCE_LIMIT`, not the same-owner
+  number**, argued from shape (each booking needs a bed, so lodge capacity bounds
+  the population), never from a club's lodge size (`INV-CONFIG-001`). A writer
+  truncates, erring towards the rule; an evidence caller passing its own ceiling
+  is refused with `HostingGroupTripSourceCeilingExceededError`, never handed a
+  short host list. The diagnostic pack imports the writer's constant.
 
-  **Both cross-booking source reads are ONE read, ordered unconditionally.**
+  **Both cross-booking source reads are one read, ordered unconditionally:**
   `loadSameBookingOwnerHosts` and `loadSameGroupTripHosts` are
-  `loadCoverageSourceHosts` with one relationship clause changed, so the guest
-  narrowing, the ordered-truncation protocol, the defensive guest-relation
-  filter and the `sourceIds` contract have one definition rather than two
-  (`INV-SSOT-001`). `COVERAGE_READ_ORDER` applies to a writer as well as to an
-  evidence caller: an unordered `take` lets the database return any N of the
-  matching rows, which leaves the ANSWER safe (fewer hosts errs towards the
-  rule) and the SNAPSHOT unstable — `adultMemberHostingStateKey` moves between
-  two evaluations of an unchanged booking, reopening the incident and
-  re-notifying an officer over nothing.
+  `loadCoverageSourceHosts` with one relationship clause changed (`INV-SSOT-001`).
+  `COVERAGE_READ_ORDER` binds writers too, because an unordered `take` moves
+  `adultMemberHostingStateKey` between evaluations of an unchanged booking and
+  re-notifies an officer.
 
   **Member-owned and non-member-owned joins consume this cover on identical
-  terms.** Nothing about who owns a source or a dependent booking is consulted —
-  that is `SAME_BOOKING_OWNER`'s question, not this one. Enforced by
-  `src/lib/__tests__/adult-member-hosting-group-trip-cover.test.ts`, whose
-  failure messages carry this id.
+  terms.** Enforced by `adult-member-hosting-group-trip-cover.test.ts`, whose
+  failure messages carry this id. History: #3037.
 
 ### INV-HOST-045
 
 - **The kiosk's adult-cover display is DERIVED from the canonical evaluation,
   and a stale, failed or unrecorded evaluation never renders as cover** (#3040,
-  epic #2943). The privileged kiosk tier may show, on a Group Trip card, where a
-  booking's adult supervision comes from. Every value it shows is read by
-  `deriveKioskAdultCoverSource` (`src/lib/kiosk-adult-cover.ts`) out of the
-  frozen violation snapshot (`Booking.adultMemberHostingReview`, parsed by
-  `parseStoredHostingReview`); nothing about cover is recomputed for display.
+  epic #2943). On a Group Trip card, the privileged kiosk tier may show where a
+  booking's adult supervision comes from, read by `deriveKioskAdultCoverSource`
+  (`src/lib/kiosk-adult-cover.ts`) from the frozen violation snapshot
+  (`Booking.adultMemberHostingReview`, parsed by `parseStoredHostingReview`);
+  nothing is recomputed for display.
 
-  **A snapshot records a violation and nothing else.**
-  `evaluateAdultMemberHostingWithPolicy` returns `null` when the party has no
-  non-member guest-nights or all are covered, and
-  `reconcileAdultMemberHostingReview` then writes `Prisma.DbNull` over any
-  snapshot already there. So a stored snapshot always records at least one
-  uncovered night, "fully covered" is the ABSENCE of a snapshot, and the display
-  has no "all covered" wording. A named
-  test in `kiosk-group-trip-privacy.test.ts` pins this against the real
-  evaluator.
+  **A snapshot records a violation and nothing else**: with nothing uncovered
+  the evaluator returns `null` and the reconciler writes `Prisma.DbNull`, so
+  "fully covered" is the ABSENCE of a snapshot and the display has no "all
+  covered" wording (pinned against the real evaluator).
 
-  **Four statuses; only `EVALUATED` carries night rows.** The DTO is a
-  discriminated union whose other three members carry the empty tuple for
-  `nights` and `scopes`.
+  **Four statuses; only `EVALUATED` carries night rows** (a discriminated union;
+  the others carry empty `nights` and `scopes` tuples). `NOT_RECORDED`, no
+  snapshot and no signal against it, is the ordinary state: muted text, *"Adult
+  cover: no issue recorded for this booking"*, neither a warning nor a positive
+  claim. `UNREADABLE` (not canonical, or self-contradictory) and `STALE` render
+  amber. `EVALUATED` means at least one night, at least one uncovered.
 
-  - `NOT_RECORDED` — no snapshot and no signal against it: the ordinary state,
-    rendered as muted text, *"Adult cover: no issue recorded for this booking"*.
-    Not a warning, and not a positive claim: it cannot tell "evaluated and
-    clean" from "never evaluated".
-  - `UNREADABLE` — not the canonical shape, or disagrees with itself. Amber.
-  - `STALE` — what is recorded cannot be trusted as current. Amber.
-  - `EVALUATED` — a recorded problem with per-night evidence: at least one
-    night, at least one uncovered.
+  **Staleness signals, in this order:** (1) a queued
+  `HostingCoverageReevaluation` for the owner at this lodge, read before the
+  snapshot, its night list not intersected; (2) an open
+  `HostingCoverageIncident` with NO snapshot (with one, the snapshot stands),
+  nothing of it in any payload; (3) a readable snapshot with nothing uncovered;
+  (4) a covered night resting on `SAME_GROUP_TRIP`, which makes the whole
+  snapshot `STALE`, never a night uncovered, until #3039 enqueues a row for
+  every DEPENDENT owner or extends `readStalenessSignals` to the whole group.
+  The policy revision is NOT a signal: `incidentPolicyChanged` compares mode and
+  enabled scopes, and a material change reaches signal 1.
 
-  **Four staleness signals, consulted in this order:**
+  **A partially readable snapshot is `UNREADABLE`**: no malformed night row is
+  skipped; the per-night evidence and the `uncovered` list must name the same
+  nights; duplicate nights, a covered night with no supplying scope and an
+  unknown scope are rejected, each guard mutation-verified.
 
-  1. A queued `HostingCoverageReevaluation` for the booking's owner at this
-     lodge, consulted before the snapshot is read, because it invalidates an
-     absent snapshot as much as a present one. Its night list is not
-     intersected.
-  2. An open `HostingCoverageIncident` on a booking with NO snapshot. With a
-     snapshot present the two agree and the snapshot stands. Nothing about the
-     incident reaches any payload.
-  3. A readable snapshot with nothing uncovered, which no writer produces.
-  4. A covered night resting on `SAME_GROUP_TRIP` (below).
+  **No requirement in force means no cover line.** Where the resolved MODE is
+  not a consequence — `DISABLED`, no row, or a malformed set — the kiosk omits
+  `adultCoverSource`, as for a viewer without the capability, and issues no
+  staleness read. The gate is never the scope set (with `SAME_GROUP_TRIP` off,
+  `SAME_BOOKING` evidence still shows); it is the one club setting the kiosk
+  Group Trip surface consults and governs the cover line alone; the linkage
+  badge is gated on nothing (D1 on #3040, `INV-PRIV-016`).
 
-  **A partially readable snapshot is `UNREADABLE`, not a partial answer.** No
-  malformed night row is skipped. The reader requires the per-night evidence and
-  the snapshot's own `uncovered` list to name the same uncovered nights, and
-  rejects duplicate nights, a covered night with no scope that supplied it, and
-  a scope list naming nothing this deployment has; each guard is
-  mutation-verified by a fixture that slips past every other one.
-
-  **`SAME_GROUP_TRIP` cover is withheld until #3039 lands.** A sibling's account
-  can invalidate it unseen, so a snapshot with any covered night resting on it
-  reports `STALE` as a whole, never by marking the night uncovered. Before
-  removing that refusal, #3039 must either enqueue a re-evaluation row for every
-  DEPENDENT owner, so the own-owner read finds it, or extend
-  `readStalenessSignals` to the owners of the whole group.
-
-  **No requirement in force means no cover line, not `NOT_RECORDED`.** Where the
-  club's resolved mode is not a consequence — `DISABLED`, no policy row, or a
-  malformed set the resolver refuses — the kiosk omits the `adultCoverSource`
-  key, as for a viewer without the capability, and issues no staleness read or
-  anything else on that path. The gate is the MODE, never the scope set: with
-  `SAME_GROUP_TRIP` off, the `SAME_BOOKING` evidence still shows. It is the one
-  club setting the kiosk Group Trip surface consults, and governs the cover line
-  alone; the linkage badge is gated on nothing (D1 on #3040, `INV-PRIV-016`).
-
-  **The policy revision is NOT a staleness signal**; adding one would be a
-  regression. A revision bump is immaterial to cover
-  (`HOSTING_POLICY_RECONCILIATION_SELECT`; `incidentPolicyChanged` compares the
-  mode and enabled scope set), and a material change reaches signal 1.
-
-  **`EVALUATED` carries the officer's decision** — `PENDING`, `APPROVED`,
-  `REJECTED` or `null` — and the screen says which, since an approved exception
-  moves only `Booking.adultMemberHostingReviewStatus`, never the snapshot.
-
-  **Cover is per night.** The per-night rows are the answer; the union of scopes
-  is a heading, never a substitute. `coveredByScopes` ABSENT on a covered night
-  reads as `SAME_BOOKING` (its documented meaning, `QualifyingHostsForNight`);
-  an EMPTY list is `UNREADABLE`.
-
-  **The categories travel; the people do not.** The kiosk drops the member ids
-  in `qualifyingHostsByNight` (`INV-PRIV-016`).
+  **`EVALUATED` shows the officer's decision** (`PENDING`, `APPROVED`,
+  `REJECTED` or `null`), as an approval moves only
+  `adultMemberHostingReviewStatus`. **Cover is per night**: the scope union is
+  only a heading; `coveredByScopes` ABSENT on a covered night reads as
+  `SAME_BOOKING` (`QualifyingHostsForNight`), EMPTY is `UNREADABLE`. The kiosk
+  drops the member ids in `qualifyingHostsByNight` (`INV-PRIV-016`).
 
   Enforced by `src/lib/__tests__/kiosk-group-trip-privacy.test.ts`,
   `src/app/api/lodge/guests/[date]/__tests__/group-trip-tiers.test.ts` and
-  `src/app/(lodge)/lodge/kiosk/_components/__tests__/kiosk-group-trip-card.test.tsx`,
-  whose failure messages carry this id. History, measurements and rejected
-  alternatives: #3040.
+  `kiosk-group-trip-card.test.tsx`, whose failure messages carry this id.
+  History, measurements and rejected alternatives: #3040.
+
 ### INV-HOST-046
 
 - **When a change strands another account's Group Trip booking, the change
   proceeds, the sibling is escalated to officers, and the actor is told nothing
-  about the other account** (owner contract, epic #2943; implemented by #3039).
-  Whether the actor removes the qualifying adult, moves dates, changes lodge or
-  cancels, the system does not refuse the valid change: it re-evaluates the
-  affected sibling, raises it for officers through the existing incident and
-  officer-queue machinery, and discloses nothing.
+  about the other account** (owner contract, #2943; #3039), through the
+  existing incident queue.
 
-  **No new refusal exists.** There is no Group Trip counterpart to
-  `SameOwnerCoverageWouldBreakError` or to the officer's override prompt, no new
-  error body and no new member-facing sentence; a "your group is affected"
-  message would be the disclosure this rule forbids, and a test asserts the
-  absence. `settleGroupTripDependentCoverage` cannot throw: it records durable
-  work and returns.
+  **No new refusal, error body or member-facing sentence exists** (a test
+  asserts the absence). `settleGroupTripDependentCoverage` cannot throw.
+  `lockAndVerifyGroupTripCoverageDependents` may throw the non-disclosing
+  `HOSTING_COVERAGE_PARTICIPANT_RETRY` when its fail-fast trip key loses a
+  race or the sibling set drifts, rolling the actor back,
+  so the no-block promise holds of the OUTCOME. Only
+  `xero-inbound/invoice-paid-effects.ts` may pass
+  `GroupTripFanOutOptions.bestEffort`, where the transition cannot remove cover
+  (`PAYMENT_PENDING -> PAID`); the settlement reaper's de-confirming revert
+  never may.
 
-  **The rest of the cross-account path can return a transient 409.**
-  `lockAndVerifyGroupTripCoverageDependents` throws the stable
-  `HOSTING_COVERAGE_PARTICIPANT_RETRY` when its fail-fast trip-key acquisition
-  loses to any other member's booking write in the same trip, or when the
-  sibling set drifts between plan and key; both roll the actor's transaction
-  back, and the "reload and try again" discloses nothing about the other
-  account. So "the actor is never blocked because of somebody else's booking"
-  holds of the OUTCOME, not of every attempt. The one exception is
-  `xero-inbound/invoice-paid-effects.ts`, which reaches
-  `enqueueOwnHostingCoverageReevaluation` inside a `PAID` claim for an invoice
-  already paid and passes `GroupTripFanOutOptions.bestEffort`, so the
-  cross-account half degrades instead of refusing. That is legal only where a
-  transition cannot remove cover (`PAYMENT_PENDING -> PAID` only adds a source);
-  the group-settlement reaper's de-confirming revert must never pass it.
+  **Dependents are the trip at this lodge, with no night clause**:
+  `groupTripCoverageDependentWhere` composes
+  `coverageDependentEnvelopeAcrossNightsWhere` (same lodge and trip, active,
+  not this booking or soft-deleted); the SOURCE direction keeps its
+  night clause. Each dependent gets one `HostingCoverageReevaluation` item:
+  itself as `sourceBookingId`, its owner as `memberId`, the lodge, its OWN
+  nights, cause `SYSTEM_CHANGE` even after an officer override.
+  `assertHostingCoverageQueueParticipantsLocked` refuses an item not matching a
+  source in the runtime proof. The drain always adds each dependent's split
+  halves (`hostingSiblingWhere`, `INV-HOST-043`).
 
-  **The dependent set is the trip at this lodge, with no night-overlap clause.**
-  Seams run after the write, so the changed booking's dates are the new ones;
-  `groupTripCoverageDependentWhere` therefore composes
-  `coverageDependentEnvelopeAcrossNightsWhere` — same lodge, not this booking,
-  not soft-deleted, in the active-status cohort, in this trip — and the
-  per-dependent re-evaluation decides the rest. The lodge clause and the
-  self-exclusion stay. The SOURCE direction keeps its night clause.
-
-  **The fan-out is one `HostingCoverageReevaluation` item per dependent
-  booking**, capped by `GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`, naming that
-  booking as `sourceBookingId`, its own owner as `memberId`, the lodge, THAT
-  DEPENDENT'S OWN nights (the drain's `loadSameOwnerCoverageDependentIds` reads
-  the owner's bookings at that lodge over exactly those nights) and cause
-  `SYSTEM_CHANGE` —
-  even when the actor's change was an officer override, which is never a
-  decision about a third party's booking.
-  `assertHostingCoverageQueueParticipantsLocked` requires the runtime-issued
-  proof to hold a source whose `bookingId` and `ownerMemberId` are the item's
-  `sourceBookingId` and `memberId`, so an item naming the actor's booking as a
-  sibling owner's source is refused.
-
-  **The ceiling is its own constant, at the source ceiling's number.** When it
-  binds it writes, alongside the log line and in the same transaction, an audit
-  row from `reportGroupTripDependentCeilingBound`
+  **`GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`** (own constant, source ceiling's
+  number) writes when it binds, in that transaction and once per trip,
+  a `reportGroupTripDependentCeilingBound` audit row
   (`booking.hostingCoverage.groupTripFanoutTruncated`, keyed on the
-  `GroupBooking`, `severity: "important"`), once per trip per transaction, from
-  the fan-out rather than the dependent read. It says any booking in the trip
-  beyond the bound was NOT re-evaluated and may be left without its required
-  adult.
+  `GroupBooking`, `severity: "important"`) saying the rest were not
+  re-evaluated.
 
-  **The split half is reached (`INV-HOST-043`).** On EVERY branch, the drain
-  expands its dependent list with the booking's `SAME_BOOKING` split halves
-  through the borrow's own `hostingSiblingWhere` predicate.
+  **The fan-out lives in the three seams** (`INV-SSOT-001`):
+  `reconcileAdultMemberHostingReviewWithSiblings`,
+  `enqueueOwnHostingCoverageReevaluation` and
+  `enqueueHostingCoverageReevaluationForMember`, which plans each trip once
+  before its participant fence, takes trip keys before owner keys and records
+  through `settleGroupTripDependentCoverage`. A fourth seam joins the census
+  list first.
 
-  **The fan-out lives in the three existing seams**, so every writer reaching
-  the hosting rule participates (`INV-SSOT-001`):
-  `reconcileAdultMemberHostingReviewWithSiblings` (reconcile, which can refuse),
-  `enqueueOwnHostingCoverageReevaluation` (confirming paths that must not be
-  refused) and `enqueueHostingCoverageReevaluationForMember` (membership
-  lifecycle). The membership seam exists because a change in host standing
-  (`participantQualifiesAsHost`: a lapse, deactivation, archive, membership
-  cancellation, declined consent or Xero "unpaid") removes cover from every
-  booking relying on that person, including other accounts' bookings in the
-  trip. It plans the person's trips before its participant fence (one plan per
-  trip, de-duplicated by `GroupBooking.id`), takes those trip keys before the
-  owner keys, and records through `settleGroupTripDependentCoverage`. A fourth
-  seam joins the seam list in `adult-member-hosting-call-sites.test.ts` before
-  it joins the tree.
+  **Closing, reopening and deleting need no hook** (status governs joining;
+  deletion touches only non-source `DRAFT`/`CANCELLED` bookings;
+  `OPENABLE_ORGANISER_STATUSES` keeps organisers out of `DRAFT`).
 
-  **Closing, reopening and deleting need no hook.** `GroupBooking.status`
-  governs joining, not cover (`INV-HOST-043`), so `closeGroupBooking` and
-  `reopenGroupBooking` reach the hosting rule nowhere. `booking-delete.ts`
-  hard-deletes only `DRAFT` and soft-deletes only `CANCELLED`, neither in
-  `HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES`, so a deletion removes cover from
-  nobody; the `GroupBookingJoin.bookingId` SetNull and `GroupBooking` cascade
-  fire only on a hard delete, and `OPENABLE_ORGANISER_STATUSES` keeps an
-  organiser's booking out of `DRAFT` when its group is created, so no cascade
-  destroys a live trip's identity.
-
-  Enforced by
-  `src/lib/__tests__/adult-member-hosting-group-trip-reconciliation.test.ts`
-  and, against real PostgreSQL,
-  `src/lib/__tests__/adult-member-hosting-group-trip-races.realdb.test.ts`; the
-  writer census is in
-  `src/lib/__tests__/adult-member-hosting-call-sites.test.ts`. Their failure
-  messages carry this id. History, measurements and rejected alternatives:
-  #3039.
+  Enforced by `adult-member-hosting-group-trip-reconciliation.test.ts`,
+  `adult-member-hosting-group-trip-races.realdb.test.ts` and
+  `adult-member-hosting-call-sites.test.ts`. History: #3039.
 
 ### INV-HOST-049
 
 - **The same-owner dependent fan-out reads over the window the changed booking
-  VACATED as well as the one it now holds, and each queue item carries the
-  DEPENDENT's own nights** (#3232). Both halves, in one rule, because fixing
-  either one alone still loses the booking — and the second failure is silent
-  where the first is at least visible.
+  VACATED as well as the one it holds, and each queue item carries the
+  DEPENDENT's own nights** (#3232). Fixing either half alone still loses the
+  booking, so each is mutation-verified separately.
 
-  **THE FIRST HALF.** Every dependent read runs after the write: the writer
-  updates the booking and then calls the hosting seam. A single-window overlap
-  test therefore compares against the NEW dates, so a booking that was relying on
-  the OLD ones fails the test and is not in the set at all. No evaluation, no
-  incident, no owner notice, nothing in the officer queue — the booking stays
-  recorded as compliant while being uncovered, indefinitely, because nothing looks
-  at it again until its owner touches it and its owner has no reason to.
-  Concretely: booking A carries the only qualifying adult on nights 10-11, booking
-  B is the same owner's at the same lodge on the same nights and is compliant only
-  through A, and A moves to nights 20-21. B's checkout (night 12) is not after A's
-  new arrival (night 20), so B fails the overlap test and is invisible. The set
-  must therefore be the UNION of the vacated and the current window —
-  `coverageDependentEnvelopeOverStayUnionWhere`, composed with §1's `memberId`
-  relationship by `sameOwnerCoverageDependentOverStayUnionWhere`.
+  **The read.** Dependent reads run after the write, so one overlap test against
+  the NEW dates misses a booking that relied on the old ones and leaves it
+  recorded as compliant while uncovered. The set is the UNION of the vacated and
+  current windows — `coverageDependentEnvelopeOverStayUnionWhere`, composed with
+  §1's `memberId` relationship by `sameOwnerCoverageDependentOverStayUnionWhere`
+  — never the group direction's dropped night clause, because here an extra row
+  can refuse a member's move; the union is exact. `hostingCoverageActorOptions`
+  requires `vacatedRange`: `modifyBookingDates`, `adminShiftBookingDates` and
+  `modifyBookingBatch` supply it; the rest pass `null`, one overlap test.
 
-  **THE UNION, AND NOT THE DROPPED CLAUSE THE GROUP DIRECTION USES.**
-  `coverageDependentEnvelopeAcrossNightsWhere` (#3039) removes the night
-  comparison entirely, which is right there because that fan-out cannot refuse
-  anybody: an extra row costs one idempotent re-evaluation that writes nothing.
-  Here an extra row is a booking the member may be told they cannot move, so the
-  set has to be RIGHT rather than merely not-narrowed. It is, because the fact the
-  group direction lacks is available here: only a DATE MOVE makes the old and new
-  stay differ, and the writers that perform one hold the previous window in the
-  same function that calls the seam. The union is exact — a booking sharing a
-  night with neither window cannot have been relying on this booking before the
-  change and cannot be after it.
+  **The items.** The drain turns an item's nights back into bookings
+  (`loadSameOwnerCoverageDependentIds`), so the settle step records one item per
+  dependent the changed booking's own window cannot reach, naming that
+  dependent's OWN nights (`enqueueSameOwnerDependentItems`, gated by
+  `dependentNeedsOwnQueueItem`). The ordinary edit still writes one item; items
+  are capped with the dependent set at `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`.
 
-  **WHAT MAKES A WRITER SUPPLY THE VACATED WINDOW IS THE COMPILER, NOT THIS
-  PAGE.** `hostingCoverageActorOptions` takes `vacatedRange` as a REQUIRED field,
-  so every actor-driven site has to state whether its change moved the stay. Three
-  say yes (`modifyBookingDates`, `adminShiftBookingDates`, `modifyBookingBatch`);
-  the rest pass `null`, which collapses the union to one overlap test and is
-  byte-identical to their previous behaviour. An optional field with a convenient
-  default would have compiled every existing caller unchanged and left the three
-  date writers exactly as wrong as they were.
+  **The fence.** The dependent set is planned before the participant fence and
+  re-verified under the per-owner coverage key, the Group Trip fan-out's plan,
+  lock, re-verify and retry protocol, with no new lock or ordering: same-owner
+  dependents share the `memberId`, so only the proof's source list grows.
 
-  **THE SECOND HALF, WHICH IS THE ONE THAT LOOKS FIXED AND IS NOT.** A queue
-  item's nights are what the drain turns back into bookings —
-  `loadSameOwnerCoverageDependentIds` reads the owner's bookings at that lodge
-  over exactly that window — so an item carrying the CHANGED booking's new nights
-  resolves to a dependent list that does not contain the booking the change
-  stranded. Widen the read and leave the item alone and the refusal path works
-  while the escalation path drops the booking in the background, with nothing
-  logged. So the settle step records one item per dependent the changed booking's
-  own window cannot reach, naming that dependent's OWN nights
-  (`enqueueSameOwnerDependentItems`, gated by `dependentNeedsOwnQueueItem`). In
-  the ordinary edit every dependent overlaps and exactly one item is written,
-  exactly as before; items appear only after a move, and are capped with the
-  dependent set at `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`.
-
-  **THE TWO HALVES ARE MUTATION-VERIFIED SEPARATELY**, because #3039 measured that
-  fixing one and not the other still loses the booking. A single test that only
-  fails when both are broken would pass over a half-fix.
-
-  **PER-DEPENDENT ITEMS NEED THE DEPENDENT IN THE PARTICIPANT FENCE**, so the
-  dependent set is planned BEFORE the fence and re-verified under the per-owner
-  coverage key — the same plan, lock, re-verify, retry protocol the Group Trip
-  fan-out uses. No new lock and no new ordering: every same-owner dependent shares
-  the changed booking's `memberId` by construction, so the `Member` row set the
-  fence takes is unchanged and only the proof's source list grows.
-
-  Enforced by `src/lib/__tests__/adult-member-hosting-same-owner.test.ts` and
-  `src/lib/__tests__/adult-member-hosting-linked-move.test.ts`, whose failure
-  messages carry this id.
+  Enforced by `adult-member-hosting-same-owner.test.ts` and
+  `adult-member-hosting-linked-move.test.ts`, whose failure messages carry this
+  id. History and worked example: #3232.
 
 ### INV-HOST-050
 
 - **A member is never refused a change they have no way to make; where moving
   one of their bookings would strand another of their own, they are OFFERED the
-  linked move** (owner decision, 2 September 2026, #3232). The refusal never
-  tells the member to update the affected booking first; every action it names
-  is one they can take.
+  linked move** (owner decision, 2 September 2026, #3232). Every action a
+  refusal names is one the member can take, never "update the affected booking
+  first".
 
-  **The three arms.** *Yes* — both bookings move together, atomically, on one
-  combined figure accepted once. *No* — only the changed booking moves, the
-  member is told plainly that the other will be left without adult supervision,
-  the officer queue gets it and an incident opens whose recorded reason says a
-  member was asked and answered. *Cannot* — where the beds are not there for
-  both, that is said plainly and the warn-and-continue path is offered rather
-  than a failure.
+  **Three arms.** *Yes*: both move together, atomically, on one combined figure
+  accepted once. *No*: only the changed booking moves; the member is told
+  plainly the other will be left without adult supervision, the officer queue
+  gets it, and an incident records that a member was asked and answered.
+  *Cannot*: no beds for both is said plainly and warn-and-continue offered,
+  naming the WHOLE stranded set, priced at nothing, with the primary's figures
+  as the combined ones.
 
-  **A refusal becomes the offer only when both conditions hold.** First, the
-  dependent no longer shares a night with the changed booking (it MOVED AWAY); a
-  stranding whose dependent still overlaps, from a guest change or a
-  cancellation, keeps the ordinary refusal (`SameOwnerCoverageWouldBreakError`,
-  unflagged). Second, shifting the dependent by the changed booking's ARRIVAL
-  delta puts it back into a night the changed booking still holds
-  (`linkedMoveWouldRestoreCover`). So a shortening with the arrival unmoved, or
-  an arrival move too small to carry the dependent inside the new stay, keeps
-  the ordinary refusal. The test is overlap, not containment, and only decides
-  whether to raise the offer: the real supervision pass over the state that
-  would commit remains the authority, so a mixed set (one dependent a shift can
-  carry, another not) reaches the offer and is decided there. The hosting engine
-  marks the refusal `linkedMoveWouldAnswer` and
-  `modifyBookingWithLinkedMoveSupport` prices it into the offer; a path that
-  fails to enrich it gives the bare refusal naming an officer, never a silent
-  stranding.
+  **The offer replaces the refusal only when** the dependent no longer shares a
+  night with the changed booking (otherwise `SameOwnerCoverageWouldBreakError`,
+  unflagged) **and** shifting it by the ARRIVAL delta overlaps a night the
+  changed booking still holds (`linkedMoveWouldRestoreCover`; overlap, not
+  containment). The supervision pass over the would-commit state stays the
+  authority, so a mixed set reaches the offer and is decided there; it is
+  skipped on an arm that cannot commit and governs every arm that can. The
+  engine marks the refusal `linkedMoveWouldAnswer`;
+  `modifyBookingWithLinkedMoveSupport` prices it by applying both moves through
+  the ordinary modification service and rolling back (`INV-SSOT-001`); an
+  unenriched refusal names an officer.
 
-  **The offer's price is the real price**: both moves applied through the
-  ordinary modification service and rolled back, never a parallel estimator
-  (`INV-SSOT-001`).
+  **Two state keys:** declining binds `strandedCoverageStateKey` (shared with
+  the officer override), accepting `linkedMoveStateKey` (stranded set, proposed
+  windows, combined money and price delta). A stale key gets a fresh prompt,
+  judged by the same delivery test at both throw sites.
 
-  **Two state keys.** Declining is bound by the stranded set alone
-  (`strandedCoverageStateKey`, shared with the officer's override); accepting by
-  `linkedMoveStateKey` — the stranded set, every booking's proposed window and
-  the combined money, including the price delta. A stale key of either kind gets
-  a fresh prompt, never a silent substitution, judged by the same delivery test
-  at BOTH throw sites: a stale answer is a fresh first submission and cannot
-  claim an arm the shift cannot deliver.
+  **Money:** a due and a refund field, never one signed figure; per booking one
+  is non-zero, across bookings both can be, settled separately. Surfaces compose
+  from `hosting-coverage-linked-move-client.ts` (`INV-SSOT-001`), state both
+  non-zero figures, and are count-driven (cap
+  `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`; the consent arm names every booking it
+  leaves uncovered). Every claim holds for both directions: no fee sentence says
+  the total "includes" it or names a zero combined fee; no "one change fee only"
+  when the primary's fee is also nothing; no "will be asked once" when the
+  request already answered. The offer names `policyRetainedAmountCents` summed
+  across moving bookings.
 
-  **Both money directions are shown whenever both move.** The quote holds a due
-  field and a refund field, never one signed number: they do not net off, as
-  each booking refunds or charges on its own, and Stripe and Internet
-  Banking/Xero settlement stay distinct per booking. Per booking exactly one is
-  non-zero; across bookings both can be. Every surface composes the sentence
-  from `hosting-coverage-linked-move-client.ts` (`INV-SSOT-001`), states both
-  figures when both are non-zero, says they settle separately, and is
-  count-driven throughout: the dependent cap is
-  `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`, the arm relied on for informed consent
-  names every booking it will leave uncovered, and the both-directions sentence
-  says which way the money goes without counting bookings. Every claim must hold
-  for both directions at once: a payable figure has the fee added and a refund
-  has it taken off, so no fee sentence says the total "includes" it; no fee
-  sentence names a figure when the combined fee is zero; no "one change fee only" on the waiver branch when the primary's own
-  fee is also nothing; no promise that the member "will be asked once" where the
-  money goes when the request already carried that answer. The offer names
-  `policyRetainedAmountCents` summed across every booking that moves.
+  **Save stays disabled until an arm is chosen**; the error slot is an announced
+  live region; no reason is demanded. **Only the booking's own member answers**:
+  the seam honours a decline only from the owner on the answer,
+  `runLinkedDateMove` refuses a non-owner before writing, and the answer is no
+  ADMIN-gated field. An officer still owes §7.
 
-  **The member cannot save without answering**: Save is disabled until an arm is
-  chosen, as on the officer-override arm, and the bottom error slot is an
-  announced live region. **No reason is demanded**, unlike §7's override; the
-  state key is the proof they were shown the consequence.
+  **Every date-capable member surface offers all three arms**: `PUT
+  /api/bookings/[id]/modify` and `.../modify-dates` share one function
+  (`INV-SSOT-001`). `adminShiftBookingDates` escalates via `REQUIRE_OVERRIDE`
+  instead, census-checked.
 
-  **Only the booking's own member may answer, on either arm.** Declining is
-  honoured by the hosting seam only when the actor is the booking owner carried
-  on the answer; accepting is refused for a non-owner in `runLinkedDateMove`
-  before it writes anything. The answer is deliberately not one of the routes'
-  ADMIN-gated fields, which would 403 the only person entitled to answer. An
-  officer who means to strand a booking still owes §7's confirmation and reason.
-
-  **Every date-capable member surface offers all three arms.** Both doors, `PUT
-  /api/bookings/[id]/modify` and `PUT /api/bookings/[id]/modify-dates`, route
-  the arms through ONE shared function, differing only in the single-booking
-  writer they hand in (`INV-SSOT-001`); a surface with `INV-HOST-049`'s widened
-  read and no offer refuses moves it used to allow. `adminShiftBookingDates` is
-  outside the arms: an officer's change escalates through `REQUIRE_OVERRIDE` and
-  is never refused for stranding. A census checks its absence from the arms.
-
-  **The *Cannot* arm names the WHOLE stranded set**, priced at nothing, with the
-  primary's own figures as the combined ones, and the deferred supervision check
-  is skipped on any arm that cannot commit while still governing every arm that
-  can.
-
-  Enforced by `src/lib/__tests__/adult-member-hosting-linked-move.test.ts`,
-  `src/lib/__tests__/adult-member-hosting-same-owner.test.ts`,
-  `src/lib/__tests__/booking-linked-date-move-service.test.ts`,
-  `src/lib/__tests__/adult-member-hosting-call-sites.test.ts` (both doors) and
-  `src/app/api/bookings/[id]/__tests__/modify-linked-move.test.ts`, whose
-  failure messages carry this id. History, measurements and rejected
-  alternatives: #3232.
+  Enforced by `adult-member-hosting-linked-move.test.ts`,
+  `adult-member-hosting-same-owner.test.ts`,
+  `booking-linked-date-move-service.test.ts`,
+  `adult-member-hosting-call-sites.test.ts` and `modify-linked-move.test.ts`.
+  History: #3232.
 
 ### INV-HOST-051
 
@@ -1407,134 +1086,46 @@ compliant indefinitely.
   change fees is a club setting that defaults to charging** (#3232 D2,
   `INV-CONFIG-001`).
 
-  **ATOMIC.** Every write happens inside one transaction, so no state exists in
-  which one booking has moved and the other has not. Any failure on the second
-  booking — no beds, a minimum-stay violation, a Xero lock date, a member-night
-  conflict, or a supervision refusal over the FINAL state — rolls the first one
-  back with it. The provider work is the one thing that cannot be inside the
-  transaction and is not: each booking's Stripe refund or charge, member email and
-  Xero settlement is returned as a `deferredPostCommit` thunk and run after the
-  commit, because a provider call under the global money key and a lodge capacity
-  key is what the locking guide forbids.
+  **Atomic:** one transaction, so any failure on the second booking rolls back
+  the first. Each booking's Stripe, email and
+  Xero work is a `deferredPostCommit` thunk run after commit, contained per
+  booking: one failing never skips the other's or reports the committed move
+  failed.
 
-  **ONE COMBINED FIGURE, ACCEPTED ONCE.** Both bookings' price recalculations and
-  both change fees are summed and shown before the member accepts, and one
-  refund-or-credit choice covers both. Every amount stays integer cents; the
-  combined fields are sums of the per-booking ones, never separately derived. The
-  due and refund figures are reported separately rather than netted, because
-  Stripe and Internet Banking/Xero settlement stay distinct per booking and a
-  single signed figure would imply a netting-off that never happens.
+  **One combined figure, accepted once:** both bookings' repricing and change
+  fees, summed in integer cents from per-booking fields, shown before
+  acceptance with one refund-or-credit choice; due and refund never net off.
+  The need for a card-or-credit choice is the modification result's own
+  `requiresSettlementMethod`, never re-derived from amounts (`INV-SSOT-001`); a method the member already chose attaches by
+  the ARM they chose, not that flag.
 
-  **WHETHER A CARD-OR-CREDIT CHOICE IS NEEDED IS THE WRITE'S OWN ANSWER, CARRIED
-  ON THE RESULT — NEVER RE-DERIVED FROM THE AMOUNTS.** The modification service
-  refuses a settlement without a method on
-  `cardRefundAmountCents > 0 || creditRefundAmountCents > 0`, an OR over BOTH
-  options; a quote is priced against ONE of them, and the two come from separate
-  policy tiers with their own percentage and their own fixed fee, each floored at
-  zero. So the two expressions disagree whenever one option resolves to nothing and
-  the other does not — a card tier carrying a processing fee larger than the
-  refund, say — and the disagreement is a DEADLOCK, not a cosmetic one: the offer
-  says nothing comes back, draws no Return-method control, the member accepts, the
-  write demands a method, and the re-quote prices the same way and returns a
-  byte-identical offer. Every retry repeats and neither booking moves. The fact
-  therefore travels as `requiresSettlementMethod` on the modification result
-  (`INV-SSOT-001`), and the panel attaches a method the member has already chosen
-  on the strength of the ARM they chose rather than on the strength of that flag —
-  a flag going quiet on a re-quote must not un-answer a question they answered.
+  **The setting** is `BookingDefaults.linkedMoveChargesBothChangeFees`; the
+  member is told the club's answer. A
+  waiver reaches pricing as `waiveChangeFee`, a modification-service argument
+  (never a request-body field; its one permitted caller is censused) passed for
+  the DRAGGED booking only, its zero reaching settlement, payment adjustment,
+  modification row, audit and Xero.
+  `changeFeeWaived` and its one-home reason are recorded only where a
+  chargeable fee was suppressed.
 
-  **A WAIVER IS RECORDED ONLY WHERE A FEE WAS SUPPRESSED.** `changeFeeWaived` and
-  its reason are written from the fee that would have been charged, not from the
-  request that asked for the waiver. The flag is passed for every booking the move
-  drags along, and `calculateModificationChangeFee` already returns zero for an
-  unchanged check-in, a `DRAFT` booking and a move outside every fee band, so
-  recording the waiver from the flag alone over-counted exactly the number the
-  field exists for — the one a treasurer reconciles against the club setting — and
-  wrote "waived because our own supervision rule compelled this move" into the
-  history of a booking that was never going to be charged. The stored reason has
-  one home in code, because it is written to two places and read as a key.
+  **One supervision check, over the committing state:** `modifyBookingBatch`
+  accepts `hostingReconcile: "CALLER"` only from
+  `booking-linked-date-move-service.ts`, returning `pendingHostingReconcile`,
+  run for every written booking before commit.
 
-  **THE SUPERVISION CHECK RUNS ONCE, OVER THE STATE THAT WILL COMMIT.** The
-  intermediate state in which one of two linked bookings has moved would be
-  refused by this very rule, and no ordering avoids it: move A first and A's seam
-  sees B stranded; move B first and B's own seam sees B with no adult. So
-  `modifyBookingBatch` accepts `hostingReconcile: "CALLER"` and hands the
-  reconciliation back as `pendingHostingReconcile`, which the linked move runs for
-  every booking it wrote before committing. Deferral moves the check and never
-  removes it, and `booking-linked-date-move-service.ts` is the only caller
-  permitted to ask for it.
+  **`NO_CAPACITY` is chosen by error class** (`InsufficientCapacityError` on
+  the member path, unchanged 400), never by message.
 
-  **BOTH CHANGE FEES, BY DEFAULT, AS A SETTING.** Both bookings really move, so
-  both really attract their fee. Clubs will disagree about whether the second is
-  fair when the club's own supervision rule is what compelled the move, so
-  `BookingDefaults.linkedMoveChargesBothChangeFees` is the lever, defaulting to
-  `true` — a club that means to waive it says so, and an upgrade never silently
-  starts giving fees away. The member-facing sentence states which answer the club
-  gave, so a waived fee is never described as charged or the reverse.
+  **Locks:** one lodge key covers both (the dependent envelope pins `lodgeId`),
+  global → lodge → `Member` rows → coverage key, adding no key; its two
+  roster-date sets rely on the
+  [global key](../CONCURRENCY_AND_LOCKING.md#composition-roster-date-writers-2586).
+  The transaction takes `{ maxWait: 10_000, timeout: 30_000 }`; P2028/P2034
+  answers "nothing was changed, try again in a moment".
 
-  **AND THE SETTING REACHES THE PRICING ENGINE, NOT ONLY THE SENTENCE.** It first
-  shipped as a display flag: the combined figure was summed from two modifications
-  that each charged their own fee, so a club that had waived the second fee told
-  the member it was waived and charged it anyway. The waiver is a service argument
-  on the modification service (`waiveChangeFee`), passed on the DRAGGED booking
-  only — the booking the member chose to move always attracts its own — and it
-  takes the same zero branch a parked edit takes, so the zero flows through the
-  settlement options, the payment adjustment, the modification row, the audit
-  trail and the Xero leg. It is deliberately NOT a field on the request-body input
-  type, because that input is the parsed request body on both member save routes
-  and a fee waiver living there would be a fee waiver any member could ask for;
-  the one file permitted to pass it is censused, exactly as the deferred hosting
-  check is.
-
-  **"THERE ARE NOT BEDS FOR BOTH" IS DECIDED FROM A CLASS, NOT FROM A SENTENCE.**
-  The `NO_CAPACITY` arm is selected by asking the second booking's refusal what
-  kind of refusal it is, and the member path throws `InsufficientCapacityError` —
-  the same 400 with the same words as before it was classed, so nothing on the wire
-  changed. It has to be a class because the two over-capacity errors
-  (`OverCapacityConfirmationRequiredError`, `WholeLodgeHoldBlockedError`) are
-  raised on the ADMIN override path only, and a linked move is reachable only for
-  the booking's own member: keyed on those alone the arm was unreachable, a full
-  lodge propagated a bare 400 about beds on a booking the member had not asked to
-  move, and the member was refused with no door — the third distinct way this arm
-  was found to be dead. A message match would have worked until somebody reworded
-  the message.
-
-  **ONE LODGE CAPACITY KEY COVERS BOTH BOOKINGS**, and that is a property of the
-  predicate rather than an assumption: the dependent envelope pins `lodgeId` to
-  the changed booking's lodge, so a same-owner dependent is always at the same
-  lodge, and no writer moves a booking between lodges. The order is unchanged —
-  global `pg_advisory_xact_lock(1)`, then the lodge key, then the participant
-  `Member` rows and the per-owner coverage key — and this change adds no new key.
-  The ROSTER-DATE family is the one place where composing two booking writes takes
-  keys outside a single sorted order: `lockRosterDates` sorts within a call and
-  this transaction makes two, so it can hold a later date from the first booking's
-  set and then ask for an earlier one from the second's. Every writer in the tree
-  that acquires more than one roster-date key holds the global key first, so two
-  such acquisitions can never interleave; that constraint is now stated where the
-  key is minted and in `docs/CONCURRENCY_AND_LOCKING.md`, because it is what a new
-  multi-key roster writer has to honour.
-
-  **THE TRANSACTION IS BUDGETED FOR THE GLOBAL KEY, NOT LEFT ON PRISMA'S
-  DEFAULTS.** It is roughly two batch modifications behind a blocking wait for
-  `pg_advisory_xact_lock(1)`, and that wait counts against the 2s/5s default — so
-  an ordinary cancel or bed assignment legitimately holding the key would abort a
-  member's save. It takes the same `{ maxWait: 10_000, timeout: 30_000 }` as
-  `assignBedRange`, the longest-lived holder of that key. Contention (P2028/P2034)
-  is answered as "nothing was changed, try again in a moment" rather than as an
-  opaque 500, because an unmapped contention error reaches the member INSTEAD OF
-  THE OFFER and puts them back to being unable to move either booking.
-
-  **AND THE POST-COMMIT WORK IS CONTAINED PER BOOKING.** The transaction has
-  committed by then, so a failure there can never mean the move did not happen.
-  Uncontained, one booking's follow-up failing meant the other booking got none of
-  its own — no Stripe charge for its increase and no recovery row either, since
-  that enqueue lives inside the thunk's own catch, no Xero leg, no audit row and no
-  member email — while its dates had already changed, and the member was told the
-  whole change had failed.
-
-  Enforced by `src/lib/__tests__/adult-member-hosting-linked-move.test.ts`,
-  `src/lib/__tests__/booking-linked-date-move-service.test.ts` and
-  `src/lib/__tests__/adult-member-hosting-call-sites.test.ts`, whose failure
-  messages carry this id.
+  Enforced by `adult-member-hosting-linked-move.test.ts`,
+  `booking-linked-date-move-service.test.ts` and
+  `adult-member-hosting-call-sites.test.ts`. History: #3232.
 
 ### INV-HOST-052
 
@@ -1543,239 +1134,70 @@ compliant indefinitely.
   one release before anything wrote it** (#3232 D3, #3241,
   `docs/BLUE_GREEN_MIGRATION_POLICY.md`).
 
-  **WHY ITS OWN CAUSE.** `HostingCoverageIncidentCause` had exactly two values,
-  and a member's deliberate, prompted decision was filed as `SYSTEM_CHANGE` —
-  the value that means an automatic change nobody could reasonably block. An
-  officer reading the booking's history was therefore told the wrong thing, and
-  anybody counting incidents by cause had a member's own choice mixed in with
-  genuine automatic changes. That count is the one number a club or its committee
-  would use to judge whether the supervision setting is working, so merging the
-  two corrupts it, and corrupts it quietly. The repository already argues this
-  against itself: the docblock on the neighbouring
-  `HostingCoverageIncidentResolution` says its values are recorded rather than
-  inferred, because "coverage came back" and "the booking was cancelled" are the
-  same absence of a hazard and a very different story for an officer reading the
-  history. A member's decision and an automatic change are the same kind of pair.
+  **Its own cause.** `OWNER_DECLINED_LINKED_MOVE` is never filed as
+  `SYSTEM_CHANGE`, which means an automatic change nobody could reasonably
+  block; merging them misinforms officers and corrupts the by-cause count.
 
-  **TWO RELEASES, AND THE ORDER IS THE RULE.** A production deploy runs
-  migrations *before* the new colour takes traffic, while the previous colour is
-  still serving against the same database. That colour's generated Prisma client
-  knows this type with two labels and cannot deserialize a third. So:
+  **Two releases; the order is the rule**, owed by the next value added to this
+  enum. Migrations run while the previous colour serves, and its Prisma client
+  cannot deserialize an unknown label, even in the fold read every drain
+  performs (`adult-member-hosting-coverage-incidents.ts`). Expand (#3232):
+  `20260909010000_add_owner_declined_linked_move_incident_cause` registered the
+  value; nothing wrote it. Runtime (#3241): the owner-declined branch of
+  `hostingCoverageActorOptions` writes it. Both have landed.
 
-  1. **Expand (#3232, shipped first).**
-     `20260909010000_add_owner_declined_linked_move_incident_cause` registered
-     `OWNER_DECLINED_LINKED_MOVE` and **nothing wrote it**. A declined offer was
-     still stored as `SYSTEM_CHANGE`.
-  2. **Runtime (#3241, the following release).** The declined arm — the
-     owner-declined branch of `hostingCoverageActorOptions` in
-     `src/lib/adult-member-hosting-review.ts` — writes the new value. **Both
-     halves have now landed**, and the sequence stands here because the next
-     value added to this enum owes the same one.
+  **Wording.** Each cause's officer-facing phrase has one home,
+  `describeHostingCoverageIncidentCause`, used by the bookings queue and the
+  stuck-state dashboard (`INV-SSOT-001`); `SYSTEM_CHANGE` reads "no longer
+  covered after a later change". The member's decision is recorded in words in
+  the incident's audit history, **never** on
+  `overriddenByMemberId`/`overrideReason`: nobody exercised §7 authority.
 
-  Writing it early would not have been a cosmetic risk. `cause` is selected by
-  the incident writer's OWN fold read in
-  `src/lib/adult-member-hosting-coverage-incidents.ts` — the read every
-  re-evaluation drain performs before it opens or folds an incident — as well as
-  by the two officer surfaces. A row carrying the value during the drain would
-  therefore have broken the reconciliation engine, not merely a screen.
-  Registering the label breaks nothing: a client that never meets a value of a
-  type is unaffected by that value existing.
+  **One writer:** an exact-list census holds that the declined arm alone
+  produces the value, and only the module declaring the union and owning the
+  phrase names it outside tests; widening either list changes this invariant.
 
-  **That claim was measured, not reasoned about.** Every migration on the branch
-  was applied to a throwaway PostgreSQL 16, a Prisma client was generated from
-  `origin/main`'s own `prisma/schema.prisma`, and that client ran the fold read
-  three times: after the expand with no row carrying the new label, **OK**; with
-  a row carrying `SYSTEM_CHANGE`, which is what the expand release wrote for a
-  declined offer, **OK**; and with that row's cause changed to
-  `OWNER_DECLINED_LINKED_MOVE`, **failed** with
-  `Value 'OWNER_DECLINED_LINKED_MOVE' not found in enum
-  'HostingCoverageIncidentCause'`. The migration header records the same
-  transcript.
-
-  **THE WORDING DID NOT WAIT, AND NEITHER DID THE TRUTH.** Two things landed in
-  the expand release, so an officer was not misinformed for a release — and the
-  runtime half was then a writer rather than a writer plus two screens.
-
-  - The officer-facing phrase for every cause has ONE home,
-    `describeHostingCoverageIncidentCause`, and it already names the new value.
-    The two surfaces had drifted into two different wordings for the same stored
-    value — the bookings queue said "qualification changed", the stuck-state
-    dashboard said "system change" (`INV-SSOT-001`). `SYSTEM_CHANGE` now reads
-    "no longer covered after a later change", which is true of everything that
-    value holds: an administrative cancellation, a lifecycle transition, a data
-    correction, a club that tightened its own policy or switched the rule on, an
-    officer who confirmed pending guests or force-confirmed and so ADDED people
-    the existing cover no longer stretches to, and — while the halves were
-    apart — a declined linked move. "Qualification changed" was true of none of
-    those, and the interim phrase "cover removed by a later change" was untrue of
-    the last three: nothing was removed in any of them.
-  - The member's decision is **recorded in words** in the incident's audit
-    history. It was already computed and carried on the queue item and then
-    dropped, because only an officer override stored a reason, so the history
-    showed a bare cause code for a decision a member had deliberately made after
-    being warned. The audit row is the right home for it and not only the
-    available one: an audit row describes ONE event, so it cannot go stale, while
-    a "why" column would be left describing the decline after a later automatic
-    change moved the same incident's uncovered state.
-
-  It is **not** written onto `overriddenByMemberId`/`overrideReason`. Nobody
-  exercised authority over a booking that was not theirs, so §7's mandatory
-  reason and its attribution would both be inventions, and an officer would be
-  shown a decision they never made.
-
-  **ONE WRITER, AND THAT IS THE PART STILL BEING ENFORCED.** The writer-ban
-  census is gone, deleted by #3241 in the same change that started writing the
-  value — leaving it would have made that change unmergeable, and deleting it
-  separately would have dropped the guard while the wait was still real. What
-  replaced it is an exact-list census: `OWNER_DECLINED_LINKED_MOVE` is produced
-  by the declined arm and by nothing else, and named outside a test only by the
-  module that declares the union and owns the officer-facing phrase. An empty
-  list means the writer was renamed or removed and a declined offer is quietly
-  back to `SYSTEM_CHANGE`; a second entry means some automatic change now files
-  itself as a member's decision, which is the count this value exists to keep
-  clean. Widening either list is a change to this invariant, not a test fix.
-
-  Enforced by
-  `src/lib/__tests__/hosting-coverage-incident-cause-expand.test.ts`, whose
-  failure messages carry this id: it pins the appended-never-reordered enum, the
-  additive DML-free migration, the ledger row's declared deploy order, the
-  wording in its one home on both surfaces, and the one-writer census above.
-  `adult-member-hosting-same-owner.test.ts` pins the arm itself — the queue item
-  the declined offer enqueues, and the cause and reason the drain then stores.
+  Enforced by `hosting-coverage-incident-cause-expand.test.ts` (appended enum,
+  additive DML-free migration, the ledger row's deploy order, the phrase on both
+  surfaces, the census) and `adult-member-hosting-same-owner.test.ts` (the
+  declined arm's queue item and stored cause and reason). History: #3241.
 
 ### INV-HOST-053
 
 - **A re-evaluation row's explanation belongs to the booking that row is about,
   and an explained cause is never overwritten by an unexplained one** (#3241).
+  `actorMemberId` reaches every booking the drain's §14 sweep matches by the
+  row's owner, lodge and nights; `cause` and `reason` stop at the row's own
+  booking.
 
-  **THE SHAPE OF THE DEFECT.** One `HostingCoverageReevaluation` row names an
-  owner, a lodge and a night list, and the drain turns that triple back into
-  every one of that owner's active bookings over those nights. §14 then asks of
-  each "is this booking covered NOW", deliberately, rather than "did this change
-  uncover it" — so the sweep also reaches bookings that were already uncovered
-  for reasons of their own. Each of them used to be handed the row's `cause` and
-  `reason`. An officer's private override reason therefore landed on a booking
-  they had never considered, and a member's decision landed on a booking nobody
-  had mentioned to them. It also inflated the count `INV-HOST-052` exists to keep
-  honest: a club counting declined moves counted bookings nobody declined.
+  Cause labels, ranks, phrases and the declined-move sentence have one home,
+  `adult-member-hosting-incident-causes.ts` (`INV-SSOT-001`).
 
-  **WHERE THE VOCABULARY LIVES.** The labels, their ranks, the one officer-facing
-  phrase for each and the one stored sentence a declined move records are
-  `src/lib/adult-member-hosting-incident-causes.ts`, split out of the incident
-  writer by #3241 when the writer had grown to two jobs. Two officer surfaces and
-  an audit line want the words and nothing else; the fold wants the ranks
-  (`INV-SSOT-001`). The writer re-exports the words for callers that already
-  imported them from it — a pointer, not a second definition.
+  1. **The drain** gives `cause` and `reason` only to the named booking, plus,
+     for an officer override alone, its #738 split half (no extra read
+     otherwise).
+  2. **The enqueue** writes a row per **acknowledged** dependent (the member's
+     declined set or an officer's §7-confirmed set, both bound by the stranded
+     state key) even where the changed booking's window
+     reaches it. `inspectSameOwnerDependents` drops from `stranded` any
+     dependent whose uncovered state is already recorded (a stored review or
+     open incident at that state key), leaving it a dependent without the
+     story. A plain `SYSTEM_CHANGE` with no reason keeps the overlap rule and
+     one row; the edited booking's own row never carries the decision.
+  3. **A sweep yields the OPENING**: a story-carrying row never opens an
+     incident for another booking that has an unprocessed story-carrying row of
+     its own below `maxAttempts`. `resolveRowRemit`
+     (`adult-member-hosting-coverage-remit.ts`) alone decides a row's remit.
+  4. **The fold promotes by rank**: `OFFICER_OVERRIDE` over
+     `OWNER_DECLINED_LINKED_MOVE` over `SYSTEM_CHANGE`. For an identical state,
+     higher overwrites lower, never the reverse; the guarded `updateMany` re-asserts this as `notIn` the causes not
+     outranked, never an allow-list (`INV-HOST-052`), so a stronger concurrent
+     writer wins. A promotion writes the story only, never clearing the
+     owner-notification claim (§16); the rank map is `satisfies`-checked.
 
-  **THE ACTOR IS NOT THE STORY.** `actorMemberId` still reaches every booking in
-  the sweep, because "who did the thing that revealed this" is true of all of
-  them and is what an audit trail is for. What stops at the row's own booking is
-  the `cause` and the `reason` — the claim about WHY, and about whom.
+  **When the state key moves**, the incoming cause is written whatever its rank;
+  a stored `overrideReason` survives.
 
-  **THREE PARTS, BECAUSE THE OBVIOUS ONE ALONE LOSES THE STORY.** Confining
-  attribution is not sufficient by itself, and shipping only that would have
-  silently dropped the decision from the very bookings it describes.
-
-  1. **The drain** gives `cause` and `reason` only to the booking the row names —
-     **and, for an officer override, to that booking's #738 split half**, because
-     a split pair is one booking and the officer acted on the pair. The sibling
-     query excludes its own input, so a half can never equal `sourceBookingId`;
-     and §7's mandatory reason is stored nowhere but the incident, so where the
-     uncovered half is the split child and its parent has no violation of its
-     own, confining attribution to the id alone would leave that reason nowhere
-     at all.
-
-     **THE EXPANSION IS FOR AN OVERRIDE AND NOT FOR A DECLINE**, and that is not
-     an oversight. A decline is an answer about an EXACT set of bookings, each of
-     which gets a row of its own under part 2 — so a half that was not in that set
-     would inherit a decision nobody was asked for, which is this invariant's own
-     defect wearing a different hat. An override names no set: the officer
-     confirmed a change to one booking, and its two halves are that booking. The
-     extra read is therefore taken only for an override, and the ordinary sweep
-     pays nothing (`adult-member-hosting-coverage-drain.ts`).
-  2. **The enqueue** writes a row per **acknowledged** dependent — the member's
-     declined set, or the exact set an officer was shown and confirmed under §7,
-     both fingerprinted by the same stranded state key — even where the changed
-     booking's own night window already reaches it.
-     A dependent that PARTIALLY overlaps the new dates — the adult's booking
-     still covers one of the kid's nights and leaves the other short — is an
-     ordinary family shape, and it is reached only by the sweep. Without a row of
-     its own it would lose the decision entirely.
-
-     **AN OFFICER'S OVERRIDE IS AN ACKNOWLEDGEMENT TOO**, and the same rule
-     carries it: the officer is shown the exact bookings their change would
-     strand and confirms that set with a mandatory reason, so the incident opened
-     on each of them is the record of who authorised it — and there is no other
-     durable home for that reason. A dependent reached only by the changed
-     booking's sweep, and so filed as a plain automatic change, would lose it.
-     The end-to-end contract from #2576/#2597 asserts exactly this, and caught it
-     when #3241's first attempt confined attribution without carrying it.
-
-     **STRANDED, NOT EVERY DEPENDENT, AND THE DIFFERENCE IS THE WHOLE POINT.**
-     `inspectSameOwnerDependents` drops from `stranded` any dependent whose
-     uncovered state is already recorded — a stored review or an open incident at
-     the same state key — and those are precisely the bookings uncovered for
-     reasons of their own. They stay in the dependent set. Giving each of them a
-     row of its own would hand them the story under their own name, where the
-     drain's filter cannot help. A change that explains nothing about who — a
-     plain `SYSTEM_CHANGE` with no reason — has nothing to carry, so it keeps the
-     existing overlap rule and the ordinary edit still writes exactly one row.
-     The changed booking's own row does not carry the decision either: "asked whether to move this booking as well" is
-     self-contradictory on the booking they were editing.
-  3. **A sweep yields the OPENING to the row that owns the story.** Before a
-     story-carrying row opens an incident for a booking that is not its own, it
-     asks whether that booking already has an unprocessed row of its own carrying
-     a story, and if so leaves it alone entirely — that row will reconcile it
-     moments later, with the explanation.
-
-     This is about the AUDIT HISTORY, not the stored cause. Without it the sweep
-     can open the incident unexplained and the explained row can then only
-     promote it, which puts §7's mandatory reason on an *update* rather than on
-     the opening — and an officer filtering the audit log for "incident opened",
-     which is what the admin screen offers, would never see why. Ordering cannot
-     fix it: both rows are written in one transaction, PostgreSQL gives every row
-     in a transaction the same `now()`, and the claim orders by `enqueuedAt`.
-
-     It yields only to a row that can still run. A row at or past `maxAttempts`
-     is retired, so deferring to it would hold the incident closed for good — an
-     unnoticed hazard is worse than an unexplained opening. `resolveRowRemit` in
-     `adult-member-hosting-coverage-remit.ts` is the one home for both halves of
-     a row's remit, split out of the drain when that file reached its size budget
-     with a second job in it.
-  4. **The fold promotes by rank**: `OFFICER_OVERRIDE` outranks
-     `OWNER_DECLINED_LINKED_MOVE`, which outranks `SYSTEM_CHANGE`. For an
-     identical uncovered state a more explained cause overwrites a less explained
-     one, and never the reverse. That is what makes drain order stop mattering: a
-     stranded booking can be opened by a sweep that knows nothing and reached
-     afterwards by its own row carrying the member's decision. The guarded
-     `updateMany` re-asserts the ranks under concurrency **as `notIn` the causes
-     this write does not outrank** — an allow-list would exclude a label the
-     running build has never heard of, which is exactly what an older colour
-     meets mid-deploy under `INV-HOST-052`'s own two-release order, and the
-     promotion would then match nothing, spin the retry loop and throw. A
-     concurrent writer holding something stronger still wins rather than being
-     erased. A promotion writes the story and NOTHING ELSE: the full update
-     payload also clears the owner-notification claim, which is right when the
-     state moved and wrong here — clearing a claim held by a delivery in flight
-     loses its completion stamp and emails the owner twice about one unchanged
-     condition (§16). The rank is a map checked with `satisfies`, so a fourth
-     cause nobody ranks is a compile error rather than a silent 0.
-
-  **WHAT THIS DOES NOT CHANGE.** A materially different uncovered state is still
-  a new state: when the state key moves, the incoming cause is written whatever
-  its rank, because the situation being described is no longer the same one. The
-  pre-existing preservation of an officer's stored `overrideReason` across such a
-  move is untouched.
-
-  Enforced by
-  `src/lib/__tests__/adult-member-hosting-coverage-drain-claims.test.ts` (the
-  story reaches the row's own booking and no other, in both the declined and the
-  officer-override directions, and a split half keeps the officer's reason),
-  `src/lib/__tests__/adult-member-hosting-coverage-incidents.test.ts` (the
-  decision is recorded whichever drain arrives first, an override promotes a
-  decision and is never demoted by one, and a notification claim in flight
-  survives a promotion) and
-  `src/lib/__tests__/adult-member-hosting-same-owner.test.ts` (an overlapping
-  stranded booking gets a row of its own, while a booking uncovered for its own
-  reason and the booking being edited do not carry the decision), whose failure
-  messages carry this id.
+  Enforced by `adult-member-hosting-coverage-drain-claims.test.ts`,
+  `adult-member-hosting-coverage-incidents.test.ts` and
+  `adult-member-hosting-same-owner.test.ts`. History: #3241.
