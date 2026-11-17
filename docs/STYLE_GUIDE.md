@@ -175,7 +175,7 @@ re-creatable.
   That tooltip never appears (disabled buttons receive no pointer events), and
   gated controls also stay out of the keyboard tab order, so "tab to the button
   to hear why" is wrong too. **Check the screen before you write "the banner
-  says why":** 55 controls still carry their own per-button reason instead —
+  says why":** some controls still carry their own per-button reason instead:
   controls inside a dialog, popover, or dropdown; leaf toolbars dropped into
   another page's layout; the member detail **credit** card, whose buttons
   are gated on finance while that page's banner states membership; and the
@@ -185,7 +185,7 @@ re-creatable.
   so itself. The member
   detail page itself was converted under owner decision #2168 and now shows ONE
   banner covering its eight membership-scoped cards.
-  See `docs/ARCHITECTURE.md` for the full list of shapes and counts. And note
+  See `docs/ARCHITECTURE.md` for the full list of shapes. And note
   the banner is stated once per **section**, not once per screen: a page built
   from several banner-bearing sections repeats it once per section, so
   `/admin/security` and `/admin/booking-requests` each show it three times. What

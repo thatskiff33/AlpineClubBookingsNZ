@@ -22,6 +22,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
+import { getAdminPage } from "@/lib/admin-hubs"
 import { FocusedActionError } from "@/components/focused-action-error"
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 
@@ -386,7 +387,7 @@ export default function ChoresPage() {
       <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Chore Templates</h1>
+          <h1 className="text-3xl font-bold">{getAdminPage("chores").label}</h1>
           <p className="text-muted-foreground mt-1">
             Configure chore definitions for the lodge roster
           </p>

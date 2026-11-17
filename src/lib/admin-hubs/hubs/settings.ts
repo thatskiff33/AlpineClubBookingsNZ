@@ -18,6 +18,7 @@ export const SETTINGS_HUB = defineHub({
     {
       id: "setup",
       label: "Setup",
+      keywords: ["setup wizard", "setup checklist"],
       oldPath: "/admin/setup",
       area: "support",
       moved: false,
@@ -32,6 +33,7 @@ export const SETTINGS_HUB = defineHub({
     {
       id: "setup-foundations",
       label: "Foundations Setup",
+      keywords: ["initial setup"],
       oldPath: "/admin/setup/foundations",
       area: "support",
       moved: false,
@@ -111,7 +113,7 @@ export const SETTINGS_HUB = defineHub({
       oldPath: "/admin/config-transfer",
       area: "support",
       fullAdminOnly: true,
-      keywords: ["backup", "migration", "config transfer", "restore"],
+      keywords: ["configuration export & import", "backup", "migration", "config transfer", "restore"],
       moved: false,
     },
     {
