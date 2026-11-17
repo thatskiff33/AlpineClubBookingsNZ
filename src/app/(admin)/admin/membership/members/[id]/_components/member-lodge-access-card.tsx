@@ -39,6 +39,39 @@ interface MemberLodgeAccessCardProps extends AncestorViewOnlyBannerProps {
   memberId: string
 }
 
+/**
+ * One run of per-lodge tickboxes. Booking restrictions and staff grants are the
+ * same control over different id sets, so the markup is written once.
+ */
+function LodgeTickboxes({
+  lodges,
+  selectedIds,
+  canEdit,
+  onToggle,
+}: {
+  lodges: ReadonlyArray<{ id: string; name: string }>
+  selectedIds: readonly string[]
+  canEdit: boolean | undefined
+  onToggle: (lodgeId: string, checked: boolean) => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-4">
+      {lodges.map((lodge) => (
+        <label key={lodge.id} className="flex items-center space-x-2">
+          <input
+            type="checkbox"
+            checked={selectedIds.includes(lodge.id)}
+            disabled={!canEdit}
+            onChange={(e) => onToggle(lodge.id, e.target.checked)}
+            className="rounded border-input"
+          />
+          <span className="text-sm">{lodge.name}</span>
+        </label>
+      ))}
+    </div>
+  )
+}
+
 export function MemberLodgeAccessCard({
   memberId,
   ancestorRendersViewOnlyBanner = false,
@@ -175,6 +208,8 @@ export function MemberLodgeAccessCard({
       })
       if (!res.ok) throw await apiRefusalFromResponse(res, SAVE_FALLBACK)
       if (!ownsCurrentScope()) return
+      // The save landed, so a failed earlier read of the same grants is moot.
+      setLoadError("")
       setSuccess("Lodge access saved.")
     } catch (saveError) {
       if (!ownsCurrentScope()) return
@@ -252,26 +287,14 @@ export function MemberLodgeAccessCard({
             ) : null}
             <div className="space-y-2">
               <Label>Restrict bookings to</Label>
-              <div className="flex flex-wrap gap-4">
-                {lodges.map((lodge) => (
-                  <label key={lodge.id} className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={bookingRestrictionLodgeIds.includes(lodge.id)}
-                      disabled={!canEdit}
-                      onChange={(e) =>
-                        toggle(
-                          lodge.id,
-                          e.target.checked,
-                          setBookingRestrictionLodgeIds,
-                        )
-                      }
-                      className="rounded border-input"
-                    />
-                    <span className="text-sm">{lodge.name}</span>
-                  </label>
-                ))}
-              </div>
+              <LodgeTickboxes
+                lodges={lodges}
+                selectedIds={bookingRestrictionLodgeIds}
+                canEdit={canEdit}
+                onToggle={(lodgeId, checked) =>
+                  toggle(lodgeId, checked, setBookingRestrictionLodgeIds)
+                }
+              />
               {bookingRestrictionLodgeIds.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                   No restriction — this member can book every lodge.
@@ -280,22 +303,14 @@ export function MemberLodgeAccessCard({
             </div>
             <div className="space-y-2">
               <Label>Staff (kiosk) lodges</Label>
-              <div className="flex flex-wrap gap-4">
-                {lodges.map((lodge) => (
-                  <label key={lodge.id} className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={staffLodgeIds.includes(lodge.id)}
-                      disabled={!canEdit}
-                      onChange={(e) =>
-                        toggle(lodge.id, e.target.checked, setStaffLodgeIds)
-                      }
-                      className="rounded border-input"
-                    />
-                    <span className="text-sm">{lodge.name}</span>
-                  </label>
-                ))}
-              </div>
+              <LodgeTickboxes
+                lodges={lodges}
+                selectedIds={staffLodgeIds}
+                canEdit={canEdit}
+                onToggle={(lodgeId, checked) =>
+                  toggle(lodgeId, checked, setStaffLodgeIds)
+                }
+              />
               <p className="text-xs text-muted-foreground">
                 Only needed for lodge-operational (kiosk) accounts; it does not
                 affect booking access.

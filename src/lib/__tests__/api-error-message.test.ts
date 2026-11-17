@@ -6,6 +6,8 @@ import {
   apiErrorMessageFromResponse,
   apiRefusalFromResponse,
   readApiErrorBody,
+  readApiObjectOrEmpty,
+  readApiObjectOrNull,
   refusalMessageOr,
 } from "@/lib/api-error-message";
 import { templateErrorMessage } from "@/components/admin/email-settings/email-message-settings-panel";
@@ -167,6 +169,27 @@ describe("readApiErrorBody", () => {
     expect(
       await readApiErrorBody(new Response("<html>502</html>", { status: 502 })),
     ).toBeNull();
+  });
+});
+
+describe("readApiObjectOrNull and readApiObjectOrEmpty", () => {
+  it("hand back a JSON object body as it was sent", async () => {
+    const sent = { membershipTypes: [{ id: "t1" }], error: "kept" };
+
+    expect(await readApiObjectOrNull(Response.json(sent))).toEqual(sent);
+    expect(await readApiObjectOrEmpty(Response.json(sent))).toEqual(sent);
+  });
+
+  it.each([
+    ["an HTML error page", () => new Response("<html>502</html>", { status: 502 })],
+    ["an empty body", () => new Response(null, { status: 500 })],
+    ["a truncated JSON body", () => new Response('{"error":', { status: 500 })],
+    ["a JSON array", () => Response.json(["nope"])],
+    ["a JSON string", () => Response.json("nope")],
+    ["a bare null", () => Response.json(null)],
+  ])("count %s as no object: null, and empty where an object is wanted", async (_case, reply) => {
+    expect(await readApiObjectOrNull(reply())).toBeNull();
+    expect(await readApiObjectOrEmpty(reply())).toEqual({});
   });
 });
 

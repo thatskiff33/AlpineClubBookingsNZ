@@ -33,7 +33,7 @@ import {
   readPartPaymentAtCancel,
 } from "@/lib/internet-banking-part-payment-at-cancel";
 import { checkRateLimit, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
-import { disputedCaptureCents, paymentCaptureIntentIds } from "@/lib/stripe-dispute-hold";
+import { paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
 
 /**
  * GET /api/bookings/[id]/cancel-preview
@@ -175,7 +175,7 @@ export async function GET(
     // no longer holds money.
     const organiserCard = paidByOrganiserCard(booking) ? await organiserChildCancelBasis(prisma, booking, booking.payment) : null;
     const organiserByBank = paidByOrganiserInternetBanking(booking); // #3949: refunded to the organiser by hand, on the card tiers
-    const disputed = (await disputedCaptureCents(prisma, await paymentCaptureIntentIds(prisma, booking.payment))).cents > 0; // #4911 (`INV-PAY-154`): the cancel's own read
+    const disputed = (await paymentDisputedCaptureCents(prisma, booking.payment)).cents > 0; // #4911 (`INV-PAY-154`): the cancel's own read
     const preview = calculateCancellationPreview({
       // #3643: the cash the cancel will record, not the invoice's face value.
       payment: partPayment

@@ -15,8 +15,10 @@ import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases"
 import { ADMIN_FORBIDDEN_SAVE_REASON } from "@/components/admin/view-only-action";
 import { MODULE_KEYS, type ModuleSettingsValues } from "@/config/modules";
 
+// The page refreshes the admin layout after a save (#5091), so it needs a router.
+const mocks = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
+  useRouter: () => ({ refresh: mocks.refresh }),
 }));
 
 vi.mock("next-auth/react", () => ({
@@ -83,6 +85,7 @@ async function turnTheModuleOffAndSave() {
 describe("modules page refusals", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+    mocks.refresh.mockReset();
   });
   afterEach(() => {
     cleanup();
@@ -119,6 +122,7 @@ describe("modules page refusals", () => {
       await turnTheModuleOffAndSave();
 
       expect(await screen.findByText("Module settings saved.")).toBeInTheDocument();
+      expect(mocks.refresh).toHaveBeenCalledTimes(1);
     });
   });
 });

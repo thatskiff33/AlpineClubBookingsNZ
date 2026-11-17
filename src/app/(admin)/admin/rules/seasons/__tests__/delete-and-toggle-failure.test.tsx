@@ -8,7 +8,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -70,7 +70,6 @@ let listFetches = 0;
 
 beforeEach(() => {
   listFetches = 0;
-  vi.stubGlobal("confirm", () => true);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -102,6 +101,22 @@ function renderPage() {
 
 async function click(name: string) {
   fireEvent.click(await screen.findByRole("button", { name }));
+  // Delete asks first through the shared confirmation dialog (#4973).
+  if (name.startsWith("Delete ")) {
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete season" }));
+  }
+}
+
+// The action alert is mounted permanently and empty until a refusal (#4975),
+// so wait for its text rather than its presence.
+async function findRefusal(text: string) {
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(text));
+  return screen.getByRole("alert");
+}
+
+/** Every alert on the page that is saying something. */
+function visibleAlerts() {
+  return screen.queryAllByRole("alert").filter((alert) => alert.textContent?.trim());
 }
 
 describe("Seasons page: a refused delete or toggle is readable (#4976)", () => {
@@ -110,7 +125,7 @@ describe("Seasons page: a refused delete or toggle is readable (#4976)", () => {
     renderPage();
     await click("Delete Winter 2026");
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Season not found");
+    await findRefusal("Season not found");
   });
 
   it("shows the fallback, not a parse error, for an HTML delete refusal", async () => {
@@ -118,8 +133,7 @@ describe("Seasons page: a refused delete or toggle is readable (#4976)", () => {
     renderPage();
     await click("Delete Winter 2026");
 
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Failed to delete");
+    const alert = await findRefusal("Failed to delete");
     expect(alert).not.toHaveTextContent(/JSON/);
   });
 
@@ -128,8 +142,7 @@ describe("Seasons page: a refused delete or toggle is readable (#4976)", () => {
     renderPage();
     await click("Deactivate Winter 2026");
 
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Failed to update");
+    const alert = await findRefusal("Failed to update");
     expect(alert).not.toHaveTextContent(/JSON/);
   });
 
@@ -145,8 +158,7 @@ describe("Seasons page: a refused delete or toggle is readable (#4976)", () => {
       renderPage();
       await click(button);
 
-      const alert = await screen.findByRole("alert");
-      expect(alert).toHaveTextContent(fallback);
+      const alert = await findRefusal(fallback);
       expect(alert).not.toHaveTextContent(/fetch/i);
     },
   );
@@ -157,15 +169,15 @@ describe("Seasons page: a refused delete or toggle is readable (#4976)", () => {
     mutationResponse = () => Response.json({ error: "Season not found" }, { status: 404 });
     renderPage();
     await click("Delete Winter 2026");
-    await screen.findByText("Season not found");
+    await findRefusal("Season not found");
 
     let answer: (response: Response) => void = () => {};
     mutationResponse = () => new Promise<Response>((resolve) => (answer = resolve));
     await click("Delete Winter 2026");
 
-    await waitFor(() => expect(screen.queryByText("Season not found")).not.toBeInTheDocument());
+    await waitFor(() => expect(visibleAlerts()).toEqual([]));
     answer(Response.json({ error: "Season not found" }, { status: 404 }));
-    expect(await screen.findByText("Season not found")).toBeInTheDocument();
+    await findRefusal("Season not found");
   });
 
   it("refreshes the list after a successful delete", async () => {
@@ -174,7 +186,6 @@ describe("Seasons page: a refused delete or toggle is readable (#4976)", () => {
     await click("Delete Winter 2026");
 
     await waitFor(() => expect(listFetches).toBe(2));
-    // The action alert stays mounted (#4975) and stays empty.
-    expect(document.getElementById("season-action-error")).toBeEmptyDOMElement();
+    expect(visibleAlerts()).toEqual([]);
   });
 });

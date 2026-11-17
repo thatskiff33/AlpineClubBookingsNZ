@@ -27,6 +27,8 @@ const data = {
     joiningFees: [],
   }],
   familyGroups: [],
+  // The page lists subscription category fees below the membership ones.
+  subscriptionCategories: [],
 };
 
 type Answer = () => Response | Promise<Response>;

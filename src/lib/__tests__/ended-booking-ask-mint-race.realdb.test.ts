@@ -180,8 +180,9 @@ let observerClient: PrismaClient;
         door: "guestAdd",
         failureMessage: "race-4316: the mint failed",
         result: {
+          ownCardRefund: null,
           pendingRefundAmountCents: 0,
-          organiserChildRefund: null,
+          organiserChildRefund: null, refundHeldForDispute: false,
           paymentId: PAYMENT_ID,
           additionalAsk: sizeAdditionalAsk({
             priceDiffCents: ASK_CENTS,

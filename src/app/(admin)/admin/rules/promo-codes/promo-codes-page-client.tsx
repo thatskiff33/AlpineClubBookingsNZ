@@ -11,7 +11,11 @@ import {
 } from "@/components/ui/card";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { FocusedActionError } from "@/components/focused-action-error";
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import {
+  ApiRefusalError,
+  apiErrorMessageFromResponse,
+  refusalMessageOr,
+} from "@/lib/api-error-message";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
@@ -293,11 +297,11 @@ export function PromoCodesPageClient({
     }
     try {
       const res = await fetch("/api/admin/promo-codes");
-      if (!res.ok) throw new Error("Failed to fetch promo codes");
+      if (!res.ok) throw new ApiRefusalError("Failed to fetch promo codes");
       const data = await res.json();
       setPromoCodes(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(refusalMessageOr(err, "Failed to fetch promo codes"));
     } finally {
       setLoading(false);
     }
@@ -310,11 +314,11 @@ export function PromoCodesPageClient({
     }
     try {
       const res = await fetch("/api/admin/promo-codes?archived=true");
-      if (!res.ok) throw new Error("Failed to fetch archived codes");
+      if (!res.ok) throw new ApiRefusalError("Failed to fetch archived codes");
       const data = await res.json();
       setArchivedCodes(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(refusalMessageOr(err, "Failed to fetch archived codes"));
     }
   }, [lodgeScopeReady]);
 
@@ -364,7 +368,7 @@ export function PromoCodesPageClient({
         return;
       }
       if (!accountsRes.ok || !itemsRes.ok) {
-        throw new Error("Xero not connected or accounts/items unavailable");
+        throw new ApiRefusalError("Xero not connected or accounts/items unavailable");
       }
       const accountsData = (await accountsRes.json()) as { accounts?: XeroAccountOption[] };
       const itemsData = (await itemsRes.json()) as { items?: XeroItemOption[] };
@@ -372,11 +376,7 @@ export function PromoCodesPageClient({
       setXeroItems(itemsData.items ?? []);
       setXeroDataLoaded(true);
     } catch (err) {
-      setXeroDataError(
-        err instanceof Error
-          ? err.message
-          : "Could not load Xero accounts/items"
-      );
+      setXeroDataError(refusalMessageOr(err, "Could not load Xero accounts/items"));
     } finally {
       setXeroDataLoading(false);
     }

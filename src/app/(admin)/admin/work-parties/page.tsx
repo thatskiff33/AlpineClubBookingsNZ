@@ -436,7 +436,7 @@ export default function AdminWorkPartiesPage() {
       />
 
       {lodgeScopeReady && error && (
-        <div className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
+        <div role="alert" className="rounded-md border border-danger/20 bg-danger-muted p-3 text-sm text-danger">{error}</div>
       )}
 
       {lodgeScopeReady && showForm && (

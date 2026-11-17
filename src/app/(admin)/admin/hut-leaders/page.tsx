@@ -71,38 +71,12 @@ import type { HutLeaderOnNight } from "@/lib/hut-leader-handover";
 import {
   apiErrorMessageFromBody,
   apiErrorMessageFromResponse,
-  jsonObjectOrNull,
-  readApiErrorBody,
+  readApiObjectOrEmpty,
 } from "@/lib/api-error-message";
-
-interface HutLeaderAssignment {
-  id: string;
-  memberId: string;
-  memberName: string;
-  memberEmail: string;
-  startDate: string;
-  endDate: string;
-  createdAt: string;
-  lodgeId: string | null;
-  lodgeName: string | null;
-  // #2286: the bed this assignment holds, or null for a role-only assignment.
-  bedId: string | null;
-  bedName: string | null;
-  bedRoomName: string | null;
-  isCustodian?: boolean; // #3817
-  source?: string; // #3821: SCHOOL_BOOKING rows get no custodian tick
-}
-
-interface UnassignedDate {
-  date: string;
-  // One row per uncovered lodge-night since #2917; here always the selected
-  // lodge, so these are for keying, not display. Optional: an older cached
-  // response must not break the panel.
-  lodgeId?: string | null;
-  lodgeName?: string | null;
-  bookingCount: number;
-  guestCount: number;
-}
+import type {
+  HutLeaderAssignment,
+  UnassignedDate,
+} from "./_components/hut-leaders-page-types";
 
 // Compute the last inclusive day of a "YYYY-MM" month.
 function monthBounds(monthKey: string) {
@@ -566,7 +540,7 @@ export default function HutLeadersPage() {
         }
         // A refusal is not always JSON: an HTML error page reads as no body,
         // and falls through to this screen's own sentence (ALP-589).
-        const data = (jsonObjectOrNull(await readApiErrorBody(res)) ?? {}) as {
+        const data = (await readApiObjectOrEmpty(res)) as {
           code?: unknown;
           nightDetails?: NonNullable<typeof overCapacity>["nights"];
           nonHoldingBookings?: unknown;

@@ -97,8 +97,9 @@ import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modific
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const CONTEXT = {
+  ownCardRefund: null,
   pendingRefundAmountCents: 0,
-  organiserChildRefund: null,
+  organiserChildRefund: null, refundHeldForDispute: false,
   paymentId: "payment_1",
   // The +$80 guest add of the issue, with no earlier ask to carry.
   additionalAsk: sizeAdditionalAsk({

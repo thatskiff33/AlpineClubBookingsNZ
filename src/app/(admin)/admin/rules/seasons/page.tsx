@@ -3,7 +3,8 @@
 import { useEffect, useLayoutEffect, useMemo, useState, useCallback, useRef } from "react"
 import Link from "next/link"
 import { adminHref } from "@/lib/admin-hubs"
-import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message"
+import { useConfirm } from "@/components/confirm-dialog";
+import { seasonDeleteConfirmation } from "../../_lib/season-delete-confirmation";
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
@@ -23,11 +24,13 @@ import {
   useLodgeOptions,
 } from "@/components/lodge-select"
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
-import { readSeasonSchedule } from "../../_lib/season-schedule";
+import { formatSeasonEdge, readSeasonSchedule } from "../../_lib/season-schedule";
+import type { Season } from "./_lib/season-window";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
 import { useClubTime } from "@/components/club-time-provider"
 import { useClubFormat } from "@/components/club-format-provider"
-import { type ClubDateFormat, formatStayDateOrNull, calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
+import { calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time"
 import {
   SeasonCoverageGapNotice,
   SeasonCoverageGapSummary,
@@ -39,26 +42,9 @@ import {
 // rates are left untouched. Creating a season (which requires at least one rate)
 // also lives in Fees → Hut Fees, so this page edits existing windows only.
 
-interface Season {
-  id: string
-  name: string
-  type: "WINTER" | "SUMMER"
-  startDate: string
-  endDate: string
-  active: boolean
-}
-
-// CT-4 (#2870): a season edge is a CALENDAR DATE and calendar dates take no
-// timezone — the API serialises the `@db.Date` column as UTC midnight, and the
-// kernel's calendar-date formatter pins "UTC" over that encoding, so the
-// projection is the identity for every club. It used to be read through
-// APP_TIME_ZONE, which for a club behind UTC named the previous day.
-function formatSeasonEdge(value: string, format: ClubDateFormat): string {
-  return formatStayDateOrNull(value, format) ?? value
-}
-
 export default function SeasonsPage() {
   const format = useClubFormat()
+  const { confirm, confirmDialog } = useConfirm();
   const [seasons, setSeasons] = useState<Season[]>([])
   const [loading, setLoading] = useState(true)
   // A failed READ is passive: it is shown above the list and moves nothing. A
@@ -231,39 +217,49 @@ export default function SeasonsPage() {
         body: JSON.stringify(payload),
       })
       if (!res.ok) {
-        throw await apiRefusalFromResponse(res, fallback)
+        const message = await apiErrorMessageFromResponse(res, fallback)
+        // A refusal from a lodge the admin has since left must not take focus.
+        if (activeScopeRef.current !== requestedScope) return
+        actionFailure.fail(message)
+        return
       }
       if (activeScopeRef.current !== requestedScope) return
       resetForm()
       setTransitionsLanded((count) => count + 1)
       fetchSeasons()
-    } catch (err) {
-      // A failure from a lodge the admin has since left must not take focus.
+    } catch {
+      // The request never arrived: see handleDelete.
       if (activeScopeRef.current !== requestedScope) return
-      actionFailure.fail(refusalMessageOr(err, fallback))
+      actionFailure.fail(fallback)
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(season: Season) {
     if (!lodgeScopeReady) return
     const requestedScope = scopedLodgeId
-    if (!confirm("Are you sure you want to delete this season?")) return
+    if (!(await confirm(seasonDeleteConfirmation(season.name)))) return
     const fallback = "Failed to delete"
     actionFailure.clear()
     try {
-      const res = await fetch(`/api/admin/seasons/${id}`, { method: "DELETE" })
+      const res = await fetch(`/api/admin/seasons/${season.id}`, { method: "DELETE" })
       if (!res.ok) {
-        throw await apiRefusalFromResponse(res, fallback)
+        const message = await apiErrorMessageFromResponse(res, fallback)
+        // A refusal from a lodge the admin has since left must not take focus.
+        if (activeScopeRef.current !== requestedScope) return
+        actionFailure.fail(message)
+        return
       }
       if (activeScopeRef.current !== requestedScope) return
       setTransitionsLanded((count) => count + 1)
       fetchSeasons()
-    } catch (err) {
+    } catch {
+      // The request never arrived. The browser's own wording ("Failed to fetch",
+      // "Load failed") says nothing useful to an officer, so show the screen's sentence.
       // A failure from a lodge the admin has since left must not take focus.
       if (activeScopeRef.current !== requestedScope) return
-      actionFailure.fail(refusalMessageOr(err, fallback))
+      actionFailure.fail(fallback)
     }
   }
 
@@ -279,14 +275,18 @@ export default function SeasonsPage() {
         body: JSON.stringify({ active: !season.active }),
       })
       if (!res.ok) {
-        throw await apiRefusalFromResponse(res, fallback)
+        const message = await apiErrorMessageFromResponse(res, fallback)
+        // A refusal from a lodge the admin has since left must not take focus.
+        if (activeScopeRef.current !== requestedScope) return
+        actionFailure.fail(message)
+        return
       }
       if (activeScopeRef.current !== requestedScope) return
       fetchSeasons()
-    } catch (err) {
-      // A failure from a lodge the admin has since left must not take focus.
+    } catch {
+      // The request never arrived: see handleDelete.
       if (activeScopeRef.current !== requestedScope) return
-      actionFailure.fail(refusalMessageOr(err, fallback))
+      actionFailure.fail(fallback)
     }
   }
 
@@ -335,7 +335,7 @@ export default function SeasonsPage() {
                 <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="outline" size="sm" aria-label={`Edit window of ${season.name}`} onClick={() => startEdit(season)}>
                   Edit window
                 </ViewOnlyActionButton>
-                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" aria-label={`Delete ${season.name}`} onClick={() => handleDelete(season.id)}>
+                <ViewOnlyActionButton canEdit={canEdit} describeReason={false} variant="destructive" size="sm" aria-label={`Delete ${season.name}`} onClick={() => handleDelete(season)}>
                   Delete
                 </ViewOnlyActionButton>
               </div>
@@ -368,6 +368,7 @@ export default function SeasonsPage() {
 
   return (
     <div ref={pageRef}>
+      {confirmDialog}
       {viewOnlyBanner}
       <div className="space-y-6">
       <AdminPageHeader

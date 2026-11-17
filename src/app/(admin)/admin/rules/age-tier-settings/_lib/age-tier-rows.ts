@@ -1,56 +1,17 @@
-import type { AgeTier } from "@prisma/client";
+import type { AgeTierSettingData } from "@/lib/policies/age-tier";
 
-/** The age-tier editor's row shape, built-in defaults and read normaliser. */
-export type AgeTierRow = {
-  tier: AgeTier;
-  minAge: number;
-  maxAge: number | null;
-  label: string;
-  subscriptionRequiredForBooking: boolean;
-  familyGroupRequestCreateMemberAllowed: boolean;
-  sortOrder: number;
-};
+/**
+ * The age-tier editor's row shape and read normaliser.
+ *
+ * The built-in tiers are NOT defined here: `AGE_TIER_DEFAULTS` in
+ * `@/lib/policies/age-tier` is the one hard-coded age-tier safety net, and the
+ * editor's empty-database fallback and "Restore default tiers" read it
+ * (INV-SSOT-001). A row is that policy shape with its two booleans resolved.
+ */
+export type AgeTierRow = Required<AgeTierSettingData>;
 
-export const DEFAULT_SETTINGS: AgeTierRow[] = [
-  {
-    tier: "INFANT",
-    minAge: 0,
-    maxAge: 4,
-    label: "Infant (under 5)",
-    subscriptionRequiredForBooking: false,
-    familyGroupRequestCreateMemberAllowed: true,
-    sortOrder: 0,
-  },
-  {
-    tier: "CHILD",
-    minAge: 5,
-    maxAge: 9,
-    label: "Child (5-9)",
-    subscriptionRequiredForBooking: false,
-    familyGroupRequestCreateMemberAllowed: true,
-    sortOrder: 1,
-  },
-  {
-    tier: "YOUTH",
-    minAge: 10,
-    maxAge: 17,
-    label: "Youth (10-17)",
-    subscriptionRequiredForBooking: true,
-    familyGroupRequestCreateMemberAllowed: false,
-    sortOrder: 2,
-  },
-  {
-    tier: "ADULT",
-    minAge: 18,
-    maxAge: null,
-    label: "Adult (18+)",
-    subscriptionRequiredForBooking: true,
-    familyGroupRequestCreateMemberAllowed: false,
-    sortOrder: 3,
-  },
-];
-
-export function normalizeAgeTierRows(rows: AgeTierRow[]): AgeTierRow[] {
+/** Resolves the optional booleans a stored row may lack, into an editor row. */
+export function normalizeAgeTierRows(rows: AgeTierSettingData[]): AgeTierRow[] {
   return rows.map((row) => ({
     ...row,
     subscriptionRequiredForBooking: row.subscriptionRequiredForBooking ?? true,

@@ -15,19 +15,20 @@ tokens exist.
 
 The whole admin surface lives under the **Lobby Display** entry in the
 collapsible **Lodge Operations** sidebar section (`/admin/display`), a hub of
-cards: **Devices**, **Visual builder**, **Layouts (Advanced)**, **Templates**, and
-**Reference**. Per-lodge display settings live on the lodge configuration hub
+cards, each named for the page it opens: **Display Devices**, **Display
+Builder**, **Display Layouts**, **Display Templates**, and **Display
+Reference**. Per-lodge display settings live on the lodge configuration hub
 (**Admin → Lodges → [lodge]**), not under Lobby Display.
 
 ### 1. Pair the device
 
-1. In **Lobby Display → Devices** (`/admin/display/devices`), create a device
+1. In **Lobby Display → Display Devices** (`/admin/display/devices`), create a device
    record: give it a name (e.g. "Lobby TV") and it is bound to a lodge. The page
    shows the concrete display URL to open on the screen.
 2. On the TV/browser (or Raspberry Pi), open `/display`. Unpaired, it shows a
    short **pairing code**. The code expires after 15 minutes; a fresh one appears
    automatically.
-3. Back in the admin Devices page, enter/confirm that code against the device
+3. Back on the Display Devices page, enter/confirm that code against the device
    record. On its next poll the screen claims a long-lived, **hashed**,
    revocable display token (stored as an httpOnly cookie) and reloads into
    display mode. It survives reboots and network blips; re-pairing is only needed
@@ -39,8 +40,8 @@ to the pairing screen within one refresh interval.
 
 ### 2. Build a board (visual builder)
 
-Most boards are easiest to build with the **Visual builder**
-(`/admin/display/builder`) — no HTML required (ADR-004):
+Most boards are easiest to build with the **Display Builder**, the visual
+builder (`/admin/display/builder`) — no HTML required (ADR-004):
 
 1. Pick a **shape**: columns, rows, or main + side-rail (1–3 zones).
 2. **Drop a module** into each zone — drag it from the Modules palette, or use a
@@ -53,10 +54,11 @@ Most boards are easiest to build with the **Visual builder**
    safe sandbox before you save. If anything is wrong, the preview shows the same
    errors a save would.
 5. **Create board** — the builder writes a valid Layout + Template for you; bind
-   it to a device on the Devices page like any other Template.
+   it to a device on the Display Devices page like any other Template.
 
-For full manual control (custom HTML/CSS), use **Advanced mode**
-(`/admin/display/layouts` + `/admin/display/templates`). The two surfaces edit the
+For full manual control (custom HTML/CSS), use **Advanced mode** — the
+**Display Layouts** and **Display Templates** pages (`/admin/display/layouts` +
+`/admin/display/templates`). The two surfaces edit the
 same stored fields. A board that was hand-edited in Advanced mode (or a built-in
 board with its own styling) can't be re-opened in the builder — it stays in
 Advanced mode, with an option to rebuild it from a fresh skeleton if you prefer.
@@ -65,7 +67,7 @@ Advanced mode, with an option to rebuild it from a fresh skeleton if you prefer.
 
 Each device shows the **club-default board** until you bind it to a Template.
 
-- Pick a Template from the device's template selector (**Devices** page). The
+- Pick a Template from the device's template selector (**Display Devices** page). The
   three built-ins — **Everyday board**, **Whole lodge**, **Singles house** —
   appear as ordinary Templates, alongside any you have authored.
 - Choosing "club default" clears the binding (`templateId: null`).

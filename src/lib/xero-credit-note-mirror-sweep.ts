@@ -44,7 +44,8 @@ import { fundingLotWhere } from "./xero-applied-credit-slice-lookup";
 const DEFAULT_MIN_PASS_INTERVAL_MS = 12 * 60 * 60 * 1000;
 /** Notes read per run, rechecks included. */
 const DEFAULT_NOTE_LIMIT = 100;
-const MAX_CONSECUTIVE_READ_FAILURES = 3;
+/** Three failed Xero reads in a row end a run; #4336's revived refund-note report shares this bound. */
+export const MAX_CONSECUTIVE_READ_FAILURES = 3;
 const PASS_CURSOR_SCOPE = "SWEEP";
 
 export interface CreditNoteMirrorSweepResult {

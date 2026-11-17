@@ -477,8 +477,8 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
         const database = DATABASES.journal;
         await admin.query(`CREATE DATABASE "${database}" TEMPLATE "${DATABASES.fresh}"`);
         // The release before these append-only tables, provisioned: take the
-        // journal, the M4a reservation tables and the Stripe evidence table
-        // away, then apply those migrations as the migrator. StripePayout is
+        // journal, the M4a reservation tables, the M13 export manifest and the
+        // Stripe evidence table away, then apply those migrations as the migrator. StripePayout is
         // dropped with them so its migration can be reapplied; it stays mutable.
         await withClient(urlFor(database), (client) => client.query(`
           DROP TABLE ${MEMBER_MONEY_RELATIONS.map((name) => `"${name}"`).join(", ")} CASCADE;
@@ -487,18 +487,20 @@ async function privilegeSnapshot(database: string, { includeDatabaseAcl = true }
           DROP FUNCTION IF EXISTS member_money_require_complete(), member_money_batch_errors(text),
             member_money_check_seal(), member_money_refuse_mutation(), member_money_system_identifier(),
             member_money_application_state(text), member_money_reservation_errors(text),
-            member_money_require_reservation();
+            member_money_require_reservation(), member_money_require_export_coverage();
           DROP TYPE "MemberMoneyAccount", "MemberMoneySide", "MemberMoneyEventKind", "MemberMoneyOrigin",
             "MemberMoneySourceKind", "MemberMoneyObligationKind", "MemberMoneyDebtorKind",
-            "MemberMoneyRefundReservationReleaseReason";
+            "MemberMoneyRefundReservationReleaseReason", "MemberMoneyExportDocumentRole", "MemberMoneyExportOutcome",
+            "MemberMoneyExportConflictReason";
           DELETE FROM "_prisma_migrations" WHERE migration_name IN (
             '20261127010000_member_money_journal', '20261210080000_member_money_applications',
-            '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
+            '20261211010000_stripe_balance_evidence', '${APPEND_ONLY_SCHEMA_MIGRATION}')`));
         expect(deployGrantsCheck(database)).toBe("");
         // Applied as prisma migrate deploy applies them: each file, as the migration role.
         await withClient(urlFor(database, "migrator"), async (client) => {
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261127010000_member_money_journal/migration.sql"), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261210080000_member_money_applications/migration.sql"), "utf8"));
+          await client.query(readFileSync(path.join(REPO_ROOT, "prisma/migrations/20261211010000_stripe_balance_evidence/migration.sql"), "utf8"));
           await client.query(readFileSync(path.join(REPO_ROOT, `prisma/migrations/${APPEND_ONLY_SCHEMA_MIGRATION}/migration.sql`), "utf8"));
         });
         expect(deployGrantsCheck(database)).toBe("");

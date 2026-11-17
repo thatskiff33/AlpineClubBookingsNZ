@@ -20,6 +20,12 @@ vi.mock("@/components/admin/lodge-capacity-card", () => ({
   LodgeCapacityCard: () => null,
 }));
 
+// An editor: the write buttons are gated on support edit access (#4971).
+vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/hooks/use-admin-area-edit-access")),
+  useAdminAreaEditAccess: () => true,
+}));
+
 import { SetupPageClient } from "../setup-page-client";
 
 const setupBody = {

@@ -5,8 +5,9 @@ Audience: Developer, Agent.
 Prefixes defined in this file: **`INV-OPS`** — raw SQL result shapes, raw SQL
 construction and row locking, the client/server bundle boundary, production
 deployment including the worked windowed column drop, changing what values
-already stored in a column mean, what may be used as test input, and which money
-seams a test may mock (`INV-OPS-015`) — and
+already stored in a column mean, what may be used as test input, which money
+seams a test may mock (`INV-OPS-015`), and which CI runs must finish and what a
+release may tag (`INV-OPS-021`) — and
 **`INV-LOCK`** (#2722), the two-tier advisory-lock protocol: which tier a writer
 takes, the order it takes them in, and the registration every global site
 carries. `INV-LOCK` sits here because advisory locking is the sibling of the row
@@ -22,8 +23,10 @@ Read this file when you are writing raw SQL, taking a row lock or an advisory
 lock, adding an import to a `"use client"` module, dropping a column, changing
 the meaning of a stored value (an audit `category`, a status string) so that the
 rows already written no longer match the code, deploying to production,
-choosing credentials or data for CI and local validation, or mocking a money
-seam in a test that asserts money.
+choosing credentials or data for CI and local validation, mocking a money
+seam in a test that asserts money, changing a workflow's `concurrency` block
+or what `release:cut` checks before tagging (`INV-OPS-021`), or capping the rows
+an admin list route returns (`INV-OPS-020`).
 
 A Prisma `startsWith` is SQL `LIKE` too, and Prisma does not escape it: a
 prefix carrying an id or typed text goes through `exactPrefix`
@@ -258,6 +261,32 @@ rules first written here. #2765 extended it with the measured-audience half.
   from the shared advisory-lock inventory matcher; its explicit exception list
   is empty. Transactions without advisory locks are outside this restriction.
 
+## INV-LOCK-006
+
+- **A transaction that waits for the global key states the shared lock(1)
+  budget and answers contention as retryable (#4933).** Prisma counts the wait
+  for `pg_advisory_xact_lock(1)` against an interactive transaction's `timeout`
+  (`maxWait` only limits the wait to start it), and its defaults (2 s / 5 s)
+  lose to any legitimate holder that runs longer. So a writer that opens such a transaction passes
+  `LOCK1_HOLDER_TRANSACTION_BUDGET` (`src/lib/db-transaction.ts`), the one
+  definition of the lock(1) holders' budget, and never writes the numbers out.
+  Leaving the defaults is a silent choice to lose to every long holder. A writer
+  joined to a caller's transaction passes nothing: the opener's budget governs.
+  When the budget does run out, Prisma answers P2028 (P2034 for a lost write
+  conflict), nothing is committed, and the remedy is "again shortly", not
+  "differently". The route therefore answers a 503, with `Retry-After` where the
+  caller can retry, and decides that through `isTransactionContention` alone,
+  never through a code check of its own; the raw Prisma message stays in the log
+  (#1888). The trade-off is pool pressure: a waiter keeps its pooled connection
+  while it waits, so a wider budget swaps opaque failures for a fuller pool -
+  `docs/CONCURRENCY_AND_LOCKING.md` -> "The lock(1) transaction budget" states
+  it against `DEPLOYMENT.md` -> "Connection pool sizing". A writer with a harder
+  ceiling of its own, such as a provider delivery timeout, may run tighter and
+  says why at the site. Booking create, the linked date move, bed-range
+  assignment and group settlement use the constant; other lock(1) writers still
+  on the defaults, or on their own copy of the numbers, are a known gap tracked
+  by #5175, not a licence.
+
 ## INV-OPS-014
 
 - **The statement handed to a raw `Unsafe` call is visibly static at the call
@@ -461,6 +490,35 @@ rules first written here. #2765 extended it with the measured-audience half.
   the CLI census's 38 roots reach `server-only`, and every published way of
   running each of them carries the condition.
 
+## INV-OPS-020
+
+- **A row-capped admin list shows its total and reaches every row (#4960).**
+  When an admin route answers one page of a list, every screen that reads it
+  for that list has a pager that reaches the last row, and an officer queue
+  shows the total even on a single page, in the same change that adds the cap.
+  A cap with no pager is silent data loss (#297).
+- One shape, one pager. A capped route parses `adminListPageQueryFields` and
+  answers through `adminListPage`, both in `src/lib/admin-list-page.ts`; a
+  screen pages through `useAdminQueuePage` and renders the shared `Pagination` with
+  `formatAdminListRange` as its summary. A filter change returns to page 1, a
+  page left empty by a decision steps back one, and the page is kept in the URL
+  wherever the screen keeps its filter there. A slower read for a page or
+  filter the officer has left never replaces the list now shown, and the pager
+  stays mounted through a read so keyboard focus survives a page change.
+- A work queue's pending filter reads oldest first (`adminQueueCreatedOrder`).
+  A deep link (`bookingId=`, `requestId=`) whose record is off the current page
+  shows it pinned above the list (`fetchOffPageQueueRecord`). The
+  policy-exception queue merges two tables, so it counts each and reads each
+  only to the end of the page asked for: its total is exact.
+- Enforced by `src/lib/__tests__/admin-queue-pagination-census.test.ts`, which
+  names this ID: a client file fetching a route in `CAPPED_QUEUE_ROUTES` (new
+  capped routes go there) must page through the hook, guard its reads with
+  `beginLoad` and render `Pagination` outside its loading branch, or be exempt
+  in `NOT_A_QUEUE_LIST`; each route must call `adminListPage` and spread
+  `adminListPageQueryFields`. Other lists it walks take range text and URL
+  page from `formatAdminListRange`, `parseAdminListPageParam` and
+  `setAdminListPageParam`; one outside it keeps its own pager.
+
 ## INV-OPS-002
 
 - Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md`.
@@ -532,20 +590,16 @@ rules first written here. #2765 extended it with the measured-audience half.
   demands a destructive reset on every development database that applied it.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
-  A GENERAL "did a reclassification ship without a backfill" check is
-  **not available**: the audit-writer census pins only 130 of its 542 write sites
-  per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
-  `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
-  `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
-  by `audit-writer-census.test.ts` so this figure and the copy of it in
-  `bed-allocation-audit-category-backfill.test.ts` cannot go stale again —
-  deliberately, because pinning all of them would make every feature that records
-  something edit a 400-line literal — so for the other 383 there is no baseline
-  a check could compare against, and the category distribution alone cannot see a
-  reclassification that another one compensates for. The two `verify` gates that
-  can read a pull request parse its BODY, not its diff. So outside the pinned
-  population this is a rule a reviewer applies, and the reviewer is the
-  enforcement.
+  Since #5211 every write site has a per-site baseline: the generated ledger
+  `scripts/audit/audit-write-sites.ts` records each site's category, sink and
+  action, so any reclassification fails `audit-writer-census.test.ts`, naming
+  every changed attribute. Sites are matched within their function by sink and
+  action; sites sharing both are matched by order, and a reviewed record keyed
+  by `#n` must be re-pointed when its key shifts. A GENERAL "did it ship WITH a
+  backfill" check is still **not available**: the ledger sees the move, not the
+  migration or issue answering for it, and the two `verify` gates that can read
+  a pull request parse its BODY, not its diff. So outside #2751's population
+  this is a rule a reviewer applies, and the reviewer is the enforcement.
 
   **The same pull request also states the MEASURED before/after audience, per
   site.** Owner decision of 11 August 2026 on #2765, D3, extending this rule
@@ -806,11 +860,68 @@ installation.
   `UNTAGGED_DEPLOY_COMMIT_REASON`, printed in the deploy log; the flag alone is
   refused. Staging deploys of `main` and forks that do not tag use it.
 - "Release tag" has one spelling per language, the same pattern as
-  `RELEASE_TAG` in `scripts/release/cut-release.mjs`; a test runs both over the
-  same names.
+  `RELEASE_TAG` in `scripts/release/release-version.mjs` (re-exported by
+  `cut-release.mjs`); a test runs both over the same names.
 - Adopter install steps (`docs/IMPLEMENTATION_GUIDE.md` §1, `DEPLOYMENT.md`
   "First Bootstrap") check out the latest release tag straight after cloning.
 - Why: #4465 made "every production deploy is a tagged release" a written rule
   with no enforcement, and no release was cut for four months (#4978).
 - Enforced by `deploy-release-tag-guard-script-contract.test.ts`, which runs
   the guard against a scratch origin.
+
+## INV-OPS-021
+
+Every push run of `ci.yml`, `e2e.yml` and `money-coverage.yml` runs to
+completion. A newer push never cancels it or replaces it while pending. Each
+push run's concurrency group is keyed on its branch and commit, because GitHub
+replaces an older pending run in a shared group even with
+`cancel-in-progress: false`.
+Pull-request runs keep one group per ref and cancel superseded runs. This holds
+for `epic/**` pushes too, which use the same `github.event.before` gates.
+
+A release tags only a commit whose `ci.yml` push run on `main` had a
+successful `Publish GHCR images` job. `release:cut publish` asks GitHub for
+that job's result, not git history, on the commit it would tag (on a resume,
+the tagged commit). It refuses before any tag or release when the job did not
+succeed, when no run exists, or when GitHub's answer cannot be read — so its
+token needs Actions read access.
+
+- Why: one shared group cancelled about half of `main`'s runs on a busy day
+  (#4989). A cancelled run publishes no images, so a release tag on it could not
+  be deployed. The push-only gates (file-size ratchet, migration-safety ledger,
+  doc index) never judged its change. And a red `main` could not be traced to
+  the merge that caused it. Being on `main`'s first-parent chain proved none of
+  this.
+- Enforced by `scripts/ci/main-push-runs-complete.test.ts`, which evaluates
+  each workflow's group for a push and a pull request, and by the
+  `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
+
+## INV-OPS-022
+
+A Docker-only install can create its first admin with Docker alone, and the
+commands that do it are the ones CI runs. `DEPLOYMENT.md` "First Bootstrap"
+gives the seed as one plain line, `docker compose run --rm seed`, after the
+database roles are provisioned and switched on in `.env` and before the web
+slots start. The `seed` service runs on the builder image, the same image and
+build as `migrate`, because the runner image holds no source. It sits behind a
+profile, so `docker compose up` never starts it and an upgrade never runs it.
+It connects as the application role with a bounded pool counted in the
+connection budget, and reads the `SEED_` secrets from `.env` through
+`environment:` only, never as a build argument or on the command line.
+
+Every operator doc that tells somebody how to seed a Compose install names that
+service; none runs the seed in the app container (`exec app`), whose image
+cannot run it. The setup checklist names the Docker and developer commands from
+`src/lib/seed-commands.ts`. `.env.example` is copied by the first step, so no
+line gives Compose an empty value followed by a comment: Compose reads the
+comment as the value.
+
+- Why: #4977. "First Bootstrap" had lost its seed step, three docs gave an
+  `exec app` command that fails in the runner image, and CI seeded from the
+  host, so no check ran what an operator is told to run.
+- Enforced by `scripts/ci/first-install-smoke.mjs`, which reads the steps out of
+  `DEPLOYMENT.md` and runs them on an empty database in the
+  `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
+  nothing written; a second run must change no seeded value (bar the built-in
+  displays' `updatedAt`, refreshed from code by design). Also enforced by
+  `first-install-seed-contract.test.ts`.

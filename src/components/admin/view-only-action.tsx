@@ -67,15 +67,15 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
    *
    * Since #2160 the DEFAULT is no longer the usual case — it is the fallback.
    * Most admin sections render an {@link AdminViewOnlySectionBanner} and pass
-   * `describeReason={false}` here (301 of 396 call sites), and a further 40 pass
+   * `describeReason={false}` here, and others pass
    * `describeReason={!ancestorRendersViewOnlyBanner}` because a VOUCHING PARENT
-   * renders the banner instead — 35 vouched at a JSX render site (#2168) and 5
+   * renders the banner instead: vouched at a JSX render site (#2168), or
    * through the guided-setup shell's `WizardStepHelpers` channel (#2324), where
    * the shell calls each step from another file and no render site exists.
-   * 341 opt-outs in total.
-   * `view-only-banner-contract.test.ts` asserts every one of those figures, so
-   * they are measured rather than counted by hand. The default survives in
-   * three shapes:
+   * `view-only-banner-contract.test.ts` checks every call site against those
+   * rules and publishes no totals (#5211). The default survives in three
+   * shapes, and each file where it does is listed in that test's
+   * `KEEPS_OWN_REASON`:
    *
    *  - inside a dialog, sheet, popover, or dropdown menu, which is a separate
    *    accessibility container (focus trapped, page behind commonly inert), so
@@ -85,9 +85,8 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
    *    capacity/exclusive hold controls, the #2259 per-booking "No emails"
    *    switch, the #2262 cash-payment and manual-refund-task controls, the
    *    non-member contact form), where
-   *    nothing local proves an ancestor renders a banner. (`docs/ARCHITECTURE.md`
-   *    counts 40 controls here, and that bucket is the arithmetic remainder
-   *    rather than a pure shape: a few of them are the FIRST shape — dialog
+   *    nothing local proves an ancestor renders a banner. (This is the
+   *    remainder rather than a pure shape: a few of them are the FIRST shape, dialog
    *    contents inside `page-content-panel.tsx` and `site-banners-panel.tsx`,
    *    which are themselves banner-bearing panels — and the rest of the
    *    exceptions are the #2324 SCOPE ones below, sitting inside setup wizards
@@ -102,7 +101,7 @@ interface ViewOnlyActionButtonProps extends ButtonProps {
    *    wizard's area, and the Lodge Display module switch is `support`-gated
    *    under a `lodge` banner. Their siblings gated on the wizard's OWN area do
    *    opt out, through the shell's vouch; and
-   *  - in `member-credit-card.tsx` (4 controls), the one member detail card
+   *  - in `member-credit-card.tsx`, the one member detail card
    *    #2168 did NOT vouch for. Its siblings take the page banner's coverage;
    *    it cannot, because it is gated on `finance` while that banner states
    *    `membership`. Scope, not folder, is what decides.
@@ -266,7 +265,7 @@ export const ADMIN_VIEW_ONLY_SECTION_HEADING =
  *
  *  - surfaces that state view-only access WITHOUT gating a control through
  *    {@link ViewOnlyActionButton} — with no gated control there is nothing for
- *    this banner to head (8 files today, measured by the census test);
+ *    this banner to head (listed in the census test's `NOTICE_ONLY_FILES`);
  *  - a section whose Notice is CONDITIONAL on no ancestor covering it.
  *    `member-lodge-access-card`, `member-committee-assignments-card` and
  *    `member-seasonal-membership-card` each render their Notice only when

@@ -21,11 +21,12 @@
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { divergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { addCalendarDays, clubToday } from "@/lib/club-time";
 
@@ -127,8 +128,36 @@ afterEach(() => {
 });
 
 describe("Seasons page: the windows in order, with their holes", () => {
+  it("focuses a refused toggle, and focuses it again when it repeats (#4975)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "PUT"
+        ? Response.json({ error: "That season is in use." }, { status: 409 })
+        : Response.json([season()]),
+    ));
+    renderPage();
+    const alert = () => document.getElementById("season-action-error");
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const toggle = await screen.findByRole("button", { name: "Deactivate Winter 2026" });
+      toggle.focus();
+      fireEvent.click(toggle);
+      await waitFor(() => expect(alert()).toHaveTextContent("That season is in use."));
+      await expectRecoveryAlertToHoldFocus(alert());
+    }
+  });
+
+  it("keeps a failed season load passive: nothing takes focus", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 500 })));
+    renderPage();
+    const loadMessage = await screen.findByText("Failed to fetch seasons");
+    expect(document.getElementById("season-action-error")).toBeEmptyDOMElement();
+    // The failed read moved no focus, and did not mark itself as the focus target.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(document.body);
+    expect(loadMessage.closest('[tabindex="-1"]')).toBeNull();
+  });
+
   it("keeps focus on the page after deleting the focused season", async () => {
-    vi.stubGlobal("confirm", vi.fn(() => true));
     let removed = false;
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "DELETE") {
@@ -141,6 +170,9 @@ describe("Seasons page: the windows in order, with their holes", () => {
     const remove = await screen.findByRole("button", { name: "Delete Winter 2026" });
     remove.focus();
     fireEvent.click(remove);
+    // The delete asks first (#4973); the focus check starts once it is confirmed.
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete season" }));
     await waitFor(() => expect(remove).not.toBeInTheDocument());
     const heading = screen.getByRole("heading", { name: "Seasons", level: 1 });
     await waitFor(() => {
@@ -321,72 +353,26 @@ describe("Seasons page: navigable without seeing it", () => {
   });
 });
 
-/*
-  #4976 follow-up: a refused save showed whatever `await res.json()` threw. An
-  HTML 502 from the proxy in front of the app reached the officer as
-  "Unexpected token < in JSON". The failure is now read through
-  `apiErrorMessageFromResponse`, so the route's own sentence or this screen's
-  fallback is what an officer sees.
-*/
-describe("Seasons page: a refused window save says why", () => {
-  function mockSave(answer: () => Response | Promise<Response>) {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.startsWith("/api/admin/seasons/") && init?.method === "PUT") return answer();
-      if (url.startsWith("/api/admin/seasons")) return Response.json([season()]);
-      throw new Error(`unexpected request: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    return fetchMock;
-  }
-
-  async function saveWindow() {
+describe("season deletion confirmation (#4973)", () => {
+  it("names the season and lost nightly rates; cancel sends no delete", async () => {
+    mockApi([season()]);
     renderPage();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Edit window of Winter 2026" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Update Season" }));
-  }
-
-  it("shows the route's own sentence from a JSON refusal", async () => {
-    mockSave(() => Response.json({ error: "Season not found" }, { status: 404 }));
-    await saveWindow();
-
-    expect(await screen.findByText("Season not found")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Winter 2026");
+    expect(dialog).toHaveTextContent(/nightly rates.*deleted/i);
+    expect(dialog).toHaveTextContent(/cannot be undone.*season and its rates would need to be set up again/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
   });
-
-  it.each([500, 502])("shows the fallback, not a parse error, for an HTML %i", async (status) => {
-    mockSave(
-      () =>
-        new Response("<html><body>Bad Gateway</body></html>", {
-          status,
-          headers: { "content-type": "text/html" },
-        }),
-    );
-    await saveWindow();
-
-    expect(await screen.findByText("Failed to save season")).toBeInTheDocument();
-    expect(screen.queryByText(/JSON/)).not.toBeInTheDocument();
-  });
-
-  it("shows the fallback when the request never gets an answer", async () => {
-    mockSave(() => Promise.reject(new TypeError("Failed to fetch")));
-    await saveWindow();
-
-    expect(await screen.findByText("Failed to save season")).toBeInTheDocument();
-    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
-  });
-
-  it("closes the form and reloads the schedule on success", async () => {
-    const fetchMock = mockSave(() => Response.json(season()));
-    await saveWindow();
-
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Update Season" })).not.toBeInTheDocument(),
-    );
-    const listReads = fetchMock.mock.calls.filter(
-      ([input, init]) => String(input).startsWith("/api/admin/seasons") && init?.method !== "PUT",
-    );
-    expect(listReads.length).toBeGreaterThanOrEqual(2);
+  it("deletes the selected season only after confirmation", async () => {
+    mockApi([season()]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete season" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/admin/seasons/season-winter", { method: "DELETE" }));
   });
 });

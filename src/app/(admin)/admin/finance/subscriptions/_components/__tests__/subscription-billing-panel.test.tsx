@@ -7,6 +7,7 @@ import { ClubTimeProvider } from "@/components/club-time-provider";
 import { ENVIRONMENT_CLUB_ZONE } from "@/lib/__tests__/helpers/environment-club-zone";
 import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
+import { escapeRegExp } from "@/lib/escape-regexp";
 
 const mocks = vi.hoisted(() => ({
   canEdit: vi.fn(),
@@ -21,6 +22,10 @@ vi.mock("@/components/confirm-dialog", () => ({
   useConfirm: () => ({ confirm: mocks.confirm, confirmDialog: null }),
 }));
 
+import {
+  MISSING_XERO_ACCOUNT_MAPPING_CODE,
+  SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+} from "@/lib/xero-invoicing-off";
 import { SubscriptionBillingPanel } from "@/app/(admin)/admin/finance/subscriptions/_components/subscription-billing-panel";
 
 /**
@@ -69,11 +74,19 @@ const CLUB_TODAY_CANDIDATES = [
 
 function payload(options: {
   decisionDate?: string;
-  membershipTypeName?: string;
-  exemptMembers?: Array<{ memberId: string; memberName: string; ageTier: string | null }>;
+  membershipTypeName?: string | null;
+  subscriptionCategoryName?: string | null;
+  chargeMembershipTypeName?: string | null;
+  chargeSubscriptionCategoryName?: string | null;
+  exemptMembers?: Array<{ memberId: string; memberName: string; ageTier: string | null; exemptBy?: "AGE_TIER" | "MEMBERSHIP_TYPE"; membershipTypeName?: string }>;
+  ungroupedCategoryMembers?: Array<{
+    subscriptionCategoryId: string;
+    subscriptionCategoryName: string;
+    members: Array<{ memberId: string; memberName: string }>;
+  }>;
 } = {}) {
   const decisionDate = options.decisionDate ?? "2026-07-13";
-  const membershipTypeName = options.membershipTypeName ?? "Full";
+  const membershipTypeName = options.membershipTypeName === undefined ? "Full" : options.membershipTypeName;
   return {
     preview: {
       seasonYear: 2026,
@@ -84,6 +97,7 @@ function payload(options: {
       entries: [{
         key: "entry-1",
         membershipTypeName,
+        subscriptionCategoryName: options.subscriptionCategoryName ?? null,
         billingBasis: "PER_MEMBER",
         prorationRule: "NONE",
         chargedAmountCents: 12_000,
@@ -95,12 +109,14 @@ function payload(options: {
       }],
       exceptions: [{ fingerprint: "same", message: "Configure billing" }],
       exemptMembers: options.exemptMembers ?? [],
+      ungroupedCategoryMembers: options.ungroupedCategoryMembers ?? [],
       alreadyInvoiced: [],
     },
     charges: [{
       id: "charge-1",
       status: "EMAIL_FAILED",
-      membershipTypeName: "Full",
+      membershipTypeName: options.chargeMembershipTypeName === undefined ? "Full" : options.chargeMembershipTypeName,
+      subscriptionCategoryName: options.chargeSubscriptionCategoryName ?? null,
       chargedAmountCents: 12_000,
       recipientName: "Member One",
       xeroInvoiceNumber: "INV-1",
@@ -127,6 +143,22 @@ describe("subscription billing panel", () => {
     vi.unstubAllGlobals();
   });
 
+  // Subscription-category decoupling: an entry/charge with a null
+  // membershipTypeName (a category charge) must render the category name
+  // via chargeAxisDisplayName, never a blank label — the admin billing
+  // queue's one direct render of this nullable pair.
+  it("renders the subscription category's name, not blank, for a category-axis entry and charge", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.stubGlobal("fetch", vi.fn(() => successResponse(payload({
+      membershipTypeName: null,
+      subscriptionCategoryName: "Couple",
+      chargeMembershipTypeName: null,
+      chargeSubscriptionCategoryName: "Couple",
+    }))));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findAllByText(/Couple/)).not.toHaveLength(0);
+  });
+
   it("keeps finance mutations disabled for view-only admins and deduplicates exceptions", async () => {
     mocks.canEdit.mockReturnValue(false);
     render(<SubscriptionBillingPanel seasonYear={2026} />);
@@ -137,6 +169,47 @@ describe("subscription billing panel", () => {
     expect(screen.getByRole("button", { name: "Retry" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getAllByText("Configure billing")).toHaveLength(1);
     expect(screen.getByText("Open exceptions").nextSibling?.textContent).toBe("1");
+  });
+
+  // #4986 (INV-INT-040): a club without Xero gets a plain notice, not a dead
+  // end pointing at the hidden mappings screen, and cannot queue invoices that
+  // would wait for Xero and go out late.
+  function xeroPayload(enabled: boolean, awaitingXeroCount: number) {
+    const body = payload();
+    const mappingException = {
+      fingerprint: "mapping",
+      code: MISSING_XERO_ACCOUNT_MAPPING_CODE,
+      message: "Set the subscription income account in Xero mappings",
+    };
+    return {
+      ...body,
+      preview: { ...body.preview, exceptions: [...body.preview.exceptions, mappingException] },
+      xeroInvoicing: { enabled, awaitingXeroCount },
+    };
+  }
+
+  it("with Xero off, explains why, hides the mapping exception and disables Confirm and Retry (#4986)", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.stubGlobal("fetch", vi.fn(() => successResponse(xeroPayload(false, 1) as never)));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText("Subscription invoicing needs Xero")).toBeTruthy();
+    expect(screen.getByText(new RegExp(escapeRegExp(SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE)))).toBeTruthy();
+    expect(screen.getByText("1 charge is waiting for Xero")).toBeTruthy();
+    expect(screen.queryByText("Set the subscription income account in Xero mappings")).toBeNull();
+    expect(screen.getByText("Open exceptions").nextSibling?.textContent).toBe("1");
+    expect(screen.getByRole("button", { name: "Confirm and queue annual batch" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Retry" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("with Xero on, shows the mapping exception and leaves Confirm and Retry live (control, #4986)", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.stubGlobal("fetch", vi.fn(() => successResponse(xeroPayload(true, 0) as never)));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText("Set the subscription income account in Xero mappings")).toBeTruthy();
+    expect(screen.queryByText("Subscription invoicing needs Xero")).toBeNull();
+    expect(screen.queryByText(/waiting for Xero/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Confirm and queue annual batch" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Retry" }).hasAttribute("disabled")).toBe(false);
   });
 
   it("removes an actionable preview immediately when its date changes and keeps it cleared after refresh failure", async () => {
@@ -248,6 +321,46 @@ describe("subscription billing panel", () => {
     expect(await screen.findByText(/Exempt \(2\)/)).toBeTruthy();
     expect(screen.getByText("Kid One")).toBeTruthy();
     expect(screen.getByText("Kid Two")).toBeTruthy();
+  });
+
+  // #4496 review: a category member exempt by a NOT_REQUIRED membership type
+  // is listed with the type as the reason, never an age tier.
+  it("names the membership type, not an age tier, for a member exempt by type", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.mocked(fetch).mockImplementation(() => successResponse(payload({
+      exemptMembers: [
+        { memberId: "kid-1", memberName: "Kid One", ageTier: "CHILD", exemptBy: "AGE_TIER" },
+        { memberId: "life-1", memberName: "Life One", ageTier: null, exemptBy: "MEMBERSHIP_TYPE", membershipTypeName: "Life Member" },
+      ],
+    })));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText(/no subscription required by age tier or membership type/)).toBeTruthy();
+    expect(screen.getByText("Membership type: Life Member")).toBeTruthy();
+    expect(screen.getByText("CHILD")).toBeTruthy();
+  });
+
+  // Subscription-category decoupling (review finding): 2+ members billed
+  // solo under the same category (not in a shared FamilyGroup) surface as a
+  // visible warning, so an officer confirming the batch notices — the field
+  // existed on the preview before this test with nothing rendering it.
+  it("warns when members share a subscription category but are billed separately", async () => {
+    mocks.canEdit.mockReturnValue(true);
+    vi.mocked(fetch).mockImplementation(() => successResponse(payload({
+      ungroupedCategoryMembers: [
+        {
+          subscriptionCategoryId: "cat-couple",
+          subscriptionCategoryName: "Couple",
+          members: [
+            { memberId: "alice", memberName: "Alice Adult" },
+            { memberId: "bob", memberName: "Bob Adult" },
+          ],
+        },
+      ],
+    })));
+    render(<SubscriptionBillingPanel seasonYear={2026} />);
+    expect(await screen.findByText(/billed separately, not as one group/)).toBeTruthy();
+    expect(screen.getByText(/Couple:/)).toBeTruthy();
+    expect(screen.getByText(/Alice Adult, Bob Adult/)).toBeTruthy();
   });
 
   // #2148 (D2 / constraint 3): a finance-EDIT admin's Refresh reconciles via the

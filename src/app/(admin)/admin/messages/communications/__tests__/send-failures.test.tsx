@@ -37,33 +37,39 @@ import CommunicationsPage from "../page";
 
 type Answer = () => Response | Promise<Response>;
 
+const SEND_URL = "/api/admin/communications/send";
+
 function installFetch(send?: Answer) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url === "/api/admin/communications/send" && init?.method === "POST") {
-      return (send ?? (() => Response.json({ eligibleRecipients: 12, filteredByPreference: 2 })))();
+    if (url === SEND_URL && init?.method === "POST") {
+      return (send ?? (() => Response.json({ eligibleRecipients: 12, optedOut: 2, neverOptedIn: 0 })))();
     }
-    if (url === "/api/admin/communications/send") return Response.json({ limit: 500 });
-    if (url.startsWith("/api/admin/communications/send?recipientFilter=")) {
-      return Response.json({ eligibleRecipients: 12 });
+    // The count the confirmation names (#4964): a GET that spends no quota.
+    if (url.startsWith(`${SEND_URL}?recipientFilter=`)) {
+      return Response.json({ totalRecipients: 14, eligibleRecipients: 12, optedOut: 2, neverOptedIn: 0 });
     }
-    if (url === "/api/admin/communications/history") return Response.json({ history: [] });
+    if (url === SEND_URL) return Response.json({ limit: 500, windowSeconds: 3600 });
+    if (url.startsWith("/api/admin/communications/history")) return Response.json({ history: [] });
     throw new Error(`unexpected fetch ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
 
+// Submitting the form only opens the confirmation (#4964); the POST that emails
+// people waits for the officer to confirm the audience and count.
 async function sendAMessage() {
   render(<CommunicationsPage />);
   fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "Working bee" } });
   fireEvent.change(screen.getByLabelText("Message Body"), { target: { value: "Saturday 9am." } });
+  // Nothing is preselected (#4987): the sender names the kind of message first.
+  fireEvent.click(screen.getByLabelText(/Club newsletter/));
   // The fields are `required`; jsdom holds back a button click on an
   // unvalidated form, so submit the form itself.
   fireEvent.submit(screen.getByLabelText("Subject").closest("form")!);
-  // Nothing is sent until the officer confirms the count (#4964).
   const dialog = await screen.findByRole("dialog");
-  fireEvent.click(within(dialog).getByRole("button", { name: /^Send to/ }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Send to 12 people" }));
 }
 
 describe("sending a bulk message", () => {

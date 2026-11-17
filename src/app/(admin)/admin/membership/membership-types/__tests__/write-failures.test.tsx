@@ -168,6 +168,12 @@ function installFetch(refused?: { method: string; url: string; answer: Answer })
     if (url === "/api/admin/membership-types" && method === "GET") {
       return Response.json({ membershipTypes });
     }
+    if (url === "/api/admin/membership-types" && method === "POST") {
+      return Response.json(
+        { membershipType: customType({ id: "type-lifetime", key: "LIFETIME", name: "Lifetime" }) },
+        { status: 201 },
+      );
+    }
     if (url === "/api/admin/membership-types/reorder") {
       return Response.json({ membershipTypes });
     }
@@ -198,6 +204,21 @@ async function saveADescription() {
     target: { value: "Updated description" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+}
+
+async function createALifetimeType() {
+  await renderPage();
+  fireEvent.click(screen.getByRole("button", { name: "New membership type" }));
+  await screen.findByRole("dialog", { name: "New membership type" });
+  fireEvent.change(document.getElementById("membership-type-editor-name")!, {
+    target: { value: "Lifetime" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create type" }));
+}
+
+async function rollForward(button: "Preview" | "Run") {
+  await renderPage();
+  fireEvent.click(screen.getByRole("button", { name: button }));
 }
 
 async function moveAssociateUp() {
@@ -275,6 +296,67 @@ describe("membership-type refusals", () => {
       await saveADescription();
 
       expect(await screen.findByText("Membership type saved.")).toBeInTheDocument();
+    });
+  });
+
+  describe("creating a type", () => {
+    itShowsEveryRefusal({
+      fallback: "Failed to create membership type",
+      submit: async (answer) => {
+        installFetch({ method: "POST", url: "/api/admin/membership-types", answer });
+        await createALifetimeType();
+      },
+    });
+
+    it("keeps the forbidden-save reason for a 403", async () => {
+      installFetch({
+        method: "POST",
+        url: "/api/admin/membership-types",
+        answer: () => Response.json({ error: "Forbidden" }, { status: 403 }),
+      });
+      await createALifetimeType();
+
+      expect(await screen.findAllByText(ADMIN_FORBIDDEN_SAVE_REASON)).not.toHaveLength(0);
+    });
+
+    it("says so after a successful create", async () => {
+      installFetch();
+      await createALifetimeType();
+
+      expect(await screen.findByText("Membership type created.")).toBeInTheDocument();
+    });
+  });
+
+  // The two modes carry different fallbacks, so each is pinned on its own: a
+  // swapped `dryRun` mapping would show a preview's sentence for a real run.
+  describe("previewing a roll-forward", () => {
+    itShowsEveryRefusal({
+      fallback: "Failed to preview seasonal assignment roll-forward",
+      submit: async (answer) => {
+        installFetch({ method: "POST", url: "/api/admin/membership-types/roll-forward", answer });
+        await rollForward("Preview");
+      },
+    });
+  });
+
+  describe("running a roll-forward", () => {
+    itShowsEveryRefusal({
+      fallback: "Failed to roll forward seasonal assignments",
+      submit: async (answer) => {
+        installFetch({ method: "POST", url: "/api/admin/membership-types/roll-forward", answer });
+        await rollForward("Run");
+      },
+    });
+
+    it("keeps the forbidden-save reason for a 403", async () => {
+      installFetch({
+        method: "POST",
+        url: "/api/admin/membership-types/roll-forward",
+        answer: () => Response.json({ error: "Forbidden" }, { status: 403 }),
+      });
+      await rollForward("Run");
+
+      expect(await screen.findAllByText(ADMIN_FORBIDDEN_SAVE_REASON)).not.toHaveLength(0);
     });
   });
 

@@ -32,6 +32,12 @@ import { describe, expect, it } from "vitest";
   There is no allowance list: ALP-649 converged the last files other lanes
   were still editing when this census landed, so any hit, in any file, is red.
 
+  What it does NOT see: only `await x.json()` with a plain identifier receiver
+  is counted. A `.then((r) => r.json())` chain, or a receiver that is not an
+  identifier (`(await fetch(…)).json()`), is invisible here, and so is an
+  `err.message` shown from a catch. The census guards the unguarded parse, not
+  every way a screen can put the browser's words in front of an officer.
+
   This test reads the source tree from disk, so `pnpm run test:related` cannot
   reach it. Run it by name.
 */

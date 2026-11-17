@@ -40,3 +40,5 @@ export function useActionFailure() {
     clear,
   };
 }
+
+export type ActionFailure = ReturnType<typeof useActionFailure>;

@@ -191,6 +191,7 @@ function moduleFlags() {
     hutLeaders: true,
     communications: false,
     skifieldConditions: false,
+    skifieldWhakapapa: false,
     twoFactor: false,
     analytics: false,
     // ON, or the `CalendarEvent.startsAt` half of "the two encodings stay

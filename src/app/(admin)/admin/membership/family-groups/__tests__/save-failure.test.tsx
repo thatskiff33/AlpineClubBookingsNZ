@@ -109,6 +109,22 @@ describe("Family groups: a refused save says why", () => {
     expect(screen.queryByText(/JSON/)).not.toBeInTheDocument();
   });
 
+  it("announces a refused save in an alert region, so a screen reader hears it", async () => {
+    mockSave(
+      () =>
+        new Response("<html><body>Bad Gateway</body></html>", {
+          status: 502,
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    await createGroup();
+
+    // The page also keeps main's list-failure region (an empty role="alert")
+    // permanently mounted, so assert the message itself sits in an alert.
+    const message = await screen.findByText("Failed to save");
+    expect(message.closest('[role="alert"]')).toHaveTextContent("Failed to save");
+  });
+
   it("shows the fallback when the request never gets an answer", async () => {
     mockSave(() => Promise.reject(new TypeError("Failed to fetch")));
     await createGroup();
