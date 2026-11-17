@@ -30,6 +30,7 @@ const figures = (change: Record<string, unknown> = {}) => ({
   appliedCreditGivenBackCents: 0,
   refundedExcessCreditCents: 0,
   additionalAmountCents: 0,
+  billedToOrganiserCents: 0,
   refundAmountCents: 0,
   settlementMethod: "credit",
   ...change,
@@ -203,5 +204,80 @@ describe("BookingWorkPartyControls after a refused apply", () => {
     await waitFor(() => expect(screen.getByRole("combobox")).toBeDisabled());
     release(new Response(JSON.stringify({ error: "x" }), { status: 400 }));
     await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
+  });
+});
+
+describe("Remove from work party (fork #130)", () => {
+  const removal = figures({
+    previousFinalPriceCents: 15_000,
+    newFinalPriceCents: 20_000,
+    priceDiffCents: 5_000,
+    accountCreditAmountCents: 0,
+    additionalAmountCents: 5_000,
+    billedToOrganiserCents: 0,
+    settlementMethod: null,
+  });
+
+  it("offers Remove instead of Add on a booking that carries a work party, and previews it", async () => {
+    serve(() => ({ outcome: "quoted", figures: removal }));
+    render(<BookingWorkPartyControls bookingId="booking-1" currentWorkParty={{ id: "wp-1", name: "Spring Bee" }} />);
+    expect(screen.queryByRole("button", { name: "Add to work party" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove from work party" }));
+    const shown = await screen.findByTestId("work-party-remove-figures");
+    expect(shown).toHaveTextContent("Added to what is owed on the booking");
+    expect(shown).toHaveTextContent("Asked of the member now");
+    expect(posts).toEqual([{ mode: "preview", action: "remove", workPartyEventId: "wp-1" }]);
+  });
+
+  it("asks the removal rule first, and shows its refusal with nothing to confirm (L3)", async () => {
+    posts = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string; body?: string }) => {
+        if (init?.method === "POST") {
+          posts.push(JSON.parse(init.body ?? "{}"));
+          return new Response(JSON.stringify({ outcome: "quoted", figures: removal }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({
+            currentWorkParty: { id: "wp-1", name: "Spring Bee" },
+            workParties: [],
+            removal: { eligible: false, reason: "This stay has finished, so its work party can't be changed here." },
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+    render(<BookingWorkPartyControls bookingId="booking-1" currentWorkParty={{ id: "wp-1", name: "Spring Bee" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove from work party" }));
+    expect(await screen.findByTestId("work-party-remove-refusal")).toHaveTextContent("This stay has finished");
+    expect(posts).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Remove without emailing" })).toBeNull();
+    expect(screen.queryByTestId("work-party-remove-figures")).toBeNull();
+  });
+
+  it("shows what is invoiced to the group organiser (Security L1)", async () => {
+    serve(() => ({ outcome: "quoted", figures: { ...removal, additionalAmountCents: 0, billedToOrganiserCents: 5_000 } }));
+    render(<BookingWorkPartyControls bookingId="booking-1" currentWorkParty={{ id: "wp-1", name: "Spring Bee" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove from work party" }));
+    const shown = await screen.findByTestId("work-party-remove-figures");
+    expect(shown).toHaveTextContent("Invoiced to the group organiser: $50.00");
+    expect(shown).not.toHaveTextContent("Asked of the member now");
+  });
+
+  it("applies with the figures it showed, and no settlement method", async () => {
+    serve((body) => (body.mode === "apply" ? { outcome: "applied", figures: removal } : { outcome: "quoted", figures: removal }));
+    render(<BookingWorkPartyControls bookingId="booking-1" currentWorkParty={{ id: "wp-1", name: "Spring Bee" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove from work party" }));
+    await screen.findByTestId("work-party-remove-figures");
+    fireEvent.click(screen.getByRole("button", { name: "Remove without emailing" }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1]).toEqual({
+      mode: "apply",
+      action: "remove",
+      workPartyEventId: "wp-1",
+      notifyMember: false,
+      expectedFigures: removal,
+    });
   });
 });

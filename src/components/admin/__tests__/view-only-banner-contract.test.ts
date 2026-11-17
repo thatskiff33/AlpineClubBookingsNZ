@@ -426,7 +426,7 @@ const FIGURES = {
    */
   // 15 Nov 2026, #4971: 391 -> 396 after merging main (#4618, #5081). Setup gates its five support write controls. MEASURED by running this census.
   // 396 -> 401 (#4496): the Subscription Categories page's five controls, under its own banner. MEASURED by running this census on the merged tree.
-  callSites: 403, // 402 -> 403 (#5149, fork #119): Add to work party, with its own per-button reason. MEASURED. // 401 -> 402 (ALP-588): the booking fresh-copy panel's per-email "Send fresh …" button, under that panel's own banner. MEASURED. // 390 -> 391 (#4618): the officer two-factor card's Edit/Save under its own banner. MEASURED. // 388 -> 390 (#4918): Where members' data is held adds Edit and Save under its own banner. MEASURED. // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
+  callSites: 404, // 403 -> 404 (#5149, fork #130): Remove from work party, with its own per-button reason. MEASURED. // 402 -> 403 (#5149, fork #119): Add to work party, with its own per-button reason. MEASURED. // 401 -> 402 (ALP-588): the booking fresh-copy panel's per-email "Send fresh …" button, under that panel's own banner. MEASURED. // 390 -> 391 (#4618): the officer two-factor card's Edit/Save under its own banner. MEASURED. // 388 -> 390 (#4918): Where members' data is held adds Edit and Save under its own banner. MEASURED. // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
   /**
    * Those that hand their explanation to a banner, by either rule.
    *
@@ -615,15 +615,15 @@ const FIGURES = {
     * sits beside, where each button explains its own view-only state.
     * 54 -> 55 (#3408): the Membership Types repair button keeps its own reason.
    */
-   exceptions: 56, // 55 -> 56 (fork #119): Add to work party on the booking tools card.
-  exceptionFiles: 31,
+   exceptions: 57, // 56 -> 57 (fork #130): Remove from work party on the booking tools card, its own file. // 55 -> 56 (fork #119): Add to work party on the booking tools card.
+  exceptionFiles: 32,
   /**
    * The remainder bucket: neither a member detail card nor dialog-only.
    *
    * 39 -> 40 in 23 -> 24 files (#3498): the reopen card's own control.
    */
-  leafControls: 41, // 40 -> 41 (fork #119): Add to work party, a leaf in the Admin tools card.
-  leafFiles: 25,
+  leafControls: 42, // 41 -> 42 (fork #130): Remove from work party, a leaf in the Admin tools card. // 40 -> 41 (fork #119): Add to work party, a leaf in the Admin tools card.
+  leafFiles: 26,
   /**
    * Components that render an `AdminViewOnlySectionBanner`.
    *

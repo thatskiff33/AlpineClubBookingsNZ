@@ -46,6 +46,8 @@ const HAND_ROLLED_WITH_THEIR_OWN_WAY_BACK = [
   // previews, then the email choice saves exactly the figures shown — with an
   // outline Cancel first, disabled and dismissal-proof while a request runs.
   "src/components/admin/booking-work-party-controls.tsx",
+  // #5149 (fork #130): Remove from work party, the same two-step shape as Add.
+  "src/components/admin/booking-work-party-remove-controls.tsx",
 ];
 
 const MIGRATED_SCREENS = [

@@ -86,6 +86,7 @@ export function AdminBookingToolsCard({
   storedNightPriceOffers = [],
   showReturnToWaitlist = false,
   returnToWaitlistReleasesHold = false,
+  currentWorkParty = null,
 }: {
   bookingId: string;
   /**
@@ -123,6 +124,8 @@ export function AdminBookingToolsCard({
    */
   financialReviewWarnings?: BookingFinancialReviewWarning[];
   features: FeatureFlags;
+  /** The work party the booking is on (fork #130: offered for removal), or null. */
+  currentWorkParty?: { id: string; name: string } | null;
   /** Admin capacity hold state (#1764); omitted for deleted bookings. */
   capacityHold?: {
     hasAdminCapacityHold: boolean;
@@ -296,11 +299,13 @@ export function AdminBookingToolsCard({
               noEmails={noEmails?.noEmails ?? false}
             />
           )}
-          {/* Fork #119: add the booking to a work party the member missed. */}
+          {/* Fork fork #119: add the booking to a work party the member missed;
+              fork #130: or take it off the one it is on. */}
           {!isDeleted && features.workParties && (
             <BookingWorkPartyControls
               bookingId={bookingId}
               noEmails={noEmails?.noEmails ?? false}
+              currentWorkParty={currentWorkParty}
             />
           )}
           {/* #3214: recording what a guest's nights sold for. It sits with the

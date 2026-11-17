@@ -7,7 +7,7 @@
  * `work-party-booking-correction.test.ts`.
  *
  * What the argument names: the work party an officer is adding the booking
- * to, and its internal promo, for a work party the member was entitled to and
+ * to (or, fork #130, removing it from), and its internal promo, for a work party the member was entitled to and
  * missed ("Add booking to work party"). A SERVICE argument, like
  * `waiveChangeFee` and for the same reason: `input` is a parsed request body
  * on the member routes.
@@ -22,6 +22,8 @@
 export type OfficerWorkPartyCorrection = {
   readonly workPartyEventId: string;
   readonly promoCodeId: string;
+  /** Fork fork #130: "remove" drops the code instead, and the difference is owed. */
+  readonly direction: "add" | "remove";
 };
 
 /** The money rule a work-party correction carries, recorded with it. */
@@ -64,4 +66,17 @@ export function assertOfficerWorkPartyCorrectionCall(call: {
  */
 export function workPartyCorrectionRecord(correction: OfficerWorkPartyCorrection) {
   return { ...correction, ...OFFICER_WORK_PARTY_MONEY_RULE };
+}
+
+/**
+ * Fork fork #127: the day a correction's codes are judged on. On a started stay it
+ * is the check-in day, as a finished stay's are (#3750) — on the real today an
+ * expired second code would be released and its discount billed back.
+ */
+export function workPartyCorrectionCodeDay<T extends string>(
+  correction: OfficerWorkPartyCorrection | null | undefined,
+  checkInDay: T,
+  today: T,
+): T {
+  return correction && checkInDay < today ? checkInDay : today;
 }

@@ -29,11 +29,10 @@ import { formatCents } from "@/lib/pricing";
 import { workPartyCreditBackCents } from "@/lib/edit-money-back";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
+import { BookingWorkPartyRemoveControls } from "@/components/admin/booking-work-party-remove-controls";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify-validation";
-import type {
-  WorkPartyCorrectionFigures,
-  WorkPartySettlementOptions,
-} from "@/lib/work-party-booking-correction";
+import type { WorkPartyCorrectionFigures } from "@/lib/work-party-booking-correction";
+import type { WorkPartySettlementOptions } from "@/lib/work-party-settlement-options";
 
 type WorkPartyOption = {
   id: string;
@@ -56,15 +55,34 @@ type WorkPartyOption = {
  * decision 15 Nov 2026); the choice re-runs the dry run. An organiser-paid joiner's money goes back to
  * the organiser. The figures shown are the figures saved — the route refuses
  * if they, or the choice, moved.
- * Bookings edit; a bookings-view admin sees the button disabled.
+ * Bookings edit; a bookings-view admin sees the button disabled. A booking
+ * already on a work party is offered "Remove from work party" instead (fork #130).
  */
 export function BookingWorkPartyControls({
   bookingId,
   noEmails = false,
+  currentWorkParty = null,
 }: {
   bookingId: string;
   /** The booking's "No emails" switch: when on, the member is not emailed. */
   noEmails?: boolean;
+  /** The work party the booking is on, or null. */
+  currentWorkParty?: { id: string; name: string } | null;
+}) {
+  if (currentWorkParty) {
+    return (
+      <BookingWorkPartyRemoveControls bookingId={bookingId} workParty={currentWorkParty} noEmails={noEmails} />
+    );
+  }
+  return <BookingWorkPartyAddControls bookingId={bookingId} noEmails={noEmails} />;
+}
+
+function BookingWorkPartyAddControls({
+  bookingId,
+  noEmails,
+}: {
+  bookingId: string;
+  noEmails: boolean;
 }) {
   const canEdit = useAdminAreaEditAccess("bookings");
   const format = useClubFormat();

@@ -6614,9 +6614,12 @@ execution cannot both win. Proved against PostgreSQL in
 
 An officer's "Add to work party" (`addBookingToWorkParty`,
 `src/lib/work-party-booking-correction.ts`) composes only existing keys and adds
-one registered global site, `addBookingToWorkParty#1` (`INV-LOCK-002`,
+one registered global site, `correctWorkParty#1` (`INV-LOCK-002`,
 `INV-LOCK-003`). It is the #3750 execution's shape without a request row.
-Order, in one transaction:
+Fork fork #130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
+writer in the other direction: it adds no key, site or participant, and the
+steps below are its steps too (its eligibility rule is
+`workPartyRemovalEligibility`). Order, in one transaction:
 
 1. Pre-read only the booking's immutable `lodgeId`; take global `lock(1)`, then
    `acquireLodgeCapacityLock`, then the booking row
@@ -6638,8 +6641,9 @@ Order, in one transaction:
 
 **Counterparts and idempotency.** There is no claim row: a cancel, capture or
 refund of the same booking holds `lock(1)`, and two concurrent applies serialise
-on it — the second re-reads a booking that already carries the work party and is
-refused, so the discount and its credit or refund apply once. A refund the
+on it — the second re-reads a booking that already carries the work party (or,
+for a removal, no longer does) and is refused, so the discount and its credit,
+refund or amount owed apply once. A refund the
 officer chose (fork #129) is the edit's own: its ledger lines (and, for an
 organiser-paid joiner, the organiser-child refund debt; for Internet Banking,
 the edit's bank-transfer hand-back task, `raiseEditRefundHandBackIfOwed`) are

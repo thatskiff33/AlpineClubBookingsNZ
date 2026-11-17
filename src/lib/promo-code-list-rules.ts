@@ -71,3 +71,25 @@ export function enteredPromoCodeAdmitted<T extends { id: string; internal: boole
   if (!promoCode) return false;
   return !promoCode.internal || promoCode.id === admittedInternalPromoCodeId;
 }
+
+/** Fork fork #119/#130: the work party an officer's correction adds or removes, by its internal code. */
+export type WorkPartyCodeCorrection = { readonly promoCodeId: string; readonly direction: "add" | "remove" };
+
+/** The one internal code a correction admits: an Add's. A Remove (fork #130) admits none. */
+export function admittedWorkPartyCodeId(correction: WorkPartyCodeCorrection | null): string | null {
+  return correction?.direction === "add" ? correction.promoCodeId : null;
+}
+
+/**
+ * Fork fork #130: with several codes on, a stored internal code a list leaves out
+ * is carried; the officer removing that work party drops it instead.
+ */
+export function withoutRemovedWorkPartyCode<E extends { code: string }>(
+  requested: E[] | null,
+  stored: ReadonlyArray<{ promoCodeId: string; promoCode: { code: string } }>,
+  correction: WorkPartyCodeCorrection | null,
+): E[] | null {
+  if (correction?.direction !== "remove") return requested;
+  const removed = stored.find((row) => row.promoCodeId === correction.promoCodeId)?.promoCode.code;
+  return requested?.filter((entry) => entry.code !== removed) ?? null;
+}

@@ -15,7 +15,7 @@ import {
   requestedPromoCodeListFor,
   splitRequestedPromoCodes,
 } from "@/lib/booking-modify-promo-request";
-import { enteredPromoCodeAdmitted, promoCodeListRefusal } from "@/lib/promo-code-list-rules";
+import { admittedWorkPartyCodeId, enteredPromoCodeAdmitted, promoCodeListRefusal, withoutRemovedWorkPartyCode, type WorkPartyCodeCorrection } from "@/lib/promo-code-list-rules";
 import {
   AdminReviewStatus,
   type AgeTier,
@@ -2081,13 +2081,13 @@ export async function applyPromoCodeChanges(
     newTotalPriceCents,
     guestNightRates,
     todayAtClub,
-    officerWorkPartyPromoCodeId = null,
+    officerWorkPartyCorrection = null,
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
-    officerWorkPartyPromoCodeId?: string | null; // Fork #119: the one internal code `enteredPromoCodeAdmitted` admits
+    officerWorkPartyCorrection?: WorkPartyCodeCorrection | null; // Fork fork #119/#130: the one internal code an Add admits or a Remove drops
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{
@@ -2158,7 +2158,7 @@ export async function applyPromoCodeChanges(
   const multiPromoCodes = promoRequestReadsMultiPromoSwitch(input, storedCodes)
     ? await multiPromoCodesEnabled(tx)
     : true;
-  const requested = requestedPromoCodeListFor(input, storedCodes, multiPromoCodes);
+  const requested = withoutRemovedWorkPartyCode(requestedPromoCodeListFor(input, storedCodes, multiPromoCodes), existing, officerWorkPartyCorrection);
 
   if (requested === null) {
     // No promo change asked for: re-price every code the booking carries
@@ -2255,7 +2255,7 @@ export async function applyPromoCodeChanges(
     }
     const id = incomingIds.find((row) => row.code === entry.code)?.id;
     const promoCode = incomingRows.find((row) => row.id === id && row.code === entry.code);
-    if (!enteredPromoCodeAdmitted(promoCode, officerWorkPartyPromoCodeId)) {
+    if (!enteredPromoCodeAdmitted(promoCode, admittedWorkPartyCodeId(officerWorkPartyCorrection))) {
       throw new ApiError("Promo code not found", 400);
     }
     applications.push({

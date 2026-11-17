@@ -39,7 +39,10 @@ type BookingEditMode =
   // #3750: an officer-approved LOCKED_PERIOD change request executing on a
   // finished stay. Reachable ONLY through `finishedStayCorrection` below, which
   // no route reads from a request body.
-  | "finished-stay-correction";
+  | "finished-stay-correction"
+  // Fork fork #127/#130: an officer adding a started stay to, or removing it from, a
+  // work party. Reachable ONLY through `workPartyCorrection` below.
+  | "work-party-correction";
 
 export interface BookingEditPolicy {
   canModify: boolean;
@@ -72,6 +75,15 @@ export interface BookingEditPolicyInput {
    * pins the executor as its only caller.
    */
   finishedStayCorrection?: boolean;
+  /**
+   * Fork fork #127/#130: an officer's "Add to work party" or "Remove from work
+   * party" (`modifyBookingBatch`'s work-party service argument, never a
+   * request body). On a stay in its in-progress window it prices the whole
+   * stay, so the work party's discount reaches every night inside its window,
+   * slept or not. Ignored for non-admin roles and for a stay not in progress,
+   * so no other answer moves.
+   */
+  workPartyCorrection?: boolean;
   /**
    * The club's TODAY, as the UTC-midnight instant a `@db.Date` round-trips
    * through. REQUIRED since #3123 — see {@link getBookingEditPolicy}.
@@ -170,6 +182,30 @@ export function getBookingEditPolicy(
       reason: canModify
         ? null
         : "This booking cannot be modified in its current status",
+    };
+  }
+
+  // Fork fork #127/#130: the officer's work-party correction on a started stay. Only
+  // the in-progress window qualifies (a future stay keeps "future" below, a
+  // finished one its refusal), and only an active-lifecycle status, since the
+  // edit moves settlement money. No night moves: `resolveTargetDates` refuses
+  // a date change in this mode.
+  if (
+    input.workPartyCorrection &&
+    isAdmin(input.role) &&
+    checkIn <= today &&
+    !isFinishedStay({ checkOut: input.checkOut, status: input.status }, today)
+  ) {
+    const canModify = canModifyBookingInActiveLifecycle(input.status, input.role);
+    return {
+      canModify,
+      mode: canModify ? "work-party-correction" : null,
+      today,
+      editableFrom: null,
+      checkInEditable: false,
+      reason: canModify
+        ? null
+        : "This in-progress booking cannot be modified in its current status",
     };
   }
 

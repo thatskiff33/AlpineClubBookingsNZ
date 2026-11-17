@@ -355,6 +355,15 @@ These family rules are enforced by automated tests (issue #1132):
     Work Parties module is off. Its POST is on the step-up list
     (`INV-AUTH-010`): the canonical edit it calls reaches the refund
     operations, so it asks for a fresh proof before reading the body.
+    Fork fork #130: `action: "remove"` takes the
+    booking off the work party it carries through the same service argument
+    and edit; the price rises and the difference is owed on the booking. A
+    removal carries no settlement method (400 if sent) and refuses, 409, any
+    money it would hand back. Its checked figures include an increase invoiced
+    to the group organiser, so a stale preview cannot save it. Fork fork #127: on a started stay the argument also
+    asks the edit policy to price the whole stay (an officer-only mode no body
+    can reach), so the promotion re-runs over nights already slept; every
+    other in-progress edit still refuses a promo change.
 
 Admin route subfamilies are:
 

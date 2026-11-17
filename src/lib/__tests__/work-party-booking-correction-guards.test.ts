@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Fork #129: the service's own guards around the canonical edit, with the edit
@@ -79,11 +79,14 @@ import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
   addBookingToWorkParty,
+  removeBookingFromWorkParty,
+  WORK_PARTY_NOT_ON_BOOKING_MESSAGE,
   WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
-  WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
+  WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE,
   WorkPartyCorrectionFiguresChangedError,
   type WorkPartyCorrectionFigures,
 } from "@/lib/work-party-booking-correction";
+import { WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE } from "@/lib/work-party-settlement-options";
 
 const PAID_BY_CARD = { status: "SUCCEEDED", amountCents: 20_000, creditAppliedCents: 0, source: "STRIPE" };
 
@@ -121,6 +124,7 @@ function edit(
     appliedCreditGivenBackCents: 0,
     refundedExcessCreditCents: 0,
     additionalAmountCents: 0,
+    billedToOrganiserCents: 0,
     promoChangeNotApplied: null,
     bookingModificationId: "mod-1",
     ...money,
@@ -248,6 +252,7 @@ describe("own or family booking (fork #129 decision 6, 16 Nov)", () => {
       appliedCreditGivenBackCents: 0,
       refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
+      billedToOrganiserCents: 0,
       refundAmountCents: 0,
       ...money,
       settlementMethod: method,
@@ -343,6 +348,7 @@ describe("the settlement method is a checked figure", () => {
       appliedCreditGivenBackCents: 0,
       refundedExcessCreditCents: 0,
       additionalAmountCents: 0,
+      billedToOrganiserCents: 0,
       refundAmountCents: 0,
       settlementMethod: "credit",
     };
@@ -359,5 +365,98 @@ describe("the settlement method is a checked figure", () => {
     );
     expect(refused).toBeInstanceOf(WorkPartyCorrectionFiguresChangedError);
     expect((refused as WorkPartyCorrectionFiguresChangedError).actual).toEqual(saved);
+  });
+});
+
+describe("Remove from work party (fork #130): the service's own guards", () => {
+  const ON_WORK_PARTY = [
+    { id: "r-1", applicationOrder: 0, promoCode: { code: "WP-1", workPartyEvent: { id: "wp-1" } } },
+  ];
+  /** The edit's answer to a removal: the price back up by 5,000c, nothing back. */
+  function raised(money: Record<string, number> = {}) {
+    h.modified = {
+      booking: { finalPriceCents: 20_000 },
+      priceDiffCents: 5_000,
+      refundAmountCents: 0,
+      accountCreditAmountCents: 0,
+      appliedCreditGivenBackCents: 0,
+      refundedExcessCreditCents: 0,
+      additionalAmountCents: 5_000,
+      billedToOrganiserCents: 0,
+      promoChangeNotApplied: null,
+      bookingModificationId: "mod-2",
+      ...money,
+    };
+  }
+
+  beforeEach(() => {
+    seedBooking({ finalPriceCents: 15_000, promoRedemptions: ON_WORK_PARTY });
+    raised();
+    tx.promoRedemption.findFirst.mockResolvedValue(null as never);
+  });
+
+  afterEach(() => {
+    tx.promoRedemption.findFirst.mockResolvedValue({ id: "redemption-1" } as never);
+  });
+
+  it("asks the edit for the booking's codes without the work party's, with no settlement method", async () => {
+    const result = await removeBookingFromWorkParty({ ...common, dryRun: true });
+    expect(result.figures).toMatchObject({ priceDiffCents: 5_000, additionalAmountCents: 5_000, settlementMethod: null });
+    expect(h.modifyCalls[0]).toMatchObject({
+      input: { promoCodes: [], notifyMember: false },
+      officerWorkPartyCorrection: { workPartyEventId: "wp-1", promoCodeId: "promo-1", direction: "remove" },
+    });
+    expect(h.modifyCalls[0]!.input).not.toHaveProperty("settlementMethod");
+  });
+
+  it("refuses a booking without that work party before the edit runs", async () => {
+    seedBooking({ promoRedemptions: [] });
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toEqual({
+      status: 409,
+      message: WORK_PARTY_NOT_ON_BOOKING_MESSAGE,
+    });
+    expect(h.modifyCalls).toEqual([]);
+  });
+
+  it.each([
+    ["credit", { accountCreditAmountCents: 1 }],
+    ["a refund", { refundAmountCents: 1 }],
+    ["applied credit given back", { appliedCreditGivenBackCents: 1 }],
+    ["freed applied credit", { refundedExcessCreditCents: 1 }],
+  ])("refuses a removal that would hand back %s", async (_label, money) => {
+    raised(money);
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toEqual({
+      status: 409,
+      message: WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE,
+    });
+  });
+
+  it("refuses a removal that lowered the price, or left the work party on", async () => {
+    raised({ priceDiffCents: -1 });
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toMatchObject({
+      status: 409,
+      message: expect.stringContaining("would lower"),
+    });
+    raised();
+    tx.promoRedemption.findFirst.mockResolvedValue({ id: "redemption-1" } as never);
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toMatchObject({
+      status: 409,
+      message: expect.stringContaining("could not be removed"),
+    });
+  });
+
+  it("Security L1: an increase invoiced to the group organiser is a figure, and a preview without it does not save", async () => {
+    raised({ additionalAmountCents: 0, billedToOrganiserCents: 5_000 });
+    const quoted = await removeBookingFromWorkParty({ ...common, dryRun: true });
+    expect(quoted.figures).toMatchObject({ billedToOrganiserCents: 5_000, additionalAmountCents: 0 });
+    const stale = { ...quoted.figures, billedToOrganiserCents: 0 };
+    await expect(
+      removeBookingFromWorkParty({ ...common, dryRun: false, expectedFigures: stale }),
+    ).rejects.toBeInstanceOf(WorkPartyCorrectionFiguresChangedError);
+  });
+
+  it("allows the officer's own booking: nothing comes back", async () => {
+    seedBooking({ memberId: "officer-1", finalPriceCents: 15_000, promoRedemptions: ON_WORK_PARTY });
+    expect((await removeBookingFromWorkParty({ ...common, dryRun: true })).outcome).toBe("quoted");
   });
 });

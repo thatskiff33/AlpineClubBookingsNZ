@@ -139,11 +139,7 @@ import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateFullReductionSettlementOptions, editReductionDisputeHold, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { buildIdentityOnlyPricing } from "@/lib/booking-identity-only-pricing";
-import {
-  assertOfficerWorkPartyCorrectionCall,
-  workPartyCorrectionRecord,
-  type OfficerWorkPartyCorrection,
-} from "@/lib/booking-batch-work-party-correction";
+import { assertOfficerWorkPartyCorrectionCall, workPartyCorrectionCodeDay, workPartyCorrectionRecord, type OfficerWorkPartyCorrection } from "@/lib/booking-batch-work-party-correction";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import { postModificationLedgerLines } from "@/lib/booking-ledger-modification-sync";
 import { computeModificationPricing } from "@/lib/booking-modification-pricing";
@@ -962,6 +958,7 @@ export async function modifyBookingBatch({
       input,
       today: clubTodayDateOnly,
       finishedStayCorrection: Boolean(finishedStayCorrection),
+      workPartyCorrection: Boolean(officerWorkPartyCorrection), // Fork fork #127/#130: a started stay is priced whole
     });
     if (finishedStayCorrection) {
       // The flag only ASKS for the mode. A stay that has not finished took its
@@ -1183,7 +1180,7 @@ export async function modifyBookingBatch({
           // borrows ADMIN only for the reviewed minimum-stay override) prices
           // the party under the family boundary it was actually planned under.
           skipAuthorization: guestPlan.guestAuthorizationIsAdmin,
-          skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
+          skipBookingLifecycleRules: dates.skipBookingLifecycleRules || Boolean(officerWorkPartyCorrection), // Fork fork #127/#130: here only the bed check; a correction moves no bed
           // Multi-lodge: season rates are resolved for the booking's lodge.
           seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
           // Issue #1668: over-capacity warns-and-confirms under admin override.
@@ -1236,9 +1233,9 @@ export async function modifyBookingBatch({
           guestNightRates: pricingResult.guestNightRates,
           // #3750 (F1): a finished stay's codes are judged on its check-in day,
           // as its fee tiers are — on the real today an expired code would be
-          // released and its discount billed back to the member.
-          todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : todayAtClub,
-          officerWorkPartyPromoCodeId: officerWorkPartyCorrection?.promoCodeId ?? null,
+          // released and its discount billed back to the member. Fork fork #127: so are a correction's on a started stay.
+          todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : workPartyCorrectionCodeDay(officerWorkPartyCorrection, finishedStayNoticeDay(booking), todayAtClub),
+          officerWorkPartyCorrection: officerWorkPartyCorrection ?? null, // the code an Add admits, or (fork #130) a Remove drops
         });
 
     /**

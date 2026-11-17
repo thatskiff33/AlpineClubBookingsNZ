@@ -58,7 +58,8 @@ Admin).
 
 1. Open the booking. In the **Admin tools** card, click **Add to work party**.
 2. Choose the work party. Every active work party that overlaps the stay is
-   listed. If the booking is already on one, the dialog says so instead.
+   listed. A booking already on one shows **Remove from work party** instead
+   (see below).
 3. Click **Show the new total**. You see the booking's new total, how much comes
    back and how, and anything still to pay.
 4. If the booking was paid, choose **Club credit** (the default) or a refund,
@@ -73,6 +74,17 @@ What happens:
 
 - The booking is repriced exactly as if the member had ticked the box when
   booking. The discount applies to each guest's nights inside the window.
+- **A stay that has already started** can be added too, for a member at the
+  lodge during the working bee. Every night inside the window is discounted,
+  including nights already slept. Nights outside the window are not changed,
+  and each night keeps the price it was sold at. The money comes back as below.
+- **Other promo codes on the booking** are re-applied, as on any change: a
+  night takes at most one code, so a member code gives up the nights the work
+  party now covers and keeps the rest. On a stay that has started they are
+  judged on the check-in day, so a code that has expired or been switched off
+  since the stay began is kept, not taken off and charged back.
+- A booking an officer overbooked can still be added: the change moves no guest
+  or night, so it claims no bed and the lodge's capacity is not re-checked.
 - **Unpaid:** the amount owed drops. With a 100% discount an unpaid booking can
   end up owing nothing, and is then settled as any $0 booking is. If account
   credit was applied to it and is now more than the new total, the extra goes
@@ -110,7 +122,7 @@ reason:
 
 - the booking isn't pending, confirmed or paid (for example cancelled, a draft,
   awaiting review, or on the waitlist);
-- the stay has already started, so its prices are fixed;
+- the stay has finished (its check-out day has passed);
 - it belongs to an organisation (a school), which has no account credit;
 - it is priced by its quote (a school or booking-request quote);
 - it already has another promo code and the club allows only one discount per
@@ -126,8 +138,42 @@ another officer must add it, and nothing is saved. For a joiner's booking the
 group organiser paid for, the same applies when you, or someone in your family
 group, organised the group, because the money goes back to the organiser.
 
-A booking can be on only one work party. Removing a booking from a work party is
-not available.
+A booking can be on only one work party.
+
+### Remove a booking from a work party
+
+For a booking added to the wrong work party, or by mistake. You need **bookings
+edit**.
+
+1. Open the booking. In the **Admin tools** card, click **Remove from work
+   party**. It replaces **Add to work party** on a booking that is on one.
+2. The dialog shows the new total and how much is added to what is owed (or,
+   for a joiner's booking billed to the group organiser, how much is invoiced
+   to the organiser). If the booking can't be removed, it says why instead.
+3. Click **Remove and email member** or **Remove without emailing** (one
+   **Remove from work party** button when the booking has **No emails** on).
+
+What happens:
+
+- The booking is repriced without the work party's discount, through the
+  normal booking change. The price goes back up by the discount, less anything
+  another code on the booking takes back on those nights. Other codes are
+  re-applied as for an Add, judged on the check-in day for a started stay, and
+  capacity is not re-checked.
+- **The difference is owed on the booking**, as with any change that raises the
+  price. Unpaid: the amount owed goes up. Paid by card: the member is asked to
+  pay the difference ("Asked of the member now"). Where an invoice was issued,
+  Xero gets a supplementary invoice.
+- **Nothing is taken back.** Club credit the Add gave (spent or not) stays on
+  the member's account, and a refund already paid stays paid.
+- A stay that has started can be removed too; the same nights lose the
+  discount.
+- No change fee is charged. Removing hands no money back, so you can remove
+  your own or your family's booking.
+- A joiner's booking the group organiser paid by card can't be raised this way,
+  as with any change to one that raises its price. Where the group organiser is
+  invoiced for a joiner's changes, the increase goes on the organiser's invoice
+  ("Invoiced to the group organiser").
 
 ## Settings reference
 

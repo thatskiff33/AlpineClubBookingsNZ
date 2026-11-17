@@ -803,6 +803,29 @@ adds are charged normally, and the ordinary late-change fee does not apply.
 Member self-service on a finished stay stays refused. Officer-entered guests
 and promo codes (`INV-REQ-011`, `INV-REQ-013`) are applied the same way.
 
+## INV-MOD-063
+
+**Officer work-party correction on a started stay (fork #127, fork #130; owner,
+16 Nov 2026).** An officer's "Add to work party" or "Remove from work party"
+on a stay in its in-progress window is the one promo change an in-progress
+stay admits. `modifyBookingBatch`'s `officerWorkPartyCorrection` service
+argument, which no request body can carry, asks `getBookingEditPolicy` for
+its "work-party-correction" mode: admin only, an active-lifecycle status,
+never a finished stay, and no date change (refused). The edit is then priced
+as a whole stay, not by the in-progress plan: every held night keeps its
+`INV-MOD-028` value, so no night is re-rated and history is not repriced,
+and the promotion re-runs over every night. The work party's discount
+therefore reaches every night inside its window, including nights already
+slept, and no night outside it. The booking's other codes are re-priced as on
+any edit (`INV-MONEY-039`) but judged on the earlier of today and the
+check-in day, so a code that lapsed during the stay is kept, never billed back.
+A correction moves no guest or night, so it claims no bed: the capacity pass is
+skipped (its own flag, not `skipBookingLifecycleRules`), future stays
+included. The money is fork #129's: no change fee, an Add's
+reduction returned in full and untiered, a Remove's increase owed on the
+booking, with credit already given and refunds already paid left alone. Every
+other in-progress edit still refuses a promo change (`INV-MOD-019`).
+
 ## INV-MOD-025
 
 **Amended by INV-MOD-028 (#3031, epic #2797; #4317).** Two of #2744's clauses

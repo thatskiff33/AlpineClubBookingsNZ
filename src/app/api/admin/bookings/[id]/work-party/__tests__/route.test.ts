@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   guard: { ok: true } as { ok: boolean; status?: number },
   requirements: [] as unknown[],
   addBookingToWorkParty: vi.fn(),
+  removeBookingFromWorkParty: vi.fn(),
   bookingFindUnique: vi.fn(),
   findActiveWorkParties: vi.fn(),
   modules: { workParties: true },
@@ -55,6 +56,7 @@ vi.mock("@/lib/booking-batch-modification-service", () => ({
 vi.mock("@/lib/work-party-booking-correction", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/work-party-booking-correction")),
   addBookingToWorkParty: h.addBookingToWorkParty,
+  removeBookingFromWorkParty: h.removeBookingFromWorkParty,
 }));
 
 import { ApiError } from "@/lib/api-error";
@@ -70,6 +72,7 @@ const figures = {
   appliedCreditGivenBackCents: 0,
   refundedExcessCreditCents: 0,
   additionalAmountCents: 0,
+  billedToOrganiserCents: 0,
   refundAmountCents: 0,
   settlementMethod: "credit" as const,
 };
@@ -219,6 +222,53 @@ describe("POST settlement method (fork #129)", () => {
   });
 });
 
+describe("POST action remove (fork #130)", () => {
+  const removal = {
+    ...figures,
+    previousFinalPriceCents: 25_000,
+    newFinalPriceCents: 30_000,
+    priceDiffCents: 5_000,
+    accountCreditAmountCents: 0,
+    additionalAmountCents: 5_000,
+    billedToOrganiserCents: 0,
+    settlementMethod: null,
+  };
+
+  it("previews and applies through the removal, never the add", async () => {
+    h.removeBookingFromWorkParty.mockResolvedValue({ outcome: "quoted", figures: removal });
+    expect((await post({ mode: "preview", action: "remove", workPartyEventId: "wp-1" })).status).toBe(200);
+    expect(h.removeBookingFromWorkParty).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bookingId: "booking-1", workPartyEventId: "wp-1", dryRun: true }),
+    );
+    h.removeBookingFromWorkParty.mockResolvedValue({ outcome: "applied", figures: removal, bookingModificationId: "m-2" });
+    const res = await post({ mode: "apply", action: "remove", workPartyEventId: "wp-1", expectedFigures: removal });
+    expect(res.status).toBe(200);
+    expect(h.removeBookingFromWorkParty).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dryRun: false, expectedFigures: removal }),
+    );
+    expect(h.addBookingToWorkParty).not.toHaveBeenCalled();
+  });
+
+  it("refuses a settlement method on a removal with 400, calling nothing", async () => {
+    const res = await post({ mode: "preview", action: "remove", workPartyEventId: "wp-1", settlementMethod: "card" });
+    expect(res.status).toBe(400);
+    expect(h.removeBookingFromWorkParty).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown action with 400", async () => {
+    expect((await post({ mode: "preview", action: "undo", workPartyEventId: "wp-1" })).status).toBe(400);
+    expect(h.removeBookingFromWorkParty).not.toHaveBeenCalled();
+    expect(h.addBookingToWorkParty).not.toHaveBeenCalled();
+  });
+
+  it("says a failed removal changed nothing", async () => {
+    h.removeBookingFromWorkParty.mockRejectedValue(new Error("boom"));
+    const res = await post({ mode: "preview", action: "remove", workPartyEventId: "wp-1" });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/could not be removed from the work party. Nothing was changed/);
+  });
+});
+
 describe("GET", () => {
   const ownBooking = (memberId: string) => ({
     status: "PAID",
@@ -291,6 +341,25 @@ describe("GET", () => {
     ]);
     expect(body.workParties[1].reason).toMatch(/Other Hut/);
     expect(JSON.stringify(body)).not.toMatch(/WORKPARTY-/);
+  });
+
+  it("fork #130: says whether the work party on the booking can be removed", async () => {
+    h.bookingFindUnique.mockResolvedValue({
+      ...ownBooking("member-1"),
+      promoRedemptions: [
+        { id: "r-1", applicationOrder: 0, promoCode: { workPartyEvent: { id: "wp-1", name: "Here" } } },
+      ],
+    });
+    h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
+    const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(body.currentWorkParty).toEqual({ id: "wp-1", name: "Here" });
+    expect(body.removal).toEqual({ eligible: true, reason: null });
+
+    h.bookingFindUnique.mockResolvedValue({ ...ownBooking("member-1"), status: "CANCELLED", promoRedemptions: [
+      { id: "r-1", applicationOrder: 0, promoCode: { workPartyEvent: { id: "wp-1", name: "Here" } } },
+    ] });
+    const refused = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(refused.removal).toMatchObject({ eligible: false, reason: expect.stringMatching(/current status/) });
   });
 
   it("404s an unknown booking", async () => {

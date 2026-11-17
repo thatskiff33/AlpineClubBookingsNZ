@@ -1420,10 +1420,10 @@ compliant indefinitely.
   **ONE COMBINED FIGURE, ACCEPTED ONCE.** Both bookings' price recalculations and
   both change fees are summed and shown before the member accepts, and one
   refund-or-credit choice covers both. Every amount stays integer cents; the
-  combined fields are sums of the per-booking ones, never separately derived. The
-  due and refund figures are reported separately rather than netted, because
-  Stripe and Internet Banking/Xero settlement stay distinct per booking and a
-  single signed figure would imply a netting-off that never happens.
+  combined fields are sums of the per-booking ones, never separately derived.
+  Money back includes applied credit a lower price frees on a pending booking
+  (`editTotalMoneyBackCents`, fork #132). Due and money back are never netted:
+  Stripe and Internet Banking/Xero settlement stay distinct per booking.
 
   **WHETHER A CARD-OR-CREDIT CHOICE IS NEEDED IS THE WRITE'S OWN ANSWER, CARRIED
   ON THE RESULT — NEVER RE-DERIVED FROM THE AMOUNTS.** The modification service
