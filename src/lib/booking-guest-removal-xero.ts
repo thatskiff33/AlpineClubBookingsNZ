@@ -15,6 +15,7 @@ export type GuestRemovalXeroSettlement = Pick<
   | "settlementMethod"
   | "hasSucceededPayment"
   | "paymentId"
+  | "refundHeldForDispute"
   | "appliedCreditGivenBackCents"
   | "xeroAdditionalAmountCents"
   | "zeroDollarAutoPaid"
@@ -32,6 +33,7 @@ export function guestRemovalXeroSettlement(result: RemoveBookingGuestResult): Gu
     settlementMethod: result.settlementMethod,
     hasSucceededPayment: result.hasSucceededPayment,
     paymentId: result.paymentId,
+    refundHeldForDispute: result.refundHeldForDispute,
     appliedCreditGivenBackCents: result.appliedCreditGivenBackCents,
     xeroAdditionalAmountCents: result.xeroAdditionalAmountCents,
     zeroDollarAutoPaid: result.zeroDollarAutoPaid,
@@ -73,7 +75,9 @@ export function queueGuestRemovalXeroSettlement(
     // classifyXeroBookingEditSettlement when this is null.
     settlementAmountCents: settlement.xeroRefundAmountCents,
     settlementMethod: settlement.settlementMethod,
-    refundedThroughStripe: settlement.hasSucceededPayment,
+    // #5061 follow-up (`INV-PAY-154`): a disputed payment's reduction goes back by hand.
+    refundedThroughStripe: settlement.hasSucceededPayment && !settlement.refundHeldForDispute,
+    refundHeldForDispute: settlement.refundHeldForDispute,
     paymentId: settlement.paymentId,
     appliedCreditGiveBackCents: settlement.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.

@@ -36,6 +36,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 import type { RosterDayStatus, RosterDayStatusResult } from "@/lib/roster-status"
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
+import { getAdminPage } from "@/lib/admin-hubs"
 
 // #2264: deliberately not one of the shared house shapes — the printed chore
 // roster heads the page with the full weekday and month, matching the
@@ -419,7 +420,7 @@ export default function RosterPage() {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Chore Roster</h1>
+          <h1 className="text-3xl font-bold">{getAdminPage("roster").label}</h1>
           <p className="mt-1 text-muted-foreground">Review and manage daily chore assignments</p>
         </div>
         <div className="flex items-center space-x-3">

@@ -182,7 +182,7 @@ let observerClient: PrismaClient;
         result: {
           ownCardRefund: null,
           pendingRefundAmountCents: 0,
-          organiserChildRefund: null,
+          organiserChildRefund: null, refundHeldForDispute: false,
           paymentId: PAYMENT_ID,
           additionalAsk: sizeAdditionalAsk({
             priceDiffCents: ASK_CENTS,

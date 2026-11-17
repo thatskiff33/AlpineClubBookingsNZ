@@ -2826,6 +2826,136 @@ pnpm run xero:bank-refund-void-count --json
 The buckets and what each one leads to are in
 [`xero/ARCHITECTURE.md` -> "Voided bank-transfer refund notes (#4162)"](xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162).
 
+### Find refund notes Xero voided that the app still counts (#4336)
+
+Before #4288 (PR #4341), an older "live" reading of a refund credit note could
+be written after the treasurer voided the note in Xero, and the write erased
+the app's record of the void. The app then counts the refund as documented
+while Xero credits nothing. No local data can find these, so
+`scripts/xero-revived-refund-note-report.ts` asks Xero again.
+
+**When to run it:** once, on the live deployment, after upgrading from any
+version before #4341 (v0.13.2 or earlier). Run it from the app's own
+environment: it needs the app's `AUTH_SECRET` and `DATABASE_URL` to read the
+stored Xero login, and refuses before reading anything if it cannot.
+
+```bash
+pnpm run xero:revived-refund-note-report                      # counts, and cents per payment source
+pnpm run xero:revived-refund-note-report --list               # also each payment, booking and note
+pnpm run xero:revived-refund-note-report --json               # JSON on stdout; logs go to stderr
+pnpm run xero:revived-refund-note-report --resume-from <id>   # carry on a run that stopped early
+```
+
+**What it reads.** Every active refund-note link (both the payment's own role
+and a refund request's), outside any transaction, then each distinct note once
+from Xero, one call every 1.5 seconds, in note-id order. Each listed line shows:
+
+- the payment, booking and payment source;
+- the link role, and the refund request for a request's own note;
+- the note's number and id;
+- Xero's status and `UpdatedDateUTC`, and the status the app records;
+- for the payment's own note, the cents the app counts toward its refunded
+  total; for a refund request's own note, the note's value instead, shown
+  apart because the refunded total never counts it;
+- whether `Payment.xeroRefundCreditNoteId` names the note.
+
+The list comes first; the run ends with the count and the cents per payment
+source. A note Xero reports live is not listed. A link the app already records
+as VOIDED or DELETED is counted in its own line, outside the list and its
+totals. It needs no action: the app already treats the note as cancelled, and
+for the payment's own refund note the nightly link cleanup (#4161) also
+retires the link. A note Xero cannot find, or that could not be read, goes on
+a separate "could not read" list.
+
+**What it writes.** It changes no booking, payment, credit, link or Xero
+record. It can write API-usage rows and, if the Xero token needs refreshing,
+the new token, its refresh lease and a credential audit row; a failed refresh
+alerts the admins, as it would for the app.
+
+**Limits, and carrying on.** A minute rate limit waits and retries. The run
+stops, printing what it read so far, on Xero's daily limit or once the app's
+own share of it is used (85% of the app's 1,000-call daily budget, counting
+everything else the app called that day, which leaves the rest to the outbox
+and the inbound sync), if Xero needs reconnecting, or after three failed reads
+in a row. Its reads never arm the outage pause; that pause lives in memory in
+each process, so the report and the running app never see each other's.
+
+Whenever a run leaves a note unread (a failed read, or a stop before the note
+was reached), the output says **THE LIST IS INCOMPLETE** and prints
+`To carry on, run again with --resume-from <id>` (`resumeFrom` in the JSON).
+That id is the earliest note the run did not read, so the next run retries
+every failed read before it moves on; a note after it that was already read
+can be read and listed again, and the later run's line is the one to act on.
+A note Xero answers for, even "no such note", counts as read and is not
+retried. A club with more distinct refund notes than one day's share, roughly
+600 to 800 on a quiet day, takes several days.
+
+How to finish a multi-day walk:
+
+1. Run the report. If it says **THE LIST IS INCOMPLETE**, keep its output and
+   run it again the next day with the `--resume-from` id it printed.
+2. A resumed run says its output, totals included, is **this run only**: keep
+   every day's output together. Do not add the parts' totals together: a note
+   read again after an earlier failure appears in two parts. For a grand
+   total, count each note id once across the parts, using the latest part's
+   line.
+3. The walk is finished when a resumed run prints "This was the last part:
+   every note from <id> to the end was read; the notes before it were covered
+   by earlier runs", with no **THE LIST IS INCOMPLETE** line (exit code 0,
+   `walkFinished: true` in the JSON). A run from the beginning that reads
+   everything says neither and has `complete: true`.
+4. If a run prints **NO PROGRESS**, check its "Read from Xero" count. If it is
+   0 and the run stopped on the daily limit, wait until tomorrow and run the
+   same command. Otherwise the note it resumed from is stuck: do not re-run
+   with the same id. Ask a maintainer, giving the note id privately. A
+   maintainer can move past it by resuming from the next note id in the
+   `--list` output; the stuck note is then checked by hand.
+
+If the note a resume id names has since left the active set (handled with
+**Sync from Xero now**, say), the run starts at the next note after it and
+says so; every note before the id was covered by earlier runs. An id that was
+never a refund note on any link is refused. Exit code 0 means nothing in this
+run's scope is left to read; 2 means a note is; 1 is an error or a refused
+argument.
+
+**Could not read.** A read that failed is retried by the next run (above). A
+note Xero sent without a status is reported and not retried: ask a
+maintainer. A note **Xero says does not exist** will never be readable, so do
+not wait for it. First check that Xero is connected to the organisation the
+note was raised in (**Admin → Finance → Xero Sync**). If it is, the app's link
+points at nothing: **Sync from Xero now** on that booking fails, reporting
+the note was not found, and no tool in the app retires such a link yet
+(#5233, which needs an owner decision on the rule). Ask a maintainer to look
+at it, giving the payment and note ids privately.
+
+**Privacy.** The output names members' payments and refunds by id and amount.
+It goes to your terminal only. Never post it in an issue, a pull request or
+any public place.
+
+**What to do with each line.** Open the booking and use **Sync from Xero now**
+([guide](guides/xero.md#pick-up-a-change-made-in-xero-now)). It re-reads every
+credit note on an active link of the booking's payment, in both roles, and a
+VOIDED or DELETED reading always applies (#4288). Then:
+
+- the link goes inactive, and if `Payment.xeroRefundCreditNoteId` named the
+  note it is moved to another live refund note or cleared;
+- **bank transfer:** the recount never takes the refunded total below the
+  payment's own refund history. The nightly voided-note follow-up (#4162) picks
+  the void up the night after and, with `XERO_ENABLE_BANK_REFUND_VOID_WRITES`
+  set, puts the refund back on the treasurer's list
+  ([runbook](xero/ARCHITECTURE.md#voided-bank-transfer-refund-notes-4162));
+- **card:** the refunded total is raise-only, so it stays. Where the remaining
+  notes no longer cover it, the refund-ledger-divergence alert fires, and the
+  nightly credit reconciliation can then raise a fresh refund note for the
+  uncovered amount, subject to its usual checks;
+- **a refund request's own note:** no total is recounted and nothing re-raises
+  it. An officer decides whether to raise a fresh note (#4214).
+
+The sync may answer **Already in step** even when it changed a link, because it
+compares money records, not links. Run the report again afterwards: a handled
+line no longer appears. **Sync everything from Xero now** does not revisit
+these notes.
+
 ### Audit bank-transfer receipts settled at a stale figure (#3979)
 
 Before #3979 the inbound Xero settle kept the figure an Internet Banking payment

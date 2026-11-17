@@ -397,7 +397,7 @@ Journey: Choose a lodge, inspect lockers and assignments, and manage the selecte
 
 [Guide](guides/lockers.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Member Applications — member-applications
+### Applications — member-applications
 
 Screen: `/admin/member-applications`.
 
@@ -491,7 +491,7 @@ Journey: Choose a date range, inspect events, and open an event to manage it.
 
 [Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Chore Templates — chores
+### Chores — chores
 
 Screen: `/admin/chores`.
 
@@ -1001,7 +1001,7 @@ Screen: `/admin/setup`.
 
 Shows: The installation setup hub and configuration cards.
 
-Journey: Open a setup card, run a provider test, or update a step. Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
+Journey: Open the setup card for the configuration task you need, run a provider test, or update a step. No card links back to Setup itself; each sub-hub returns here by its Setup back link (#4968). Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
 
 [Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -1066,6 +1066,9 @@ every screen:
 - **Destructive confirmations** use `useConfirm()` from
   `src/components/confirm-dialog.tsx`, never `window.confirm`. Lint enforces
   it (`design-system/no-native-confirm`), with today's calls on a ratchet.
+  The prompt names what it acts on and says what will change and what cannot
+  be undone (#4973); when the server gains a side effect, the prompt that
+  guards it changes in the same PR.
 
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
