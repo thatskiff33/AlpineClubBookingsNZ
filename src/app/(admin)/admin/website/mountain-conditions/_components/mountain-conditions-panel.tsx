@@ -62,6 +62,14 @@ import {
 
 const LOAD_FALLBACK = "Failed to load mountain conditions";
 const EXPORT_FALLBACK = "Failed to export configuration";
+// Each action names its fallback once: the same sentence covers an HTML error
+// page (thrown at the request) and a dropped connection (shown by the catch).
+const SAVE_FALLBACK = "Failed to save mountain conditions";
+const REFRESH_FALLBACK = "Failed to refresh mountain conditions";
+const VISIBILITY_FALLBACK = "Failed to save section visibility";
+const CONFIG_FALLBACK = "Failed to save source configuration";
+const IMPORT_FALLBACK = "Failed to import selectors";
+const PREVIEW_FALLBACK = "Preview failed";
 
 const VISIBILITY_SECTIONS: {
   key: keyof WhakapapaSectionVisibility;
@@ -87,13 +95,11 @@ type AdminMountainConditionsRecord = {
 type ApiResponse = {
   record: AdminMountainConditionsRecord | null;
   message?: string;
-  error?: string;
 };
 
 type PreviewResponse = {
   preview?: WhakapapaCurlData;
   message?: string;
-  error?: string;
 };
 
 function configToForm(config: WhakapapaSourceConfig | undefined) {
@@ -216,7 +222,7 @@ export function MountainConditionsPanel() {
       });
       if (!response.ok) {
         if (response.status === 403) setForbidden(true);
-        throw await apiRefusalFromResponse(response, "Failed to save mountain conditions");
+        throw await apiRefusalFromResponse(response, SAVE_FALLBACK);
       }
       const body = (await response.json()) as ApiResponse;
 
@@ -229,7 +235,7 @@ export function MountainConditionsPanel() {
       toast.success(body.message || "Mountain conditions saved");
     } catch (saveError) {
       actionFailure.fail(
-        refusalMessageOr(saveError, "Failed to save mountain conditions"),
+        refusalMessageOr(saveError, SAVE_FALLBACK),
       );
       toast.error("Mountain conditions save failed");
     } finally {
@@ -247,7 +253,7 @@ export function MountainConditionsPanel() {
       });
       if (!response.ok) {
         if (response.status === 403) setForbidden(true);
-        throw await apiRefusalFromResponse(response, "Failed to refresh mountain conditions");
+        throw await apiRefusalFromResponse(response, REFRESH_FALLBACK);
       }
       const body = (await response.json()) as ApiResponse;
 
@@ -260,7 +266,7 @@ export function MountainConditionsPanel() {
       toast.success(body.message || "Mountain conditions refreshed");
     } catch (refreshError) {
       actionFailure.fail(
-        refusalMessageOr(refreshError, "Failed to refresh mountain conditions"),
+        refusalMessageOr(refreshError, REFRESH_FALLBACK),
       );
       toast.error("Mountain conditions refresh failed");
     } finally {
@@ -280,7 +286,7 @@ export function MountainConditionsPanel() {
       });
       if (!response.ok) {
         if (response.status === 403) setForbidden(true);
-        throw await apiRefusalFromResponse(response, "Failed to save section visibility");
+        throw await apiRefusalFromResponse(response, VISIBILITY_FALLBACK);
       }
       const body = (await response.json()) as ApiResponse;
 
@@ -293,7 +299,7 @@ export function MountainConditionsPanel() {
       toast.success(body.message || "Section visibility saved");
     } catch (visibilityError) {
       actionFailure.fail(
-        refusalMessageOr(visibilityError, "Failed to save section visibility"),
+        refusalMessageOr(visibilityError, VISIBILITY_FALLBACK),
       );
       toast.error("Section visibility save failed");
     } finally {
@@ -400,7 +406,7 @@ export function MountainConditionsPanel() {
         toast.error("Could not import selectors: the file is not valid JSON.");
       } else {
         actionFailure.fail(
-          refusalMessageOr(importError, "Failed to import selectors"),
+          refusalMessageOr(importError, IMPORT_FALLBACK),
         );
         toast.error("Import failed");
       }
@@ -428,7 +434,7 @@ export function MountainConditionsPanel() {
     });
     if (!response.ok) {
       if (response.status === 403) setForbidden(true);
-      throw await apiRefusalFromResponse(response, "Failed to save source configuration");
+      throw await apiRefusalFromResponse(response, CONFIG_FALLBACK);
     }
     const body = (await response.json()) as ApiResponse;
 
@@ -449,7 +455,7 @@ export function MountainConditionsPanel() {
       toast.success(message);
     } catch (configError) {
       actionFailure.fail(
-        refusalMessageOr(configError, "Failed to save source configuration"),
+        refusalMessageOr(configError, CONFIG_FALLBACK),
       );
       toast.error("Source configuration save failed");
     } finally {
@@ -470,7 +476,7 @@ export function MountainConditionsPanel() {
       });
       if (!response.ok) {
         if (response.status === 403) setForbidden(true);
-        throw await apiRefusalFromResponse(response, "Preview failed");
+        throw await apiRefusalFromResponse(response, PREVIEW_FALLBACK);
       }
       const body = (await response.json()) as PreviewResponse;
 
@@ -478,7 +484,7 @@ export function MountainConditionsPanel() {
       toast.success(body.message || "Preview generated");
     } catch (previewError) {
       actionFailure.fail(
-        refusalMessageOr(previewError, "Preview failed"),
+        refusalMessageOr(previewError, PREVIEW_FALLBACK),
       );
       toast.error("Preview failed");
     } finally {

@@ -27,10 +27,11 @@ export function htmlErrorPage(status: number): Response {
 
 const ROUTE_SENTENCE = "That record no longer exists.";
 
-// What a bare `await res.json()` on an HTML page throws ("Unexpected token '<',
-// … is not valid JSON"). Matching the bare word "JSON" would also catch screens
-// whose own copy names JSON, such as a raw-JSON editor.
-const JSON_PARSE_ERROR = /Unexpected token|not valid JSON|JSON\.parse/;
+// What a bare `await res.json()` throws on an HTML page ("Unexpected token '<',
+// … is not valid JSON") or on an empty body ("Unexpected end of JSON input").
+// Matching the bare word "JSON" would also catch screens whose own copy names
+// JSON, such as a raw-JSON editor.
+const JSON_PARSE_ERROR = /Unexpected token|not valid JSON|Unexpected end of JSON|JSON\.parse/;
 
 export function itShowsEveryRefusal({ submit, fallback }: FailedWriteCase): void {
   it("shows the route's own sentence from a JSON refusal", async () => {

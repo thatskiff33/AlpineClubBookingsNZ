@@ -5,17 +5,20 @@
  * follow-up; the delete has its own file).
  *
  * The list load, save, active toggle and attending-bookings read each parsed
- * the reply as JSON before checking `ok`. An HTML error page from the proxy in
- * front of the app reached the officer as a JSON parse error, the toggle and
- * the bookings read had no catch at all, and a refused bookings read left
- * "Loading bookings..." standing for good. Each now throws the refusal through
+ * the reply as JSON before checking `ok`. The list load and save caught the
+ * parse error and showed their fixed fallback, so their cases here pin that
+ * behaviour through the shared reader rather than fix a visible fault. The
+ * toggle and the bookings read had no catch at all: an error page or a dropped
+ * connection was silent, and a refused bookings read left "Loading
+ * bookings..." standing for good. Each now throws the refusal through
  * `apiRefusalFromResponse`: the route's own sentence when it sent one, this
  * screen's fallback otherwise, and the fallback again when the request never
- * arrives. A 403 save or toggle keeps its own permission sentence.
+ * arrives. A 403 save or toggle keeps its own permission sentence. A failed
+ * bookings read is reported inside the event's card, with "Try again".
  */
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { htmlErrorPage, itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
 
@@ -99,10 +102,14 @@ async function toggle(answer: Answer) {
 
 async function showBookings(answer: Answer) {
   events = [{ ...BEE, bookingCount: 2 }];
-  stubFetch((url, method) => url === `${LIST}/wp-1` && method === "GET", answer);
+  const fetchMock = stubFetch((url, method) => url === `${LIST}/wp-1` && method === "GET", answer);
   render(<AdminWorkPartiesPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Show bookings" }));
+  return fetchMock;
 }
+
+const detailReads = (fetchMock: ReturnType<typeof stubFetch>) =>
+  fetchMock.mock.calls.filter(([input, init]) => String(input) === `${LIST}/wp-1` && (init?.method ?? "GET") === "GET");
 
 afterEach(() => {
   events = [BEE];
@@ -156,13 +163,39 @@ describe("Work parties: a refused active toggle says why", () => {
 });
 
 describe("Work parties: a failed attending-bookings read says why", () => {
-  itShowsEveryRefusal({ submit: showBookings, fallback: "Failed to load attending bookings" });
+  itShowsEveryRefusal({ submit: async (answer) => void (await showBookings(answer)), fallback: "Failed to load attending bookings" });
 
-  it("collapses the row instead of leaving it loading", async () => {
+  it("says why inside the event's card, not in the page banner, and stops loading", async () => {
     await showBookings(() => htmlErrorPage(502));
-    expect(await screen.findByText("Failed to load attending bookings")).toBeInTheDocument();
+    const alert = await screen.findByText("Failed to load attending bookings");
+    expect(alert.closest("#wp-bookings-error-wp-1")).not.toBeNull();
     expect(screen.queryByText("Loading bookings...")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show bookings" })).toBeInTheDocument();
+  });
+
+  it("clears the reason when a retry loads the bookings", async () => {
+    let fail = true;
+    const fetchMock = await showBookings(() =>
+      fail ? htmlErrorPage(502) : Response.json({ attendingBookings: [], totalDiscountCents: 0 }),
+    );
+    const card = (await screen.findByText("Failed to load attending bookings")).closest("#wp-bookings-error-wp-1");
+    fail = false;
+    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("columnheader", { name: "Member" })).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load attending bookings")).not.toBeInTheDocument();
+    expect(detailReads(fetchMock)).toHaveLength(2);
+  });
+
+  it("reads again with a clean card when the officer hides and re-opens a failed row", async () => {
+    let fail = true;
+    await showBookings(() =>
+      fail ? htmlErrorPage(502) : Response.json({ attendingBookings: [], totalDiscountCents: 0 }),
+    );
+    await screen.findByText("Failed to load attending bookings");
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Hide bookings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show bookings" }));
+    expect(await screen.findByRole("columnheader", { name: "Member" })).toBeInTheDocument();
+    expect(screen.queryByText("Failed to load attending bookings")).not.toBeInTheDocument();
   });
 
   it("shows the bookings table when the read succeeds", async () => {

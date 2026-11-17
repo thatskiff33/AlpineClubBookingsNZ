@@ -3,11 +3,12 @@
 /**
  * A refused booking-desk price quote says why (ALP-649, #4976 follow-up).
  *
- * The quote parsed the reply as JSON before checking `ok`, so an HTML error
- * page from the proxy in front of the app reached the officer as a JSON parse
- * error. The refusal is now thrown through `apiRefusalFromResponse`: the
- * route's own sentence when it sent one, this screen's fallback otherwise, and
- * the fallback again when the request never arrives. The page mocks below are
+ * The quote parsed the reply as JSON before checking `ok`. Its catch already
+ * showed the fixed "Failed to calculate price" for an HTML error page, so these
+ * cases pin that behaviour now that the refusal is read through the shared
+ * `apiRefusalFromResponse` rather than fix a visible fault: the route's own
+ * sentence when it sent one, this screen's fallback otherwise, and the fallback
+ * again when the request never arrives. The page mocks below are
  * the ones lodge-date-response-ownership.test.tsx uses.
  */
 

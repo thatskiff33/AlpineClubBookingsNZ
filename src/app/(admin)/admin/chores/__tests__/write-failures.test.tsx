@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
 /**
- * A refused chore save, delete or active toggle says why (ALP-649, #4976
- * follow-up).
+ * A refused chore save, delete or active toggle, or a failed list read, says
+ * why (ALP-649, #4976 follow-up).
  *
- * Each handler parsed the reply as JSON before checking `ok`, so an HTML error
- * page from the proxy in front of the app reached the officer as a JSON parse
- * error. Each now throws the refusal through `apiRefusalFromResponse`: the
+ * Each write handler parsed the reply as JSON before checking `ok`, so an HTML
+ * error page from the proxy in front of the app reached the officer as a JSON
+ * parse error. The list read showed the browser's own words for a dropped
+ * connection and never the route's sentence. Each now throws the refusal through `apiRefusalFromResponse`: the
  * route's own sentence when it sent one, this screen's fallback otherwise, and
  * the fallback again when the request never arrives. A 403 keeps its own
  * permission sentence (pinned in lodge-config-action-attention.test.tsx).
@@ -130,5 +131,21 @@ describe("Chores: a refused active toggle says why", () => {
     const fetchMock = await toggleChore(() => Response.json({ ...CHORE, active: false }));
     await waitFor(() => expect(listCalls(fetchMock)).toHaveLength(2));
     expect(document.getElementById("chores-action-error")).toBeEmptyDOMElement();
+  });
+});
+
+describe("Chores: a failed list read says why", () => {
+  itShowsEveryRefusal({
+    submit: async (answer) => {
+      stubFetch(isList, answer);
+      render(<ChoresPage />);
+    },
+    fallback: "Failed to fetch chores",
+  });
+
+  it("lists the chores when the read succeeds", async () => {
+    stubFetch(() => false, () => Response.json([]));
+    render(<ChoresPage />);
+    expect(await screen.findByText("Breakfast dishes")).toBeInTheDocument();
   });
 });

@@ -11,13 +11,16 @@
  * `apiRefusalFromResponse`: the route's own sentence when it sent one, the
  * panel's fallback otherwise, and the fallback again when the request never
  * arrives. Import writes through the same `persistConfig` as the configuration
- * save, so the configuration-save cases cover its refusal.
+ * save but has its own catch, which tells a file that is not JSON apart from a
+ * refused write; its cases below pin that an error page from the write is
+ * never blamed on the officer's file.
  */
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
+import { htmlErrorPage, itShowsEveryRefusal } from "@/lib/__tests__/support/failed-write-cases";
+import { WHAKAPAPA_SELECTOR_KEYS } from "@/lib/whakapapa-report";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -128,8 +131,22 @@ describe("Mountain conditions: a refused selector export says why", () => {
   const isExport = ({ method, gets }: Request) => method === "GET" && gets > 1;
   const opener = "Advanced: element selectors";
 
+  // jsdom has no object URLs. Install them for this block and put back what
+  // was there, so later tests in the file never see the stand-ins.
+  const urlStatics = URL as unknown as Record<"createObjectURL" | "revokeObjectURL", unknown>;
+  let original: { createObjectURL: unknown; revokeObjectURL: unknown };
+
   beforeEach(() => {
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: () => "blob:test", revokeObjectURL: () => {} }));
+    original = { createObjectURL: urlStatics.createObjectURL, revokeObjectURL: urlStatics.revokeObjectURL };
+    urlStatics.createObjectURL = () => "blob:test";
+    urlStatics.revokeObjectURL = () => {};
+  });
+
+  afterEach(() => {
+    for (const key of ["createObjectURL", "revokeObjectURL"] as const) {
+      if (original[key] === undefined) delete urlStatics[key];
+      else urlStatics[key] = original[key];
+    }
   });
 
   itShowsEveryRefusal({
@@ -141,6 +158,48 @@ describe("Mountain conditions: a refused selector export says why", () => {
     await press("Export selectors", isExport, () => Response.json({ record: null }), opener);
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith("Selector configuration exported from the database."),
+    );
+    expect(document.getElementById("mountain-conditions-action-error")).toBeEmptyDOMElement();
+  });
+});
+
+describe("Mountain conditions: a refused selector import says why", () => {
+  const isImportWrite = ({ method, body }: Request) => method === "PATCH" && "config" in body;
+  const selectorFile = () =>
+    new File([JSON.stringify({ selectorOverrides: { [WHAKAPAPA_SELECTOR_KEYS[0]]: ".lift-status" } })], "selectors.json", {
+      type: "application/json",
+    });
+
+  async function importFile(answer: Answer, file: File = selectorFile()) {
+    stubFetch(isImportWrite, answer);
+    const { container } = render(<MountainConditionsPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "Advanced: element selectors" }));
+    await screen.findByRole("button", { name: "Import selectors" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+  }
+
+  it("shows the write's fallback, not 'not valid JSON', when the save answers with an HTML error page", async () => {
+    await importFile(() => htmlErrorPage(502));
+    expect(await screen.findByText("Failed to save source configuration")).toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalledWith("Could not import selectors: the file is not valid JSON.");
+  });
+
+  it("shows the route's own sentence from a JSON refusal", async () => {
+    await importFile(() => Response.json({ error: "That record no longer exists." }, { status: 404 }));
+    expect(await screen.findByText("That record no longer exists.")).toBeInTheDocument();
+  });
+
+  it("shows the import fallback when the write never gets an answer", async () => {
+    await importFile(() => Promise.reject(new TypeError("Failed to fetch")));
+    expect(await screen.findByText("Failed to import selectors")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
+  });
+
+  it("still blames the file, and writes nothing, when the file is not JSON", async () => {
+    await importFile(() => Response.json({ record: null }), new File(["not json"], "selectors.json"));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Could not import selectors: the file is not valid JSON."),
     );
     expect(document.getElementById("mountain-conditions-action-error")).toBeEmptyDOMElement();
   });

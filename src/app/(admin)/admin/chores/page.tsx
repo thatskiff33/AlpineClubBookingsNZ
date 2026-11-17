@@ -174,12 +174,13 @@ export default function ChoresPage() {
       setLoading(false)
       return
     }
+    const fallback = "Failed to fetch chores"
     try {
       const res = await fetch(
         `/api/admin/chores?lodgeId=${encodeURIComponent(scopedLodgeId)}`,
         { signal }
       )
-      if (!res.ok) throw new Error("Failed to fetch chores")
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback)
       const data = await res.json()
       setChores(data)
       setLoadError("")
@@ -187,7 +188,7 @@ export default function ChoresPage() {
       // An aborted request means the lodge changed (or the page unmounted);
       // a newer request owns the list now.
       if (err instanceof DOMException && err.name === "AbortError") return
-      setLoadError(err instanceof Error ? err.message : "Unknown error")
+      setLoadError(refusalMessageOr(err, fallback))
     } finally {
       setLoading(false)
     }

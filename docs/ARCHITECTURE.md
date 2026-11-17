@@ -1240,9 +1240,8 @@ told apart) and hand the result to `apiErrorMessageFromBody`; do not spell the
 `admin-failed-response-json-census.test.ts` fails on a new bare
 `await res.json()` read of a failed reply under `src/app/(admin)`. It does not
 see a `.then((r) => r.json())` chain or an `err.message` shown from a catch, so
-review those by eye. Its per-file ceilings cover only files an open lane was
-still converting, each naming that lane; lower an entry when you convert its
-reads.
+review those by eye. It has no allowance list: an unguarded failure read
+anywhere under `src/app/(admin)` fails.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).

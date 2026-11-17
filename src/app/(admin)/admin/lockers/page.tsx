@@ -168,13 +168,14 @@ export default function LockersPage() {
     }
     setLoading(true);
     setLoadError("");
+    const fallback = "Failed to load lockers";
     try {
       const response = await fetch(
         `/api/admin/lockers?lodgeId=${encodeURIComponent(scopedLodgeId)}`,
         { signal },
       );
       if (!response.ok) {
-        throw await apiRefusalFromResponse(response, "Failed to load lockers");
+        throw await apiRefusalFromResponse(response, fallback);
       }
       const body = await response.json();
 
@@ -186,7 +187,7 @@ export default function LockersPage() {
       if (readError instanceof DOMException && readError.name === "AbortError") {
         return;
       }
-      setLoadError(refusalMessageOr(readError, "Failed to load lockers"));
+      setLoadError(refusalMessageOr(readError, fallback));
     } finally {
       setLoading(false);
     }
@@ -312,6 +313,7 @@ export default function LockersPage() {
 
     setDeletingLockerId(locker.id);
     setActionError("");
+    const fallback = "Failed to delete locker";
     try {
       const response = await fetch(`/api/admin/lockers/${locker.id}`, {
         method: "DELETE",
@@ -321,7 +323,7 @@ export default function LockersPage() {
           failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope);
           return;
         }
-        throw await apiRefusalFromResponse(response, "Failed to delete locker");
+        throw await apiRefusalFromResponse(response, fallback);
       }
       if (activeScopeRef.current !== requestedScope) return;
 
@@ -332,7 +334,7 @@ export default function LockersPage() {
         resetForm();
       }
     } catch (deleteError) {
-      failAction(refusalMessageOr(deleteError, "Failed to delete locker"), requestedScope);
+      failAction(refusalMessageOr(deleteError, fallback), requestedScope);
     } finally {
       setDeletingLockerId(null);
     }
@@ -344,6 +346,7 @@ export default function LockersPage() {
     const count = Number(bulkCount);
     setBulkSaving(true);
     setActionError("");
+    const fallback = "Failed to create lockers";
     try {
       const response = await fetch("/api/admin/lockers/bulk", {
         method: "POST",
@@ -359,13 +362,13 @@ export default function LockersPage() {
           failAction(ADMIN_FORBIDDEN_SAVE_REASON, requestedScope);
           return;
         }
-        throw await apiRefusalFromResponse(response, "Failed to create lockers");
+        throw await apiRefusalFromResponse(response, fallback);
       }
       if (activeScopeRef.current !== requestedScope) return;
       setBulkCount("");
       await loadData();
     } catch (bulkError) {
-      failAction(refusalMessageOr(bulkError, "Failed to create lockers"), requestedScope);
+      failAction(refusalMessageOr(bulkError, fallback), requestedScope);
     } finally {
       setBulkSaving(false);
     }

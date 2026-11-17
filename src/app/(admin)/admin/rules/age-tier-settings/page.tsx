@@ -59,16 +59,26 @@ export default function AgeTierSettingsPage() {
   });
 
   useEffect(() => {
-    fetch("/api/admin/age-tier-settings")
-      .then((r) => r.json())
-      .then((d) => {
+    // A refused read (401/403 with the guard's JSON) is thrown before parsing,
+    // so it says why instead of passing for "nothing configured" and showing
+    // the built-in defaults as if they were the club's saved tiers.
+    const fallback = "Failed to load settings";
+    async function load() {
+      try {
+        const res = await fetch("/api/admin/age-tier-settings");
+        if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
+        const d = await res.json();
         const rows = d.settings ?? [];
         const data = normalizeAgeTierRows(rows.length > 0 ? rows : AGE_TIER_DEFAULTS);
         setSettings(data);
         setSavedSettings(data);
-      })
-      .catch(() => setLoadError("Failed to load settings"))
-      .finally(() => setLoading(false));
+      } catch (err) {
+        setLoadError(refusalMessageOr(err, fallback));
+      } finally {
+        setLoading(false);
+      }
+    }
+    void load();
   }, []);
 
   const sorted = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
