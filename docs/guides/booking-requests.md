@@ -33,7 +33,8 @@ If a read fails, the badges keep their last numbers.
 A link to the page that names no tab, such as the sidebar entry followed from
 another page, the dashboard card, or a typed address, opens on the first tab
 that has work, in tab order (Approvals, Changes, Policy Exceptions, Public
-Requests), or on **Approvals** when nothing is waiting. The dashboard's
+Requests), or on **Approvals** when nothing is waiting or the counts could not
+be read when the page opened. The dashboard's
 **Booking Requests** card links to that tab. A link that names a tab, a single
 booking or request, or a status filter always opens where it points. Once the
 page is open its address names the tab, so a bookmark taken then keeps that

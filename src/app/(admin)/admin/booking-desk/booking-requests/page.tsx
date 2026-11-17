@@ -131,20 +131,25 @@ export default function BookingRequestsPage() {
   // sidebar's. A failed read keeps the last good badges, as the sidebar keeps
   // its last good counts. Loads never overlap, so an older response cannot
   // overwrite a newer one. A reread never moves the officer: the landing tab
-  // below is decided once, on the first counts.
+  // below is decided once, by the first read to settle. If that first read
+  // fails, the page stays where it opened, so counts that arrive later (say
+  // after the officer has approved something) cannot move them.
+  const landingTabDecided = useRef(false);
   const refreshTabCounts = useAdminQueueRefresh(async (isMounted) => {
+    let counts: ReturnType<typeof readBookingRequestPendingCounts> = null;
     try {
       const res = await fetch(BOOKING_REQUEST_PENDING_COUNTS_PATH, {
         cache: "no-store",
       });
-      const counts = readBookingRequestPendingCounts(
-        res.ok ? await res.json() : null,
-      );
-      if (isMounted() && counts) {
-        setTabCounts(bookingRequestsTabCounts(counts));
-      }
+      counts = readBookingRequestPendingCounts(res.ok ? await res.json() : null);
     } catch {
       /* badges are best-effort; the last good ones stay */
+    }
+    if (!isMounted()) return;
+    if (counts) {
+      setTabCounts(bookingRequestsTabCounts(counts));
+    } else {
+      landingTabDecided.current = true;
     }
   });
   useEffect(() => {
@@ -155,7 +160,7 @@ export default function BookingRequestsPage() {
   // the dashboard card's, a typed address) opens on the first tab with work
   // (#4969), so an officer who followed the sidebar badge never lands on an
   // empty Approvals while the work sits on another tab. Decided once per
-  // mount, when the counts first arrive, and only for a link that named no
+  // mount, when the first read settles (no move at all if it failed), and only for a link that named no
   // tab, record (bookingId/requestId) or status filter — a status filter
   // belongs to the tab it was set on and means nothing on another. Once the
   // page has opened, the address names the tab (a bookmark taken from it keeps
@@ -170,7 +175,6 @@ export default function BookingRequestsPage() {
   // `replace`, not `push`, so Back still leaves the page in one step.
   const openedFromBareLink = useRef(!hasLandingTarget(searchParams));
   const officerChoseTab = useRef(false);
-  const landingTabDecided = useRef(false);
   useEffect(() => {
     if (landingTabDecided.current || tabCounts === null) return;
     landingTabDecided.current = true;

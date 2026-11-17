@@ -385,6 +385,29 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  // A page that could not read its counts on open stays where it opened: a
+  // later first success (after the officer has acted) must not move them.
+  it.each([
+    ["a decision", () => window.dispatchEvent(new CustomEvent(ADMIN_QUEUE_CHANGED_EVENT))],
+    ["a focus reread", () => window.dispatchEvent(new Event("focus"))],
+  ])("does not land on another tab when the first read failed and %s brings the counts", async (_label, trigger) => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 500 }));
+    render(<BookingRequestsPage />);
+    await countsLoaded();
+    expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
+    replace.mockClear();
+
+    // Approvals now empty, work waiting on Changes.
+    serveCounts({ lockedPeriodChangeRequests: 2 });
+    act(() => {
+      trigger();
+    });
+
+    await waitFor(() => expect(tab(/^Changes/)).toHaveTextContent("Changes2"));
+    expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
   // As the sidebar does with a failed refetch: the last good numbers stay
   // rather than vanishing or reading as zero.
   it.each([
