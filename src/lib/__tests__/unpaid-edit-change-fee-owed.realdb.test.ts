@@ -18,6 +18,7 @@ import { releaseBookingJournalForTeardown } from "./support/booking-financial-hi
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
+import { memberMoneyTestContext } from "@/lib/__tests__/support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -39,6 +40,8 @@ const CHECK_OUT = new Date("2026-07-12T00:00:00.000Z");
 const MOVED = { checkIn: "2026-07-20", checkOut: "2026-07-22" };
 // The same tier move, one night longer, so the price itself changes.
 const MOVED_LONGER = { checkIn: "2026-07-20", checkOut: "2026-07-23" };
+// The same tier move, one night shorter: the price falls by the fee.
+const MOVED_SHORTER = { checkIn: "2026-07-20", checkOut: "2026-07-21" };
 const NIGHT_CENTS = 5_000;
 const PRICE_CENTS = 2 * NIGHT_CENTS;
 const NEW_PRICE_CENTS = 3 * NIGHT_CENTS;
@@ -185,6 +188,61 @@ async function moveStay(input: { checkIn: string; checkOut: string } = MOVED) {
 async function dropPayment(): Promise<void> {
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
   await prisma.payment.delete({ where: { id: PAYMENT_ID } });
+}
+
+/**
+ * A PAID booking settled at $0: account credit (or a promotion) covered the
+ * whole price, so nothing was captured from `source` (#5039).
+ */
+async function paidAtZero(source: "STRIPE" | "INTERNET_BANKING", creditCents = PRICE_CENTS): Promise<void> {
+  const reference = source === "STRIPE" ? null : "BOOKING-RACE4661";
+  await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID" } });
+  await prisma.payment.update({
+    where: { id: PAYMENT_ID },
+    data: { status: "SUCCEEDED", amountCents: 0, source, creditAppliedCents: creditCents, reference, internetBankingHoldSlots: false },
+  });
+  await prisma.paymentTransaction.update({
+    where: { id: PRIMARY_ID },
+    data: { status: "SUCCEEDED", amountCents: 0, source, reference },
+  });
+  await prisma.memberCredit.create({
+    data: { memberId: OWNER_ID, amountCents: -creditCents, type: "BOOKING_APPLIED", appliedToBookingId: BOOKING_ID, description: "Applied at booking" },
+  });
+}
+
+/** A PAID Internet Banking booking whose transfer was matched: the price captured, no card behind it. */
+async function paidByBank(): Promise<void> {
+  await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID" } });
+  await prisma.payment.update({
+    where: { id: PAYMENT_ID },
+    data: { status: "SUCCEEDED", amountCents: PRICE_CENTS, internetBankingHoldSlots: false },
+  });
+  await prisma.paymentTransaction.update({ where: { id: PRIMARY_ID }, data: { status: "SUCCEEDED" } });
+}
+
+/** The confirmation's ledger lines, as the settle that made the booking PAID posts them. */
+async function confirmOnLedger(): Promise<void> {
+  await prisma.$transaction((tx) =>
+    confirmationSync.postStoredBookingConfirmationLedgerLines(tx, BOOKING_ID, memberMoneyTestContext()),
+  );
+}
+
+async function postedFeeLines() {
+  return prisma.bookingLedgerLine.findMany({
+    where: { bookingId: BOOKING_ID, kind: "CHANGE_FEE" },
+    select: { amountCents: true, anchorId: true },
+  });
+}
+
+async function plannedFeeLines() {
+  const planned = await prisma.$transaction(async (tx) =>
+    confirmationSync.planConfirmationPostings(tx, await confirmationSync.readConfirmationBooking(tx, BOOKING_ID), "pending charge"),
+  );
+  return planned.filter((posting) => posting.kind === "CHANGE_FEE").map((posting) => ({ unitCents: posting.unitCents, anchorId: posting.anchorId }));
+}
+
+async function paymentFeeCents(): Promise<number> {
+  return (await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } })).changeFeeCents;
 }
 
 async function theEdit() {
@@ -419,30 +477,115 @@ async function theEdit() {
     ).toEqual({ changeFeeCents: FEE_CENTS });
   }, 60_000);
 
-  it("a credit-paid booking is charged the fee", async () => {
-    await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAID" } });
-    await prisma.payment.update({
-      where: { id: PAYMENT_ID },
-      data: {
-        status: "SUCCEEDED",
-        amountCents: 0,
-        source: "STRIPE",
-        creditAppliedCents: PRICE_CENTS,
-        reference: null,
-        internetBankingHoldSlots: false,
-      },
-    });
-    await prisma.paymentTransaction.update({
-      where: { id: PRIMARY_ID },
-      data: { status: "SUCCEEDED", amountCents: 0, source: "STRIPE", reference: null },
-    });
-
-    await moveStay();
-
+  /**
+   * #5039 (`INV-MOD-042`, `INV-PAY-119`): a paid edit's fee is on the edit, the
+   * payment, the queued invoice work and the ledger exactly once - the edit
+   * posts its own `CHANGE_FEE` line, and the confirmation plan adds none.
+   */
+  async function expectFeeRecordedOnce(): Promise<{ id: string }> {
+    await drainXeroWork();
     const edit = await theEdit();
     expect(edit.changeFeeCents).toBe(FEE_CENTS);
-    expect(
-      await prisma.payment.findUniqueOrThrow({ where: { id: PAYMENT_ID }, select: { changeFeeCents: true } }),
-    ).toEqual({ changeFeeCents: FEE_CENTS });
+    expect(edit.newData).not.toHaveProperty("changeFeeAddedToAmountOwed");
+    expect(await paymentFeeCents()).toBe(FEE_CENTS);
+    expect(queuedForThisBooking.map((queued) => queued.changeFeeCents)).toEqual([FEE_CENTS]);
+    expect(await postedFeeLines()).toEqual([{ amountCents: FEE_CENTS, anchorId: edit.id }]);
+    expect(await plannedFeeLines()).toEqual([]);
+    return edit;
+  }
+
+  async function finalPriceCents(): Promise<number> {
+    return (await prisma.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, select: { finalPriceCents: true } })).finalPriceCents;
+  }
+
+  // A card source's fee-only move is the zero-dollar card increase (#3502),
+  // which recorded its fee before #5039; every other row here did not.
+  describe.each(["STRIPE", "INTERNET_BANKING"] as const)("#5039: a booking credit settled in full, paid from %s", (source) => {
+    it.each([
+      ["made one night cheaper", MOVED_SHORTER, false],
+      ["made one night cheaper after its invoice", MOVED_SHORTER, true],
+      ["moved for the fee alone", MOVED, false],
+    ] as const)("records the fee on its payment once when %s", async (_name, move, invoiced) => {
+      if (invoiced) await raiseInvoice();
+      await paidAtZero(source);
+      await confirmOnLedger();
+
+      await moveStay(move);
+
+      await expectFeeRecordedOnce();
+      // The charge is the new price plus the fee, against the credit applied.
+      expect(await owedCents()).toBe((await finalPriceCents()) + FEE_CENTS - PRICE_CENTS);
+    }, 60_000);
+  });
+
+  it.each([
+    ["made one night cheaper", MOVED_SHORTER],
+    ["made one night longer", MOVED_LONGER],
+  ] as const)("#5039: a booking paid by bank transfer and %s records the fee once", async (_name, move) => {
+    await paidByBank();
+    await confirmOnLedger();
+
+    await moveStay(move);
+
+    await expectFeeRecordedOnce();
+    expect(await owedCents()).toBe((await finalPriceCents()) + FEE_CENTS);
+  }, 60_000);
+
+  it("#5039: a fee an earlier edit added to the amount owed keeps its one line beside a later paid edit's", async () => {
+    // The #4661-era shape: an edit of the unpaid booking added its fee to the
+    // amount owed, then credit settled the price and that fee.
+    const earlier = await prisma.bookingModification.create({
+      data: {
+        bookingId: BOOKING_ID,
+        memberId: OFFICER_ID,
+        modificationType: "DATE_CHANGE",
+        previousData: {},
+        newData: { changeFeeAddedToAmountOwed: true },
+        changeFeeCents: FEE_CENTS,
+      },
+    });
+    await paidAtZero("INTERNET_BANKING", PRICE_CENTS + FEE_CENTS);
+    await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { changeFeeCents: FEE_CENTS } });
+    const earlierLine = { unitCents: FEE_CENTS, anchorId: earlier.id };
+    expect(await plannedFeeLines()).toEqual([earlierLine]);
+    await confirmOnLedger();
+    expect(await postedFeeLines()).toEqual([{ amountCents: FEE_CENTS, anchorId: earlier.id }]);
+
+    await moveStay(MOVED_SHORTER);
+
+    const later = await prisma.bookingModification.findFirstOrThrow({
+      where: { bookingId: BOOKING_ID, id: { not: earlier.id } },
+      select: { id: true, changeFeeCents: true },
+    });
+    expect(later.changeFeeCents).toBe(FEE_CENTS);
+    expect(await paymentFeeCents()).toBe(2 * FEE_CENTS);
+    expect(await plannedFeeLines()).toEqual([earlierLine]);
+    const posted = await postedFeeLines();
+    expect(posted).toHaveLength(2);
+    expect(posted).toEqual(expect.arrayContaining([
+      { amountCents: FEE_CENTS, anchorId: earlier.id },
+      { amountCents: FEE_CENTS, anchorId: later.id },
+    ]));
+  }, 60_000);
+
+  it("#5039: a held bank-transfer booking still gains no fee on a late-notice move", async () => {
+    await moveStay(MOVED_SHORTER);
+
+    expect((await theEdit()).changeFeeCents).toBe(0);
+    expect(await paymentFeeCents()).toBe(0);
+  }, 60_000);
+
+  it("#5039: a card booking at its pay step still gains no fee on a late-notice move through the batch door", async () => {
+    await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PAYMENT_PENDING" } });
+    await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { source: "STRIPE", reference: null, internetBankingHoldSlots: false } });
+    await prisma.paymentTransaction.update({
+      where: { id: PRIMARY_ID },
+      data: { source: "STRIPE", reference: null, reason: null, stripePaymentIntentId: "pi_race4661" },
+    });
+
+    await moveStay(MOVED_SHORTER);
+
+    expect((await theEdit()).changeFeeCents).toBe(0);
+    expect(await paymentFeeCents()).toBe(0);
   }, 60_000);
 });
