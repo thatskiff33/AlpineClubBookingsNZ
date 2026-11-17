@@ -7,7 +7,7 @@ growth in each is the one line that imports the helper; the links themselves
 stay the same length.
 
 file: src/app/(admin)/admin/lodge-ops/display/devices/page.tsx
-lines: 537
+lines: 547
 reason: one import line, so the back link comes from the hub registry.
   Splitting the devices page is a refactor of its own and would not shrink
   this hunk.
