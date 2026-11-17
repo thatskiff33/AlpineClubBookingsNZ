@@ -22,10 +22,12 @@ import { ADMIN_WRITE_VISIBLE_POLL } from "./helpers/public-cache";
   is no longer read and its value is not imported), so the admin has to save one
   through Admin -> Integrations before anything can load at all.
 
-  A fake measurement id is used deliberately. Google answers a 404 for an unknown
-  id, which is all this spec needs: the assertion is about WHETHER a request is
-  made and WHAT URL it carries, never about a response. No real property is
-  touched and no measurement data is sent anywhere.
+  A fake measurement id is used deliberately: the assertions are about WHETHER a
+  request is made and WHAT URL it carries, never about a response. Google no
+  longer answers a 404 for an unknown id, though (#5155): it serves the full
+  library, which runs and sends the app's sanitised `page_view` hits for a
+  property that belongs to nobody. No real property is touched, but those hits
+  do leave, and the tests below wait for them rather than assume they never come.
 */
 
 test.describe.configure({ mode: "serial" });
@@ -46,23 +48,88 @@ let admin: APIRequestContext;
 let visitor: APIRequestContext;
 let previousModules: Record<string, boolean>;
 
+interface GoogleRequestLog {
+  /** Every request URL, in order, recorded as the request BEGINS. */
+  readonly urls: string[];
+  /** How many of `urls` have finished or failed. */
+  settled: number;
+  /** The `dl` (page location) of each `page_view` event sent. */
+  readonly pageViews: string[];
+  /** The gtag loader's HTTP status, or "failed" when it never answered. */
+  loaderStatus?: number | "failed";
+}
+
+const isGoogleAnalyticsUrl = (url: string) =>
+  GOOGLE_ANALYTICS_HOSTS.some((host) => url.includes(host));
+const isGtagLoaderUrl = (url: string) =>
+  url.includes("googletagmanager.com/gtag/js");
+
 /**
  * Every request the page made to a Google Analytics host, in order.
  *
- * Attached to the CONTEXT rather than filtered afterwards, and recorded from
+ * Attached to the page rather than filtered afterwards, and recorded from
  * before the first navigation, so a request made during initial load cannot be
- * missed. `requestfinished` would under-report: a blocked or failed request is
- * still a request that left, and is still a disclosure.
+ * missed. A URL is recorded at `request`, not `requestfinished`, which would
+ * under-report: a blocked or failed request is still a request that left, and
+ * is still a disclosure. Settlement is counted separately, for a test that has
+ * to know the page's own traffic is over before it takes a snapshot.
  */
-function recordGoogleRequests(page: Page): string[] {
-  const urls: string[] = [];
+function recordGoogleRequests(page: Page): GoogleRequestLog {
+  const log: GoogleRequestLog = { urls: [], settled: 0, pageViews: [] };
   page.on("request", (request) => {
     const url = request.url();
-    if (GOOGLE_ANALYTICS_HOSTS.some((host) => url.includes(host))) {
-      urls.push(url);
+    if (!isGoogleAnalyticsUrl(url)) return;
+    log.urls.push(url);
+    // GA4 puts a lone event's name in the URL, and each event of a batch on
+    // its own line of the body; the page location is shared, in the URL.
+    const params = new URL(url).searchParams;
+    const events = [
+      params.get("en"),
+      ...(request.postData() ?? "")
+        .split("\n")
+        .map((line) => new URLSearchParams(line).get("en")),
+    ];
+    for (const event of events) {
+      if (event === "page_view") log.pageViews.push(params.get("dl") ?? "");
     }
   });
-  return urls;
+  const settle = (failed: boolean) => (request: { url(): string }) => {
+    const url = request.url();
+    if (!isGoogleAnalyticsUrl(url)) return;
+    log.settled += 1;
+    if (failed && isGtagLoaderUrl(url)) log.loaderStatus = "failed";
+  };
+  page.on("requestfinished", settle(false));
+  page.on("requestfailed", settle(true));
+  page.on("response", (response) => {
+    if (isGtagLoaderUrl(response.url())) log.loaderStatus = response.status();
+  });
+  return log;
+}
+
+/**
+ * Whether the first page's own Google traffic is over: its `page_view` hit was
+ * sent (or the loader answered an error, so the library cannot run and none
+ * will be), and every request recorded so far has finished or failed.
+ */
+function firstPageTrafficSettled(log: GoogleRequestLog, pageLocation: string): boolean {
+  const libraryCannotRun =
+    log.loaderStatus === "failed" ||
+    (log.loaderStatus !== undefined && (log.loaderStatus < 200 || log.loaderStatus > 299));
+  const pageViewSent = log.pageViews.includes(pageLocation);
+  return (pageViewSent || libraryCannotRun) && log.settled === log.urls.length;
+}
+
+/** A recorded request, as a failure message names it. */
+function describeGoogleRequest(url: string): string {
+  const parsed = new URL(url);
+  const event = parsed.searchParams.get("en");
+  const location = parsed.searchParams.get("dl");
+  return [
+    `${parsed.host}${parsed.pathname}`,
+    event ? `en=${event}` : "",
+    location ? `dl=${location}` : "",
+  ].filter(Boolean).join(" ");
 }
 
 async function saveAnalyticsSettings(
@@ -167,7 +234,7 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       bannerMessage: BANNER_MESSAGE,
     });
 
-    const googleRequests = recordGoogleRequests(page);
+    const googleRequests = recordGoogleRequests(page).urls;
     await page.goto("/");
     await expect(page.locator("footer")).toBeVisible();
 
@@ -189,7 +256,7 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       bannerMessage: BANNER_MESSAGE,
     });
 
-    const googleRequests = recordGoogleRequests(page);
+    const googleRequests = recordGoogleRequests(page).urls;
     await page.goto("/");
 
     // The banner shows the admin's own wording.
@@ -219,17 +286,16 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
 
     /*
       A CONDITIONAL check on the URL sanitisation, and its limit is stated
-      rather than hidden. The fake measurement id makes Google answer 404 for
-      the loader, so the gtag library never executes and usually no `collect`
-      request follows at all — which means this loop normally has nothing to
-      inspect and must not be mistaken for the proof.
+      rather than hidden. Google now serves the library for the fake id, so a
+      `collect` request usually follows the loader, but this loop checks only
+      the requests made by the time it runs, and whether Google answers is not
+      this spec's to control. It must not be mistaken for the proof.
 
       What proves the sanitisation is `analytics-route-policy.test.ts` (only
       origin + pathname is ever built, for an eligible route) and
       `analytics-consent.test.tsx` (`send_page_view: false`, one page view per
-      address, the referrer reduced). This is here so that IF a collect request
-      does happen on some future runner, a query string in `dl` fails the suite
-      instead of going unnoticed.
+      address, the referrer reduced). This is here so that a query string in a
+      collect request's `dl` fails the suite instead of going unnoticed.
     */
     const origin = new URL(page.url()).origin;
     for (const url of googleRequests) {
@@ -248,7 +314,7 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       bannerMessage: BANNER_MESSAGE,
     });
 
-    const googleRequests = recordGoogleRequests(page);
+    const googleRequests = recordGoogleRequests(page).urls;
     await page.goto("/");
     await expect(banner(page)).toBeVisible();
 
@@ -273,7 +339,7 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       bannerMessage: BANNER_MESSAGE,
     });
 
-    const googleRequests = recordGoogleRequests(page);
+    const googleRequests = recordGoogleRequests(page).urls;
     // Banner OFF, so this is the most permissive configuration there is: if the
     // route policy were not enforced, the tag would load here.
     await page.goto("/login");
@@ -302,10 +368,11 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       What is asserted is the state Google's own library reads: `ga-disable-<id>`
       must be true once the runtime has gone. Next may retain the already-injected
       `next/script` node for the life of this document, so DOM-node removal is not
-      the boundary and is deliberately not asserted. The fake measurement id means
-      the real library never executes here, so "no further collect request" would
-      pass vacuously and is not the primary assertion — though any request that did
-      leave after the navigation would still fail the count below.
+      the boundary and is deliberately not asserted. The library does run for the
+      fake id and sends the first page's own `page_view`, a moment after the
+      loader arrives (#5155). So the snapshot waits until that traffic is over,
+      and any request that BEGINS after it, through the navigation, fails the count
+      at the end.
     */
     await saveAnalyticsSettings(admin, {
       measurementId: FAKE_MEASUREMENT_ID,
@@ -313,7 +380,8 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       bannerMessage: BANNER_MESSAGE,
     });
 
-    const googleRequests = recordGoogleRequests(page);
+    const google = recordGoogleRequests(page);
+    const googleRequests = google.urls;
     await page.goto("/");
     await expect(banner(page)).toBeHidden();
     await expect
@@ -331,6 +399,24 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       )
       .toBe(false);
 
+    // The home page's own traffic ends before the snapshot: its page_view hit
+    // starts only after the loader has finished, so counting at the loader
+    // alone raced it (#5155: expected 1, received 4).
+    const homeLocation = `${new URL(page.url()).origin}/`;
+    await expect
+      .poll(
+        () =>
+          firstPageTrafficSettled(google, homeLocation)
+            ? "settled"
+            : `still waiting (loader ${google.loaderStatus ?? "pending"}, ${google.settled}/${googleRequests.length} settled): ${googleRequests
+                .map(describeGoogleRequest)
+                .join(", ")}`,
+        {
+          message: "the home page's own Google traffic must be over before the snapshot",
+          timeout: 15_000,
+        },
+      )
+      .toBe("settled");
     const requestsBefore = googleRequests.length;
     // A marker on the document, so the assertions below can state WHICH kind of
     // navigation happened rather than assume it. A full document load wipes it —
@@ -375,7 +461,10 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       .toBe(true);
     expect(
       googleRequests.length,
-      "no further request may reach Google after leaving the public website",
+      `no further request may reach Google after leaving the public website; saw ${googleRequests
+        .slice(requestsBefore)
+        .map(describeGoogleRequest)
+        .join(", ")}`,
     ).toBe(requestsBefore);
   });
 
@@ -388,7 +477,7 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       bannerMessage: BANNER_MESSAGE,
     });
 
-    const googleRequests = recordGoogleRequests(page);
+    const googleRequests = recordGoogleRequests(page).urls;
     await page.goto("/");
 
     // No prompt, and the tag loads by itself.
@@ -414,7 +503,7 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
     // The opt-out survives a reload in banner-off mode — the whole point of the
     // owner's clarification 1: turning the banner off must not make the
     // preferences control ineffective.
-    const afterOptOut = recordGoogleRequests(page);
+    const afterOptOut = recordGoogleRequests(page).urls;
     await page.reload();
     await expect(page.locator("footer")).toBeVisible();
     expect(
