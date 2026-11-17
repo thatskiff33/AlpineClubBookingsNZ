@@ -206,6 +206,44 @@ describe("getAdminPendingCounts", () => {
     );
   });
 
+  // The four Booking Requests counts are one read of the helper the page's tab
+  // badges share (#4969), taken once per batch: four counters each making their
+  // own call would run 20 queries on every sidebar refetch instead of 5.
+  it("reads the four Booking Requests counts once per batch, not once per counter", async () => {
+    await getAdminPendingCounts();
+    expect(mocks.newBookingPolicyExceptionRequestCount).toHaveBeenCalledTimes(1);
+    expect(mocks.bookingRequestCount).toHaveBeenCalledTimes(1);
+    // LOCKED_PERIOD and POLICY_EXCEPTION: two queries, once each.
+    expect(mocks.bookingChangeRequestCount).toHaveBeenCalledTimes(2);
+
+    await getAdminPendingCounts();
+    expect(mocks.newBookingPolicyExceptionRequestCount).toHaveBeenCalledTimes(2);
+  });
+
+  it("names all four Booking Requests counts unavailable when their one read fails, and loads the rest", async () => {
+    mocks.newBookingPolicyExceptionRequestCount.mockRejectedValue(
+      new Error("connection reset"),
+    );
+
+    const counts = await getAdminPendingCounts();
+
+    expect([...counts.unavailable].sort()).toEqual(
+      [
+        "bookingReviews",
+        "lockedPeriodChangeRequests",
+        "policyExceptionRequests",
+        "publicBookingRequests",
+      ].sort(),
+    );
+    expect(counts.bookingReviews).toBe(0);
+    expect(counts.publicBookingRequests).toBe(0);
+    // Every other queue still arrives.
+    expect(counts.familyRequests).toBe(1);
+    expect(counts.manualRefundTasks).toBe(15);
+    expect(counts.issueReports).toBe(11);
+    expect(counts.unpaidFinishedStays).toBe(12);
+  });
+
   it("uses a count the caller supplies and does not scan for it a second time (#4962 review)", async () => {
     // The dashboard already reads the uncovered nights for its hut-leader cards
     // and hands that number in, so the page holds one number, from one read.
