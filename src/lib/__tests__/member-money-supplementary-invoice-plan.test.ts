@@ -1,9 +1,38 @@
 import { describe, expect, it, vi } from "vitest";
 
-// The builders' modules load the client; the planners never query it.
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+// The builders' modules load the client; the planners never query it. The
+// recorder's wiring test drives the journal read, the shares, the posted legs
+// and the manifest write through these mocks.
+const mocks = vi.hoisted(() => ({
+  findMany: vi.fn(),
+  loadShares: vi.fn(),
+  readBookingChargeLegs: vi.fn(),
+  writeExportManifest: vi.fn(),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    memberMoneyJournal: { findMany: mocks.findMany },
+    $transaction: (fn: (tx: unknown) => unknown) => fn({}),
+  },
+}));
+vi.mock("@/lib/xero-modification-line-items", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-modification-line-items")),
+  loadEditReviewSettledShares: mocks.loadShares,
+}));
+vi.mock("@/lib/member-money/internal/booking-journal-read", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/internal/booking-journal-read")),
+  readBookingChargeLegs: mocks.readBookingChargeLegs,
+}));
+vi.mock("@/lib/member-money/internal/store", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/internal/store")),
+  writeExportManifest: mocks.writeExportManifest,
+}));
 import type { Prisma } from "@prisma/client";
-import { readSettledShareSliceEvents, readSupplementarySliceEvent } from "@/lib/member-money/internal/supplementary-invoice-manifest";
+import {
+  readSettledShareSliceEvents,
+  readSupplementarySliceEvent,
+  recordSupplementaryInvoiceManifest,
+} from "@/lib/member-money/internal/supplementary-invoice-manifest";
 import { LineAmountTypes, type LineItem } from "xero-node";
 import { modificationChangeFeeKey } from "@/lib/booking-ledger-posting-keys";
 import { changeFeeLineItem } from "@/lib/xero-modification-line-items";
@@ -279,5 +308,39 @@ describe("readSupplementarySliceEvent (ALP-436)", () => {
   it("keeps a reversed modification visible so its planner can refuse it", async () => {
     await expect(readSupplementarySliceEvent(read([journal(EVENT, true)]).db, BOOKING, { kind: "MODIFICATION", modificationId: MOD }))
       .resolves.toMatchObject({ eventKey: EVENT, reversed: true });
+  });
+});
+
+describe("recordSupplementaryInvoiceManifest (ALP-436)", () => {
+  it("passes the settled shares' closures to the planner, so an itemised share is covered as its own slice", async () => {
+    const CLOSE = "review-close:task-a:line-1";
+    mocks.findMany
+      .mockResolvedValueOnce([{ event: { eventKey: EVENT }, reversedBy: null, lines: [leg("BOOKING_REVENUE", STAY, 4500), leg("FEE_REVENUE", FEE, 2000)] }])
+      .mockResolvedValueOnce([{ event: { eventKey: CLOSE }, reversedBy: null, lines: [leg("BOOKING_REVENUE", STAY, 1500)] }]);
+    mocks.loadShares.mockResolvedValueOnce([{ taskId: "task-a", sign: 1, amountCents: 1500, note: null }]);
+    mocks.readBookingChargeLegs.mockResolvedValueOnce([
+      leg("BOOKING_REVENUE", STAY, 14000), leg("BOOKING_REVENUE", STAY, 4500), leg("BOOKING_REVENUE", STAY, 1500), leg("FEE_REVENUE", FEE, 2000),
+    ]);
+    mocks.writeExportManifest.mockResolvedValueOnce("WRITTEN");
+
+    await recordSupplementaryInvoiceManifest({
+      bookingId: BOOKING,
+      anchor: { kind: "MODIFICATION", modificationId: MOD },
+      legacyKey: `xero-supplementary:${MOD}`,
+      lines: [stayLine(4500), { description: "Agreed adjustment", quantity: 1, unitAmount: 15, accountCode: "201" }, changeFeeLineItem(2000, mapping)],
+      priceLines: [{ kind: "night" }],
+      providerInvoiceId: "inv-1",
+    });
+
+    expect(mocks.loadShares).toHaveBeenCalledWith(BOOKING, MOD);
+    expect(mocks.writeExportManifest).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      documentRole: "SUPPLEMENTARY_BOOKING_INVOICE",
+      outcome: "COVERED",
+      coverage: [
+        expect.objectContaining({ account: "BOOKING_REVENUE", sliceKey: EVENT, coveredCents: 4500 }),
+        expect.objectContaining({ account: "BOOKING_REVENUE", sliceKey: CLOSE, coveredCents: 1500 }),
+        expect.objectContaining({ account: "FEE_REVENUE", chargeIdentity: FEE, coveredCents: 2000 }),
+      ],
+    }));
   });
 });
