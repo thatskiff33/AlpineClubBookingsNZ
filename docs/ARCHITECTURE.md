@@ -2645,6 +2645,9 @@ when the tab becomes visible, and on the `admin-queue-changed` window event a
 queue page fires after a decision (`notifyAdminQueueChanged` in
 `src/lib/admin-queue-events.ts`). One load runs at a time: a navigation,
 decision or retry mid-load queues one more, while focus and visibility do not.
+These triggers live in `useAdminQueueRefresh` (`src/hooks/use-admin-queue-refresh.ts`),
+which the Booking Requests page's tab badges share, so after a decision they
+still add up to the sidebar's badge.
 A failed load shows "Couldn't load counts" with Retry and keeps the last good
 badges. Sidebar sections render expanded by
 default; a per-section collapse preference persists in localStorage.
