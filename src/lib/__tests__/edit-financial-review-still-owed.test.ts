@@ -26,13 +26,13 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/edit-financial-review-settlement", () => ({ chooseEditReviewSettlementRoute: h.choose }));
 vi.mock("@/lib/edit-financial-review-cancel-netting", () => ({ capturedShareOwedAfterCancellation: h.owed }));
-vi.mock("@/lib/payment-reconciliation", () => ({
+vi.mock("@/lib/manual-booking-payment-error", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {},
 }));
 
 import { requireClubTimeZone } from "@/lib/club-time";
 import { previewEditReviewStillOwed } from "@/lib/edit-financial-review-still-owed";
-import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 const preview = () =>
@@ -56,7 +56,8 @@ describe("previewEditReviewStillOwed (#3835)", () => {
     h.choose.mockResolvedValue(chosen);
 
     expect(await preview()).toEqual({ shareCents: 5_000, stillOwedCents: 3_500, captureCents: 2_500, creditCents: 1_000, route });
-    expect(h.choose).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 5_000, direction: "REFUND_TO_MEMBER" }));
+    // #5171 review: the rolled-back read holds no lock(1), so it asks for no Payment row or member lock.
+    expect(h.choose).toHaveBeenCalledWith(expect.objectContaining({ amountCents: 5_000, direction: "REFUND_TO_MEMBER", readOnlyPreview: true }));
     expect(h.committed).toBe(false);
   });
 

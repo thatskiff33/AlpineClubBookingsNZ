@@ -10,7 +10,7 @@ import { getAgeTierSettings } from "@/lib/age-tier";
 import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
-} from "@/lib/xero";
+} from "@/lib/xero-contact-groups";
 import {
   NON_MEMBER_ROLE_VALUES,
   OPERATIONAL_ROLE_VALUES,
@@ -20,6 +20,7 @@ import {
   isSubscriptionNotRequiredForMembershipType,
 } from "@/lib/membership-types";
 import { serializeSubscriptionMemberLoginStage } from "@/lib/subscription-member-login-stage";
+import { adminListPageQueryFields } from "@/lib/admin-list-page";
 
 const subscriptionStatuses = [
   "PAID",
@@ -49,8 +50,7 @@ const querySchema = z.object({
   xeroContactGroup: z.string().trim().min(1).max(100).optional(),
   sortBy: subscriptionSortBySchema,
   sortDir: z.enum(["asc", "desc"]).optional().default("asc"),
-  page: z.coerce.number().int().min(1).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  ...adminListPageQueryFields,
 });
 
 type SubscriptionSortBy = z.infer<typeof subscriptionSortBySchema>;

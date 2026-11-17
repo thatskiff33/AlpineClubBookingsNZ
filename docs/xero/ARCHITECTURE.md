@@ -594,11 +594,14 @@ Two design rules shape everything below:
 
 ## Module map
 
-`src/lib/xero.ts` is a compatibility facade (re-exports only, no logic) for
-external callers. New code should import the focused module. The subsystem's
-own `src/lib/xero-*` modules must import the source domain module directly, not
-the facade — an `eslint.config.mjs` `no-restricted-imports` override enforces
-this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
+Every caller imports the focused module that owns the behaviour. The
+`src/lib/xero.ts` compatibility facade (re-exports only) was retired in #4930:
+it hid the subsystem's real dependency graph and closed one of the money-core
+import loops. `src/lib/__tests__/module-graph-census.test.ts` fails any import
+of it, of any kind, and any static import cycle (`INV-SSOT-008`); it replaced
+the `eslint.config.mjs` override #1208 added for the `xero-*` modules alone.
+The facade's `import "server-only"` marker moved to `xero-api-client`, the one
+module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 `readNumber`) live in `xero-json`. The subsystem groups as:
 
 ### Infrastructure
@@ -627,13 +630,14 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | --- | --- |
 | `xero-sync` | The ledger primitives: `startXeroSyncOperation` / `completeXeroSyncOperation` / `failXeroSyncOperation`, payload redaction + hashing, `buildXeroIdempotencyKey`, `upsertXeroObjectLink` (enforces single-active canonical links for Member CONTACT, Payment PRIMARY_INVOICE, MemberSubscription SUBSCRIPTION_INVOICE; a `mergeMetadata` write lays its record over the stored metadata in one statement, `xero-object-link-metadata-merge.ts`, so two writers of one link both keep their keys, #4445), `recordXeroInboundEvent`. |
 | `xero-sync-cursors` | `XeroSyncCursor` read/write for incremental syncs, plus throttling helpers. |
-| `xero-stale-operations` | Filters/counters for operations stuck in RUNNING and inbound events stuck in PROCESSING (feeds cron health and the admin reset/replay actions). |
+| `xero-stale-operations` | Filters/counters for operations stuck in RUNNING and inbound events stuck in PROCESSING (feeds cron health, the admin reset/replay actions and the automatic inbound takeover). |
 
 ### Outbound document pipeline
 
 | Module | Owns |
 | --- | --- |
 | `xero-operation-outbox` | `enqueueXero*Operation` (every queue type in `XERO_OUTBOX_QUEUE_TYPES`) and the worker `processQueuedXeroOutboxOperations` (scans the indexed `queueType` column via `XERO_OUTBOX_QUEUE_TYPES`); also WAITING_PAYMENT release/reap for supplementary invoices. |
+| `xero-supplementary-invoice-enqueue` | Queueing a booking change's supplementary invoice (`enqueueXeroSupplementaryInvoiceOperation`, the edit-review and organiser-extra in-transaction enqueues, pending-amount restatement) and the per-anchor advisory lock `lockSupplementaryInvoiceAnchor` (#3170). Moved out of the outbox unchanged by #4930 so the worker and its booking-invoice handlers no longer import each other. |
 | `xero-operation-outbox-payload` | The queue-type constants (17 since #3635, plus the `XERO_OUTBOX_QUEUE_TYPES` list the pending scan filters on), payload schemas, and payload→expected-operation mapping used to claim rows safely. |
 | `xero-operation-retry` | `retryXeroSyncOperation`: immediate replay of a failed operation (admin "Retry"), including contact-payload rebuild for member contact ops. |
 | `xero-operation-queue` | Background replay: a REQUEUE `XeroSyncOperation` wraps the original id; `processQueuedXeroOperationRetries` claims and executes them via `retryXeroSyncOperation`. |
@@ -746,7 +750,7 @@ this (#1208). Shared JSON-guard micro-helpers (`asRecord`/`readString`/
 | `XeroConnection` | Single row (id `default`): the connected tenant, the access token's expiry and the only refresh lease. No secret. |
 | `XeroSyncOperation` | The ledger. `direction` INBOUND/OUTBOUND, `entityType`, `operationType`, optional `localModel`/`localId`, `idempotencyKey`, `correlationKey`, `replayable`, error fields, redacted request/response payloads, resulting Xero object identity, manual-resolution override fields, and `queueType` (a denormalized, indexed copy of `requestPayload.queueType` set at enqueue — canonical value still lives in the payload; #1271). **Status machine:** `PENDING → RUNNING → SUCCEEDED | FAILED`, plus `WAITING_PAYMENT → PENDING` for supplementary invoices held until their Stripe payment settles. Claims are optimistic `updateMany` transitions, so concurrent workers cannot double-run a row. |
 | `XeroObjectLink` | Local record ⇄ Xero object links with a `role` (e.g. `PRIMARY_INVOICE`, `REFUND_CREDIT_NOTE`, `CONTACT`, `ENTRANCE_FEE_INVOICE`) and `active` flag; unique on (local, xero, role). Canonical single-active scopes are enforced on upsert. |
-| `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; stale PROCESSING is operator-replayable). Unique `correlationKey` makes webhook delivery idempotent. |
+| `XeroInboundEvent` | Stored webhook/admin events. **Status machine:** `RECEIVED → PROCESSING → PROCESSED | FAILED` (FAILED retried after a backoff; PROCESSING past the webhook lease is taken over automatically, `INV-INT-039`). Unique `correlationKey` makes webhook delivery idempotent. |
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
 | `WebhookValidationReceipt` | One row per provider recording the last valid intent-to-receive (ITR) validation ping (#2081): `validatedAt` + a non-reversible SHA-256 `keyFingerprint` of the webhook key that signed it (never the key). Drives the wizard's freshness-scoped, key-bound webhook Verify and the persistent amber "webhooks not configured" badge. |
 | `XeroSyncCursor` | Incremental checkpoints per (`resourceType`, `scope`) for contact/membership/invoice reconciliation. |
@@ -988,7 +992,11 @@ note.
    `callXeroApi` meters usage and trips process-local cool-downs
    (`XeroDailyLimitError`, `XeroTransientOutageError`).
 2. **Stale contact repair** — `retryXeroWriteWithContactRepair` repairs the
-   member↔contact link once and retries the write.
+   member↔contact link once and retries the write. Before the retry it
+   replaces the row's stored request with the caller's `buildRequestPayload`.
+   On a queued row that payload must keep every field the outbox and Retry
+   read, `queueType` first: a row given back to PENDING without it is never
+   claimed again (#5221, `INV-INT-037`).
 3. **Operation replay** — a FAILED ledger row is never auto-retried by the
    outbox loop (it only claims PENDING). Admins either replay immediately
    (`retryXeroSyncOperation`) or queue a background REQUEUE wrapper
@@ -1208,8 +1216,11 @@ note.
    before it checks for an overlapping retry.) Once FAILED, the ordinary
    Retry / Requeue applies.
 4. **Inbound event retry** — FAILED `XeroInboundEvent` rows are re-swept after
-   `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; stale PROCESSING rows are
-   operator-replayable.
+   `XERO_INBOUND_FAILED_RETRY_BACKOFF_MS`; rows left PROCESSING past
+   `WEBHOOK_PROCESSING_LEASE_MINUTES` are reset to RECEIVED by the worker,
+   with their `xero` dedup row cleared, in one guarded write
+   (`xero-inbound/stale-event-takeover.ts`, `INV-INT-039`). A Replay takes one
+   over at once through the same helper.
 
 ### Stripe payments the app did not create (#4532)
 
@@ -1323,6 +1334,26 @@ A kept void stays inactive and retires no sibling. A pointer naming it is
 released without waiting on Payment, as for a status-less write, and the inbound
 pointer gate refuses the note. A hand-made answer whose note was voided
 meanwhile is refused (409), and its completion rolls back.
+
+**Voids an older reading already erased (#4336).** #4288 stops new cases; it
+cannot see a mirror an older live reading revived before it, because the void
+is gone from the local row. The webhook path (#4046, #4091) records a void only
+when Xero sends an event for it, and the nightly #4161 heal only acts on a link
+whose recorded status already says VOIDED or DELETED. Neither revisits a note
+whose recorded status went back to live. The #4370 recount takes off card
+refunds Stripe failed later, a different drift. So the owner-run, read-only
+`pnpm run xero:revived-refund-note-report` (`xero-revived-refund-note-report.ts`,
+reader in `xero-revived-refund-note-reader.ts`) asks Xero about the note on
+every active link in both refund-note roles, through the same link definition,
+status predicate and contribution helper as the rest of this section, and lists
+each one Xero reports cancelled. It changes no booking, payment, credit, link
+or Xero record, and its reads never arm the in-process outage pause. A link
+the app already records cancelled is counted apart and needs no action: the
+app already treats it as cancelled, and on the payment's own role the #4161
+heal also retires the link. Each listed note is corrected by a booking's
+**Sync from Xero now**, whose fresh VOIDED reading the rule above always
+applies. Runbook:
+[MAINTENANCE.md](../MAINTENANCE.md#find-refund-notes-xero-voided-that-the-app-still-counts-4336).
 
 The inbound reconcile then acts on each payment's note as that payment's own
 refund-note row holds it when it acts (`readRefundNoteRowsByPayment`), never on
@@ -4237,7 +4268,9 @@ These are candidates for future issues, not commitments.
    (#1208):_ no `src/lib/xero-*` module imports the `@/lib/xero` facade anymore
    — each imports the source domain module directly, and an `eslint.config.mjs`
    `no-restricted-imports` override forbids the facade path from `xero-*` files
-   to hold the boundary. The facade stays for external callers.
+   to hold the boundary. #4930 finished the job: every external caller moved
+   to the focused modules, the facade was deleted, and the module-graph census
+   replaced that override.
 8. **Minor:** _Partly done (#1208):_ the `messageForTask` nested-ternary chain
    in `xero-cron-runner` is now a `switch`. The webhook route's per-category
    `if` blocks were kept — they emit real observability log lines, so dropping

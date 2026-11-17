@@ -6,7 +6,7 @@ Audience: Operator
 
 A hub that gathers the booking rules and setup pages you revisit less often
 than the daily booking queues. It links to six places: **Booking Policies**,
-**Hut Fees & Seasons**, **Age Groups**, **Promo Codes**, **Rooms & Beds** (the
+**Seasons**, **Age Groups**, **Promo Codes**, **Rooms & Beds** (the
 bed inventory) and **Booking Messages** (member-facing booking copy), and
 carries one settings card of its own: **Member guests** (the member-guest
 consent policy, #2307). Find it at **Admin → Setup & Configuration → Bookings
@@ -48,8 +48,9 @@ module.
    - **Booking Policies** (`/admin/booking-policies`) — cancellation,
      minimum-stay, public-request and group-discount rules. See
      [Booking Policies](booking-policies.md).
-   - **Hut Fees & Seasons** (`/admin/seasons`) — season windows and nightly
-     rates. See [Seasons](seasons.md).
+   - **Seasons** (`/admin/seasons`) — season windows (name, type, dates
+     and active state). Nightly rates are set under **Fees**, not here. See
+     [Seasons](seasons.md).
    - **Age Groups** (`/admin/age-tier-settings`) — age-tier boundaries and
      whether each tier needs a subscription to book.
    - **Promo Codes** (`/admin/promo-codes`) — booking discounts. See

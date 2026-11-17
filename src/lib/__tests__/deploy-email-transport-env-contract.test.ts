@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { bashFixturePath, bashGateArgs } from "./helpers/bash-fixture-path";
 import { readRepoFile } from "./helpers/compose";
-import { DEPLOY_SCRIPT, shellFunctionSource } from "./helpers/deploy-script";
+import { DEPLOY_SCRIPT, deployShellSource, shellFunctionSource } from "./helpers/deploy-script";
 import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
 
 /*
@@ -32,6 +32,8 @@ import { resolveEmailDeliveryConfigFromEnv } from "@/lib/email-delivery";
 */
 
 const SCRIPT = readRepoFile(DEPLOY_SCRIPT);
+/** The script with the libraries it sources, for lifting functions (#4980). */
+const SHELL = deployShellSource();
 
 const ROOT = mkdtempSync(path.join(tmpdir(), "deploy-proxied-host-"));
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
@@ -50,7 +52,7 @@ function exactLine(line: string): string {
 }
 
 function lift(names: string[]): string {
-  return names.map((name) => shellFunctionSource(SCRIPT, name)).join("\n");
+  return names.map((name) => shellFunctionSource(SHELL, name)).join("\n");
 }
 
 type Run = { code: number | null; stdout: string; stderr: string; dir: string };
@@ -93,10 +95,13 @@ describe("the wrapper reads a fork's image repositories with Compose's .env gram
     const body = shellFunctionSource(SCRIPT, "resolve_image_repository");
     expect(body).toContain('compose_env_file_value "$key" "$SOURCE_REPO/.env"');
     expect(SCRIPT).not.toContain("read_source_env_value");
-    // Defined above both nested halves, so the wrapper process has it.
-    const reader = SCRIPT.indexOf("\ncompose_env_file_value() {");
-    expect(reader).toBeGreaterThan(0);
-    expect(reader).toBeLessThan(SCRIPT.indexOf("\nrun_production_wrapper() {"));
+    // Defined once, in the readers library the script sources above both
+    // nested halves (#4980), so the wrapper process has it.
+    expect(SCRIPT).not.toContain("\ncompose_env_file_value() {");
+    expect(readRepoFile("scripts/lib/compose-env-file.sh")).toContain("\ncompose_env_file_value() {");
+    const sourced = SCRIPT.indexOf('\n. "$DEPLOY_SCRIPT_LIB_DIR/compose-env-file.sh"\n');
+    expect(sourced).toBeGreaterThan(0);
+    expect(sourced).toBeLessThan(SCRIPT.indexOf("\nrun_production_wrapper() {"));
   });
 
   it.each([
@@ -173,6 +178,9 @@ const CADDY_ENV: EnvMap = {
   MIROTALK_UPSTREAM: "host.docker.internal:3010",
   CADDY_TLS_MODE: "acme",
   CADDY_TRUSTED_PROXIES: "10.0.0.2/32",
+  CADDY_WWW_REDIRECT: "on",
+  CADDY_LEGACY_ROUTES: "off",
+  CADDY_FINANCE_LEGACY_UPSTREAM: "set-CADDY_FINANCE_LEGACY_UPSTREAM-for-legacy-routes:none",
 };
 const POSTGRES_COMMAND = ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=40"];
 
@@ -214,12 +222,15 @@ function render(
 
 /** What docker-compose.yml hands Caddy when .env leaves CADDY_TRUSTED_PROXIES unset. */
 const TRUSTED_PROXIES_SENTINEL = "set-CADDY_TRUSTED_PROXIES-for-local-mode";
+/** What docker-compose.yml hands Caddy when .env leaves CADDY_FINANCE_LEGACY_UPSTREAM unset. */
+const LEGACY_UPSTREAM_SENTINEL = CADDY_ENV.CADDY_FINANCE_LEGACY_UPSTREAM;
 
 const ENGINE_HARNESS = `set -Eeuo pipefail
 CRON_SERVICE=app BLUE_SERVICE=app_blue GREEN_SERVICE=app_green MIGRATE_SERVICE=migrate
 CADDY_SERVICE=caddy POSTGRES_SERVICE=postgres
 ${exactLine("POSTGRES_MAX_CONNECTIONS_MAX=1000")}
 ${exactLine(`CADDY_TRUSTED_PROXIES_UNSET="${TRUSTED_PROXIES_SENTINEL}"`)}
+${exactLine(`CADDY_FINANCE_LEGACY_UPSTREAM_UNSET="${LEGACY_UPSTREAM_SENTINEL}"`)}
 VALIDATED_ENVIRONMENT_ROLE="$ROLE"
 PROJECT_DIR="$PWD"
 ${lift([
@@ -239,6 +250,8 @@ ${lift([
   "validate_resolved_email_transport",
   "require_resolved_caddy_tls_mode",
   "require_resolved_caddy_trusted_proxies",
+  "require_resolved_caddy_switch",
+  "require_resolved_caddy_legacy_upstream",
   "require_integer_setting_in_range",
   "validate_resolved_postgres_max_connections",
   "compose_service_image_ref",
@@ -261,7 +274,7 @@ docker() {
   done
 }
 RESOLVED_COMPOSE_CONFIG="$(cat rendered.yml)"
-"$ENTRY"
+eval "$ENTRY"
 if [ -f docker.envpath ] && [ -e "$(cat docker.envpath)" ]; then echo LEFTOVER-ENV-FILE; fi
 echo PASSED
 `;
@@ -365,7 +378,7 @@ describe("step 3 checks the email transport each app service would receive (#427
       const body = shellFunctionSource(SCRIPT, "require_resolved_email_transport_for_service");
       expect(body).toContain('"$VALIDATED_ENVIRONMENT_ROLE" != "non-production"');
       expect(body).not.toMatch(/(env_file_value|env_value) APP_ENVIRONMENT_ROLE/);
-      expect(shellFunctionSource(SCRIPT, "require_environment_role_env_key")).toContain(
+      expect(shellFunctionSource(SHELL, "require_environment_role_env_key")).toContain(
         'VALIDATED_ENVIRONMENT_ROLE="$normalised"',
       );
     });
@@ -644,8 +657,11 @@ describe("Caddy is validated with the TLS mode and settings it will run with (#4
     const envFile = readFileSync(path.join(result.dir, "docker.env"), "utf8").trimEnd().split("\n");
     expect(envFile.sort()).toEqual(
       [
+        "CADDY_FINANCE_LEGACY_UPSTREAM=set-CADDY_FINANCE_LEGACY_UPSTREAM-for-legacy-routes:none",
+        "CADDY_LEGACY_ROUTES=off",
         "CADDY_TLS_MODE=local",
         "CADDY_TRUSTED_PROXIES=10.0.0.3/32",
+        "CADDY_WWW_REDIRECT=on",
         "DOMAIN=bookings.club.test",
         'EXTRA_SETTING=say "hi"',
         "MEET_HOST=",
@@ -666,6 +682,109 @@ describe("Caddy is validated with the TLS mode and settings it will run with (#4
   });
 });
 
+/** The step-3 call lines, run as written so a renamed key or dropped call fails here. */
+const WWW_SWITCH_CALL = exactLine(
+  'require_resolved_caddy_switch CADDY_WWW_REDIRECT "whether www.<DOMAIN> redirects to <DOMAIN>"',
+);
+const LEGACY_SWITCH_CALL = exactLine(
+  `require_resolved_caddy_switch CADDY_LEGACY_ROUTES "whether Caddy serves a legacy finance dashboard's /finance-legacy route and bookings./dashboard. hosts"`,
+);
+
+describe("the www redirect and legacy finance routes are opt-in settings (#4981)", RUN, () => {
+  const steps = [WWW_SWITCH_CALL, LEGACY_SWITCH_CALL, "require_resolved_caddy_legacy_upstream"];
+  const passesEvery = (caddy: EnvMap) =>
+    steps.map((step) => check(step, render({ caddy }))).filter((result) => !result.passed);
+
+  it("passes the shipped defaults: www on, legacy off, upstream left unset", () => {
+    expect(passesEvery({}).map((result) => result.stderr)).toEqual([]);
+  });
+
+  it("passes every documented combination", () => {
+    for (const www of ["on", "off"]) {
+      expect(passesEvery({ CADDY_WWW_REDIRECT: www, CADDY_LEGACY_ROUTES: "off" }), www).toEqual([]);
+      const legacy = { CADDY_WWW_REDIRECT: www, CADDY_LEGACY_ROUTES: "on" };
+      for (const upstream of ["10.0.0.5:8501", "legacy-dashboard:8501", "finance.club.test:8080"]) {
+        expect(passesEvery({ ...legacy, CADDY_FINANCE_LEGACY_UPSTREAM: upstream }), upstream).toEqual([]);
+      }
+    }
+  });
+
+  it("refuses a mode with no snippet, naming the setting", () => {
+    for (const [call, key] of [
+      [WWW_SWITCH_CALL, "CADDY_WWW_REDIRECT"],
+      [LEGACY_SWITCH_CALL, "CADDY_LEGACY_ROUTES"],
+    ]) {
+      for (const value of ["", "On", "true", "yes", "acme"]) {
+        const result = check(call, render({ caddy: { [key]: value } }));
+        expect(result.passed, `${key}=${value}`).toBe(false);
+        expect(result.stderr).toContain(`${key} must be 'on' or 'off'`);
+        expect(result.stderr).toContain("Set it in .env.");
+      }
+    }
+  });
+
+  it("refuses legacy routes on without a real upstream", () => {
+    const upstream = (value: string) =>
+      check(
+        "require_resolved_caddy_legacy_upstream",
+        render({ caddy: { CADDY_LEGACY_ROUTES: "on", CADDY_FINANCE_LEGACY_UPSTREAM: value } }),
+      );
+    // Unset (what Compose hands Caddy) and set-but-empty.
+    for (const missing of [LEGACY_UPSTREAM_SENTINEL, ""]) {
+      const result = upstream(missing);
+      expect(result.passed, missing).toBe(false);
+      expect(result.stderr).toContain("CADDY_LEGACY_ROUTES=on needs CADDY_FINANCE_LEGACY_UPSTREAM");
+    }
+    for (const malformed of [
+      "10.0.0.5",
+      ":8501",
+      "10.0.0.5:",
+      "http://10.0.0.5:8501",
+      "10.0.0.5:8501/path",
+      "10.0.0.5:8501 10.0.0.6:8501",
+      "10.0.0.5:8501}",
+      "{$OTHER}",
+      // Valid to Caddy but outside the narrow shape the guard accepts.
+      "[fd00::5]:8501",
+    ]) {
+      const result = upstream(malformed);
+      expect(result.passed, malformed).toBe(false);
+      expect(result.stderr).toContain("CADDY_FINANCE_LEGACY_UPSTREAM must be one host:port");
+      // The refusal says what is accepted, so a valid-looking IPv6 literal is explained.
+      expect(result.stderr).toContain("a hostname or IPv4 address then a port");
+      expect(result.stderr).toContain("no scheme, path or IPv6 literal");
+    }
+    // Off, the upstream is never read.
+    const off = check(
+      "require_resolved_caddy_legacy_upstream",
+      render({ caddy: { CADDY_LEGACY_ROUTES: "off", CADDY_FINANCE_LEGACY_UPSTREAM: "" } }),
+    );
+    expect(off.passed, off.stderr).toBe(true);
+  });
+
+  it("accepts exactly the modes there are snippet files for, with the documented defaults", () => {
+    const caddyfile = readRepoFile("Caddyfile");
+    const compose = readRepoFile("docker-compose.yml");
+    expect(shellFunctionSource(SCRIPT, "require_resolved_caddy_switch")).toContain("on|off) return 0 ;;");
+    for (const [key, fallback, snippets] of [
+      ["CADDY_WWW_REDIRECT", "on", ["www-redirect"]],
+      ["CADDY_LEGACY_ROUTES", "off", ["legacy-routes", "legacy-hosts"]],
+    ] as const) {
+      expect(compose).toContain(`${key}: \${${key}:-${fallback}}`);
+      for (const snippet of snippets) {
+        expect(caddyfile).toContain(`import /etc/caddy/deploy/${snippet}-{$${key}:${fallback}}.caddy`);
+        for (const mode of ["on", "off"]) readRepoFile(`deploy/caddy/${snippet}-${mode}.caddy`);
+      }
+    }
+    // Unset, the upstream is a placeholder Caddy rejects (its port is not a
+    // number), never an empty value or a real address.
+    expect(compose).toContain(
+      `CADDY_FINANCE_LEGACY_UPSTREAM: \${CADDY_FINANCE_LEGACY_UPSTREAM:-${LEGACY_UPSTREAM_SENTINEL}}`,
+    );
+    expect(LEGACY_UPSTREAM_SENTINEL).toMatch(/:[^0-9:]+$/);
+  });
+});
+
 describe("the step-3 wiring (#4275)", () => {
   it("renders the Compose model once, then runs every resolved check before step 4", () => {
     expect(SCRIPT.split('docker compose --profile "$MIGRATE_SERVICE" config').length - 1).toBe(1);
@@ -678,6 +797,9 @@ describe("the step-3 wiring (#4275)", () => {
       "\nvalidate_resolved_email_transport\n",
       "\nrequire_resolved_caddy_tls_mode\n",
       "\nrequire_resolved_caddy_trusted_proxies\n",
+      `\n${WWW_SWITCH_CALL}\n`,
+      `\n${LEGACY_SWITCH_CALL}\n`,
+      "\nrequire_resolved_caddy_legacy_upstream\n",
       "\nvalidate_resolved_postgres_max_connections\n",
     ].map((call) => {
       expect(SCRIPT.split(call).length - 1, call).toBe(1);

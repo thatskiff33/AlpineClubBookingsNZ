@@ -37,8 +37,9 @@ environment side.
 2. Tick or untick the modules you want to change. A module that needs extra
    setup shows **Needs setup** with its dependencies listed (e.g. Xero
    credentials, an API key).
-3. Click **Save**. Changes take effect across the site immediately. **Refresh**
-   reloads the saved state.
+3. Click **Save**. When the save finishes, the admin sidebar, top menu and Search
+   update to show the saved modules. **Refresh** reloads both the saved settings
+   and these menus.
 
 ## Settings reference
 
@@ -65,7 +66,8 @@ deploy-time setup default **off**; general-purpose modules default **on**):
 | Communications (`communications`) | Admin bulk email to members. Transactional notifications (booking, payment and membership emails) are unaffected | On |
 | Member notices (`memberNotices`) | Committee news notices targeted to member audiences, shown on the dashboard with read/acknowledge tracking | On |
 | Events calendar (`eventsCalendar`) | Club events calendar, recurring events, and the dashboard Events card | On |
-| Ski-field conditions (`skifieldConditions`) | Mountain/road status panel and the Mountain Conditions page, the public conditions API routes, and the admin cache controls | On |
+| Ski-field conditions (`skifieldConditions`) | Snow.nz condition widgets for any New Zealand ski field, placed on a public page with the `{{skifield-conditions:<id>}}` token, and their public API route | On |
+| Whakapapa (Mt Ruapehu) conditions report (`skifieldWhakapapa`) | **Whakapapa (Mt Ruapehu) only.** The live mountain and road status panel from the `{{skifield-whakapapa}}` token, its public feed, and the admin [Mountain Conditions](mountain-conditions.md) cache page. Off on a new install; an install upgraded from before #4932 keeps the value its `skifieldConditions` switch had | Off |
 | Two-factor authentication (`twoFactor`) | Second-factor after password login | Off |
 | Email sign-in link (`magicLink`) | Single-use email sign-in links | Off |
 | Google sign-in (`googleLogin`) | Sign in with a linked Google account. Credentials are entered in-app at **Admin › Integrations › Google sign-in**; see [Integrations](integrations.md) | Off |
@@ -79,6 +81,21 @@ deploy-time setup default **off**; general-purpose modules default **on**):
 | Message board (`commsPortal`) | A member-written message board for the club. Posts stay inside your club unless a member ticks **share with all clubs**, which sends that post to every other club connected through the Alpine Central Server. The board itself needs no central-server connection; only sharing does. Off by default because switching it on is a decision about publishing your members' writing beyond your own club | Off |
 | Member lodge roster (`memberLodgeRoster`) | Lets a signed-in member see who else is staying, for the next 30 nights, at a lodge they can already book. Names and nights only: no contact details, no prices, no booking information. **Shows your members to each other** — a member's name and the nights they are staying become visible to every other member with access to that lodge, and an individual cannot hide themselves. How much of a name is shown is set per lodge under **Admin › Lodges › the lodge › Member roster**, and defaults to the full name. A booking that includes a child never names anyone in it: it shows a family or group label instead, at every setting. Nights under a whole-lodge hold are shown as "Reserved for a private booking", without naming or counting the party — the booking calendar still shows them as full. Off by default because switching it on is a decision about showing your members to one another | Off |
 
+### What needs Xero
+
+These features work only while **Xero integration** is on. A club without Xero
+uses the manual alternative:
+
+| Feature | Without Xero |
+| --- | --- |
+| Internet Banking payments (bank transfer against a Xero invoice) | Take card payments, or record a bank transfer by hand on the booking |
+| Annual subscription invoicing (the annual batch and its retries) | Bill members outside the app; record a listed member's payment with **Mark as paid (manual)** in [Subscriptions](subscriptions.md#if-the-club-does-not-use-xero) |
+| Subscription and joining-fee invoices on application approval | Approval still succeeds without them and warns you; invoice the new member outside the app |
+| The Finance dashboard's Xero data (monthly accounts figures from the finance sync) | Use [Reports](reports.md), which read the app's own bookings and payments |
+
+While Xero is off, the app writes no subscription or joining-fee invoice work,
+so nothing waits to go out late the day Xero is switched back on.
+
 Each card's **readiness** badge reads Enabled, Disabled, or **Needs setup** (the
 module is on but a dependency — credentials, an API key, inventory — is missing).
 
@@ -88,8 +105,9 @@ module is on but a dependency — credentials, an API key, inventory — is miss
 | --- | --- | --- |
 | The toggles are read-only | Your role has support **view**, not **edit** | Ask a full admin for support edit access |
 | A module shows "Needs setup" | It's on but a dependency isn't configured | Add the named credential/API key/inventory; see [`CONFIGURATION.md`](../../CONFIGURATION.md) |
-| A page still 404s after enabling | You didn't **Save**, or you're looking at a cached tab | Save, then reload the target page |
+| A page still 404s after enabling | The change was not saved, or the target page is open in another tab | Check that Save succeeded; use **Refresh** to reload settings and menus here, and reload the target tab if it was already open |
 | Enabling Internet Banking payments does nothing | It depends on Xero integration | Enable Xero integration first |
+| Subscriptions can't confirm the annual batch, or an approval says subscription invoicing is off | Subscription and joining-fee invoicing depend on Xero integration | Bill outside the app and record listed members' payments with **Mark as paid (manual)**, or enable Xero integration ([What needs Xero](#what-needs-xero)) |
 
 ## Related links
 

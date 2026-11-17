@@ -138,7 +138,9 @@ describe("census: no date field checks the YYYY-MM-DD shape only (ALP-574)", () 
    * non-day itself, so it is outside this pattern and needs no entry.
    */
   const ALLOWED: Record<string, string> = {
-    "src/lib/nomination.ts":
+    // #4930 moved this read schema out of `nomination.ts` into the leaf both
+    // `nomination.ts` and `member-application-mapping.ts` import.
+    "src/lib/member-application-fields.ts":
       "the read schema over stored application JSON, deliberately loose so a stored bad value cannot blank the nominating member's page (#3082; application-date-of-birth-refusal.test.ts)",
   };
 
@@ -150,5 +152,54 @@ describe("census: no date field checks the YYYY-MM-DD shape only (ALP-574)", () 
 
   it("finds every allowed file still using it, so a stale entry is removed", () => {
     expect([...new Set(sites(SHAPE_ONLY))].sort()).toEqual(Object.keys(ALLOWED).sort());
+  });
+});
+
+describe("census: no hand-written date-only pattern outside the allowed files (ALP-580)", () => {
+  const SHAPE_HOME = "src/lib/club-time/calendar-date.ts";
+
+  /**
+   * The files allowed to spell `/^\d{4}-\d{2}-\d{2}$/` outside a `.regex(` call,
+   * each with its reason. That pattern is a SHAPE check: it accepts `2026-02-30`.
+   * A real calendar day is `dateOnlyStringSchema` for a request field, or
+   * `isCalendarDate` from `@/lib/club-time` (what `isDateOnlyString` delegates
+   * to) for a bare check. Shrinks only; a new entry needs a reason a reviewer
+   * accepts.
+   *
+   * The `.regex(` spelling is not counted here; the ALP-574 census above owns it.
+   */
+  const ALLOWED: Record<string, string> = {
+    [SHAPE_HOME]: "the home of the shape check behind isCalendarDate, which isDateOnlyString delegates to",
+    "src/app/api/applications/route.ts":
+      "calendarDayOfBirth, its own validator: tells an applicant a mistyped shape from a non-existent day",
+    "src/lib/config-transfer/values.ts":
+      "strictDate pairs the shape with a real-day check, to tell an importer which of the two a cell fails",
+    "src/lib/diagnostics/page-context/projections.ts":
+      "one shape in a closed vocabulary of values safe to travel unredacted, not a date validator",
+  };
+
+  // The literal, unless it is the argument of `.regex(`.
+  const HAND_PATTERN = /(?<!\.regex\(\s*)\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//g;
+
+  const handSites = () => sites(HAND_PATTERN);
+
+  it("finds the shape home's own pattern, so the scan is not blind", () => {
+    expect(handSites().filter((file) => file === SHAPE_HOME)).toEqual([SHAPE_HOME]);
+  });
+
+  it("counts both spellings it refuses and skips the one ALP-574 owns", () => {
+    const count = (code: string) => Array.from(code.matchAll(HAND_PATTERN)).length;
+    expect(count("const P = /^\\d{4}-\\d{2}-\\d{2}$/;")).toBe(1);
+    expect(count("if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(v)) return;")).toBe(1);
+    expect(count("z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/)")).toBe(0);
+    expect(count("z\n  .string()\n  .regex(\n    /^\\d{4}-\\d{2}-\\d{2}$/,\n  )")).toBe(0);
+  });
+
+  it("finds no hand-written pattern outside the allowed files", () => {
+    expect(handSites().filter((file) => !(file in ALLOWED))).toEqual([]);
+  });
+
+  it("finds every allowed file still spelling it, so a stale entry is removed", () => {
+    expect([...new Set(handSites())].sort()).toEqual(Object.keys(ALLOWED).sort());
   });
 });

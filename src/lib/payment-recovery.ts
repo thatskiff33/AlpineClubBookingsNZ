@@ -56,9 +56,8 @@ import { closePrePersistedRefundRow, type DoorCloseArgs } from "@/lib/pre-persis
 import { alertPaymentRecoveryOfficers } from "@/lib/payment-recovery-alert";
 import {
   findWaitingSupplementaryInvoiceOperationForPaymentIntent,
-  // Type-only, so it adds nothing to this module's runtime import graph.
-  type XeroSupplementaryInvoiceEnqueueOutcome,
 } from "@/lib/xero-operation-outbox";
+import type { XeroSupplementaryInvoiceEnqueueOutcome } from "@/lib/xero-supplementary-invoice-statuses";
 import { attachRecoveredIntentToWaitingSupplementaryInvoice } from "@/lib/xero-supplementary-invoice-late-capture";
 import { followSupersededAskInvoicesSafely } from "@/lib/superseded-ask-invoice-carry";
 import { queueFoldedAskInvoices, queueReissuedAskSupplementaryInvoice } from "@/lib/reissued-ask-invoice";
@@ -234,6 +233,14 @@ export async function enqueuePaymentIntentCancellationRecovery({
   });
 }
 
+/** #4992: the payment has no Stripe intent, so there is no card to owe this refund to. */
+export class NoRefundPaymentIntentError extends Error {
+  constructor() {
+    super("Cannot enqueue ledger refund recovery without a payment intent");
+    this.name = "NoRefundPaymentIntentError";
+  }
+}
+
 async function enqueueLedgerRefundRecovery({
   bookingId,
   paymentId,
@@ -280,9 +287,7 @@ async function enqueueLedgerRefundRecovery({
     null;
 
   if (!representativePaymentIntentId) {
-    throw new Error(
-      "Cannot enqueue ledger refund recovery without a payment intent",
-    );
+    throw new NoRefundPaymentIntentError();
   }
 
   const allocationPlanJson =
@@ -338,6 +343,9 @@ async function enqueueLedgerRefundRecovery({
   }
   return { created: inserted.count > 0, paymentIntentId: representativePaymentIntentId };
 }
+
+/** #4992: close only the pre-persisted edit debt on the frozen plan actually sent. */
+export const markBookingModificationRefundRecoverySucceeded = (args: DoorCloseArgs) => closePrePersistedRefundRow(args);
 
 export async function enqueueBookingModificationRefundRecovery({
   bookingId,

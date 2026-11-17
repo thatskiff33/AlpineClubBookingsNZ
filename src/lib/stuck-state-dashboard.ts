@@ -1,13 +1,16 @@
-import { countExhaustedCashSettlementAlerts } from "@/lib/xero-inbound/cash-settlement-alert-retry";
+import {
+  countExhaustedCashSettlementAlerts,
+  listExhaustedCashSettlementAlerts,
+} from "@/lib/xero-inbound/cash-settlement-alert-retry";
 import { countBankRefundVoidsToAnswer } from "@/lib/bank-refund-void-follow-up";
 import type { FeatureFlags } from "@/config/schema";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
-import { bookingOwner } from "@/lib/booking-owner";
+import { listDeadCardRefunds } from "@/lib/card-refund-paid-another-way";
+import { clubFormat } from "@/lib/club-format-server";
 import { describeHostingCoverageIncidentCause } from "@/lib/adult-member-hosting-coverage-incidents";
 import { formatDateOnly } from "@/lib/date-only";
 import { addCalendarDays } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
-import { groupSettlementReapDeadline } from "@/lib/cron-group-settlement-reaper";
 import { getAdminAlertDeliveryEscalations } from "@/lib/email-admin-alert-escalation";
 import { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review";
 import { getEmailDeliverabilityTelemetry } from "@/lib/email-suppression";
@@ -20,14 +23,14 @@ import {
   getUnreachableMemberSummary,
   UNREACHABLE_MEMBER_REASON_LABEL,
 } from "@/lib/member-email-inheritance";
-import { countBookingsWithUnnamedPlaceholderGuests } from "@/lib/placeholder-guest-name-reminders";
+import {
+  countBookingsWithUnnamedPlaceholderGuests,
+  listBookingsWithUnnamedPlaceholderGuests,
+} from "@/lib/placeholder-guest-name-reminders";
 import { countUnconfirmedSchoolAttendeeLists } from "@/lib/school-attendee-confirmation";
 import { loadHutLeaderLookaheadDays } from "@/lib/lodge-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { SETTLEMENT_MARKER_EVENT_REASONS } from "@/lib/manual-settlement-reversal-event";
-import { MAX_PAYMENT_RECOVERY_ATTEMPTS, PAYMENT_RECOVERY_EXHAUSTED_WHERE } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
-import { formatBookingReference } from "@/lib/booking-reference";
 import { getBedAllocationDashboard } from "@/lib/bed-allocation-board";
 import { parseBedAllocationDateRange } from "@/lib/bed-allocation-date-range";
 import { getTokenEmailRecoveryQueue } from "@/lib/token-email-recovery";
@@ -37,15 +40,25 @@ import {
   type XeroAdminHealthSnapshot,
 } from "@/lib/xero-admin-health";
 
+import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
+import {
+  bookingDetailRow,
+  CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS,
+  getPaymentSignals,
+  OWNED_BOOKING_SELECT,
+  PAYMENT_PENDING_OVERDUE_MINUTES,
+  PAYMENT_PROCESSING_STALE_MINUTES,
+  STUCK_STATE_DETAIL_ROW_CAP,
+  type CountDelegate,
+  type FindManyDelegate,
+  type OwnedBooking,
+  type PaymentSignal,
+  type StuckStateDetail,
+  type StuckStateDetailFormat,
+} from "@/lib/stuck-state-payment-signals";
+
 import { adminHref, adminAnchorHref } from "@/lib/admin-hubs";
-const PAYMENT_PROCESSING_STALE_MINUTES = 30;
-const PAYMENT_PENDING_OVERDUE_MINUTES = 15;
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
-// #1349 (F2): lookback window for the cancelled-with-unrecorded-refund
-// detector. Bounds noise from historical deliberate zero-refund cancellations
-// that predate BookingEvent narratives while still catching any recent cancel
-// that crashed between its claim commit and the Stripe refund.
-const CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS = 90;
 
 export type StuckStateSeverity = "critical" | "warning" | "info";
 
@@ -75,12 +88,7 @@ export interface StuckStateItem {
   count: number;
   href: string;
   summary: string;
-  details?: Array<{
-    id: string;
-    title: string;
-    summary: string;
-    href: string;
-  }>;
+  details?: StuckStateDetail[];
 }
 
 interface StuckStateDomainSummary {
@@ -107,16 +115,8 @@ export interface StuckStateDashboard {
   items: StuckStateItem[];
 }
 
-type CountDelegate = {
-  count(args: unknown): Promise<number>;
-};
-
-type FindManyDelegate = {
-  findMany(args: unknown): Promise<unknown[]>;
-};
-
 type StuckStateDashboardDb = {
-  paymentRecoveryOperation: CountDelegate;
+  paymentRecoveryOperation: CountDelegate & FindManyDelegate;
   hostingCoverageIncident: CountDelegate & FindManyDelegate;
   booking: FindManyDelegate & CountDelegate;
   groupBookingSettlement: FindManyDelegate;
@@ -141,6 +141,8 @@ export interface StuckStateDashboardDependencies {
   getWaitlistOfferEmailDeliveries: typeof getWaitlistOfferEmailDeliveries;
   countUnconfirmedSchoolAttendeeLists: typeof countUnconfirmedSchoolAttendeeLists;
   countBookingsWithUnnamedPlaceholderGuests: typeof countBookingsWithUnnamedPlaceholderGuests;
+  /** #4959: the bookings the count above counts; called instead of it when the rows may be shown. */
+  listBookingsWithUnnamedPlaceholderGuests: typeof listBookingsWithUnnamedPlaceholderGuests;
   getBedAllocationDashboard: typeof getBedAllocationDashboard;
   getUnassignedHutLeaderDates: typeof getUnassignedHutLeaderDates;
   loadHutLeaderLookaheadDays: typeof loadHutLeaderLookaheadDays;
@@ -154,6 +156,16 @@ export interface StuckStateDashboardDependencies {
   /** #4162: how many voided bank refund notes wait for a person (`countBankRefundVoidsToAnswer`). */
   countBankRefundVoidsToAnswer: () => Promise<number>;
   countExhaustedCashSettlementAlerts: () => Promise<number>;
+  /** #4959: the oldest exhausted alerts, with their bookings, for the named rows. */
+  listExhaustedCashSettlementAlerts: typeof listExhaustedCashSettlementAlerts;
+  /**
+   * #4959: the recovery operations listed under "Card refunds Stripe gave up
+   * on", so an exhausted row can send the officer there. The page passes the
+   * list it already read.
+   */
+  listDeadCardRefundOperationIds: () => Promise<ReadonlySet<string>>;
+  /** #4959: the club's money format and zone for the payment rows. */
+  loadDetailFormat: () => Promise<StuckStateDetailFormat>;
 }
 
 const DOMAIN_LABELS: Record<StuckStateDomain, string> = {
@@ -194,12 +206,20 @@ const defaultDependencies: StuckStateDashboardDependencies = {
   getWaitlistOfferEmailDeliveries,
   countUnconfirmedSchoolAttendeeLists,
   countBookingsWithUnnamedPlaceholderGuests,
+  listBookingsWithUnnamedPlaceholderGuests,
   getBedAllocationDashboard,
   getUnassignedHutLeaderDates,
   loadHutLeaderLookaheadDays,
   countActiveLodges: () => countActiveLodges(prisma),
   countBankRefundVoidsToAnswer,
   countExhaustedCashSettlementAlerts,
+  listExhaustedCashSettlementAlerts,
+  listDeadCardRefundOperationIds: async () =>
+    new Set((await listDeadCardRefunds()).map((row) => row.operationId)),
+  loadDetailFormat: async () => {
+    const [format, time] = await Promise.all([clubFormat(), clubTime()]);
+    return { cents: format.cents, instantDate: time.instantDate };
+  },
 };
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
@@ -276,14 +296,12 @@ function buildTotals(items: StuckStateItem[]) {
   };
 }
 
-function buildPaymentItems(items: StuckStateItem[], counts: {
-  exhaustedFailed: number;
-  staleProcessing: number;
-  overduePending: number;
-  staleSettlements: number;
-  cancelledUnrecordedRefunds: number;
-  unexecutedSettlementRefunds: number;
-}) {
+function buildPaymentItems(
+  items: StuckStateItem[],
+  counts: Record<PaymentSignal, number>,
+  // #4959: undefined unless the viewer may see named payment rows.
+  details: Record<PaymentSignal, StuckStateDetail[]> | undefined,
+) {
   addItem(items, {
     id: "payment-group-settlement-refund-unexecuted",
     domain: "payment",
@@ -291,13 +309,14 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.unexecutedSettlementRefunds,
-    href: adminHref("bookings"),
+    href: adminAnchorHref("stuck-states", "payment-group-settlement-refund-unexecuted"),
     summary: `${counts.unexecutedSettlementRefunds} cancelled organiser-pays ${plural(
       counts.unexecutedSettlementRefunds,
       "group",
     )} still ${
       counts.unexecutedSettlementRefunds === 1 ? "holds" : "hold"
     } an unexecuted settlement refund plan — the organiser has not been refunded yet; the recovery queue retries it and alerts if retries exhaust.`,
+    details: details?.unexecutedSettlementRefunds,
   });
   addItem(items, {
     id: "payment-cancelled-refund-unrecorded",
@@ -306,13 +325,14 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.cancelledUnrecordedRefunds,
-    href: adminHref("health"),
+    href: adminAnchorHref("stuck-states", "payment-cancelled-refund-unrecorded"),
     summary: `${counts.cancelledUnrecordedRefunds} cancelled ${plural(
       counts.cancelledUnrecordedRefunds,
       "booking",
     )} in the last ${CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS} days ${
       counts.cancelledUnrecordedRefunds === 1 ? "holds" : "hold"
     } a captured payment with no recorded refund, no recovery operation, and no cancellation settlement record — the cancel may have crashed before the card refund; verify the member was refunded.`,
+    details: details?.cancelledUnrecordedRefunds,
   });
   addItem(items, {
     id: "payment-recovery-exhausted",
@@ -321,11 +341,12 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.exhaustedFailed,
-    href: adminHref("health"),
+    href: adminAnchorHref("stuck-states", "payment-recovery-exhausted"),
     summary: `${counts.exhaustedFailed} payment recovery ${plural(
       counts.exhaustedFailed,
       "operation",
     )} reached ${MAX_PAYMENT_RECOVERY_ATTEMPTS} attempts, or stopped on a failure a retry cannot fix, and need manual reconciliation. A card refund among them that the member was paid another way can be closed under "Card refunds Stripe gave up on" on this page (Finance view).`,
+    details: details?.exhaustedFailed,
   });
   addItem(items, {
     id: "payment-recovery-stale-processing",
@@ -334,11 +355,12 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "critical",
     owner: "Finance",
     count: counts.staleProcessing,
-    href: adminHref("health"),
+    href: adminHref("background-jobs"),
     summary: `${counts.staleProcessing} payment recovery ${plural(
       counts.staleProcessing,
       "operation",
     )} have been processing for more than ${PAYMENT_PROCESSING_STALE_MINUTES} minutes.`,
+    details: details?.staleProcessing,
   });
   addItem(items, {
     id: "payment-group-settlement-stale",
@@ -347,11 +369,12 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "warning",
     owner: "Admin",
     count: counts.staleSettlements,
-    href: adminHref("bookings"),
+    href: adminAnchorHref("stuck-states", "payment-group-settlement-stale"),
     summary: `${counts.staleSettlements} organiser-pays group ${plural(
       counts.staleSettlements,
       "settlement",
     )} are unpaid past the reap deadline and still hold (or recently held) beds; the group-settlement reaper releases them on its next run.`,
+    details: details?.staleSettlements,
   });
   addItem(items, {
     id: "payment-recovery-overdue-pending",
@@ -360,11 +383,12 @@ function buildPaymentItems(items: StuckStateItem[], counts: {
     severity: "warning",
     owner: "Finance",
     count: counts.overduePending,
-    href: adminHref("health"),
+    href: adminHref("background-jobs"),
     summary: `${counts.overduePending} payment recovery ${plural(
       counts.overduePending,
       "operation",
     )} are more than ${PAYMENT_PENDING_OVERDUE_MINUTES} minutes past their retry time and have not been claimed.`,
+    details: details?.overduePending,
   });
 }
 
@@ -809,141 +833,6 @@ async function addLodgeItems(
   });
 }
 
-async function getPaymentCounts(
-  deps: StuckStateDashboardDependencies,
-  now: Date,
-) {
-  const staleProcessingThreshold = new Date(
-    now.getTime() - PAYMENT_PROCESSING_STALE_MINUTES * 60 * 1000,
-  );
-  const pendingOverdueThreshold = new Date(
-    now.getTime() - PAYMENT_PENDING_OVERDUE_MINUTES * 60 * 1000,
-  );
-
-  // F3 (#1351): a SUCCEEDED settlement under a CANCELLED group whose persisted
-  // refund plan was never executed — the organiser's settlement refund has not
-  // completed. The recovery queue retries it (and alerts on exhaustion); this
-  // tile keeps the state visible to operators the whole time, including for
-  // incidents that predate the durable retry.
-  const unexecutedSettlementRefunds = (
-    (await deps.db.groupBookingSettlement.findMany({
-      where: {
-        status: "SUCCEEDED",
-        groupBooking: { status: "CANCELLED" },
-      },
-      select: { refundPlan: true },
-    })) as Array<{ refundPlan: unknown }>
-  ).filter((settlement) => settlement.refundPlan != null).length;
-
-  const staleSettlements = (
-    (await deps.db.groupBookingSettlement.findMany({
-      where: { status: { in: ["PENDING", "FAILED"] } },
-      select: {
-        updatedAt: true,
-        groupBooking: {
-          select: { organiserBooking: { select: { checkIn: true } } },
-        },
-      },
-    })) as Array<{
-      updatedAt: Date;
-      groupBooking: { organiserBooking: { checkIn: Date } };
-    }>
-  ).filter(
-    (settlement) =>
-      now >=
-      groupSettlementReapDeadline(
-        settlement.updatedAt,
-        settlement.groupBooking.organiserBooking.checkIn,
-      ),
-  ).length;
-
-  const cancelledRefundLookbackThreshold = new Date(
-    now.getTime() -
-      CANCELLED_REFUND_UNRECORDED_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
-  );
-
-  const [
-    exhaustedFailed,
-    staleProcessing,
-    overduePending,
-    cancelledUnrecordedRefunds,
-  ] = await Promise.all([
-    // #4104: a card refund raised dead is PENDING with its attempts spent.
-    deps.db.paymentRecoveryOperation.count({ where: PAYMENT_RECOVERY_EXHAUSTED_WHERE }),
-    deps.db.paymentRecoveryOperation.count({
-      where: {
-        status: "PROCESSING",
-        processingStartedAt: { lt: staleProcessingThreshold },
-      },
-    }),
-    deps.db.paymentRecoveryOperation.count({
-      where: {
-        status: "PENDING",
-        nextRetryAt: { lte: pendingOverdueThreshold },
-        attempts: { lt: MAX_PAYMENT_RECOVERY_ATTEMPTS },
-      },
-    }),
-    // #1349 (F2) crash-window detector: a CANCELLED booking that kept a fully
-    // captured, unrefunded payment with NO refund-recovery operation and NO
-    // cancellation narrative event can only be a cancel that died between the
-    // claim commit and Phase 2 (deliberate zero-refund cancels write their
-    // CANCELLED BookingEvent; refunds bump refundedAmountCents; the #1349
-    // in-transaction enqueue leaves a recovery operation). Before #1349
-    // NOTHING fired for this state — the member's refund was silently lost.
-    deps.db.booking.count({
-      where: {
-        status: "CANCELLED",
-        deletedAt: null,
-        updatedAt: { gte: cancelledRefundLookbackThreshold },
-        payment: {
-          is: {
-            status: "SUCCEEDED",
-            refundedAmountCents: 0,
-            amountCents: { gt: 0 },
-          },
-        },
-        paymentRecoveryOperations: {
-          none: { type: "REFUND_BOOKING_MODIFICATION" },
-        },
-        events: {
-          // #2262 — the admin-only settlement markers are stored as
-          // CANCELLED events (reversal / reciprocal-fence conflict, and
-          // #3638's second-instrument conflict) but cancel
-          // nothing, so they must not count as "the cancel wrote its
-          // narrative event" here: a genuinely crashed cancel on a booking
-          // that once hit a marker would otherwise be invisible. The DB-level
-          // twin of booking-narrative's isManualSettlementMarkerEvent
-          // exclusion, keyed on the markers' constant `reason` strings (the
-          // snapshot discriminator is not expressible in this relation
-          // filter). The OR keeps a NULL-reason genuine cancel event counted —
-          // a bare notIn would drop NULL rows under SQL three-valued logic.
-          // #2008's duplicate-capture marker does NOT share this shape (it is
-          // a REFUNDED event), so it needs no exclusion here.
-          none: {
-            type: "CANCELLED",
-            OR: [
-              { reason: null },
-              {
-                reason: {
-                  notIn: [...SETTLEMENT_MARKER_EVENT_REASONS],
-                },
-              },
-            ],
-          },
-        },
-      },
-    }),
-  ]);
-
-  return {
-    exhaustedFailed,
-    staleProcessing,
-    overduePending,
-    staleSettlements,
-    cancelledUnrecordedRefunds,
-    unexecutedSettlementRefunds,
-  };
-}
 
 function isModuleEnabled(modules: FeatureFlags, key: keyof FeatureFlags) {
   return Boolean(modules[key]);
@@ -970,15 +859,25 @@ export async function getStuckStateDashboard(input?: {
   };
   const now = input?.now ?? new Date();
   const viewerCanViewMembership = input?.viewerCanViewMembership ?? false;
+  // #4959 (#2823): a named payment row is a booking owner beside their money,
+  // so it needs both finance:view and membership:view. Fail closed: without
+  // both, the rows' queries never run; the count and card link always stay.
+  const viewerCanViewPaymentRows =
+    viewerCanViewMembership && (input?.viewerCanViewFinance ?? false);
   const items: StuckStateItem[] = [];
 
-  const [modules, paymentCounts] = await Promise.all([
+  const [modules, paymentSignals] = await Promise.all([
     deps.loadEffectiveModuleFlags(),
-    getPaymentCounts(deps, now),
+    getPaymentSignals(deps, now, viewerCanViewPaymentRows),
   ]);
 
-  buildPaymentItems(items, paymentCounts);
-  const exhaustedSettlementAlerts = await deps.countExhaustedCashSettlementAlerts();
+  buildPaymentItems(items, paymentSignals.counts, paymentSignals.details);
+  const [exhaustedSettlementAlerts, exhaustedSettlementAlertRows] = await Promise.all([
+    deps.countExhaustedCashSettlementAlerts(),
+    viewerCanViewPaymentRows
+      ? deps.listExhaustedCashSettlementAlerts(STUCK_STATE_DETAIL_ROW_CAP)
+      : Promise.resolve(undefined),
+  ]);
   addItem(items, {
     id: "payment-settlement-alert-undelivered",
     domain: "payment",
@@ -988,6 +887,13 @@ export async function getStuckStateDashboard(input?: {
     count: exhaustedSettlementAlerts,
     href: adminHref("payments"),
     summary: `${exhaustedSettlementAlerts} settlement figure alerts exhausted their retries. Check the bank transfer amounts against Xero and the staff booking timeline; no further alert emails are attempted.`,
+    details: exhaustedSettlementAlertRows?.map((alert) =>
+      bookingDetailRow(
+        alert.id,
+        alert.booking,
+        `${formatDateOnly(alert.booking.checkIn)} to ${formatDateOnly(alert.booking.checkOut)}; open the booking's staff timeline for the figures to check against Xero.`,
+      ),
+    ),
   });
 
   // School attendee lists inside their confirmation window (#1101): the
@@ -1027,8 +933,15 @@ export async function getStuckStateDashboard(input?: {
   // `attendeesConfirmedAt: null`), and a booking still held for approval, which
   // has no `convertedBookingId` for either sweep to find. Those are precisely
   // the rows an admin must fix by hand, so the copy has to say so.
+  //
+  // #4959: a membership viewer reads the list the count is the length of, and
+  // its first rows are named here; anyone else reads the count alone.
+  const unnamedPlaceholderList = viewerCanViewMembership
+    ? await deps.listBookingsWithUnnamedPlaceholderGuests(now)
+    : undefined;
   const unnamedPlaceholderBookings =
-    await deps.countBookingsWithUnnamedPlaceholderGuests(now);
+    unnamedPlaceholderList?.length ??
+    (await deps.countBookingsWithUnnamedPlaceholderGuests(now));
   addItem(items, {
     id: "booking-unnamed-placeholder-guests",
     domain: "booking",
@@ -1036,13 +949,22 @@ export async function getStuckStateDashboard(input?: {
     severity: "warning",
     owner: "Admin",
     count: unnamedPlaceholderBookings,
-    href: adminHref("bookings"),
+    href: adminAnchorHref("stuck-states", "booking-unnamed-placeholder-guests"),
     summary: `${unnamedPlaceholderBookings} upcoming ${plural(
       unnamedPlaceholderBookings,
       "booking",
     )} still ${
       unnamedPlaceholderBookings === 1 ? "lists" : "list"
-    } placeholder guest names ("Guest 2", "School Child 5"), so the chore list and arrival roster would show those instead of real people. Most bookers are chased automatically, but some rows are not — a school list already confirmed with its placeholder names, or a booking still held for approval — so treat this as a list to work through: open the booking and edit the names, which an admin or Booking Officer can always do. The stay is never held up over this.`,
+    } placeholder guest names ("Guest 2", "School Child 5"), so the chore list and arrival roster would show those instead of real people. Most bookers are chased automatically, but some rows are not — a school list already confirmed with its placeholder names, or a booking still held for approval — so open each booking named below and edit the names, which an admin or Booking Officer can always do. The stay is never held up over this.`,
+    details: unnamedPlaceholderList
+      ?.slice(0, STUCK_STATE_DETAIL_ROW_CAP)
+      .map((booking) =>
+        bookingDetailRow(
+          booking.id,
+          booking,
+          `${booking.lodge?.name ?? "Lodge"}; arrives ${formatDateOnly(booking.checkIn)}; ${booking.unnamedGuestCount} unnamed ${plural(booking.unnamedGuestCount, "guest")}.`,
+        ),
+      ),
   });
 
   // #2576 §7 and §16: a CONFIRMED booking at an enforcing lodge that has lost the
@@ -1061,7 +983,7 @@ export async function getStuckStateDashboard(input?: {
       deps.db.hostingCoverageIncident.findMany({
         where: { resolvedAt: null },
         orderBy: [{ openedAt: "asc" }, { id: "asc" }],
-        take: 50,
+        take: STUCK_STATE_DETAIL_ROW_CAP,
         select: {
           id: true,
           cause: true,
@@ -1069,12 +991,10 @@ export async function getStuckStateDashboard(input?: {
           evidence: true,
           booking: {
             select: {
-              id: true,
+              // #3369: the owner may be an Organisation; bookingOwnerName() reads both.
+              ...OWNED_BOOKING_SELECT,
               checkIn: true,
               checkOut: true,
-              member: { select: { firstName: true, lastName: true } },
-              // #3369: the owner may be an Organisation; bookingOwner() reads both.
-              organisation: { select: { name: true, email: true } },
               lodge: { select: { name: true } },
             },
           },
@@ -1087,11 +1007,9 @@ export async function getStuckStateDashboard(input?: {
       cause: string;
       openedAt: Date;
       evidence: unknown;
-      booking: {
-        id: string;
+      booking: OwnedBooking & {
         checkIn: Date;
         checkOut: Date;
-        member: { firstName: string; lastName: string };
         lodge: { name: string } | null;
       };
     }>
@@ -1102,18 +1020,14 @@ export async function getStuckStateDashboard(input?: {
           (night): night is string => typeof night === "string",
         )
       : [];
-    const ownerName =
-      `${bookingOwner(incident.booking).member.firstName} ${bookingOwner(incident.booking).member.lastName}`.trim();
-    return {
-      id: incident.id,
-      title: `${formatBookingReference(incident.booking.id)} - ${ownerName}`,
-      summary:
-        `${incident.booking.lodge?.name ?? "Lodge"}; ` +
+    return bookingDetailRow(
+      incident.id,
+      incident.booking,
+      `${incident.booking.lodge?.name ?? "Lodge"}; ` +
         `${formatDateOnly(incident.booking.checkIn)} to ${formatDateOnly(incident.booking.checkOut)}; ` +
         `${nights.length} uncovered ${plural(nights.length, "night")}; ` +
         `${describeHostingCoverageIncidentCause(incident.cause)}.`,
-      href: `/bookings/${incident.booking.id}`,
-    };
+    );
   });
   addItem(items, {
     id: "booking-hosting-coverage-incidents",

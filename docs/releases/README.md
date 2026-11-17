@@ -7,6 +7,7 @@ drafts that accompany a release. Newest first.
 
 ## Published release notes
 
+- [v0.14.0](v0.14.0.md) — 2026-11-17 minor public reference release.
 - [v0.13.2](v0.13.2.md) — 2026-07-23 patch public reference release (deferred contract drop, backup re-home, provider wizards, AI help).
 - [v0.13.1](v0.13.1.md) — 2026-07-22 patch public reference release (breaking contract migrations).
 - [v0.13.0](v0.13.0.md) — 2026-07-21 minor public reference release.
@@ -17,17 +18,22 @@ drafts that accompany a release. Newest first.
 
 ## v0.10.0 communication drafts
 
-These are **drafts for the owner to review and send** — nothing here is posted
-automatically. They are kept for the audit trail and as templates for future
-releases.
+These are **drafts, not releases**. They live in [`drafts/`](drafts/) so this
+directory's top level holds published release notes only (#4978). Nothing here
+is posted automatically. They are kept for the audit trail and as templates for
+future releases.
 
-- [v0.10.0 release notes (draft)](v0.10.0-release-notes-draft.md) — the release
-  notes awaiting owner review.
-- [v0.10.0 fork-communication drafts](v0.10.0-fork-comms-drafts.md) — messages
-  for downstream deployment forks.
-- [v0.10.0 committee heads-up (draft)](v0.10.0-committee-headsup-draft.md) — the
-  cancellation-policy-change note for the club committee.
+- [v0.10.0 release notes (draft)](drafts/v0.10.0-release-notes-draft.md) — the
+  release notes that were awaiting owner review.
+- [v0.10.0 fork-communication drafts](drafts/v0.10.0-fork-comms-drafts.md) —
+  messages for downstream deployment forks.
+- [v0.10.0 committee heads-up (draft)](drafts/v0.10.0-committee-headsup-draft.md)
+  — the cancellation-policy-change note for the club committee.
 
-When you cut a new release, add its notes here (newest at the top of *Published
-release notes*) and update the [documentation hub](../README.md) pointer if the
-"most recent" release changes.
+`pnpm run release:cut prepare` writes each new release's page as a stub and
+lists it at the top of *Published release notes* (#4983). Finish the stub in the
+release-prep pull request, deleting its unfinished marker, the stub note and
+the placeholder paragraph: `release:cut publish` refuses while any of them is
+there. The [documentation hub](../README.md) links this index rather than a
+version, so a new release needs no edit there. The full order is the
+[release checklist](../MAINTENANCE.md#public-reference-release-checklist).

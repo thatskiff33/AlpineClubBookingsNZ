@@ -16,8 +16,10 @@ const { prismaMock } = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/email", () => ({}));
-vi.mock("@/lib/xero", () => ({
+vi.mock("@/lib/xero-token-store", () => ({
   isXeroConnected: vi.fn(),
+}));
+vi.mock("@/lib/xero-contacts", () => ({
   findOrCreateXeroContact: vi.fn(),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -27,12 +29,16 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/membership-subscription-billing", () => ({
   queueApprovedMembershipSubscriptionCharges: vi.fn(),
 }));
+// #4986: approval reads the Xero module; Xero on, so these pin the usual path.
+vi.mock("@/lib/xero-invoicing-guard", () =>
+  import("@/lib/__tests__/helpers/xero-invoicing-guard-mock"),
+);
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/induction", () => ({ createMemberInduction: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
+
 
 import {
   buildApprovalMappingPreview,
