@@ -998,6 +998,21 @@ describe("starter privacy recipients and hosting migration (#5007)", () => {
     expect(auditRetentionSql).toContain(`WHEN "headerText" = ${sqlQuote(privacyHeaderOn("1 April 2026"))}`);
   });
 
+  it("names the seed's Last updated date in the upgrade step", () => {
+    // The date is the merge date and lives in five places that must move
+    // together: the seed, the migration's header CASE, the fixture, this test
+    // and the upgrade step. The first two are held equal above, the fixture by
+    // the real-database suite; this holds the step to the seed.
+    const seedDate = /Last updated (\d{1,2} [A-Za-z]+ \d{4})/.exec(page.headerText)?.[1];
+    expect(seedDate).toBeDefined();
+    const guide = readFileSync(join(process.cwd(), "docs", "UPGRADING.md"), "utf8");
+    const step = guide
+      .split("### Starter privacy policy lists its recipients and names your host (#5007)")[1]
+      ?.split(/\n#{2,3} /)[0];
+    expect(step, "the #5007 upgrade step must exist").toBeDefined();
+    expect(step).toContain(`"Last updated" date moves to ${seedDate},`);
+  });
+
   it("uses the UTC statement clock, never the session clock", () => {
     expect(statements).toContain(`"updatedAt" = timezone('UTC', statement_timestamp())`);
     expect(statements).not.toMatch(/CURRENT_TIMESTAMP|\bnow\(\)|LOCALTIMESTAMP/i);
