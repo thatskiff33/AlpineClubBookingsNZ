@@ -102,7 +102,6 @@ type ElementRef = RefObject<HTMLElement | null>;
 type ScrollContainerTarget = HTMLElement | ElementRef | null | undefined;
 type ScrollErrorTarget = HTMLElement | ElementRef | string | null | undefined;
 
-
 export interface AttentionOptions {
   /** Defaults to `"start"`; the recovery alerts centre themselves. */
   block?: AttentionBlock;
@@ -136,7 +135,6 @@ export const DIRECT_SCROLL_EXCLUSIONS: ReadonlyArray<{
       "a successful card booking moves the wizard to its pay step and scrolls the WINDOW to the top (#1084, #4945). The member layout scrolls the document rather than a container, and `scrollToTop` only scrolls the nearest overflow container, so it would focus the step without moving the page. The jump is instant, so reduced motion is not at stake",
   },
 ];
-
 
 export function isHTMLElement(value: unknown): value is HTMLElement {
   return typeof HTMLElement !== "undefined" && value instanceof HTMLElement;
@@ -204,8 +202,6 @@ function ensureFocusable(element: HTMLElement) {
     element.setAttribute("tabindex", "-1");
   }
 }
-
-
 
 function focusAndReveal(element: HTMLElement, requested: AttentionBlock) {
   const block = requested === "center" && exceedsCentredView(element) ? "start" : requested;
