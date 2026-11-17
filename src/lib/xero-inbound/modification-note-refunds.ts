@@ -155,7 +155,7 @@ export async function resolveModificationRefundAmountsByPaymentId(input: {
  * when there are no rows at all (a legacy payment, or an organiser-settled
  * child, whose mirror keeps today's answer).
  */
-export async function uncapturedPrimaryStatus(
+async function uncapturedPrimaryStatus(
   paymentId: string,
   db: Pick<Prisma.TransactionClient, "paymentTransaction"> = prisma,
 ): Promise<PaymentStatus | null> {
