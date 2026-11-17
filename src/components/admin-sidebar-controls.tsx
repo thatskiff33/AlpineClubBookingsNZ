@@ -6,7 +6,7 @@
  * counts behind the badges, the "Search…" trigger, the role-panel switcher
  * (#108), and the hub-menu role switcher (C14 #4811).
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Search } from "lucide-react";
@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { ADMIN_HUBS } from "@/lib/admin-hubs";
 import { hubRoot } from "@/lib/admin-hubs/define";
 import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
-import { ADMIN_QUEUE_CHANGED_EVENT } from "@/lib/admin-queue-events";
+import { useAdminQueueRefresh } from "@/hooks/use-admin-queue-refresh";
 import {
   ZERO_ADMIN_PENDING_COUNTS,
   type AdminPendingCounts,
@@ -41,14 +41,10 @@ export type PendingCountsStatus = "loading" | "ok" | "error";
  *
  * The admin layout is never remounted on a client navigation, so "fetch on
  * mount" meant "fetch once per hard reload": a decided request kept its badge
- * and new work never appeared. The counts are refetched instead
- * - whenever the pathname changes,
- * - when the tab regains focus or becomes visible again,
- * - when a queue page announces a decision (`notifyAdminQueueChanged`),
- * with at most one request in flight. A navigation, decision or retry during a
- * request queues one more after it (the request may predate the change); focus
- * and visibility do not, since the request in flight is already fresh — a tab
- * coming back fires both, and that must not cost two loads.
+ * and new work never appeared. The counts are refetched on every pathname
+ * change and on the queue-refresh triggers in `useAdminQueueRefresh` (a
+ * decision, window focus, the tab becoming visible), which the Booking
+ * Requests page's tab badges share, with at most one request in flight.
  *
  * A failed or non-OK load sets `status: "error"` and KEEPS the last good
  * counts, so the sidebar can say it could not load them rather than show a
@@ -62,63 +58,26 @@ export function usePendingCounts(): {
   const pathname = usePathname();
   const [counts, setCounts] = useState<AdminPendingCounts>(ZERO_ADMIN_PENDING_COUNTS);
   const [status, setStatus] = useState<PendingCountsStatus>("loading");
-  const load = useRef<() => void>(() => {});
 
-  useEffect(() => {
-    let disposed = false;
-    let inFlight = false;
-    let again = false;
-
-    const run = (queueIfBusy: boolean) => {
-      if (inFlight) {
-        if (queueIfBusy) again = true;
-        return;
-      }
-      inFlight = true;
-      fetch("/api/admin/pending-counts", { cache: "no-store" })
-        .then(async (response) => {
-          if (!response.ok) throw new Error(`pending-counts ${response.status}`);
-          const data = (await response.json()) as Partial<AdminPendingCounts>;
-          if (disposed) return;
-          setCounts({ ...ZERO_ADMIN_PENDING_COUNTS, ...data });
-          setStatus("ok");
-        })
-        .catch(() => {
-          if (!disposed) setStatus("error");
-        })
-        .finally(() => {
-          inFlight = false;
-          if (again && !disposed) {
-            again = false;
-            run(false);
-          }
-        });
-    };
-    load.current = () => run(true);
-
-    const onFocus = () => run(false);
-    const onQueueChanged = () => run(true);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") run(false);
-    };
-    window.addEventListener("focus", onFocus);
-    window.addEventListener(ADMIN_QUEUE_CHANGED_EVENT, onQueueChanged);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      disposed = true;
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener(ADMIN_QUEUE_CHANGED_EVENT, onQueueChanged);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, []);
+  const refresh = useAdminQueueRefresh(async (isMounted) => {
+    try {
+      const response = await fetch("/api/admin/pending-counts", { cache: "no-store" });
+      if (!response.ok) throw new Error(`pending-counts ${response.status}`);
+      const data = (await response.json()) as Partial<AdminPendingCounts>;
+      if (!isMounted()) return;
+      setCounts({ ...ZERO_ADMIN_PENDING_COUNTS, ...data });
+      setStatus("ok");
+    } catch {
+      if (isMounted()) setStatus("error");
+    }
+  });
 
   // Every navigation, the first render included.
   useEffect(() => {
-    load.current();
-  }, [pathname]);
+    refresh();
+  }, [pathname, refresh]);
 
-  const retry = useCallback(() => load.current(), []);
-  return { counts, status, retry };
+  return { counts, status, retry: refresh };
 }
 
 /**
