@@ -6,15 +6,7 @@ import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-c
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
-import {
-  type AgeTier,
-  type Booking,
-  type BookingGuest,
-  type Payment,
-  PaymentSource,
-  PaymentStatus,
-  type Role,
-} from "@prisma/client";
+import { type AgeTier, PaymentStatus, type Role } from "@prisma/client";
 
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { repriceBookingPromotions } from "@/lib/booking-promotions";
@@ -48,7 +40,6 @@ import {
   createModificationAdditionalPaymentIntent,
   type ModificationAdditionalAskMint,
   executeBookingModificationRefund,
-  type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
 import {
   assertNoPendingEditFinancialReview,
@@ -167,6 +158,8 @@ import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-claim";
 import { changeFeeAddedToAmountOwedHistory } from "@/lib/change-fee-owed";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import type { DateModificationResponse, DateModificationTransactionResult } from "@/lib/booking-date-modification-transaction-result";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -183,77 +176,6 @@ export type ModifyBookingDatesInput = {
   // Owner decision (#1668 review): the admin chooses per override edit whether
   // the member receives the change-notification email. Absent = notify.
   notifyMember?: boolean;
-};
-
-type ModifiedBooking = Booking & {
-  guests: BookingGuest[];
-  payment: Payment | null;
-};
-
-type DateModificationTransactionResult =
-  BookingModificationPaymentContext & {
-    /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
-    unpaidAskCancelled: boolean;
-    /**
-     * The plain figure the emails, the response body and the Xero leg read.
-     * Inherited from `BookingModificationPaymentContext` until #3371 replaced
-     * that field with `additionalAsk`; it is restated here because those
-     * consumers want a number and the minter must not be handed one.
-     */
-    additionalAmountCents: number;
-    billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
-    booking: ModifiedBooking;
-    priceDiffCents: number;
-    changeFeeCents: number;
-    refundAmountCents: number;
-    accountCreditAmountCents: number;
-    settlementMethod: BookingModificationSettlementMethod | null;
-    policyRetainedAmountCents: number;
-    promoRemoved: boolean;
-    // #2390: set only when a usage cap stopped the promotion reaching somebody
-    // on the repriced booking; null means everyone it applies to is covered.
-    promoCoverage: PromoCoverageNotice | null;
-    choreWarnings: string[];
-    datesChanged: boolean;
-    adminOverride: boolean;
-    notifyMember: boolean;
-    capacityOverridden: boolean;
-    oldCheckIn: Date;
-    oldCheckOut: Date;
-    hasIssuedXeroInvoice: boolean;
-    paymentStatus: PaymentStatus | null;
-    paymentSource: PaymentSource | null;
-    paymentReference: string | null;
-    xeroInvoiceNumber: string | null;
-    xeroRefundAmountCents: number;
-    appliedCreditGivenBackCents: number;
-    xeroAdditionalAmountCents: number;
-    // F20 (#1887): the reprice landed the booking fully credit-covered and it
-    // was auto-confirmed at $0, so the primary Xero invoice must be created.
-    zeroDollarAutoPaid: boolean;
-  };
-
-export type DateModificationResponse = {
-  booking: ModifiedBooking;
-  priceDiffCents: number;
-  changeFeeCents: number;
-  refundAmountCents: number;
-  accountCreditAmountCents: number;
-  /** #3809: applied credit the reduction gave back, as account credit. */
-  appliedCreditGivenBackCents: number;
-  settlementMethod: BookingModificationSettlementMethod | null;
-  policyRetainedAmountCents: number;
-  additionalAmountCents: number;
-  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
-  billedToOrganiserCents: number;
-  additionalPaymentClientSecret: string | null;
-  stripeRefundId: string | null;
-  promoRemoved: boolean;
-  promoCoverage: PromoCoverageNotice | null;
-  choreWarnings: string[];
-  // Admin override (issue #1668): true when an over-capacity target was
-  // explicitly confirmed. Always false on the standard (hard-blocked) path.
-  capacityOverridden: boolean;
 };
 
 export async function modifyBookingDates({
@@ -824,6 +746,7 @@ export async function modifyBookingDates({
       unpaidAskCancelled,
       pendingRefundAmountCents,
       hasSucceededPayment,
+      refundHeldForDispute,
       hasIssuedXeroInvoice,
       xeroRefundAmountCents,
       xeroAdditionalAmountCents,
@@ -1253,6 +1176,7 @@ export async function modifyBookingDates({
       bookingModificationId: bookingModification.id,
       adjusted: payments,
       editLabel: "date change", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
+      journal, actorMemberId: actor.id, // #4516 (M4d): the R05 names the edit's actor, as its BookingModification does
     });
     // #3954, #4744: the re-issue, a folded increase's ask, and a billed-offset note are durable from this commit.
     await queueEditAskFollowUps(tx, {
@@ -1351,6 +1275,7 @@ export async function modifyBookingDates({
       oldCheckIn,
       oldCheckOut,
       hasSucceededPayment,
+      refundHeldForDispute,
       hasIssuedXeroInvoice,
       paymentStatus: booking.payment?.status ?? null,
       paymentSource: booking.payment?.source ?? null,
@@ -1371,7 +1296,7 @@ export async function modifyBookingDates({
       bookingModificationId: bookingModification.id,
       priceLines,
     } satisfies DateModificationTransactionResult;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   const refund = await executeBookingModificationRefund({
     format,
@@ -1541,7 +1466,9 @@ async function dispatchDatePostTransactionSideEffects({
     // issued invoice falls back to the full delta inside classify when null.
     settlementAmountCents: result.xeroRefundAmountCents,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment, paymentId: result.paymentId,
+    // #5061 follow-up (`INV-PAY-154`): a disputed payment's reduction goes back by hand.
+    refundedThroughStripe: result.hasSucceededPayment && !result.refundHeldForDispute, paymentId: result.paymentId,
+    refundHeldForDispute: result.refundHeldForDispute,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,
@@ -2128,7 +2055,7 @@ export async function adminShiftBookingDates({
       paymentSource: booking.payment?.source ?? null,
       lodgeId: booking.lodgeId,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Post-transaction (no Stripe/Xero/payment mutations at all).
   const linkedChangeRequestId = await linkModificationToOutstandingChangeRequest(

@@ -10,6 +10,7 @@ import {
   type AdminCreditGrantAccount,
 } from "@/lib/admin-credit-grant-account";
 import {
+  buildAdminGrantCreditNotePayload,
   XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE,
   type AdminGrantNoteMappingKey,
 } from "@/lib/admin-grant-credit-note-payload";
@@ -101,12 +102,7 @@ export async function enqueueAdminGrantCreditNote(
     status: "PENDING",
     idempotencyKey,
     correlationKey: idempotencyKey,
-    requestPayload: {
-      queueType: XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE,
-      amountCents: credit.amountCents,
-      mappingKey,
-      memberCreditId: credit.id,
-    },
+    requestPayload: buildAdminGrantCreditNotePayload({ amountCents: credit.amountCents, mappingKey, memberCreditId: credit.id }),
     store: tx,
   });
 }

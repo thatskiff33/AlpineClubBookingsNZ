@@ -1,0 +1,5 @@
+- **Admin settings cards no longer show the browser's own error words when the connection drops (#5195).** When a card with an Edit button (booking policies, security, maintenance, backups, lodge settings, member fields, privacy, analytics, video meetings and others) loaded or saved its setting and the request never got an answer, it showed the browser's words, such as "Failed to fetch", or "Load failed" in Safari. When the server answered with an error page, the card showed a garbled parse error.
+
+  Each card now shows its own plain sentence for the setting it loads or saves, such as "Failed to save". Refusals the server explains read exactly as before. An empty or blank reason on the roster editor's save now shows the "server refused the save and did not say why" sentence instead of failing without a message.
+
+  Only a card's own load and Save are covered. Separate buttons on the same cards (Remove override on the cancellation policy, for example) and the lists the booking periods and minimum night stay cards load are not part of this change and show what they showed before.

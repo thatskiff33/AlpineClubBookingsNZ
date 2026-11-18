@@ -159,9 +159,9 @@ Journey: Inspect diagnostic access and follow the deployment guide to provision 
 
 Screen: `/admin/dashboard`.
 
-Shows: Attention queues, headline statistics, recent bookings and quick-action links.
+Shows: Attention cards for the officer work queues the sidebar's Needs Attention section lists, with the same numbers; headline statistics; recent bookings and quick-action links. A count that failed to load is named above the cards.
 
-Journey: Scan attention cards, follow a queue, or use a quick action to open its screen.
+Journey: Scan attention cards, follow a queue, or use a quick action to open its screen. The sidebar's counts refresh on each admin page change, on returning to the tab and after a queue decision, and offer Retry when they fail.
 
 [Guide](guides/dashboard.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -245,9 +245,9 @@ Journey: Review booking rules and cancellation policies before staging a change.
 
 Screen: `/admin/booking-requests`.
 
-Shows: Tabbed request queues and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-020). A deep link to one booking or request pins it above the page when it is elsewhere.
+Shows: Four request queue tabs, each with its pending count across every page, and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-020). A deep link to one booking or request pins it above the page when it is elsewhere.
 
-Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
+Journey: Open on the first tab with pending work (Approvals when none), open a request, inspect the proposed stay, and use its available actions.
 
 [Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -397,7 +397,7 @@ Journey: Choose a lodge, inspect lockers and assignments, and manage the selecte
 
 [Guide](guides/lockers.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Member Applications — member-applications
+### Applications — member-applications
 
 Screen: `/admin/member-applications`.
 
@@ -491,7 +491,7 @@ Journey: Choose a date range, inspect events, and open an event to manage it.
 
 [Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Chore Templates — chores
+### Chores — chores
 
 Screen: `/admin/chores`.
 
@@ -649,7 +649,7 @@ Screen: `/admin/payments`.
 
 Shows: Payment records, statuses and links to related bookings.
 
-Journey: Filter payments, open a record, and inspect its booking and provider status.
+Journey: Filter payments, open a record, and inspect its booking and provider status. On **Money to settle**, a refund handed to the treasurer because its card payment is disputed offers **Reduce by lost dispute** when the dispute was lost for part of it: the confirmation states what the refund was, what it is reduced by and what is still owed, and the task stays open for the rest (#4516). The same holds for a booking change's refund held by a dispute; lost money is counted once across a payment's refunds, oldest first, and a row with lost money set against it offers no **Mark paid back** (`INV-PAY-157`).
 
 [Guide](guides/payments.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -1001,7 +1001,7 @@ Screen: `/admin/setup`.
 
 Shows: The installation setup hub and configuration cards.
 
-Journey: Open a setup card, run a provider test, or update a step. Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
+Journey: Open the setup card for the configuration task you need, run a provider test, or update a step. No card links back to Setup itself; each sub-hub returns here by its Setup back link (#4968). Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
 
 [Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -1012,6 +1012,10 @@ Screen: `/admin/stuck-states`.
 Shows: Operational incidents and guided repair actions.
 
 Journey: Inspect flagged records and use the documented recovery for the selected state.
+A signal over particular bookings lists them under it (at most 50, then "and N
+more"), each linking to the booking; its **Open** link goes to that list, or to
+Background Jobs for operations still retrying (#4959). Payment lists need
+Finance view and Membership view; the unnamed-guest list needs Membership view.
 A card refund Stripe gave up on is settled on its row, never with a new Stripe
 dashboard refund (#4368): **Paid another way**, or **Try the card again** after a
 confirm dialog; a row a later Stripe refund covers reads "nothing left owed" and
@@ -1062,6 +1066,9 @@ every screen:
 - **Destructive confirmations** use `useConfirm()` from
   `src/components/confirm-dialog.tsx`, never `window.confirm`. Lint enforces
   it (`design-system/no-native-confirm`), with today's calls on a ratchet.
+  The prompt names what it acts on and says what will change and what cannot
+  be undone (#4973); when the server gains a side effect, the prompt that
+  guards it changes in the same PR.
 
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.

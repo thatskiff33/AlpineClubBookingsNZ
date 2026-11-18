@@ -17,6 +17,7 @@ import { PinnedQueueRecordNote } from "@/components/admin/pinned-queue-record-no
 import { parseAdminListPageParam } from "@/lib/admin-list-page";
 import { bookingOwner } from "@/lib/booking-owner";
 import { buildBookingRequestDatasetPath } from "@/lib/admin-dataset-reset-state";
+import { BOOKING_REQUESTS_STATUS_PARAM } from "@/lib/admin-booking-requests-path";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,6 +33,7 @@ import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubFormat } from "@/components/club-format-provider";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL";
 
@@ -128,7 +130,7 @@ export function BookingApprovalsPanel({
   const clubTime = useClubTime();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialFilter = searchParams.get("status");
+  const initialFilter = searchParams.get(BOOKING_REQUESTS_STATUS_PARAM);
   const focusedBookingId = searchParams.get("bookingId");
   const defaultFilter: ReviewFilter = focusedBookingId ? "ALL" : "PENDING";
   const [bookings, setBookings] = useState<BookingReviewData[]>([]);
@@ -304,6 +306,7 @@ export function BookingApprovalsPanel({
           setPinnedBooking((current) => (current?.id === bookingId ? null : current));
           setDecisionRecovery({ bookingId, message: recoveryBase });
           setRecoveryAttentionVersion((version) => version + 1);
+          notifyAdminQueueChanged();
           const refreshed = await fetchBookings();
           // The refresh outcome is folded into the durable recovery below; do
           // not duplicate it in the ordinary action region or steal focus.
@@ -345,6 +348,7 @@ export function BookingApprovalsPanel({
         (decision === "APPROVED" ? "Booking approved." : "Booking rejected and cancelled.") +
           suppressedNote,
       );
+      notifyAdminQueueChanged();
       await fetchBookings();
     } catch (err) {
       showActionError(err instanceof Error ? err.message : "Failed to record decision");

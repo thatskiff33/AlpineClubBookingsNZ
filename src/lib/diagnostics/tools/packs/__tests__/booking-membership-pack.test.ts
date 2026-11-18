@@ -3796,9 +3796,8 @@ describe("AID-6B booking/membership pack: the audit subject maps (#2376)", () =>
     }
     const bookingScope =
       entry(DIAGNOSTICS_BOOKING_AUDIT_HISTORY_TOOL_ID).evidenceScope ?? "";
-    // The dedicated census test discovers this runtime current-fact copy and
-    // compares its numeric values with the canonical manifest. This pack test
-    // owns the model-facing caveat, not a second hard-coded census total.
+    // The scope states no site total (#5211); the census test refuses one
+    // coming back. This pack test owns the model-facing caveat.
     expect(bookingScope).toContain("The exact-head census has");
     expect(bookingScope).toContain("zero uncategorised sites");
     expect(bookingScope).toContain("historical rows");

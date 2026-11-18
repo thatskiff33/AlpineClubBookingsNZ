@@ -302,7 +302,10 @@ overbook is requested (#1366, #1881). Its
 charge-saved-card branch follows the cron's claim-first shape (#1418): claim
 `PENDING -> CONFIRMED` (hold cleared) under the lock, charge outside it, then
 promote to PAID. A failed or requires-action charge releases the claim back to
-`PENDING` with the hold restored and (on failure) alerts admins; a captured
+`PENDING` with the hold restored and (on failure) alerts admins. The claim
+stamps `Booking.savedCardClaimAt` and the release clears it, so a claim whose
+release never ran is recovered by the cron (#4993, `INV-PAY-158`, "Stale
+saved-card claim recovery" below); a captured
 charge is durably recorded as a PRIMARY payment transaction before promotion,
 so if the promotion fails the booking stays CONFIRMED holding its beds, admins
 are alerted, and the Stripe webhook finishes the promotion idempotently —
@@ -784,9 +787,20 @@ balance of the ask it supersedes.
 ```text
 a failed mint's replay, before it mints (#4015 review, outside any transaction)
   -> reads Stripe for the live ask it would carry and supersede (bounded read;
-       a timeout is an ordinary retry), through `staleIntentAction`
-       unpaid (requires_action / 3DS included), cancelled or unknown to Stripe
-         -> carried and superseded; a 3DS confirmation in progress then fails
+       a timeout is an ordinary retry)
+       requires_action: the member is on their bank's 3D Secure page (#4755,
+       `isAwaitingMemberAuthentication`)
+         -> WAIT: nothing minted or cancelled, the attempt handed back, checked
+            again every 15 minutes; the recovery row records that intent and
+            when the replay first saw its challenge
+         -> the member finishes: the arms below apply (a capture is waited on,
+            then carried none of); the bank declines: carried at once
+         -> still requires_action 1 hour after that first sighting of the SAME
+            intent: abandoned, carried and superseded as below (never the
+            7-day stop); a sighting of another intent starts a fresh hour
+       unpaid by `staleIntentAction` (requires_payment_method,
+       requires_confirmation), cancelled or unknown to Stripe
+         -> carried and superseded; a recorded sighting is cleared first
        succeeded, processing, requires_capture or an unrecognised status
          -> WAIT: nothing minted or cancelled, the attempt handed back, checked
             again on the longest retry interval; once the webhook lands it
@@ -1898,6 +1912,14 @@ already recorded, and each path's locked release re-reads the booking under its
 locks and hands the claim back only while it is still CONFIRMED — a booking the
 webhook has since settled PAID is left alone.
 
+The claim is durable (#4993, `INV-PAY-158`): all three paths stamp
+`Booking.savedCardClaimAt` in the PENDING -> CONFIRMED write, and every release
+(CONFIRMED -> PENDING) and every PAID promotion clears it in the same guarded
+write. All three release through one helper (`runSavedCardClaimRelease`) with
+its own 5 s / 10 s budget and one retry on P2028/P2034; a release that still
+fails writes a critical `booking.saved_card_claim_release_failed` audit row
+and leaves the marker for recovery.
+
 Before #3267 all three paths shared one key, `pending_charge_<bookingId>`, so
 the admin route's different metadata could only ever answer an idempotency
 parameter-mismatch error, and a re-saved card was refused for 24 hours. The
@@ -2489,15 +2511,19 @@ OPEN   -> WON           charge.dispute.closed, Stripe status won
 OPEN   -> LOST          charge.dispute.closed, Stripe status lost
 OPEN   -> CLOSED_OTHER  charge.dispute.closed with no funds taken (warning_closed, prevented)
 (none) -> WON / LOST / CLOSED_OTHER   a closed event arriving first
+LOST   -> WON           a newer closed event, Stripe status won (a lost dispute reversed)
 ```
 
-WON, LOST and CLOSED_OTHER are terminal: a later or older event never reopens
-the row, and a replay changes nothing. `funds_withdrawn` and `funds_reinstated`
+WON, LOST and CLOSED_OTHER are closed: no event reopens the row, an older
+event changes nothing, and a replay changes nothing; only a newer closed event
+replaces one closed status with another. `funds_withdrawn` and `funds_reinstated`
 add to the row's withdrawn and reinstated cents. OPEN and LOST hold the
-payment's captures: no card refund or account credit, and a paid cancel goes to
-the treasurer as a hand-back task. WON and CLOSED_OTHER hold nothing. The opened
-alert is sent once ever on the first record, the closed alert once ever on the
-first terminal status. To verify: `stripe-dispute.test.ts`.
+payment's captures: no card refund or account credit, and a paid cancel or a
+price-lowering edit goes to the treasurer as a hand-back task. WON and
+CLOSED_OTHER hold nothing. The opened alert is sent once ever on the first
+record, the closed alert once ever on the first closed status, and a third once
+ever on LOST -> WON, owed by a marker written in the same transaction as the
+status. To verify: `stripe-dispute.test.ts`, `stripe-dispute-edit.realdb.test.ts`.
 
 ### Manual refund task lifecycle (#2262)
 
@@ -2505,7 +2531,10 @@ first terminal status. To verify: `stripe-dispute.test.ts`.
 OPEN -> COMPLETED   (finance:edit; writes the local refund allocation and a
                      REFUNDED BookingEvent — the ONLY moment the ledger says
                      the money went back)
-OPEN -> DISMISSED   (finance:edit; requires a note; moves no money)
+OPEN -> DISMISSED   (finance:edit; requires a note; moves no money. #4516:
+                     refused (409), task OPEN, for a real bank or cash
+                     hand-back the journal holds as a debt; a card
+                     shortfall's part to check still dismisses; see below)
 OPEN -> DISMISSED   (#2700: the Stripe webhook, with NO acting member at all —
                      `completedByMemberId` stays null and no operator note is
                      required. Fires only on a task raised by the deleted-booking
@@ -2661,9 +2690,9 @@ amount no card refund carries, inside the approval's transaction under
 `lock(1)`, keyed one per `RefundRequest`, and nets it as above. Its completion
 queues that request's own Xero refund credit note for the amount paid back
 (owner decision D-3813-8; the approval queues none for this part), and its
-`REFUNDED` event is marked the same way. It may be DISMISSED with a note even
-though the booking is cancelled, because the cancel came first and never
-counted it. See
+`REFUNDED` event is marked the same way. The cancel came first and never
+counted it, so the booking's status never stopped it being DISMISSED; since
+#4516 it is not dismissed at all for now (below). See
 [`INV-PAY-118`](invariants/payment-and-settlement.md#inv-pay-118).
 
 **#3949 (owner decisions, 15 and 21 Oct 2026): on a joiner the organiser paid
@@ -2727,8 +2756,11 @@ card refund recovery is not SUCCEEDED and, for the part to check, while its
 bank-transfer sibling is OPEN; it settles on the non-card charges first,
 posts its `BANK_REFUND` line on the card payment, which no refund row will
 post, and queues one Xero refund note of its own, keyed on the task. Where the
-payment's ledger has nothing left to allocate, COMPLETED is refused with a
-message naming DISMISSED, which the treasurer then uses. See
+payment's ledger has nothing left to allocate, COMPLETED is refused. For the
+part to check the message names DISMISSED, once the officer has confirmed the
+card refund reached the member; for the bank-transfer part it says to leave it
+open and take money still owed to the treasurer, because its DISMISSED is
+refused (#4516, below). See
 [`INV-PAY-129`](invariants/payment-and-settlement.md#inv-pay-129).
 A capacity race whose card refund plan is short of the charge raises the
 part to check alone, OPEN inside the void's claim and keyed on the race's
@@ -2736,9 +2768,59 @@ intent (#4154); its COMPLETED is refused while any of the race's own card
 refund rows is not SUCCEEDED, and settles only on that intent's own charge.
 Where that charge holds too little, the completion first lowers its refunded
 total to its refund rows when every guard holds (the owner's guarded
-recalculation), else is refused naming the guard (DISMISSED and a Xero note by
-hand). See
+recalculation), else is refused naming the guard (DISMISSED once the card
+refund is confirmed, or the treasurer for money still owed). See
 [`INV-PAY-135`](invariants/payment-and-settlement.md#inv-pay-135).
+
+**#4516 (owner decisions, 14 and 15 Nov 2026): for now a real bank or cash
+hand-back is never dismissed.** A task the member-money journal records as a
+hand-back debt, other than a card shortfall's part to check
+(`refusesJournalHandBackDismissal`: a cash cancellation's, a card shortfall's
+bank part, an edit's, an approved appeal's, an organisation's late cash),
+refuses OPEN -> DISMISSED with a 409 (bar a disputed card payment's, below),
+under `lock(1)` and the booking row, before any claim: the task stays OPEN, its
+refund debt (R05) stays open, and nothing is written. It closes only by
+COMPLETED. Wherever this section says such a task is dismissed, that is a row
+dismissed before this change (or by the old colour during a deploy); reopen
+still puts those back OPEN. A four-way dismissal that records why replaces the
+refusal in a later change. Every other kind keeps its dismissal.
+
+**A card shortfall's part to check keeps its dismissal** (a capacity race's
+too), for an officer who has confirmed the card refund reached the member. **So
+does a disputed card payment's hand-back, a cancellation's (#5061) or a
+dispute-held edit's (#5151), once the LOST disputes on its own payment cover its
+amount** (owner decisions, 15 and 18 Nov 2026; lost cents go once across the
+payment's hand-backs, oldest open task first, `INV-PAY-157`; a
+group settlement's dispute filed on the organiser's booking never counts): the cardholder already
+has that money back through their bank. While a dispute is open, if the lost
+cents cover less, or if it was won or closed with no funds taken, OPEN ->
+DISMISSED is refused with a 409 saying which, writing nothing. Either dismissal
+takes `lock(1)`, the booking row and the Payment row before its claim (a
+disputed hand-back re-reads its disputes only then), and after a won claim
+withdraws its R05 exactly, so raising and
+dismissing it leaves the journal as it was. The queue asks the same rule
+(`journalHandBackDismissal`) with the same dispute read.
+
+**OPEN -> OPEN, reduced by a dispute lost for part of it** (owner decision,
+15 Nov 2026, #4516). A disputed card payment's hand-back whose lost disputes,
+on its own payment, cover a positive amount less than what is still owed can
+be reduced by exactly the lost cents not yet applied (applied = raised less
+still owed). Same locks and re-read as the dismissal, then a status- and
+amount-guarded claim that writes the smaller `amountCents` (`raisedAmountCents`
+keeps the original); the journal then withdraws exactly that part of the R05,
+paying it, and an audit row records was, reduced by, still owed and the lost
+disputes counted. The confirmed amount and reduction must still be the
+server's, so a second click, a replay or a dispute recorded since writes
+nothing. Every reader of the task's amount (Refunds owed, the netting, Mark
+paid, its Xero note) reads the reduced figure. Once the lost disputes cover
+the rest, OPEN -> DISMISSED withdraws the debt's open rest. OPEN -> COMPLETED
+is refused while lost cents are unapplied (reduce first, or, beside a dispute
+still open on the same payment, wait for it) or cover it all (dismiss
+instead), read under `lock(1)` and the booking row, so the lost part
+is never paid twice. A legacy row with no `raisedAmountCents` records its
+original with the first reduction. A Stripe late win after a reduction leaves
+it reduced: a stated limit, with #5197. Reopened, it has no live R05, and Mark paid then
+posts its R14 unapplied, as for a task raised before M4d.
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row
@@ -4013,15 +4095,37 @@ on `FAILED` alone. An installation whose role nobody has declared, and a live
 installation that has declared a local capture mailbox, both land on `FAILED`
 instead, carrying a `deliveryBlockReason`: those are configuration faults, so they
 stay retryable and go out by themselves once the deployment is corrected —
-PROVIDED the row still holds a rendered body. It does not for the twenty-six
+PROVIDED the row still holds a rendered body. It does not for the
 `SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose logged recipient is
 redacted, because a live sign-in link, a door code or a payment link must not sit
 at rest; and the retry cron selects only rows that still hold one. Such a row is
 therefore written AT the retry ceiling (`attempts = 3`, the one constant
 `EMAIL_RETRY_MAX_ATTEMPTS` in `src/lib/email/retry-selection.ts`), which drops it
-out of the retry query and into the operator's email-failure review queue for a
-manual re-send, and its `errorMessage` says exactly that rather than promising
-it will self-heal.
+out of the retry query and into the operator's email-failure review queue, and
+its `errorMessage` says so rather than promising it will self-heal. The queue cannot resend it: it says why
+on the row and links its booking or member, and the officer sends a fresh
+message from there (or from Token Email Recovery for its three templates). For
+the three booking emails below whose booking still exists, the row links
+straight to that booking's fresh-copy section instead.
+
+An exhausted `FAILED` row that still holds a body can be handed back to the
+cron with **Try again** (#4963): one status-guarded `updateMany` (id, `FAILED`,
+`attempts >= 3`, `RETAINS_REPLAYABLE_EMAIL_BODY`, and not a booking-scoped
+template with no `bookingId`, which the cron retires on sight with its body kept,
+#2258) sets `attempts` to one below the ceiling (2) and dates `lastAttemptAt` past the backoff, then
+writes an `email.failure.requeued` audit row. A row naming a booking that has
+since been deleted is refused before that write (`EmailLog.bookingId` has no
+foreign key, and the cron would read the missing booking as nothing suppressed
+and send). A press that matches nothing (another press won, the cron sent it, or
+no requeueable body is left) is refused with 409 and writes no audit row. The
+route never sends: the cron's next run selects the row and re-runs its suppression, No-emails
+and authority checks before its guarded claim. `deliveryBlockReason` is left for
+that run's terminal write to clear. Archive and Try again are both audit rows,
+and the newer of the two decides whether the row shows as archived; an archive
+older than the row's `lastAttemptAt` (one that raced a Try again and lost to the
+cron's next failure) does not count. Pinned by
+`email-failure-requeue.test.ts` and, against a real database,
+`email-failure-requeue.realdb.test.ts`.
 A copy that has explicitly declared a capture mailbox transmits into it normally
 and its rows are ordinary `SENT`.
 
@@ -4035,11 +4139,13 @@ revoked authority or stale mailbox -> detail CTA removed, bearer/page action pre
 unknown legacy authority -> retired for manual review
 application rollback -> old worker cannot select quarantined new-version booking body
 exhausted or suppressed -> admin-visible failure/suppression
+exhausted + body retained -> operator requeue (Try again) -> retryable failed
 ```
 
 An exhausted failure of `booking-confirmed`, `pre-arrival-reminder` or
-`split-guest-payment-link` is never replayed. An officer with bookings edit access
-sends a fresh copy from the booking page instead (ALP-588): rendered again from
+`split-guest-payment-link` is never replayed, so the queue offers no **Try
+again** for it. An officer with bookings edit access sends a fresh copy from the
+booking page instead (ALP-588), which the failure's row links to: rendered again from
 the booking's current owner and data through its normal sender and `sendEmail`,
 with the payment link re-issued by the existing revoke-and-remint workflow. Only
 an outcome of `sent` archives that booking's earlier exhausted failures of the
@@ -4246,6 +4352,13 @@ supplementary invoice WAITING_PAYMENT on a card ask's intent (INV-PAY-104;
      row on the anchor it holds; while a supersede's cancel of that intent is still in
      flight the reaper keeps it, and the cancel's last step moves it, #4665)
 inbound webhook/event recorded -> reconciliation worker processes event
+  PROCESSING left by a dead worker past the webhook lease -> RECEIVED
+  (INV-INT-039): the worker's takeover before it selects a batch, or a
+  Replay, in one updateMany guarded on status and the stale updatedAt (one
+  winner, a loser skips or answers 409); the winner deletes its xero dedup
+  row in the same transaction, so the reprocess applies the event; after
+  three dead attempts on its RUNNING WEBHOOK_RECONCILE row the worker leaves
+  it PROCESSING for Replay
   its WEBHOOK_RECONCILE row is this attempt's own (INV-INT-038): an INBOUND
   row left RUNNING past the stale threshold by a dead attempt is re-claimed
   in place under a fresh startedAt (one guarded write, one winner; the dead
@@ -5143,6 +5256,39 @@ claim (lock(1) + lodge lock, PENDING -> CONFIRMED, Payment upsert)
 The states and the definite/ambiguous partition are in "Payment Lifecycle"
 above and `INV-PAY-055`. To verify: `saved-card-charge-attempt.test.ts` and
 `cron-confirm-pending.test.ts` ("#3267").
+
+### Stale saved-card claim recovery (#4993)
+
+A claim whose process stopped between the Stripe call and its release, or
+whose release failed twice, would otherwise stay CONFIRMED and unpaid, holding
+its beds, with no writer left to hand it back. Each `confirmPendingBookings`
+run therefore begins with `recoverStaleSavedCardClaims`:
+
+```text
+CONFIRMED + savedCardClaimAt older than 30 min + Stripe Payment PENDING or FAILED
+  -> lock(1) + lodge lock, re-read
+     no marker / young marker / not CONFIRMED / not Stripe
+       / Payment PROCESSING or settled / any captured row -> left alone
+     otherwise -> PENDING, hold = marker time, beds reconciled,
+                  marker cleared (guarded on the marker read)
+                  -> critical `booking.saved_card_claim_recovered` audit row
+  -> the same run's pending pass selects it (its hold has elapsed)
+     -> beginSavedCardChargeAttempt replays the unresolved row by its own key,
+        or begins a fresh row after a definite failure (`INV-PAY-089`)
+```
+
+A FAILED payment is a decline whose release then failed: Stripe's
+`payment_intent.payment_failed` reconciles the aggregate from the FAILED row.
+PROCESSING is left for its webhook, which ends it SUCCEEDED (the PAID settle
+clears the marker) or FAILED. Recovery makes no Stripe call and writes no attempt row. A CONFIRMED booking
+without a marker — an Internet Banking hold, a group booking, a claim made
+before the column existed — is never touched. A recovery that cannot commit is
+counted among the run's failed ids and retried next run. Racing the webhook's
+adoption of a capture, either order is safe: recovery sees the captured row,
+or it hands the booking back first and the capture settles it from PENDING.
+To verify: `saved-card-charge-claim.test.ts`, `cron-confirm-pending.test.ts`
+("#4993"), `saved-card-claim-marker-census.test.ts` and
+`saved-card-claim-recovery.realdb.test.ts`.
 
 ## Two-Factor Login Lifecycle
 

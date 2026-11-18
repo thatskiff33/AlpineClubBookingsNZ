@@ -425,7 +425,17 @@ export async function resolveModificationDocumentLineItems(args: {
   taxRendering: XeroTaxRendering;
 },
   format: ClubFormat,
-): Promise<{ lineItems: LineItem[] | null; record: ModificationDocumentLinesRecord }> {
+): Promise<{
+  lineItems: LineItem[] | null;
+  record: ModificationDocumentLinesRecord;
+  /**
+   * The tasks whose settled review shares these lines itemise
+   * (`selection.shares`, the set rendered), empty when the single line is
+   * sent. The export manifest covers exactly these (#4525, ALP-436); not
+   * stored on the operation, so its payload is unchanged.
+   */
+  itemisedShareTaskIds: string[];
+}> {
   try {
     const row =
       args.row !== undefined
@@ -457,6 +467,7 @@ export async function resolveModificationDocumentLineItems(args: {
     if (selection.source !== "STORED") {
       return {
         lineItems: null,
+        itemisedShareTaskIds: [],
         record: {
           source: selection.source,
           reason: selection.reason,
@@ -482,6 +493,7 @@ export async function resolveModificationDocumentLineItems(args: {
     }, format);
     return {
       lineItems,
+      itemisedShareTaskIds: selection.shares.map((share) => share.taskId),
       record: {
         source: "STORED",
         reason: null,
@@ -499,6 +511,7 @@ export async function resolveModificationDocumentLineItems(args: {
     );
     return {
       lineItems: null,
+      itemisedShareTaskIds: [],
       record: {
         source: "FALLBACK_SINGLE_LINE",
         reason: "NARRATION_UNAVAILABLE",

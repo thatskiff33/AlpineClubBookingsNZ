@@ -101,7 +101,7 @@ import {
 } from "@/lib/xero-primary-invoice-fee-gap";
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
-import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest } from "@/lib/member-money/doors";
+import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest, recordPrimaryInvoiceUpdateManifest } from "@/lib/member-money/doors";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -1537,6 +1537,15 @@ export async function updateXeroBookingInvoiceForBooking(
           role: "PRIMARY_INVOICE",
         },
       ],
+    });
+    // #4525 (ALP-436): what the update sent, beside the primary manifest. Never throws.
+    await recordPrimaryInvoiceUpdateManifest({
+      bookingId,
+      legacyKey: invoiceUpdateIdempotencyKey,
+      providerInvoiceId: invoiceId,
+      lines: updatedInvoice.lineItems ?? [],
+      lineAmountTypes: updatedInvoice.lineAmountTypes!,
+      providerTotal: updated?.total ?? currentInvoice.total,
     });
 
     return updated?.invoiceID ?? invoiceId;

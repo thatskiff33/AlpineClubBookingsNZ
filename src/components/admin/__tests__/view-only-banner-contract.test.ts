@@ -19,6 +19,7 @@ import { describe, expect, it, vi } from "vitest";
 // shared scanner matches backticks rather than lexing tokens, so it does not have
 // that failure; measured on that exact file it agrees with the TypeScript parser
 // on every count this test makes (#3132).
+import { liveDocSurfaces } from "@/lib/__tests__/support/live-doc-surfaces";
 import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /*
@@ -278,420 +279,93 @@ const NOTICE = "AdminViewOnlyNotice";
  * ------------------------------------------------------------------------ */
 
 /*
-  The published census, in ONE place.
+  NO TOTALS (#5211). This block used to pin the census's totals (call sites,
+  opt-outs by rule, banner components, the exceptions and their buckets), and
+  three documents and the `ViewOnlyActionButton` JSDoc quoted them, held word
+  for word by a test. Every pull request that added a gated control or a banner
+  moved them, so any two such pull requests edited the same lines in the same
+  files and conflicted. The history of those figures is in git.
 
-  Three documents and one JSDoc block quote these numbers as fact, and they have
-  drifted twice — once by being counted from raw text (a `describeReason={false}`
-  inside a comment counted as a call site), and once by a doc being updated while
-  a sibling doc was not. The census test below measures them; the
-  "figures the docs publish" test below reads those sources and fails
-  when any of them no longer states the measured value. So a rollout change
-  cannot land with the prose out of step: both tests fail, and the fix is always
-  to re-measure and update every place together — never to loosen an assertion.
+  What replaced them classifies every call site instead of counting them:
+
+    - an OPT-OUT (`describeReason={false}` or the vouch expression) is checked
+      site by site by the coverage tests below: a banner in its own file, or a
+      verified vouching parent. Nothing to list: the rule IS the review.
+    - a control that KEEPS its own reason is a reviewed choice (a dialog, a
+      leaf, a narrower permission than the banner above it), so it is listed
+      per file, with how many it holds, in `KEEPS_OWN_REASON`.
+
+  One entry per line, sorted by path, with nothing else on the line, so two
+  pull requests adding different files touch different lines.
 */
-// #4432 adds the shared sync control and staged webhook threshold section.
-const FIGURES = {
-  /**
-   * Every `<ViewOnlyActionButton>` render site in the admin tree.
-   *
-   * 324 -> 327 (local database backups): the Local backup panel's Edit, Save and
-   * Manual Backup buttons. The panel is its own file because the backups page's
-   * shell is already the largest in that area, which is also why all three are
-   * VOUCHED rather than static — see `vouchedOptOuts`.
-   *
-   * 327 -> 338 (#2780 merged with main): the maintenance-report admin surfaces
-   * add eleven gated controls. Main's three and this branch's eleven are
-   * DISJOINT, so the merged figure is 338 — MEASURED by re-running this census
-   * on the merged tree, never by adding one branch's delta to the other's total.
-   *
-   * 338 -> 342 (#2998): the club message board's moderation queue adds four
-   * gated controls — Hide/Show, Edit text, Save text and Remove. MEASURED by
-   * re-running this census, not by adding four to the previous figure.
-   *
-   * 342 -> 345 (#2999): the board's Retention section adds Edit, Save and Run
-   * cleanup now. Cancel is a plain Button — it reverts local state and writes
-   * nothing, so gating it would refuse a view-only admin the way OUT of a form
-   * they could not have changed.
-   *
-   * 345 -> 346 (#3214): the booking page's "Record what these nights sold for"
-   * control. One per unreadable guest strand at RUN time, but one render site in
-   * the source, which is what this census counts. MEASURED by re-running it.
-   *
-   * 346 -> 347 (#2698): the hut-leaders page's Accept control, which narrows an
-   * overlapping whole-lodge hold in the same action that writes the custodian
-   * bed. Decline is a plain Button — it sends nothing and writes nothing, so
-   * gating it would refuse a view-only admin the way out of a prompt they could
-   * not have acted on, exactly as #2999's Cancel reasons. MEASURED by re-running
-   * this census.
-   * 346 -> 349 (#3354): the shared "Currency for AI spend" card
-   * (`ai-spend-currency-card.tsx`) adds Set/Change rate, Save rate and Cancel.
-   * One component rendered on two pages is ONE file to this census. MEASURED by
-   * re-running it.
-   *
-   * 347/349 -> 351 (sync of `main` into `epic/2725-mad`): both lanes' new
-   * call sites are disjoint files, so neither classification moved. MEASURED on
-   * the MERGED tree by re-running this census, never by adding the deltas.
-   *
-   * 351 -> 353 (#2939): the missing-Xero-contact panel's two controls — run the
-   * dry run, and create the next batch. MEASURED by re-running this census.
-   *
-   * 353 -> 354 (#3058, arriving with the epic merge): the erased-member Xero
-   * contact panel's "Check these in Xero". Its Refresh stays a plain Button.
-   *
-   * 354 -> 359 (#2940): the Video meetings setup screen. Three on the settings
-   * section (Edit, Save, Cancel — Cancel is gated here rather than left a plain
-   * Button because it is the staged-edit hook's Cancel, mounted only while the
-   * section is already in edit mode, which a view-only admin can never reach)
-   * and two in the secrets section, which renders one Save and one Clear per
-   * secret from a single pair of render sites. This census counts render sites,
-   * not the three rows they produce. MEASURED by re-running it.
-   *
-   * 359 -> 361 (#2942, on the eighth sync): the member lodge roster's per-lodge name-detail card
-   * (`lodge-roster-settings-card.tsx`) adds Edit and Save. Cancel is a plain
-   * Button, as it is on the Retention section: it reverts local state and
-   * writes nothing, so gating it would refuse a view-only admin the way out of
-   * a form they could not have changed. MEASURED by re-running this census.
-   *
-   * 361 -> 362 (#3498): the finance queue's reopen card adds one - the **Put
-   * back on the queue** control on a dismissed money task. It carries the
-   * DEFAULT `describeReason`, like every other control on that surface: the
-   * finance queue renders no `AdminViewOnlySectionBanner` at all, so each of its
-   * buttons explains its own view-only state.
-   *
-   * 362 -> 364 (#3596): the club currency and locale page's Change and Save,
-   * now that any admin may view it and only a Full Admin may change it. Cancel
-   * is a plain Button, as on the Retention section, and is only reachable once
-   * Change has opened the editor. MEASURED by re-running this census.
-   *
-   * 364 -> 365 (#2941): Admin -> Member Fields moved to the staged pattern, so
-   * its Save gained an Edit beside it. Cancel is a plain Button. MEASURED.
-   * 365 -> 366 (#3408): the Membership Types editor adds Restore expected
-   * booking behavior for a drifted key-resolved built-in. MEASURED.
-   * 366 -> 367 (#3462): the Xero operations panel's per-row Mark failed on a
-   * stale running operation. MEASURED.
-   *
-   * 367 -> 368 (#3407): the lodge setup wizard's new Capacity step adds its
-   * Save and continue. Back and Skip are plain Buttons. MEASURED.
-   *
-   * 368 -> 369 (#3817): the hut-leaders table's per-row Custodian (lives on
-   * site) toggle. MEASURED.
-   *
-   * 369 -> 371 (#3416): the School Teacher Hut-Leader Assignments card adds
-   * Edit and Save. Cancel remains a plain Button because it only discards the
-   * staged choice. MEASURED by re-running this census on the composed tree.
-   *
-   * 362 -> 364 (#50): the Other lodges panel's amenities editor adds two —
-   * **Add amenity** and the per-row **Remove amenity**. Both pass
-   * `describeReason={!ancestorRendersViewOnlyBanner}` like the panel's existing
-   * four, because the Lodges page renders the one banner and vouches for the
-   * panel at its render site. MEASURED by re-running this census.
-   *
-   * 364 -> 362 (#52): the same panel loses Add other lodge, the per-row Edit
-   * and the per-row Delete (three vouched opt-outs) and gains ONE per-row
-   * Edit my Lodge, vouched the same way. Net two fewer. MEASURED by re-running
-   * this census.
-   *
-   * 370 -> 372 (#62): the Central lodge card's Edit and Save, both
-   * `describeReason={false}` under the card's own section banner. MEASURED by
-   * re-running this census.
-   *
-   * 372 -> 373 (#58): the Other lodges panel's Hide, render-site vouched by
-   * the Lodges page like the panel's Edit my Lodge. MEASURED by re-running.
-   * 370 -> 371 (#3750): the change-request card's Confirm overbooking and
-   * apply, shown when an executed finished-stay approval needs the officer to
-   * confirm an over-capacity past night. MEASURED.
-   *
-   * 371 -> 372 (#3372): the stuck-states page's "Paid another way" close on a
-   * card refund Stripe gave up on, and 372 -> 373 (owner 9 Oct 2026) the same
-   * page's "Resolved" on a card refund paid back twice. Each dialog's confirm
-   * is a plain Button, reachable only once its gated row button opened it.
-   * MEASURED by re-running this census.
-   *
-   * 371/371 -> 372 (sync of `main` f1ecdb5ff into epic #3789): #3817's Custodian
-   * toggle and #3750's overbooking confirm are disjoint files. MEASURED on the
-   * composed tree by re-running this census, never by adding the deltas.
-   *
-   * 372/373 -> 374 (sync of `main` 0ff7e6d46 into epic #3789, #3821): the
-   * epic's sites and #3372's two stuck-states confirms are disjoint files.
-   * MEASURED on the composed tree by re-running this census.
-   *
-   * 374 -> 375 (#3976 on `main` after #3821): Club identity's new Edit. MEASURED by re-running this census.
-   * 375 -> 376 (#4030 review S6, on top of main's #3976): the
-   * change-request panel's officer guest entry button, rendered through the
-   * panel's own view-only button. MEASURED on the composed tree after merging main at aaedc5481.
-   * 376 -> 377 (#4098): the subscription charge queue's "Close: already paid".
-   * MEASURED by re-running this census.
-   * 377 -> 378 (#4162): the stuck-states page's "Record the answer" on a voided
-   * bank refund note. MEASURED by re-running this census.
-   */
-  // 15 Nov 2026, #4971: 391 -> 396 after merging main (#4618, #5081). Setup gates its five support write controls. MEASURED by running this census.
-  // 396 -> 401 (#4496): the Subscription Categories page's five controls, under its own banner. MEASURED by running this census on the merged tree.
-  callSites: 405, // 402 -> 405 (#4632): the GST / tax treatment card's Schedule a change, Save tax change and Cancel this change, under its own banner. MEASURED. // 401 -> 402 (ALP-588): the booking fresh-copy panel's per-email "Send fresh …" button, under that panel's own banner. MEASURED. // 390 -> 391 (#4618): the officer two-factor card's Edit/Save under its own banner. MEASURED. // 388 -> 390 (#4918): Where members' data is held adds Edit and Save under its own banner. MEASURED. // 386 -> 388 (#4368): Stuck States' "Try the card again" and "Nothing left owed", under the dead card refund panel's own banner. MEASURED. // #4457 adds privacy retention Edit/Save to #4555’s Xero actions. 378/373 -> 381 (central-server lane on thatskiff33/main, 20 Oct 2026): #62's two and #58's one are disjoint from upstream's. MEASURED by re-running this census on the merged tree.
-  /**
-   * Those that hand their explanation to a banner, by either rule.
-   *
-   * 285 -> 289 (#2998): all four of the moderation queue's controls opt out.
-   * 289 -> 292 (#2999): so do the Retention section's three.
-   * 292 -> 293 (#3214): so does the night-price control.
-   * 293 -> 294 (#2698): so does the custodian/whole-lodge-hold amendment
-   * control, whose Accept sits under the hut-leaders page's own banner.
-   * 293 -> 296 (#3354): so do the AI spend currency card's three.
-   * 294/296 -> 298 (sync of `main` into `epic/2725-mad`): both lanes' opt-outs
-   * are disjoint. MEASURED on the MERGED tree, never added together.
-   * 298 -> 300 (#2939): both of the missing-contact panel's controls opt out
-   * under the banner that panel heads itself with.
-   * 300 -> 301 (#3058, arriving with the epic merge): the erased-member panel's
-   * one control opts out under its section banner.
-   *
-   * 301 -> 306 (#2940): all five of the Video meetings screen's controls opt
-   * out — each of its two sections heads itself with its own banner.
-   *
-   * 306 -> 308 (#2942, on the eighth sync): so do the roster name-detail card's two.
-   *
-   * 308 -> 310 (#3596): so do the club currency and locale page's two.
-   *
-   * 310 -> 311 (#2941): so does Member Fields' new Edit.
-   *
-   * 311 -> 312 (#3462): so does the Xero operations panel's Mark failed.
-   * 312 -> 313 (#3407): so does the setup wizard's Capacity Save and continue.
-   * 313 -> 314 (#3817): so does the hut-leaders row Custodian toggle.
-   * 314 -> 316 (#3416): the new school-teacher policy card heads itself under
-   * the existing section banner, so its Edit and Save opt out.
-   *
-   * 308 -> 310 (#50): so do the Other lodges panel's two amenity controls,
-   * vouched rather than static (the banner is in the Lodges page, not the panel).
-   *
-   * 310 -> 308 (#52): three of the panel's vouched opt-outs go (Add, Edit,
-   * Delete) and one arrives (Edit my Lodge).
-   *
-   * 315 -> 316 (#3750): so does the change-request card's overbooking confirm.
-   * 316 -> 318 (#3372): the dead card refunds panel's "Paid another way" and
-   * the paid-twice list's "Resolved" each opt out under their own banner.
-   *
-   * 316/316 -> 317 (sync of `main` f1ecdb5ff into epic #3789): the two sides'
-   * new opt-outs are disjoint. MEASURED on the composed tree.
-   *
-   * 317/318 -> 319 (sync of `main` 0ff7e6d46 into epic #3789, #3821): #3372's
-   * two opt-outs are disjoint from the epic's. MEASURED on the composed tree.
-   *
-   * 319 -> 320 (#3976 on `main` after #3821): so does Club identity's Edit.
-   * 320 -> 321 (#4030 review S6, on top of main's #3976): the officer
-   * guest entry's button, under the change-request panel's banner. MEASURED
-   * on the composed tree.
-   * 321 -> 322 (#4098): "Close: already paid", under the billing panel's banner.
-   * 322 -> 323 (#4162): "Record the answer", under the voided bank refund notes panel's banner.
-   */
-  // 315 -> 317 (#62): the Central lodge card's two, static opt-outs (below).
-  // 317 -> 318 (#58): the Other lodges panel's Hide, a vouched opt-out.
-  // 15 Nov 2026, #4971: 336 -> 341 after merging main (#4618, #5081). The five Setup controls use their support section banner. MEASURED by running this census.
-  // 341 -> 346 (#4496): the same five, static opt-outs. MEASURED.
-  optOuts: 350, // 347 -> 350 (#4632): the tax card's three, static opt-outs. MEASURED. // 346 -> 347 (ALP-588): the booking fresh-copy panel's per-email "Send fresh …" button, under that panel's own banner. MEASURED. // 335 -> 336 (#4618): the officer two-factor card's own banner opt-out. MEASURED. // 333 -> 335 (#4918): the same two, static opt-outs. MEASURED. // 331 -> 333 (#4368): the same two, static opt-outs. MEASURED. // #4457 adds two section-banner opt-outs. 323/318 -> 326 (central-server lane, 20 Oct 2026). MEASURED.
-  /**
-   * `describeReason={false}` — needs a banner in the SAME file.
-   *
-   * 251 -> 255 (#2998): the queue's banner and its four buttons are in one
-   * file, so they are static rather than vouched.
-   * 255 -> 258 (#2999): the Retention section likewise heads its own file with
-   * its own banner, so its three are static too.
-   * 258 -> 259 (#3214): the night-price section's banner and its button are in
-   * one file, so it is static rather than vouched — the button sits in a child
-   * COMPONENT, but the static rule is about the FILE.
-   * 259 -> 262 (#3354): the AI spend currency card heads itself with its own
-   * banner, so its three controls are static.
-   * 259 -> 260 (#2698, carried in from `epic/2725-mad`, which moved the literal
-   * without a bump line): the custodian/whole-lodge-hold amendment Accept sits
-   * in the same file as the hut-leaders page's own banner, so it is static.
-   * 260/262 -> 264 (sync of `main` into `epic/2725-mad`): the two are in
-   * different files and neither classification moved. MEASURED on the MERGED
-   * tree by re-running this census, never by adding the deltas together.
-   * 264 -> 266 (#2939): the missing-contact panel's banner and both its
-   * controls are in one file, so both are static rather than vouched.
-   *
-   * Both controls are ALSO gated on whether Xero is connected, which the
-   * finance-permission banner says nothing about. That second axis is carried
-   * by a visible paragraph in the same section rather than by a per-button
-   * reason, deliberately: a kept reason lands in a `title` that never fires on
-   * a `disabled:pointer-events-none` button and an sr-only line on a control
-   * out of the tab order, which is the weakness the banner exists to fix. So
-   * this is an opt-out with the banner in its own file, not an exception.
-   * 266 -> 267 (#3058, arriving with the epic merge): the erased-member panel's
-   * control passes the literal.
-   *
-   * 267 -> 272 (#2940): the Video meetings screen's two banners and all five of
-   * its controls are in one file, so every one of them is static rather than
-   * vouched.
-   *
-   * Each also passes `readOnlyReason={ADMIN_FULL_ADMIN_ONLY_ACTION_REASON}`,
-   * which is NOT an exception: the reason is what a Full-Admin-only control
-   * says when it has no banner, and here both banners already state the
-   * Full Admin requirement themselves. It is carried so a future render of
-   * these controls outside this file still says the narrower rule rather than
-   * the area one.
-   *
-   * 272 -> 274 (#2942, on the eighth sync): the roster name-detail card likewise heads its own
-   * file with its own banner, so its two are static rather than vouched.
-   *
-   * 274 -> 276 (#3596): the club currency and locale panel heads its own file
-   * with its own banner, so its Change and Save are static. Like the Video
-   * meetings pair above, both also pass `ADMIN_FULL_ADMIN_ONLY_ACTION_REASON`,
-   * and for the same reason: the banner already names Full Admin, and a future
-   * render outside this file would still state the narrower rule.
-   *
-   * 276 -> 277 (#2941): Member Fields' Edit sits in the same file as the page's
-   * own banner, beside the Save that was already static.
-   *
-   * 277 -> 278 (#3462): the Xero operations panel's Mark failed sits in the same
-   * file as that panel's own banner, beside its Retry and Resolve.
-   * 278 -> 279 (#3407): the setup wizard's Capacity Save and continue sits in
-   * the same file as the wizard's own banner, beside its sibling steps' static
-   * opt-outs.
-   * 279 -> 280 (#3817): the hut-leaders row Custodian toggle sits in the same
-   * file as the page's own banner, beside Release bed and Change bed.
-   *
-   * 280 -> 282 (#3416): the school-teacher card's Edit and Save sit in the
-   * same file as its section banner.
-   *
-   * 281 -> 283 (#62): the Central lodge card's Edit and Save sit in the same
-   * file as its section banner.
-   * 281 -> 282 (#3750): the overbooking confirm is rendered in the change-
-   * request panel itself, beside that panel's own banner.
-   * 282 -> 284 (#3372): the dead card refunds panel's "Paid another way" and
-   * the paid-twice list's "Resolved" sit in the same file as their banners.
-   *
-   * 280/282 -> 281 (sync of `main` f1ecdb5ff into epic #3789): the epic
-   * measured 280 (its bump lines above add to 282, but the census, not the
-   * lines, is the authority) and `main`'s #3750 adds one. MEASURED on the
-   * composed tree by re-running this census, never by adding the deltas.
-   *
-   * 281/284 -> 283 (sync of `main` 0ff7e6d46 into epic #3789, #3821): `main`'s
-   * #3372 adds two to the epic's 281. MEASURED on the composed tree by
-   * re-running this census, never by adding the deltas.
-   *
-   * 283 -> 284 (#3976): Club identity's Edit opts out under the section's own banner.
-   * 284 -> 285 (#4030 review S6, on top of main's #3976): the officer
-   * guest entry's button is defined in the change-request panel, beside that
-   * panel's own banner. MEASURED on the composed tree after merging main at aaedc5481.
-   * 285 -> 286 (#4098): "Close: already paid" sits in the same file as the
-   * subscription billing panel's own banner. MEASURED by re-running this census.
-   * 286 -> 287 (#4162): "Record the answer" sits beside the voided bank refund
-   * notes panel's own banner. MEASURED by re-running this census.
-   */
-  // 15 Nov 2026, #4971: 296 -> 301 after merging main (#4618, #5081). The Setup controls and support banner share one file. MEASURED by running this census.
-  // 301 -> 306 (#4496): the same five, beside the page's own banner. MEASURED.
-  staticOptOuts: 310, // 307 -> 310 (#4632): the GST / tax treatment card's three buttons, under its own banner. MEASURED. // 306 -> 307 (ALP-588): the booking fresh-copy panel's per-email "Send fresh …" button, under that panel's own banner. MEASURED. // 298 -> 296 (#5081): the Lodge properties card's Edit and (De)activate moved to their own file and are render-site vouched by the Lodges page. MEASURED. // 297 -> 298 (#4618): the officer two-factor card, under its own banner. MEASURED. // 295 -> 297 (#4918): Where members' data is held's Edit and Save, under its own banner. MEASURED. // 293 -> 295 (#4368): the dead card refund panel's "Try the card again" and "Nothing left owed", under its own banner. MEASURED. // 294 -> 293 (#4467): the committee role form's Save Role moved to its own file and is render-site vouched by the committee page. MEASURED. // #4457 adds two local-banner opt-outs. 287/283 -> 289 (central-server lane, 20 Oct 2026): the Central lodge card's two. MEASURED.
-  /**
-   * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
-   *
-   * 31 -> 34 (local database backups). The three new buttons live in a CHILD
-   * file while `BackupsClient` renders the one banner for the page, which is
-   * exactly the shape #2168 added the vouch for. They were written as static
-   * `describeReason={false}` first, copying the sibling S3 panel where the
-   * banner IS in the same file — and this contract caught it: an opt-out with no
-   * covering banner in its own file deletes the explanation outright for anyone
-   * who later renders the card somewhere else.
-   *
-   * 34 -> 36 (#50): the Other lodges panel's Add amenity and Remove amenity
-   * controls take the same vouch as the panel's Add/Save/Edit/Delete — the
-   * Lodges page renders the lodge-area banner and passes
-   * `ancestorRendersViewOnlyBanner` at the panel's render site. Render-site
-   * vouched 29 -> 31 with them; the shell channel does not move.
-   *
-   * 36 -> 34 (#52): the Other lodges panel's Add/Edit/Delete go and Edit my
-   * Lodge arrives, all render-site vouched by the Lodges page; 31 -> 29 there.
-   *
-   * 34 -> 35 (#58): the panel's Hide, render-site vouched; 29 -> 30 there.
-   */
-  /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  vouchedOptOuts: 40, // 38 -> 40 (#5081): the Lodge properties card's Edit and (De)activate, vouched by the Lodges page. MEASURED. // 37 -> 38 (#4467): the committee role form's Save Role. MEASURED. // 36/35 -> 37 (central-server lane, 20 Oct 2026): the Other lodges panel's Hide. MEASURED.
-  /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  renderSiteVouchedOptOuts: 35, // 33 -> 35 (#5081): the Lodge properties card's Edit and (De)activate, vouched by the Lodges page. MEASURED. // 32 -> 33 (#4467): the committee role form's Save Role, vouched by the committee page. MEASURED. // 31/30 -> 32 (central-server lane, 20 Oct 2026): the Other lodges panel's Hide, render-site vouched by the Lodges page. MEASURED.
-  /** …of the vouched: proved through the wizard shell's channel (#2324). */
-  shellVouchedOptOuts: 5,
-  /**
-   * Controls that KEEP the per-button reason, and the files holding them.
-   *
-   * 53 -> 54 in 29 -> 30 files (#3498): the finance queue's reopen card, which
-   * is a new file and heads no banner - the same shape as the settle card it
-    * sits beside, where each button explains its own view-only state.
-    * 54 -> 55 (#3408): the Membership Types repair button keeps its own reason.
-   */
-   exceptions: 55,
-  exceptionFiles: 30,
-  /**
-   * The remainder bucket: neither a member detail card nor dialog-only.
-   *
-   * 39 -> 40 in 23 -> 24 files (#3498): the reopen card's own control.
-   */
-  leafControls: 40,
-  leafFiles: 24,
-  /**
-   * Components that render an `AdminViewOnlySectionBanner`.
-   *
-   * 85 -> 89 (#2780 merged with main): the four maintenance-report admin
-   * surfaces each head their section with one. Measured, not added up.
-   *
-   * 89 -> 90 (#2998): the club message board's moderation queue heads its
-   * section with one banner.
-   *
-   * 90 -> 91 (#2999): the Retention section is a SECOND section on that same
-   * page and heads itself with its own banner — one per section, not one per
-   * page.
-   *
-   * 91 -> 92 (#3214): the booking page's night-price section heads itself with
-   * one, for every strand it lists rather than one per strand — the permission
-   * is the same for all of them, so saying it per guest would say it three times
-   * on a three-guest booking.
-   *
-   * 92 -> 93 (#3354): the AI spend currency card heads itself with one banner,
-   * mounted above its loading early-return, and carries it onto both AI
-   * settings pages — one component, counted once.
-   *
-   * 93 -> 94 (#2939): the missing-Xero-contact panel heads its own section with
-   * one banner, above everything the section renders.
-   *
-   * 94 -> 95 (#3058, arriving with the epic merge): the erased-member Xero
-   * contact panel heads itself with its own banner.
-   *
-   * 95 -> 96 (#2940): the Video meetings setup screen. TWO banners, ONE
-   * component — this figure counts files that render one, and the settings
-   * section and the host sign-in section each head themselves with their own,
-   * which is the one-per-SECTION rule rather than one per page.
-   *
-   * 96 -> 97 (#2942, on the eighth sync): the roster name-detail card heads itself with one banner,
-   * mounted above its loading early-return. Its sibling on the same lodge — the
-   * lobby display card — keeps its own, because the two are separate sections
-   * on separate sub-pages and neither is ever rendered inside the other.
-   *
-   * 97 -> 98 (#3596): the club currency and locale panel, which #3563 built
-   * without one because every visitor was a Full Admin. #3596 gave it a view
-   * tier. Mounted in all three of its branches (load failed, loading, loaded).
-   *
-   * 98 -> 99 (#62): the Central lodge card, which keeps its own banner like
-   * the roster card beside it. Mounted in both of its branches.
-   * 98 -> 99 (#3372): the stuck-states page's dead card refunds panel, gated on
-   * finance inside a support page, so it states its own area's reason.
-   * 99 -> 100 (#4162): the stuck-states page's voided bank refund notes panel,
-   * finance-gated inside a support page for the same reason.
-   */
-  // 15 Nov 2026, #4971: 107 -> 108 after merging main (#4618). Setup adds its support section banner; the lodge card keeps its own. MEASURED by running this census.
-  // 108 -> 109 (#4496): the Subscription Categories page renders its own banner. MEASURED.
-  bannerComponents: 111, // 110 -> 111 (#4632): the GST / tax treatment card on the Xero page. MEASURED. // 109 -> 110 (ALP-588): the booking fresh-copy panel's section banner. MEASURED. // 106 -> 107 (#4618): the officer two-factor card on Login & Security, banner and all. MEASURED. // 105 -> 106 (#4918): the privacy hosting panel renders its own banner. MEASURED. // 104 -> 105 (#4368): "Card refunds paid back twice" moved out of the dead card refund panel into its own file, banner and all. MEASURED. // #4457 adds the retention banner alongside #4555’s Xero banners. 100/99 -> 101 (central-server lane, 20 Oct 2026): the Central lodge card. MEASURED.
-  /**
-   * Admin files that render an `AdminViewOnlyNotice` and NO
-   * `ViewOnlyActionButton` — the first of the three cases in which the older
-   * per-section Notice is deliberately retained. With no gated control there is
-   * nothing for the banner to head, so there is nothing for the rollout to
-   * convert.
-   *
-   * Added by #2720. The `ViewOnlyActionButton` JSDoc published this as a
-   * hand-counted "seven files today" and it had drifted to eight by the time
-   * anybody re-measured — the same failure the figures above already exist to
-   * prevent, in the one bullet nothing was measuring. Re-measured 17 Aug 2026
-   * and pinned here, so the number moves only when the tree does and the prose
-   * has to move with it.
-   */
-  noticeOnlyFiles: 8,
-} as const;
+
+/**
+ * Admin files with `ViewOnlyActionButton`s that KEEP the per-button reason
+ * (`describeReason` left at `true`), and how many each holds. Reviewed: each
+ * is one of the three shapes the `ViewOnlyActionButton` JSDoc describes (inside
+ * a dialog, sheet, popover or menu; a leaf with no section of its own; or gated
+ * on a narrower permission than the banner above it). A new file here, or a
+ * new control in a listed file, is that judgement made again.
+ */
+const KEEPS_OWN_REASON: Readonly<Record<string, number>> = {
+  "app/(admin)/admin/alpine-server/setup/alpine-server-setup.tsx": 2,
+  "app/(admin)/admin/booking-desk/bookings/page.tsx": 1,
+  "app/(admin)/admin/finance/subscriptions/page.tsx": 2,
+  "app/(admin)/admin/finance/xero/setup/xero-completion-steps.tsx": 1,
+  "app/(admin)/admin/finance/xero/setup/xero-wizard-steps.tsx": 1,
+  "app/(admin)/admin/google/setup/google-wizard-steps.tsx": 2,
+  "app/(admin)/admin/lodge-ops/display/setup/display-wizard-steps.tsx": 1,
+  "app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel.tsx": 2,
+  "app/(admin)/admin/membership/members/[id]/_components/member-account-access-group.tsx": 2,
+  "app/(admin)/admin/membership/members/[id]/_components/member-contact-group.tsx": 2,
+  "app/(admin)/admin/membership/members/[id]/_components/member-credit-card.tsx": 4,
+  "app/(admin)/admin/membership/members/[id]/_components/member-detail-header.tsx": 2,
+  "app/(admin)/admin/membership/membership-types/page.tsx": 4,
+  "app/(admin)/admin/stripe/setup/stripe-wizard-steps.tsx": 2,
+  "app/(admin)/admin/system/backups/setup/backup-wizard-steps.tsx": 2,
+  "app/(admin)/admin/system/issue-reports/page.tsx": 3,
+  "components/admin/admin-capacity-hold-controls.tsx": 2,
+  "components/admin/admin-exclusive-hold-controls.tsx": 2,
+  "components/admin/admin-return-to-waitlist-controls.tsx": 1,
+  "components/admin/bed-allocation-move-dialog.tsx": 1,
+  "components/admin/booking-manual-payment-controls.tsx": 2,
+  "components/admin/booking-no-emails-controls.tsx": 1,
+  "components/admin/committee-photo-display-control.tsx": 1,
+  "components/admin/family-groups/login-holder-section.tsx": 2,
+  "components/admin/family-groups/request-review-card.tsx": 2,
+  "components/admin/manual-refund-task-dispute-reduction.tsx": 1,
+  "components/admin/manual-refund-task-queue.tsx": 2,
+  "components/admin/manual-refund-task-reopen-card.tsx": 1,
+  "components/admin/non-member-contact-form.tsx": 2,
+  "components/admin/page-content-panel.tsx": 2,
+  "components/admin/site-banners-panel.tsx": 1,
+};
+
+/**
+ * Admin files that render an `AdminViewOnlyNotice` and NO
+ * `ViewOnlyActionButton`: the first of the three cases in which the older
+ * per-section Notice is deliberately retained (#2720). With no gated control
+ * there is nothing for a banner to head. Listed rather than counted (#5211).
+ */
+const NOTICE_ONLY_FILES: readonly string[] = [
+  "app/(admin)/admin/booking-desk/booking-requests/page.tsx",
+  "app/(admin)/admin/lodge-ops/display/builder/page.tsx",
+  "app/(admin)/admin/rules/fees/_components/finance-fees-sections.tsx",
+  "app/(admin)/admin/system/ai-assistant/ai-assistant-client.tsx",
+  "app/(admin)/admin/system/health/_components/email-deliverability-section.tsx",
+  "app/(admin)/admin/website/image-manager/image-manager-client.tsx",
+  "components/admin/email-settings/notification-delivery-policy-settings.tsx",
+  "components/admin/rooms-beds-manager.tsx",
+];
+
+/**
+ * Opt-outs covered through the wizard shell's channel (#2324). A REVIEW GATE,
+ * kept pinned on purpose (#5211): each one is a scope judgement the test cannot
+ * make (a step control gated on a narrower area than the wizard's banner must
+ * NOT take the vouch), it moves only when someone decides a wizard step's
+ * coverage, and no document quotes it.
+ */
+const SHELL_VOUCHED_CONTROLS = 5;
 
 const WIZARD_SHELL = "IntegrationWizard";
 const WIZARD_HELPERS_TYPE = "WizardStepHelpers";
@@ -1358,494 +1032,87 @@ describe("view-only section banner coverage (#2160)", () => {
     ).toBeGreaterThan(50);
   });
 
-  it("matches the coverage figures the docs publish", () => {
+  it("classifies every call site: an opt-out under a checked rule, or a reviewed keeper (#5211)", () => {
     /*
-      Three documents and one JSDoc block quote these numbers as fact:
-      `docs/ARCHITECTURE.md`, `docs/STYLE_GUIDE.md`,
-      `CHANGELOG.md`, and `ViewOnlyActionButton`'s own JSDoc in
-      `src/components/admin/view-only-action.tsx`. `AGENTS.md` published them
-      too until #2714 routed the settings pattern out of the always-read core;
-      it is still scanned for a stale figure, but no longer has to carry one.
+      Replaced the pinned totals (#5211). Counted off `astFiles`, not text
+      (#2168): a `describeReason` written in prose is not a `JsxAttribute`, so it
+      cannot reach anything here.
 
-      They were counted by hand, from raw text, and came out one too high —
-      twice, for the same reason both times: a `describeReason={false}` written
-      inside a comment counted as a call site. Nothing structural stopped a
-      third instance, so this pins them.
-
-      Since #2168 the figures are counted off `astFiles`, not text: a
-      `describeReason` written in prose is not a `JsxAttribute`, so it cannot
-      reach these totals at all. That is what makes the count mean "call sites"
-      rather than "mentions". The comment-stripped `files` view still backs the
-      TEXT assertions further down — and #2166 had to replace its lexer with a
-      parser to keep even that honest (see `stripComments`) — but the numbers
-      here no longer depend on it.
-
-      This test is MEANT to fail when the rollout changes. Adding or converting
-      a gated control is a real change to a published figure, and the fix is to
-      re-run the numbers and update all five places together — never to loosen
-      the assertion.
+      Every `ViewOnlyActionButton` render site is one of:
+        - a STATIC opt-out, `describeReason={false}`, which the next test holds
+          to a banner in the same file;
+        - a VOUCHED opt-out, `describeReason={!ancestorRendersViewOnlyBanner}`,
+          which the vouching tests hold to a verified parent or the wizard shell;
+        - a KEEPER of its own reason, which must sit in a file listed in
+          `KEEPS_OWN_REASON` with exactly that many.
+      So a new control needs no edit here when it opts out under a banner, and a
+      reviewed entry when it keeps its reason.
     */
     const perFile = astFiles.map((f) => {
       const kinds = describeReasonAttrs(f.ast).map(classifyDescribeReason);
       return {
         rel: f.rel,
         sites: jsxTags(f.ast, "ViewOnlyActionButton").length,
-        // #2168: BOTH opt-out forms count. A control that hands its explanation
-        // to a banner has stopped explaining itself either way, so a metric
-        // that only counted `{false}` would have read "53 exceptions" after
-        // this change while 21 of them no longer keep the reason on the page.
         staticOptOuts: kinds.filter((k) => k === "static").length,
         vouchedOptOuts: kinds.filter((k) => k === "vouched").length,
       };
     });
-    const sum = (list: { n: number }[]) => list.reduce((n, f) => n + f.n, 0);
+    const optOuts = (f: (typeof perFile)[number]) =>
+      f.staticOptOuts + f.vouchedOptOuts;
 
-    // Controls that KEEP the per-button reason, per file.
-    const exceptions = perFile
-      .map((f) => ({
-        rel: f.rel,
-        n: f.sites - f.staticOptOuts - f.vouchedOptOuts,
-      }))
-      .filter((f) => f.n > 0);
-
-    expect({
-      callSites: perFile.reduce((n, f) => n + f.sites, 0),
-      optOuts: perFile.reduce(
-        (n, f) => n + f.staticOptOuts + f.vouchedOptOuts,
-        0,
-      ),
-      // Split out, because the two are covered by DIFFERENT rules: a static
-      // opt-out needs a banner in its own file, a vouched one needs a verified
-      // vouching parent. The docs publish the split for the same reason.
-      staticOptOuts: perFile.reduce((n, f) => n + f.staticOptOuts, 0),
-      vouchedOptOuts: perFile.reduce((n, f) => n + f.vouchedOptOuts, 0),
-      exceptions: sum(exceptions),
-      exceptionFiles: exceptions.length,
-      bannerComponents: astFiles.filter(
-        (f) => (bannersByFile.get(f.file) ?? []).length > 0,
-      ).length,
-      // #2720: the retained-Notice case the JSDoc publishes. Counted off the
-      // AST for the same reason as everything else here — a `<AdminViewOnlyNotice`
-      // written in prose is not a JsxElement, so it cannot inflate the total.
-      noticeOnlyFiles: astFiles.filter(
-        (f) =>
-          jsxTags(f.ast, NOTICE).length > 0 &&
-          jsxTags(f.ast, "ViewOnlyActionButton").length === 0,
-      ).length,
-    }).toEqual({
-      /*
-        The delta chain from upstream, so the figures reconcile rather than
-        merely being asserted. Every step is a MEASURED re-run, not arithmetic:
-
-          264  upstream.
-          264  +1  member-photos (hoppers#171) adds the committee photo-display
-               control — a leaf exception that keeps its own reason.
-          268  +4  the Member Notices feature (#2238) adds banner-bearing admin
-               surfaces (the notices list page and the notice editor) with
-               static opt-out ViewOnlyActionButtons covered in the same file.
-          269  +1  commit 427200eb ("Build Fix") re-measured after that merge
-               and found one call site and one banner component MORE than the
-               +4/+2 written above — so the Notices feature really contributed
-               5 call sites and 3 banner components (264 -> 269, 75 -> 78), and
-               the prose deltas for it undercount by one. Recorded here rather
-               than silently corrected, because 427200eb is the commit that
-               made these numbers true and the earlier prose is what a reader
-               would otherwise try (and fail) to add up.
-          270  +1  #2259 adds the per-booking "No emails" switch.
-          271  +1  #2247 adds "Restore built-in boards" to the display Templates
-               page — a static opt-out under that page's existing banner.
-          275  +4  #2249's Lodge Display setup wizard steps (restore the
-               built-in boards, turn the module on, save the lodge details,
-               pair the screen). All four KEPT their own reason at that point:
-               the banner that covers them is rendered by the shared
-               `IntegrationWizard` shell, in another file, and the shell renders
-               its step bodies through a `render(context, helpers)` callback
-               supplied by the wizard CONFIG — so there was no render site at
-               which a parent could pass `ancestorRendersViewOnlyBanner`, and
-               neither coverage rule could see it. (The Xero/Stripe/Google/
-               backup wizard steps sidestepped it by using a plain disabled
-               `Button`, which says nothing at all; these said why.)
-          285 +10  #2324 gives the shell a vouch channel and converts all five
-               setup flows together, so the ten controls that were plain
-               disabled `Button`s become real, counted, policed call sites:
-               Xero credentials + webhook key (2), Stripe keys + signing
-               secret (2), Google credentials + verify (2), backups
-               credentials + destination + turn-it-on + run-verification (4).
-               Nothing else in the tree changed, and no call site was removed —
-               the whole +10 is those four provider wizards' step files
-               becoming visible to this suite for the first time.
-        And how the other figures moved with #2324, each re-measured:
-
-          optOuts  237 -> 242 (+5)   the controls the vouch NOW covers, all of
-               them gated on the wizard's OWN area, which is exactly what its
-               banner states: Lodge Display's restore-boards, save-lodge-details
-               and pair-the-screen (3, `lodge`), and backups' turn-it-on and
-               run-verification (2, `support`). staticOptOuts is untouched at
-               216 — #2324 adds no `describeReason={false}`.
-          exceptions 38 -> 43 (+5)   +8 -3. The +8 are the credential-ish
-               writes that KEEP their own reason because their gate is NARROWER
-               than the banner's: Xero credentials + webhook key, Stripe keys +
-               signing secret, Google credentials + verify, backups credentials
-               + destination all additionally require Full Admin, so an admin
-               with the wizard's area but not Full Admin meets no banner and a
-               dead button. They now say "Full Admin" instead of saying nothing.
-               The -3 are the display-wizard controls that moved into the vouched
-               bucket. Display's fourth control — the module switch — stays an
-               exception: it is `support`-gated under a `lodge` banner, the same
-               scope mismatch that keeps `member-credit-card.tsx` un-vouched.
-          exceptionFiles 18 -> 23 (+5)   the four provider wizards' five step
-               files (`xero-wizard-steps`, `xero-completion-steps`,
-               `stripe-wizard-steps`, `google-wizard-steps`,
-               `backup-wizard-steps`). `display-wizard-steps` was already an
-               exception file and stays one on the module switch alone, so it
-               is neither added nor removed.
-          bannerComponents 78, unchanged   #2324 adds no banner. The shell's
-               existing one now covers more, which is the entire point.
-
-        Not converted, deliberately, and each is a scope judgement no static
-        rule can make:
-
-          - `xero/_components/connection-status-panel.tsx` — the connect /
-            reconnect / disconnect buttons ARE finance-gated, matching the Xero
-            wizard's banner, but the panel is a GRANDCHILD (the Connect step
-            renders it) and is also used standalone outside the wizard.
-            Forwarding the vouch through two hops is forbidden by the #2168
-            rule above, so its plain `Button`s stay as they are.
-          - the disabled `Input`s and `select`s inside the wizard steps. This
-            suite polices `ViewOnlyActionButton`; text inputs have never been in
-            its scope, and the display wizard has always left its own that way.
-
-        The ledger then resumes:
-
-          288  +3  #2252 adds the in-booking Bed allocation panel
-               (`booking-bed-allocation-panel.tsx`): Assign, Remove and the
-               booking-level Confirm, all static opt-outs under the panel's own
-               banner (+1 banner component, 78 -> 79). Its remove-confirmation
-               dialog keeps its own reason — a dialog is a separate
-               accessibility container the card's banner does not reach — and
-               is a plain Button rather than a ViewOnlyActionButton, matching
-               the shared range dialog (#2251), so it adds no call site and no
-               exception.
-          291  +3  #2286 wires the Hut Leaders page's bed controls to the PUT
-               that already existed: "Release bed" and "Change bed" per
-               assignment row, plus "Confirm anyway" on the over-capacity
-               question. All three are STATIC opt-outs under that page's single
-               unconditional `AdminViewOnlySectionBanner`, which the two
-               existing row actions (reset PIN, delete) already opt out under
-               (optOuts 245 -> 248, staticOptOuts 219 -> 222; nothing else
-               moves).
-          295  +4  #2262 adds the cash / off-Xero payment feature's two leaf
-               surfaces, four controls across two files, all keeping their own
-               per-button reason: `booking-manual-payment-controls.tsx` (Record
-               and Reverse manual payment) is a leaf control dropped into the
-               Admin tools card's layout, exactly like the "No emails" switch
-               and the two hold controls beside it, and
-               `manual-refund-task-queue.tsx` (Mark paid back and Dismiss, one
-               pair per open task) is a card on /admin/payments with no banner
-               of its own. Both are gated on FINANCE, so neither may vouch off a
-               banner elsewhere on its page that states another area. No new
-               banner component: dropping one into the Admin tools card would
-               duplicate what its siblings already handle per button. With them
-               exceptions 43 -> 47 (+4), exceptionFiles 23 -> 25 (+2), and the
-               leaf bucket 30/18 -> 34/20; optOuts, the vouched split and
-               bannerComponents are untouched.
-          293  +2  #2307's Member guests settings card on Bookings setup
-               (member-guest-settings-card.tsx): Edit + Save, both static
-               opt-outs under the card's own banner, so staticOptOuts and
-               optOuts move +2 with it and bannerComponents +1 (79 -> 80).
-               Re-measured on the merged tree rather than added to either
-               side's figure: #2286 and #2307 landed in the same window and
-               both moved the count.
-          298      Re-measured on the merged tree: #2262's +4 and #2307's +2 are
-               independent, so 291 -> 295 -> 298. Neither side's number is
-               taken as-is.
-          299  +2  the Mountain Conditions "Source & selectors" panel adds
-               Preview and Save configuration ViewOnlyActionButtons — two static
-               opt-outs under the panel's existing AdminViewOnlySectionBanner
-               (optOuts 250 -> 252, staticOptOuts 224 -> 226; vouched,
-               exceptions and bannerComponents unchanged — no new banner).
-          301  +2  #2359 makes the Subscriptions header's Xero sync actions
-               finance-edit-aware. Both keep their own reason because the
-               sibling billing panel's banner does not cover header actions
-               (exceptions 47 -> 49, exceptionFiles 25 -> 26, leaf bucket
-               34/20 -> 36/21; opt-outs and bannerComponents unchanged).
-          303  +2  #2364's Adult Member Hosting card on Booking Policies
-               (adult-member-hosting-section.tsx): Edit + Save, both static
-               opt-outs under the card's own unconditional
-               AdminViewOnlySectionBanner, so optOuts 252 -> 254, staticOptOuts
-               226 -> 228 and bannerComponents 80 -> 81 move with it. The
-               vouched split, exceptions and the leaf bucket are untouched:
-               nothing keeps its own reason, and no control here is gated on
-               anything narrower than the bookings area the banner states.
-          304  +1  #2364 review: /admin/book gains "Record the reason and
-               create" — the surface that answers the adult-member hosting 409,
-               which shipped with no client able to satisfy it. A static
-               opt-out beside the existing over-capacity confirm, under the
-               page's banner it already sits behind, so optOuts 254 -> 255 and
-               staticOptOuts 228 -> 229 and nothing else moves (no new banner
-               component, no new exception).
-          307  +3  TLR-8C's Policy Exceptions queue (#2526,
-               policy-exception-requests-panel.tsx): the decision form's
-               controls are static opt-outs under the panel's own new
-               AdminViewOnlySectionBanner, so optOuts 255 -> 258,
-               staticOptOuts 229 -> 232 and bannerComponents 81 -> 82 move
-               together. The vouched split, exceptions and the leaf bucket
-               are untouched.
-          312  +5  #2573's Google Analytics integration card
-               (analytics-integration-card.tsx), which moves the GA4 setup onto
-               Admin -> Integrations as a peer of Xero and Stripe. Its settings
-               DIALOG renders its own AdminViewOnlySectionBanner — the
-               sanctioned shape for dialog contents, which an ancestor's banner
-               cannot reach — so all five controls are static opt-outs in the
-               same file: Edit, Save, "Restore the suggested wording", and the
-               two halves of the confirm-gated "Ask visitors to choose again"
-               action. optOuts 258 -> 264, staticOptOuts 232 -> 237 and
-               bannerComponents 82 -> 83 move together; the vouched split,
-               exceptions and the leaf bucket are untouched, because nothing
-               here is gated on anything narrower than the finance area the
-               banner states.
-          310  -2  #2586 replaces the roster's three immediate row-write call
-               sites (Add Person, Remove and the unassigned-chore picker) with
-               one staged whole-roster Edit control. That child control is
-               vouched by the roster page's unconditional lodge-access banner,
-               so static opt-outs move 237 -> 234, render-site vouches move
-               21 -> 22, and total opt-outs move 264 -> 261.
-          311  +1  #2593 replaces the old Save Mode site with two Edit/Save
-               sites in the per-lodge allocation-preferences card. It owns a
-               banner for standalone reuse, while the bed-allocation page
-               suppresses that child banner and covers both control sites with
-               the page's existing bookings-area banner.
-               static opt-outs move 234 -> 235 and banner components 83 -> 84.
-          310  -1  #2602 replaces the booking-panel removal control with a
-               plain preview button: view-only administrators may inspect the
-               staged removal, while the dialog keeps apply edit-gated. The
-               removed site was a same-file static opt-out, so static opt-outs
-               move 235 -> 234 and total opt-outs move 262 -> 261. Banner,
-               vouch and per-button-explanation counts are unchanged.
-          311  +1  Unrecorded when it landed, reconstructed here from the
-               commit rather than left as a hole in the chain: #2597 ADDED a
-               control — the "Resume approval" button, which finishes a deletion
-               approval that started and did not finish, in
-               `app/(admin)/admin/membership/deletion-requests/deletion-requests-client.tsx`.
-               It is a `describeReason={false}` static opt-out in the same file
-               as that page's own unconditional banner, so callSites
-               310 -> 311, optOuts 261 -> 262 and staticOptOuts 234 -> 235,
-               and nothing else moves. Commit 969b88943
-               re-measured the figures to 311/262/235 and updated every place
-               that publishes them, but added no ledger line: the entry above
-               it reads 310, the figures read 311, and the gap was exactly
-               this. Noticed while measuring the entry below, whose own numbers
-               would otherwise have looked like +2.
-          312  +1  #2627 adds "Release approval" to the deletion queue's
-               self-service rows — the Full-Admin way out of an approval left
-               mid-flight, beside the existing "Resume approval". A static
-               opt-out under the page's own unconditional
-               AdminViewOnlySectionBanner, which the sibling Approve/Reject/
-               Resume controls already opt out under, so static opt-outs move
-               235 -> 236 and total opt-outs 262 -> 264. Nothing else moves: no
-               new banner component, and the Full-Admin gate it additionally
-               carries is applied by NOT RENDERING the control at all rather
-               than by disabling it with a narrower per-button reason, so it
-               adds no exception. (Re-measured, as always: 311 -> 312. The
-               running left-hand column reached 310 at the step above, so it
-               trails the measured total by one; #2637 supplies the correct
-               reconstruction of that gap and this note deliberately does not
-               guess at it.)
-          313  +1  #2352 MC-03D adds the per-page Delete control to the Page
-               Content cards, beside the Hide/Publish toggle it sits with and
-               under the banner that file already renders. Static opt-outs move
-               236 -> 237 and total opt-outs 264 -> 264; the vouched split,
-               the exceptions and the banner count are untouched, because the
-               control is gated on the same content area the banner states.
-          313      THE COLLISION THIS LEDGER EXISTS FOR, and it fired. This
-               entry was first written as `312`, measured against main at
-               54b282b61 when #2352 was the first of three open PRs off that
-               base — and #2636 (the entry above) reached main first with its own
-               `callSites: 312`. The two literals were byte-identical, so the
-               merge produced no conflict in the FIGURES block at all: only the
-               prose ledger conflicted, and the numbers it guards merged
-               silently wrong. Re-measured on the merged tree at f9bd34bd1 with
-               `vitest run view-only-banner-contract` and set to what the tree
-               reports: 313 / 264 / 237. #2641 will measure 314 / 265 / 238 when
-               it lands, and it must MEASURE that rather than read it here.
-          314  +1  #2595 adds the bed-allocation **Move** control to the
-               allocation board's row menu. It is an EXCEPTION, not an opt-out:
-               it keeps its own per-button reason because the menu it sits in is
-               popover content with no banner above it, which is the same
-               treatment every other control in that menu already has. So
-               callSites 313 -> 314 and exceptions 49 -> 50 across 26 -> 27
-               files, while optOuts and staticOptOuts do not move at all — the
-               one entry in this ledger where the opt-out figures stay still.
-
-               And that is where the entry above guessed wrong, which is the
-               ledger's own rule proving itself a third time. #2637 predicted
-               "#2641 will measure 314 / 265 / 238" by assuming every new
-               control is an opt-out under a banner. This one is not: it sits in
-               popover content, so it lands in the EXCEPTIONS bucket and the two
-               opt-out figures do not move. Measured on the merged tree with
-               `npx vitest run view-only-banner-contract`, the tree reports
-               314 / 264 / 237 — one more call site than 313, and the same
-               opt-out figures #2637 left behind. READ NOTHING FROM THIS
-               COLUMN; run the suite.
-
-               (The earlier hazard fired here too, in the other direction:
-               against its own base this branch measured `callSites: 312`, the
-               same literal #2637 wrote, so git merged the FIGURES value
-               silently and only this prose collided — exactly the shape the
-               entry above describes.)
-
-          314      Re-measured a second time after merging main at d8041b601
-               (#2352 ISR, #2621 arrival-time, #2654 requested-room Save). None
-               of those three adds a `<ViewOnlyActionButton>` render site, so
-               the tree still reports 314 / 264 / 237, exceptions 50 across 27
-               files, and this block is unchanged. Recorded anyway, because
-               "the figures did not move" is only worth anything when somebody
-               RAN the suite to find that out — the sibling audit-writer census
-               merged silently two short in this very same merge, off a
-               byte-identical literal, and the only reason that was caught is
-               that its per-sink figures were measured rather than assumed.
-
-          315  +1  #2649 adds **Return to waitlist** — the repair for a free
-               waitlist confirm stranded in `PAYMENT_PENDING`
-               (`admin-return-to-waitlist-controls.tsx`) — to the Admin tools
-               card. Like the `No emails` switch and the capacity/exclusive hold
-               controls it sits beside, it is a LEAF dropped into someone else's
-               layout with nothing local proving a banner renders above it, so
-               it keeps its own per-button reason: an EXCEPTION, not an opt-out.
-               leafControls 36 -> 37 across 21 -> 22 files, exceptions 50 -> 51
-               across 27 -> 28 files, and optOuts/staticOptOuts do not move.
-
-               AND THE COLLISION THIS LEDGER EXISTS FOR FIRED A THIRD TIME, on
-               three lines at once. #2595 (the `314 +1` entry above) and this
-               branch each measured `313 -> 314` against a base without the
-               other, and each wrote `callSites: 314`, `exceptions: 50`,
-               `exceptionFiles: 27` — byte-identical on all three, so git had no
-               textual disagreement to report and merged the VALUES silently
-               while only this prose collided. The merged tree holds BOTH new
-               controls, so the honest figures are 315 / 51 / 28 and neither
-               side's literals were them. The two that did NOT collide are what
-               makes the shape legible: `leafControls`/`leafFiles` moved on this
-               side only (#2595's control is popover content, mine is a leaf), so
-               they merged correctly to 37/22 — and 10 dialog + 37 leaf + 4
-               member-credit-card reconciles to 51, not 50. Re-measured with
-               `npx vitest run view-only-banner-contract`, which reports
-               315 / 264 / 237. READ NOTHING FROM THIS COLUMN; run the suite.
-
-          319  +4  #2749 adds the Other Lodges panel on /admin/lodges
-               (`lodges/_components/other-lodges-panel.tsx`): Add, Save, Edit and
-               Delete. The panel is a CHILD of the Lodges page, which renders one
-               lodge-area banner above it and passes `ancestorRendersViewOnlyBanner`
-               at the render site (#2168), so all four are RENDER-SITE VOUCHED
-               opt-outs, not static ones and not exceptions: callSites 315 -> 319,
-               optOuts 264 -> 268, vouchedOptOuts 27 -> 31, and the render-site
-               half of the split 22 -> 26. staticOptOuts, exceptions and the leaf
-               bucket do not move, and bannerComponents stays 84 — the panel owns
-               no banner of its own (the page's covers it). Re-measured with
-               `npx vitest run view-only-banner-contract`, which reports
-               319 / 268 / 237. READ NOTHING FROM THIS COLUMN; run the suite.
-          324  +5  the Alpine Central Server setup page
-               (`alpine-server/setup/alpine-server-setup.tsx`), added in review of
-               PR #2949 — the page shipped with FIVE mutating controls as plain
-               `Button`s and no banner at all, which this suite could not see:
-               its per-file rules only inspect files that already render a
-               ViewOnlyActionButton, so a page with zero gated controls is
-               structurally invisible to it.
-
-               The five split 3/2, and the split is the point. Enable/Disable,
-               Upload and Download are finance-gated, matching the section
-               banner directly above them, so they are STATIC opt-outs and hand
-               their explanation to it (staticOptOuts 237 -> 240, optOuts
-               268 -> 271). The server address and the API key KEEP their own
-               reason, because they need FULL ADMIN and the banner describes the
-               finance area — the exact case
-               `ADMIN_FULL_ADMIN_ONLY_ACTION_REASON` exists for, and the same
-               shape as the Xero/Google credential controls (exceptions
-               51 -> 53, exceptionFiles 28 -> 29). The page renders two banners
-               of its own, one per Card, so bannerComponents 84 -> 85 (a file is
-               counted once however many banners it holds). Vouched opt-outs are
-               untouched: nothing here is a child taking a parent's vouch.
-               Re-measured with `npx vitest run view-only-banner-contract`,
-               which reports 324 / 271 / 240.
-
-          330 +11  #2780's Lodge Maintenance admin surface adds four sibling
-               sections, each with its OWN unconditional
-               `AdminViewOnlySectionBanner` and its gated controls as static
-               `describeReason={false}` opt-outs in the same file:
-               `maintenance-settings-section.tsx` (Edit + Save = 2),
-               `maintenance-questions-section.tsx` (Edit + Save = 2),
-               `maintenance-qr-section.tsx` (Pause/Resume + Replace/Create the
-               sign = 3), and `maintenance-queue-section.tsx` (Delete the photo +
-               Reopen + Working on it + Mark resolved = 4). So callSites
-               319 -> 330 (+11), optOuts 268 -> 279 (+11) and staticOptOuts
-               237 -> 248 (+11) all move together — every one of the eleven is a
-               static opt-out under a banner in its own file. bannerComponents
-               84 -> 88 (+4), one per section. The vouched split, the exceptions
-               and the leaf bucket do NOT move: nothing here keeps its own reason,
-               nothing is vouched through a parent, and nothing is gated on an
-               area narrower than the `lodge` area every one of the four banners
-               states. Re-measured with `npx vitest run view-only-banner-contract`,
-               which reports 330 / 279 / 248. READ NOTHING FROM THIS COLUMN; run
-               the suite.
-
-          364  +2  #50's Other lodges panel gains an amenities editor: **Add
-               amenity** and a per-row **Remove amenity**, both
-               `ViewOnlyActionButton`s passing
-               `describeReason={!ancestorRendersViewOnlyBanner}` exactly like the
-               panel's existing Add/Save/Edit/Delete, because the Lodges page
-               renders the lodge-area banner once and vouches for the panel at
-               its JSX render site. So callSites 362 -> 364, optOuts 308 -> 310
-               and vouchedOptOuts 34 -> 36 (renderSiteVouchedOptOuts 29 -> 31)
-               move together; staticOptOuts, the shell channel, the exceptions,
-               the leaf bucket and bannerComponents do not move — no new file,
-               no new banner, nothing keeping its own reason. Re-measured with
-               `npm run test:named -- src/components/admin/__tests__/view-only-banner-contract.test.ts`,
-               which reports 364 / 310 / 274.
-
-          362  -2  #52 makes the Other lodges panel edit only the site's own
-               lodge: **Add other lodge**, the per-row **Edit** and the per-row
-               **Delete** are removed and one per-row **Edit my Lodge** is added,
-               a `ViewOnlyActionButton` vouched exactly as the three it replaces
-               (the Lodges page renders the lodge-area banner and passes
-               `ancestorRendersViewOnlyBanner` at the panel's render site). So
-               callSites 364 -> 362, optOuts 310 -> 308 and vouchedOptOuts
-               36 -> 34 (renderSiteVouchedOptOuts 31 -> 29) move together;
-               staticOptOuts, the shell channel, the exceptions, the leaf bucket
-               and bannerComponents do not move. Re-measured with
-               `npm run test:named -- src/components/admin/__tests__/view-only-banner-contract.test.ts`,
-               which reports 362 / 308 / 274.
-
-      */
-      // #2259 adds the per-booking "No emails"
-      // switch (`booking-no-emails-controls.tsx`), a leaf control dropped into
-      // the Admin tools card's layout — the same shape as the capacity- and
-      // exclusive-hold controls beside it, so it keeps its own per-button
-      // reason rather than opting out under a banner it cannot prove renders.
-      callSites: FIGURES.callSites,
-      optOuts: FIGURES.optOuts,
-      staticOptOuts: FIGURES.staticOptOuts,
-      vouchedOptOuts: FIGURES.vouchedOptOuts,
-      exceptions: FIGURES.exceptions,
-      exceptionFiles: FIGURES.exceptionFiles,
-      bannerComponents: FIGURES.bannerComponents,
-      noticeOnlyFiles: FIGURES.noticeOnlyFiles,
-    });
-
-    // The vouched total splits by RULE, and the docs publish that split. Keeping
-    // it arithmetic here means only one of the two halves has to be measured
-    // (the #2324 test measures the shell's).
+    // An opt-out attribute that sits on no call site would hide a keeper from
+    // the per-file arithmetic below, so it fails here first.
     expect(
-      FIGURES.renderSiteVouchedOptOuts + FIGURES.shellVouchedOptOuts,
-      `The published vouched split must add up to ${FIGURES.vouchedOptOuts}.`,
-    ).toBe(FIGURES.vouchedOptOuts);
+      perFile.filter((f) => optOuts(f) > f.sites).map((f) => f.rel),
+      "These files pass more opt-out describeReason attributes than they render " +
+        "ViewOnlyActionButtons, so the per-file keeper count cannot be trusted.",
+    ).toEqual([]);
+
+    // Non-vacuous: both opt-out rules are in use, so the coverage tests below
+    // are checking something.
+    expect(perFile.reduce((n, f) => n + f.staticOptOuts, 0)).toBeGreaterThan(0);
+    expect(perFile.reduce((n, f) => n + f.vouchedOptOuts, 0)).toBeGreaterThan(0);
+
+    const keepers: Record<string, number> = Object.fromEntries(
+      perFile
+        .filter((f) => f.sites - optOuts(f) > 0)
+        .map((f) => [f.rel, f.sites - optOuts(f)] as const)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    );
+    expect(
+      keepers,
+      "A ViewOnlyActionButton keeps its own per-button reason in a file, or in a " +
+        "number, that KEEPS_OWN_REASON does not list. Either it belongs under a " +
+        "section banner (render one in the same file and pass " +
+        "describeReason={false}, or take the parent's vouch), or it is one of " +
+        "the three reviewed shapes in the ViewOnlyActionButton JSDoc: add or " +
+        "update that file's line in KEEPS_OWN_REASON. A listed file that no " +
+        "longer keeps a reason comes off the list.",
+    ).toEqual(KEEPS_OWN_REASON);
+
+    // #2720's retained-Notice case, listed rather than counted.
+    expect(
+      astFiles
+        .filter(
+          (f) =>
+            jsxTags(f.ast, NOTICE).length > 0 &&
+            jsxTags(f.ast, "ViewOnlyActionButton").length === 0,
+        )
+        .map((f) => f.rel)
+        .sort(),
+      "An admin file renders AdminViewOnlyNotice with no ViewOnlyActionButton, " +
+        "or one listed in NOTICE_ONLY_FILES no longer does. Update the list.",
+    ).toEqual([...NOTICE_ONLY_FILES].sort());
 
     /*
-      …and the three shapes those exceptions fall into, because the docs break
-      the total down and a bucket can drift while the total holds. The member
-      detail cards are listed by name rather than by directory: three OTHER
-      files in that same folder (`member-detail-header`,
-      `member-account-access-group`, `member-contact-group`) are leaf toolbars,
-      not per-record cards, and belong in the leaf bucket.
+      A REVIEW GATE that stays: of the nine member detail cards, only
+      `member-credit-card.tsx` keeps its own reason. Its siblings take the page
+      banner's coverage (#2168); it cannot, because it is gated on FINANCE while
+      the page banner states MEMBERSHIP. A second card keeping its reason, or
+      this one taking the vouch, is a scope decision to make deliberately.
     */
+    const MEMBER_DETAIL_CARDS_DIR =
+      "app/(admin)/admin/membership/members/[id]/_components/";
     const MEMBER_DETAIL_CARDS = [
       "member-committee-assignments-card",
       "member-credit-card",
@@ -1856,127 +1123,58 @@ describe("view-only section banner coverage (#2160)", () => {
       "member-parent-links-card",
       "member-partner-link-card",
       "member-seasonal-membership-card",
-    ].map((name) => `app/(admin)/admin/membership/members/[id]/_components/${name}.tsx`);
+    ].map((name) => `${MEMBER_DETAIL_CARDS_DIR}${name}.tsx`);
+    expect(MEMBER_DETAIL_CARDS.filter((rel) => rel in keepers)).toEqual([
+      `${MEMBER_DETAIL_CARDS_DIR}member-credit-card.tsx`,
+    ]);
 
-    // Controls inside a dialog, sheet, popover, or dropdown menu — a separate
+    // Keepers inside a dialog, sheet, popover or dropdown menu: a separate
     // accessibility container that a banner in the page body does not reach.
+    // The named record of that shape, and each must still be a listed keeper.
     const SEPARATE_A11Y_CONTAINER = [
       "app/(admin)/admin/booking-desk/bookings/page.tsx",
-      "app/(admin)/admin/system/issue-reports/page.tsx",
       "app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel.tsx",
       "app/(admin)/admin/membership/membership-types/page.tsx",
+      "app/(admin)/admin/system/issue-reports/page.tsx",
       "components/admin/bed-allocation-move-dialog.tsx",
     ];
-
-    const bucket = (names: string[]) =>
-      exceptions.filter((f) => names.includes(f.rel));
-    const leaves = exceptions.filter(
-      (f) =>
-        !MEMBER_DETAIL_CARDS.includes(f.rel) &&
-        !SEPARATE_A11Y_CONTAINER.includes(f.rel),
+    expect(SEPARATE_A11Y_CONTAINER.filter((rel) => !(rel in KEEPS_OWN_REASON))).toEqual(
+      [],
     );
-
-    expect({
-      memberDetailCards: {
-        controls: sum(bucket(MEMBER_DETAIL_CARDS)),
-        files: bucket(MEMBER_DETAIL_CARDS).length,
-      },
-      separateA11yContainer: {
-        controls: sum(bucket(SEPARATE_A11Y_CONTAINER)),
-        files: bucket(SEPARATE_A11Y_CONTAINER).length,
-      },
-      leaves: { controls: sum(leaves), files: leaves.length },
-    }).toEqual({
-      // #2168 shrank this bucket from 25 controls / 9 files to 4 / 1. Eight of
-      // the nine cards now take `ancestorRendersViewOnlyBanner` from the page,
-      // which renders the one banner. `member-credit-card.tsx` is the survivor
-      // and is NOT an oversight: it is gated on FINANCE while the page banner
-      // states MEMBERSHIP, so vouching for it would point a view-only admin at
-      // the wrong permission — and an admin with membership edit but finance
-      // view-only would get no banner at all.
-      memberDetailCards: { controls: 4, files: 1 },
-       // #3408 adds one repair control to the Membership Types editor.
-       separateA11yContainer: { controls: 11, files: 5 },
-      // +1 control / +1 file vs 20/11: the #2259 "No emails" switch; then
-      // +4 controls / +1 file: the four #2249 display-wizard step controls,
-      // which the shell's render-callback indirection put out of reach of both
-      // coverage rules; then #2324 moves three of those four into the vouched
-      // bucket (-3) and brings the four provider wizards' Full-Admin writes into
-      // this one (+8 controls / +5 files) — see the delta chain above. Every
-      // wizard control left here is a SCOPE exception, not an indirection one:
-      // its gate is narrower than the banner its shell renders. Finally
-      // +4 controls / +2 files: the #2262 cash-payment controls and the
-      // manual-refund-task queue, both leaf surfaces described above.
-      leaves: { controls: FIGURES.leafControls, files: FIGURES.leafFiles },
-    });
   });
 
-  it("matches the figures the docs publish, word for word", () => {
+  it("publishes no census total in the docs or the JSDoc (#5211)", () => {
     /*
-      The census above measures the tree. This one reads the PROSE.
+      These sentences used to carry the census's totals, and a test held each to
+      the measured figure. That kept them true, and it also meant every pull
+      request adding a gated control or a banner edited the same sentences in
+      the same four files, so any two such pull requests conflicted (#5211).
 
-      Both halves are needed, and the gap between them is where the drift has
-      actually happened: the numbers moved, the census was updated, and one of the
-      one of the three documents or the JSDoc was not. That leaves a reader
-      trusting a figure no test disagrees with. Here every document that quotes
-      a figure has to still quote the measured one.
-
-      Matching is on whitespace-collapsed, markup-stripped text, so re-wrapping a
-      paragraph or bolding a number is free; changing a number is not. The
-      `ViewOnlyActionButton` JSDoc is checked too — it publishes the same split in
-      the same words, and it is the one a developer reads first.
-
-      When this fails, the fix is to re-measure and update every listed place
-      together. Never to delete a phrase from this list to make it pass.
+      The documents now say what is true without the number. This refuses a
+      number coming back in any of the wordings they used, in every document
+      and in the JSDoc a developer reads first. Matching is on whitespace-
+      collapsed, markup-stripped text, so re-wrapping or bolding cannot hide one.
     */
-    const f = FIGURES;
-    const published: Record<string, string[]> = {
-      "docs/ARCHITECTURE.md": [
-        `${f.bannerComponents} components render a banner, and ${f.optOuts} of the ${f.callSites} ViewOnlyActionButton call sites opt out`,
-        `${f.staticOptOuts} pass the literal describeReason={false}`,
-        `Those ${f.optOuts} split by WHICH rule`,
-        `and ${f.vouchedOptOuts} pass describeReason={!${VOUCH_PROP}}`,
-        `${f.renderSiteVouchedOptOuts} by a parent's own JSX render site (#2168), ${f.shellVouchedOptOuts} by the guided-setup shell (#2324)`,
-        `${f.exceptions} controls across ${f.exceptionFiles} files deliberately keep the per-button default`,
-        `(${f.leafControls} controls across ${f.leafFiles} files.)`,
-      ],
-      "docs/STYLE_GUIDE.md": [
-        // The style guide publishes the exception TOTAL only, on purpose.
-        `${f.exceptions} controls still carry their own per-button reason`,
-      ],
-      "src/components/admin/view-only-action.tsx": [
-        `pass describeReason={false} here (${f.staticOptOuts} of ${f.callSites} call sites)`,
-        `a further ${f.vouchedOptOuts} pass describeReason={!${VOUCH_PROP}}`,
-        `${f.renderSiteVouchedOptOuts} vouched at a JSX render site (#2168) and ${f.shellVouchedOptOuts}`,
-        `${f.optOuts} opt-outs in total`,
-        `counts ${f.leafControls} controls here`,
-        // #2720. This bullet carried a hand-counted "seven files today" that had
-        // drifted to eight; it is measured above now, so the prose is pinned to
-        // the measurement like every other figure in this list.
-        `this banner to head (${f.noticeOnlyFiles} files today, measured by the census test)`,
-      ],
-    };
-    /*
-      #2714 routed the canonical admin-settings pattern out of `AGENTS.md`'s
-      always-read core and into `docs/ARCHITECTURE.md`, which had already carried
-      the same rules in fuller form. `AGENTS.md` now leaves a pointer and a
-      routing row instead, so it publishes none of these figures and is no longer
-      REQUIRED to. It is still scanned, for the reason the shape check below
-      exists: a figure re-introduced there has to be the measured one, not a
-      resurrected copy of a superseded census.
-    */
-    const scannedButNotRequired: Record<string, string[]> = {
-      "AGENTS.md": [
-        `${f.optOuts} of ${f.callSites} ViewOnlyActionButton call sites now opt out`,
-        `${f.staticOptOuts} covered by a banner in the SAME file`,
-        `${f.vouchedOptOuts} by a verified vouching parent (${f.renderSiteVouchedOptOuts} at a JSX render site, ${f.shellVouchedOptOuts} through the guided-setup shell)`,
-        `and ${f.exceptions} keep the per-button reason`,
-      ],
-    };
-
-    const changelogPhrases = [
-      `${f.callSites} gated admin controls, ${f.optOuts} of them covered by a banner (${f.staticOptOuts} in their own file, ${f.vouchedOptOuts} by a verified vouching parent — ${f.shellVouchedOptOuts} of those through the wizard frame)`,
-      `and ${f.exceptions} across ${f.exceptionFiles} files deliberately keeping their own reason`,
+    const N = String.raw`\d+`;
+    const shapes: RegExp[] = [
+      new RegExp(`${N} components render a banner`),
+      new RegExp(`${N} of the ${N} ViewOnlyActionButton call sites`),
+      new RegExp(`${N} of ${N} ViewOnlyActionButton call sites`),
+      new RegExp(`Those ${N} split by WHICH rule`),
+      new RegExp(`${N} pass the literal describeReason`),
+      new RegExp(`${N} pass describeReason=\\{!`),
+      new RegExp(`${N} by a parent's own JSX render site`),
+      new RegExp(`${N} by the guided-setup shell`),
+      new RegExp(`${N} controls across ${N} files`),
+      new RegExp(`${N} controls still carry their own per-button reason`),
+      new RegExp(`\\(${N} of ${N} call sites\\)`),
+      new RegExp(`${N} vouched at a JSX render site`),
+      new RegExp(`${N} opt-outs in total`),
+      new RegExp(`counts ${N} controls here`),
+      new RegExp(`\\(${N} files today, measured by the census test\\)`),
+      new RegExp(`${N} covered by a banner in the SAME file`),
+      new RegExp(`${N} gated admin controls, ${N} of them covered by a banner`),
+      new RegExp(`and ${N} keep the per-button reason`),
     ];
 
     // Collapse the formatting a prose edit is free to change: line wrapping,
@@ -1987,81 +1185,72 @@ describe("view-only section banner coverage (#2160)", () => {
         .replace(/[*`]/g, "")
         .replace(/\s+/g, " ");
 
-    /*
-      #2452 moved changelog entries OUT of CHANGELOG.md: a PR now writes its
-      entry as a `changelog.d/<pr>-<slug>.md` fragment, and the release compile
-      folds the fragments into the compiled CHANGELOG ledger later. Feature PRs
-      do not edit that ledger or its Unreleased list, so current census
-      enforcement applies to the source documents and new fragments instead.
-
-      Every new fragment is therefore scanned separately, and a stale figure
-      fails on its OWN pull request. A fragment is not REQUIRED to quote these
-      sentences (almost none do); it is only forbidden from quoting a
-      superseded version of one.
-    */
-    const fragmentsDir = join(process.cwd(), "changelog.d");
-    const scanned: { rel: string; phrases: string[]; requirePresence: boolean }[] = [
-      ...Object.entries(published).map(([rel, phrases]) => ({
+    // #5211: the same live surfaces the audit census scans, and no history
+    // (`CHANGELOG.md`, `docs/releases/`). See `liveDocSurfaces`.
+    const scanned = liveDocSurfaces();
+    // A moved publisher must fail here rather than drop out of the scan.
+    for (const rel of [
+      "AGENTS.md",
+      "docs/ARCHITECTURE.md",
+      "docs/STYLE_GUIDE.md",
+      "src/components/admin/view-only-action.tsx",
+    ]) {
+      expect(scanned, `${rel} moved; point this test at its new path`).toContain(
         rel,
-        phrases,
-        requirePresence: true,
-      })),
-      ...Object.entries(scannedButNotRequired).map(([rel, phrases]) => ({
-        rel,
-        phrases,
-        requirePresence: false,
-      })),
-      ...(existsSync(fragmentsDir)
-        ? readdirSync(fragmentsDir)
-            .filter((name) => name.endsWith(".md") && name !== "README.md")
-            .map((name) => ({
-              rel: `changelog.d/${name}`,
-              phrases: changelogPhrases,
-              requirePresence: false,
-            }))
-        : []),
-    ];
-
-    const offenders: string[] = [];
-    for (const { rel, phrases, requirePresence } of scanned) {
-      const file = join(process.cwd(), ...rel.split("/"));
-      // A moved document must fail here, not throw ENOENT and not pass silently.
-      if (!existsSync(file)) {
-        offenders.push(`${rel} not found — it publishes these figures`);
-        continue;
-      }
-      const flat = flatten(readFileSync(file, "utf8"));
-      for (const phrase of phrases) {
-        if (!flat.includes(phrase) && requirePresence) {
-          offenders.push(`${rel}: "${phrase}"`);
-          continue;
-        }
-        // A CORRECT SENTENCE ELSEWHERE IN THE SAME CURRENT DOCUMENT MUST NOT
-        // EXCUSE A STALE ONE: `includes` only answers "does the measured figure
-        // appear at least once". Release-compiler-owned CHANGELOG entries are
-        // not in this set; current changelog fragments are.
-        //
-        // So every occurrence of each sentence's SHAPE — the same words with any
-        // digits in the numeric slots — has to carry the measured figures.
-        const shape = new RegExp(
-          phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\d+/g, "\\d+"),
-          "g",
-        );
-        for (const match of flat.matchAll(shape)) {
-          if (match[0] !== phrase) {
-            offenders.push(`${rel}: stale "${match[0]}" — should read "${phrase}"`);
-          }
-        }
-      }
+      );
     }
 
+    const offenders: string[] = [];
+    for (const rel of scanned) {
+      const flat = flatten(
+        readFileSync(join(process.cwd(), ...rel.split("/")), "utf8"),
+      );
+      for (const shape of shapes) {
+        const match = shape.exec(flat);
+        if (match) offenders.push(`${rel}: "${match[0]}"`);
+      }
+    }
     expect(
       offenders,
-      `These documents no longer state the figures the census above measures. ` +
-        `A rollout change moves the numbers; re-measure and update ` +
-        `docs/ARCHITECTURE.md, docs/STYLE_GUIDE.md, any changelog.d/ fragment ` +
-        `quoting them, and the ` +
-        `ViewOnlyActionButton JSDoc together.`,
+      "A document states a view-only census total again. Do not publish one " +
+        "(#5211): it moves whenever a pull request adds a gated control or a " +
+        "banner, so every such pull request would edit the same sentence and " +
+        "conflict with every other. Describe the shapes without the number; " +
+        "this test and the coverage tests are the measurement.",
+    ).toEqual([]);
+  });
+
+  it("renders no banner that covers nothing (#5211 review)", () => {
+    /*
+      The old `bannerComponents` total moved when a stray banner appeared, so a
+      reviewer at least saw a number change. With no total, this is the check: a
+      file that renders `AdminViewOnlySectionBanner` must also render a
+      `ViewOnlyActionButton` for it to head, or vouch for a child at a JSX render
+      site. The wizard shell is the one other shape: it vouches through
+      `WizardStepHelpers`, which the #2324 test below verifies.
+    */
+    const stray = astFiles
+      .filter((f) => (bannersByFile.get(f.file) ?? []).length > 0)
+      .filter((f) => jsxTags(f.ast, "ViewOnlyActionButton").length === 0)
+      .filter(
+        (f) =>
+          !jsxTags(f.ast).some((tag) => {
+            // A vouch counts only when it is true: bare, or `={true}`.
+            const vouch = attr(tag, VOUCH_PROP);
+            if (!vouch) return false;
+            const value = attrExpression(vouch);
+            return value === null || value.kind === ts.SyntaxKind.TrueKeyword;
+          }),
+      )
+      .filter((f) => f.rel !== WIZARD_SHELL_REL)
+      .map((f) => f.rel);
+    expect(
+      stray,
+      "These files render a view-only section banner but gate no control under " +
+        "it and vouch for no child, so the banner tells a view-only admin about " +
+        "controls that are not there. Gate the section's controls with " +
+        "ViewOnlyActionButton, pass the vouch to the child that has them, or drop " +
+        "the banner.",
     ).toEqual([]);
   });
 
@@ -2883,14 +2072,14 @@ describe("view-only section banner coverage (#2160)", () => {
         `plumbing and every wizard step control is back to its own reason.`,
     ).toBeGreaterThan(0);
 
-    // The docs publish the vouched total split by RULE (#2168 render site vs
-    // this shell channel), so the shell's half is measured rather than asserted
-    // in prose. The census test checks the two halves add up to the total.
+    // A review gate (see SHELL_VOUCHED_CONTROLS): each control covered
+    // through the shell is a scope judgement, so a change here is deliberate.
     expect(
       shellVouchedControls,
-      `The docs publish ${FIGURES.shellVouchedOptOuts} opt-outs covered through ` +
-        `the wizard shell's channel. Re-measure and update them together.`,
-    ).toBe(FIGURES.shellVouchedOptOuts);
+      `The number of controls covered through the wizard shell's channel ` +
+        `changed. Check each one is gated on the wizard's own area (a narrower ` +
+        `gate keeps its reason, #2324), then update SHELL_VOUCHED_CONTROLS.`,
+    ).toBe(SHELL_VOUCHED_CONTROLS);
   });
 
   it("never lets the vouch prop reach a component this test cannot resolve (#2168)", () => {

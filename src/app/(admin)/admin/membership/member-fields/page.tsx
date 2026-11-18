@@ -30,9 +30,13 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { apiErrorMessageFromBody, ApiRefusalError } from "@/lib/api-error-message";
 
 import { adminLink } from "@/lib/admin-hubs";
+
+const LOAD_FALLBACK = "Failed to load settings";
+const SAVE_FALLBACK = "Failed to save settings";
+
 interface FieldsResponse {
   settings: MemberFieldsSettingsValues;
   updatedAt: string | null;
@@ -86,11 +90,11 @@ export default function AdminMemberFieldsPage() {
         credentials: "same-origin",
         signal,
       });
-      const body = (await response.json()) as
+      const body = (await response.json().catch(() => ({}))) as
         | FieldsResponse
         | { error?: string };
       if (!response.ok || !("settings" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to load settings"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, LOAD_FALLBACK));
       }
       return toDraft(body.settings);
     },
@@ -108,13 +112,13 @@ export default function AdminMemberFieldsPage() {
         // A stale tab or narrowed permission maps to the shared forbidden-save
         // copy (#1940), shown in the focused failure below.
         if (response.status === 403) throw new ForbiddenSaveError();
-        throw new Error(apiErrorMessageFromBody(body, "Failed to save settings"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, SAVE_FALLBACK));
       }
       return toDraft(body.settings);
     },
     successMessage: "Member field settings saved.",
-    loadErrorFallback: "Failed to load settings",
-    saveErrorFallback: "Failed to save settings",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
   });
 
   const { draft, editing, saving, dirty, error, success } = section;

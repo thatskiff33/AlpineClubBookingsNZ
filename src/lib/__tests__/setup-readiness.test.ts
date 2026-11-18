@@ -11,6 +11,7 @@ import {
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 import { decideClubTimeZoneBackfill } from "@/lib/config-self-heal-steps";
+import { BROWSER_SENTRY_OFF_DETAIL } from "@/lib/observability/browser-sentry-config";
 import { decideEnvironmentRole } from "@/lib/environment-role";
 import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import {
@@ -18,10 +19,10 @@ import {
   getSetupRequiredEnvNames,
   buildSetupReadiness,
   normalizeSetupProgress,
-  renderSetupCheckReport,
   type SetupDatabaseSnapshot,
   type SetupReadiness,
 } from "@/lib/setup-readiness";
+import { renderSetupCheckReport } from "@/lib/setup-readiness-report";
 
 /**
  * A resolved environment role for the fixtures below, built by the REAL
@@ -231,6 +232,31 @@ describe("setup-readiness", () => {
     for (const dir of tempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  describe("Sentry runtime readiness", () => {
+    it.each([undefined, "", "   ", "https://public@example.ingest.sentry.io/1"])("reports browser reporting from the runtime environment (%s)", browserDsn => {
+      const report = buildSetupReadiness({
+        env: { ...baseEnv, NEXT_PUBLIC_SENTRY_DSN: browserDsn },
+        database: completeDatabase,
+        configDir: makeConfigDir(),
+      });
+      const sentry = findStep(report, "sentry")!;
+      expect(sentry.status).toBe(browserDsn?.trim() ? "complete" : "warning");
+      expect(sentry.details.join(" ")).toContain(browserDsn?.trim() ? "configured at runtime" : "off");
+      expect(sentry.details.join(" ")).not.toContain("https://public@");
+      // One sentence per fact: the off line is not repeated as a "missing" line.
+      expect(sentry.details.filter(line => line.includes("NEXT_PUBLIC_SENTRY_DSN"))).toHaveLength(browserDsn?.trim() ? 0 : 1);
+    });
+
+    it("words browser Sentry off exactly as System Health does", () => {
+      const sentry = findStep(buildSetupReadiness({
+        env: { ...baseEnv, NEXT_PUBLIC_SENTRY_DSN: " " },
+        database: completeDatabase,
+        configDir: makeConfigDir(),
+      }), "sentry")!;
+      expect(sentry.details).toContain(BROWSER_SENTRY_OFF_DETAIL);
+    });
   });
 
   it("reports a complete setup without exposing secret values", () => {
@@ -550,6 +576,25 @@ describe("setup-readiness", () => {
     expect(report).toContain("Runtime Environment: blocked");
     expect(report).toContain("supportEmail");
     expect(report).toContain("Run the seed command");
+  });
+
+  it("tells a Docker-only install how to seed the first admin, not only a developer (#4977)", () => {
+    // The deployment prerequisites list Docker alone, so a checklist that only
+    // says `pnpm run db:seed` leaves that operator with no command they can run.
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, adminCount: 0 },
+    });
+    const seedAdmin = readiness.categories
+      .flatMap((category) => category.checks)
+      .find((check) => check.id === "seed-admin");
+
+    expect(seedAdmin?.status).toBe("blocked");
+    expect(seedAdmin?.details).toEqual([
+      "Docker install: docker compose run --rm seed",
+      "Developer machine: pnpm run db:seed",
+    ]);
   });
 
   it("reports module state from Admin Modules activation only", () => {

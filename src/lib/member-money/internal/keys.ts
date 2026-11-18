@@ -25,6 +25,9 @@ function revision(value: number): string {
   return String(value);
 }
 
+/** What every closure key of one review task starts with (`memberMoneyEventKeys.reviewClose`): its closures, found by prefix. */
+export const reviewCloseKeyPrefix = (taskId: string) => `review-close:${part(taskId, "task id")}:`;
+
 export const memberMoneyEventKeys = {
   /** R01: once per booking, as the legacy confirmation posts once (`INV-MONEY-033`). */
   bookingCharge: (bookingId: string) => key(`booking-charge:${part(bookingId, "booking id")}`),
@@ -39,7 +42,7 @@ export const memberMoneyEventKeys = {
    * back-post is: a line is written once, so a retry finds its batch.
    */
   reviewClose: (taskId: string, firstLineId: string) =>
-    key(`review-close:${part(taskId, "task id")}:${part(firstLineId, "first legacy line id")}`),
+    key(`${reviewCloseKeyPrefix(taskId)}${part(firstLineId, "first legacy line id")}`),
   /**
    * R26: the booking-ledger back-post filling lines a door could not post, for a
    * booking whose R01 is in the journal (#4627). Named by the first legacy line
@@ -73,6 +76,20 @@ export const memberMoneyEventKeys = {
   refundAnswer: (id: string) => key(`refund-answer:${part(id, "refund")}`),
   paidAnotherWay: (id: string) => key(`paid-another-way:${part(id, "record")}`),
   handBackPaid: (id: string) => key(`hand-back-paid:${part(id, "task")}`),
+  /**
+   * #4516 (owner decision, 15 Nov 2026, comment 6893252570): a hand-back reduced by card disputes lost for part of it,
+   * named by the task and the lost disputes counted, sorted. A further reduction needs a further lost dispute, so
+   * each reduction names a different set; the door refuses a replay, and the journal refuses a second part under a
+   * name already posted (a dispute whose amount changed since).
+   */
+  handBackReduced: (taskId: string, lostDisputeIds: readonly string[]) => {
+    if (lostDisputeIds.length === 0) throw new Error("A hand-back reduction names at least one lost dispute.");
+    const ids = [...lostDisputeIds].map((id) => part(id, "dispute")).sort();
+    if (ids.some((id) => id.includes(","))) throw new Error("A dispute id in a hand-back reduction key must contain no ','.");
+    return key(`hand-back-reduced:${part(taskId, "task")}|${ids.join(",")}`);
+  },
+  /** The rest of a hand-back's debt, withdrawn when a reduced hand-back is dismissed (its debt is no longer whole). */
+  handBackRestWithdrawn: (taskId: string) => key(`hand-back-rest-withdrawn:${part(taskId, "task")}`),
   /** #4516 review M1: one close-out per close record, so two kept rests of one debt each post their own. */
   refundCloseOut: (recordId: string) => key(`refund-close-out:${part(recordId, "close record")}`),
   keptCapture: (id: string) => key(`kept-capture:${part(id, "capture")}`),

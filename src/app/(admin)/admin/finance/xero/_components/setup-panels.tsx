@@ -13,6 +13,7 @@ import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
 import { fetchJson, postJson, type ActionResponse } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
 import { xeroSectionId } from "./types"
+import { useAutoLoadOncePerOpening } from "./use-auto-load-once-per-opening"
 import type {
   ContactGroup,
   DuplicateGroup,
@@ -88,8 +89,9 @@ export function SetupPanels({
     }) => {
       if (options?.refreshFromXero) setRefreshingGroups(true)
       else setLoadingGroups(true)
+      // Every attempt replaces the passive notice, so a failure shows once.
+      setLoadError("")
       if (options?.pressed) clearActionError()
-      else setLoadError("")
       try {
         const result = await loadAdminXeroContactGroups({
           refreshFromXero: options?.refreshFromXero,
@@ -124,9 +126,14 @@ export function SetupPanels({
     [clearActionError, failAction, onRefreshDiagnostics]
   )
 
-  useEffect(() => {
-    if (connected && open && contactGroups.length === 0 && !loadingGroups && !refreshingGroups) void loadContactGroups()
-  }, [connected, contactGroups.length, loadContactGroups, loadingGroups, open, refreshingGroups])
+  // Auto-load the groups once per opening while the list is empty; Reset
+  // re-arms it (ALP-591).
+  const { rearm: rearmGroupAutoLoad } = useAutoLoadOncePerOpening({
+    active: connected && open,
+    needed: contactGroups.length === 0,
+    busy: loadingGroups || refreshingGroups,
+    load: loadContactGroups,
+  })
 
   // #2108: load active membership types (for the type selects) once the section
   // is open. Only active types are offered — the import rejects inactive ones.
@@ -407,7 +414,7 @@ export function SetupPanels({
                 <Button onClick={() => void importMembers()} disabled={syncing !== null || !groupMappings.some(isGroupMapped)}>
                   {syncing === "import" ? "Importing..." : "Import Members"}
                 </Button>
-                <Button variant="outline" onClick={() => { setContactGroups([]); setGroupMappings([]) }}>Reset</Button>
+                <Button variant="outline" onClick={() => { rearmGroupAutoLoad(); setContactGroups([]); setGroupMappings([]) }}>Reset</Button>
               </div>
             </>
           )}

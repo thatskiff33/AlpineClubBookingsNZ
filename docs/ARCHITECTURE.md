@@ -1141,7 +1141,14 @@ same permission `/api/admin/members` requires); the count and the card-level
 link stay for every support admin (#2823). Both callers (the page and
 `/api/admin/stuck-states`) resolve that flag from the acting admin's permission
 matrix and default it to `false`, so a caller that omits it fails closed to no
-names.
+names. Since #4959 the *Bookings with unnamed guests* card names its bookings
+under the same flag, and the payment signals (cancelled refunds unrecorded,
+the three recovery-operation signals, the two stale group settlements and
+undelivered bank transfer amount alerts) name theirs only when the caller also
+passes `viewerCanViewFinance`. Each row set is read with the count's own
+`where` and capped at `STUCK_STATE_DETAIL_ROW_CAP`; the page says how many more
+there are (`INV-PAY-156`). The payment counts, their row reads and the shared
+row shape live in `src/lib/stuck-state-payment-signals.ts`.
 The page also lists the card refunds Stripe gave up on (#3372), each with its
 "Paid another way" close: the list names bookings and money still owed, so the
 page loads it only for `{ area: "finance", level: "view" }`, and the close
@@ -1222,6 +1229,19 @@ parse error (`INV-SSOT`). Put the region where the officer is looking, never
 inside a closed form, and prefer `FocusedActionError` so it takes focus and
 scrolls into view. A plain banner above a long list can be off screen. The
 Seasons page still uses one, which is a known gap and not a model to copy.
+A handler that throws a refusal into its own `catch` reads the failed reply with
+`apiRefusalFromResponse` and shows `refusalMessageOr(err, fallback)`: the
+catch also sees a dropped connection and any bug in the success path, and those
+show the screen's own fallback, never the browser's words or a parse error.
+When one body decides between success and failure, parse it once with
+`readApiObjectOrEmpty` (or `readApiObjectOrNull` when a missing body must be
+told apart) and hand the result to `apiErrorMessageFromBody`; do not spell the
+"unreadable counts as empty" rule again.
+`admin-failed-response-json-census.test.ts` fails on a new bare
+`await res.json()` read of a failed reply under `src/app/(admin)`. It does not
+see a `.then((r) => r.json())` chain or an `err.message` shown from a catch, so
+review those by eye. It has no allowance list: an unguarded failure read
+anywhere under `src/app/(admin)` fails.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
@@ -1257,64 +1277,57 @@ one commit, and because a scope change is itself a load it unmounts the
 for the duration of the round trip. That banner shape started in the five
 Booking Policies sections (#2142) and is now the **default across the admin
 tree** (#2160, extended by #2168 and #2324) — not a claim that nothing is left.
-Measured
-on the current tree by `view-only-banner-contract.test.ts`, which asserts these
-figures rather than trusting a hand count: **111 components render a banner, and
- 350 of the 405 `ViewOnlyActionButton` call sites opt out** of the per-button
-reason. (Earlier revisions of this page published 76/232/264/211 — those were
-upstream-historical and had drifted; the numbers here are the ones the contract
-test currently pins, which is the only authority.) Those 350 split by WHICH rule
-covers them: **310** pass the literal
-`describeReason={false}` and are covered by a banner in the same file, and **40**
-pass `describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a
-verified vouching parent — 35 by a parent's own JSX render site (#2168), 5 by the
+`view-only-banner-contract.test.ts` classifies every `ViewOnlyActionButton`
+call site rather than counting them, and this page publishes no totals (#5211):
+a total moved with every pull request that added a gated control or a banner,
+so any two such pull requests conflicted over the same sentence. Run the test
+for the live picture. Most call sites opt out of the per-button reason, under
+one of two rules. Some pass the literal `describeReason={false}` and are covered
+by a banner in the same file. Others pass
+`describeReason={!ancestorRendersViewOnlyBanner}` and are covered by a verified
+vouching parent, either at a parent's own JSX render site (#2168) or through the
 guided-setup shell (#2324); see *Vouching for a child's coverage* and *Vouching
-through the wizard shell* below. The
-remaining **55 controls across 30 files deliberately keep the per-button
-default** (`describeReason` left at `true`), in three shapes:
+through the wizard shell* below. The rest deliberately keep the per-button
+default (`describeReason` left at `true`). Each file that does is listed, with
+how many controls it holds, in the test's `KEEPS_OWN_REASON`, so a new keeper
+is a reviewed line there. They fall into three shapes:
 
 - **Controls inside a dialog, sheet, popover, or dropdown menu.** These live in
-  a separate accessibility container — focus is trapped and the page behind is
-  commonly inert — so a banner rendered in the page body does not reach them.
-  (11 controls across 5 files, including the confirmed bed-allocation move
-  dialog, which the test enumerates by name; three further
-  controls of this shape live in files counted under the next bucket, see
-  there.)
+  a separate accessibility container (focus is trapped and the page behind is
+  commonly inert), so a banner rendered in the page body does not reach them.
+  The test names these files, including the confirmed bed-allocation move
+  dialog; a few further controls of this shape live in files read under the
+  next shape, see there.
 - **Leaf components with no section of their own**, which a parent drops into
   someone else's layout (for example the member detail header's action toolbar,
   the booking capacity/exclusive hold controls, the family-group login-holder
   and request-review sub-sections, and the non-member contact form). Nothing
   local proves an ancestor renders a banner above them, so the reason stays on
-  the control. (40 controls across 24 files.) Nine of those 40 sit inside a
-  setup wizard and are **scope** exceptions rather than indirection ones: each is
-  gated on a permission NARROWER than the banner its shell renders, so an admin
-  who has the wizard's area but not that narrower one meets no banner at all.
-  Eight are new to this bucket with #2324, and are the four provider wizards'
-  credential-ish writes — Xero credentials and webhook key, Stripe keys and
-  signing secret, Google credentials and verify, the backups credentials and
-  destination — all of which additionally need Full Admin. The ninth, the Lodge
-  Display wizard's `support`-gated module switch under a `lodge` banner, has been
-  an exception since #2249 and stays one for the same reason; #2324 moved its
-  three lodge-gated siblings out of this bucket and into the vouched one. Before
-  those, the per-booking "No emails" switch (#2259), dropped into the Admin tools
-  card's layout beside the capacity and exclusive holds. Newest are the
-  cash / off-Xero payment feature's four controls (#2262): Record and Reverse
-  manual payment, a leaf dropped into that same Admin tools card, and the
+  the control. Some of these sit inside a setup wizard and are **scope**
+  exceptions rather than indirection ones: each is gated on a permission
+  NARROWER than the banner its shell renders, so an admin who has the wizard's
+  area but not that narrower one meets no banner at all. They are the four
+  provider wizards' credential-ish writes (Xero credentials and webhook key,
+  Stripe keys and signing secret, Google credentials and verify, the backups
+  credentials and destination), all of which additionally need Full Admin, and
+  the Lodge Display wizard's `support`-gated module switch under a `lodge`
+  banner, an exception since #2249; #2324 moved its three lodge-gated siblings
+  into the vouched rule. Also here: the per-booking "No emails" switch (#2259),
+  dropped into the Admin tools card's layout beside the capacity and exclusive
+  holds, and the cash / off-Xero payment feature's controls (#2262): Record and
+  Reverse manual payment, a leaf in that same Admin tools card, and the
   manual-refund-task queue's Mark-paid-back and Dismiss pair, a card on the
-  Payments page with no banner of its own. Read that
-  bucket as the
-  REMAINDER — everything that is neither a member detail card nor one of the
-  five dialog-only files — rather than as a claim that all 36 are leaves.
-  Thirteen of the twenty-one files are (24 controls); six are the wizard step
-  files just described (9 controls); and the last two, `page-content-panel.tsx`
-  and `site-banners-panel.tsx`, are full banner-bearing panels whose last 3
-  controls sit inside their own edit/create `Dialog`, so those 3 are really the
-  first shape occurring inside a file that also has the third. Nothing is
-  mis-gated either way — the point is only that the bucket boundary is where the
-  test can draw one mechanically, not a clean taxonomy.
+  Payments page with no banner of its own. Read this shape as the REMAINDER
+  (everything that is neither the member detail card below nor one of the
+  dialog-only files) rather than as a claim that all are leaves: two of its
+  files, `page-content-panel.tsx` and `site-banners-panel.tsx`, are full
+  banner-bearing panels whose last controls sit inside their own edit/create
+  `Dialog`, so those are really the first shape occurring inside a file that
+  also has the third. Nothing is mis-gated either way; the bucket boundary is
+  where the test can draw one mechanically, not a clean taxonomy.
 - **A member detail per-record card gated on a DIFFERENT permission area than
-  the page banner** — today exactly one: `member-credit-card.tsx` (4 controls
-  across 1 file). The other eight cards in
+  the page banner**: today exactly one, `member-credit-card.tsx`, which the
+  test holds as a review gate. The other eight cards in
   `src/app/(admin)/admin/membership/members/[id]/_components/` were converted under #2168
   and now take their coverage from the page banner. The credit card did not,
   and that is deliberate rather than a leftover: the page banner states the
@@ -1323,7 +1336,7 @@ default** (`describeReason` left at `true`), in three shapes:
   edit but finance view-only would meet no banner at all while looking at four
   dead buttons. Any second banner for the finance scope would break the owner's
   one-banner-per-page decision and trip the nesting rule, so the per-button
-  reason stays. Bucket by SCOPE, not by folder, when reading this figure.
+  reason stays. Bucket by SCOPE, not by folder.
 
 The Setup Wizard gates checklist progress, provider tests and completion on
 `support` edit access (#4971). Its support banner stays mounted through loading
@@ -1847,7 +1860,13 @@ same shortcut against a normalising route would silently diverge. Each card
 keeps its own `save` callback — the
 GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
 copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
-maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Feedback rendering stays
+maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Any other sentence the
+officer should read is thrown as an `ApiRefusalError`
+(`src/lib/api-error-message.ts`; `apiRefusalFromResponse` reads a route's
+refusal into one). Everything else (a request that never got an answer, an
+unreadable body, a bug) shows the section's required `saveErrorFallback`, and
+its `loadErrorFallback` when it has a `load`, never the browser's own words such
+as "Failed to fetch" (#4976). Feedback rendering stays
 in the component, because booking-policy sections use `PolicyFeedback` while the
 security cards use `Alert`. Where the admin's attention goes is not per-card
 either, and the section wires nothing for the way in: Edit unmounts the button
@@ -1862,11 +1881,17 @@ already change, such as a scope select, is not what Edit opened and is skipped,
 as is an unchecked radio whose group has a checked one (Tab's own rule). The
 reveal moves nothing when focus has moved off the control that opened the
 editor — an opening that awaited a fetch first ("Create override", which
-carries Edit's `editTriggerProps` so the reveal knows it opened) — or when
-the card is hidden behind a modal, as the analytics card is while its dialog
-holds Edit. The hook's `revealTarget` option instead reveals a given element at
-the top; it exists only for the two sections whose card reveal predates #4115 —
-allocation preferences and club identity — and a new section omits it. The way back out: Save and Cancel unmount
+carries Edit's `editTriggerProps` so the reveal knows it opened). An Edit that
+lives in a dialog outside the section's card, as the analytics card's does
+(the card is `aria-hidden` while the dialog is open), reveals inside that
+dialog instead: focus goes to the first control the edit made editable there,
+never to the hidden card. The dialog's own focus scope cannot be relied on for
+it: React reuses the Edit button as the disabled Save, a browser drops focus
+from a control that becomes disabled, and Radix's focus scope notices only a
+removed node (#5183). The hook's `revealTarget` option instead reveals a given
+element at the top; it exists only for the two sections whose card reveal
+predates #4115 — allocation preferences and club identity — and a new section
+omits it. The way back out: Save and Cancel unmount
 the button that held focus too, so the hook records the focused element when
 `startEditing` runs and, after Cancel or a successful save, returns focus to it,
 to the Edit re-rendered in its place, or — when Edit is missing or disabled for
@@ -2243,6 +2268,19 @@ operation holds the settler, a silent keep. The Xero second-instrument conflict 
 (`INV-PAY-043`). It has no foreign key, because the guard re-reads the row and
 trusts it only while it still holds money on this payment.
 
+### The saved-card claim marker (#4993)
+
+`Booking.savedCardClaimAt` is when a saved-card door last claimed the booking
+PENDING -> CONFIRMED for an off-session charge (the confirm-pending cron,
+`charge-saved-method`, confirm-pending-guests). Each claim stamps it, and every
+release back to PENDING and every PAID promotion clears it in the same guarded
+write, so a non-NULL value on a CONFIRMED booking means a claim is in flight or
+was stranded. NULL means no claim is open: the booking was never claimed, the
+claim ended, or it was claimed before the column existed. Only
+`recoverStaleSavedCardClaims` reads it, to hand back a claim older than 30
+minutes with no captured money (`INV-PAY-158`). Nullable, no default, no index:
+an expand-only column the old code neither reads nor writes.
+
 ## Booking and Payment Flow
 
 The happy-path request/data flow for a card booking. Capacity is claimed under
@@ -2558,10 +2596,24 @@ operational defaults such as its fallback capacity override and school-group
 soft cap; the hut-leader lookahead window used by dashboard and Needs Attention
 warnings stays a club-wide knob on the legacy row. Single-lodge clubs keep one
 row (ADR-002); additional lodges get their own keyed by lodge id.
-The sidebar's Needs Attention Booking Requests badge sums pending internal
-booking reviews, requested change requests, and queued public booking requests.
-Pending self-service account deletion requests are also counted there and link
-admins to the deletion request queue. Unpaid finished stays (#1709/#1731) —
+Officer work queues (#4962) are one registry, `ADMIN_WORK_QUEUES` in the
+client-safe `src/lib/admin-work-queues.ts`: each queue's key, label, href,
+icon, tone, the pending counts its number sums and its dashboard card wording.
+The admin dashboard's attention cards (`AdminWorkQueueCards`) and the sidebar's
+Needs Attention section both render that list, and both decide visibility the
+same way, from the queue's href: `isFeatureHrefVisible` for its module and
+`canViewAdminHrefWithMatrix` for the viewer, so for one admin they show the same
+queues with the same numbers. Adding a queue is one registry entry plus its
+counter. The Booking Requests number sums internal booking reviews, requested
+change requests, new-booking policy exception requests and queued public
+booking requests; the deletion queue sums self-service account deletions and
+admin-initiated member deletions; open manual refund tasks are a Payments
+entry; the Stuck States headline (`getStuckStateAffectedCount` in
+`src/lib/stuck-state-affected-count.ts`, the dashboard scan cached per
+process for 60 seconds, failures not cached) shows only with
+`support:view`. `INV-SSOT-011` and `admin-work-queue-census.test.ts` keep both
+surfaces from counting or linking a queue around the registry.
+Unpaid finished stays (#1709/#1731) —
 `PAYMENT_PENDING` bookings whose check-out is on or before NZ today — badge an
 "Unpaid Finished Stays" entry deep-linking to the pre-filtered bookings list;
 its predicate lives in `src/lib/unpaid-finished-stays.ts` and its href in the
@@ -2585,9 +2637,36 @@ of that predicate is `isAdditionalPaymentOwed`
 (`src/lib/additional-payment-chase.ts`), which takes the booking status as a
 required argument and shares one status list with the SQL builder, so no
 surface can read a cancelled booking's untouched delta columns as money owed.
-All sidebar badge counts come from the single `GET /api/admin/pending-counts`
-endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
-mirror the individual queue routes. Sidebar sections render expanded by
+Every queue count comes from `getAdminPendingCounts`
+(`src/lib/admin-pending-counts.ts`): the dashboard calls it while rendering and
+the sidebar reads it through `GET /api/admin/pending-counts`. Its per-queue
+where-clauses mirror the individual queue routes. The four Booking Requests queues in it
+(Approvals, Changes, Policy Exceptions, Public Requests) are defined once, in
+`getBookingRequestPendingCounts` (`src/lib/admin-booking-request-pending-counts.ts`,
+#4969), and each count builds its query from the where-builder its list uses
+(`src/lib/booking-request-queue-where.ts` and `buildBookingRequestListWhere`),
+so a list and its badge are narrowed together. The same helper feeds,
+through the bookings-area `GET /api/admin/booking-requests/pending-counts`,
+the Booking Requests page's tab badges and landing tab, so a bookings-only
+role still gets them; the work queue's card opens the same first tab with
+work. Each counter settles on its
+own (`Promise.allSettled`): a failed one reads as zero and is named in the
+payload's `unavailable` list, so both surfaces say which counts are missing
+rather than reading the failure as "nothing to do". A caller that already reads
+a queue's rows for its own page passes that count in `supplied`, so the page
+holds one number from one read: the dashboard does this for uncovered
+hut-leader nights, and its two hut-leader cards and the listed nights cannot
+disagree. The admin layout is
+persistent, so the sidebar refetches on every pathname change, on window focus,
+when the tab becomes visible, and on the `admin-queue-changed` window event a
+queue page fires after a decision (`notifyAdminQueueChanged` in
+`src/lib/admin-queue-events.ts`). One load runs at a time: a navigation,
+decision or retry mid-load queues one more, while focus and visibility do not.
+These triggers live in `useAdminQueueRefresh` (`src/hooks/use-admin-queue-refresh.ts`),
+which the Booking Requests page's tab badges share, so after a decision they
+still add up to the sidebar's badge.
+A failed load shows "Couldn't load counts" with Retry and keeps the last good
+badges. Sidebar sections render expanded by
 default; a per-section collapse preference persists in localStorage.
 
 The admin command palette (#2092, `src/components/admin-command-palette.tsx`)

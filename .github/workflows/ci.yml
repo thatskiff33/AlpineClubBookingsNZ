@@ -1783,8 +1783,11 @@ jobs:
     env:
       # Stripe publishable key is delivered at runtime from the DB store (#2082),
       # not a build arg — nothing Stripe is inlined into the image.
-      NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
+      # The builder-stage image the migrate and seed services run, built below.
+      # A first-party local tag (INV-OPS-017's exception, `tacbookings-*:ci`), and
+      # the name Compose reads for `migrate` and `seed`, so the smoke inherits it.
+      MIGRATE_IMAGE: tacbookings-ci-migrate:ci
       # Heap ceiling for the builder stage's `next build`, passed as the
       # Dockerfile's build-only NODE_OPTIONS arg; it never reaches the image's
       # runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
@@ -1830,7 +1833,6 @@ jobs:
         if: steps.scope.outputs.needed != 'false'
         run: |
           docker build \
-            --build-arg NEXT_PUBLIC_SENTRY_DSN="${NEXT_PUBLIC_SENTRY_DSN}" \
             --build-arg GIT_COMMIT_SHA="${GIT_COMMIT_SHA}" \
             --build-arg KNOWLEDGE_BUNDLE_OBSERVED_AT="${KNOWLEDGE_BUNDLE_OBSERVED_AT}" \
             --build-arg RELEASE_ID="${GIT_COMMIT_SHA}" \
@@ -1883,6 +1885,31 @@ jobs:
           severity: HIGH
           skip-setup-trivy: true
 
+      # #4977 (INV-OPS-022): the Docker-only first install, run as DEPLOYMENT.md
+      # "First Bootstrap" writes it, on an empty database. The migrate and seed
+      # services run the builder stage, which the app build above has just
+      # produced with these same build args, so this tags it from the cache
+      # rather than building it again; the job's MIGRATE_IMAGE points Compose at it,
+      # exactly as a production adopter points it at the published image.
+      - name: Tag the builder-stage image the migrate and seed services run
+        if: steps.scope.outputs.needed != 'false'
+        run: |
+          docker build \
+            --target builder \
+            --build-arg GIT_COMMIT_SHA="${GIT_COMMIT_SHA}" \
+            --build-arg KNOWLEDGE_BUNDLE_OBSERVED_AT="${KNOWLEDGE_BUNDLE_OBSERVED_AT}" \
+            --build-arg RELEASE_ID="${GIT_COMMIT_SHA}" \
+            --build-arg NODE_OPTIONS="${NODE_BUILD_OPTIONS}" \
+            --tag "${MIGRATE_IMAGE}" \
+            .
+
+      # The commands are read from the doc, never copied here, so the doc
+      # cannot drift from what this runs. Throwaway SEED_* values are generated
+      # by the script; no repository secret is involved.
+      - name: First-install smoke (migrate and seed exactly as DEPLOYMENT.md says)
+        if: steps.scope.outputs.needed != 'false'
+        run: node scripts/ci/first-install-smoke.mjs
+
   publish-ghcr-images:
     name: Publish GHCR images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -1912,7 +1939,6 @@ jobs:
       APP_IMAGE: ${{ vars.GHCR_APP_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-app', github.repository_owner) }}:${{ github.sha }}
       MIGRATE_IMAGE: ${{ vars.GHCR_MIGRATE_IMAGE_REPOSITORY || format('ghcr.io/{0}/alpineclubbookingsnz-migrate', github.repository_owner) }}:${{ github.sha }}
       # Stripe credentials are DB-only (#2082) — no Stripe build args or env here.
-      NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
       # Heap ceiling for the builder stage's `next build` in both image builds,
       # passed as the Dockerfile's build-only NODE_OPTIONS arg; it never reaches
       # the published image's runtime. Value and reason: the `Build` step of `Production build` in ci.yml (#5164).
@@ -1969,7 +1995,6 @@ jobs:
           provenance: mode=max
           tags: ${{ env.APP_IMAGE }}
           build-args: |
-            NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
             RELEASE_ID=${{ env.GIT_COMMIT_SHA }}
@@ -2019,7 +2044,6 @@ jobs:
           provenance: mode=max
           tags: ${{ env.MIGRATE_IMAGE }}
           build-args: |
-            NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
             GIT_COMMIT_SHA=${{ env.GIT_COMMIT_SHA }}
             KNOWLEDGE_BUNDLE_OBSERVED_AT=${{ env.KNOWLEDGE_BUNDLE_OBSERVED_AT }}
             NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}

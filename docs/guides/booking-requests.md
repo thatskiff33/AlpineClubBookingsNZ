@@ -23,6 +23,28 @@ Find it at **Admin → Bookings & Beds → Booking Requests**
 appears under **Admin → Needs Attention → Booking Requests**, and the badge
 counts waiting policy exceptions alongside the other queues.
 
+Each tab shows how many items are waiting on it, across every page of that
+queue, not only the 25 rows on screen. The four counts are worked out
+the same way as the sidebar badge, so they add up to it. The page reads them
+again whenever the sidebar does: after you decide something on any tab, and
+when you come back to the window or browser tab. The tab you are on stays put.
+If a read fails, the badges keep their last numbers.
+
+A link to the page that names no tab, such as the sidebar entry followed from
+another page, the dashboard card, or a typed address, opens on the first tab
+that has work, in tab order (Approvals, Changes, Policy Exceptions, Public
+Requests), or on **Approvals** when nothing is waiting or the counts could not
+be read when the page opened. The dashboard's
+**Booking Requests** card links to that tab. A link that names a tab, a single
+booking or request, or a status filter always opens where it points. Once the
+page is open its address names the tab, so a bookmark taken then keeps that
+tab, and the sidebar entry followed while you are already on this page opens
+**Approvals**, as it always has. The tab counts show where the work is.
+
+**Changes** counts only locked-period change requests; a policy-exception
+request, whether for a new booking or a change to one, is counted on **Policy
+Exceptions**, where it is listed.
+
 > The two older routes **`/admin/booking-approvals`** and
 > **`/admin/booking-change-requests`** are redirects: they open this page on the
 > **Approvals** and **Changes** tabs respectively. They have no separate screen,
@@ -70,7 +92,8 @@ then Save or Cancel.
 
 ### Approvals — decide a flagged booking
 
-1. Open **Booking Requests**; the **Approvals** tab is selected by default.
+1. Open **Booking Requests** and choose the **Approvals** tab (the page opens on
+   it when it has work, or when no tab does).
    Filter by **Pending**, **Approved**, **Rejected**, or **All**.
 
    ![Booking Requests, Approvals tab: a pending review card for a member with Approve and Reject and cancel buttons](../images/admin/admin-booking-requests.png)

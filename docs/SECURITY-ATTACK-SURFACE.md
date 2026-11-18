@@ -125,7 +125,7 @@ the row, not open work. Open findings now live in labelled GitHub issues
 | `/api/admin/bed-allocation/**` | Admin session plus bed-allocation module capability. | Admin. | Lodge rooms, lodge beds, per-night guest allocations, allocation approvals, booking highlight/date-range filters. | None directly. | The route-appropriate `requireBedAllocationRead()`, `requireBedAllocationWrite()`, `requireBedInventoryRead()`, or `requireBedInventoryWrite()` guard; module-state gate; Zod/body validation through bed-allocation route helpers; service-level allocation uniqueness constraints. | Audit logs for room/bed/allocation/settings mutations and approval runs; logger on failures. | Reservation and shared-room integrity surface. Keep allocation writes synchronized with booking lifecycle and preserve per-guest date-only semantics. |
 | `/api/admin/booking-policies/**`, `/api/admin/seasons/**`, `/api/admin/age-tier-settings`, `/api/admin/promo-codes/**` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | Booking policy settings, seasons/rates, age-tier settings, promo codes, Xero item/account mappings for promos. | Xero mapping reads/writes where promo/account mappings are touched. | Admin role plus active guard; Zod validation in several routes. | Audit logs for policy/rate/promo changes. | Money values must remain integer cents. #617 should review pricing/promo abuse and concurrent updates. |
 | `/api/admin/payments/**`, `/api/admin/refund-requests/**`, `/api/admin/credit-approvals` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | Payments, refund requests, member credits, booking/payment reconciliation state. | Stripe refunds/charges as needed, Xero invoice/credit-note work, email notifications. | Admin role plus active guard; service-level validation. | Audit log, logger, email logs. | High money-movement risk. #617 should review cents-only invariants, idempotency, and external call placement. |
-| `/api/admin/communications/**`, `/api/admin/email-templates/**`, `/api/admin/email-settings`, `/api/admin/email-suppressions/**`, `/api/admin/email-failures/**`, `/api/admin/notification-delivery-policies`, `/api/admin/notifications` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | Email templates/settings, send history, suppressions, notification preferences, email failure review. | SES/SMTP email send. | Admin role plus active guard; communications send is rate-limited. | Audit logs for template/settings/suppression/notification changes; logger. | Admin-triggered bulk email and template injection risk. #616 should review SES/email boundaries and redaction. |
+| `/api/admin/communications/**`, `/api/admin/email-templates/**`, `/api/admin/email-settings`, `/api/admin/email-suppressions/**`, `/api/admin/email-failures/**`, `/api/admin/notification-delivery-policies`, `/api/admin/notifications` | Admin session via the shared `requireAdmin()` guard (per-method test-enforced, #1132). | Admin. | Email templates/settings, send history, suppressions, notification preferences, email failure review and requeue to the retry job. | SES/SMTP email send. | Admin role plus active guard; communications send is rate-limited. | Audit logs for template/settings/suppression/notification changes; logger. | Admin-triggered bulk email and template injection risk. #616 should review SES/email boundaries and redaction. |
 | `/api/admin/members/subject-access`, `/api/admin/members/subject-access/guests` | Admin session via `requireAdmin()` (membership view), then Full Admin (`ADMIN` role) on the session and again from the database before any record is read. | Full Admin only. | One person's whole record: profile, bookings, own guest rows, credits, family, applications, booking requests, email log, activity, own dietary values; the guest search returns non-member guest names, stay dates, lodge and booker. | None. | The report asks for a fresh sign-in proof (`INV-AUTH-010`) and has its own 20-per-officer daily limit; a lookup takes exactly one of member id, email or guest id; an email shared by several member records is refused (409). | `privacy` audit row naming the officer and the subject for each report; logger for failures. | Whole-record extraction for one person (`INV-PRIV-025`). A wrong identity check sends someone else's record; the operator procedure is in `PRIVACY_RETENTION.md`. |
 | `/api/admin/audit-log`, `/api/admin/reports`, `/api/admin/members/export`, `/api/admin/members/import` | Admin session. | Admin. | Audit log, reports, member import/export data, bookings/payments/report aggregates. | Import may email login-enabled rows when invites are requested; non-login shared-email rows do not receive setup tokens. | Admin role plus active guard; import has API rate limit; exports select broad PII. | Logger and audit rows for import/export where implemented. | Large data extraction surface. #613/#614 should guard missing admin markers; #617/#619 should review export handling and storage. |
 | `/api/admin/access-roles/**` | Admin session via the shared `requireAdmin()` guard (support area); create/update/delete additionally require Full Admin via an explicit `isFullAdmin` check inside the handlers, because an editable definition could otherwise widen itself past the area gate. | Full Admin for mutations; any admin with support view for the read/options list. | Access-role definitions: labels, descriptions, per-area permission matrices, holder counts. | None. | Zod validation; deletion returns 409 while any member holds the role (including bare enum rows) with a Restrict FK backstop; protected system roles have no definition rows and cannot be touched. | Critical-severity structured audit entries for create/update/delete with before/after definitions. | Permission definitions are security-critical configuration: an edit applies to every holder on their next request. Full-Admin-only management plus the separation-of-duties gate on assignments keeps scoped admins from widening access. |
@@ -172,8 +172,10 @@ Verified controls already present and intentionally preserved:
 - Provider webhooks remain unauthenticated by session and rely on Stripe
   signature verification, Xero HMAC verification, and SNS signature plus topic
   allowlisting.
-- Stripe and SES/SNS webhook handlers claim event ids before side effects and
-  release the claim if downstream processing fails.
+- Stripe and SES/SNS webhook handlers claim event ids under one processing
+  lease before side effects, release the claim if downstream processing
+  fails, and take over a crashed attempt's claim once the lease expires
+  (`INV-INT-039`).
 - Xero inbound events use correlation keys for replay/idempotency and keep
   reconciliation work outside the initial provider response path.
 - Operational Xero token storage encrypts access and refresh tokens at rest.
@@ -286,6 +288,7 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/app/api/auth/verify-email/route.ts`
 - `src/app/api/chores/[token]/route.ts`
 - `src/app/api/committee/route.ts`
+- `src/app/api/observability/browser-config/route.ts` — public, dynamic GET returns only the trimmed runtime browser DSN or null, with `Cache-Control: no-store`. No server DSN, upload credentials, session, database or provider calls. The proxy excludes this API path. Browser reporting initializes only after a successful non-empty response; replay waits for that initialization and the separate club opt-in. CSP still permits the existing `*.ingest.sentry.io` hosts; custom/self-hosted hosts require the same CSP changes as before.
 - `src/app/api/privacy/replay/route.ts` — public GET returns only the Replay opt-in, with the shared API rate limiter before any policy read. Concurrent reads share an in-process 15-second cache; settings failures return OFF, and local saves invalidate the cache. Open tabs re-check every 30 seconds, so switching Replay off reaches every instance and tab within about 45 seconds. Responses remain `no-store`.
 - `src/app/api/contact/route.ts`
 - `src/app/api/display/**/route.ts`
@@ -1243,9 +1246,10 @@ Verified controls already present and intentionally preserved:
   one reviewed advisory under an expiring, owner-approved record.
   The conditions it requires are stated once, in
   [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md)
-  -> "When the wrapper says MITIGATED"; it covers only the copy the audit can
-  see, and a record's known bundled copies it cannot reach are printed on
-  every run. No record is live since the braces record was retired (#3851).
+  -> "When the wrapper says MITIGATED"; it covers only the copies the audit
+  can see, each an exact patched version on exactly its recorded paths
+  (#5252), and a record's known bundled copies it cannot reach are printed on
+  every run. The live records are listed in that README's "Current records".
 - The secret scan reads merge commits. `git log -p` emits no patch for a merge
   commit, and roughly a third of this repository's 7,510 commits are merges, so
   a scan without `--diff-merges=first-parent` never looked at them — and a
@@ -1572,6 +1576,23 @@ to **any** scoped policy this app adds in future, not just these (#2279):
   component wrapper fails, not just `<Link>`), forbids `router.push`/`replace`
   at a relaxed path, and requires any hub/nav descriptor pointing at one to carry
   `hardNavigate: true` — the variable-`href` case a literal scan cannot see.
+- **Each relaxed admin page is listed at both of its addresses (C11 part 1,
+  #4808).** The preview and the builder moved under `/admin/lodge-ops`, and a
+  page answers at its old path or its hub path depending on `ADMIN_HUBS_LIVE`,
+  so both allowlists name both. `src/lib/csp.ts` reads them from the hub
+  registry, through the same twin rule (`withAdminHubTwins`) the module-gate
+  exemptions use, rather than writing them out: `FRAME_SRC_SELF_PATHS` holds
+  `/admin/display/preview`, `/admin/lodge-ops/display/preview`,
+  `/admin/display/builder` and `/admin/lodge-ops/display/builder`, and
+  `TIGHT_IMG_SRC_PATHS` holds `/display` and the two preview paths, never the
+  builder. The match stays exact at every address, so
+  `/admin/lodge-ops/display/templates` and `/admin/lodge-ops/display/builder/extra`
+  fail closed as the old paths' neighbours do. Links reach both pages through
+  `adminHref("display-builder")` and `adminHref("display-preview")`, which is no
+  literal of either path, so the static guard treats that call as an entry
+  point to both addresses: a JSX `href` of it must sit on a plain `<a>`, a
+  descriptor with it must carry `hardNavigate: true`, and `router.push`/`replace`
+  of it fails; `window.open` of it is a hard load and passes.
 - **Accepted residual — a relaxation leaks forward, never backward.** The same
   mechanism means an admin who hard-loads *any* relaxed route and then
   soft-navigates on to other admin pages carries that relaxation into those

@@ -1265,6 +1265,9 @@ test/demo mode or disabled:
 | `DEMO_SEED_PASSWORD`    | Optional local-only password for `pnpm run db:seed:demo` users.   |
 | `DEMO_SECOND_LODGE`     | Local-only; set to `1` to also seed a second demo lodge (rooms + a few bookings) so two-lodge flows are demoable. Default demo dataset is unchanged when unset. |
 
+The seed runs once, on a new install, after migrations:
+`docker compose run --rm seed` on a Docker-only server, or `pnpm run db:seed`
+on a developer machine (#4977). Upgrades never run it.
 `prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
 `SEED_ADMIN_PASSWORD` is unset, or if the lodge kiosk account is missing and
 `SEED_LODGE_PASSWORD` is unset. Before it writes anything, it checks the
@@ -2764,6 +2767,18 @@ read `MemberAccessRole` rows.
 | `SES_SNS_ALLOW_SIGNATURE_V1`             | Temporarily permit legacy SNS SignatureVersion 1 (SHA1). Default rejects v1; enable SignatureVersion 2 on the SNS topic and leave this unset in production.   |
 | `BULK_SENDMAIL_LIMIT`                    | Admin bulk-communication sends allowed per hour (default `1`).                                                                                               |
 
+**SNS delivery policy for SES feedback (#4921).** The SES/SNS route answers
+503 while an earlier attempt at the same notification still holds its
+15-minute processing lease, and takes the notification over only on a
+redelivery after the lease has run out. SNS's default HTTP/S delivery policy
+retries 3 times, 20 seconds apart, so a notification whose first attempt
+crashed is dropped before then. Set an HTTP/S delivery policy on the
+subscription (or topic) that keeps retrying past 15 minutes, within SNS's
+3,600-second hard limit, and attach a dead-letter queue. For example:
+`{"healthyRetryPolicy":{"minDelayTarget":20,"maxDelayTarget":120,"numRetries":30,"numNoDelayRetries":0,"numMinDelayRetries":3,"numMaxDelayRetries":20,"backoffFunction":"exponential"}}`
+retries for roughly 50 minutes. See
+[Amazon SNS message delivery retries](https://docs.aws.amazon.com/sns/latest/dg/sns-message-delivery-retries.html).
+
 ## Address Autocomplete
 
 | Variable          | Description                                     |
@@ -2784,13 +2799,28 @@ rate-limited, or temporarily unavailable.
 
 | Variable                                  | Description                                                                                                      |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `SENTRY_DSN`                              | Server/edge Sentry DSN.                                                                                          |
-| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN.                                                                                              |
+| `SENTRY_DSN`                              | Server/edge Sentry DSN, read at runtime.                                                                         |
+| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN, read at runtime through a public no-store endpoint; blank disables browser reporting.        |
 | `SENTRY_ORG`                              | Sentry organization slug for source map uploads.                                                                 |
 | `SENTRY_PROJECT`                          | Sentry project slug for source map uploads.                                                                      |
 | `SENTRY_AUTH_TOKEN`                       | Sentry auth token for source map uploads during build.                                                           |
 | `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` | Optional in-process cooldown for Sentry event deduplication, shared by the cron/webhook bridge and the auth-bounce anomaly alert (#1669); defaults to 300000 ms. |
 | `AUTH_BOUNCE_AUDIT_MAX_WRITES_PER_MINUTE` | Optional per-process cap on durable auth-bounce `AuditLog` rows per minute (#1669); suppressed rows are tallied onto the next written row. Defaults to 10. |
+
+Both DSNs belong in the deployment's `.env`, including when using published
+images or `--build-and-push-images`. Restart/redeploy after changing them; no
+image rebuild is needed. New page loads fetch only `NEXT_PUBLIC_SENTRY_DSN`
+from `/api/observability/browser-config` before initializing browser reporting.
+Failed or empty configuration leaves reporting and replay off. Errors before
+that fetch completes are not reported. Replay still needs the separate club
+privacy opt-in; its default remains off.
+
+**Upgrade action:** before deploying the first release with runtime browser
+Sentry, set `NEXT_PUBLIC_SENTRY_DSN` in `.env` if browser reports are wanted.
+This applies to the maintainer's deployment too: published images no longer
+supply the upstream destination. Leaving it blank deliberately disables browser
+reports. Sentry DSNs are environment settings, not in-app credentials; upload
+credentials remain build-time settings.
 
 ## Cron, Waitlist, And Backups
 

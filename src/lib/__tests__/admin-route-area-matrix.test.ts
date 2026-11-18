@@ -190,6 +190,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/booking-requests/[id]/resolve-pending-adults": "bookings",
   "/api/admin/booking-requests/[id]/school-record": "bookings",
   "/api/admin/booking-requests/[id]/send-quote": "bookings",
+  // #4969: the four queue counts that badge the Booking Requests page tabs.
+  // Bookings view, like the lists it counts, rather than the overview-area
+  // sidebar aggregate, so a bookings-only role still gets its badges.
+  "/api/admin/booking-requests/pending-counts": "bookings",
   "/api/admin/booking-requests/settings": "bookings",
   "/api/admin/booking-reviews": "bookings",
   "/api/admin/bookings": "bookings",
@@ -293,6 +297,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/display/templates": "lodge",
   "/api/admin/display/templates/[id]": "lodge",
   "/api/admin/email-failures/[id]/reissue-token": "support",
+  "/api/admin/email-failures/[id]/retry": "support",
   "/api/admin/email-failures/[id]/review": "support",
   "/api/admin/email-settings": "support",
   "/api/admin/email-suppressions": "support",
@@ -464,6 +469,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // is gated exactly as closing one is - undoing a money decision is not a
   // lesser act than taking it.
   "/api/admin/payments/manual-refund-tasks/[id]/reopen": "finance",
+  "/api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute": "finance",
   // #3835: what a review share on a cancelled booking still owes, read by the
   // settle dialog before completing - a finance read, gated as the queue is.
   "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",

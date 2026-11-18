@@ -12,7 +12,7 @@ to look like the absence of a decision.
 way.** #2755 unified the three writers of *an officer editing somebody else's
 member record* on `admin` by moving the two bulk-screen branches IN, rather than
 moving the member-page writer out into a member-visible category. Eight of the
-nine remain held. `admin` therefore reads 101 sites now, not 96, and the rule that
+nine remain held. `admin` therefore read 98 sites after #2755, not 96, and the rule that
 came out of it is `INV-PRIV-012` — which is also where the fifteen lodge-gated
 sites and the `lockers` group (unresolved then, settled by #2777) are now
 recorded, instead of only in the open-question section at the foot of this page.
@@ -579,19 +579,21 @@ land.
 
 ## How to check this page is still true
 
-`pnpm run audit:census` prints the live distribution, and
-`src/lib/__tests__/audit-writer-census.test.ts` fails CI if it moves without the
-manifest moving with it. The numbers this page was written against:
+`pnpm run audit:census` prints the live distribution and every site's category.
+`scripts/audit/audit-write-sites.ts` records each production write site's
+category and sink, one line per site, and
+`src/lib/__tests__/audit-writer-census.test.ts` fails CI when any site is added,
+removed or reclassified without its line changing with it. A pull request that
+adds a writer regenerates that file with `pnpm run audit:census --write`.
 
-```
-row-producing sites:  551
-uncategorised:        0
-category values: admin 118, booking 109, xero 51, family 35, payment 73,
-                 lodge 68, account 19, security 26, privacy 25,
-                 communication 22, system 4
-```
+This page publishes no current count, and no longer records each new writer
+(#5211). A pasted count went stale with every new writer, and each pull request
+that added one edited the same lines here, so any two of them conflicted. The
+paragraphs below are the record up to #5211, kept because each says why its
+writer files where it does; the figures in them are the ones measured at the
+time.
 
-`admin` was 96 when this page was written for #2730 (87 kept + 9 held) and is 98
+`admin` was 96 when this page was written for #2730 (87 kept + 9 held) and was 98
 after #2755 moved the two `bulk-update/route.ts` branches in, against `account`
 20 → 19 and `security` 19 → 18. #2755 moved categories and added no writer;
 #2760 then added the late-capture auto-refund record writer (`payment` 34 → 35),
@@ -910,12 +912,6 @@ data, and `member.subject_access_exported`, a Full Admin's subject access report
 one person. Both are `privacy`, so they need `membership:view` to read, and the
 report's row reaches the subject's own timeline on purpose: the subject sees that a
 copy of their record was released.
-#4632 then added two (`admin` 116 -> 118, 549 -> 551, MEASURED with
-`pnpm run audit:census`): `CLUB_TAX_TREATMENT_SCHEDULED` and
-`CLUB_TAX_TREATMENT_SCHEDULE_CANCELLED`, the rows the club tax treatment's one writer
-(`club-tax-settings-write.ts`) writes when a Full Admin schedules or cancels a GST change.
-Filed `admin` like `CLUB_FORMAT_UPDATED`: they record installation configuration and who
-changed it, never a member's affairs, so readable with `support:view` alone by design.
 
 #4680 then added one (`xero` 49 -> 50, 531 -> 532, MEASURED with
 `pnpm run audit:census`): `xero.organiser_adjustment_note.run_stood_down`, the row an

@@ -428,6 +428,7 @@ describe("resolveModificationDocumentLineItems", () => {
     }, CLUB_FORMAT_TEST);
     expect(result.lineItems).toBeNull();
     expect(result.record).toEqual({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", storedSumCents: 8000, sharesSumCents: null, billedCents: 9000, lineCount: 0, shareCount: 0 });
+    expect(result.itemisedShareTaskIds).toEqual([]);
     expect(mocks.bookingFindUniqueOrThrow).not.toHaveBeenCalled();
     expect(mocks.getHutFeeItemCodeMap).not.toHaveBeenCalled();
   });
@@ -466,6 +467,7 @@ describe("resolveModificationDocumentLineItems", () => {
     }, CLUB_FORMAT_TEST);
     expect(result).toEqual({
       lineItems: null,
+      itemisedShareTaskIds: [],
       record: { source: "FALLBACK_SINGLE_LINE", reason: "NARRATION_UNAVAILABLE", storedSumCents: null, sharesSumCents: null, billedCents: 8000, lineCount: 0, shareCount: 0 },
     });
     expect(mocks.loggerError).toHaveBeenCalledTimes(1);
@@ -621,5 +623,7 @@ describe("review share lines (2c)", () => {
     expect(result.record).toEqual({
       source: "STORED", reason: null, storedSumCents: null, sharesSumCents: 2275, billedCents: 2275, lineCount: 1, shareCount: 1,
     });
+    // The rendered shares' tasks, for the export manifest (#4525, ALP-436).
+    expect(result.itemisedShareTaskIds).toEqual(["t1"]);
   });
 });

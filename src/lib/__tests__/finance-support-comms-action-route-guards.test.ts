@@ -27,6 +27,7 @@ import {
 } from "@/app/api/admin/issue-reports/[id]/route";
 import { POST as reissuePost } from "@/app/api/admin/email-failures/[id]/reissue-token/route";
 import { POST as reviewPost } from "@/app/api/admin/email-failures/[id]/review/route";
+import { POST as retryPost } from "@/app/api/admin/email-failures/[id]/retry/route";
 import { POST as clearSuppressionPost } from "@/app/api/admin/email-suppressions/[id]/clear/route";
 import {
   GET as commsGet,
@@ -136,6 +137,14 @@ describe("finance/support/comms action route guards (#1997)", () => {
 
   it("email reissue-token POST requires support:edit", async () => {
     const res = await reissuePost(req("POST"), idParams);
+    expect(res.status).toBe(403);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: SUPPORT_EDIT,
+    });
+  });
+
+  it("email failure retry POST requires support:edit (#4963)", async () => {
+    const res = await retryPost(req("POST"), idParams);
     expect(res.status).toBe(403);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
       permission: SUPPORT_EDIT,

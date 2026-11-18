@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { buildModificationExceptionQueueWhere, buildNewBookingExceptionQueueWhere } from "@/lib/booking-request-queue-where";
 import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
 import { adminListPage, adminQueueCreatedOrder, type AdminListPage } from "@/lib/admin-list-page";
 import { addDaysDateOnly, parseDateOnly, formatDateOnly } from "@/lib/date-only";
@@ -74,6 +75,8 @@ import {
   type ProposalGuest,
   type ProposalParty,
 } from "@/lib/booking-exception-requests";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { optionalDateOnly, optionalNightList } from "@/lib/booking-exception-delta-values";
 
 /**
  * The canonical global booking/money lock(1). A HELD modification request now
@@ -558,28 +561,6 @@ export function buildModificationProposalParties(args: {
 // ---------------------------------------------------------------------------
 // The replayable modification delta (#2526)
 // ---------------------------------------------------------------------------
-
-function optionalDateOnly(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-/**
- * A stored explicit night set, canonicalised: date-only strings, deduped, sorted.
- * Absent or empty becomes `undefined` so the stored delta stays byte-stable
- * (`normalizeStoredExceptionDelta`'s contract) and a re-freeze of the same request
- * writes the same JSON.
- */
-function optionalNightList(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const nights = [
-    ...new Set(
-      value.filter(
-        (night): night is string => typeof night === "string" && night.length > 0,
-      ),
-    ),
-  ].sort();
-  return nights.length > 0 ? nights : undefined;
-}
 
 /**
  * Canonicalise the stored delta so a re-freeze of the same member request writes
@@ -1821,7 +1802,7 @@ export async function createModificationExceptionRequest(
       }
 
       return request;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     return {
       id: created.id,
@@ -1943,7 +1924,7 @@ export async function cancelModificationExceptionRequest(input: {
 
     await releasePolicyExceptionReservation(tx, input.id);
     return true;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 // ---------------------------------------------------------------------------
@@ -2162,13 +2143,12 @@ export async function readUnifiedExceptionQueue(input: {
   page: number;
   pageSize: number;
 }): Promise<{ data: UnifiedExceptionQueueItem[] } & AdminListPage> {
-  const statusWhere =
-    input.status === "ALL" ? {} : { status: input.status };
-  const modificationWhere = { kind: "POLICY_EXCEPTION" as const, ...statusWhere };
+  const newBookingWhere = buildNewBookingExceptionQueueWhere(input.status);
+  const modificationWhere = buildModificationExceptionQueueWhere(input.status);
   const direction = adminQueueCreatedOrder(input.status === "REQUESTED");
 
   const [newBookingTotal, modificationTotal] = await Promise.all([
-    prisma.newBookingPolicyExceptionRequest.count({ where: statusWhere }),
+    prisma.newBookingPolicyExceptionRequest.count({ where: newBookingWhere }),
     prisma.bookingChangeRequest.count({ where: modificationWhere }),
   ]);
   const total = newBookingTotal + modificationTotal;
@@ -2180,7 +2160,7 @@ export async function readUnifiedExceptionQueue(input: {
 
   const [newBookingRows, modificationRows] = await Promise.all([
     prisma.newBookingPolicyExceptionRequest.findMany({
-      where: statusWhere,
+      where: newBookingWhere,
       include: { requestedBy: ACTOR_SELECT, reviewedBy: ACTOR_SELECT },
       orderBy: [{ createdAt: direction }, { id: direction }],
       take: Math.min(windowEnd, newBookingTotal),

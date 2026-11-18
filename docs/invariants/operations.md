@@ -282,10 +282,12 @@ rules first written here. #2765 extended it with the measured-audience half.
   `docs/CONCURRENCY_AND_LOCKING.md` -> "The lock(1) transaction budget" states
   it against `DEPLOYMENT.md` -> "Connection pool sizing". A writer with a harder
   ceiling of its own, such as a provider delivery timeout, may run tighter and
-  says why at the site. Booking create, the linked date move, bed-range
-  assignment and group settlement use the constant; other lock(1) writers still
-  on the defaults, or on their own copy of the numbers, are a known gap tracked
-  by #5175, not a licence.
+  says why in an `INV-LOCK-006 exception:` comment inside the options argument.
+  `lock1-transaction-budget-census.test.ts` enforces this: it follows every
+  lock(1) site out through named helpers to the transaction that opens it, and
+  accepts only the constant, a `const` that is exactly it, or a reasoned
+  exception (`docs/audits/lock1-transaction-budgets.md`). No spread: advisory-lock
+  transactions stay on READ COMMITTED (`INV-LOCK-005`).
 
 ## INV-OPS-014
 
@@ -590,20 +592,16 @@ rules first written here. #2765 extended it with the measured-audience half.
   demands a destructive reset on every development database that applied it.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
-  A GENERAL "did a reclassification ship without a backfill" check is
-  **not available**: the audit-writer census pins only 130 of its 551 write sites
-  per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
-  `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
-  `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
-  by `audit-writer-census.test.ts` so this figure and the copy of it in
-  `bed-allocation-audit-category-backfill.test.ts` cannot go stale again —
-  deliberately, because pinning all of them would make every feature that records
-  something edit a 400-line literal — so for the other 383 there is no baseline
-  a check could compare against, and the category distribution alone cannot see a
-  reclassification that another one compensates for. The two `verify` gates that
-  can read a pull request parse its BODY, not its diff. So outside the pinned
-  population this is a rule a reviewer applies, and the reviewer is the
-  enforcement.
+  Since #5211 every write site has a per-site baseline: the generated ledger
+  `scripts/audit/audit-write-sites.ts` records each site's category, sink and
+  action, so any reclassification fails `audit-writer-census.test.ts`, naming
+  every changed attribute. Sites are matched within their function by sink and
+  action; sites sharing both are matched by order, and a reviewed record keyed
+  by `#n` must be re-pointed when its key shifts. A GENERAL "did it ship WITH a
+  backfill" check is still **not available**: the ledger sees the move, not the
+  migration or issue answering for it, and the two `verify` gates that can read
+  a pull request parse its BODY, not its diff. So outside #2751's population
+  this is a rule a reviewer applies, and the reviewer is the enforcement.
 
   **The same pull request also states the MEASURED before/after audience, per
   site.** Owner decision of 11 August 2026 on #2765, D3, extending this rule
@@ -899,3 +897,33 @@ token needs Actions read access.
 - Enforced by `scripts/ci/main-push-runs-complete.test.ts`, which evaluates
   each workflow's group for a push and a pull request, and by the
   `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
+
+## INV-OPS-022
+
+A Docker-only install can create its first admin with Docker alone, and the
+commands that do it are the ones CI runs. `DEPLOYMENT.md` "First Bootstrap"
+gives the seed as one plain line, `docker compose run --rm seed`, after the
+database roles are provisioned and switched on in `.env` and before the web
+slots start. The `seed` service runs on the builder image, the same image and
+build as `migrate`, because the runner image holds no source. It sits behind a
+profile, so `docker compose up` never starts it and an upgrade never runs it.
+It connects as the application role with a bounded pool counted in the
+connection budget, and reads the `SEED_` secrets from `.env` through
+`environment:` only, never as a build argument or on the command line.
+
+Every operator doc that tells somebody how to seed a Compose install names that
+service; none runs the seed in the app container (`exec app`), whose image
+cannot run it. The setup checklist names the Docker and developer commands from
+`src/lib/seed-commands.ts`. `.env.example` is copied by the first step, so no
+line gives Compose an empty value followed by a comment: Compose reads the
+comment as the value.
+
+- Why: #4977. "First Bootstrap" had lost its seed step, three docs gave an
+  `exec app` command that fails in the runner image, and CI seeded from the
+  host, so no check ran what an operator is told to run.
+- Enforced by `scripts/ci/first-install-smoke.mjs`, which reads the steps out of
+  `DEPLOYMENT.md` and runs them on an empty database in the
+  `docker-image-security` job. A missing `SEED_ADMIN_EMAIL` must fail with
+  nothing written; a second run must change no seeded value (bar the built-in
+  displays' `updatedAt`, refreshed from code by design). Also enforced by
+  `first-install-seed-contract.test.ts`.

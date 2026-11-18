@@ -1,5 +1,6 @@
 import { BookingRequestType, BookingStatus, Prisma } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { BOOKING_OWNER_NAME_SELECT } from "@/lib/booking-owner-name";
 import { logAudit } from "@/lib/audit";
 import { getBookingRequestSettings } from "@/lib/booking-request";
 import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
@@ -298,9 +299,20 @@ export async function sendPlaceholderGuestNameReminders(
   return result;
 }
 
+/** One booking the stuck-states "Bookings with unnamed guests" signal names (#4959). */
+export type BookingWithUnnamedPlaceholderGuests = Prisma.BookingGetPayload<{
+  select: typeof BOOKING_OWNER_NAME_SELECT;
+}> & {
+  id: string;
+  checkIn: Date;
+  lodge: { name: string } | null;
+  /** How many of its guests still carry a generated placeholder name. */
+  unnamedGuestCount: number;
+};
+
 /**
  * Bookings approaching check-in whose party still carries generated placeholder
- * names — the admin-dashboard face of #2550.
+ * names — the admin-dashboard face of #2550, soonest arrival first.
  *
  * A deliberate sibling of `countUnconfirmedSchoolAttendeeLists` rather than a
  * replacement for it: that count answers "has the school contact signed off the
@@ -310,14 +322,18 @@ export async function sendPlaceholderGuestNameReminders(
  * front doors plus any other booking that somehow carries a placeholder-shaped
  * name — it reads the guest rows themselves rather than a request type.
  *
+ * #4959: the one rule. The stuck-states signal names these bookings, and
+ * {@link countBookingsWithUnnamedPlaceholderGuests} is this list's length, so
+ * the named rows and the count cannot disagree.
+ *
  * Read-only, and blocks nothing.
  */
-export async function countBookingsWithUnnamedPlaceholderGuests(
+export async function listBookingsWithUnnamedPlaceholderGuests(
   now: Date = new Date(),
-): Promise<number> {
+): Promise<BookingWithUnnamedPlaceholderGuests[]> {
   const settings = await getBookingRequestSettings();
   const leadDays = settings.attendeeConfirmationLeadDays;
-  if (leadDays <= 0) return 0;
+  if (leadDays <= 0) return [];
 
   // Same @db.Date boundary as the sweep above (F32, #1888; #3123), and the same
   // inclusive arrival day: a party still unnamed on the day they arrive is the
@@ -334,11 +350,15 @@ export async function countBookingsWithUnnamedPlaceholderGuests(
     },
     select: {
       id: true,
+      checkIn: true,
+      ...BOOKING_OWNER_NAME_SELECT,
+      lodge: { select: { name: true } },
       guests: {
         where: candidatePlaceholderGuestWhere(),
         select: PLACEHOLDER_GUEST_SELECT,
       },
     },
+    orderBy: [{ checkIn: "asc" }, { id: "asc" }],
     // The window is at most `attendeeConfirmationLeadDays` wide and only holds
     // bookings that still carry a candidate placeholder, so this bound is far
     // above any realistic count; it exists so a data anomaly cannot turn an
@@ -346,7 +366,15 @@ export async function countBookingsWithUnnamedPlaceholderGuests(
     take: 500,
   });
 
-  return bookings.filter(
-    (booking) => countPlaceholderGuestNames(booking.guests) > 0,
-  ).length;
+  return bookings.flatMap(({ guests, ...booking }) => {
+    const unnamedGuestCount = countPlaceholderGuestNames(guests);
+    return unnamedGuestCount > 0 ? [{ ...booking, unnamedGuestCount }] : [];
+  });
+}
+
+/** How many bookings {@link listBookingsWithUnnamedPlaceholderGuests} names. */
+export async function countBookingsWithUnnamedPlaceholderGuests(
+  now: Date = new Date(),
+): Promise<number> {
+  return (await listBookingsWithUnnamedPlaceholderGuests(now)).length;
 }

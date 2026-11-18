@@ -3,7 +3,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { promoChangeNotAppliedHeading } from "@/lib/promo-change-not-applied";
 import { formatCents } from "@/lib/utils";
-import { organiserBilledSentence } from "@/lib/booking-modified-email-copy";
+import { disputedRefundSentence, organiserBilledSentence } from "@/lib/booking-modified-email-copy";
+import { heldForDisputeSettlementCents } from "@/lib/edit-dispute-held-settlement";
 import type { PromoAction } from "@/components/edit-booking/hooks/use-promo-selection";
 import type { PromoInfo, QuoteResult } from "@/components/edit-booking/types";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -415,6 +416,14 @@ export function PriceSummaryCard({
                     {quote.settlementOptions.cardRefundAmountCents > 0
                       ? `${quote.settlementOptions.organiserRefundByBankTransfer ? "To be refunded to the group organiser by bank transfer" : "Refunded to the group organiser's card"}: ${formatCents(quote.settlementOptions.cardRefundAmountCents, format)} (${quote.settlementOptions.cardRefundPercentage}%). The organiser paid for this booking, so the refund goes back to them.`
                       : "No refund is available for this reduction under the current policy."}
+                  </p>
+                ) : quote.settlementOptions.refundHeldForDispute ? (
+                  // #5061 follow-up (`INV-PAY-154`): the save's own held amount, in the email's words.
+                  <p data-testid="disputed-refund-notice">
+                    {disputedRefundSentence(
+                      formatCents(heldForDisputeSettlementCents(quote.settlementOptions), format),
+                      actingAsAdmin ? "the member's" : "your",
+                    )}
                   </p>
                 ) : quote.settlementOptions.requiresSettlementMethod ? (
                   <div className="space-y-2">

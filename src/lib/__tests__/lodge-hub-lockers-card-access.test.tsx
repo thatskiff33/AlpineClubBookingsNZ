@@ -36,7 +36,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-import LodgeConfigurationHubPage from "@/app/(admin)/admin/lodges/[id]/page";
+import LodgeConfigurationHubPage from "@/app/(admin)/admin/lodge-ops/lodges/[id]/page";
 
 const LODGE = {
   id: "lodge-1",

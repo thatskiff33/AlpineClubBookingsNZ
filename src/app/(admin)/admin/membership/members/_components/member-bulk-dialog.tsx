@@ -22,10 +22,25 @@ import {
 import { useAccessRoleOptions } from "@/hooks/use-access-role-options"
 import type { BulkAction } from "../_types"
 
+// What each action really does on the server (#4973). Keep these sentences
+// aligned with api/admin/members/bulk-update/route.ts: a change to that route's
+// side effects changes this map in the same PR. Membership-type changes have
+// their own dialog, and "" is only the page's nothing-chosen-yet state.
+type MemberBulkDialogAction = Exclude<BulkAction, "" | "set-membership-type">
+const actionDescriptions: Record<MemberBulkDialogAction, string> = {
+  deactivate: "Each member's leaving date will be set to today (an inactive member's existing leaving date is kept). They will be removed from their family groups, and their future shared-room bed placements will be cleared; Reactivate restores neither.",
+  reactivate: "Each member's leaving date will be cleared.",
+  "set-role": "Each member's existing access roles will be replaced by the chosen role. Choosing Organisation also sets each member's age tier to N/A and can clear their future shared-room bed placements; replacing Organisation with another role can restore a person age tier.",
+}
+
+const MAX_LISTED_MEMBERS = 10
+
 interface MemberBulkDialogProps {
   open: boolean
   action: BulkAction
   selectedIds: Set<string>
+  /** Display names of every member the list has shown, by id. */
+  memberNames: ReadonlyMap<string, string>
   onOpenChange: (open: boolean) => void
   onUpdated: (updated: number) => void
   onError: (message: string) => void
@@ -35,6 +50,7 @@ export function MemberBulkDialog({
   open,
   action,
   selectedIds,
+  memberNames,
   onOpenChange,
   onUpdated,
   onError,
@@ -68,6 +84,16 @@ export function MemberBulkDialog({
     }
   }
 
+  const actionDescription =
+    action === "" || action === "set-membership-type" ? "" : actionDescriptions[action]
+  // Named in selection order, from every page the officer has ticked on.
+  const listedMembers = [...selectedIds]
+    .filter((id) => memberNames.has(id))
+    .slice(0, MAX_LISTED_MEMBERS)
+  // Counted from the ids actually posted, so a selection the list has no name
+  // for is still owned up to rather than silently left off the list.
+  const unlistedCount = selectedIds.size - listedMembers.length
+
   const titleAction =
     action === "set-role" ? "Change Access" : action === "deactivate" ? "Deactivate" : "Reactivate"
 
@@ -77,9 +103,15 @@ export function MemberBulkDialog({
         <DialogHeader>
           <DialogTitle>Bulk {titleAction}</DialogTitle>
           <DialogDescription>
-            This will affect {selectedIds.size} selected member(s).
+            This will affect {selectedIds.size} selected member(s). {actionDescription}
           </DialogDescription>
         </DialogHeader>
+        <ul aria-label="Selected members" className="text-sm list-disc pl-5">
+          {listedMembers.map((id) => (
+            <li key={id}>{memberNames.get(id)}</li>
+          ))}
+          {unlistedCount > 0 && <li>and {unlistedCount} more</li>}
+        </ul>
         {action === "set-role" && (
           <div className="space-y-2">
             <Label htmlFor="member-bulk-role">New Access Role</Label>

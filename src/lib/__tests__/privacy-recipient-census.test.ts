@@ -39,6 +39,10 @@ function serverFiles(directory: string): string[] {
     if (entry.isDirectory()) return serverFiles(path);
     if (!/\.tsx?$/.test(entry.name) || /\.(test|spec)\.tsx?$/.test(entry.name)) return [];
     if (entry.name === "privacy-recipient-classification.ts") return [];
+    // Superseded starter privacy bodies (#5007), byte copies of migration guard
+    // text that config-transfer-cleaned-literals.test.ts pins to the SQL. Their
+    // links are old policy prose, not outbound calls, and cannot be reworded.
+    if (relative(root, path) === join("src", "lib", "config-transfer", "starter-privacy-cleaned-bodies.ts")) return [];
     const source = readFileSync(path, "utf8");
     const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
     if (file.statements.some((statement) => ts.isExpressionStatement(statement)
@@ -51,7 +55,7 @@ function recipientRows(): string[] {
   return Object.entries(PRIVACY_RECIPIENTS).map(([id, entry]) => {
     const namespaces = Object.entries(CREDENTIAL_RECIPIENTS)
       .filter(([, recipient]) => recipient === id).map(([namespace]) => `\`${namespace}\``).join(", ") || "None";
-    return `| ${id} | [${entry.name}](${entry.privacyUrl}) | ${namespaces} | ${entry.dataSent} | ${entry.enablement} | ${entry.processing} | ${entry.memberFacing ? "Yes" : "No"} |`;
+    return `| ${id} | [${entry.name}](${entry.privacyUrl}) | ${namespaces} | ${entry.dataSent} | ${entry.enablement} | ${entry.processing} | ${entry.memberFacing ? "Yes" : "No"} | \`${entry.availability}\` |`;
   });
 }
 
@@ -93,6 +97,24 @@ describe("privacy recipient register census", () => {
     expect(unclassified).toEqual([]);
     // Parses every server-capable file under src/; measured at 6-8s locally.
   }, 30_000);
+
+  it("keeps the exempt cleaned-bodies file to plain string constants (#5007)", () => {
+    // The host scan skips this file, so it must never grow code that could call out.
+    const path = join(root, "src", "lib", "config-transfer", "starter-privacy-cleaned-bodies.ts");
+    const file = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true);
+    // A variable's initialiser, or the statement itself when it is anything else
+    // (an import, a function, a call), which the check below then rejects.
+    const initialisers: Array<ts.Node | undefined> = [];
+    for (const statement of file.statements) {
+      if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) initialisers.push(declaration.initializer);
+      } else {
+        initialisers.push(statement);
+      }
+    }
+    expect(initialisers.length).toBeGreaterThan(0);
+    for (const initialiser of initialisers) expect(initialiser && ts.isStringLiteral(initialiser)).toBe(true);
+  });
 
   it("sees a new outbound host, including template URLs, and ignores prose comments", () => {
     expect([...outboundHosts('fetch("https://new-recipient.invalid/send");')]).toEqual(["new-recipient.invalid"]);

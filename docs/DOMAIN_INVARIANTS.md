@@ -367,12 +367,15 @@ Prefix `INV-PAY`.
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
-| `INV-PAY-150` | Refund doors leave a live superseded capture to its own refund |
+| `INV-PAY-150` | Cancels, reviews, hand closes leave superseded captures to their refund |
 | `INV-PAY-151` | Paid another way reverses a covered failed card refund |
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
 | `INV-PAY-154` | A disputed capture is never refunded or credited |
 | `INV-PAY-155` | The inbound recount takes each failed-later card refund off once |
+| `INV-PAY-156` | Stuck States signals name their records with the count's filter |
+| `INV-PAY-157` | Lost dispute cents close a payment's hand-backs once, oldest first |
+| `INV-PAY-158` | A saved-card claim is marked durably and recovered when stranded |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -962,6 +965,8 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-036` | An account-credit note stamps the one member credit it was raised for |
 | `INV-INT-037` | A manual grant queues one Xero note at approval |
 | `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
+| `INV-INT-039` | A dead webhook attempt is taken over past the lease |
+| `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
 
 ## Operations
 
@@ -1001,6 +1006,7 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
 | `INV-OPS-021` | Every main push run completes; releases tag only published commits |
+| `INV-OPS-022` | The documented Docker first install, seed included, is what CI runs |
 
 ## Product Configuration
 
@@ -1044,6 +1050,8 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
 | `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
 | `INV-SSOT-009` | A charge's dedup key and display name share one builder only |
+| `INV-SSOT-010` | An admin page's heading is its registry label; a census holds it |
+| `INV-SSOT-011` | Officer work queues: one registry, one counter, both admin surfaces |
 
 ## Authentication
 
