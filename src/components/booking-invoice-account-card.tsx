@@ -6,6 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { BookingCreditNoteKind, BookingInvoiceAccount, BookingInvoiceOffer } from "@/lib/booking-invoice-access";
 import { formatCents } from "@/lib/utils";
 
+const BALANCE_LABEL: Readonly<Record<BookingInvoiceAccount["summary"]["balanceWhen"], string>> = {
+  NOW: "Still to pay",
+  AFTER_REVIEW: "Due once reviewed",
+  AFTER_CONFIRMATION: "Due once confirmed",
+};
+
 const CREDIT_NOTE_KIND_LABEL: Readonly<Record<BookingCreditNoteKind, string>> = {
   CHANGE: "For a change to the booking",
   REFUND: "For a refund",
@@ -15,7 +21,7 @@ const CREDIT_NOTE_KIND_LABEL: Readonly<Record<BookingCreditNoteKind, string>> = 
 
 /**
  * The booking's invoice account (#5066; owner decision on PR #5201, 17 Nov
- * 2026), under Stay Details whenever the page offers the Xero invoice: a line
+ * 2026), after the Payment card whenever the page offers the Xero invoice: a line
  * when the app knows the invoice in Xero does not show the latest change, a
  * short summary from the app's own records, and one download per Xero credit
  * note raised against the booking. Renders the server's answer only; the
@@ -32,11 +38,14 @@ export function BookingInvoiceAccountCard({
 }) {
   const format = useClubFormat();
   const { summary } = account;
+  // `bookingInvoiceSummary`: paid = total + change fees - credit - due + kept.
   const rows: Array<[string, number]> = [
     ["Booking total", summary.totalCents],
+    ...(summary.changeFeeCents > 0 ? [["Change fees", summary.changeFeeCents] as [string, number]] : []),
     ["Account credit applied", summary.creditAppliedCents],
-    ["Paid, less refunds", summary.paidCents],
-    ["Still to pay", summary.balanceCents],
+    ["Paid, less refunds and credits returned", summary.paidCents],
+    ...(summary.keptCents > 0 ? [["Kept under the booking's change terms", summary.keptCents] as [string, number]] : []),
+    [BALANCE_LABEL[summary.balanceWhen], summary.balanceCents],
   ];
   return (
     <Card>

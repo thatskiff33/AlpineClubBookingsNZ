@@ -55,6 +55,26 @@ describe("offeredBookingCreditNotes", () => {
     );
     expect(offered).toEqual([{ creditNoteId: "cn-column", creditNoteNumber: null, kind: "REFUND" }]);
   });
+
+  it("F5: labels a note this booking's credit slices name as credit used, whatever an older link calls it", () => {
+    const offered = offeredBookingCreditNotes(
+      [
+        { creditNoteId: "cn-lot", kind: "ACCOUNT_CREDIT", role: "ACCOUNT_CREDIT_NOTE" },
+        { creditNoteId: "cn-lot", kind: "CREDIT_USED" },
+      ],
+      [link("cn-lot", { xeroObjectNumber: "CN-0003" })],
+      new Set(["cn-lot"]),
+    );
+    expect(offered).toEqual([{ creditNoteId: "cn-lot", creditNoteNumber: "CN-0003", kind: "CREDIT_USED" }]);
+  });
+
+  it("F6: drops a remainder note once no slice for this booking names it (the credit was given back)", () => {
+    const remainder = { creditNoteId: "cn-remainder", kind: "CREDIT_USED" as const, role: "APPLIED_CREDIT_REMAINDER_NOTE" };
+    expect(offeredBookingCreditNotes([remainder], [link("cn-remainder")], new Set())).toEqual([]);
+    expect(offeredBookingCreditNotes([remainder], [link("cn-remainder")], new Set(["cn-remainder"]))).toEqual([
+      { creditNoteId: "cn-remainder", creditNoteNumber: null, kind: "CREDIT_USED" },
+    ]);
+  });
 });
 
 describe("readBookingCreditNotes", () => {
@@ -109,7 +129,7 @@ describe("readBookingCreditNotes", () => {
     );
     // Only the booking owner's own credit lots.
     expect(db.memberCreditNoteAllocation.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { appliedToBookingId: "bk-1", memberCredit: { memberId: "owner-1" } } }),
+      expect.objectContaining({ where: { appliedToBookingId: "bk-1", amountCents: { gt: 0 }, memberCredit: { memberId: "owner-1" } } }),
     );
   });
 

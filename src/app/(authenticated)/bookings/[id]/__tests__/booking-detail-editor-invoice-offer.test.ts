@@ -69,7 +69,7 @@ const input = {
   amountOwed: { owedCents: 1000, dueCents: 1000, appliedCreditCents: 0 },
 } as never;
 const ACCOUNT = {
-  summary: { totalCents: 1000, creditAppliedCents: 0, paidCents: 1000, balanceCents: 0 },
+  summary: { totalCents: 1000, changeFeeCents: 0, creditAppliedCents: 0, paidCents: 1000, keptCents: 0, balanceCents: 0, balanceWhen: "NOW" },
   invoiceUpdateNotice: null,
 };
 

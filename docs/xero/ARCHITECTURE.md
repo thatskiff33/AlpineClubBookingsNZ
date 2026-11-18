@@ -3547,19 +3547,26 @@ page and both routes, so neither can serve what the page does not offer.
   refund-note columns on `Payment` and `PaymentRefund`, and the owner's own
   credit lots allocated to the booking (`MemberCreditNoteAllocation`). A note
   any link records as voided or deleted is left out, as is one whose every
-  link is inactive. Organiser-extra notes credit another invoice and are not
-  listed. The credit-note route serves only an id in this list.
+  link is inactive. A note an applied-credit slice names is "credit used",
+  whatever an older link calls it, and a remainder note is listed only while a
+  slice for the booking names it. Organiser-extra notes credit another invoice
+  and are not listed. The credit-note route serves only an id in this list.
 - **The Xero read**: one `getInvoiceAsPdf` or `getCreditNoteAsPdf` through
   `callXeroApi`, outside any transaction, no retries, no breaker arming, and
   no writes to Xero.
 - **The summary** (`bookingInvoiceSummary`) is the page's own figures, not a
-  ledger statement: the booking's worth, the ledger's applied credit, what
-  the payment still holds after refunds (Net Collected's cash rule), and the
-  amount due while the booking still owes its price.
-- **A stale invoice** (`readPrimaryInvoiceUpdateState`): the page says so when
-  the latest primary-invoice update was skipped by policy
-  (`recordSkippedXeroBookingInvoiceUpdateOperation`) or failed unresolved, and
-  that the PDF may lag while one is queued or running.
+  ledger statement: the price (the Payment card's Total), the recorded change
+  fee, the ledger's applied credit, what the payment still holds after refunds
+  and returned credit (Net Collected's cash rule), and the amount due (now, or
+  once a review or pending booking is confirmed). When a reduction was
+  refunded only in part, a "kept" row is the one sum that makes the rows
+  reconcile: paid = total + fee - credit - due + kept.
+- **Not yet in Xero** (`readPrimaryInvoiceUpdateState`): the page says so when
+  the latest primary-invoice update was skipped (`isSkippedPrimaryInvoiceUpdate`:
+  by the edit's policy, or by the worker on a paid, credited, voided or
+  deleted invoice) or failed unresolved, or when a credit note for the booking
+  (modification, account-credit or refund note) failed unresolved; and that
+  the documents may lag while either is queued or running.
 - **Later work.** A single statement PDF for the booking (invoice, credits,
   payments and balance in one document) belongs to #5066's generated-document
   slice, which waits on the club GST status work (#5153).

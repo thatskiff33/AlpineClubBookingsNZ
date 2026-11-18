@@ -142,15 +142,18 @@ club's short name.
 
 Under the booking's **Payment** card, an **Invoice and credits** card shows:
 
-- a short summary from the booking itself: the booking total, any account
-  credit applied, what you have paid less any refunds, and what is still to
-  pay;
+- a short summary from the booking itself: the booking total (the same as
+  the Payment card's Total), any change fee, any account credit applied, what
+  you have paid less refunds and credits returned, anything kept under the
+  booking's change terms when a change was refunded only in part, and what is
+  still to pay (or what will be due once the booking is reviewed or
+  confirmed);
 - each Xero credit note raised against the booking (for example when a change
   lowered the price, a refund, or account credit used on it), each with its
   own **Download credit note** button;
-- a line in plain words when the invoice in the club's accounts does not show
-  your latest change yet, or could not be changed. The summary is then the
-  booking's own figures.
+- a line in plain words when the club's accounts do not show your latest
+  change yet: the invoice could not be changed, or a credit for the change
+  has not been made yet. The summary is then the booking's own figures.
 
 Some things to know:
 

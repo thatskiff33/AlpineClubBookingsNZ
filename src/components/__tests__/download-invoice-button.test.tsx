@@ -19,7 +19,7 @@ import type { BookingInvoiceAccount } from "@/lib/booking-invoice-access";
 
 const CREDIT_NOTE = { creditNoteId: "xero-cn-1", creditNoteNumber: "CN-0007", kind: "CHANGE" as const };
 const ACCOUNT: BookingInvoiceAccount = {
-  summary: { totalCents: 45_000, creditAppliedCents: 5_000, paidCents: 40_000, balanceCents: 0 },
+  summary: { totalCents: 45_000, changeFeeCents: 0, creditAppliedCents: 5_000, paidCents: 40_000, keptCents: 0, balanceCents: 0, balanceWhen: "NOW" },
   invoiceUpdateNotice: null,
 };
 
@@ -131,10 +131,33 @@ describe("BookingInvoiceAccountCard", () => {
     const summary = screen.getByLabelText("Booking account summary");
     expect(summary).toHaveTextContent("Booking total$450.00");
     expect(summary).toHaveTextContent("Account credit applied$50.00");
-    expect(summary).toHaveTextContent("Paid, less refunds$400.00");
+    expect(summary).toHaveTextContent("Paid, less refunds and credits returned$400.00");
     expect(summary).toHaveTextContent("Still to pay$0.00");
+    expect(summary).not.toHaveTextContent("Change fees");
+    expect(summary).not.toHaveTextContent("Kept under");
     expect(screen.queryByText("Credit notes")).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows a change fee and what the booking's terms kept as their own rows, and when an amount falls due (F3, F4)", () => {
+    const account: BookingInvoiceAccount = {
+      summary: { totalCents: 45_000, changeFeeCents: 5_000, creditAppliedCents: 0, paidCents: 55_000, keptCents: 5_000, balanceCents: 0, balanceWhen: "NOW" },
+      invoiceUpdateNotice: null,
+    };
+    const offer = { kind: "XERO_INVOICE" as const, invoiceNumber: "INV-7", creditNotes: [] };
+    const { rerender } = render(<BookingInvoiceAccountCard bookingId="bk-1" offer={offer} account={account} />);
+    const summary = screen.getByLabelText("Booking account summary");
+    expect(summary).toHaveTextContent("Booking total$450.00");
+    expect(summary).toHaveTextContent("Change fees$50.00");
+    expect(summary).toHaveTextContent("Kept under the booking's change terms$50.00");
+    rerender(
+      <BookingInvoiceAccountCard
+        bookingId="bk-1"
+        offer={offer}
+        account={{ ...account, summary: { ...account.summary, paidCents: 0, keptCents: 0, balanceCents: 50_000, balanceWhen: "AFTER_REVIEW" } }}
+      />,
+    );
+    expect(screen.getByLabelText("Booking account summary")).toHaveTextContent("Due once reviewed$500.00");
   });
 
   it("says in plain words when the invoice in Xero does not show the latest change", () => {

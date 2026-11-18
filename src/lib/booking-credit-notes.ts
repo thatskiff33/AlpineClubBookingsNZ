@@ -2,9 +2,13 @@ import "server-only";
 
 import type { BookingCreditNote, BookingCreditNoteKind } from "@/lib/booking-invoice-access";
 import { prisma } from "@/lib/prisma";
-import { REFUND_REQUEST_CREDIT_NOTE_ROLE } from "@/lib/refund-request-credit-note";
 import { APPLIED_CREDIT_REMAINDER_NOTE_ROLE } from "@/lib/xero-applied-credit-link-roles";
-import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-status";
+import {
+  ACCOUNT_CREDIT_NOTE_ROLE,
+  MODIFICATION_ACCOUNT_CREDIT_NOTE_ROLE,
+  MODIFICATION_CREDIT_NOTE_ROLE,
+} from "@/lib/xero-booking-credit-note-link-roles";
+import { isRefundCreditNoteLinkCancelledInXero, REFUND_NOTE_LINK_ROLES } from "@/lib/xero-refund-note-status";
 
 /**
  * THE BOOKING'S XERO CREDIT NOTES, from the app's own records (#5066; owner
@@ -26,6 +30,13 @@ import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-st
  *   (`MemberCreditNoteAllocation`), which is how applied account credit reaches
  *   the invoice in Xero.
  *
+ * Applied credit is read from the slices alone (review F5, F6): a note a slice
+ * names is "credit used" whatever an older link calls it (before #4712 the
+ * reconcile wrote ACCOUNT_CREDIT_NOTE links on the spending booking's payment),
+ * and a remainder note is listed only while a slice for this booking still
+ * names it — deallocation removes the slice but never deactivates the
+ * APPLIED_CREDIT_REMAINDER_NOTE link.
+ *
  * Organiser-extra notes (ORGANISER_EXTRA_*) credit the organiser's extra
  * invoice, not this booking's, and are not listed.
  *
@@ -37,14 +48,22 @@ import { isRefundCreditNoteLinkCancelledInXero } from "@/lib/xero-refund-note-st
  * an id the booking does not hold is refused (`INV-SSOT`: one list for the page
  * and the route).
  */
-const ROLE_KIND: Readonly<Record<string, BookingCreditNoteKind>> = {
-  MODIFICATION_CREDIT_NOTE: "CHANGE",
-  REFUND_CREDIT_NOTE: "REFUND",
-  [REFUND_REQUEST_CREDIT_NOTE_ROLE]: "REFUND",
-  ACCOUNT_CREDIT_NOTE: "ACCOUNT_CREDIT",
-  MODIFICATION_ACCOUNT_CREDIT_NOTE: "ACCOUNT_CREDIT",
+type ListedRole =
+  | typeof MODIFICATION_CREDIT_NOTE_ROLE
+  | typeof MODIFICATION_ACCOUNT_CREDIT_NOTE_ROLE
+  | typeof ACCOUNT_CREDIT_NOTE_ROLE
+  | typeof APPLIED_CREDIT_REMAINDER_NOTE_ROLE
+  | (typeof REFUND_NOTE_LINK_ROLES)[number];
+
+const ROLE_KIND: Readonly<Record<ListedRole, BookingCreditNoteKind>> = {
+  [MODIFICATION_CREDIT_NOTE_ROLE]: "CHANGE",
+  [REFUND_NOTE_LINK_ROLES[0]]: "REFUND",
+  [REFUND_NOTE_LINK_ROLES[1]]: "REFUND",
+  [ACCOUNT_CREDIT_NOTE_ROLE]: "ACCOUNT_CREDIT",
+  [MODIFICATION_ACCOUNT_CREDIT_NOTE_ROLE]: "ACCOUNT_CREDIT",
   [APPLIED_CREDIT_REMAINDER_NOTE_ROLE]: "CREDIT_USED",
 };
+const LISTED_ROLES = Object.keys(ROLE_KIND) as ListedRole[];
 
 type CreditNoteLink = {
   xeroObjectId: string;
@@ -53,21 +72,29 @@ type CreditNoteLink = {
   metadata: unknown;
 };
 
-/** Pure: which candidates survive the app's own links for them, in order, once each. */
+/**
+ * Pure: which candidates survive the app's own links for them, in order, once
+ * each. `sliceNoteIds` are the notes this booking's applied-credit slices name:
+ * each is "credit used" whatever kind its other candidate says (F5), and a
+ * remainder-role candidate not among them is dropped (F6).
+ */
 export function offeredBookingCreditNotes(
-  candidates: ReadonlyArray<{ creditNoteId: string; kind: BookingCreditNoteKind }>,
+  candidates: ReadonlyArray<{ creditNoteId: string; kind: BookingCreditNoteKind; role?: string }>,
   links: ReadonlyArray<CreditNoteLink>,
+  sliceNoteIds: ReadonlySet<string> = new Set(),
 ): BookingCreditNote[] {
   const offered: BookingCreditNote[] = [];
   const seen = new Set<string>();
   for (const candidate of candidates) {
     if (seen.has(candidate.creditNoteId)) continue;
+    const sliced = sliceNoteIds.has(candidate.creditNoteId);
+    if (candidate.role === APPLIED_CREDIT_REMAINDER_NOTE_ROLE && !sliced) continue;
     seen.add(candidate.creditNoteId);
     const own = links.filter((link) => link.xeroObjectId === candidate.creditNoteId);
     if (own.some((link) => isRefundCreditNoteLinkCancelledInXero(link.metadata))) continue;
     if (own.length > 0 && !own.some((link) => link.active)) continue;
     const creditNoteNumber = own.find((link) => link.xeroObjectNumber)?.xeroObjectNumber ?? null;
-    offered.push({ creditNoteId: candidate.creditNoteId, creditNoteNumber, kind: candidate.kind });
+    offered.push({ creditNoteId: candidate.creditNoteId, creditNoteNumber, kind: sliced ? "CREDIT_USED" : candidate.kind });
   }
   return offered;
 }
@@ -88,7 +115,7 @@ export async function readBookingCreditNotes(
       : [],
     ownerMemberId
       ? db.memberCreditNoteAllocation.findMany({
-          where: { appliedToBookingId: bookingId, memberCredit: { memberId: ownerMemberId } },
+          where: { appliedToBookingId: bookingId, amountCents: { gt: 0 }, memberCredit: { memberId: ownerMemberId } },
           select: { xeroCreditNoteId: true },
           orderBy: { createdAt: "asc" },
         })
@@ -100,12 +127,12 @@ export async function readBookingCreditNotes(
     ...(modificationIds.length > 0 ? [{ localModel: "BookingModification", localId: { in: [...modificationIds] } }] : []),
   ];
   const anchored = await db.xeroObjectLink.findMany({
-    where: { xeroObjectType: "CREDIT_NOTE", active: true, role: { in: Object.keys(ROLE_KIND) }, OR: anchors },
+    where: { xeroObjectType: "CREDIT_NOTE", active: true, role: { in: LISTED_ROLES }, OR: anchors },
     select: { xeroObjectId: true, role: true },
     orderBy: { createdAt: "asc" },
   });
   const candidates = [
-    ...anchored.map((link) => ({ creditNoteId: link.xeroObjectId, kind: ROLE_KIND[link.role] ?? "REFUND" })),
+    ...anchored.map((link) => ({ creditNoteId: link.xeroObjectId, kind: ROLE_KIND[link.role as ListedRole], role: link.role })),
     ...[payment?.xeroRefundCreditNoteId, ...refunds.map((refund) => refund.xeroRefundCreditNoteId)]
       .filter((id): id is string => Boolean(id))
       .map((creditNoteId) => ({ creditNoteId, kind: "REFUND" as const })),
@@ -116,5 +143,5 @@ export async function readBookingCreditNotes(
     where: { xeroObjectType: "CREDIT_NOTE", xeroObjectId: { in: [...new Set(candidates.map((c) => c.creditNoteId))] } },
     select: { xeroObjectId: true, xeroObjectNumber: true, active: true, metadata: true },
   });
-  return offeredBookingCreditNotes(candidates, links);
+  return offeredBookingCreditNotes(candidates, links, new Set(allocations.map((allocation) => allocation.xeroCreditNoteId)));
 }
