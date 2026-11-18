@@ -148,6 +148,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import type { XeroTaxRendering } from "@/lib/xero-tax-rendering";
+import { LineAmountTypes } from "xero-node";
 
 describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L2)", () => {
   beforeEach(() => {
@@ -392,8 +393,8 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
   });
 
   it.each([
-    ["a registered period with another code", { lineAmountTypes: "Inclusive", taxType: "OUTPUT3" }],
-    ["an unregistered period", { lineAmountTypes: "NoTax" }],
+    ["a registered period with another code", { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "OUTPUT3" }],
+    ["an unregistered period", { lineAmountTypes: LineAmountTypes.NoTax }],
   ] as Array<[string, XeroTaxRendering]>)(
     "#4632: renders under the booking's own treatment (%s) and records that treatment on its manifest",
     async (_label, rendering) => {

@@ -1,4 +1,4 @@
-import type { LineItem } from "xero-node";
+import type { LineAmountTypes, LineItem } from "xero-node";
 import type { MemberMoneyAccount, MemberMoneyExportConflictReason } from "@prisma/client";
 import { invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
 import { sanitizeForJson } from "../../xero-sync";
@@ -94,7 +94,7 @@ export interface RefundNotePlanInput {
    * rendering for a note this run built, the stored request's own for a
    * replay (null when the request holds none). Frozen, never translated.
    */
-  lineAmountTypes: string | null;
+  lineAmountTypes: LineAmountTypes | string | null;
   /** The live REFUND_PAYABLE obligation: its key and face, or why none could be named. */
   obligation: RefundExportComponent | RefundExportProblem;
 }
