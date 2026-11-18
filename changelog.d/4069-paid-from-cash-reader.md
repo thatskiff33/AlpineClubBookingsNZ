@@ -1,0 +1,1 @@
+- Document the blocked cash-cover blueprint review for #4069: superseded captures can still be counted before their refund record exists. The inherited approval-email implementation is incomplete and not ready for release.
