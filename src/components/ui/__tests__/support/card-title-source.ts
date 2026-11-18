@@ -37,6 +37,17 @@ export const SOURCE_FILES = filesUnder("src", /\.tsx$/, true).filter(
   (file) => !/\.test\.tsx$/.test(file)
 );
 
+/**
+ * The route groups that hold the screens a member reaches from an email link
+ * or their account. One list, so the guards that hold those screens to a
+ * stricter rule (card-title headings, tab titles) cover the same screens.
+ */
+export const MEMBER_FACING_ROOTS = [
+  "src/app/(public)/",
+  "src/app/(authenticated)/",
+  "src/app/(website-dynamic)/",
+];
+
 export function lineOf(source: string, index: number) {
   return source.slice(0, index).split("\n").length;
 }

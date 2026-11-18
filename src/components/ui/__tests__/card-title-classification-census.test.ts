@@ -3,6 +3,7 @@ import {
   CARD_TITLE_OPEN,
   headingClassification,
   lineOf,
+  MEMBER_FACING_ROOTS,
   read,
   SOURCE_FILES,
 } from "./support/card-title-source";
@@ -34,15 +35,9 @@ import {
  * on one line.
  */
 
-/** Roots where an unclassified `CardTitle` is never allowed. */
-const MEMBER_FACING_ROOTS = [
-  "src/app/(public)/",
-  "src/app/(authenticated)/",
-  "src/app/(website-dynamic)/",
-];
-
 /**
- * Shared member screens that live outside those roots (#4951 §2): the cards
+ * Shared member screens that live outside `MEMBER_FACING_ROOTS`, the roots
+ * where an unclassified `CardTitle` is never allowed (#4951 §2): the cards
  * a member or delegate reaches from an email link, held to the same rule.
  */
 const MEMBER_FACING_SHARED_FILES = [

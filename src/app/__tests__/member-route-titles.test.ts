@@ -1,5 +1,11 @@
+import { existsSync } from "node:fs";
 import type { Metadata } from "next";
 import { describe, expect, it, vi } from "vitest";
+import {
+  filesUnder,
+  MEMBER_FACING_ROOTS,
+  read,
+} from "@/components/ui/__tests__/support/card-title-source";
 
 // Importing a server page loads its auth and database modules, which reach for
 // the Next.js runtime and a DATABASE_URL. The titles are static exports, so
@@ -103,5 +109,48 @@ describe("member-facing routes set their own tab title (#4951, #5217)", () => {
   it("no two routes share a title", () => {
     const titles = ROUTES.map(([, , title]) => title);
     expect(new Set(titles).size).toBe(titles.length);
+  });
+});
+
+/**
+ * The table above pins what each title SAYS; this pins that none is MISSING.
+ * A page that sets no title falls back to the club's default, the defect #4951
+ * and #5217 swept out of these roots, and nothing else fails when a new page
+ * forgets one. A layout counts only when it sits beside the page: one further
+ * up would give several screens the same title.
+ *
+ * It reads source, so it cannot tell that a `generateMetadata` returns a title
+ * on every path. A page that needs one adds a `ROUTES` row or its own test.
+ */
+const SETS_A_TITLE =
+  /^export (?:const metadata\b[^=]*=\s*\{[^}]*\btitle:|(?:async )?function generateMetadata\b)/m;
+
+describe("no member-facing page falls back to the default tab title (#5217)", () => {
+  const pages = MEMBER_FACING_ROOTS.flatMap((root) =>
+    filesUnder(root.replace(/\/$/, ""), /^page\.tsx$/, true)
+  );
+
+  it("every page sets a title itself or through a layout beside it", () => {
+    const untitled = pages.filter((page) => {
+      const layout = page.replace(/page\.tsx$/, "layout.tsx");
+      return (
+        !SETS_A_TITLE.test(read(page)) &&
+        !(existsSync(layout) && SETS_A_TITLE.test(read(layout)))
+      );
+    });
+    expect(
+      untitled,
+      "Give each of these pages a fixed tab title: `export const metadata` " +
+        "with a `title` string in the page, or in a server `layout.tsx` " +
+        "beside it when the page is a client component (INV-PUB-006):\n" +
+        untitled.join("\n")
+    ).toEqual([]);
+  });
+
+  it("scans a tree that actually contains member pages", () => {
+    // A census that silently finds nothing passes for the wrong reason.
+    for (const root of MEMBER_FACING_ROOTS) {
+      expect(pages.some((page) => page.startsWith(root))).toBe(true);
+    }
   });
 });
