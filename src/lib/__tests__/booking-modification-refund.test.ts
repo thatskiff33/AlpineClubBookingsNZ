@@ -125,16 +125,23 @@ describe("reserveModificationRefundDebts", () => {
     await expect(reserveModificationRefundDebts(tx, args())).rejects.toBe(error);
   });
 
-  it("lets the edit stand when the payment has no Stripe intent to owe a refund on, reporting it pending", async () => {
-    h.enqueue.mockRejectedValue(new NoRefundPaymentIntentError());
-    const ownCardRefund = await reserveModificationRefundDebts(tx, args());
-    expect(ownCardRefund).toBeNull();
-    expect(await execute(ownCardRefund)).toEqual({ stripeRefundId: undefined, refundDestination: "own_card_pending" });
+  // #5212 (`INV-PAY-157`): the settlement never promises a card refund on a
+  // payment with no Stripe intent, so a reserve that finds none is a
+  // disagreement - the edit rolls back rather than commit a refund payable
+  // with no debt behind it.
+  it("rolls the edit back when the payment has no Stripe intent to owe the refund on", async () => {
+    const error = new NoRefundPaymentIntentError();
+    h.enqueue.mockRejectedValue(error);
+    await expect(reserveModificationRefundDebts(tx, args())).rejects.toBe(error);
+  });
+
+  it("never asks Stripe for a refund no debt was reserved for", async () => {
+    expect(await execute(null)).toEqual({ stripeRefundId: undefined, refundDestination: "own_card_pending" });
     expect(h.refund).not.toHaveBeenCalled();
-    // Stripe was never asked and no debt row exists, so the door's
-    // "debt stays owed" failure message would point an operator the wrong way.
+    // No debt row exists, so the door's "debt stays owed" failure message
+    // would point an operator the wrong way.
     expect(vi.mocked(logger.error)).toHaveBeenLastCalledWith(
-      expect.anything(), expect.stringContaining("No card refund was reserved for this edit"));
+      expect.anything(), expect.stringContaining("No card refund debt was reserved for this edit"));
     expect(vi.mocked(logger.error)).not.toHaveBeenCalledWith(expect.anything(), "refund failed");
   });
 
