@@ -105,7 +105,7 @@ correctly, and for anyone extending the taxonomy in AID-6B or AID-6C.
 | Category | Correlation entry | Reader needs | What actually records there |
 | --- | --- | --- | --- |
 | `system`, `security` | System | `support:view` | Setup, credentials, password/magic-link policy, backups, auth events and auth bounces, PIN login |
-| `admin` | System | `support:view` | **The cross-domain catch-all** — still the largest category in the codebase (98 write sites: 118 before #2730, 96 after it, 98 after #2755). Member merge, member-lifecycle delete/archive, member import, lodge-access changes, seasonal membership assignments, internet-banking **payment settings**, booking-request **settings**, chores, lockers, work parties, lodge instructions, lodge settings, the `LODGE_*` lodge records themselves, access roles, modules. Also **an officer editing another member's record** — every field, plus activate, deactivate and role changes — from the member page *and* the bulk screen alike, for rows written from #2755 onwards. **Not bed allocation** any more, and not the lodge display configuration — both are `lodge`, for the rows already written as well as the new ones (#2730 moved the writers, #2751 moved the rows) |
+| `admin` | System | `support:view` | **The cross-domain catch-all**, and still the largest category in the codebase (`pnpm run audit:census` gives today's count of write sites; it was 118 before #2730, 96 after it and 98 after #2755). Member merge, member-lifecycle delete/archive, member import, lodge-access changes, seasonal membership assignments, internet-banking **payment settings**, booking-request **settings**, chores, lockers, work parties, lodge instructions, lodge settings, the `LODGE_*` lodge records themselves, access roles, modules. Also **an officer editing another member's record** — every field, plus activate, deactivate and role changes — from the member page *and* the bulk screen alike, for rows written from #2755 onwards. **Not bed allocation** any more, and not the lodge display configuration — both are `lodge`, for the rows already written as well as the new ones (#2730 moved the writers, #2751 moved the rows) |
 | `booking` | Booking | `support:view` + `bookings:view` | Member-facing and system booking events. Not booking *settings* — those are `admin` |
 | `account` | Membership | `support:view` + `membership:view` | Member self-service **only**: profile edits, notification preferences, post-login landing, membership cancellation, member photos, membership applications and nomination. An officer editing somebody else's record is `admin` from #2755 onwards, including the bulk screen's activate/deactivate, which recorded here before |
 | `family` | Membership | `support:view` + `membership:view` | Family groups, partner links, login-holder changes, dependents |
@@ -251,8 +251,8 @@ sites that passed no category** when #2581 opened: 69 through `logAudit`, 11 thr
 `createStructuredAuditLog`. Those same 82 were still uncategorised on `main`
 immediately before this change, out of **426** write sites in total.
 
-**All 82 have now been classified at the source.** The census reads **546 write sites and
-zero uncategorised**, so no *new* audit row is born invisible to these five entries. What
+**All 82 have now been classified at the source.** The census finds **no uncategorised
+write site**, so no *new* audit row is born invisible to these five entries. What
 each site was given is recorded site by site in `APPLIED_AUDIT_CATEGORIES`
 (`scripts/audit/audit-writer-census-manifest.ts`), and the contract test compares that
 table against the measured tree on every run, so a later reclassification is a named
@@ -275,7 +275,8 @@ differs from the measured one). Nothing was withheld. The disclosure below there
 stays, scoped to that residual rather than to the whole pre-#2581 history.
 
 Those figures used to be quoted here as "81 of about 350", which was a hand count and was
-stale. They are measured on every CI run now, and a **new** uncategorised audit writer
+stale. The census measures every site on every CI run now and this page quotes no current
+total (#5211), and a **new** uncategorised audit writer
 fails the census contract with its own symbol named — and because the pinned set is now
 empty, the *first* such writer fails it, with no backlog left to hide in.
 
@@ -294,7 +295,7 @@ What the census still uniquely catches is the writer the compiler cannot see —
 reverted.
 
 **Scope the two compile-time and runtime layers honestly**: they cover writes that go
-through `src/lib/audit.ts`, which is every one of the 546 sites in the tree. A write that
+through `src/lib/audit.ts`, which every production write site in the tree does. A write that
 never reaches the helper — hand-built Prisma, raw SQL, a migration — is outside them by
 construction, which is what the census is for, and the census is a heuristic AST walk
 rather than a proof.

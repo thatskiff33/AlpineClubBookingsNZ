@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { FocusedActionError } from "@/components/focused-action-error"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { useClubTime } from "@/components/club-time-provider"
 import { requireInstant } from "@/lib/club-time"
 import { fetchJson, postJson } from "./api"
@@ -33,15 +35,16 @@ export function MembershipSyncPanel({
   // viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime()
   const [lastRefresh, setLastRefresh] = useState<XeroHealthSnapshot["lastMembershipRefresh"] | null>(null)
-  const [error, setError] = useState("")
+  const [loadError, setLoadError] = useState("")
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
 
   const fetchLastRefresh = useCallback(async () => {
-    setError("")
+    setLoadError("")
     try {
       const data = await fetchJson<XeroHealthSnapshot>("/api/admin/xero/health", undefined, "Failed to fetch Xero health")
       setLastRefresh(data.lastMembershipRefresh)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load membership refresh state")
+      setLoadError(err instanceof Error ? err.message : "Failed to load membership refresh state")
     }
   }, [])
 
@@ -56,20 +59,24 @@ export function MembershipSyncPanel({
   const syncMemberships = async (mode: MembershipSyncMode = "incremental") => {
     setSyncing(mode === "backfill" ? "memberships-backfill" : "memberships")
     setSyncResult(null)
-    setError("")
+    clearActionError()
     try {
       const data = await postJson<SyncResult>(`/api/admin/xero/sync-memberships?mode=${mode}`, undefined, "Sync failed")
       setSyncResult(data)
       await fetchLastRefresh()
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Membership sync failed")
+      failAction(err instanceof Error ? err.message : "Membership sync failed")
     } finally {
       setSyncing(null)
     }
   }
 
   return (
+    <>
+    {/* Outside the card's body, which unmounts while the section is collapsed:
+        both sync buttons sit in its always-visible header. */}
+    <FocusedActionError id="xero-membership-sync-action-error" className="mb-4" error={actionError} attentionKey={attentionKey} />
     <SectionCard
       id={xeroSectionId("membershipSync")}
       title="Membership Status Refresh"
@@ -88,7 +95,7 @@ export function MembershipSyncPanel({
       }
     >
       <div className="space-y-3">
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
         <p className="text-sm text-muted-foreground">This runs automatically as a daily cron job. Only members already linked to Xero contacts can be refreshed.</p>
         <p className="text-sm text-muted-foreground">Incremental refresh is the normal low-API-cost path. Repair backfill is manual only and rechecks linked members whose local season status still looks stale.</p>
         <div className="rounded-md border bg-muted p-3 text-sm">
@@ -105,5 +112,6 @@ export function MembershipSyncPanel({
         </div>
       </div>
     </SectionCard>
+    </>
   )
 }

@@ -2,6 +2,8 @@ import { Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
 import { prisma } from "@/lib/prisma";
+import { buildModificationExceptionQueueWhere, buildNewBookingExceptionQueueWhere } from "@/lib/booking-request-queue-where";
+import { getBookingTimingSettings } from "@/lib/booking-timing-settings";
 import { adminListPage, adminQueueCreatedOrder, type AdminListPage } from "@/lib/admin-list-page";
 import { addDaysDateOnly, parseDateOnly, formatDateOnly } from "@/lib/date-only";
 import { clubTimeZone } from "@/lib/club-time/server";
@@ -1670,10 +1672,14 @@ export async function createModificationExceptionRequest(
   // first held night begins. Resolved here, in the request path, and passed in:
   // the expiry rule stays a pure function of its inputs, which is what lets the
   // reaper re-derive the identical deadline for a row that never got one.
+  //
+  // #4932 — the hold length is the club's setting AS IT STANDS NOW, read here and
+  // only here. Once stamped, a later change to the setting moves no request.
   const holdExpiresAt = reservesBeds
     ? computePolicyExceptionHoldExpiry({
         createdAt: new Date(),
         firstHeldNight: firstReservedNight(reservationFootprint),
+        ttlDays: (await getBookingTimingSettings()).policyExceptionHoldDays,
         zone: await clubTimeZone(),
       })
     : null;
@@ -2157,13 +2163,12 @@ export async function readUnifiedExceptionQueue(input: {
   page: number;
   pageSize: number;
 }): Promise<{ data: UnifiedExceptionQueueItem[] } & AdminListPage> {
-  const statusWhere =
-    input.status === "ALL" ? {} : { status: input.status };
-  const modificationWhere = { kind: "POLICY_EXCEPTION" as const, ...statusWhere };
+  const newBookingWhere = buildNewBookingExceptionQueueWhere(input.status);
+  const modificationWhere = buildModificationExceptionQueueWhere(input.status);
   const direction = adminQueueCreatedOrder(input.status === "REQUESTED");
 
   const [newBookingTotal, modificationTotal] = await Promise.all([
-    prisma.newBookingPolicyExceptionRequest.count({ where: statusWhere }),
+    prisma.newBookingPolicyExceptionRequest.count({ where: newBookingWhere }),
     prisma.bookingChangeRequest.count({ where: modificationWhere }),
   ]);
   const total = newBookingTotal + modificationTotal;
@@ -2175,7 +2180,7 @@ export async function readUnifiedExceptionQueue(input: {
 
   const [newBookingRows, modificationRows] = await Promise.all([
     prisma.newBookingPolicyExceptionRequest.findMany({
-      where: statusWhere,
+      where: newBookingWhere,
       include: { requestedBy: ACTOR_SELECT, reviewedBy: ACTOR_SELECT },
       orderBy: [{ createdAt: direction }, { id: direction }],
       take: Math.min(windowEnd, newBookingTotal),

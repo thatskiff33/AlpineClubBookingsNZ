@@ -69,6 +69,7 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
@@ -180,6 +181,23 @@ describe("N-08: shouldSendEmail", () => {
     mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
     const { shouldSendEmail } = await import("../email");
     expect(await shouldSendEmail("member-1", "marketingEmails")).toBe(false);
+  });
+
+  // #4987: club notices are opt-out, so a member with no saved preferences
+  // receives them; newsletters (marketingEmails, above) stay opt-in.
+  it("returns true for clubNotices when no preference record exists", async () => {
+    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
+    const { shouldSendEmail } = await import("../email");
+    expect(await shouldSendEmail("member-1", "clubNotices")).toBe(true);
+  });
+
+  it("honours a stored clubNotices opt-out", async () => {
+    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
+      clubNotices: false,
+      marketingEmails: true,
+    });
+    const { shouldSendEmail } = await import("../email");
+    expect(await shouldSendEmail("member-1", "clubNotices")).toBe(false);
   });
 
   it("respects stored preference (false)", async () => {
@@ -612,8 +630,10 @@ describe("exhausted email failure review", () => {
         createdAt: new Date("2026-05-14T00:00:00.000Z"),
       },
     ]);
+    mockPrisma.emailLog.count.mockResolvedValue(2);
     mockPrisma.auditLog.findMany.mockResolvedValue([
       {
+        action: "email.failure.reviewed",
         targetId: "reviewed-failure",
         actorMemberId: "admin_1",
         memberId: "admin_1",

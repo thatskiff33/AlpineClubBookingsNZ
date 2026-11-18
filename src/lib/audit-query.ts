@@ -680,7 +680,7 @@ function getSummary(log: AuditTimelineLog): string {
  *
  * What it still shows is the writer's `summary` column, and that is a DELIBERATE
  * limit of this change rather than an oversight. `summary` is the timeline's
- * short title; 188 write sites in member-visible categories set one today and
+ * short title; many write sites in member-visible categories set one, and
  * denying them all would withdraw history from members at every one of those
  * sites at once — a readership change reserved to the owner by `INV-PRIV-012`
  * and `INV-OPS-012`, not a consequence a lane may take on its way past. What
@@ -1134,9 +1134,9 @@ function serializeSubjectForAudience(params: {
  * is the truncation hole closed by construction rather than by a second check.
  *
  * ONE FUNCTION, EXHAUSTIVE ON AUDIENCE, rather than three ternaries spread
- * through the serializer. `INV-PRIV-012` already records why that shape matters
- * on this surface: a guard living inside one query was measured to survive
- * deletion with the word left behind in a comment. A free-text field added to
+ * through the serializer. A guard living inside one query was measured to
+ * survive deletion with the word left behind in a comment (history on #3232).
+ * A free-text field added to
  * the timeline later has to be answered for HERE, for both audiences, or it
  * does not compile.
  */

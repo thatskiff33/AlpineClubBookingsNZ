@@ -427,7 +427,7 @@ because the entry's own category is `admin`, which on this screen is Support onl
 a Booking Officer who cannot find the entry in the Audit Log can still read its
 words on the booking.
 
-A **view-only** booking admin sees the queue on **Admin → All Bookings** — which
+A **view-only** booking admin sees the queue on **Admin → Bookings** — which
 booking, whose, which nights, how many uncovered guest-nights and the cause label
 — and, on the booking itself, no reason. That is the same line drawn twice:
 noticing that a booking needs attention and reading an officer's private note
@@ -507,8 +507,8 @@ and the data download rather than every page that happens to quote an entry.
 ### Some entries have no category at all
 
 `Category` is optional in the database, and **82 of the platform's places that
-record an audit entry used not to set one**. As of this release **none do**: all
-546 now record a category, measured on every build rather than estimated.
+record an audit entry used not to set one**. As of this release **none do**: every
+place now records a category, measured on every build rather than estimated.
 
 **And a new one can no longer forget.** Recording an entry without a category is
 now refused three separate ways. Giving the 82 places a category and stopping the
@@ -530,7 +530,7 @@ that order and both landing in this release; this is the second:
    maintenance script outside the normal path.
 
 The practical effect for you: an entry recorded the ordinary way — through the
-platform’s own recording step, which is how every one of the 546 places does it —
+platform’s own recording step, which is how every place in the platform does it,
 cannot be born without a category any more. **It is not a mathematical
 guarantee**, and it is worth saying so rather than overclaiming: someone writing
 directly to the database table in a migration, or building a query by hand, is

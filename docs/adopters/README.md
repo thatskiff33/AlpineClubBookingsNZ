@@ -54,6 +54,10 @@ to tested releases and a club getting live without the maintainer.
   change belongs on.
 - [Modules](../guides/modules.md) — the live list of every optional capability
   and its out-of-the-box default, on one admin page.
+  Running without Xero? Internet Banking, subscription invoicing, joining-fee
+  invoicing and the Finance dashboard's Xero data need it; [What needs
+  Xero](../guides/modules.md#what-needs-xero) lists the manual alternative
+  for each, such as **Mark as paid (manual)** for subscriptions.
 - [Setup](../guides/setup.md) — the in-app installation checklist and
   configuration hub at `/admin/setup`.
 - [Site Appearance & Content](../guides/appearance.md), [Site Style](../guides/site-style.md),
@@ -109,7 +113,7 @@ per-route index if you would rather start from a URL.
 - [Members](../guides/members.md) — the member directory, login-readiness
   status, safe read-only opening, CSV import, roles, seasonal membership, and
   merge.
-- [Member Applications](../guides/member-applications.md) — the join/nomination
+- [Applications](../guides/member-applications.md) — the join/nomination
   review queue and how approval maps people to member records.
 - [Member Fields](../guides/member-fields.md) — which extra profile fields are
   collected from members and applicants.
@@ -152,7 +156,7 @@ per-route index if you would rather start from a URL.
 - [Rooms & Beds](../guides/rooms-beds.md) — the room/bed inventory, the
   capacity it derives, and the lodge's auto-allocation preferences
   (lodge-scoped).
-- [Chore Templates](../guides/chores.md) — the chore library the roster draws
+- [Chores](../guides/chores.md) — the chore library the roster draws
   from (lodge-scoped).
 - [Chore Roster](../guides/roster.md) — the daily chore board: generate,
   confirm, print, and email.
@@ -244,6 +248,10 @@ procedure.
   operating the Xero member-grouping cutover.
 - [Privacy incidents](../guides/privacy-incidents.md) — first-hour containment,
   evidence preservation, credential replacement and notification.
+- [Subscription Category Redesign Reconciliation](../guides/subscription-category-redesign-production-reconciliation.md)
+  — the one-off, out-of-band script and runbook for a production database that
+  already ran the original subscription-category migrations before the
+  redesigned pair replaced them.
 - [Backups](../guides/backups.md) — S3-backed PostgreSQL backups, configured
   in-app, run on demand or nightly, with a scripted restore drill.
 - [Club Time Zone](../guides/club-time.md) — the one time zone the club runs on,

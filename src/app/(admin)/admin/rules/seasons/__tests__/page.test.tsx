@@ -21,11 +21,12 @@
 
 import "@testing-library/jest-dom/vitest";
 import { useEffect } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ClubFormatTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "@/lib/__tests__/helpers/clock";
+import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { divergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { addCalendarDays, clubToday } from "@/lib/club-time";
 
@@ -127,6 +128,59 @@ afterEach(() => {
 });
 
 describe("Seasons page: the windows in order, with their holes", () => {
+  it("focuses a refused toggle, and focuses it again when it repeats (#4975)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "PUT"
+        ? Response.json({ error: "That season is in use." }, { status: 409 })
+        : Response.json([season()]),
+    ));
+    renderPage();
+    const alert = () => document.getElementById("season-action-error");
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const toggle = await screen.findByRole("button", { name: "Deactivate Winter 2026" });
+      toggle.focus();
+      fireEvent.click(toggle);
+      await waitFor(() => expect(alert()).toHaveTextContent("That season is in use."));
+      await expectRecoveryAlertToHoldFocus(alert());
+    }
+  });
+
+  it("keeps a failed season load passive: nothing takes focus", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({}, { status: 500 })));
+    renderPage();
+    const loadMessage = await screen.findByText("Failed to fetch seasons");
+    expect(document.getElementById("season-action-error")).toBeEmptyDOMElement();
+    // The failed read moved no focus, and did not mark itself as the focus target.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(document.body);
+    expect(loadMessage.closest('[tabindex="-1"]')).toBeNull();
+  });
+
+  it("keeps focus on the page after deleting the focused season", async () => {
+    let removed = false;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        removed = true;
+        return Response.json({});
+      }
+      return Response.json(removed ? [] : [season()]);
+    }));
+    renderPage();
+    const remove = await screen.findByRole("button", { name: "Delete Winter 2026" });
+    remove.focus();
+    fireEvent.click(remove);
+    // The delete asks first (#4973); the focus check starts once it is confirmed.
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete season" }));
+    await waitFor(() => expect(remove).not.toBeInTheDocument());
+    const heading = screen.getByRole("heading", { name: "Seasons", level: 1 });
+    await waitFor(() => {
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toContainElement(heading);
+    });
+  });
+
   it("orders the windows chronologically, whatever order the API returned", async () => {
     mockApi([SUMMER, season()]);
     renderPage();
@@ -296,5 +350,29 @@ describe("Seasons page: navigable without seeing it", () => {
     expect(
       screen.queryByRole("button", { name: /Delete Winter 2026/ }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("season deletion confirmation (#4973)", () => {
+  it("names the season and lost nightly rates; cancel sends no delete", async () => {
+    mockApi([season()]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Winter 2026");
+    expect(dialog).toHaveTextContent(/nightly rates.*deleted/i);
+    expect(dialog).toHaveTextContent(/cannot be undone.*season and its rates would need to be set up again/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+  });
+  it("deletes the selected season only after confirmation", async () => {
+    mockApi([season()]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Winter 2026" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete season" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/admin/seasons/season-winter", { method: "DELETE" }));
   });
 });

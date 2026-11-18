@@ -239,6 +239,10 @@ Journey: Follow the redirect into the Changes tab of Booking Requests.
 
 Screen: `/admin/booking-policies`.
 
+The Cancellation section includes club-wide reminder and policy-exception hold
+timings. Choose Edit, adjust days, then Save or Cancel; existing requests keep
+their stamped hold deadlines.
+
 Shows: Booking rules and cancellation-policy settings.
 
 Journey: Review booking rules and cancellation policies before staging a change.
@@ -249,9 +253,9 @@ Journey: Review booking rules and cancellation policies before staging a change.
 
 Screen: `/admin/booking-requests`.
 
-Shows: Tabbed request queues and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-020). A deep link to one booking or request pins it above the page when it is elsewhere.
+Shows: Four request queue tabs, each with its pending count across every page, and request details with their current status and actions. Each queue pages 25 rows with a "Showing 1–25 of 40" total line; pending filters list the oldest first (INV-OPS-020). A deep link to one booking or request pins it above the page when it is elsewhere.
 
-Journey: Choose a queue tab, open a request, inspect the proposed stay, and use its available actions.
+Journey: Open on the first tab with pending work (Approvals when none), open a request, inspect the proposed stay, and use its available actions.
 
 [Guide](guides/booking-requests.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -335,7 +339,7 @@ Screen: `/admin/communications`.
 
 Shows: Member communication composition and audience selection.
 
-Journey: Choose recipients (the help line says who each reaches) and compose a message; Send to Members opens a confirmation naming the recipient count, audience and subject, with Cancel focused; confirm to send. The result is announced in a status region.
+Journey: Choose recipients (the help line says who each reaches), choose the kind of message (club notice or club newsletter, nothing preselected; a live count shows who it reaches and who is left out) and compose a message; Send to Members opens a confirmation naming the recipient count, audience, kind and subject, with Cancel focused; confirm to send. The result is announced in a status region.
 
 [Guide](guides/communications.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -401,7 +405,7 @@ Journey: Choose a lodge, inspect lockers and assignments, and manage the selecte
 
 [Guide](guides/lockers.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Member Applications — member-applications
+### Applications — member-applications
 
 Screen: `/admin/member-applications`.
 
@@ -463,6 +467,16 @@ Journey: Inspect a type, its eligibility and subscription settings before saving
 
 [Guide](guides/membership-types.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Subscription Categories — subscription-categories
+
+Screen: `/admin/subscription-categories`.
+
+Shows: Subscription categories and their fee, the second billing axis alongside membership type.
+
+Journey: Create or edit a category and its flat fee, then assign members from their profile.
+
+[Guide](guides/subscription-categories.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
 ### Subscription Lockout — subscription-lockout
 
 Screen: `/admin/subscription-lockout`.
@@ -485,7 +499,7 @@ Journey: Choose a date range, inspect events, and open an event to manage it.
 
 [Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
-### Chore Templates — chores
+### Chores — chores
 
 Screen: `/admin/chores`.
 
@@ -501,7 +515,7 @@ Screen: `/admin/display`.
 
 Shows: The lobby-display hub, device management, templates, layouts and previews.
 
-Journey: Open Devices, Visual builder, Layouts, Templates or Reference from the display hub.
+Journey: Open Display Devices, Display Builder, Display Layouts, Display Templates or Display Reference from the display hub.
 
 [Guide](guides/display.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -887,7 +901,7 @@ Screen: `/admin/email-deliverability`.
 
 Shows: Email delivery results and eligible retry controls.
 
-Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail.
+Journey: Filter delivery outcomes and inspect a failure before retrying eligible mail. A failed booking confirmation, pre-arrival reminder or guest payment link links to its booking, where an officer sends a fresh copy.
 
 [Guide](guides/email-deliverability.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -995,7 +1009,7 @@ Screen: `/admin/setup`.
 
 Shows: The installation setup hub and configuration cards.
 
-Journey: Open a setup card, run a provider test, or update a step. Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
+Journey: Open the setup card for the configuration task you need, run a provider test, or update a step. No card links back to Setup itself; each sub-hub returns here by its Setup back link (#4968). Failed provider tests and step or finish actions take focus and scroll into view; finishing setup announces completion.
 
 [Guide](guides/setup.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -1006,6 +1020,10 @@ Screen: `/admin/stuck-states`.
 Shows: Operational incidents and guided repair actions.
 
 Journey: Inspect flagged records and use the documented recovery for the selected state.
+A signal over particular bookings lists them under it (at most 50, then "and N
+more"), each linking to the booking; its **Open** link goes to that list, or to
+Background Jobs for operations still retrying (#4959). Payment lists need
+Finance view and Membership view; the unnamed-guest list needs Membership view.
 A card refund Stripe gave up on is settled on its row, never with a new Stripe
 dashboard refund (#4368): **Paid another way**, or **Try the card again** after a
 confirm dialog; a row a later Stripe refund covers reads "nothing left owed" and
@@ -1056,6 +1074,9 @@ every screen:
 - **Destructive confirmations** use `useConfirm()` from
   `src/components/confirm-dialog.tsx`, never `window.confirm`. Lint enforces
   it (`design-system/no-native-confirm`), with today's calls on a ratchet.
+  The prompt names what it acts on and says what will change and what cannot
+  be undone (#4973); when the server gains a side effect, the prompt that
+  guards it changes in the same PR.
 
 New code follows this rule; existing inline success panels are converted
 opportunistically when a file is already being touched.
@@ -1066,7 +1087,13 @@ so a blind member can miss a declined card or a wrong sign-in code:
 
 - **A failure** goes in `FocusedActionError`
   (`src/components/focused-action-error.tsx`): mounted empty with its own
-  unique `id`, filled when the action fails, and focused.
+  unique `id`, filled when the action fails, and focused. The message and the
+  counter that re-fires it when the same failure repeats have one home,
+  `useActionFailure` (`src/hooks/use-action-failure.ts`, #4975): `fail`
+  records and counts, `clear` empties without counting. The setup wizards use
+  it. Four older pages still keep the same pair by hand (Chores, Lockers,
+  Lodges and Hut fees); they predate the hook and are unconverted, so new code
+  uses the hook rather than a fifth copy.
 - **A success or progress message** goes in a `StatusRegion`
   (`src/components/status-region.tsx`): a `role="status"` region mounted
   before the request, `sr-only` while empty, so only its text changes. It is the

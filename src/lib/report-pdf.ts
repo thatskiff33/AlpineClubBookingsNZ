@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { requireInstant, type BoundClubTime } from "@/lib/club-time";
+import { clubDownloadFilename } from "@/lib/club-download-filename";
 
 /**
  * Force the light palette onto the off-screen document html2canvas renders from
@@ -67,7 +68,11 @@ export async function generateReportPDF(
   reportElement: HTMLElement,
   dateRange: { from: string; to: string },
   club: BoundClubTime,
-  options?: { title?: string }
+  options: {
+    title?: string;
+    /** The club's resolved short name; the file is named after it (`INV-CONFIG-001`). */
+    clubShortName: string;
+  }
 ): Promise<void> {
   // THE ONLY READING OF THE CLOCK IN THIS FUNCTION (#3123). Both dates the file
   // carries — the cover stamp and the day in its name — are derived from this
@@ -100,7 +105,7 @@ export async function generateReportPDF(
 
   // Header
   pdf.setFontSize(16);
-  pdf.text(options?.title ?? "Reports", margin, margin + 5);
+  pdf.text(options.title ?? "Reports", margin, margin + 5);
   pdf.setFontSize(10);
   pdf.setTextColor(100, 100, 100);
   pdf.text(`Date range: ${dateRange.from} to ${dateRange.to}`, margin, margin + 12);
@@ -170,5 +175,11 @@ export async function generateReportPDF(
   // Save. The day in the filename is the CLUB's, from the same binding AND the
   // same instant as the cover above — so a file exported at 8am in London is not
   // named yesterday, and its name can never disagree with its own first page.
-  pdf.save(`tac-report-${club.calendarDateOf(generatedAt)}.pdf`);
+  pdf.save(
+    clubDownloadFilename(
+      options.clubShortName,
+      `report-${club.calendarDateOf(generatedAt)}`,
+      "pdf",
+    ),
+  );
 }

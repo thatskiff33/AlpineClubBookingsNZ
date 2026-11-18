@@ -2642,7 +2642,7 @@ describe("AdminBookPage view-only gating (#1997, bookings)", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: /Book on Behalf of Member/i }),
+        screen.getByRole("heading", { name: /Book on Behalf/i }),
       ).toBeInTheDocument(),
     );
     expect(
@@ -2737,7 +2737,7 @@ describe("MemberApplicationsPage view-only gating (#1997, membership)", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: /Member Applications/i }),
+        screen.getByRole("heading", { name: /^Applications$/i }),
       ).toBeInTheDocument(),
     );
     expect(
@@ -2786,7 +2786,7 @@ describe("MembershipCancellationsPage view-only gating (#1997, membership)", () 
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: /Membership Cancellations/i }),
+        screen.getByRole("heading", { name: /Cancellation Requests/i }),
       ).toBeInTheDocument(),
     );
     expect(
@@ -2843,7 +2843,15 @@ describe("CommunicationsPage view-only gating (#1997, membership)", () => {
   beforeEach(() => {
     sessionMatrix = null;
     stubFetchRoutes({
-      "/api/admin/communications/send": { limit: 5, windowSeconds: 3600 },
+      // The rate limit, and the live recipient count (#4987), share one route.
+      "/api/admin/communications/send": {
+        limit: 5,
+        windowSeconds: 3600,
+        totalRecipients: 2,
+        eligibleRecipients: 2,
+        optedOut: 0,
+        neverOptedIn: 0,
+      },
       "/api/admin/communications/history": { history: [] },
     });
   });
@@ -2872,6 +2880,8 @@ describe("CommunicationsPage view-only gating (#1997, membership)", () => {
     const body = screen.getByLabelText(/Message|Body/i);
     fireEvent.change(subject, { target: { value: "Hello" } });
     fireEvent.change(body, { target: { value: "World" } });
+    // #4987: the sender must choose the kind of message before sending.
+    fireEvent.click(screen.getByLabelText(/Club notice/i));
 
     expect(
       screen.getByRole("button", { name: /Send to Members/i }),

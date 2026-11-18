@@ -5,6 +5,7 @@ import { useEditorFocusReturn } from "@/hooks/use-editor-focus-return"
 import { useRowActionFocusReturn } from "@/hooks/use-row-action-focus-return"
 import { rowKey, toggleKey, useRowHeadings } from "./list-row-focus"
 import { normalizeCancellationRule } from "@/lib/cancellation-rules"
+import { getAdminPage } from "@/lib/admin-hubs"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -573,8 +574,8 @@ export function BookingPeriodsSection() {
                 <div>
                   <CardTitle {...editorFocus.titleProps}>
                     {scopeLodgeName
-                      ? `Date-Specific Periods — ${scopeLodgeName}`
-                      : "Date-Specific Periods"}
+                      ? `${getAdminPage("booking-policies-periods").label} — ${scopeLodgeName}`
+                      : getAdminPage("booking-policies-periods").label}
                   </CardTitle>
                   <CardDescription>
                     Override the default policy for specific date ranges (e.g. school holidays).

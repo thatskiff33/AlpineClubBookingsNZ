@@ -1,5 +1,5 @@
 import { BackLink } from "@/components/admin/back-link";
-import { adminLink } from "@/lib/admin-hubs";
+import { adminLink, getAdminPage } from "@/lib/admin-hubs";
 import { BookingPeriodsSection } from "@/components/admin/booking-policies/booking-periods-section";
 
 export default function BookingPeriodsPage() {
@@ -8,7 +8,7 @@ export default function BookingPeriodsPage() {
       <div>
         <BackLink {...adminLink("booking-policies")} />
         <h1 className="mt-2 text-2xl font-bold text-foreground">
-          Date-Specific Periods
+          {getAdminPage("booking-policies-periods").label}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Override the default cancellation policy for specific date ranges.
