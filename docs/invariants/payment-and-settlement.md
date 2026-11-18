@@ -1479,8 +1479,8 @@ preview).
     while the card refund recovery is unsettled (409 under the `Payment` row
     lock, naming the next step by its state), and `check` only after `bank`.
     Its `BANK_REFUND` posts on the card payment (`INV-MONEY-035`) and it takes
-    ONE Xero note of its own, keyed on the task. Where the ledger holds nothing
-    for it, the refusal says to dismiss it.
+    ONE Xero note of its own, keyed on the task. With nothing to allocate,
+    `check` is told to dismiss, `bank` to stay open (#4516).
   - **The booking and payment-link pages name each part and where it stands**,
     from the CANCELLED snapshot and live status.
   - Proven by `booking-cancel.test.ts`, `cancel-card-refund-shortfall.test.ts`,
@@ -2774,8 +2774,8 @@ _Legacy: settles tasks raised before #4317._
     owed (`openCardRefundOwedCents`, #4124), read under `lock(1)` and the
     Payment row. None moves `refundedAmountCents`. Edits and cancels exclude
     the cancellation's own task.
-  - **Dismissal stays open**, unlike an edit's after a cancel: an appeal
-    exists only on a cancelled booking, so the cancel never counted it.
+  - **Dismissal is refused for now** (#4516, owner 14 Nov 2026), as for
+    every real bank or cash hand-back (`refusesJournalHandBackDismissal`).
   - **A cash-settled payment is still refused**: a dismissed cancellation
     hand-back reads refundable again, so an appeal could re-promise it.
   - **The member is told the club WILL refund by bank transfer**
@@ -2840,10 +2840,10 @@ _Legacy: settles tasks raised before #4317._
 - **A declined card stays live** (#4052).
 - **Asks awaiting a failed mint's retry** count, sized as the replay would
   (none if one's frozen). Only its own row settles one, bar a frozen one's
-  replay (#4015). A claim under two minutes refuses the edit;
-  older ones close. A later increase folds a waiting re-issue, and a waiting
-  increase retry, into its own ask (#4744), recorded for replay,
-  and that retry's deferred invoice follows the new ask (`INV-PAY-140`).
+  replay (#4015). Replays await 3DS for an hour (#4755). A claim under two
+  minutes refuses the edit; older ones close. A later increase folds a waiting
+  re-issue or increase retry into its own ask (#4744), recorded for replay;
+  that retry's deferred invoice follows the new ask (`INV-PAY-140`).
   Both re-issue minters send one request (`planReissuedAskMint`).
 - **Only the member's price asks.** An officer's review charge is never set
   against. Financial-review settled refunds stay as the officer decided; the
@@ -4040,11 +4040,11 @@ _Split from `INV-PAY-057` (#3220)._
   still includes the corrected amount, so the correction keeps counting and the
   net stays the cash. A recount finds a bank-transfer payment's
   modification notes by its invoice, so a later note never drops an earlier one.
-  A keep counts each applied correction already synced in its own transaction
-  when the rows explain the refunded total, so a writer queued on its locks
-  reads the corrected net. After the commit a keep, and every replay, recounts
-  the payment with no note of its own; failing, the event is retried. One
-  synced during the settle, or beside an older fold, waits for that (#4095).
+  A keep sets the whole refunded total its links record under the `Payment`
+  row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
+  note's allocation write or removal locks that row first and decides it too,
+  so a writer queued on `lock(1)` reads the net (#4449). The recount after a
+  keep or replay is a backstop; failing, the event is retried (#4095).
 - **The refunded-total repair writes through a claim** on the row it read
   (status, totals, `updatedAt`, which every settle transition touches),
   re-running once from scratch when lost, and never un-refunds a payment whose
@@ -4055,8 +4055,10 @@ _Split from `INV-PAY-057` (#3220)._
 - Pinned by `account-credit-modification-notes.test.ts`,
   `xero-credit-note-repairs.test.ts`, `xero-booking-edit-settlement.test.ts`,
   `xero-repair-known-modification-refund.test.ts`,
-  `kept-settle-correction-recount.test.ts` and
-  `ib-settle-from-cash.realdb.test.ts`.
+  `kept-settle-correction-recount.test.ts`,
+  `retire-unlisted-credit-note-allocations.test.ts`,
+  `ib-settle-from-cash.realdb.test.ts` and
+  `kept-settle-queued-cancel.realdb.test.ts`.
 
 ## INV-PAY-148
 
@@ -4300,13 +4302,13 @@ alert nobody received answers 500).
   the treasurer at once (`unretryableRecoveryCause`); a late capture's is held,
   never redelivered.
 - **One record per dispute**, merged under its row lock: replays change
-  nothing, an older event never overwrites a newer one, a closed dispute never
+  nothing, older events never overwrite newer, a closed dispute never
   reopens.
 - **Finance alerts**, unmuteable, once ever: open, close, and a LOST dispute
   later WON (reverse the Xero loss entry).
 - **A record, not money.** No ledger line, journal, refund, `Payment` total or
-  Xero posting (held edit refunds included); the treasurer posts by hand
-  (`DEPLOYMENT.md`).
+  Xero posting (a held refund's task: its R05 only, #4516); the treasurer
+  posts by hand (`DEPLOYMENT.md`).
 - Limits: a dispute recorded after a cancel's or edit's read is not seen by
   it; a joiner's reduction owed to the organiser's card is refused only at
   `processRefund`; a task raised before a win stays with the treasurer.
@@ -4346,3 +4348,36 @@ alert nobody received answers 500).
 - Proven by `stuck-state-dashboard.test.ts`, `named-rows.test.tsx`,
   `admin-hubs-registry.test.ts` and
   `stuck-state-cancelled-unrecorded.realdb.test.ts`.
+
+## INV-PAY-157
+
+**Related: `INV-PAY-154`** (the treasurer task a dispute raises),
+**`INV-LOCK-001`** (the global tier).
+
+- **A disputed card payment's hand-back closes by its lost disputes** (#4516,
+  owner decisions of 15 and 18 Nov 2026). The rule covers a cancellation's own
+  hand-back and a dispute-held edit's alike (`isDisputeLossHandBack`).
+- **Lost cents are applied once per payment, oldest refund first.** The
+  payment's LOST dispute cents, less what its dispute-loss hand-backs already
+  applied (a dismissed task all it was raised for, any other its reductions),
+  go to its OPEN tasks oldest first; a task gets what is left after every
+  older open task's whole still-owed amount. One function answers
+  (`disputeLossAvailableToTask`), so the sum written off never exceeds what
+  was lost.
+- **What the share allows.** It covers what is still owed: Dismiss. It covers
+  part: Reduce by exactly that share, the rest still owed. Either withdraws
+  the hand-back's R05 by exactly those cents. Mark paid is refused while the
+  task has a share. An OPEN dispute on the payment refuses Dismiss and Reduce;
+  a WON one leaves the task payable. A lost dispute lets an edit's hand-back be
+  dismissed after its booking was cancelled.
+- **Serialised, order-independent.** Dismiss and Reduce take `lock(1)`, the
+  booking row, the Payment row, then re-read; Mark paid reads under `lock(1)`.
+  Applying x to an older task raises applied and lowers older owed by x, so no
+  other share moves; one task's second officer meets the guarded claim.
+- Limit: a dispute-loss task dismissed for another reason (by older code) still
+  counts all it was raised for. A $50 edit refund dismissed while the dispute
+  was open, then a $150 cancel refund with $150 lost: the cancel is reduced by
+  only $100 (`DEPLOYMENT.md`).
+- Proven by `manual-refund-task-dispute-loss.test.ts`,
+  `manual-refund-task.test.ts`, `manual-refund-task-dispute-reduction.test.ts`,
+  `edit-refund-hand-back.test.ts` and `dispute-loss-hand-backs.realdb.test.ts`.

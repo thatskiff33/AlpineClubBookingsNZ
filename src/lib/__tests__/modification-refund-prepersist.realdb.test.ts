@@ -48,6 +48,7 @@ let removal: typeof import("@/lib/booking-guest-removal-service");
 let acceptance: typeof import("@/lib/booking-guest-acceptance-reprice");
 let keys: typeof import("@/lib/payment-recovery-keys");
 let clubTime: typeof import("@/lib/club-time");
+let money: typeof import("@/lib/member-money");
 let restoreInline: (() => void) | undefined;
 let role: SuiteEnvironmentRoleDeclaration | undefined;
 
@@ -123,6 +124,27 @@ async function debt(prefix: string, cents = 10_000) {
   return rows[0]!;
 }
 
+/** #4516: the booking's R01 in the journal, so an edit on it posts its refund debt there too. */
+async function postR01(): Promise<void> {
+  const charge = money.memberMoneyEventKeys.bookingCharge(BOOKING);
+  const booking = { bookingId: BOOKING, lodgeId: LODGE };
+  await prisma.$transaction((tx) => money.postMemberMoneyEvent(tx, JOURNAL, {
+    kind: "CHARGE", eventKey: charge, origin: "APP", source: { kind: "BOOKING", id: BOOKING, version: "1" }, reason: "Synthetic R01",
+    obligations: [{ key: charge, kind: "CHARGE", debtor: { kind: "MEMBER", memberId: OWNER }, faceCents: 20_000, evidence: {} }],
+    legs: [
+      { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: 20_000, booking, debtor: { kind: "MEMBER", memberId: OWNER }, obligationKey: charge, evidence: {} },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 20_000, booking, chargeIdentity: `booking:${BOOKING}:test`, evidence: {} },
+    ] }));
+}
+
+/** The refund debts (R05) the journal holds for one scope and id: each batch's face. */
+function refundDebts(scope: "hand-back" | "modification", id: string) {
+  return prisma.memberMoneyObligation.findMany({
+    where: { obligationKey: { startsWith: money.memberMoneyEventKeys.refundObligation(scope, id) } },
+    select: { obligationKey: true, faceCents: true },
+  });
+}
+
 function batchArgs() {
   return {
     bookingId: BOOKING, actor: { id: OFFICER, role: Role.ADMIN },
@@ -160,6 +182,7 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
     acceptance = await import("@/lib/booking-guest-acceptance-reprice");
     keys = await import("@/lib/payment-recovery-keys");
     clubTime = await import("@/lib/club-time");
+    money = await import("@/lib/member-money");
     await clean();
     for (const [id, memberRole] of [[OWNER, Role.USER], [OFFICER, Role.ADMIN], [GUEST_MEMBER, Role.USER]] as const) {
       await prisma.member.upsert({ where: { id }, create: {
@@ -308,6 +331,38 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
     expect(result.pendingRefundAmountCents).toBe(0);
     expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId: BOOKING, type: "REFUND_BOOKING_MODIFICATION" } })).toBe(0);
     if (shape === "zero") await prisma.cancellationPolicy.updateMany({ where: { lodgeId: LODGE }, data: { refundPercentage: 100, creditRefundPercentage: 100 } });
+  });
+
+  // #4516 x #4992 (focused review of the merge with #5126): an edit on a booking whose journal is active posts the
+  // debt its own door owes, and only that one.
+  it("bank guest removal on a journal-era booking posts one hand-back R05 for the task's cents and no card debt", async () => {
+    await seed("INTERNET_BANKING");
+    await postR01();
+    const result = await remove("card");
+    expect(result.pendingRefundAmountCents).toBe(0);
+    const modification = await prisma.bookingModification.findFirstOrThrow({ where: { bookingId: BOOKING } });
+    const tasks = await prisma.manualRefundTask.findMany({ where: { bookingId: BOOKING }, select: { id: true, amountCents: true } });
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]!.amountCents).toBe(10_000);
+    expect(await refundDebts("hand-back", tasks[0]!.id)).toEqual([
+      { obligationKey: money.memberMoneyEventKeys.refundObligation("hand-back", tasks[0]!.id), faceCents: tasks[0]!.amountCents },
+    ]);
+    expect(await refundDebts("modification", modification.id)).toEqual([]);
+    expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId: BOOKING, type: "REFUND_BOOKING_MODIFICATION" } })).toBe(0);
+  });
+
+  it("card guest removal on a journal-era booking posts one modification R05 for the frozen debt and no hand-back", async () => {
+    await seed();
+    await postR01();
+    const result = await remove("card");
+    expect(result.pendingRefundAmountCents).toBe(10_000);
+    const modification = await prisma.bookingModification.findFirstOrThrow({ where: { bookingId: BOOKING } });
+    const row = await debt("guest_remove_refund");
+    expect(await refundDebts("modification", modification.id)).toEqual([
+      { obligationKey: money.memberMoneyEventKeys.refundObligation("modification", modification.id), faceCents: row.amountCents },
+    ]);
+    expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING } })).toBe(0);
+    expect(await prisma.memberMoneyObligation.count({ where: { obligationKey: { contains: "|hand-back|" }, lines: { some: { bookingId: BOOKING } } } })).toBe(0);
   });
 
   it.each(["CONSENT_DECLINE", "CONSENT_EXPIRY"] as const)("%s cannot silently commit an own-card refund debt", async (kind) => {

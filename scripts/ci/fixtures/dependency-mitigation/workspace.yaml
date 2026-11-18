@@ -1,8 +1,9 @@
-# Synthetic fixture for scripts/ci/dependency-mitigation.test.mjs (#3843).
+# Synthetic fixture for scripts/ci/dependency-mitigation.test.mjs (#3843, #5252).
 # Copied in as pnpm-workspace.yaml so the gate's tests do
 # not depend on the live dependency inputs. pnpm never reads this file.
 packages:
   - .
 
 patchedDependencies:
-  braces@3.0.3: patches/braces@3.0.3.patch
+  picomatch@2.3.2: patches/picomatch@2.3.2.patch
+  picomatch@4.0.7: patches/picomatch@4.0.7.patch

@@ -26,13 +26,15 @@ counts waiting policy exceptions alongside the other queues.
 Each tab shows how many items are waiting on it, across every page of that
 queue, not only the 25 rows on screen. The four counts are worked out
 the same way as the sidebar badge, so they add up to it. The page reads them
-once, when it opens, so a badge can lag behind something you do on the page
-until you reload.
+again whenever the sidebar does: after you decide something on any tab, and
+when you come back to the window or browser tab. The tab you are on stays put.
+If a read fails, the badges keep their last numbers.
 
 A link to the page that names no tab, such as the sidebar entry followed from
 another page, the dashboard card, or a typed address, opens on the first tab
 that has work, in tab order (Approvals, Changes, Policy Exceptions, Public
-Requests), or on **Approvals** when nothing is waiting. The dashboard's
+Requests), or on **Approvals** when nothing is waiting or the counts could not
+be read when the page opened. The dashboard's
 **Booking Requests** card links to that tab. A link that names a tab, a single
 booking or request, or a status filter always opens where it points. Once the
 page is open its address names the tab, so a bookmark taken then keeps that
