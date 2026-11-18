@@ -80,6 +80,7 @@ import { formatBookingReference } from "@/lib/booking-reference";
 import { ManualRefundTaskStillOwedNotice } from "@/components/admin/manual-refund-task-still-owed-notice";
 import { AutomaticRefundNoticesCard, type AutoRefundedNotice } from "@/components/admin/automatic-refund-notices-card";
 import { DIRECTION_CHOICES, type SettlementDirection } from "@/components/admin/manual-refund-settlement-direction";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 
 const NOTE_MAX_LENGTH = MANUAL_PAYMENT_NOTE_MAX;
 
@@ -1181,6 +1182,7 @@ export function ManualRefundTaskQueue() {
       setHandMadeNoteNumber("");
       setAmountInput("");
       setNightPriceInputs({});
+      notifyAdminQueueChanged();
       await load();
     } catch {
       /*

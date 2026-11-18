@@ -22,7 +22,11 @@ import { cn } from "@/lib/utils";
 import { ADMIN_HUBS } from "@/lib/admin-hubs";
 import { hubRoot } from "@/lib/admin-hubs/define";
 import { openAdminCommandPalette } from "@/lib/admin-command-palette-events";
-import type { AdminPendingCounts } from "@/lib/admin-pending-counts";
+import { useAdminQueueRefresh } from "@/hooks/use-admin-queue-refresh";
+import {
+  ZERO_ADMIN_PENDING_COUNTS,
+  type AdminPendingCounts,
+} from "@/lib/admin-work-queues";
 import {
   ADMIN_NAV_PANELS,
   ADMIN_NAV_PANEL_STORAGE_KEY,
@@ -30,49 +34,83 @@ import {
   type AdminNavPanelKey,
 } from "@/lib/admin-nav-panels";
 
-const ZERO_PENDING_COUNTS: AdminPendingCounts = {
-  familyRequests: 0,
-  memberApplications: 0,
-  refundAppeals: 0,
-  manualRefundTasks: 0,
-  creditApprovals: 0,
-  bookingReviews: 0,
-  lockedPeriodChangeRequests: 0,
-  policyExceptionRequests: 0,
-  publicBookingRequests: 0,
-  unpaidFinishedStays: 0,
-  unsettledAdditionalFinishedStays: 0,
-  unsettledAdditionalUpcomingStays: 0,
-  membershipCancellations: 0,
-  archiveRequests: 0,
-  deletionRequests: 0,
-  memberDeleteRequests: 0,
-  issueReports: 0,
-  unassignedHutLeaderDates: 0,
-};
+export type PendingCountsStatus = "loading" | "ok" | "error";
 
-/** Fetch every queue count for the sidebar badges in a single request. */
-export function usePendingCounts(): AdminPendingCounts {
-  const [counts, setCounts] = useState<AdminPendingCounts>(ZERO_PENDING_COUNTS);
+/**
+ * The officer work-queue counts behind the Needs Attention badges (#4962).
+ *
+ * The admin layout is never remounted on a client navigation, so "fetch on
+ * mount" meant "fetch once per hard reload": a decided request kept its badge
+ * and new work never appeared. The counts are refetched on every pathname
+ * change and on the queue-refresh triggers in `useAdminQueueRefresh` (a
+ * decision, window focus, the tab becoming visible), which the Booking
+ * Requests page's tab badges share, with at most one request in flight.
+ *
+ * A failed or non-OK load sets `status: "error"` and KEEPS the last good
+ * counts, so the sidebar can say it could not load them rather than show a
+ * false zero; `retry` asks again.
+ */
+export function usePendingCounts(): {
+  counts: AdminPendingCounts;
+  status: PendingCountsStatus;
+  retry: () => void;
+} {
+  const pathname = usePathname();
+  const [counts, setCounts] = useState<AdminPendingCounts>(ZERO_ADMIN_PENDING_COUNTS);
+  const [status, setStatus] = useState<PendingCountsStatus>("loading");
 
+  const refresh = useAdminQueueRefresh(async (isMounted) => {
+    try {
+      const response = await fetch("/api/admin/pending-counts", { cache: "no-store" });
+      if (!response.ok) throw new Error(`pending-counts ${response.status}`);
+      const data = (await response.json()) as Partial<AdminPendingCounts>;
+      if (!isMounted()) return;
+      setCounts({ ...ZERO_ADMIN_PENDING_COUNTS, ...data });
+      setStatus("ok");
+    } catch {
+      if (isMounted()) setStatus("error");
+    }
+  });
+
+  // Every navigation, the first render included.
   useEffect(() => {
-    let cancelled = false;
+    refresh();
+  }, [pathname, refresh]);
 
-    fetch("/api/admin/pending-counts")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!cancelled && data) {
-          setCounts({ ...ZERO_PENDING_COUNTS, ...data });
-        }
-      })
-      .catch(() => {});
+  return { counts, status, retry: refresh };
+}
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return counts;
+/**
+ * Shown in place of a silent, empty Needs Attention section when the counts
+ * could not be loaded (#4962): a failure must never look like "nothing to do".
+ */
+export function PendingCountsError({
+  retry,
+  partial,
+}: {
+  retry: () => void;
+  /** Some counts loaded and some did not, rather than the whole request failing. */
+  partial?: boolean;
+}) {
+  return (
+    <div
+      role="alert"
+      className="mx-3 my-1 flex items-center gap-2 rounded-md border border-warning-6 bg-warning-3 px-2 py-1.5 text-xs text-warning-11"
+    >
+      <span className="flex-1">
+        {partial ? "Couldn't load some counts" : "Couldn't load counts"}
+      </span>
+      <Button
+        type="button"
+        variant="link"
+        size="sm"
+        onClick={retry}
+        className="h-auto p-0 text-xs font-semibold text-warning-11 underline"
+      >
+        Retry
+      </Button>
+    </div>
+  );
 }
 
 /**

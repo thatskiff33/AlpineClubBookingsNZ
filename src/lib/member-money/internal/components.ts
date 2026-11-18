@@ -155,7 +155,7 @@ export function completeMemberMoneyBatch(batch: BuiltBatch, posted: readonly Pos
 }
 
 /** The components a journal's taxed revenue legs post, as `{ account, chargeIdentity }`. */
-export function componentsPostedBy(journal: Pick<MemberMoneyJournalToReverse, "lines">) {
+export function componentsPostedBy(journal: { lines: readonly Pick<PostedRevenueLeg, "account" | "chargeIdentity">[] }) {
   const seen = new Map<string, { account: MemberMoneyAccount; chargeIdentity: string }>();
   for (const line of journal.lines) {
     if (line.chargeIdentity !== null && isTaxedRevenue(line.account)) {
