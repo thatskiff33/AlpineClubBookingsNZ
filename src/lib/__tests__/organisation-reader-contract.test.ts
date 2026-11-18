@@ -70,7 +70,7 @@ const ADDED_COLUMN = "organisationId";
 const LATER_REQUEST_COLUMNS = ["applyAccountCredit", "pendingAdultCount"];
 // Columns added to Booking independently of the organisation rollout, in
 // schema order, each reviewed: `savedCardClaimAt` is the durable saved-card
-// charge claim marker (#4993, `INV-PAY-157`), nullable with no default, so a
+// charge claim marker (#4993, `INV-PAY-158`), nullable with no default, so a
 // booking read by old code is unchanged once it is dropped.
 const LATER_BOOKING_COLUMNS = ["savedCardClaimAt"];
 

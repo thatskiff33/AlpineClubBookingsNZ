@@ -437,6 +437,7 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/late-capture-refund-setting-change.ts::auditLateCaptureSettingChange#0": {"category":"payment","sink":"logAudit","action":"booking-defaults.late_capture_refund_approval.changed"},
   "src/lib/late-capture-unrecorded-refunds.ts::readUnrecordedLateCaptureRefund#0": {"category":"payment","sink":"logAudit","action":"booking.payment.late_capture_refunded_outside_app","reviewed":["2581-applied"]},
   "src/lib/manual-refund-task-audit.ts::recordManualRefundTaskClosureAudit#0": {"category":"payment","sink":"createAuditLog","action":"(dynamic) resolution === \"completed\" ? \"booking-payment.manual-refund-task.complete\" : \"booking-payment.manual-refund-task.dismiss\""},
+  "src/lib/manual-refund-task-dispute-reduction.ts::reduceDisputedHandBack#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.manual-refund-task.reduce-by-lost-dispute"},
   "src/lib/manual-refund-task-reopen-audit.ts::recordManualRefundTaskReopenAudit#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.manual-refund-task.reopen"},
   "src/lib/manual-subscription-payment.ts::applyManualSubscriptionPayment#0": {"category":"payment","sink":"createAuditLog","action":"membership-subscription.manual-payment.mark-paid"},
   "src/lib/manual-subscription-payment.ts::applyManualSubscriptionPayment#1": {"category":"payment","sink":"createAuditLog","action":"membership-subscription.manual-payment.mark-unpaid"},

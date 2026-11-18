@@ -676,7 +676,7 @@ import "./saved-card-charge-worth.realdb.test";
 // for one row have one winner. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4646-` fixtures.
 import "./saved-card-async-capture-adopt.realdb.test";
-// #4993 (`INV-PAY-157`) reuses it to prove a saved-card claim stranded
+// #4993 (`INV-PAY-158`) reuses it to prove a saved-card claim stranded
 // CONFIRMED by an interrupted charge is handed back to PENDING once, its hold
 // the claim marker and its attempt row untouched; a young claim and a captured
 // one are left; and recovery racing the capture's adoption resolves either way

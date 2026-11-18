@@ -137,10 +137,12 @@ const confirmationLedger = vi.hoisted(() => ({
 vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
 
 // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
-const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0) }));
+const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0), postHandBackObligation: vi.fn(async () => null) }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingReceipts: receiptDoors.postBookingReceipts,
+  // #4516 (M4d): the organisation's late cash is a hand-back debt; here, that the delivery asks for it.
+  postHandBackObligation: receiptDoors.postHandBackObligation,
 }));
 // #4370: the failed-later recount reads in one read-only snapshot; here it
 // runs on the mocked client, and against a real database in
@@ -2702,6 +2704,7 @@ describe("processStoredXeroInboundEvents", () => {
       capacityAvailable: true,
       owner: "organisation",
     });
+    mocks.manualRefundTaskCreate.mockResolvedValueOnce({ id: "hand-back-school" });
 
     await expect(processStoredXeroInboundEvents()).resolves.toEqual({
       found: 1,
@@ -2736,6 +2739,11 @@ describe("processStoredXeroInboundEvents", () => {
         raisedAmountCents: 12345,
         kind: "CANCELLED_BOOKING_HAND_BACK",
       }),
+      select: { id: true },
+    });
+    // #4516 (M4d): and its refund debt posts with it, under this delivery's lock(1).
+    expect(receiptDoors.postHandBackObligation).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      bookingId: "booking_ib_pl", taskId: "hand-back-school", amountCents: 12345, origin: "XERO", debtorRead: "plain", // review C: no booking row after the Payment row
     });
     const reason = mocks.manualRefundTaskCreate.mock.calls[0]?.[0]?.data?.reason;
     expect(reason).toContain("organisation");

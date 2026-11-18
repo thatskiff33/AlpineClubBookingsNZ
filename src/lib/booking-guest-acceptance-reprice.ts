@@ -495,7 +495,7 @@ export async function repriceBookingAfterGuestAcceptance(
   // D-3813-6 (`INV-PAY-117`): the cash share of a reduction on a booking paid
   // by internet banking or by hand is the treasurer's to send back.
   await raiseEditRefundHandBackIfOwed(tx, {
-    bookingId,
+    bookingId, journal, actorMemberId: params.actorMemberId, // #4516 (M4d): the hand-back's R05 posts with the task, naming the edit's actor
     paymentId: booking.payment?.id ?? null,
     bookingModificationId: bookingModification.id,
     adjusted: paymentImpact,

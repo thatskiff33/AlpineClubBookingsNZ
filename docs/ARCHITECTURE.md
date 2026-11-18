@@ -2267,7 +2267,7 @@ write, so a non-NULL value on a CONFIRMED booking means a claim is in flight or
 was stranded. NULL means no claim is open: the booking was never claimed, the
 claim ended, or it was claimed before the column existed. Only
 `recoverStaleSavedCardClaims` reads it, to hand back a claim older than 30
-minutes with no captured money (`INV-PAY-157`). Nullable, no default, no index:
+minutes with no captured money (`INV-PAY-158`). Nullable, no default, no index:
 an expand-only column the old code neither reads nor writes.
 
 ## Booking and Payment Flow
