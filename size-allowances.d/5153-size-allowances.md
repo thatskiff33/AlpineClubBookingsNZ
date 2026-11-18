@@ -15,7 +15,7 @@ reason: routes Xero tax through the club tax schedule; those lines sit inside
   of this fix.
 
 function: src/lib/xero-credit-notes.ts#createXeroCreditNote
-lines: 652
+lines: 658
 reason: routes Xero tax through the club tax schedule; those lines sit inside
   the function `createXeroCreditNote`, which was already over its limit before
   this change, and lifting it apart is a refactor of its own, not part of this

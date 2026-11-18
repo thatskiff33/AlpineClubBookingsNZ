@@ -14,7 +14,7 @@ import {
   ADMIN_FULL_ADMIN_ONLY_ACTION_REASON,
   useFullAdminEditAccess,
 } from "@/hooks/use-admin-area-edit-access"
-import { isDateOnlyString } from "@/lib/date-only"
+import { isCalendarDate } from "@/lib/club-time"
 import { formatBasisPoints, usableXeroTaxRates, type XeroTaxRateOption } from "@/lib/xero-tax-rate-options"
 
 import {
@@ -128,7 +128,7 @@ export function ClubTaxCard() {
   }, [])
 
   // A real calendar day, not just its shape (ALP-580).
-  const validDate = isDateOnlyString(effectiveFrom)
+  const validDate = isCalendarDate(effectiveFrom)
   // How many bookings a change from the chosen date leaves on the old treatment, read outside any transaction.
   useEffect(() => {
     if (!editing || !validDate) {
