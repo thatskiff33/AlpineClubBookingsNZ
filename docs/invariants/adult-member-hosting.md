@@ -79,6 +79,8 @@ linked to a guest row on that exact night. Each consequence is deliberate:
   would let a member suppress the review with an adult who never agreed to come.
   The review clears by itself the moment the invite is accepted.
 
+Background: #2364.
+
 ### INV-HOST-005
 
 Nights come from the sparse `BookingGuestNight` rows (#713), so a non-contiguous
@@ -410,14 +412,15 @@ compliant indefinitely.
 
 ### INV-HOST-028
 
-- **An authorised officer is ASKED TO CONFIRM, then ALLOWED and ESCALATED** (§7).
+- **An authorised officer is ASKED TO CONFIRM, then ALLOWED and ESCALATED**
+  (#2576 §7).
   An officer change that would strand a dependent raises
   `SameOwnerCoverageOverrideRequiredError` (409, `requiresOverrideReason: true`)
   naming what would be stranded: a block on the UNCONFIRMED change, not the
   officer, since §7's override needs the permission, an explicit confirmation,
   a mandatory reason, the affected bookings and nights, and an audit event.
   Re-submitted with `hostingCoverageOverride`
-  (`{ acknowledged: true, reason, strandedStateKey }`, reason at least 10
+  (`{ acknowledged: true, reason, strandedStateKey }`, reason minimum 10
   characters, unknown nested fields rejected), it proceeds as
   `OFFICER_OVERRIDE`, recorded against their member id with their reason on the
   incident. `strandedStateKey` digests (versioned) the changed source booking
@@ -438,15 +441,15 @@ compliant indefinitely.
   approval explanation. The booking detail's officer edit and cancel controls
   use the same strict client-only prompt, bound to the whole rejected
   mutation (including shift pricing mode, refund method and email choice) and
-  retired permanently if any proposal field changes. A retry reuses that proposal, not re-asking
-  about email; a refreshed 409 replaces the key/list, clearing
-  only the private reason and confirmation. Affected booking details render only
-  when `viewerAuthorizationRole === "ADMIN"`; member self-removal and ordinary
-  draft confirmation never gain this override UI.
+  retired permanently if any proposal field changes. A retry reuses that
+  proposal, not re-asking about email; a refreshed 409 replaces the key/list,
+  clearing only the private reason and confirmation. Affected booking details
+  render only when `viewerAuthorizationRole === "ADMIN"`; member self-removal
+  and ordinary draft confirmation never gain this override UI.
 
 ### INV-HOST-029
 
-- **A change to one PERSON's standing records the check it owes** (§8). The
+- **A change to one PERSON's standing records the check it owes** (#2576 §8). The
   evaluator half is automatic (an archived or cancelled member stops
   qualifying); `enqueueHostingCoverageReevaluationForMember` is the other,
   called in the same transaction as archive, account-deletion anonymisation
@@ -485,15 +488,16 @@ compliant indefinitely.
   retrying only from the current Member, never stored pre-deletion PII. The
   create reservation, manual Link and provider-returned local-link paths re-read
   the deleted-member marker under their own Member lock before any provider call
-  or attribution, so a deleted account neither reaches Xero nor regains a link. Manual Link commits the Member pointer and FK-less canonical
-  CONTACT ledger row together; deletion deactivates that ledger in the anonymisation
-  transaction that clears the pointer. In the same transaction, a canonical link commit claims, status-guarded, a
-  `FAILED`
-  member CONTACT create proving Xero made the now-linked contact as
-  `SUCCEEDED`, touching no `RUNNING` reservation and no create that made a
-  *different* contact. Merge, deletion and member detail read the blocker
-  (whose predicates never consult `Member.xeroContactId`) through one predicate, so a refused member never renders reconciled; each
-  refusal names the blocking operation and the
+  or attribution, so a deleted account neither reaches Xero nor regains a link.
+  Manual Link commits the Member pointer and FK-less canonical CONTACT ledger
+  row together; deletion deactivates that ledger in the anonymisation
+  transaction that clears the pointer. In the same transaction, a canonical
+  link commit claims, status-guarded, a `FAILED` member CONTACT create proving
+  Xero made the now-linked contact as `SUCCEEDED`, touching no `RUNNING`
+  reservation and no create that made a *different* contact. Merge, deletion
+  and member detail read the blocker (whose predicates never consult
+  `Member.xeroContactId`) through one predicate, so a refused member never
+  renders reconciled; each refusal names the blocking operation and the
   Admin → Xero → Operations screen. Only an explicit `repairExistingLink` may
   reserve a CREATE for a linked member, re-resolving by exact non-archived name
   first so a live same-named contact is re-linked, not duplicated.
@@ -868,8 +872,9 @@ compliant indefinitely.
   re-notifies an officer.
 
   **Member-owned and non-member-owned joins consume this cover on identical
-  terms.** Enforced by `adult-member-hosting-group-trip-cover.test.ts`, whose
-  failure messages carry this id. History: #3037.
+  terms.** Nothing about who owns a source or a dependent booking is consulted.
+  Enforced by `adult-member-hosting-group-trip-cover.test.ts`, whose failure
+  messages carry this id. History: #3037.
 
 ### INV-HOST-045
 
@@ -897,7 +902,8 @@ compliant indefinitely.
   `HostingCoverageReevaluation` for the owner at this lodge, read first since it
   invalidates an absent snapshot as much as a present one, night list not
   intersected; (2) an open `HostingCoverageIncident` with NO snapshot
-  (with one, the snapshot stands), never in any payload; (3) a readable snapshot with nothing uncovered;
+  (with one, the snapshot stands), never in any payload; (3) a readable
+  snapshot with nothing uncovered;
   (4) a covered night resting on `SAME_GROUP_TRIP`, which makes the whole
   snapshot `STALE`, never a night uncovered, until #3039 enqueues a row for
   every DEPENDENT owner or extends `readStalenessSignals` to the whole group.
@@ -906,15 +912,17 @@ compliant indefinitely.
 
   **A partially readable snapshot is `UNREADABLE`**: no malformed night row is
   skipped; the per-night evidence and the `uncovered` list must name the same
-  nights; duplicate nights, a covered night with no supplying scope and an
-  unknown scope are rejected, each guard mutation-verified.
+  nights; duplicate nights, a covered night with no supplying scope and a scope
+  list naming nothing this deployment has are rejected, each guard
+  mutation-verified.
 
   **No requirement in force means no cover line.** Where the resolved MODE
   (never the scope set) is not a consequence — `DISABLED`, no row, or a
   malformed set — the kiosk omits `adultCoverSource`, as for a viewer without
-  the capability, and issues no staleness read or anything else on that path. That mode is the one club
-  setting the kiosk Group Trip surface consults, and gates the cover line alone;
-  the linkage badge is gated on nothing (D1 on #3040, `INV-PRIV-016`).
+  the capability, and issues no staleness read or anything else on that path.
+  That mode is the one club setting the kiosk Group Trip surface consults, and
+  gates the cover line alone; the linkage badge is gated on nothing (D1 on
+  #3040, `INV-PRIV-016`).
 
   **`EVALUATED` shows the officer's decision** (`PENDING`, `APPROVED`,
   `REJECTED` or `null`), as an approval moves only
@@ -937,25 +945,25 @@ compliant indefinitely.
   exists** (test-asserted). `settleGroupTripDependentCoverage` cannot throw.
   `lockAndVerifyGroupTripCoverageDependents` may throw the non-disclosing
   `HOSTING_COVERAGE_PARTICIPANT_RETRY` when its fail-fast trip key loses a
-  race or the sibling set drifts, rolling the actor back,
-  so the no-block promise holds of the OUTCOME. `GroupTripFanOutOptions.bestEffort`
-  is passed only where the transition cannot remove
-  cover, today `xero-inbound/invoice-paid-effects.ts` (`PAYMENT_PENDING ->
-  PAID`); the settlement reaper's de-confirming revert never may.
+  race or the sibling set drifts, rolling the actor back, so the no-block
+  promise holds of the OUTCOME. `GroupTripFanOutOptions.bestEffort` (degrade,
+  not refuse) is passed only where the transition cannot remove cover
+  (`invoice-paid-effects.ts`, `PAYMENT_PENDING -> PAID`); the settlement
+  reaper's de-confirming revert never may.
 
   **Dependents are the trip at this lodge, with no night clause**:
   `groupTripCoverageDependentWhere` (active, not this booking or
-  soft-deleted); sources keep their night clause. Each dependent gets one `HostingCoverageReevaluation` item:
-  itself as `sourceBookingId`, its owner as `memberId`, the lodge, its OWN
-  nights, cause `SYSTEM_CHANGE` even after an officer override.
-  `assertHostingCoverageQueueParticipantsLocked` refuses an item unless one
-  proof source's `bookingId` and `ownerMemberId` are its `sourceBookingId` and
-  `memberId`. The drain always adds each dependent's split
-  halves (`hostingSiblingWhere`, `INV-HOST-043`).
+  soft-deleted); sources keep their night clause. Each dependent gets one
+  `HostingCoverageReevaluation` item: itself as `sourceBookingId`, its owner as
+  `memberId`, the lodge, its OWN nights, cause `SYSTEM_CHANGE` even after an
+  officer override. `assertHostingCoverageQueueParticipantsLocked` refuses an
+  item unless one proof source's `bookingId` and `ownerMemberId` are its
+  `sourceBookingId` and `memberId`. The drain always adds each dependent's
+  split halves (`hostingSiblingWhere`, `INV-HOST-043`).
 
   **`GROUP_TRIP_COVERAGE_DEPENDENT_LIMIT`** (own constant, source ceiling's
-  number) writes when it binds, in that transaction and once per trip,
-  a `reportGroupTripDependentCeilingBound` audit row
+  number) writes when it binds, in that transaction, once per trip, a
+  `reportGroupTripDependentCeilingBound` audit row
   (`booking.hostingCoverage.groupTripFanoutTruncated`, keyed on the
   `GroupBooking`, `severity: "important"`) saying the rest were not
   re-evaluated.
@@ -970,8 +978,8 @@ compliant indefinitely.
 
   **Closing, reopening and deleting need no hook** (status governs joining;
   deletion touches only non-source `DRAFT`/`CANCELLED` bookings;
-  `OPENABLE_ORGANISER_STATUSES` keeps an
-  organiser's booking out of `DRAFT` when its group is created).
+  `OPENABLE_ORGANISER_STATUSES` keeps an organiser's booking out of `DRAFT`
+  when its group is created).
 
   Enforced by `adult-member-hosting-group-trip-reconciliation.test.ts`,
   `adult-member-hosting-group-trip-races.realdb.test.ts` and
@@ -1017,8 +1025,8 @@ compliant indefinitely.
   linked move** (owner decision, 2 September 2026, #3232). A refusal names only
   actions the member can take, never "update the affected booking first".
 
-  **Three arms.** *Yes*: both move atomically on one combined figure
-  (`INV-HOST-051`). *No*: only the changed booking moves; the member is told
+  **Three arms.** *Yes*: both move atomically on one combined figure accepted
+  once (`INV-HOST-051`). *No*: only the changed booking moves; the member is told
   plainly the other will lack adult supervision, and an officer-queue incident
   records that they were asked and answered. *Cannot*: no beds for both is said
   plainly and warn-and-continue offered for the WHOLE stranded set, priced at
@@ -1030,26 +1038,31 @@ compliant indefinitely.
   changed booking keeps (`linkedMoveWouldRestoreCover`). That test only
   raises the offer; the supervision pass over the would-commit state remains the
   authority (a mixed set reaches the offer and is decided there), skipped on an
-  arm that cannot commit and governing every arm that can. The engine marks the refusal `linkedMoveWouldAnswer`;
+  arm that cannot commit and governing every arm that can. The engine marks the
+  refusal `linkedMoveWouldAnswer`;
   `modifyBookingWithLinkedMoveSupport` prices it by running both moves through
   the modification service and rolling back (`INV-SSOT-001`); an unenriched
   refusal names an officer.
 
   **State keys:** declining binds `strandedCoverageStateKey` (the officer
   override's); accepting binds `linkedMoveStateKey` (stranded set, proposed
-  windows, combined money). A stale key gets a fresh prompt: a stale answer
-  is a fresh first submission, judged by the same delivery test at both throw
-  sites, and cannot claim an arm the shift cannot deliver.
+  windows, combined money including the price delta). A stale key gets a fresh
+  prompt: a stale answer is a fresh first submission, judged by the same
+  delivery test at both throw sites, and cannot claim an arm the shift cannot
+  deliver.
 
-  **Wording** is composed from `hosting-coverage-linked-move-client.ts`
-  (`INV-SSOT-001`): the due and refund figures (per booking one is non-zero)
-  are both stated when non-zero and said to settle separately,
-  count-driven (the both-directions sentence counts no bookings), every
-  uncovered booking named. Every claim holds for both
-  directions: no fee "included" in a total, no named zero combined fee, no "one
-  change fee only" when the primary's fee is also nothing, no "will be asked
-  once" when already answered. The offer names `policyRetainedAmountCents`
-  summed across moving bookings.
+  **Money and wording.** The quote holds a due field and a refund field, never
+  one signed number: they do not net off (per booking exactly one is non-zero).
+  Every surface composes the sentence from
+  `hosting-coverage-linked-move-client.ts` (`INV-SSOT-001`), states both
+  figures when both are non-zero, says they settle separately, and is
+  count-driven: the dependent cap is `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT`, the
+  arm relied on for informed consent names every booking it will leave
+  uncovered, and the both-directions sentence counts no bookings. Every claim
+  holds for both directions: no fee "included" in a total, no named zero
+  combined fee, no "one change fee only" when the primary's fee is also
+  nothing, no "will be asked once" when already answered. The offer names
+  `policyRetainedAmountCents` summed across moving bookings.
 
   **Save stays disabled until an arm is chosen** (errors in an announced live
   region); no reason is demanded. **Only the booking's own member answers**:
