@@ -189,7 +189,7 @@ describe("prepareBookingInvoiceDownload", () => {
       ...overrides,
     } as never as NonNullable<Parameters<typeof prepareBookingInvoiceDownload>[4]>;
   }
-  const allowed = { success: true, remaining: 19, resetAt: 0 };
+  const allowed = { success: true, limit: 20, remaining: 19, resetAt: 0 };
   const chargeBookingLimit = vi.fn(async () => allowed);
   const request = { ipAddress: "203.0.113.9", chargeBookingLimit };
   const INVOICE = { kind: "INVOICE" } as const;
@@ -280,7 +280,7 @@ describe("prepareBookingInvoiceDownload", () => {
   });
 
   it("charges the per-booking limit only once on offer, and stops before Xero when it is spent", async () => {
-    const spent = { success: false, remaining: 0, resetAt: 60_000 };
+    const spent = { success: false, limit: 20, remaining: 0, resetAt: 60_000 };
     const d = deps();
     const result = await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, { ipAddress: null, chargeBookingLimit: vi.fn(async () => spent) }, d);
     expect(result).toEqual({ kind: "RATE_LIMITED", limit: spent });
@@ -337,7 +337,7 @@ describe("prepareBookingInvoiceDownload with its real dependencies", () => {
     vi.mocked(readBookingCreditNotes).mockResolvedValue([]);
     vi.mocked(getClubIdentity).mockResolvedValue({ shortName: "TAC" } as never);
 
-    const result = await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), { kind: "INVOICE" }, { ipAddress: null, chargeBookingLimit: async () => ({ success: true, remaining: 1, resetAt: 0 }) });
+    const result = await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), { kind: "INVOICE" }, { ipAddress: null, chargeBookingLimit: async () => ({ success: true, limit: 20, remaining: 1, resetAt: 0 }) });
 
     expect(result).toMatchObject({ kind: "PDF", fileName: "tac-invoice-INV-0042.pdf" });
     expect(getInvoiceAsPdf).toHaveBeenCalledWith("tenant-1", "xero-primary-id");
@@ -369,7 +369,7 @@ describe("prepareBookingInvoiceDownload with its real dependencies", () => {
       "ckbooking1234567",
       session(OWNER_ID, "USER"),
       { kind: "CREDIT_NOTE", creditNoteId: "xero-cn-1" },
-      { ipAddress: null, chargeBookingLimit: async () => ({ success: true, remaining: 1, resetAt: 0 }) },
+      { ipAddress: null, chargeBookingLimit: async () => ({ success: true, limit: 20, remaining: 1, resetAt: 0 }) },
     );
 
     expect(result).toMatchObject({ kind: "PDF", fileName: "tac-credit-note-CN-0007.pdf" });

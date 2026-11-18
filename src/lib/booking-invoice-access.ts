@@ -2,6 +2,14 @@ import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-ch
 import type { BookingInvoiceSummary } from "@/lib/booking-invoice-summary";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
+/** One Xero credit note raised against the booking (`readBookingCreditNotes`). */
+export type BookingCreditNoteKind = "CHANGE" | "REFUND" | "ACCOUNT_CREDIT" | "CREDIT_USED";
+export type BookingCreditNote = {
+  creditNoteId: string;
+  creditNoteNumber: string | null;
+  kind: BookingCreditNoteKind;
+};
+
 /**
  * WHAT THE BOOKING PAGE OFFERS AS THE BOOKING'S INVOICE (#5066, slice 1).
  *
@@ -29,14 +37,6 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
  * for a credit note, only an id in its `creditNotes`, so neither can disagree
  * with the other.
  */
-/** One Xero credit note raised against the booking (`readBookingCreditNotes`). */
-export type BookingCreditNoteKind = "CHANGE" | "REFUND" | "ACCOUNT_CREDIT" | "CREDIT_USED";
-export type BookingCreditNote = {
-  creditNoteId: string;
-  creditNoteNumber: string | null;
-  kind: BookingCreditNoteKind;
-};
-
 export type BookingInvoiceOffer =
   | { kind: "NONE" }
   | { kind: "XERO_INVOICE"; invoiceNumber: string | null; creditNotes: BookingCreditNote[] }
