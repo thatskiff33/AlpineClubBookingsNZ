@@ -6,6 +6,7 @@ import {
   MEMBER_FACING_ROOTS,
   read,
 } from "@/components/ui/__tests__/support/card-title-source";
+import { blankLiterals } from "@/lib/__tests__/support/strip-comments";
 
 // Importing a server page loads its auth and database modules, which reach for
 // the Next.js runtime and a DATABASE_URL. The titles are static exports, so
@@ -121,9 +122,29 @@ describe("member-facing routes set their own tab title (#4951, #5217)", () => {
  *
  * It reads source, so it cannot tell that a `generateMetadata` returns a title
  * on every path. A page that needs one adds a `ROUTES` row or its own test.
+ *
+ * It reads source with comments and string contents blanked (INV-SSOT-004), so
+ * an example in a docblock never counts. A `title:` counts only at the top
+ * level of the `metadata` object: `openGraph: { title }` is not a tab title,
+ * and a nested object ahead of the real `title:` (`robots: { index: false }`)
+ * does not hide it.
  */
-const SETS_A_TITLE =
-  /^export (?:const metadata\b[^=]*=\s*\{[^}]*\btitle:|(?:async )?function generateMetadata\b)/m;
+function setsATitle(source: string): boolean {
+  const code = blankLiterals(source);
+  if (/^export (?:async )?function generateMetadata\b/m.test(code)) return true;
+  const start = /^export const metadata\b[^=]*=\s*\{/m.exec(code);
+  if (!start) return false;
+  // Keep only the characters at the object's own depth, so nested objects drop out.
+  let depth = 1;
+  let topLevel = "";
+  for (let i = start.index + start[0].length; i < code.length && depth > 0; i++) {
+    const ch = code[i];
+    if (ch === "{" || ch === "[" || ch === "(") depth++;
+    else if (ch === "}" || ch === "]" || ch === ")") depth--;
+    else if (depth === 1) topLevel += ch;
+  }
+  return /(?:^|[\s,])title\s*:/.test(topLevel);
+}
 
 describe("no member-facing page falls back to the default tab title (#5217)", () => {
   const pages = MEMBER_FACING_ROOTS.flatMap((root) =>
@@ -134,8 +155,8 @@ describe("no member-facing page falls back to the default tab title (#5217)", ()
     const untitled = pages.filter((page) => {
       const layout = page.replace(/page\.tsx$/, "layout.tsx");
       return (
-        !SETS_A_TITLE.test(read(page)) &&
-        !(existsSync(layout) && SETS_A_TITLE.test(read(layout)))
+        !setsATitle(read(page)) &&
+        !(existsSync(layout) && setsATitle(read(layout)))
       );
     });
     expect(
@@ -145,6 +166,41 @@ describe("no member-facing page falls back to the default tab title (#5217)", ()
         "beside it when the page is a client component (INV-PUB-006):\n" +
         untitled.join("\n")
     ).toEqual([]);
+  });
+
+  // The check above is only as good as `setsATitle`, so each way a raw-source
+  // scan used to be wrong is pinned here against synthetic source.
+  it.each([
+    ["a plain metadata title", 'export const metadata = { title: "Profile" };', true],
+    [
+      "a typed, multi-line metadata block",
+      'export const metadata: Metadata = {\n  title: "Profile",\n};',
+      true,
+    ],
+    [
+      "a title after a nested object",
+      'export const metadata = { robots: { index: false }, title: "Profile" };',
+      true,
+    ],
+    ["generateMetadata", "export async function generateMetadata() { return {}; }", true],
+    [
+      "a title only inside openGraph",
+      'export const metadata = { openGraph: { title: "Profile" } };',
+      false,
+    ],
+    [
+      "a metadata line that sits inside a block comment",
+      '/*\nexport const metadata = { title: "Profile" };\n*/\nexport default function Page() {}',
+      false,
+    ],
+    [
+      "a title that appears only in a string value",
+      'export const metadata = { description: "title: not a key" };',
+      false,
+    ],
+    ["no metadata at all", "export default function Page() { return null; }", false],
+  ])("setsATitle: %s", (_name, source, expected) => {
+    expect(setsATitle(source)).toBe(expected);
   });
 
   it("scans a tree that actually contains member pages", () => {

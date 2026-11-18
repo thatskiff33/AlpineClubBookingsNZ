@@ -8,6 +8,10 @@ import { join } from "node:path";
  * the two cannot come to disagree about which files exist or what counts as a
  * `CardTitle` and its heading classification.
  *
+ * `member-route-titles.test.ts` (#5217) is a third reader, and not about
+ * `CardTitle`: it takes the file readers and `MEMBER_FACING_ROOTS` so the
+ * tab-title guard covers the same screens the heading guards do.
+ *
  * Discovery, not an allow-list: a new file is covered the day it lands.
  */
 

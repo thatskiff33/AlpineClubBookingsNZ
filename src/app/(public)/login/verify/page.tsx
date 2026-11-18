@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { buildLoginPath, getExplicitCallbackUrl } from "@/lib/auth-redirect";
@@ -10,7 +11,6 @@ import { resolvePostLoginLandingPath } from "@/lib/post-login-landing";
 import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
 import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
 import { TwoFactorVerifyPanel } from "../two-factor-panels";
-import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Verify your sign-in",

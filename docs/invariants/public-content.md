@@ -102,8 +102,9 @@ Pinned by `image-derivatives.test.ts`, `admin-image-manager-derivatives.test.ts`
   name, amount or token. A client page gets it from a server `layout.tsx`
   beside it. None falls back to the default title:
   `member-route-titles.test.ts` fails a page that sets none, and its `ROUTES`
-  table pins the wording for the screens a member reaches from an email link
-  or their account. A new such route adds a row.
+  table pins the wording of the titles it lists. The source check proves only
+  that a title exists, so a route with no `ROUTES` row can change its wording
+  unnoticed. A new such route adds a row.
 - The screens a member reaches from an email link, and login, dashboard,
   bookings, notices and `/join/apply`, have exactly one level-1 heading in
   every render state.
@@ -113,8 +114,9 @@ Pinned by `image-derivatives.test.ts`, `admin-image-manager-derivatives.test.ts`
   lists, and ratchets the rest down (#4951).
 - Limit: a notice body's H1 renders as an H2. Lodge and hut-leader instruction
   bodies render as the admin wrote them, so an H1 there adds a second level-1
-  heading. The guest chore sheet (`/chores/[token]`) has no level-1 heading
-  while it loads.
+  heading; so does an H1 in the stored header or body HTML of `/join/apply`,
+  which keeps it. The guest chore sheet (`/chores/[token]`) has no level-1
+  heading while it loads.
 - Proof: `member-route-titles.test.ts`,
   `card-title-classification-census.test.ts`,
   `member-token-screen-headings.test.tsx`, `single-card-screen-headings.test.tsx`,
