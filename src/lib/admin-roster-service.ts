@@ -24,6 +24,8 @@ import { lockRosterEligibilityMutation } from "@/lib/roster-lock"
 import { z } from "zod"
 import logger from "@/lib/logger"
 import { logAudit } from "@/lib/audit"
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { isTransactionContention } from "@/lib/prisma-errors";
 
 type JsonRouteResult = {
   body: unknown
@@ -356,7 +358,7 @@ export async function getAdminRosterForDate(params: {
       }
     }
     return loadRosterSnapshot(tx, date, dateStr, lodgeId, guests)
-  })
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET)
   return jsonResult(snapshot)
 }
 
@@ -515,7 +517,7 @@ export async function updateAdminRosterForDate(params: {
         return {
           snapshot: await loadRosterSnapshot(tx, date, dateStr, lodgeId, eligibleGuests),
         }
-      })
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET)
       if (saveResult.error) return saveResult.error
       return jsonResult(saveResult.snapshot)
     }
@@ -565,7 +567,7 @@ export async function updateAdminRosterForDate(params: {
         }
 
         return { conflict: false as const }
-      })
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET)
 
       if (regenerateResult.conflict) {
         return rosterError(
@@ -608,7 +610,7 @@ export async function updateAdminRosterForDate(params: {
           data: { status: "CONFIRMED" },
         })
         return { success: true as const }
-      })
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET)
       if ("invalid" in confirmResult) {
         return rosterError(
           confirmResult.invalid === "guest" ? "ROSTER_CONFIRM_GUEST_INELIGIBLE" : "ROSTER_CONFIRM_TEMPLATE_INVALID",
@@ -680,7 +682,7 @@ export async function updateAdminRosterForDate(params: {
           return { invalid: "template" as const }
         }
         return { assignments }
-      })
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET)
       if ("invalid" in emailSelection) {
         return rosterError(
           emailSelection.invalid === "guest" ? "ROSTER_EMAIL_GUEST_INELIGIBLE" : "ROSTER_EMAIL_TEMPLATE_INVALID",
@@ -813,6 +815,8 @@ export async function updateAdminRosterForDate(params: {
     }
   }
   } catch (err) {
+    // INV-LOCK-006: contention is the route's retryable 503, not a failure.
+    if (isTransactionContention(err)) throw err
     logger.error({ err }, "Error processing roster action")
     const failures = {
       save: {

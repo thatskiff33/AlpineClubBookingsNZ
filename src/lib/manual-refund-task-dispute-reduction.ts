@@ -9,6 +9,7 @@ import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { disputedHandBackReductionSummary } from "@/lib/manual-refund-task-copy";
 import { decideJournalHandBackDismissal, withdrawReducedHandBackDebt, type JournalHandBackDismissal } from "@/lib/manual-refund-task-hand-back-journal";
 import { lockBookingRowForOwnerRead } from "@/lib/booking-row-lock";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { resolveBookingDoorClock } from "@/lib/member-money/doors";
 import { prisma } from "@/lib/prisma";
 
@@ -46,6 +47,7 @@ export async function reduceDisputedHandBack(input: {
 }): Promise<DisputedHandBackReduction> {
   // `INV-LOCK-004`: the journal is read outside the transaction.
   const { journal } = await resolveBookingDoorClock();
+  // `INV-LOCK-006`: it waits for lock(1) behind the same holders the dismissal does.
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const head = await tx.manualRefundTask.findUnique({ where: { id: input.taskId }, select: { bookingId: true } });
@@ -79,7 +81,7 @@ export async function reduceDisputedHandBack(input: {
         wasCents, reducedByCents, stillOwedCents, lostDisputeIds: decision.reduction.lostDisputeIds.join(",") },
     }, tx);
     return { taskId: task.id, wasCents, reducedByCents, stillOwedCents };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /** The officer's toast: the same amounts the confirmation stated. */

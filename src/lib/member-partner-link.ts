@@ -52,6 +52,7 @@ import {
   PARTNER_LINK_CONFIRMED,
   canonicalPartnerPair,
 } from "@/lib/member-partner-link-shared";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const PARTNER_MEMBER_SELECT = {
   id: true,
@@ -1053,7 +1054,7 @@ export async function removeOwnPartnerLink(params: {
         })
       : [];
     return { deletedCount: deleted.count, sweptShares: swept };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   if (deletedCount === 0) {
     return { ok: false, status: 409, error: "Partner link not found or already changed." };
   }
@@ -1382,7 +1383,7 @@ export async function adminRemovePartnerLink(params: {
         })
       : [];
     return { deletedCount: deleted.count, sweptShares: swept };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   if (deletedCount === 0) {
     return { ok: false, status: 409, error: "Partner link not found or already changed." };
   }

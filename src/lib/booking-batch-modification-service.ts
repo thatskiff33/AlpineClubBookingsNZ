@@ -106,10 +106,7 @@ import {
 } from "@/lib/edit-refund-hand-back";
 import { reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
 import { prisma } from "@/lib/prisma";
-import {
-  withOptionalTransaction,
-  type PrismaTransactionClient,
-} from "@/lib/db-transaction";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET, type PrismaTransactionClient, withOptionalTransaction } from "@/lib/db-transaction";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   assertProposedCheckInClearsXeroLockDate,
@@ -2196,7 +2193,7 @@ export async function modifyBookingBatch({
               : ("TAKEN_OFF" as const),
         })),
     } satisfies BatchModificationTransactionResult;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // #2525: post-commit provider work (superseded-intent drain, Stripe refund,
   // additional PaymentIntent, member/notification emails, Xero settlement,

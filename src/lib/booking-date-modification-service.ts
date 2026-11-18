@@ -158,7 +158,8 @@ import { unpaidAskOffsetHistory } from "@/lib/unpaid-ask-offset-marker";
 import { primaryInvoiceSettlementHistory } from "@/lib/booking-primary-invoice-claim";
 import { changeFeeAddedToAmountOwedHistory } from "@/lib/change-fee-owed";
 import type { BookingModifiedRefundDestination } from "@/lib/booking-modified-email-copy";
-import type { DateModificationTransactionResult, ModifiedBooking } from "@/lib/booking-date-modification-transaction-result";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import type { DateModificationResponse, DateModificationTransactionResult } from "@/lib/booking-date-modification-transaction-result";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -175,29 +176,6 @@ export type ModifyBookingDatesInput = {
   // Owner decision (#1668 review): the admin chooses per override edit whether
   // the member receives the change-notification email. Absent = notify.
   notifyMember?: boolean;
-};
-
-export type DateModificationResponse = {
-  booking: ModifiedBooking;
-  priceDiffCents: number;
-  changeFeeCents: number;
-  refundAmountCents: number;
-  accountCreditAmountCents: number;
-  /** #3809: applied credit the reduction gave back, as account credit. */
-  appliedCreditGivenBackCents: number;
-  settlementMethod: BookingModificationSettlementMethod | null;
-  policyRetainedAmountCents: number;
-  additionalAmountCents: number;
-  /** #4299 (`INV-PAY-148`): the increase invoiced to the group organiser instead of this member. */
-  billedToOrganiserCents: number;
-  additionalPaymentClientSecret: string | null;
-  stripeRefundId: string | null;
-  promoRemoved: boolean;
-  promoCoverage: PromoCoverageNotice | null;
-  choreWarnings: string[];
-  // Admin override (issue #1668): true when an over-capacity target was
-  // explicitly confirmed. Always false on the standard (hard-blocked) path.
-  capacityOverridden: boolean;
 };
 
 export async function modifyBookingDates({
@@ -1318,7 +1296,7 @@ export async function modifyBookingDates({
       bookingModificationId: bookingModification.id,
       priceLines,
     } satisfies DateModificationTransactionResult;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   const refund = await executeBookingModificationRefund({
     format,
@@ -2077,7 +2055,7 @@ export async function adminShiftBookingDates({
       paymentSource: booking.payment?.source ?? null,
       lodgeId: booking.lodgeId,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // Post-transaction (no Stripe/Xero/payment mutations at all).
   const linkedChangeRequestId = await linkModificationToOutstandingChangeRequest(

@@ -8,6 +8,7 @@ import {
 import logger from "@/lib/logger";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const reviewSchema = z.object({
   action: z.enum(["approve", "reject"]),
@@ -60,6 +61,12 @@ export async function POST(
       );
     }
 
+    const contended = transactionContendedResponse(
+      err,
+      "Membership cancellation participant review contended for a transaction budget",
+      { context: { requestId, participantId } },
+    );
+    if (contended) return contended;
     logger.error(
       { err, requestId, participantId },
       "Failed to review membership cancellation participant",

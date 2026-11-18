@@ -80,6 +80,7 @@ import { processWaitlistForDates } from "./waitlist";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { localChargeRefusal } from "@/lib/stripe-charge-currency";
 import type { ClubFormat } from "@/lib/club-format";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
 const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
@@ -986,7 +987,7 @@ async function resolveHoldWindowUnderLock(
       previousHoldUntil: booking.nonMemberHoldUntil,
       attempt,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 async function releaseChargeClaim(

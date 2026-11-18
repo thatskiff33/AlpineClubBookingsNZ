@@ -33,7 +33,8 @@ export const SAVED_CARD_CLAIM_RECOVERY_AGE_MS = 30 * 60 * 1000;
 /**
  * `docs/CONCURRENCY_AND_LOCKING.md` rule 1: a compensating transaction gets its
  * own budget. Two of the three releasers have a person waiting, so these match
- * waitlist-confirm's release (5s / 10s, two attempts).
+ * waitlist-confirm's release (5s / 10s, two attempts). It is an `INV-LOCK-006`
+ * exception to the shared lock(1) budget, stated at the transaction below.
  */
 const RELEASE_BUDGET = { maxWait: 5_000, timeout: 10_000 } as const;
 const RELEASE_ATTEMPTS = 2;
@@ -108,7 +109,14 @@ export async function runSavedCardClaimRelease<T>(
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         await acquireLodgeCapacityLock(tx, context.lodgeId ?? (await getDefaultLodgeId(tx)));
         return work(tx);
-      }, RELEASE_BUDGET);
+      },
+      // INV-LOCK-006 exception: a compensating release after a saved-card charge
+      // that did not capture, in a bounded two-attempt loop an officer's request
+      // may be waiting on; two attempts on the shared budget would hold it for a
+      // minute.
+      // A release that still loses keeps its claim marker for the confirm-pending
+      // job's recovery, so the tighter budget defers the hand-back, never loses it.
+      RELEASE_BUDGET);
       return { ok: true, value };
     } catch (err) {
       failure = err;

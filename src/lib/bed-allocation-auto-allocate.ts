@@ -30,6 +30,7 @@ import {
 } from "@/lib/bed-allocation-admin-contract";
 import type { BedAllocationDateRange } from "@/lib/bed-allocation-date-range";
 import { getBedAllocationDashboard } from "@/lib/bed-allocation-board";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export async function runAutoBedAllocation(input: {
   range: BedAllocationDateRange;
@@ -166,5 +167,5 @@ export async function runAutoBedAllocation(input: {
     });
   };
 
-  return prisma.$transaction(writeUnderLocks);
+  return prisma.$transaction(writeUnderLocks, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }

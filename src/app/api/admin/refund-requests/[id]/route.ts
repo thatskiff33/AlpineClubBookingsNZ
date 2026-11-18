@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { PaymentSource } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -46,7 +47,9 @@ import {
   runOrganiserChildAppealRefundNow,
 } from "@/lib/organiser-child-appeal-refund";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { reviewSchema } from "@/lib/refund-request-review-schema";
+import { reviewedRefundRequestInclude } from "@/lib/refund-request-reviewed-include";
 
 /** #3827 (`INV-PAY-118`): thrown inside the approval to roll its claim back. */
 class RefundRequestHandBackNotRaisedError extends Error {}
@@ -293,7 +296,7 @@ export async function PUT(
         bankTransferCents,
         organiserChildDebtId: null as string | null,
       };
-    }).catch((err: unknown) => {
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err: unknown) => {
       if (err instanceof RefundRequestHandBackNotRaisedError) {
         return { kind: "handBackNotRaised" as const };
       }
@@ -301,8 +304,17 @@ export async function PUT(
       if (err instanceof OrganiserChildRefundRefusedError || err instanceof GroupCancelInProgressError) {
         return { kind: "organiserCardRefused" as const, message: err.message };
       }
+      // INV-LOCK-006: the claim is the first write and rolled back whole.
+      const contended = transactionContendedResponse(
+        err,
+        "Refund appeal approval claim contended for the lock(1) budget",
+        { context: { refundRequestId: id } },
+      );
+      if (contended) return { kind: "contended" as const, response: contended };
       throw err;
     });
+
+    if (capped.kind === "contended") return capped.response;
 
     if (capped.kind === "exceeds") {
       return NextResponse.json(
@@ -477,7 +489,7 @@ export async function PUT(
                   reason: "Refund appeal approval released: its bank hand-back was withdrawn", senderKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id) });
               }
             }
-          })
+          }, LOCK1_HOLDER_TRANSACTION_BUDGET)
           .catch((revertErr: unknown) => {
             logger.error(
               { err: revertErr, refundRequestId: id },
@@ -730,26 +742,7 @@ export async function PUT(
 
   const updated = await prisma.refundRequest.findUnique({
     where: { id },
-    include: {
-      booking: {
-        select: {
-          id: true,
-          checkIn: true,
-          checkOut: true,
-          finalPriceCents: true,
-          status: true,
-          payment: {
-            select: {
-              amountCents: true,
-              refundedAmountCents: true,
-            },
-          },
-        },
-      },
-      member: {
-        select: { id: true, firstName: true, lastName: true, email: true },
-      },
-    },
+    include: reviewedRefundRequestInclude,
   });
 
   return NextResponse.json({ ...updated, ...cardRefund });
