@@ -4,7 +4,6 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { requireAdmin } from "@/lib/session-guards";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
-import { reviewSchema } from "@/lib/refund-request-review-body";
 import { createAuditLog } from "@/lib/audit";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { kickQueuedXeroOutboxOperationsIfConnected } from "@/lib/xero-operation-outbox";
@@ -49,6 +48,7 @@ import {
 } from "@/lib/organiser-child-appeal-refund";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import { reviewSchema } from "@/lib/refund-request-review-schema";
 
 /** #3827 (`INV-PAY-118`): thrown inside the approval to roll its claim back. */
 class RefundRequestHandBackNotRaisedError extends Error {}
@@ -277,6 +277,7 @@ export async function PUT(
           paymentId: payment.id,
           refundRequestId: id,
           amountCents: bankTransferCents, booking: { ...booking, payment: lockedPayment }, // #3949: names the payee
+          journal, actorMemberId: session.user.id,
         });
         // A row already holds this request's key (left by an earlier approval
         // of it), so nobody would be asked to send this money. Refuse rather
@@ -468,15 +469,24 @@ export async function PUT(
               },
             });
             if (released.count === 1) {
+              const handBack = await tx.manualRefundTask.findFirst({
+                where: { occurrenceKey: refundRequestHandBackOccurrenceKey(id), status: "OPEN" },
+                select: { id: true },
+              });
               await tx.manualRefundTask.deleteMany({
                 where: {
                   occurrenceKey: refundRequestHandBackOccurrenceKey(id),
                   status: "OPEN",
                 },
               });
-              // #4516 (M4c): the approval's R05 goes with it, its open reservations released, under the Payment row.
+              // #4516 (M4c): the approval's card R05 goes with it. #4516 (M4d): so does the bank part's hand-back R05.
+              // A journal refusal rethrows: the release rolls back rather than leaving the debt.
               await withdrawRefundObligation(tx, journal, { bookingId: booking.id, scope: "refund-request", id, actorMemberId: session.user.id,
                 reason: "Refund appeal approval released: its card refund was never sent", senderKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id) });
+              if (handBack) {
+                await withdrawRefundObligation(tx, journal, { bookingId: booking.id, scope: "hand-back", id: handBack.id, actorMemberId: session.user.id,
+                  reason: "Refund appeal approval released: its bank hand-back was withdrawn", senderKeyPrefix: buildRefundRequestRefundStripeKeyPrefix(id) });
+              }
             }
           }, LOCK1_HOLDER_TRANSACTION_BUDGET)
           .catch((revertErr: unknown) => {

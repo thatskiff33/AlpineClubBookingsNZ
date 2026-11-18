@@ -4,9 +4,7 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
-import {
-  type Role,
-} from "@prisma/client";
+import type { Role } from "@prisma/client";
 
 import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -1946,6 +1944,7 @@ export async function modifyBookingBatch({
       bookingModificationId: bookingModification.id,
       adjusted: payments,
       editLabel: "booking change", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
+      journal: preparation.journal, actorMemberId: actor.id, // #4516 (M4d): the R05 names the edit's actor
     });
     // #3954, #4744: the re-issue, a folded increase's ask, and a billed-offset note are durable from this commit.
     await queueEditAskFollowUps(tx, {

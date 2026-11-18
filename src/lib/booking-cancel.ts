@@ -50,7 +50,7 @@ import { bookingReducedThroughCreditGiveBack } from "@/lib/booking-credit-give-b
 import { cancelTieredAppliedCreditCents } from "@/lib/booking-payment-state";
 import { refundedPaymentCreditRestore } from "@/lib/cancel-refunded-payment-credit";
 import { postCancellationLedgerLines } from "@/lib/booking-ledger-cancellation-sync";
-import { postRefundObligation, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
+import { postHandBackObligation, postRefundObligation, resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import {
   applyLocalRefundAllocation,
   foldIntoTransactionRefundedAmount,
@@ -118,7 +118,7 @@ import {
 import type { ClubFormat } from "@/lib/club-format";
 import { unpaidInvoiceClearingAmountCents } from "@/lib/invoice-clearing-amount";
 import { cancelRefundDisposition } from "@/lib/cancel-refund-method";
-import { disputedRefundSentence, ownCardRefundWithShortfallSentence, type OrganiserRefundMethod, type OwnCardRefundMethod } from "@/lib/booking-modified-email-copy";
+import { disputedRefundSentence, ownCardRefundWithShortfallSentence } from "@/lib/booking-modified-email-copy";
 import { alertCancelCardShortfall, cancelRaisesCardShortfall, raiseCancelCardShortfallHandBack, type CancelCardShortfall } from "@/lib/cancel-card-refund-shortfall";
 import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
@@ -133,6 +133,7 @@ import {
 } from "@/lib/internet-banking-part-payment-at-cancel";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { appendReturnedCreditSentence } from "@/lib/booking-cancel-credit-sentence";
+import type { CancelBookingResult } from "@/lib/booking-cancel-result";
 
 // The no-payment / holding statuses the shared cancel path may flip straight to
 // CANCELLED with no refund and no external-provider (Stripe/Xero) work. A strict
@@ -145,28 +146,6 @@ const NO_PAYMENT_CANCELLABLE_STATUSES: readonly string[] = [
   "WAITLIST_OFFERED",
   "AWAITING_REVIEW",
 ];
-
-interface CancelBookingResult {
-  success: boolean;
-  refundAmountCents: number;
-  refundPercentage: number;
-  // B5 (#2262): "manual" — the booking was settled in cash / by an off-Xero
-  // bank transfer, so no card refund was planned and no account credit was
-  // minted; a durable hand-back task was raised instead and its id is returned.
-  refundMethod: "card" | "credit" | "manual";
-  creditAmountCents?: number;
-  creditRestoredCents?: number;
-  stripeRefundId?: string;
-  manualRefundTaskId?: string;
-  /** #4911 (`INV-PAY-154`): a "manual" refund handed to the treasurer because the card payment is disputed. */
-  refundDisputed?: true;
-  /** #3973: a refund that is the group organiser's (`refundMethod` stays "card"), as its email words it, for the confirmation screen. */
-  organiserRefund?: { method: OrganiserRefundMethod; amountCents: number };
-  /** #4084: a refund to the member's own card, made or not yet (`refundMethod` stays "card"), for the confirmation screen.
-   * #4097: `amountCents` is what the card refund carries; of the rest, `byHandCents` the club refunds by bank transfer and `toCheckCents` it checks first. */
-  ownCardRefund?: { method: OwnCardRefundMethod; amountCents: number; byHandCents?: number; toCheckCents?: number };
-  message: string;
-}
 
 async function reconcileCancelledBookingBedAllocations(
   booking: { id: string; checkIn: Date; checkOut: Date },
@@ -1912,6 +1891,8 @@ async function performBookingCancellation(
       });
       manualRefundTaskId = task.id;
       if (organiserExtraState && organiserExtraState.invoices.length > 0) await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id, scopeId: `cancel:${bookingId}` });
+      // #4516 (M4d): the hand-back's refund debt, beside the task, under this claim's lock(1).
+      await postHandBackObligation(tx, journal, { bookingId, taskId: task.id, amountCents: refundAmountCents, origin: "APP", actorMemberId: sessionUserId, debtorRead: "booking-row" });
     } else if (branch === "credit") {
       await applyLocalRefundAllocation({ paymentId: payment.id, amountCents: refundAmountCents, store: tx, heldBackByTransaction: supersededHeldBack.byTransaction }); // #4866
       // #3369: a refund AS CREDIT credits a member's account, and an
@@ -1964,7 +1945,7 @@ async function performBookingCancellation(
       }
       // #4097 (`INV-PAY-129`): what the plan cannot carry is recorded with the claim, card branch only.
       if (cancelRaisesCardShortfall({ branch, organiserCard: organiserCard !== null })) {
-        cardShortfall = await raiseCancelCardShortfallHandBack(tx, { bookingId, paymentId: payment.id, refundAmountCents, plannedCardRefundCents, format });
+        cardShortfall = await raiseCancelCardShortfallHandBack(tx, { bookingId, paymentId: payment.id, refundAmountCents, plannedCardRefundCents, format, journal, actorMemberId: sessionUserId });
       }
     }
 
@@ -2210,7 +2191,7 @@ async function performBookingCancellation(
         : disputed
           ? `Booking cancelled ${days} day(s) before check-in while its card payment is disputed by the cardholder (Stripe dispute ${disputeIds.join(", ")}). No card refund or account credit was issued: check the dispute in Stripe before refunding any of the ${refundPercentage}% due.`
           : `Cash/manual settlement cancelled ${days} day(s) before check-in (${refundPercentage}% under the policy in effect at the time).`,
-      ...(toOrganiser ? { situation: "joiner-cancel-organiser" as const } : {}),
+      ...(toOrganiser ? { situation: "joiner-cancel-organiser" as const } : disputed ? { situation: "disputed-card-cancellation" as const } : {}),
     }, format).catch((err) =>
       logger.error(
         { err, bookingId, manualRefundTaskId },

@@ -1242,9 +1242,10 @@ Verified controls already present and intentionally preserved:
   one reviewed advisory under an expiring, owner-approved record.
   The conditions it requires are stated once, in
   [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md)
-  -> "When the wrapper says MITIGATED"; it covers only the copy the audit can
-  see, and a record's known bundled copies it cannot reach are printed on
-  every run. No record is live since the braces record was retired (#3851).
+  -> "When the wrapper says MITIGATED"; it covers only the copies the audit
+  can see, each an exact patched version on exactly its recorded paths
+  (#5252), and a record's known bundled copies it cannot reach are printed on
+  every run. The live records are listed in that README's "Current records".
 - The secret scan reads merge commits. `git log -p` emits no patch for a merge
   commit, and roughly a third of this repository's 7,510 commits are merges, so
   a scan without `--diff-merges=first-parent` never looked at them — and a
@@ -1571,6 +1572,23 @@ to **any** scoped policy this app adds in future, not just these (#2279):
   component wrapper fails, not just `<Link>`), forbids `router.push`/`replace`
   at a relaxed path, and requires any hub/nav descriptor pointing at one to carry
   `hardNavigate: true` — the variable-`href` case a literal scan cannot see.
+- **Each relaxed admin page is listed at both of its addresses (C11 part 1,
+  #4808).** The preview and the builder moved under `/admin/lodge-ops`, and a
+  page answers at its old path or its hub path depending on `ADMIN_HUBS_LIVE`,
+  so both allowlists name both. `src/lib/csp.ts` reads them from the hub
+  registry, through the same twin rule (`withAdminHubTwins`) the module-gate
+  exemptions use, rather than writing them out: `FRAME_SRC_SELF_PATHS` holds
+  `/admin/display/preview`, `/admin/lodge-ops/display/preview`,
+  `/admin/display/builder` and `/admin/lodge-ops/display/builder`, and
+  `TIGHT_IMG_SRC_PATHS` holds `/display` and the two preview paths, never the
+  builder. The match stays exact at every address, so
+  `/admin/lodge-ops/display/templates` and `/admin/lodge-ops/display/builder/extra`
+  fail closed as the old paths' neighbours do. Links reach both pages through
+  `adminHref("display-builder")` and `adminHref("display-preview")`, which is no
+  literal of either path, so the static guard treats that call as an entry
+  point to both addresses: a JSX `href` of it must sit on a plain `<a>`, a
+  descriptor with it must carry `hardNavigate: true`, and `router.push`/`replace`
+  of it fails; `window.open` of it is a hard load and passes.
 - **Accepted residual — a relaxation leaks forward, never backward.** The same
   mechanism means an admin who hard-loads *any* relaxed route and then
   soft-navigates on to other admin pages carries that relaxation into those

@@ -41,6 +41,8 @@ type Payload = {
   memberHasMore?: boolean;
 };
 const ENDPOINT = "/api/admin/privacy-retention";
+const LOAD_FALLBACK = "Could not load the retention preview. Reload this page to try again.";
+const SAVE_FALLBACK = "Could not save retention settings.";
 const PERIOD_FIELDS = [
   ["bookingDietaryRetentionDays", "Stay dietary notes after departure (days)"],
   ["emailLogRetentionYears", "Email logs (years)"],
@@ -74,7 +76,7 @@ export function PrivacyRetentionClient({ page, memberCursors = [] }: { page: num
     const memberAfter = memberCursors.at(-1);
     if (memberAfter) params.set("memberAfter", memberAfter);
     const response = await fetch(`${ENDPOINT}?${params}`, { signal, cache: "no-store" });
-    if (!response.ok) throw new Error("Could not load the retention preview. Reload this page to try again.");
+    if (!response.ok) throw new Error(LOAD_FALLBACK);
     const result = await response.json() as Payload;
     setPayload(result);
     return result;
@@ -88,7 +90,7 @@ export function PrivacyRetentionClient({ page, memberCursors = [] }: { page: num
         body: JSON.stringify(draft),
       });
       if (response.status === 403) throw new ForbiddenSaveError();
-      if (!response.ok) throw new Error("Could not save retention settings.");
+      if (!response.ok) throw new Error(SAVE_FALLBACK);
       const saved = await response.json() as { settings: PrivacyRetentionSettingsValues };
       window.dispatchEvent(new Event(SENTRY_REPLAY_POLICY_CHANGED));
       setPayload(null);
@@ -102,6 +104,8 @@ export function PrivacyRetentionClient({ page, memberCursors = [] }: { page: num
     },
     isValid: (draft) => privacyRetentionSettingsSchema.safeParse(draft).success,
     successMessage: "Privacy and retention settings saved.",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
   });
   const draft = section.draft;
   const editing = section.editing && canEdit === true;

@@ -36,7 +36,7 @@ import {
   EDIT_REFUND_HAND_BACK_REOPEN_AFTER_CANCEL_MESSAGE,
   manualRefundTaskKindAllowsSettlement,
 } from "@/lib/manual-refund-task-settlement-rules";
-import { namedDisputes } from "@/lib/stripe-dispute-note";
+import { namedDisputes, STRIPE_DISPUTE_STATUS_LABEL } from "@/lib/stripe-dispute-note";
 import { formatCents } from "@/lib/utils";
 import type { EditReviewStillOwedPreview } from "@/lib/edit-financial-review-still-owed";
 
@@ -418,6 +418,95 @@ export function editRefundHandBackReopenAfterCancelMessage(booking: PayeeBooking
 }
 
 /**
+ * #4516 (owner decisions, 14 and 15 Nov 2026): a real bank or cash hand-back the member-money journal records as a
+ * refund debt (`journalHandBackDismissal`; never a card shortfall's part to check) is not dismissed until
+ * dismissal asks the officer why. The server refuses it and the queue shows this sentence where the Dismiss button
+ * would be, in the same words (`INV-SSOT`).
+ */
+export const JOURNAL_HAND_BACK_DISMISS_REFUSAL =
+  "This refund can't be dismissed yet. Mark it paid once the money has gone back, or leave it open. Dismissing with a reason is coming in a later update.";
+
+/**
+ * #4516 (owner decision, 15 Nov 2026): the hand-back a paid cancel of a disputed card payment raises (#5061) is
+ * dismissed only once the dispute is recorded as lost. Before then the server refuses, and the queue prints the
+ * same words where the Dismiss button would be. Named by the dispute that is not yet lost.
+ */
+export function disputedHandBackDismissRefusal(status: StripeDisputeStatus): string {
+  return status === "OPEN"
+    ? "This refund can't be dismissed while the card payment's dispute is open: the club may still owe it. Once Stripe records the dispute as lost, the cardholder already has the money back and this task can be dismissed."
+    : `This refund can't be dismissed: the card payment's dispute was ${STRIPE_DISPUTE_STATUS_LABEL[status]}, so the club still owes it. Mark it paid once the money has gone back.`;
+}
+
+/**
+ * That hand-back when its lost disputes cover only part of what is still owed (owner decision, 15 Nov 2026, comment
+ * 6893252570): not dismissed, and not marked paid in full (that would pay the lost part twice), but reduced.
+ */
+export const DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL =
+  "This refund can't be dismissed: the lost card dispute covered only part of it. Reduce it by the lost amount instead; the rest stays owed. Do not mark it paid in full: the cardholder already has the lost part back.";
+
+/** Mark paid on that hand-back while a lost dispute's cents are not yet applied: it would pay the lost part twice. */
+export const DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING =
+  "This refund can't be marked paid at its full amount: a card dispute was lost for part of it, and the cardholder already has that part back. Reduce it by the lost amount first.";
+
+/**
+ * Mark paid on that hand-back while a dispute on its payment was lost (cents not yet applied) and another is still
+ * open (#4516 review): paying in full would pay the lost part twice, and the reduction waits for the open dispute
+ * (owner decision, 15 Nov 2026, comment 6893252570).
+ */
+export const DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE =
+  "This refund can't be marked paid at its full amount: one card dispute on this payment was lost, so the cardholder already has that part back, and another is still open. Wait until the open dispute is decided, then reduce the refund by what was lost, or dismiss it if the disputes cover all of it.";
+
+/** Mark paid on that hand-back once its lost disputes cover it: the cardholder already has all of it back. */
+export const DISPUTED_HAND_BACK_LOST_NOT_PAYABLE =
+  "This refund can't be marked paid: the card dispute was lost for all of it, so the cardholder already has the money back. Dismiss it instead.";
+
+/** The reduce action failed for a reason the server did not name: the route's answer and the screen's fallback. */
+export const DISPUTED_HAND_BACK_REDUCTION_FAILED = "Could not reduce the refund.";
+
+/** That hand-back once every lost dispute has reduced it and the rest is still owed. */
+export const DISPUTED_HAND_BACK_REDUCED_REFUSAL =
+  "This refund can't be dismissed: the lost card dispute has already reduced it, and the club still owes the rest. Mark it paid once the money has gone back.";
+
+/**
+ * That hand-back while the payment's lost disputes go to an older refund on the same payment first (owner decision,
+ * 18 Nov 2026: lost cents are counted once across the payment's refunds, oldest first). The club still owes this one.
+ */
+export const DISPUTED_HAND_BACK_LOSS_ON_ANOTHER_REFUND =
+  "This refund can't be dismissed: the lost card dispute is set against an earlier refund on the same card payment, so the club still owes this one. Mark it paid once the money has gone back.";
+
+/** The reduce action on that hand-back: nothing of the lost dispute is left for it. */
+export const DISPUTED_HAND_BACK_LOSS_ON_ANOTHER_REFUND_REDUCTION =
+  "There is nothing to reduce here: the lost card dispute is set against an earlier refund on the same card payment.";
+
+/** The reduce action refused on a task that is not a disputed card payment's hand-back. */
+export const NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL =
+  "Only a refund handed to the treasurer because its card payment is disputed can be reduced by a lost dispute.";
+
+/** The reduce action refused by the dispute's state: still open, or won or closed with no funds taken. */
+export function disputedHandBackReductionRefusal(status: StripeDisputeStatus): string {
+  return status === "OPEN"
+    ? "This refund can't be reduced while the card payment's dispute is open: the club may still owe it."
+    : `This refund can't be reduced: the card payment's dispute was ${STRIPE_DISPUTE_STATUS_LABEL[status]}, so the club still owes it.`;
+}
+
+/** The reduce action refused because every lost dispute has already reduced it. */
+export const DISPUTED_HAND_BACK_NOTHING_TO_REDUCE =
+  "There is nothing more to reduce: every lost card dispute has already reduced this refund, and the rest is still owed.";
+
+/** The reduce action refused because the lost disputes now cover everything still owed. */
+export const DISPUTED_HAND_BACK_FULLY_LOST_REDUCTION_REFUSAL =
+  "The lost card dispute now covers all of this refund: dismiss it instead.";
+
+/** The reduce action's confirmation and its toast: what the refund was, what it is reduced by and what is still owed. */
+export function disputedHandBackReductionSummary(cents: { wasCents: number; reducedByCents: number; stillOwedCents: number }, format: ClubFormat): string {
+  return `Was ${formatCents(cents.wasCents, format)}. Reduced by ${formatCents(cents.reducedByCents, format)}, the lost card dispute: the cardholder already has that back through their bank. Still owed ${formatCents(cents.stillOwedCents, format)}.`;
+}
+
+/** The dismiss dialog's sentence for that hand-back once its lost dispute covers it (#4516, owner decision 15 Nov 2026). */
+export const DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION =
+  "The card payment's dispute was lost, so the cardholder already has this money back through their bank. Dismissing closes the task without refunding anything and takes the refund off what the club owes. Say so in the note.";
+
+/**
  * B5 (#2262), #3949 (owner decision, 22 Oct 2026): THE REASON LINE of a paid
  * cancellation's hand-back task. A cash settlement's refund goes back to the
  * member; a joiner's own cancel of a place the group organiser paid for by
@@ -448,7 +537,7 @@ export function disputedCancellationHandBackReason({ bookingId, refundPercentage
   refundPercentage: number;
   disputes: readonly { stripeDisputeId: string; status: StripeDisputeStatus }[];
 }): string {
-  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time.`;
+  return `Booking ${bookingId} cancelled while its card payment is disputed by the cardholder (Stripe dispute ${namedDisputes(disputes)}). No card refund or account credit was issued; check the dispute in Stripe before refunding any of the ${refundPercentage}% due under the policy in effect at the time. If the dispute is lost for at least this refund, the cardholder already has it: dismiss this task.`;
 }
 
 /**

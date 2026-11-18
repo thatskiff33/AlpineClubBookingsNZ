@@ -1210,7 +1210,7 @@ async function settleBookingPaymentInTransaction(
         heldBackByTransaction: heldBack.byTransaction,
       });
       // #4154 (`INV-PAY-135`): what the plan does not carry is a hand-back task to check, raised with the cancel.
-      const shortfallTaskRaised = await raiseCapacityRaceRefundShortfallTask(tx, { bookingId: booking.id, paymentId: payment.id, paymentIntentId, chargedCents: amountCents, plannedRefundCents, format: settlement.format });
+      const shortfallTaskRaised = await raiseCapacityRaceRefundShortfallTask(tx, { bookingId: booking.id, paymentId: payment.id, paymentIntentId, chargedCents: amountCents, plannedRefundCents, format: settlement.format, journal });
       if (plannedRefundCents > 0) {
         await enqueueCapacityClaimFailedRefundRecovery({
           bookingId: booking.id,
@@ -1329,10 +1329,7 @@ async function settleBookingPaymentInTransaction(
     // that somehow raced past the lock cannot be resurrected to PAID.
     const claimed = await tx.booking.updateMany({
       where: { id: booking.id, status: { in: [...PAYABLE_SUCCESS_STATUS_LIST] } },
-      data: {
-        status: BookingStatus.PAID,
-        draftExpiresAt: null,
-      },
+      data: { status: BookingStatus.PAID, draftExpiresAt: null, savedCardClaimAt: null },
     });
     if (claimed.count === 0) {
       throw new Error(

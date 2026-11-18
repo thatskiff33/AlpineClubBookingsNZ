@@ -51,25 +51,72 @@ export async function readFailedCardRefundRecountCentsByPayment<NotesCounted>(
   payments: ReadonlyArray<{ id: string; bookingId: string; refundedAmountCents: number }>,
   readNotesCounted: (db: Prisma.TransactionClient) => Promise<NotesCounted>,
 ): Promise<{ notesCounted: NotesCounted; centsByPayment: Map<string, number> }> {
+  // One snapshot: one reading is the database at one moment.
+  return withReadOnlySnapshot(prisma, (tx) => readFailedCardRefundRecountCentsOnce(tx, payments, readNotesCounted));
+}
+
+/**
+ * #4449: the same reads on a writer's own locked transaction (the kept settle,
+ * the note sync's allocation write), never on a second connection beside it.
+ * They reach bank-transfer payments too: a card capture an edit took on one
+ * can be refunded, given its own note (#4312) and failed later.
+ *
+ * That transaction runs at READ COMMITTED, and a refund note's link write
+ * takes no Payment row, so it can commit between these statements: the notes
+ * counted without it and the cover above cash with it would take a failure off
+ * that nothing counted. So the whole reading is taken again until two readings
+ * in a row agree: a reading torn by a commit agrees with the one before or
+ * after it only where the torn part gives the same answer on either side of
+ * that commit. At most `IN_TRANSACTION_READINGS` readings: past that it
+ * throws, rolling the writer back, and its event is retried. The notes are
+ * read in a fixed order, so two readings of the same rows compare equal.
+ */
+const IN_TRANSACTION_READINGS = 4;
+
+export async function readFailedCardRefundRecountCentsIn<NotesCounted>(
+  tx: Prisma.TransactionClient,
+  payments: ReadonlyArray<{ id: string; bookingId: string; refundedAmountCents: number }>,
+  readNotesCounted: (db: Prisma.TransactionClient) => Promise<NotesCounted>,
+): Promise<{ notesCounted: NotesCounted; centsByPayment: Map<string, number> }> {
+  let previous = await readFailedCardRefundRecountCentsOnce(tx, payments, readNotesCounted);
+  for (let reading = 2; reading <= IN_TRANSACTION_READINGS; reading += 1) {
+    const next = await readFailedCardRefundRecountCentsOnce(tx, payments, readNotesCounted);
+    if (sameReading(previous, next)) return next;
+    previous = next;
+  }
+  throw new Error(`Failed-later card refund reads kept changing inside the writer's transaction (#4449): ${payments.map((payment) => payment.id).join(", ")}`);
+}
+
+function sameReading(
+  a: { notesCounted: unknown; centsByPayment: Map<string, number> },
+  b: { notesCounted: unknown; centsByPayment: Map<string, number> },
+): boolean {
+  const cents = (map: Map<string, number>) => JSON.stringify([...map].sort(([x], [y]) => x.localeCompare(y)));
+  return JSON.stringify(a.notesCounted) === JSON.stringify(b.notesCounted) && cents(a.centsByPayment) === cents(b.centsByPayment);
+}
+
+async function readFailedCardRefundRecountCentsOnce<NotesCounted>(
+  tx: Prisma.TransactionClient,
+  payments: ReadonlyArray<{ id: string; bookingId: string; refundedAmountCents: number }>,
+  readNotesCounted: (db: Prisma.TransactionClient) => Promise<NotesCounted>,
+): Promise<{ notesCounted: NotesCounted; centsByPayment: Map<string, number> }> {
   const paymentIds = payments.map((payment) => payment.id);
-  return withReadOnlySnapshot(prisma, async (tx) => {
-    // Sequential: one transaction's connection runs one statement at a time.
-    // The caller's notes first, in the snapshot every read below shares.
-    const notesCounted = await readNotesCounted(tx);
-    const centsByPayment = new Map<string, number>();
-    if (payments.length === 0) return { notesCounted, centsByPayment };
-    const liveReversalCents = await readCardRefundReversalCentsByPayment(paymentIds, tx, "live");
-    const raisedReversalCents = await readCardRefundReversalCentsByPayment(paymentIds, tx, "raised");
-    const failedLaterCents = await readFailedLaterCardRefundCentsByPayment(paymentIds, tx);
-    for (const payment of payments) {
-      const unreversedCents = Math.max(0, (failedLaterCents.get(payment.id) ?? 0) - (raisedReversalCents.get(payment.id) ?? 0));
-      const aboveCashCents = unreversedCents > 0 ? await readRefundNoteCoverageAboveCashCents(payment, tx) : 0;
-      const failureRecordCents = aboveCashCents === null ? unreversedCents : Math.min(unreversedCents, Math.max(0, aboveCashCents));
-      const cents = (liveReversalCents.get(payment.id) ?? 0) + failureRecordCents;
-      if (cents > 0) centsByPayment.set(payment.id, cents);
-    }
-    return { notesCounted, centsByPayment };
-  });
+  // Sequential: one transaction's connection runs one statement at a time.
+  // The caller's notes first, on the same client every read below shares.
+  const notesCounted = await readNotesCounted(tx);
+  const centsByPayment = new Map<string, number>();
+  if (payments.length === 0) return { notesCounted, centsByPayment };
+  const liveReversalCents = await readCardRefundReversalCentsByPayment(paymentIds, tx, "live");
+  const raisedReversalCents = await readCardRefundReversalCentsByPayment(paymentIds, tx, "raised");
+  const failedLaterCents = await readFailedLaterCardRefundCentsByPayment(paymentIds, tx);
+  for (const payment of payments) {
+    const unreversedCents = Math.max(0, (failedLaterCents.get(payment.id) ?? 0) - (raisedReversalCents.get(payment.id) ?? 0));
+    const aboveCashCents = unreversedCents > 0 ? await readRefundNoteCoverageAboveCashCents(payment, tx) : 0;
+    const failureRecordCents = aboveCashCents === null ? unreversedCents : Math.min(unreversedCents, Math.max(0, aboveCashCents));
+    const cents = (liveReversalCents.get(payment.id) ?? 0) + failureRecordCents;
+    if (cents > 0) centsByPayment.set(payment.id, cents);
+  }
+  return { notesCounted, centsByPayment };
 }
 
 /**
