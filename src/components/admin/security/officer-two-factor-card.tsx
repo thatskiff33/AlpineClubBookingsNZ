@@ -18,7 +18,7 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useSectionEditState } from "@/hooks/use-section-edit-state";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 import {
   OFFICER_TWO_FACTOR_GRACE_MAX_DAYS,
   OFFICER_TWO_FACTOR_GRACE_MIN_DAYS,
@@ -30,6 +30,9 @@ type PolicyDraft = {
   officerTwoFactorGraceDays: number | null;
 };
 
+const LOAD_FALLBACK = "Could not load the officer two-factor policy.";
+const SAVE_FALLBACK = "Could not save the officer two-factor policy.";
+
 /**
  * The officer second-factor policy (#4618). Full Admins save. Anyone else who
  * can open Login & Security sees the card and cannot change it.
@@ -37,6 +40,8 @@ type PolicyDraft = {
 export function OfficerTwoFactorCard({ canEdit }: { canEdit: boolean }) {
   const section = useSectionEditState<PolicyDraft>({
     successMessage: "Officer two-factor policy saved.",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     isValid: (draft) =>
       draft.officerTwoFactorGraceDays !== null &&
       Number.isInteger(draft.officerTwoFactorGraceDays) &&
@@ -47,9 +52,7 @@ export function OfficerTwoFactorCard({ canEdit }: { canEdit: boolean }) {
         credentials: "same-origin",
         signal,
       });
-      if (!response.ok) {
-        throw new Error("Could not load the officer two-factor policy.");
-      }
+      if (!response.ok) throw new Error(LOAD_FALLBACK);
       const body = (await response.json()) as PolicyDraft;
       return {
         officerTwoFactorPolicy: body.officerTwoFactorPolicy === true,
@@ -64,10 +67,7 @@ export function OfficerTwoFactorCard({ canEdit }: { canEdit: boolean }) {
         body: JSON.stringify(draft),
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(
-          apiErrorMessageFromBody(body, "Could not save the officer two-factor policy."),
-        );
+        throw await apiRefusalFromResponse(response, SAVE_FALLBACK);
       }
       const saved = (await response.json()) as PolicyDraft;
       return {

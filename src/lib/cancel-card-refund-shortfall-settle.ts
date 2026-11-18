@@ -68,22 +68,29 @@ export const CARD_SHORTFALL_CARD_STOPPED_MESSAGE =
 export const CARD_SHORTFALL_BANK_PART_FIRST_MESSAGE =
   "Mark the bank-transfer part of this cancellation's refund first: it is settled on the money this part would otherwise use. Then mark this, if the check shows it is really owed.";
 
-/** #4154 review (M3): an officer marks first and pays after, so a refusal says what to do with money still owed. */
+/**
+ * #4154 review (M3): an officer marks first and pays after, so a refusal says what to do with money still owed. The
+ * bank-transfer part's: #4516 (owner decision, 14 Nov 2026) refuses its dismissal for now.
+ */
 export const CARD_SHORTFALL_NOTHING_TO_ALLOCATE_MESSAGE =
-  "The payment's records show nothing left to refund for this - it may already have gone back. Check Stripe and the bank: if the member has been refunded, dismiss this task with a note saying how. If it really is owed, the app cannot record it here: refund it by bank transfer, dismiss this task with a note saying when and how much, and raise its refund credit note in Xero by hand if the booking has a Xero invoice.";
+  "The payment's records show nothing left to refund for this - it may already have gone back. Check Stripe and the bank: if the member has been refunded, leave this task open for now, because it cannot be dismissed yet. If it really is owed, take it to the treasurer before paying anything: the app cannot record it, and this task cannot be dismissed yet.";
+
+/** The part to check's: it keeps its dismissal (#4516, owner decision 15 Nov 2026), once the card refund is confirmed. */
+export const CARD_SHORTFALL_CHECK_NOTHING_TO_ALLOCATE_MESSAGE =
+  "The payment's records show nothing left to refund for this - it may already have gone back. Check Stripe and the bank: once you have confirmed the card refund reached the member, dismiss this task with a note saying how. If it really is owed, take it to the treasurer before paying anything: the app cannot record it.";
 
 /**
  * #4154 review (M10): a capacity race's card refund that failed. Never "close
  * it as Paid another way, then mark this": that close is another refund task
  * on the booking, which the race's correction refuses (`other-task`), so the
  * part can then only be dismissed - the owner's way out where the correction
- * cannot run.
+ * cannot run (#4516: a part to check keeps its dismissal, owner decision 15 Nov 2026).
  */
 export const CAPACITY_RACE_CARD_AWAITING_RETRY_MESSAGE =
   "The card refund for this booking failed and is waiting to retry: wait for its retry to go through, then mark this. If its retries run out, the app will say what to do then.";
 
 export function capacityRaceCardStoppedMessage(xero: CapacityRaceXero): string {
-  return `The card refund for this booking has stopped retrying, so the app cannot record this part as paid back. Check Stripe and the bank. Close the card refund as Paid another way on the Stuck States page once the member has had that money back another way. If this part is really owed too, refund it by bank transfer and dismiss this task with a note saying when and how much. ${CAPACITY_RACE_XERO_SENTENCE[xero]}`;
+  return `The card refund for this booking has stopped retrying, so the app cannot record this part as paid back. Check Stripe and the bank. Close the card refund as Paid another way on the Stuck States page once the member has had that money back another way. If this part is really owed too, take it to the treasurer before paying anything: the app cannot record it. Once you have confirmed a card refund already reached the member for it, dismiss this task with a note saying how. ${CAPACITY_RACE_XERO_SENTENCE[xero]}`;
 }
 
 /**
@@ -212,5 +219,5 @@ export async function cardShortfallSettlement(
     });
     if (bank?.status === ManualRefundTaskStatus.OPEN) throw new ManualBookingPaymentError(CARD_SHORTFALL_BANK_PART_FIRST_MESSAGE, 409);
   }
-  return { preferTransactionIds: (await nonCardCapturedCharges(store, task.paymentId)).map((row) => row.id) };
+  return { preferTransactionIds: (await nonCardCapturedCharges(store, task.paymentId)).map((row) => row.id), ...(part === "check" ? { nothingToAllocateMessage: CARD_SHORTFALL_CHECK_NOTHING_TO_ALLOCATE_MESSAGE } : {}) };
 }

@@ -21,6 +21,10 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
+
+const LOAD_FALLBACK = "The central lodge link could not be read.";
+const SAVE_FALLBACK = "The link could not be saved.";
 
 /**
  * Which lodge in the Alpine Central Server's registry THIS lodge is (#62).
@@ -95,7 +99,7 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
   const section = useSectionEditState<CentralLodgeDraft>({
     load: async (signal) => {
       const response = await fetch(endpoint(lodgeId), { signal, cache: "no-store" });
-      if (!response.ok) throw new Error("The central lodge link could not be read.");
+      if (!response.ok) throw new Error(LOAD_FALLBACK);
       return toDraft((await response.json()) as CentralLodgeResponse);
     },
     save: async (draft) => {
@@ -107,12 +111,13 @@ export function LodgeCentralLodgeCard({ lodgeId }: { lodgeId: string }) {
       });
       if (!response.ok) {
         if (response.status === 403) throw new ForbiddenSaveError();
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? "The link could not be saved.");
+        throw await apiRefusalFromResponse(response, SAVE_FALLBACK);
       }
       return toDraft((await response.json()) as CentralLodgeResponse);
     },
     successMessage: "Central lodge link saved.",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     isDirty: (draft, saved) => draft.centralLodgeId !== saved.centralLodgeId,
   });
 

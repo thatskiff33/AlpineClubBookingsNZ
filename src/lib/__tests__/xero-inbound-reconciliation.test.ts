@@ -137,10 +137,12 @@ const confirmationLedger = vi.hoisted(() => ({
 vi.mock("@/lib/booking-ledger-confirmation-sync", () => confirmationLedger);
 
 // #4516 (M4b): the receipt hook runs on PostgreSQL (`member-money-receipts.realdb.test.ts`), not on this fake store.
-const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0) }));
+const receiptDoors = vi.hoisted(() => ({ postBookingReceipts: vi.fn(async () => 0), postHandBackObligation: vi.fn(async () => null) }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   postBookingReceipts: receiptDoors.postBookingReceipts,
+  // #4516 (M4d): the organisation's late cash is a hand-back debt; here, that the delivery asks for it.
+  postHandBackObligation: receiptDoors.postHandBackObligation,
 }));
 // #4370: the failed-later recount reads in one read-only snapshot; here it
 // runs on the mocked client, and against a real database in
@@ -241,7 +243,13 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.bookingModificationFindMany,
     },
     payment: {
-      findMany: mocks.paymentFindMany,
+      // #4449: the allocation write's read of each invoice's one payment, by
+      // source, answers none here, without taking a slot from the ordered
+      // `paymentFindMany` queue the cases below set up.
+      findMany: (args: { where?: Record<string, unknown>; select?: Record<string, unknown> }) =>
+        args?.select?.source === true && args?.where?.xeroInvoiceId !== undefined
+          ? Promise.resolve([])
+          : mocks.paymentFindMany(args),
       findUnique: mocks.paymentFindUnique,
       update: mocks.paymentUpdate,
       updateMany: mocks.paymentUpdateMany,
@@ -287,6 +295,41 @@ vi.mock("@/lib/logger", () => ({
 // raises for a recount nothing retries.
 const xeroSyncErrorAlert = vi.hoisted(() => ({ notifyXeroSyncError: vi.fn() }));
 vi.mock("@/lib/xero-error-alert", () => xeroSyncErrorAlert);
+
+// #4449: a kept settle decides the payment's whole refunded total in its own
+// transaction. These cases' transactions mock none of the links that decision
+// reads, so the keep's decision answers the stored total; the repair's own
+// calls run for real. `kept-settle-correction-recount.test.ts` pins the keep's
+// use of the decision and the realdb suites drive it.
+vi.mock("@/lib/xero-inbound/linked-refunded-total", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-inbound/linked-refunded-total");
+  return {
+    ...actual,
+    decideLinkedRefundedTotalCents: (...args: Parameters<typeof actual.decideLinkedRefundedTotalCents>) =>
+      args[2]?.transactionRowsOverride
+        ? Promise.resolve(new Map(args[1].map((payment) => [payment.id, payment.refundedAmountCents])))
+        : actual.decideLinkedRefundedTotalCents(...args),
+  };
+});
+
+// A client here that cannot read the payment's refund detail (the keep's fake
+// transactions) floors as if that detail were the stored total: a bank
+// transfer's total never goes below it, as these cases expect. Any client that
+// can read it gets the real floor.
+vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import("@/lib/xero-inbound/credit-note-bank-transfer-floor");
+  return {
+    ...actual,
+    bankTransferFloorCents: (...args: Parameters<typeof actual.bankTransferFloorCents>) => {
+      if (typeof (args[0] as { paymentTransaction?: { aggregate?: unknown } }).paymentTransaction?.aggregate === "function") {
+        return actual.bankTransferFloorCents(...args);
+      }
+      const { payment, xeroDerivedCents } = args[1];
+      const heldAtStored = payment.source === "INTERNET_BANKING" && xeroDerivedCents < payment.refundedAmountCents;
+      return Promise.resolve({ cents: heldAtStored ? payment.refundedAmountCents : xeroDerivedCents, alert: null });
+    },
+  };
+});
 
 vi.mock("@/lib/xero-applied-credit-allocation-repair", () => ({
   repairLegacyAppliedCreditNoteAllocationsForBooking:
@@ -2702,6 +2745,7 @@ describe("processStoredXeroInboundEvents", () => {
       capacityAvailable: true,
       owner: "organisation",
     });
+    mocks.manualRefundTaskCreate.mockResolvedValueOnce({ id: "hand-back-school" });
 
     await expect(processStoredXeroInboundEvents()).resolves.toEqual({
       found: 1,
@@ -2736,6 +2780,11 @@ describe("processStoredXeroInboundEvents", () => {
         raisedAmountCents: 12345,
         kind: "CANCELLED_BOOKING_HAND_BACK",
       }),
+      select: { id: true },
+    });
+    // #4516 (M4d): and its refund debt posts with it, under this delivery's lock(1).
+    expect(receiptDoors.postHandBackObligation).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      bookingId: "booking_ib_pl", taskId: "hand-back-school", amountCents: 12345, origin: "XERO", debtorRead: "plain", // review C: no booking row after the Payment row
     });
     const reason = mocks.manualRefundTaskCreate.mock.calls[0]?.[0]?.data?.reason;
     expect(reason).toContain("organisation");
