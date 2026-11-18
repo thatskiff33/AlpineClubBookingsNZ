@@ -24,11 +24,14 @@ export const metadata = {
 };
 
 /**
- * A work party as a member sees it (fork #118): name, dates, lodge,
- * description and discount, with "Join Work Party" while it can still be
- * joined. Joining is a booking with the work party ticked — the button opens
- * the booking page with the stay filled in, and every booking rule still
- * applies there.
+ * A work party as a member sees it (#5148): name, dates, lodge, description
+ * and discount, with "Join Work Party" while it can still be joined. Joining is
+ * a booking with the work party ticked — the button opens the booking page
+ * with the stay filled in, and every booking rule still applies there.
+ *
+ * The page lives at `/dashboard/work-parties/{id}` (owner decision, 15 Nov
+ * 2026), under a root the app already owns, so the app reserves no
+ * `/work-parties` word and a club's website can still use that address.
  *
  * The members-only check is LOAD-BEARING: the proxy's feature-route gate
  * enforces the `workParties` module and nothing else, so `canViewWorkParties`
@@ -83,7 +86,7 @@ export default async function MemberWorkPartyPage({
 
       <Card>
         <CardHeader>
-          <CardTitle>Details</CardTitle>
+          <CardTitle headingLevel={2}>Details</CardTitle>
           {workParty.join && (
             <CardDescription>
               Book nights inside the work party and tick &ldquo;I am attending

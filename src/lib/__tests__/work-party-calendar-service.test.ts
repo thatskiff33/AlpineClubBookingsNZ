@@ -7,7 +7,7 @@ import {
 } from "@/lib/club-time";
 
 /**
- * Fork #118: `replaceWorkPartyCalendarEvents` (calendar-work-party-entries.ts) is the one writer of
+ * #5148: `replaceWorkPartyCalendarEvents` (calendar-work-party-entries.ts) is the one writer of
  * `CalendarEvent.workPartyEventId`, and the calendar's own update and delete
  * refuse a linked entry. Prisma is a recording fake: the transaction callback
  * runs against `tx`, so each case asserts the exact writes.
@@ -46,7 +46,10 @@ import {
   updateCalendarEvent,
   WorkPartyManagedCalendarEventError,
 } from "@/lib/calendar-service";
-import { replaceWorkPartyCalendarEvents } from "@/lib/calendar-work-party-entries";
+import {
+  replaceWorkPartyCalendarEvents,
+  replaceWorkPartyCalendarEventsInTransaction,
+} from "@/lib/calendar-work-party-entries";
 import { MAX_OCCURRENCES } from "@/lib/calendar-recurrence";
 
 const zone = requireClubTimeZone("Pacific/Auckland");
@@ -156,14 +159,19 @@ describe("replaceWorkPartyCalendarEvents", () => {
 
   it("reads the work party after the lock, and skips an unlinked one with onlyIfLinked", async () => {
     const resolve = vi.fn(async () => null);
+    const tx = h.tx as never;
     await expect(
-      replaceWorkPartyCalendarEvents("wp-1", resolve, "admin-1", { onlyIfLinked: true }),
+      replaceWorkPartyCalendarEventsInTransaction(tx, "wp-1", resolve, "admin-1", zone, {
+        onlyIfLinked: true,
+      }),
     ).resolves.toBe(0);
     expect(resolve).not.toHaveBeenCalled();
     expect(h.tx.calendarEvent.deleteMany).not.toHaveBeenCalled();
 
     h.tx.calendarEvent.findMany.mockResolvedValue([{ seriesId: null }]);
-    await replaceWorkPartyCalendarEvents("wp-1", resolve, "admin-1", { onlyIfLinked: true });
+    await replaceWorkPartyCalendarEventsInTransaction(tx, "wp-1", resolve, "admin-1", zone, {
+      onlyIfLinked: true,
+    });
     expect(resolve).toHaveBeenCalledWith(h.tx);
     expect(h.tx.$executeRaw.mock.invocationCallOrder.at(-1)!).toBeLessThan(
       resolve.mock.invocationCallOrder[0],

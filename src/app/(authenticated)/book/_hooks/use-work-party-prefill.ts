@@ -18,7 +18,7 @@ export const WORK_PARTY_PREFILL_LODGE_NOTICE =
   "You can't book the lodge that work party is held at, so nothing was filled in.";
 
 /**
- * "Join Work Party" (fork #118): `/book?workParty=<id>` opens the booking page
+ * "Join Work Party" (#5148): `/book?workParty=<id>` opens the booking page
  * with the work party's stay, its lodge and the working-bee option filled in.
  *
  * The work party id is the ONLY input — the dates come from the server

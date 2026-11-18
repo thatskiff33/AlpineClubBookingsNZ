@@ -123,23 +123,41 @@ export type CalendarEventDTO = {
   /** The series rule when this event recurs (null for a one-off). */
   recurrence: RecurrenceSummaryDTO | null;
   /**
-   * The work party that manages this entry (fork #118), or null. A linked
-   * entry opens read-only and points at the work party instead.
+   * The work party that manages this entry (#5148), or null. A linked entry
+   * opens read-only and points at the work party instead.
    */
   workPartyEventId: string | null;
 };
 
 /**
- * Which calendar rows a reader shows (fork #118): every ordinary event, and a
- * work party's entries only while that work party is open (active, with its
- * internal promo active — `OPEN_WORK_PARTY_EVENT_WHERE`). Deactivating a
- * work party hides its entries rather than deleting them, so reactivating it
- * brings them back unchanged. Every calendar read — the list API and the
- * dashboard's Events card — spreads this into its `where`.
+ * Which calendar rows a reader shows (#5148): every ordinary event, and a work
+ * party's entries only while the Work parties module is on AND that work party
+ * is open (active, with its internal promo active — `OPEN_WORK_PARTY_EVENT_WHERE`).
+ * Deactivating a work party, or switching the module off, hides its entries
+ * rather than deleting them, so turning either back on brings them back
+ * unchanged. With the module off nobody can manage them (the work-party routes
+ * answer 404 and the calendar refuses linked entries), so they must not show.
+ *
+ * The rule is combined with the caller's own filter under `AND`, never spread
+ * into it: the visibility rule is an `OR`, and a spread would be silently
+ * overwritten by a later `OR` in the caller's query (or overwrite it). Every
+ * calendar read — the list API and the dashboard's Events card — goes through
+ * this.
  */
-export const VISIBLE_CALENDAR_EVENT_WHERE = {
-  OR: [{ workPartyEventId: null }, { workPartyEvent: OPEN_WORK_PARTY_EVENT_WHERE }],
-} satisfies Prisma.CalendarEventWhereInput;
+export function whereVisibleCalendarEvent(
+  where: Prisma.CalendarEventWhereInput,
+  modules: { workParties: boolean },
+): Prisma.CalendarEventWhereInput {
+  const visible: Prisma.CalendarEventWhereInput = modules.workParties
+    ? {
+        OR: [
+          { workPartyEventId: null },
+          { workPartyEvent: OPEN_WORK_PARTY_EVENT_WHERE },
+        ],
+      }
+    : { workPartyEventId: null };
+  return { AND: [where, visible] };
+}
 
 /**
  * Serialise a stored event for the API. Builds NO meeting join URL: the host
@@ -160,9 +178,13 @@ export function serializeCalendarEvent(
     isMeeting: event.isMeeting,
     seriesId: event.seriesId,
     detachedFromSeries: event.detachedFromSeries,
-    recurrence: event.series
-      ? recurrenceSummaryFromSeries(event.series)
-      : null,
+    // A work party's nights are stored as a daily series only so they move
+    // together (#5148); they are one event, not a repeating one, so no
+    // "Daily, 3 times" line is offered for them.
+    recurrence:
+      event.series && !event.workPartyEventId
+        ? recurrenceSummaryFromSeries(event.series)
+        : null,
     workPartyEventId: event.workPartyEventId ?? null,
   };
 }

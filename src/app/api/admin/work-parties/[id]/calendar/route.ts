@@ -6,7 +6,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { addWorkPartyToCalendar } from "@/lib/work-party-calendar";
 
 /**
- * "Add to calendar" (fork #118): put an existing work party on the Events
+ * "Add to calendar" (#5148): put an existing work party on the Events
  * Calendar. New work parties are added automatically; this is for one made
  * before the feature, or while the calendar module was off, and so is an
  * explicit officer choice rather than a backfill — the club may already have

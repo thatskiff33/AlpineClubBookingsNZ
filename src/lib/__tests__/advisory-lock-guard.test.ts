@@ -1176,10 +1176,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // the milliseconds of a whole-series regenerate/propagate/collapse/delete so
   // two concurrent editors can't interleave a delete-and-regenerate and
   // duplicate/drop occurrences. Single-lock holder; its own keyspace, composed
-  // with no booking/money/capacity/lifecycle key (calendar rows only). Fork
-  // #118: calendar-work-party-entries.ts calls the same helper with a
-  // calendar-series:work-party:{workPartyEventId} key (no raw lock of its own),
-  // the only lock in its transaction.
+  // with no booking/money/capacity/lifecycle key (calendar rows only). #5148:
+  // calendar-work-party-entries.ts calls the same helper with a
+  // calendar-series:work-party:{workPartyEventId} key (`lockWorkPartyCalendar`,
+  // no raw lock of its own), the only advisory lock in its transaction and
+  // always taken before the work-party edit or delete touches that row.
   "src/lib/calendar-service.ts": 1,
   "src/lib/config-transfer-lock.ts": 1,
   // TWO: the blocking `acquireLodgeCapacityLock`, and `tryAcquireLodgeCapacityLock`

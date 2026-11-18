@@ -16,6 +16,11 @@ const mocks = vi.hoisted(() => ({
   sessionUser: null as Record<string, unknown> | null,
   calendarEventFindMany: vi.fn(),
   committeeAssignmentFindFirst: vi.fn(),
+  modules: { workParties: true },
+}));
+
+vi.mock("@/lib/module-settings", () => ({
+  loadEffectiveModuleFlags: vi.fn(async () => mocks.modules),
 }));
 
 vi.mock("@/lib/session-guards", () => ({
@@ -46,14 +51,22 @@ beforeEach(() => {
   mocks.calendarEventFindMany.mockResolvedValue([]);
   mocks.committeeAssignmentFindFirst.mockResolvedValue(null);
   mocks.sessionUser = { id: "member-1", role: "USER", accessRoles: ["USER"] };
+  mocks.modules.workParties = true;
 });
 
 describe("GET /api/calendar/events view gate", () => {
-  it("hides an inactive work party's entries (fork #118)", async () => {
+  it("hides an inactive work party's entries (#5148)", async () => {
     const res = await GET(listReq());
     expect(res.status).toBe(200);
     const where = mocks.calendarEventFindMany.mock.calls[0][0].where;
-    expect(where.AND).toContainEqual({
+    // Combined under AND with the date window, so neither OR overwrites the
+    // other (review nit on the spread).
+    expect(where.AND).toHaveLength(2);
+    expect(where.AND[0].OR).toEqual([
+      { endsAt: null },
+      { endsAt: { gte: expect.any(Date) } },
+    ]);
+    expect(where.AND[1]).toEqual({
       OR: [
         { workPartyEventId: null },
         {
@@ -64,6 +77,14 @@ describe("GET /api/calendar/events view gate", () => {
         },
       ],
     });
+  });
+
+  it("hides every work party's entries while the Work parties module is off (#5148, review question 4)", async () => {
+    mocks.modules.workParties = false;
+    const res = await GET(listReq());
+    expect(res.status).toBe(200);
+    const where = mocks.calendarEventFindMany.mock.calls[0][0].where;
+    expect(where.AND[1]).toEqual({ workPartyEventId: null });
   });
 
   it("404s an organisation account and never reads the events table", async () => {

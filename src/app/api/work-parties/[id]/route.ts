@@ -7,7 +7,7 @@ import { canViewWorkParties } from "@/lib/work-party-access";
 import { findMemberWorkParty } from "@/lib/work-party-member";
 
 /**
- * One work party as a member sees it (fork #118): what the `/work-parties/[id]`
+ * One work party as a member sees it (#5148): what the `/dashboard/work-parties/[id]`
  * page shows, and what the booking page reads for `?workParty=<id>` to fill in
  * the Join stay. Never the internal promo code.
  *

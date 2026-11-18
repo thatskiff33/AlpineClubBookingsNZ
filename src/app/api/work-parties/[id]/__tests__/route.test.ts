@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #118: `GET /api/work-parties/[id]`, the member work party read. The
+ * #5148: `GET /api/work-parties/[id]`, the member work party read. The
  * access matrix: members only (owner decision 7), the module re-checked in the
  * handler, and the same 404 for everyone else and for an inactive or unknown id.
  */

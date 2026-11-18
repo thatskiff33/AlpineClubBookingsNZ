@@ -1,65 +1,62 @@
-# File-size allowances for fork #118 (work parties: calendar, dashboard, Join)
+# File-size allowances for #5148 (work parties: calendar, dashboard, Join)
 
 Four already-over-budget files grow by wiring only. The logic itself went to
 new modules written to their own ceilings: `work-party-calendar.ts`,
 `calendar-work-party-entries.ts`, `work-party-member.ts`,
 `work-party-access.ts`, `work-party-dashboard-card.tsx`,
-`use-work-party-prefill.ts`, and `event-details-view.tsx` (which also takes the
-calendar dialog's read-only view out of `event-dialog.tsx`, leaving that file
-shorter than its base). `calendar-service.ts` stays under its budget.
+`use-work-party-prefill.ts`, `stay-work-parties.ts`, and
+`event-details-view.tsx` (which also takes the calendar dialog's read-only view
+out of `event-dialog.tsx`, leaving that file shorter than its base).
+`calendar-service.ts` stays under its budget.
+
+The booking wizard (`use-booking-wizard.ts`) is past three times its budget, so
+it may not grow at all: the review step's work-party read and its selection
+rule moved out to `stay-work-parties.ts`, which leaves the wizard one line
+shorter than on `main` with the Join wiring in it. It needs no allowance.
 
 file: src/app/(admin)/admin/work-parties/page.tsx
-lines: 659
+lines: 685
 reason: the work party card gains an "On calendar" badge, an "Add to calendar"
-  button and its click handler, and a notice when a save could not update the
-  calendar. They sit beside the card's existing Edit, Activate and Delete
-  buttons and handlers, which this page keeps inline; moving only the new one
-  out would split one row of buttons across two files.
-
-file: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts
-lines: 2706
-reason: the call to `useWorkPartyPrefill` (the prefill itself lives in its own
-  hook) and the few lines that tick the joined work party when the review step
-  lists the working bees, and the inputs that tell the prefill when to stand
-  down (the lodge list, the subscription check, the member's own dates), and
-  the one read of the work party id that also keeps the tab copy (#4950) out
-  of a Join visit. That tick has to sit inside the existing response
-  handler that sets the list, because the handler's sequence guard is what
-  stops a stale response from ticking it.
+  button and its click handler, and a status region (with its focus outcome)
+  for the calendar result. They sit beside the card's existing Edit, Activate
+  and Delete buttons and handlers, which this page keeps inline; moving only
+  the new one out would split one row of buttons across two files.
 
 file: src/app/(authenticated)/book/page.tsx
-lines: 650
-reason: one status line for a Join link that could not be filled in, placed
-  with the page's other top-of-page notices.
+lines: 653
+reason: one status region for a Join link that could not be filled in, placed
+  with the page's other top-of-page notices, and its import.
 
 file: src/app/(authenticated)/dashboard/page.tsx
-lines: 1027
+lines: 1032
 reason: the members-only gate and one query for the new Work Parties card (the
-  card is its own component), and the Events card query now hides an inactive
-  work party's entries. The gate and query sit with the other cards' gates and
-  queries in this page, which reads everything once for the whole dashboard.
+  card is its own component), and the Events card query now goes through the
+  calendar's visibility rule. The gate and query sit with the other cards'
+  gates and queries in this page, which reads everything once for the whole
+  dashboard.
+
+file: src/app/api/promo-codes/validate/route.ts
+lines: 519
+reason: one import line: the open-work-party test now comes from its one home,
+  `work-party-rules.ts`, replacing a three-condition test written inline here
+  (INV-SSOT), and `work-party.ts` no longer re-exports it, so the rule has one
+  import path.
 
 function: src/app/(admin)/admin/work-parties/page.tsx#AdminWorkPartiesPage
-lines: 495
+lines: 519
 reason: the Add to calendar handler, the On calendar badge and the calendar
-  notice sit in the work party card's existing row of buttons and handlers,
-  which this page component keeps inline; the calendar sync itself lives in
-  calendar-work-party-entries.ts.
-
-function: src/app/(authenticated)/book/_hooks/use-booking-wizard.ts#useBookingWizard
-lines: 2492
-reason: the useWorkPartyPrefill call with the wizard state it reads, and the
-  tick inside the existing working-bee response handler, whose sequence guard
-  is what stops a stale response ticking the work party. The prefill logic is
-  its own hook.
+  status region sit in the work party card's existing row of buttons and
+  handlers, which this page component keeps inline; the calendar sync itself
+  lives in work-party-calendar.ts and calendar-work-party-entries.ts.
 
 function: src/app/(authenticated)/book/page.tsx#BookPage
-lines: 624
-reason: the prefill notice, one status line rendered with the page's other
+lines: 626
+reason: the prefill notice, one status region rendered with the page's other
   top-of-page notices, and the destructured value it reads.
 
 function: src/app/(authenticated)/dashboard/page.tsx#DashboardPage
 lines: 858
 reason: the members-only gate and one query for the Work Parties card (the card
-  is its own component), and the Events card query now hides an inactive work
-  party's entries; the page reads every card's data once in this body.
+  is its own component), and the Events card query now goes through the
+  calendar's visibility rule; the page reads every card's data once in this
+  body.

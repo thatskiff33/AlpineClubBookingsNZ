@@ -6,7 +6,9 @@ import type { CalendarEvent } from "@prisma/client";
 import {
   resolveCalendarEventDates,
   serializeCalendarEvent,
+  whereVisibleCalendarEvent,
 } from "@/lib/calendar-events";
+import { showsRepeatMarker } from "@/lib/calendar-client";
 
 describe("resolveCalendarEventDates", () => {
   it("returns start with null end for an all-day event", () => {
@@ -119,5 +121,60 @@ describe("serializeCalendarEvent", () => {
 
   it("has a null recurrence for a one-off event", () => {
     expect(serializeCalendarEvent(base).recurrence).toBeNull();
+  });
+
+  it("sends no recurrence for a work party's nights, stored as a series only to move together (#5148)", () => {
+    const series = {
+      id: "series-1",
+      frequency: "DAILY" as const,
+      interval: 1,
+      until: null,
+      count: 3,
+      createdById: "member-1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const dto = serializeCalendarEvent({
+      ...base,
+      seriesId: "series-1",
+      series,
+      workPartyEventId: "wp-1",
+    });
+    expect(dto.recurrence).toBeNull();
+    expect(dto.workPartyEventId).toBe("wp-1");
+    expect(showsRepeatMarker(dto)).toBe(false);
+    expect(
+      showsRepeatMarker(
+        serializeCalendarEvent({ ...base, seriesId: "series-1", series }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("whereVisibleCalendarEvent (#5148)", () => {
+  const open = { active: true, promoCode: { active: true, archivedAt: null } };
+
+  it("shows ordinary events, and a work party's only while it is open", () => {
+    expect(whereVisibleCalendarEvent({ startsAt: { lte: new Date(0) } }, { workParties: true })).toEqual({
+      AND: [
+        { startsAt: { lte: new Date(0) } },
+        { OR: [{ workPartyEventId: null }, { workPartyEvent: open }] },
+      ],
+    });
+  });
+
+  it("hides every work party's entries while the Work parties module is off (review question 4)", () => {
+    expect(whereVisibleCalendarEvent({}, { workParties: false })).toEqual({
+      AND: [{}, { workPartyEventId: null }],
+    });
+  });
+
+  it("keeps a caller's own OR intact rather than overwriting it", () => {
+    const callerOr = [{ endsAt: null }, { endsAt: { gte: new Date(0) } }];
+    const where = whereVisibleCalendarEvent({ OR: callerOr }, { workParties: true });
+    expect(where.AND).toEqual([
+      { OR: callerOr },
+      { OR: [{ workPartyEventId: null }, { workPartyEvent: open }] },
+    ]);
   });
 });

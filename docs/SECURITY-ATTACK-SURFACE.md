@@ -327,8 +327,8 @@ These family rules are enforced by automated tests (issue #1132):
   a missing one; per-member rate limit and a `privacy` audit row per lookup.
 - `src/app/api/work-parties/**/route.ts` — module-gated (`workParties`; 404 in
   the proxy). `active` lists the open work parties overlapping a stay for the
-  booking form. `[id]` (fork #118) returns one open work party for the member
-  page `/work-parties/[id]` and the "Join Work Party" prefill: members only
+  booking form. `[id]` (#5148) returns one open work party for the member
+  page `/dashboard/work-parties/[id]` and the "Join Work Party" prefill: members only
   (`canViewWorkParties`: the `USER` access role and not an organisation
   account), with the module re-checked in the handler; every other signed-in
   caller, and an inactive or unknown id, gets the same 404, so ids are not
@@ -337,7 +337,11 @@ These family rules are enforced by automated tests (issue #1132):
   button (owner decision 7), not the data: `active` lists open work parties
   to any active session for the booking form, and a work party's calendar
   entries (title, lodge, description) are visible to everyone the Events
-  calendar admits. Work-party writes need only Lodge edit, and since fork #118
+  calendar admits, while the Work parties module is on and the work party is
+  open (`whereVisibleCalendarEvent`). The member page is under `/dashboard`
+  (owner decision, 15 Nov 2026); the proxy gates `/dashboard/work-parties` on
+  the module, and the page re-checks the module and `canViewWorkParties`
+  itself, so the app reserves no top-level `/work-parties` word. Work-party writes need only Lodge edit, and since #5148
   they also write those calendar entries without the calendar's own create
   gate; the content is limited to the work party's own fields under a fixed
   "Work party:" title.

@@ -153,7 +153,7 @@ export function seriesMatchesRule(
 /**
  * The row for a one-off (non-recurring) event — the ONE shape every one-off
  * create writes (`createCalendarEvent`, and a work party's single-night entry,
- * fork #118), so a column added to events is added once.
+ * #5148), so a column added to events is added once.
  */
 export function buildStandaloneEventRow(
   data: ResolvedEventData,

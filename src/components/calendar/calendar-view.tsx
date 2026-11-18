@@ -26,7 +26,7 @@ interface CalendarViewProps {
    * create-and-view only; /admin/calendar leaves it true for full editing.
    */
   allowEditExisting?: boolean;
-  /** Where a work party's entry links to (fork #118); see EventDialog. */
+  /** Where a work party's entry links to (#5148); see EventDialog. */
   workPartyLink?: CalendarWorkPartyLink;
 }
 

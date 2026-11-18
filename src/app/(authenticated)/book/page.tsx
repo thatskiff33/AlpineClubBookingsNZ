@@ -6,6 +6,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { StatusRegion } from "@/components/status-region";
 import { scrollToError } from "@/hooks/use-scroll-to-feedback";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { useHelpWidgetHint } from "@/components/help-widget/help-widget-context";
@@ -340,12 +341,14 @@ export default function BookPage() {
         </Alert>
       )}
 
-      {/* Fork #118: a Join link whose work party cannot be filled in. */}
-      {workPartyPrefillNotice && (
-        <p role="status" className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
-          {workPartyPrefillNotice}
-        </p>
-      )}
+      {/* #5148: a Join link whose work party cannot be filled in, in a region
+          mounted before the work party is fetched (#4949). */}
+      <StatusRegion
+        visible={Boolean(workPartyPrefillNotice)}
+        visibleClassName="rounded-md bg-muted p-3 text-sm text-muted-foreground"
+      >
+        {workPartyPrefillNotice}
+      </StatusRegion>
 
       {/*
         #4945: the wizard's ONE failure slot, rendered through the shared

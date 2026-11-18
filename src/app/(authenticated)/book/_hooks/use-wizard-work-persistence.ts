@@ -42,7 +42,7 @@ export type RestoredWorkNotice = "kept" | "datesDropped";
  *
  * Disabled for a `?replaceRequest=` visit: replacing an exception request is
  * its own entry path, and a kept copy must never override it. Likewise for a
- * `?workParty=` visit (fork #118): "Join Work Party" fills in the work
+ * `?workParty=` visit (#5148): "Join Work Party" fills in the work
  * party's stay, and a kept copy left untouched comes back on a plain visit.
  */
 export function useWizardWorkPersistence({

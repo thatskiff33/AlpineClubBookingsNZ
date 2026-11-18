@@ -711,7 +711,7 @@ record the outcome here when decided:
   pre-migration meaning). A lodge-bound event's internal promo resolves
   only for bookings at that lodge; the booking form filters events by the
   chosen lodge and labels lodge-bound ones.
-- **`CalendarEvent.workPartyEventId` (nullable, fork #118) stays club-wide.**
+- **`CalendarEvent.workPartyEventId` (nullable, #5148) stays club-wide.**
   It links a calendar entry to the work party that manages it; the calendar
   itself is club-wide, so the entry carries no lodge of its own and shows the
   work party's lodge name as its location. The work party's `lodgeId` stays

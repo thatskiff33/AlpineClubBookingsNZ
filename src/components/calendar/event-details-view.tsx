@@ -1,6 +1,7 @@
 "use client";
 
-import { Video, MapPin, ExternalLink, Repeat } from "lucide-react";
+import Link from "next/link";
+import { Video, MapPin, ArrowRight, Repeat } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -15,9 +16,10 @@ import type { CalendarEventDTO } from "@/lib/calendar-events";
 import { parseInstant } from "@/lib/club-time";
 import { formatEventDateLong, formatInstantTime } from "@/lib/calendar-client";
 import { describeRecurrence } from "@/lib/calendar-recurrence";
+import { memberWorkPartyHref } from "@/lib/work-party-rules";
 
 /**
- * Where a work party's calendar entry points (fork #118): the admin Work
+ * Where a work party's calendar entry points (#5148): the admin Work
  * Parties page, the member work party page, or nowhere (a viewer who can open
  * neither).
  */
@@ -28,15 +30,13 @@ function workPartyHref(
   workPartyEventId: string,
 ): string | null {
   if (mode === "admin") return "/admin/work-parties";
-  if (mode === "member") {
-    return `/work-parties/${encodeURIComponent(workPartyEventId)}`;
-  }
+  if (mode === "member") return memberWorkPartyHref(workPartyEventId);
   return null;
 }
 
 /**
  * The calendar event dialog's read-only detail view, split out of
- * `event-dialog.tsx` (fork #118). Shown to ordinary members, to managers on
+ * `event-dialog.tsx` (#5148). Shown to ordinary members, to managers on
  * the member calendar (where existing events are not editable), and to
  * everyone for a work party's entry, which is managed from Work Parties. A
  * meeting shows "Join meeting" only to managers (committee members / admins):
@@ -135,13 +135,13 @@ export function EventDetailsView({
               {managedHref && (
                 <>
                   {" "}
-                  <a
+                  <Link
                     href={managedHref}
                     className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
                   >
                     Open the work party
-                    <ExternalLink aria-hidden className="h-3 w-3" />
-                  </a>
+                    <ArrowRight aria-hidden className="h-3 w-3" />
+                  </Link>
                 </>
               )}
             </p>

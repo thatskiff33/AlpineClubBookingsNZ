@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 
 /**
- * Fork #118: a lodge-edit admin may edit and delete calendar events, but not an
+ * #5148: a lodge-edit admin may edit and delete calendar events, but not an
  * entry a work party manages — the service refuses it and the route answers 409
  * with nothing audited.
  */

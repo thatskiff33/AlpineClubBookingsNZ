@@ -1,5 +1,5 @@
 /**
- * Keeping a work party's Events Calendar entries in step with it (fork #118).
+ * Keeping a work party's Events Calendar entries in step with it (#5148).
  *
  * The rows themselves are written only by `replaceWorkPartyCalendarEvents` in
  * `calendar-work-party-entries.ts`; this module decides WHEN and WHAT:
@@ -8,16 +8,20 @@
  *   module is on, and not otherwise.
  * - **Edit:** a work party that already has entries has them regenerated from
  *   its name, dates, description and lodge as saved, whatever the module state
- *   — an entry that exists must never show stale dates. One without entries
- *   (made before this feature, or while the calendar was off) is left alone, so
- *   a club that typed it on the calendar by hand does not get a duplicate.
+ *   — an entry that exists must never show stale dates. The rewrite runs in the
+ *   edit's own transaction, after the lock and the update
+ *   (`updateWorkPartyWithCalendar`), so the work party and its entries change
+ *   together or not at all. One without entries (made before this feature, or
+ *   while the calendar was off) is left alone, so a club that typed it on the
+ *   calendar by hand does not get a duplicate.
  * - **"Add to calendar":** the officer's explicit link for such a work party;
  *   refused while the module is off (the route checks).
  * - **Delete:** its entries go with it, in the delete's own transaction
  *   (`removeWorkPartyCalendarEventsInTransaction`).
  * - **Deactivate / reactivate:** an ordinary edit. The entries stay, and the
- *   calendar readers hide an inactive work party's entries
- *   (`VISIBLE_CALENDAR_EVENT_WHERE`), so reactivating shows them again.
+ *   calendar readers hide an inactive work party's entries, and every work
+ *   party's entries while the Work parties module is off
+ *   (`whereVisibleCalendarEvent`), so turning either back on shows them again.
  *
  * Every write builds the entry from the work party read INSIDE the writer's
  * transaction, after its lock (`loadWorkPartyCalendarEntry`), never from the
@@ -35,10 +39,18 @@ import {
   workPartyFirstNight,
 } from "@/lib/work-party-rules";
 import {
+  lockWorkPartyCalendar,
   replaceWorkPartyCalendarEvents,
+  replaceWorkPartyCalendarEventsInTransaction,
   type WorkPartyCalendarEntry,
 } from "@/lib/calendar-work-party-entries";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { prisma } from "@/lib/prisma";
+import { clubTimeZone } from "@/lib/club-time/server";
+import {
+  updateWorkPartyEventAndPromo,
+  type WorkPartyEventInput,
+} from "@/lib/work-party";
 import logger from "@/lib/logger";
 
 export interface WorkPartyCalendarSource {
@@ -105,10 +117,6 @@ export function addWorkPartyToCalendar(
 export const WORK_PARTY_CALENDAR_SYNC_FAILED =
   "The work party was saved, but it could not be added to the calendar. Use Add to calendar to try again.";
 
-/** What an officer sees when an edit saved but its calendar entries did not. */
-export const WORK_PARTY_CALENDAR_UPDATE_FAILED =
-  "The work party was saved, but its calendar entries could not be updated. Save it again to try again.";
-
 /**
  * Run a calendar write after the work party itself has been saved. The work
  * party is the record that matters (it carries the discount); a calendar
@@ -146,18 +154,32 @@ export async function syncCreatedWorkPartyCalendar(
   );
 }
 
-/** On edit: regenerate the entries of a work party that already has some. */
-export function syncUpdatedWorkPartyCalendar(
+/**
+ * On edit: save the work party and regenerate the entries of one that already
+ * has some, in ONE transaction (#5148, review finding F9). The lock comes
+ * first, before the update takes its row locks, the order every writer of a
+ * work party's entries uses (`lockWorkPartyCalendar`), so an edit racing a
+ * delete or an "Add to calendar" waits rather than deadlocks. A failed
+ * rewrite fails the save, so the calendar can never be left showing the old
+ * dates of a work party that saved.
+ */
+export async function updateWorkPartyWithCalendar(
   workPartyEventId: string,
+  input: WorkPartyEventInput,
   actorId: string,
-): Promise<string | null> {
-  return afterWorkPartySaved(workPartyEventId, () =>
-    replaceWorkPartyCalendarEvents(
+) {
+  const zone = await clubTimeZone();
+  return prisma.$transaction(async (tx) => {
+    await lockWorkPartyCalendar(tx, workPartyEventId);
+    const event = await updateWorkPartyEventAndPromo(tx, workPartyEventId, input);
+    await replaceWorkPartyCalendarEventsInTransaction(
+      tx,
       workPartyEventId,
-      (tx) => loadWorkPartyCalendarEntry(tx, workPartyEventId),
+      (db) => loadWorkPartyCalendarEntry(db, workPartyEventId),
       actorId,
+      zone,
       { onlyIfLinked: true },
-    ),
-    WORK_PARTY_CALENDAR_UPDATE_FAILED,
-  );
+    );
+    return event;
+  });
 }

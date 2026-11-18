@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #118: the member side of work parties — who may see it, what an open
+ * #5148: the member side of work parties — who may see it, what an open
  * work party is, the dashboard card's list, and the stay a Join fills in.
  * Dates follow the frozen test clock: the club's today is 2026-07-01.
  */

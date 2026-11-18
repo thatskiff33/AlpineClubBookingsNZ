@@ -34,6 +34,7 @@ import { useSelectionCancellationSchedule } from "./use-selection-cancellation-s
 import { useWizardWorkPersistence } from "./use-wizard-work-persistence";
 import type { SavedWizardWork } from "@/lib/booking-wizard-work";
 import { useWorkPartyPrefill } from "./use-work-party-prefill";
+import { fetchStayWorkParties, reconcileWorkPartySelection } from "./stay-work-parties";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -275,9 +276,8 @@ export function useBookingWizard() {
    */
   const replaceExceptionRequestId =
     searchParams?.get("replaceRequest")?.trim() || null;
-  // Fork #118: the work party a "Join Work Party" link opened, from
-  // `/book?workParty=<id>`. Its own entry path, like a replace visit, so a
-  // copy kept in the tab (#4950) neither overrides nor absorbs it.
+  // #5148: a "Join Work Party" link's `/book?workParty=<id>`. Its own entry path,
+  // like a replace visit: a copy kept in the tab (#4950) neither overrides nor absorbs it.
   const workPartyJoinId = searchParams?.get("workParty")?.trim() || null;
   const { lodgeCapacity } = useClubIdentity();
   const [step, setStep] = useState<BookingWizardStep>("dates");
@@ -1756,65 +1756,35 @@ export function useBookingWizard() {
           .then((codes) => setAvailablePromoCodes(codes))
           .catch(() => {});
 
-        // Fetch active working bee events that overlap these dates; events
-        // bound to another lodge are filtered out server-side.
-        const workPartySequence = ++workPartySequenceRef.current;
-        workPartyAbortRef.current?.abort();
-        const workPartyController = new AbortController();
-        workPartyAbortRef.current = workPartyController;
-        const ownsWorkPartyRequest = () =>
-          workPartySequence === workPartySequenceRef.current &&
-          activeScopedLodgeIdRef.current === requestedLodgeId;
-        fetch(
-          `/api/work-parties/active?checkIn=${checkInStr}&checkOut=${checkOutStr}${
-            `&lodgeId=${encodeURIComponent(requestedLodgeId)}`
-          }`,
-          { signal: workPartyController.signal },
-        )
-          .then((r) => r.ok ? r.json() : { events: [] })
-          .then((data) => {
-            const events: WorkPartyEvent[] = data.events || [];
-            if (!ownsWorkPartyRequest()) return;
+        // Fetch active working bee events that overlap these dates.
+        fetchStayWorkParties({
+          checkIn: checkInStr,
+          checkOut: checkOutStr,
+          lodgeId: requestedLodgeId,
+          sequenceRef: workPartySequenceRef,
+          abortRef: workPartyAbortRef,
+          stillCurrent: () => activeScopedLodgeIdRef.current === requestedLodgeId,
+          onFailure: () => setActiveWorkPartyEvents([]),
+          onEvents: (events) => {
             setActiveWorkPartyEvents(events);
-            // Fork #118: tick the work party a Join came from, once. Read when
-            // the response lands, after render, so the hook declared below it
-            // has long been initialised.
-            const joined = workPartyPrefill.takePendingWorkPartySelection(events);
-            if (joined && !selectedWorkPartyEventId) {
-              setSelectedWorkPartyEventId(joined);
-              setAttendingWorkParty(true);
-              return;
-            }
-            if (
-              selectedWorkPartyEventId &&
-              !events.some((e) => e.id === selectedWorkPartyEventId)
-            ) {
-              const previous = activeWorkPartyEvents.find(
-                (e) => e.id === selectedWorkPartyEventId
-              );
-              setSelectedWorkPartyEventId(null);
-              setAttendingWorkParty(false);
-              if (previous) {
-                setWorkPartyClearedNotice(previous.name);
-              }
-              // Combined, the codes stay and the working-bee effect re-prices
-              // them without it; alone, the discount just goes.
-              setAppliedPromos((current) =>
-                current.some((promo) => promo.workPartyEvent) && !combineWorkPartyWithCodesRef.current
-                  ? []
-                  : current
-              );
-            }
-          })
-          .catch((requestError) => {
-            if (requestError instanceof DOMException && requestError.name === "AbortError") return;
-            if (ownsWorkPartyRequest()) setActiveWorkPartyEvents([]);
-          })
-          .finally(() => {
-            if (workPartyAbortRef.current === workPartyController) {
-              workPartyAbortRef.current = null;
-            }
-          });
+            reconcileWorkPartySelection(
+              events,
+              {
+                selectedId: selectedWorkPartyEventId,
+                previousEvents: activeWorkPartyEvents,
+                // #5148: the hook declared below is initialised by now.
+                joinedId: workPartyPrefill.takePendingWorkPartySelection(events),
+              },
+              {
+                select: setSelectedWorkPartyEventId,
+                setAttending: setAttendingWorkParty,
+                noticeCleared: setWorkPartyClearedNotice,
+                setAppliedPromos,
+                combineWithCodesRef: combineWorkPartyWithCodesRef,
+              },
+            );
+          },
+        });
       } else {
         handleBookingApiError((await readJsonOrNull(res)) ?? {}, "Failed to calculate price");
       }
@@ -2528,8 +2498,7 @@ export function useBookingWizard() {
     setWorkPartyError,
   });
 
-  // Fork #118: "Join Work Party" opens /book?workParty=<id>. Added after every
-  // existing effect so their order is unchanged.
+  // #5148: the Join prefill, after every existing effect so their order is unchanged.
   const workPartyPrefill = useWorkPartyPrefill({
     workPartyId: workPartyJoinId,
     lodgeIds: lodges.map((lodge) => lodge.id),

@@ -494,7 +494,7 @@ describe("the booking wizard keeps the member's work in this tab (#4950)", () =>
     expect(result.current.restoredWorkNotice).toBeNull();
   });
 
-  // Fork #118: "Join Work Party" opens /book?workParty=<id>, its own entry
+  // #5148: "Join Work Party" opens /book?workParty=<id>, its own entry
   // path. The kept copy is neither brought back over it nor overwritten.
   it("yields to a ?workParty= visit, and leaves the kept copy for a plain visit", async () => {
     navigation.searchParams = new URLSearchParams("workParty=wp-1");

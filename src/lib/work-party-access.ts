@@ -6,8 +6,8 @@ import {
 } from "@/lib/access-roles";
 
 /**
- * Who sees the member side of work parties (fork #118): the Work Parties
- * dashboard card, the `/work-parties/[id]` page and API, and its "Join Work
+ * Who sees the member side of work parties (#5148): the Work Parties
+ * dashboard card, the `/dashboard/work-parties/[id]` page and API, and its "Join Work
  * Party" button. The ONE rule all four use (INV-SSOT).
  *
  * MEMBERS ONLY (owner decision 7, fork #118). That is narrower than the Events

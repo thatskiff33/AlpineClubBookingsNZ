@@ -16,7 +16,7 @@ import {
 } from "@/lib/calendar-events";
 
 /**
- * Fork #118: an entry a work party manages is changed from Work Parties only.
+ * #5148: an entry a work party manages is changed from Work Parties only.
  * 409 rather than 403 — the caller may edit calendar events, just not this one.
  */
 async function refusingWorkPartyManaged<T>(

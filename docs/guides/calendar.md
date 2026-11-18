@@ -109,7 +109,9 @@ a member cannot use are never shown — and even a stale page could not save.
 
 With the **Events calendar** and **Work parties** modules on, each work party
 can put itself on the calendar: one all-day entry, titled "Work party: {name}", for each night of its
-window, stored as a daily series. See [Work Parties](work-parties.md#the-events-calendar).
+window, stored as a daily series so the nights move together. It shows as one
+event, not a repeating one: no repeat marker and no "Daily" line. See
+[Work Parties](work-parties.md#the-events-calendar).
 
 - They open **read-only** for everyone, admins included. While the Work parties
   module is on, **Open the work party** takes admins (on the admin calendar) to
@@ -118,13 +120,18 @@ window, stored as a daily series. See [Work Parties](work-parties.md#the-events-
   Change or delete the work party there and its entries follow.
 - The calendar API refuses to edit or delete them (**409**), so they cannot drift
   from the work party.
-- While a work party is **inactive**, its entries are hidden from the calendar
-  and the dashboard **Events** card; activating it shows them again.
+- While a work party is **inactive**, or the **Work parties** module is off,
+  its entries are hidden from the calendar and the dashboard **Events** card;
+  activating it, or turning the module back on, shows them again unchanged.
 - They are part of the club calendar, so everyone who can see the calendar
   sees them (including non-member logins), even though only members see the
-  Work Parties card and page.
-- A window longer than 366 nights, the calendar's series limit, shows its
-  first 366 nights.
+  Work Parties card and page. That is the maintainers' recommendation on
+  #5148, built as recommended; the owner may still change it.
+- A work party can run for at most 366 nights, the calendar's series limit;
+  a longer window is refused when the work party is saved.
+- The entry's location is the lodge's name when the work party was last
+  saved. Renaming a lodge does not change existing entries until the work
+  party is saved again.
 
 ## Recurring events
 

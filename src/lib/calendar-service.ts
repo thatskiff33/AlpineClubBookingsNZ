@@ -40,7 +40,7 @@ function isRecordNotFoundError(error: unknown): boolean {
 
 /**
  * Thrown by `updateCalendarEvent` / `deleteCalendarEvent` for an entry a work
- * party manages (fork #118). Such an entry changes only through its work party
+ * party manages (#5148). Such an entry changes only through its work party
  * (`replaceWorkPartyCalendarEvents` in calendar-work-party-entries.ts), so the calendar cannot edit it out of
  * step. A row's link is set when the row is created and never changes, so the
  * check on the row the mutation has just read cannot race.

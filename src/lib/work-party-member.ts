@@ -1,6 +1,6 @@
 /**
- * The member side of work parties (fork #118): the dashboard card's list, the
- * `/work-parties/[id]` page and API, and the stay a "Join Work Party" click
+ * The member side of work parties (#5148): the dashboard card's list, the
+ * `/dashboard/work-parties/[id]` page and API, and the stay a "Join Work Party" click
  * fills into the booking page.
  *
  * Every read filters on `OPEN_WORK_PARTY_EVENT_WHERE`, so an inactive work

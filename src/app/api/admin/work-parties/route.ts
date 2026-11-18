@@ -23,7 +23,7 @@ export async function GET() {
     prisma.workPartyEvent.findMany({
       include: {
         lodge: { select: { name: true } },
-        // Fork #118: whether the work party already has calendar entries, so the
+        // #5148: whether the work party already has calendar entries, so the
         // card offers "Add to calendar" only for one that does not.
         _count: { select: { calendarEvents: true } },
         promoCode: {
@@ -45,7 +45,7 @@ export async function GET() {
       ...event,
       lodgeName: lodge?.name ?? null,
       onCalendar: _count.calendarEvents > 0,
-      // Fork #118: "Add to calendar" is offered for an existing UPCOMING active
+      // #5148: "Add to calendar" is offered for an existing UPCOMING active
       // work party with no entries, while the Events Calendar is on.
       canAddToCalendar:
         modules.eventsCalendar &&
@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
     lodgeId: parsed.data.lodgeId ?? null,
   });
 
-  // Fork #118: with the Events Calendar on, the work party also goes on the
+  // #5148: with the Events Calendar on, the work party also goes on the
   // calendar. A calendar failure is reported, never a reason to lose the save.
   const calendarWarning = await syncCreatedWorkPartyCalendar(
     event.id,

@@ -1,0 +1,390 @@
+/**
+ * Real-PostgreSQL proof for #5148 (review finding F5): a work party's Events
+ * Calendar entries, written by the REAL writer against a real database. The
+ * unit suites (`work-party-calendar.test.ts`, `work-party-calendar-service.test.ts`)
+ * prove the calls with recording fakes; these claims need PostgreSQL itself:
+ *
+ *  1. "Add to calendar" writes one all-day entry per night, as one daily
+ *     series, each linked to the work party.
+ *  2. An edit (`updateWorkPartyWithCalendar`, one transaction) moves the
+ *     entries: the old rows AND their emptied series go (the
+ *     `events: { none: {} }` clean-up), and the new rows match the saved dates.
+ *     An edit of a work party with no entries adds none.
+ *  3. The calendar's visibility rule (`whereVisibleCalendarEvent`) as a real
+ *     relation filter: an inactive work party's entries are hidden and come
+ *     back on reactivation; every work party's entries are hidden while the
+ *     Work parties module is off; an ordinary event always shows.
+ *  4. Deleting the work party removes its entries and their series inside the
+ *     delete's transaction, and the foreign key's ON DELETE CASCADE removes the
+ *     entries even on a path that forgot to (the series is then left empty,
+ *     which is why the writer clears it itself).
+ *  5. The calendar's own edit and delete refuse a linked entry.
+ *  6. Under the lock: two edits racing, and an edit racing "Add to calendar",
+ *     leave exactly one set of entries matching the work party as it ended up,
+ *     never a duplicate; an edit racing the delete neither deadlocks nor leaves
+ *     an entry behind.
+ *
+ * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
+ * loopback PostgreSQL the race harness provisions (#1881), and the
+ * `realdb-all` job finds it by its name. It owns and cleans its `race-5148-`
+ * fixtures.
+ */
+import type { PrismaClient } from "@prisma/client";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
+
+vi.mock("server-only", () => ({}));
+
+const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
+const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
+
+const ACTOR_ID = "race-5148-officer";
+const LODGE_ID = "race-5148-lodge";
+const LODGE_NAME = "Race 5148 Lodge";
+const ORDINARY_EVENT_ID = "race-5148-ordinary";
+const TITLE_PREFIX = "Work party: Race 5148";
+
+// FUTURE against the frozen suite clock (1 July 2026). Date-only columns hold
+// the first and the LAST night, both inclusive.
+const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+const JULY = { startDate: day("2026-07-10"), endDate: day("2026-07-12") }; // 3 nights
+const AUGUST = { startDate: day("2026-08-01"), endDate: day("2026-08-02") }; // 2 nights
+const SEPTEMBER = { startDate: day("2026-09-05"), endDate: day("2026-09-08") }; // 4 nights
+
+let prisma: PrismaClient;
+let workParty: typeof import("@/lib/work-party");
+let workPartyCalendar: typeof import("@/lib/work-party-calendar");
+let entries: typeof import("@/lib/calendar-work-party-entries");
+let calendarEvents: typeof import("@/lib/calendar-events");
+let calendarService: typeof import("@/lib/calendar-service");
+const createdWorkParties: { id: string; promoCodeId: string }[] = [];
+
+function input(
+  name: string,
+  window: { startDate: Date; endDate: Date },
+  active = true,
+) {
+  return {
+    name,
+    description: "Bring gloves",
+    startDate: window.startDate,
+    endDate: window.endDate,
+    discountPercent: 50,
+    active,
+    lodgeId: LODGE_ID,
+  };
+}
+
+async function createWorkParty(name: string, window = JULY) {
+  const event = await workParty.createWorkPartyEventWithPromo(input(name, window));
+  createdWorkParties.push({ id: event.id, promoCodeId: event.promoCodeId });
+  return event;
+}
+
+async function linkedEntries(workPartyEventId: string) {
+  return prisma.calendarEvent.findMany({
+    where: { workPartyEventId },
+    orderBy: { startsAt: "asc" },
+    select: {
+      id: true,
+      title: true,
+      location: true,
+      details: true,
+      allDay: true,
+      seriesId: true,
+      startsAt: true,
+    },
+  });
+}
+
+async function visibleIds(modules: { workParties: boolean }) {
+  const rows = await prisma.calendarEvent.findMany({
+    where: calendarEvents.whereVisibleCalendarEvent(
+      { OR: [{ id: ORDINARY_EVENT_ID }, { title: { startsWith: TITLE_PREFIX } }] },
+      modules,
+    ),
+    select: { id: true, workPartyEventId: true },
+  });
+  return rows;
+}
+
+async function clean(): Promise<void> {
+  const workParties = await prisma.workPartyEvent.findMany({
+    where: { name: { startsWith: "Race 5148" } },
+    select: { id: true, promoCodeId: true },
+  });
+  const ids = workParties.map((row) => row.id);
+  const seriesIds = (
+    await prisma.calendarEvent.findMany({
+      where: { OR: [{ workPartyEventId: { in: ids } }, { createdById: ACTOR_ID }] },
+      select: { seriesId: true },
+    })
+  )
+    .map((row) => row.seriesId)
+    .filter((id): id is string => id !== null);
+  await prisma.calendarEvent.deleteMany({
+    where: { OR: [{ workPartyEventId: { in: ids } }, { createdById: ACTOR_ID }] },
+  });
+  await prisma.calendarEventSeries.deleteMany({
+    where: { OR: [{ id: { in: seriesIds } }, { createdById: ACTOR_ID }] },
+  });
+  await prisma.workPartyEvent.deleteMany({ where: { id: { in: ids } } });
+  await prisma.promoCode.deleteMany({
+    where: {
+      id: {
+        in: [
+          ...workParties.map((row) => row.promoCodeId),
+          ...createdWorkParties.map((row) => row.promoCodeId),
+        ],
+      },
+    },
+  });
+  await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
+  createdWorkParties.length = 0;
+}
+
+(RUN ? describe : describe.skip)(
+  "work party calendar entries on PostgreSQL (#5148)",
+  { timeout: 60_000 },
+  () => {
+    beforeAll(async () => {
+      assertSafeRaceDbUrl(RACE_DB_URL, "Work party calendar");
+      process.env.DATABASE_URL = RACE_DB_URL;
+      ({ prisma } = (await import("@/lib/prisma")) as unknown as {
+        prisma: PrismaClient;
+      });
+      workParty = await import("@/lib/work-party");
+      workPartyCalendar = await import("@/lib/work-party-calendar");
+      entries = await import("@/lib/calendar-work-party-entries");
+      calendarEvents = await import("@/lib/calendar-events");
+      calendarService = await import("@/lib/calendar-service");
+      await clean();
+    });
+
+    beforeEach(async () => {
+      await clean();
+      await prisma.lodge.create({
+        data: { id: LODGE_ID, name: LODGE_NAME, slug: "race-5148" },
+      });
+      await prisma.calendarEvent.create({
+        data: {
+          id: ORDINARY_EVENT_ID,
+          title: "Race 5148 committee meeting",
+          allDay: true,
+          startsAt: day("2026-07-11"),
+          createdById: ACTOR_ID,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      if (prisma) await clean();
+    });
+
+    it("1. Add to calendar writes one all-day entry per night, as one daily series", async () => {
+      const event = await createWorkParty("Race 5148 add");
+      await expect(
+        workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID),
+      ).resolves.toBe(3);
+      const rows = await linkedEntries(event.id);
+      expect(rows).toHaveLength(3);
+      expect(new Set(rows.map((row) => row.seriesId)).size).toBe(1);
+      expect(rows[0]!.seriesId).not.toBeNull();
+      for (const row of rows) {
+        expect(row).toMatchObject({
+          title: "Work party: Race 5148 add",
+          location: LODGE_NAME,
+          details: "Bring gloves",
+          allDay: true,
+        });
+      }
+      const series = await prisma.calendarEventSeries.findUnique({
+        where: { id: rows[0]!.seriesId! },
+      });
+      expect(series).toMatchObject({ frequency: "DAILY", interval: 1, count: 3 });
+    });
+
+    it("2. an edit moves the entries in its own transaction and clears the emptied series", async () => {
+      const event = await createWorkParty("Race 5148 edit");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+      const [oldFirst] = await linkedEntries(event.id);
+
+      await workPartyCalendar.updateWorkPartyWithCalendar(
+        event.id,
+        input("Race 5148 edit moved", AUGUST),
+        ACTOR_ID,
+      );
+
+      const rows = await linkedEntries(event.id);
+      expect(rows).toHaveLength(2);
+      expect(rows.every((row) => row.title === "Work party: Race 5148 edit moved")).toBe(true);
+      expect(
+        await prisma.calendarEventSeries.findUnique({ where: { id: oldFirst!.seriesId! } }),
+      ).toBeNull();
+      expect(await prisma.calendarEvent.findUnique({ where: { id: oldFirst!.id } })).toBeNull();
+      const saved = await prisma.workPartyEvent.findUniqueOrThrow({ where: { id: event.id } });
+      expect(saved.name).toBe("Race 5148 edit moved");
+    });
+
+    it("2b. an edit of a work party with no entries adds none", async () => {
+      const event = await createWorkParty("Race 5148 unlinked");
+      await workPartyCalendar.updateWorkPartyWithCalendar(
+        event.id,
+        input("Race 5148 unlinked", AUGUST),
+        ACTOR_ID,
+      );
+      expect(await linkedEntries(event.id)).toHaveLength(0);
+    });
+
+    it("3. the visibility rule hides an inactive work party's entries, and all of them while the module is off", async () => {
+      const event = await createWorkParty("Race 5148 visible");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+
+      const on = await visibleIds({ workParties: true });
+      expect(on.filter((row) => row.workPartyEventId === event.id)).toHaveLength(3);
+      expect(on.some((row) => row.id === ORDINARY_EVENT_ID)).toBe(true);
+
+      const off = await visibleIds({ workParties: false });
+      expect(off.filter((row) => row.workPartyEventId !== null)).toEqual([]);
+      expect(off.some((row) => row.id === ORDINARY_EVENT_ID)).toBe(true);
+
+      await workPartyCalendar.updateWorkPartyWithCalendar(
+        event.id,
+        input("Race 5148 visible", JULY, false),
+        ACTOR_ID,
+      );
+      // Deactivating keeps the entries (rewritten from the saved row) but hides them.
+      expect(await linkedEntries(event.id)).toHaveLength(3);
+      const inactive = await visibleIds({ workParties: true });
+      expect(inactive.filter((row) => row.workPartyEventId !== null)).toEqual([]);
+      expect(inactive.some((row) => row.id === ORDINARY_EVENT_ID)).toBe(true);
+
+      await workPartyCalendar.updateWorkPartyWithCalendar(
+        event.id,
+        input("Race 5148 visible", JULY, true),
+        ACTOR_ID,
+      );
+      const back = await visibleIds({ workParties: true });
+      expect(back.filter((row) => row.workPartyEventId === event.id)).toHaveLength(3);
+    });
+
+    it("4. the delete removes the entries and their series; the foreign key cascades the entries regardless", async () => {
+      const event = await createWorkParty("Race 5148 delete");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+      const [first] = await linkedEntries(event.id);
+
+      await prisma.$transaction(async (tx) => {
+        await entries.removeWorkPartyCalendarEventsInTransaction(tx, event.id);
+        await tx.workPartyEvent.delete({ where: { id: event.id } });
+        await tx.promoCode.delete({ where: { id: event.promoCodeId } });
+      });
+      expect(await prisma.calendarEvent.count({ where: { workPartyEventId: event.id } })).toBe(0);
+      expect(
+        await prisma.calendarEventSeries.findUnique({ where: { id: first!.seriesId! } }),
+      ).toBeNull();
+
+      const cascaded = await createWorkParty("Race 5148 cascade");
+      await workPartyCalendar.addWorkPartyToCalendar(cascaded.id, ACTOR_ID);
+      const ids = (await linkedEntries(cascaded.id)).map((row) => row.id);
+      await prisma.workPartyEvent.delete({ where: { id: cascaded.id } });
+      expect(await prisma.calendarEvent.count({ where: { id: { in: ids } } })).toBe(0);
+    });
+
+    it("5. the calendar's own edit and delete refuse a linked entry", async () => {
+      const event = await createWorkParty("Race 5148 managed");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+      const [first] = await linkedEntries(event.id);
+      await expect(
+        calendarService.deleteCalendarEvent(first!.id, "series"),
+      ).rejects.toBeInstanceOf(calendarService.WorkPartyManagedCalendarEventError);
+      await expect(
+        calendarService.updateCalendarEvent(
+          first!.id,
+          {
+            title: "hijacked",
+            location: null,
+            details: null,
+            allDay: true,
+            isMeeting: false,
+            startsAt: first!.startsAt,
+            endsAt: null,
+            recurrence: null,
+          },
+          "single",
+          ACTOR_ID,
+        ),
+      ).rejects.toBeInstanceOf(calendarService.WorkPartyManagedCalendarEventError);
+      expect(await linkedEntries(event.id)).toHaveLength(3);
+    });
+
+    it("6a. two edits racing leave one set of entries matching the saved work party", async () => {
+      const event = await createWorkParty("Race 5148 race");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+
+      await Promise.all([
+        workPartyCalendar.updateWorkPartyWithCalendar(
+          event.id,
+          input("Race 5148 race", AUGUST),
+          ACTOR_ID,
+        ),
+        workPartyCalendar.updateWorkPartyWithCalendar(
+          event.id,
+          input("Race 5148 race", SEPTEMBER),
+          ACTOR_ID,
+        ),
+      ]);
+
+      const saved = await prisma.workPartyEvent.findUniqueOrThrow({ where: { id: event.id } });
+      const expectedNights = saved.startDate.getTime() === AUGUST.startDate.getTime() ? 2 : 4;
+      const rows = await linkedEntries(event.id);
+      expect(rows).toHaveLength(expectedNights);
+      expect(new Set(rows.map((row) => row.seriesId)).size).toBe(1);
+    });
+
+    it("6b. an edit racing Add to calendar never duplicates the entries", async () => {
+      const event = await createWorkParty("Race 5148 add race");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+
+      await Promise.all([
+        workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID),
+        workPartyCalendar.updateWorkPartyWithCalendar(
+          event.id,
+          input("Race 5148 add race", SEPTEMBER),
+          ACTOR_ID,
+        ),
+      ]);
+
+      const rows = await linkedEntries(event.id);
+      expect(rows).toHaveLength(4);
+      expect(new Set(rows.map((row) => row.seriesId)).size).toBe(1);
+    });
+
+    it("6c. an edit racing the delete neither deadlocks nor leaves an entry behind", async () => {
+      const event = await createWorkParty("Race 5148 delete race");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+
+      const results = await Promise.allSettled([
+        workPartyCalendar.updateWorkPartyWithCalendar(
+          event.id,
+          input("Race 5148 delete race", SEPTEMBER),
+          ACTOR_ID,
+        ),
+        prisma.$transaction(async (tx) => {
+          await entries.removeWorkPartyCalendarEventsInTransaction(tx, event.id);
+          await tx.workPartyEvent.delete({ where: { id: event.id } });
+          await tx.promoCode.delete({ where: { id: event.promoCodeId } });
+        }),
+      ]);
+
+      // The delete always wins in the end (it either runs last, or the edit
+      // that waited on its lock then finds no row to update).
+      expect(results[1]!.status).toBe("fulfilled");
+      if (results[0]!.status === "rejected") {
+        expect(String(results[0]!.reason)).not.toMatch(/deadlock/i);
+      }
+      expect(await prisma.workPartyEvent.findUnique({ where: { id: event.id } })).toBeNull();
+      expect(await prisma.calendarEvent.count({ where: { workPartyEventId: event.id } })).toBe(0);
+    });
+  },
+);

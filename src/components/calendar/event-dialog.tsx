@@ -74,7 +74,7 @@ interface EventDialogProps {
    * calendar creates but does not edit; /admin/calendar keeps full editing.
    */
   canEditExisting: boolean;
-  /** Where a work party's entry points (fork #118); see EventDetailsView. */
+  /** Where a work party's entry points (#5148); see EventDetailsView. */
   workPartyLink?: CalendarWorkPartyLink;
   /** Called after a successful create/update/delete so the caller can refetch. */
   onSaved: () => void;
@@ -301,7 +301,7 @@ export function EventDialog({
   }
 
   // Read-only detail view (event-details-view.tsx): ordinary members, managers
-  // on the member calendar, and a work party's entry for everyone (fork #118),
+  // on the member calendar, and a work party's entry for everyone (#5148),
   // which is managed from Work Parties and refused by the calendar API.
   if (event && (!canEditExisting || event.workPartyEventId)) {
     return (

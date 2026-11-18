@@ -1,19 +1,47 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #118: when a work party's calendar entries are written, and from what.
+ * #5148: when a work party's calendar entries are written, and from what.
  * The row writer (`replaceWorkPartyCalendarEvents`) is mocked; its own test is
  * `work-party-calendar-service.test.ts`.
  */
-const h = vi.hoisted(() => ({
-  replace: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 3),
-  modules: { eventsCalendar: true },
-  tx: { workPartyEvent: { findUnique: vi.fn() } },
-}));
+const h = vi.hoisted(() => {
+  const order: string[] = [];
+  const tx = { workPartyEvent: { findUnique: vi.fn() } };
+  return {
+    order,
+    tx,
+    replace: vi.fn<(...args: unknown[]) => Promise<number>>(async () => 3),
+    replaceInTx: vi.fn<(...args: unknown[]) => Promise<number>>(async () => {
+      order.push("replace");
+      return 3;
+    }),
+    lock: vi.fn(async () => {
+      order.push("lock");
+    }),
+    update: vi.fn(async () => {
+      order.push("update");
+      return { id: "wp-1", name: "Spring Working Bee" };
+    }),
+    transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
+    modules: { eventsCalendar: true },
+  };
+});
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/calendar-work-party-entries", () => ({
+  lockWorkPartyCalendar: h.lock,
   replaceWorkPartyCalendarEvents: h.replace,
+  replaceWorkPartyCalendarEventsInTransaction: h.replaceInTx,
+}));
+vi.mock("@/lib/work-party", () => ({
+  updateWorkPartyEventAndPromo: h.update,
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: { $transaction: h.transaction },
+}));
+vi.mock("@/lib/club-time/server", () => ({
+  clubTimeZone: vi.fn(async () => "Pacific/Auckland"),
 }));
 vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: vi.fn(async () => h.modules),
@@ -23,9 +51,8 @@ vi.mock("@/lib/logger", () => ({ default: { error: vi.fn() } }));
 import {
   addWorkPartyToCalendar,
   syncCreatedWorkPartyCalendar,
-  syncUpdatedWorkPartyCalendar,
+  updateWorkPartyWithCalendar,
   WORK_PARTY_CALENDAR_SYNC_FAILED,
-  WORK_PARTY_CALENDAR_UPDATE_FAILED,
   workPartyCalendarDays,
   workPartyCalendarEntry,
 } from "@/lib/work-party-calendar";
@@ -41,6 +68,7 @@ const workParty = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.order.length = 0;
   h.modules.eventsCalendar = true;
   h.tx.workPartyEvent.findUnique.mockResolvedValue(workParty);
 });
@@ -116,31 +144,70 @@ describe("syncCreatedWorkPartyCalendar", () => {
   });
 });
 
-describe("syncUpdatedWorkPartyCalendar", () => {
-  it("regenerates only a work party already on the calendar (no duplicate of a hand-typed one)", async () => {
-    await syncUpdatedWorkPartyCalendar("wp-1", "admin-1");
-    expect(h.replace).toHaveBeenCalledWith("wp-1", expect.any(Function), "admin-1", {
-      onlyIfLinked: true,
-    });
+describe("updateWorkPartyWithCalendar (review F9: one transaction)", () => {
+  const input = {
+    name: "Spring Working Bee",
+    description: "Bring gloves",
+    startDate: workParty.startDate,
+    endDate: workParty.endDate,
+    discountPercent: 50,
+    active: true,
+    lodgeId: null,
+  };
+
+  /** Run the resolver the in-transaction writer was handed. */
+  async function resolvedEditEntry() {
+    const resolve = (h.replaceInTx.mock.calls[0] as unknown[])[2] as (
+      tx: unknown,
+    ) => Promise<unknown>;
+    return resolve(h.tx);
+  }
+
+  it("locks, saves and rewrites the entries in one transaction, lock first", async () => {
+    await expect(
+      updateWorkPartyWithCalendar("wp-1", input, "admin-1"),
+    ).resolves.toMatchObject({ id: "wp-1" });
+    expect(h.transaction).toHaveBeenCalledTimes(1);
+    expect(h.order).toEqual(["lock", "update", "replace"]);
+    expect(h.lock).toHaveBeenCalledWith(h.tx, "wp-1");
+    expect(h.update).toHaveBeenCalledWith(h.tx, "wp-1", input);
+    expect(h.replaceInTx).toHaveBeenCalledWith(
+      h.tx,
+      "wp-1",
+      expect.any(Function),
+      "admin-1",
+      "Pacific/Auckland",
+      { onlyIfLinked: true },
+    );
+  });
+
+  it("rewrites only a work party already on the calendar (no duplicate of a hand-typed one)", async () => {
+    await updateWorkPartyWithCalendar("wp-1", input, "admin-1");
+    expect(h.replace).not.toHaveBeenCalled();
+    expect(h.replaceInTx.mock.calls[0]?.[5]).toEqual({ onlyIfLinked: true });
   });
 
   it("keeps linked entries in step even while the calendar module is off", async () => {
     h.modules.eventsCalendar = false;
-    await syncUpdatedWorkPartyCalendar("wp-1", "admin-1");
-    expect(h.replace).toHaveBeenCalledTimes(1);
+    await updateWorkPartyWithCalendar("wp-1", input, "admin-1");
+    expect(h.replaceInTx).toHaveBeenCalledTimes(1);
   });
 
-  it("reports a failed update with its own advice", async () => {
-    h.replace.mockRejectedValueOnce(new Error("db down"));
-    await expect(syncUpdatedWorkPartyCalendar("wp-1", "admin-1")).resolves.toBe(
-      WORK_PARTY_CALENDAR_UPDATE_FAILED,
-    );
+  it("fails the save when the rewrite fails, so no stale entries survive a saved edit", async () => {
+    h.replaceInTx.mockRejectedValueOnce(new Error("db down"));
+    await expect(
+      updateWorkPartyWithCalendar("wp-1", input, "admin-1"),
+    ).rejects.toThrow("db down");
   });
 
-  it("builds no entry for a work party deleted meanwhile", async () => {
+  it("builds the entry from the work party as saved, read inside the transaction", async () => {
+    await updateWorkPartyWithCalendar("wp-1", input, "admin-1");
+    await expect(resolvedEditEntry()).resolves.toMatchObject({
+      title: "Work party: Spring Working Bee",
+      days: ["2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"],
+    });
     h.tx.workPartyEvent.findUnique.mockResolvedValueOnce(null);
-    await syncUpdatedWorkPartyCalendar("wp-1", "admin-1");
-    await expect(resolvedEntry()).resolves.toBeNull();
+    await expect(resolvedEditEntry()).resolves.toBeNull();
   });
 });
 

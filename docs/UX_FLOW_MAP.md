@@ -60,7 +60,7 @@ Journey: Fill in personal details and nominators, submit the application, and fo
 
 Screen: `/dashboard`.
 
-Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge. Members see a Work Parties card listing upcoming work parties; each opens its work party page.
+Journey: Read upcoming stays and account notices, then open a booking or choose Book a Stay. Next Stay, draft and Recent Bookings rows name a booking's lodge once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). The Lodge Kiosk card offers Open Kiosk and, while the roster module is on, Who's at the lodge. Members see a Work Parties card listing upcoming work parties, when there is at least one; each opens its work party page.
 
 [Guide](user-guide/README.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -145,7 +145,7 @@ Journey: When enabled, read recent posts, page to older posts, or compose a mess
 
 ### Work party page
 
-Screen: `/work-parties/{id}`.
+Screen: `/dashboard/work-parties/{id}`.
 
 Journey: Members only. Open a work party from the dashboard's Work Parties card or its calendar entry, read its nights, lodge, discount and description, then choose Join Work Party. That opens Book a Stay with the dates, the lodge and "I am attending a working bee" filled in; choose guests and pay as usual. A finished work party has no Join button.
 
@@ -595,7 +595,7 @@ Screen: `/admin/work-parties`.
 
 Shows: Work-party dates, participation and attendance, and whether each is on the Events Calendar.
 
-Journey: Inspect a work party, its participants and attendance before recording changes. Creating one adds it to the Events Calendar when that module is on; Add to calendar puts an older one there.
+Journey: Inspect a work party, its participants and attendance before recording changes. Creating one adds it to the Events Calendar when that module is on; Add to calendar puts an older one there, says so in a status line that takes focus, and goes.
 
 [Guide](guides/work-parties.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 

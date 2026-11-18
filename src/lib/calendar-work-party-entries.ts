@@ -8,11 +8,31 @@ import {
   type ResolvedEventData,
 } from "@/lib/calendar-occurrences";
 import { lockCalendarSeries } from "@/lib/calendar-service";
-import { startOfClubDay, type CalendarDate } from "@/lib/club-time";
+import {
+  startOfClubDay,
+  type CalendarDate,
+  type ClubTimeZone,
+} from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 
 /**
- * What a work party puts on the calendar (fork #118): one all-day entry per
+ * The ONE lock every writer of a work party's calendar entries takes first
+ * (#5148): the existing calendar-series advisory lock with a `work-party:` key,
+ * so it shares no keyspace with a real series and composes with no booking,
+ * money or capacity key. The create, edit, delete and "Add to calendar" paths
+ * all take it before touching the work party or its entries; the edit and the
+ * delete also update or delete the work party row in the same transaction,
+ * after the lock, so every path orders the advisory lock before the row lock.
+ */
+export async function lockWorkPartyCalendar(
+  tx: Prisma.TransactionClient,
+  workPartyEventId: string,
+): Promise<void> {
+  await lockCalendarSeries(tx, `work-party:${workPartyEventId}`);
+}
+
+/**
+ * What a work party puts on the calendar (#5148): one all-day entry per
  * club day in `days`, which the caller derives from the work party's date-only
  * window. More than one day is stored as a daily series so the calendar shows
  * the ↻ marker and the entries move together; one day is a standalone entry.
@@ -30,27 +50,8 @@ export type WorkPartyCalendarEntryResolver = (
 ) => Promise<WorkPartyCalendarEntry | null>;
 
 /**
- * Replace every calendar entry linked to a work party with the entry
- * `resolveEntry` builds, or remove them all when it builds none. The ONE writer of
- * `CalendarEvent.workPartyEventId` (fork #118): the work-party routes call it
- * on create, edit, delete and "Add to calendar", and the calendar's own edit
- * and delete refuse linked entries, so the two cannot drift.
- *
- * Delete-and-recreate rather than an in-place edit: a work party's dates can
- * move in either direction and the entries carry nothing of their own (no
- * meeting room, no per-occurrence exception), so regenerating is the honest
- * shape. It runs in one transaction under the existing calendar-series lock
- * with a `work-party:` key, so two officers saving the same work party cannot
- * interleave and duplicate its entries. Capped at MAX_OCCURRENCES days, the
- * calendar's own series limit.
- *
- * `resolveEntry` is called inside the transaction, after the lock, so the
- * entries are built from the work party as it is now rather than from a
- * caller's earlier read; null means "no entries" (deleted or removed).
- * `onlyIfLinked` leaves a work party with no entries alone — the edit path,
- * which must not add one that was never on the calendar.
- *
- * Returns the number of entries now linked.
+ * Delete every entry linked to the work party, then any series those entries
+ * belonged to that is now empty. The caller holds the work-party lock.
  */
 async function clearLinkedEntries(
   tx: Prisma.TransactionClient,
@@ -82,7 +83,7 @@ export async function removeWorkPartyCalendarEventsInTransaction(
   tx: Prisma.TransactionClient,
   workPartyEventId: string,
 ): Promise<void> {
-  await lockCalendarSeries(tx, `work-party:${workPartyEventId}`);
+  await lockWorkPartyCalendar(tx, workPartyEventId);
   const linked = await tx.calendarEvent.findMany({
     where: { workPartyEventId },
     select: { seriesId: true },
@@ -90,59 +91,106 @@ export async function removeWorkPartyCalendarEventsInTransaction(
   await clearLinkedEntries(tx, workPartyEventId, linked);
 }
 
+/**
+ * Replace every calendar entry linked to a work party with the entry
+ * `resolveEntry` builds, or remove them all when it builds none, inside the
+ * caller's transaction. With `replaceWorkPartyCalendarEvents` below, the ONE
+ * writer of `CalendarEvent.workPartyEventId` (#5148): the work-party routes
+ * call it on create, edit, delete and "Add to calendar", and the calendar's
+ * own edit and delete refuse linked entries, so the two cannot drift.
+ *
+ * Delete-and-recreate rather than an in-place edit: a work party's dates can
+ * move in either direction and the entries carry nothing of their own (no
+ * meeting room, no per-occurrence exception), so regenerating is the honest
+ * shape. It takes `lockWorkPartyCalendar` first (re-entrant, so a caller that
+ * already holds it, like the edit, loses nothing), so two officers saving the
+ * same work party cannot interleave and duplicate its entries. A window is
+ * capped at MAX_OCCURRENCES nights, the calendar's own series limit; the
+ * work-party form refuses a longer one (`workPartyEventDatesError`).
+ *
+ * `resolveEntry` is called after the lock, so the entries are built from the
+ * work party as it is now rather than from a caller's earlier read; null means
+ * "no entries" (deleted or removed). `onlyIfLinked` leaves a work party with
+ * no entries alone — the edit path, which must not add one that was never on
+ * the calendar. `zone` is the club's zone, resolved by the caller BEFORE its
+ * transaction opens.
+ *
+ * Returns the number of entries now linked.
+ */
+export async function replaceWorkPartyCalendarEventsInTransaction(
+  tx: Prisma.TransactionClient,
+  workPartyEventId: string,
+  resolveEntry: WorkPartyCalendarEntryResolver,
+  actorId: string,
+  zone: ClubTimeZone,
+  options: { onlyIfLinked?: boolean } = {},
+): Promise<number> {
+  await lockWorkPartyCalendar(tx, workPartyEventId);
+  const linked = await tx.calendarEvent.findMany({
+    where: { workPartyEventId },
+    select: { seriesId: true },
+  });
+  if (options.onlyIfLinked && linked.length === 0) return 0;
+  // Read the work party AFTER the lock: of two saves racing, the one that
+  // writes last also reads last, so the entries always match the newest row.
+  const entry = await resolveEntry(tx);
+  await clearLinkedEntries(tx, workPartyEventId, linked);
+  if (!entry) return 0;
+
+  const starts = entry.days
+    .slice(0, MAX_OCCURRENCES)
+    .map((day) => startOfClubDay(day, zone));
+  const [firstStart] = starts;
+  if (!firstStart) return 0;
+  const template: ResolvedEventData = {
+    title: entry.title,
+    location: entry.location,
+    details: entry.details,
+    allDay: true,
+    isMeeting: false,
+    startsAt: firstStart,
+    endsAt: null,
+    recurrence: null,
+  };
+
+  if (starts.length === 1) {
+    await tx.calendarEvent.create({
+      data: { ...buildStandaloneEventRow(template, actorId), workPartyEventId },
+    });
+    return 1;
+  }
+
+  const series = await tx.calendarEventSeries.create({
+    data: buildSeriesRow(
+      { frequency: "DAILY", interval: 1, endMode: "count", count: starts.length },
+      actorId,
+    ),
+  });
+  const rows = buildOccurrenceRows(starts, template, series.id, actorId).map(
+    (row) => ({ ...row, workPartyEventId }),
+  );
+  await tx.calendarEvent.createMany({ data: rows });
+  return rows.length;
+}
+
+/**
+ * `replaceWorkPartyCalendarEventsInTransaction` in a transaction of its own:
+ * the create and "Add to calendar" paths, which run after the work party is
+ * saved.
+ */
 export async function replaceWorkPartyCalendarEvents(
   workPartyEventId: string,
   resolveEntry: WorkPartyCalendarEntryResolver,
   actorId: string,
-  options: { onlyIfLinked?: boolean } = {},
 ): Promise<number> {
   const zone = await clubTimeZone();
-  return prisma.$transaction(async (tx) => {
-    await lockCalendarSeries(tx, `work-party:${workPartyEventId}`);
-    const linked = await tx.calendarEvent.findMany({
-      where: { workPartyEventId },
-      select: { seriesId: true },
-    });
-    if (options.onlyIfLinked && linked.length === 0) return 0;
-    // Read the work party AFTER the lock: of two saves racing, the one that
-    // writes last also reads last, so the entries always match the newest row.
-    const entry = await resolveEntry(tx);
-    await clearLinkedEntries(tx, workPartyEventId, linked);
-    if (!entry) return 0;
-
-    const starts = entry.days
-      .slice(0, MAX_OCCURRENCES)
-      .map((day) => startOfClubDay(day, zone));
-    const [firstStart] = starts;
-    if (!firstStart) return 0;
-    const template: ResolvedEventData = {
-      title: entry.title,
-      location: entry.location,
-      details: entry.details,
-      allDay: true,
-      isMeeting: false,
-      startsAt: firstStart,
-      endsAt: null,
-      recurrence: null,
-    };
-
-    if (starts.length === 1) {
-      await tx.calendarEvent.create({
-        data: { ...buildStandaloneEventRow(template, actorId), workPartyEventId },
-      });
-      return 1;
-    }
-
-    const series = await tx.calendarEventSeries.create({
-      data: buildSeriesRow(
-        { frequency: "DAILY", interval: 1, endMode: "count", count: starts.length },
-        actorId,
-      ),
-    });
-    const rows = buildOccurrenceRows(starts, template, series.id, actorId).map(
-      (row) => ({ ...row, workPartyEventId }),
-    );
-    await tx.calendarEvent.createMany({ data: rows });
-    return rows.length;
-  });
+  return prisma.$transaction((tx) =>
+    replaceWorkPartyCalendarEventsInTransaction(
+      tx,
+      workPartyEventId,
+      resolveEntry,
+      actorId,
+      zone,
+    ),
+  );
 }

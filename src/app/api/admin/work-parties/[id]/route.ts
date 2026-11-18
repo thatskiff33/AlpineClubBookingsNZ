@@ -5,11 +5,10 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { formatDateOnly } from "@/lib/date-only";
 import {
-  updateWorkPartyEventAndPromo,
   workPartyEventDatesError,
   workPartyEventSchema,
 } from "@/lib/work-party";
-import { syncUpdatedWorkPartyCalendar } from "@/lib/work-party-calendar";
+import { updateWorkPartyWithCalendar } from "@/lib/work-party-calendar";
 import { removeWorkPartyCalendarEventsInTransaction } from "@/lib/calendar-work-party-entries";
 
 export async function GET(
@@ -115,21 +114,20 @@ export async function PUT(
     }
   }
 
-  const event = await updateWorkPartyEventAndPromo(id, {
-    name: parsed.data.name,
-    description: parsed.data.description ?? null,
-    startDate: parsed.data.startDate,
-    endDate: parsed.data.endDate,
-    discountPercent: parsed.data.discountPercent,
-    active: parsed.data.active,
-    lodgeId: parsed.data.lodgeId ?? null,
-  });
-
-  // Fork #118: a work party that has calendar entries keeps them in step with
-  // its new dates and details. Deactivated, they stay but the calendar hides
-  // them.
-  const calendarWarning = await syncUpdatedWorkPartyCalendar(
-    event.id,
+  // #5148: a work party that has calendar entries has them rewritten in the
+  // same transaction as the save, so they never show its old dates.
+  // Deactivated, they stay but the calendar hides them.
+  const event = await updateWorkPartyWithCalendar(
+    id,
+    {
+      name: parsed.data.name,
+      description: parsed.data.description ?? null,
+      startDate: parsed.data.startDate,
+      endDate: parsed.data.endDate,
+      discountPercent: parsed.data.discountPercent,
+      active: parsed.data.active,
+      lodgeId: parsed.data.lodgeId ?? null,
+    },
     session.user.id
   );
 
@@ -150,11 +148,10 @@ export async function PUT(
       discountPercent: event.discountPercent,
       active: event.active,
       deactivated: existing.active && !event.active,
-      calendarSyncFailed: calendarWarning !== null,
     },
   });
 
-  return NextResponse.json({ event, calendarWarning });
+  return NextResponse.json({ event });
 }
 
 export async function DELETE(
@@ -189,7 +186,7 @@ export async function DELETE(
   }
 
   await prisma.$transaction(async (tx) => {
-    // Fork #118: its calendar entries and their series row go in the same
+    // #5148: its calendar entries and their series row go in the same
     // transaction, so a delete that fails leaves the calendar untouched.
     await removeWorkPartyCalendarEventsInTransaction(tx, id);
     await tx.workPartyEvent.delete({ where: { id } });

@@ -8,7 +8,7 @@ import {
 } from "../use-work-party-prefill";
 
 /**
- * Fork #118: `/book?workParty=<id>` fills in the stay from the SERVER's join
+ * #5148: `/book?workParty=<id>` fills in the stay from the SERVER's join
  * stay, selects the work party's lodge, and ticks the working bee once. The
  * wizard's own handlers are spies here; the hook never reads dates from the URL.
  */
