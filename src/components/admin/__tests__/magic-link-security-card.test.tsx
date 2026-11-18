@@ -206,6 +206,59 @@ describe("MagicLinkSecurityCard (#2103)", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
   });
 
+  // A write that never got an answer rejects with the browser's own words. Each
+  // step names its own failure: an offline expiry save must not read as the
+  // email sign-in link setting failing (ALP-650).
+  it("words an unanswered expiry save as the expiry failure, not the toggle failure", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderCard({ magicLink: true, initialTtlMinutes: 15 });
+    fireEvent.click(editButton());
+    fireEvent.change(screen.getByLabelText(/link expiry/i), {
+      target: { value: "30" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Could not update the link expiry.")).toBeTruthy(),
+    );
+    expect(screen.queryByText(/failed to fetch/i)).toBeNull();
+    expect(
+      screen.queryByText("Could not update the email sign-in link setting."),
+    ).toBeNull();
+    // Still in edit mode; the change did not persist.
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+  });
+
+  it("words an unanswered toggle write as the sign-in link failure", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/admin/modules" && !init?.method) {
+        return new Response(
+          JSON.stringify({ settings: DEFAULT_MODULE_SETTINGS }),
+          { status: 200 },
+        );
+      }
+      throw new TypeError("Failed to fetch");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderCard({ magicLink: false });
+    fireEvent.click(editButton());
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Could not update the email sign-in link setting."),
+      ).toBeTruthy(),
+    );
+    expect(screen.queryByText(/failed to fetch/i)).toBeNull();
+    expect(screen.queryByText("Could not update the link expiry.")).toBeNull();
+  });
+
   it("canEdit=false disables Edit and shows the view-only notice", () => {
     hookMock.canEdit = false;
     renderCard();

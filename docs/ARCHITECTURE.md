@@ -1860,7 +1860,13 @@ same shortcut against a normalising route would silently diverge. Each card
 keeps its own `save` callback — the
 GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
 copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
-maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Feedback rendering stays
+maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Any other sentence the
+officer should read is thrown as an `ApiRefusalError`
+(`src/lib/api-error-message.ts`; `apiRefusalFromResponse` reads a route's
+refusal into one). Everything else (a request that never got an answer, an
+unreadable body, a bug) shows the section's required `saveErrorFallback`, and
+its `loadErrorFallback` when it has a `load`, never the browser's own words such
+as "Failed to fetch" (#4976). Feedback rendering stays
 in the component, because booking-policy sections use `PolicyFeedback` while the
 security cards use `Alert`. Where the admin's attention goes is not per-card
 either, and the section wires nothing for the way in: Edit unmounts the button
