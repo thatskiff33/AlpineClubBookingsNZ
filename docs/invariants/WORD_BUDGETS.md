@@ -100,7 +100,7 @@ exceptions are proposed on #4990. The table now holds 75 rows and 46,141 words.
 | `INV-PRIV-016` | 1512 |
 | `INV-OPS-013` | 1354 |
 | `INV-CONFIG-004` | 1304 |
-| `INV-OPS-012` | 1214 |
+| `INV-OPS-012` | 1200 |
 | `INV-PAY-047` | 1164 |
 | `INV-MOD-055` | 1002 |
 | `INV-ADDPAY-036` | 1137 |
@@ -119,7 +119,7 @@ exceptions are proposed on #4990. The table now holds 75 rows and 46,141 words.
 | `INV-MONEY-029` | 808 |
 | `INV-LIFE-062` | 639 |
 | `INV-ADDPAY-017` | 637 |
-| `INV-PRIV-013` | 627 |
+| `INV-PRIV-013` | 625 |
 | `INV-MOD-006` | 623 |
 | `INV-ADDPAY-023` | 584 |
 | `INV-LOCK-002` | 589 |

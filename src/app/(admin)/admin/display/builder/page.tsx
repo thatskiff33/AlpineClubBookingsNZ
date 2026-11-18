@@ -17,6 +17,7 @@ import {
 } from "@/lib/lodge-display/built-in-seeds";
 import { DISPLAY_TERM_BOARD } from "@/lib/lodge-display/display-terminology";
 import DisplayBuilder from "./display-builder";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 // Visual builder surface (ADR-004 §1/§4). A NEW board is composed from a blank
 // skeleton; an EXISTING template opens here only when its Layout carries the
@@ -149,7 +150,7 @@ export default function DisplayBuilderPage() {
     <div className="space-y-6 p-6">
       <div>
         <BackLink href="/admin/display" label="Lobby Display" />
-        <h1 className="mt-2 text-2xl font-bold">Visual builder</h1>
+        <h1 className="mt-2 text-2xl font-bold">{getAdminPage("display-builder").label}</h1>
         <p className="text-muted-foreground text-sm">
           {/* #2247: "board" is the operator-facing word for what a screen
               shows, so say what it is the first time this page uses it. The

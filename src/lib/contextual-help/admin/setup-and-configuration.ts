@@ -52,19 +52,14 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
   entry(
     "/admin/setup/foundations",
     help(
-      "Initial Setup",
-      "Initial Setup groups first-install readiness, modules, lodge records, and health checks.",
+      "Foundations Setup",
+      "Foundations Setup groups club identity, modules, lodge records, and health checks.",
       [
-        "Open Setup Checklist before marking setup complete.",
+        "Return to Setup for readiness progress and provider tests before marking setup complete.",
         "Review Modules and Lodges before enabling module-backed or multi-lodge workflows.",
         "Use System Health to confirm runtime readiness before launch.",
       ],
       [
-        {
-          name: "Setup Checklist",
-          description:
-            "Readiness KPIs, blockers, provider tests, and setup progress.",
-        },
         {
           name: "Modules",
           description:
