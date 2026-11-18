@@ -127,7 +127,7 @@ export function FoodOrderSettingsSection() {
       <Card {...section.sectionRegionProps}>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
-            <CardTitle {...section.titleProps}>Where food orders go</CardTitle>
+            <CardTitle {...section.titleProps} headingLevel={2}>Where food orders go</CardTitle>
             <CardDescription>
               Every new order is emailed to this address, with a link to the
               order.

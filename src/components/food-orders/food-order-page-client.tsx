@@ -86,7 +86,7 @@ export function FoodOrderPageClient() {
       <div className="mx-auto max-w-xl space-y-6 p-4 sm:p-6">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle headingLevel={1} className="flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-primary" aria-hidden="true" />
               Thank you — your order has been placed
             </CardTitle>
