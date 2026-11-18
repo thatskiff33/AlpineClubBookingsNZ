@@ -7,7 +7,7 @@ import type { CashRefundMethod } from "../../xero-refund-method";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
 import { eventPosted } from "./booking-journal-read";
 import { memberMoneyChainTip, refundObligationChain } from "./refund-family";
-import { cardRefundAppliedObligations } from "./refund-obligation-map";
+import { appliedObligationsOfEvents, cardRefundAppliedObligations } from "./refund-obligation-map";
 import { planRefundNote, type RefundExportComponent, type RefundExportPlan, type RefundExportProblem } from "./refund-note-plan";
 import { planRefundNotePayment } from "./refund-payment-plan";
 import { writeExportManifest } from "./store";
@@ -119,19 +119,11 @@ function obligationComponent(obligation: ObligationRow | null | undefined, named
   return { account: "REFUND_PAYABLE", chargeIdentity: obligation.obligationKey, cents: obligation.faceCents };
 }
 
-/** The debts a cash event applied, with the event that applied them; a card refund's through `cardRefundAppliedObligations`. */
+/** The debts a cash event applied, with the event that applied them, through the one reader in `refund-obligation-map.ts`. */
 async function appliedByCash(db: Db, cash: CashEvent): Promise<{ eventKey: string; obligationKeys: string[] } | null> {
   // An R12 posted unapplied pays no debt itself; its answer (Dr RP, Cr AR) names the debt later.
   if (cash.kind === "CARD") return cardRefundAppliedObligations(db, cash.stripeRefundId);
-  for (const eventKey of cash.keys) {
-    const event = await db.memberMoneyEvent.findUnique({
-      where: { eventKey },
-      select: { journal: { select: { applications: { select: { obligation: { select: { obligationKey: true } } } } } } },
-    });
-    const obligationKeys = [...new Set((event?.journal?.applications ?? []).map((a) => a.obligation.obligationKey))];
-    if (obligationKeys.length > 0) return { eventKey, obligationKeys };
-  }
-  return null;
+  return appliedObligationsOfEvents(db, cash.keys);
 }
 
 /** The one live refund debt (R05) a note answers, read from its door; a watermark note names none. */

@@ -571,6 +571,15 @@ describe("the refund note's payment manifest", () => {
     expect(written()).toEqual([expect.objectContaining({ outcome: "COVERED", coverage: [expect.objectContaining({ chargeIdentity: successor })] })]);
   });
 
+  it("an R14 reversed and never re-posted is no live slice: COMPONENT_UNUSABLE, never coverage", async () => {
+    const base = memberMoneyEventKeys.handBackPaid("task_1");
+    journalHolding({ [base]: cashEvent({ obligationKey: HAND_BACK_DEBT, faceCents: 5000 }, 5000, "BANK", { reversedBy: "journal_rev" }) });
+
+    await recordPayment({ handBackTaskId: "task_1" });
+
+    expect(written()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE", coverage: [] })]);
+  });
+
   it("a hand-back paid in cash posts its R14 on CASH: a known COMPONENT_UNUSABLE conflict, never coverage", async () => {
     journalHolding({ [memberMoneyEventKeys.handBackPaid("task_1")]: cashEvent({ obligationKey: HAND_BACK_DEBT, faceCents: 5000 }, 5000, "CASH") });
 
