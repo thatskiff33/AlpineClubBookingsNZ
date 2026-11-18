@@ -486,10 +486,10 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:127",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:959",
-  "src/lib/booking-cancel.ts:2548",
-  "src/lib/booking-cancel.ts:570",
-  "src/lib/booking-date-modification-service.ts:342",
+  "src/lib/booking-batch-modification-service.ts:957",
+  "src/lib/booking-cancel.ts:2529",
+  "src/lib/booking-cancel.ts:549",
+  "src/lib/booking-date-modification-service.ts:338",
   "src/lib/booking-delete.ts:120",
   "src/lib/booking-delete.ts:69",
   "src/lib/booking-email-authority.ts:115",
@@ -501,7 +501,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1427",
   "src/lib/group-booking.ts:275",
   "src/lib/kiosk-access.ts:230",
-  "src/lib/manual-refund-task-queue-payload.ts:366",
+  "src/lib/manual-refund-task-queue-payload.ts:404",
   "src/lib/requested-room-write.ts:62",
   "src/lib/waitlist-cross-lodge.ts:344",
   "src/lib/waitlist-cross-lodge.ts:532",
@@ -523,8 +523,8 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
   "src/lib/member-guest-consent-service.ts:1355",
-  "src/lib/payment-recovery.ts:2776",
-  "src/lib/payment-recovery.ts:2828",
+  "src/lib/payment-recovery.ts:2813",
+  "src/lib/payment-recovery.ts:2865",
   "src/lib/xero-admin-health.ts:423",
 ];
 
@@ -779,7 +779,7 @@ describe("#3369: an `organisation` selection names a relation that exists", () =
 
 /** Measured, not counted by hand. Re-measure by running this test. */
 const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
-  "src/app/api/admin/payments/manual-refund-tasks/route.ts:81",
+  "src/app/api/admin/payments/manual-refund-tasks/route.ts:82",
   "src/lib/bed-allocation-removal.ts:144",
   // #3750: the change-request decision route's `includeRequestDetail`, moved
   // out of the route file to keep it in budget. Verified by hand: it is passed
@@ -805,7 +805,7 @@ const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   // it in budget. Verified by hand: written through
   // `Prisma.validator<Prisma.ManualRefundTaskSelect>()`, and `organisation` sits
   // under its `booking` relation, which declares it.
-  "src/lib/manual-refund-task-resolution-select.ts:57",
+  "src/lib/manual-refund-task-resolution-select.ts:58",
   // Added when the member lodge roster (#2942, from `main`) was routed through
   // `bookingOwner()` on the eighth epic sync. Verified by hand, which is what
   // this list asks for: `MEMBER_ROSTER_BOOKING_SELECT` is written

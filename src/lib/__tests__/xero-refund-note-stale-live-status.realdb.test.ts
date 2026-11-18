@@ -419,14 +419,14 @@ function reading(status: string, updatedAt: string, payments: Array<Record<strin
       await seed(kase);
       await prisma.payment.update({ where: { id: paymentId }, data: { refundedAmountCents: 5_000 } });
       let current = reading("AUTHORISED", EARLY);
-      const floor = await import("@/lib/xero-inbound/credit-note-bank-transfer-floor");
-      const original = floor.floorBankTransferRefundedTotal;
+      const columns = await import("@/lib/xero-inbound/xero-refunded-columns");
+      const original = columns.decideXeroRefundedColumns;
       let release!: () => void;
       const gate = new Promise<void>((resolve) => (release = resolve));
       let reached!: () => void;
       const atClaim = new Promise<void>((resolve) => (reached = resolve));
-      // Every recount floors a bank transfer just before its claim (a no-op for a card).
-      const spy = vi.spyOn(floor, "floorBankTransferRefundedTotal").mockImplementationOnce(async (...args: Parameters<typeof original>) => {
+      // Every recount decides its columns just before its claim (#4449: `decideXeroRefundedColumns`, either source).
+      const spy = vi.spyOn(columns, "decideXeroRefundedColumns").mockImplementationOnce(async (...args: Parameters<typeof original>) => {
         reached();
         await gate;
         return original(...args);

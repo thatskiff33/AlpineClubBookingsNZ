@@ -1,3 +1,4 @@
+import { releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/saved-card-charge-claim";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { NextRequest, NextResponse } from "next/server";
@@ -8,7 +9,6 @@ import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-qu
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
-  reconcileBedAllocationsForBookingWithGlobalLockHeld,
   reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -243,7 +243,7 @@ export async function POST(request: NextRequest) {
         }
         const claimed = await tx.booking.updateMany({
           where: { id: bookingId, status: BookingStatus.PENDING },
-          data: { status: BookingStatus.CONFIRMED, nonMemberHoldUntil: null },
+          data: { status: BookingStatus.CONFIRMED, savedCardClaimAt: new Date(), nonMemberHoldUntil: null },
         });
         if (claimed.count === 0) {
           return { error: "Booking is no longer pending" as const, status: 409 };
@@ -348,10 +348,8 @@ export async function POST(request: NextRequest) {
     const releaseChargeClaim = async (answer?: {
       attemptRowId: string;
       paymentIntent: SavedCardChargeAnswer;
-    }) =>
-      prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        await acquireLodgeCapacityLock(tx, lodgeId);
+    }) => {
+      const outcome = await runSavedCardClaimRelease(async (tx) => {
         if (answer) {
           await settleSavedCardChargeAttempt({ journal: receiptJournal, ...answer, paymentId, store: tx });
         }
@@ -382,22 +380,14 @@ export async function POST(request: NextRequest) {
           }
           return { released: false };
         }
-        const released = await tx.booking.updateMany({
-          where: { id: bookingId, status: BookingStatus.CONFIRMED },
-          data: {
-            status: BookingStatus.PENDING,
-            nonMemberHoldUntil: booking.nonMemberHoldUntil,
-          },
+        return releaseSavedCardChargeClaim(tx, {
+          bookingId,
+          restoreHoldUntil: booking.nonMemberHoldUntil,
+          previousRange,
         });
-        if (released.count > 0) {
-          await reconcileBedAllocationsForBookingWithGlobalLockHeld({
-            bookingId,
-            db: tx,
-            previousRange,
-          });
-        }
-        return { released: released.count > 0 };
-      });
+      }, { bookingId, lodgeId });
+      return outcome.ok ? outcome.value : { released: false };
+    };
     claimReleaser = async () => {
       await releaseChargeClaim();
     };

@@ -54,7 +54,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 // Imported after the mocks are registered.
-import LodgeConfigurationHubPage from "@/app/(admin)/admin/lodges/[id]/page";
+import LodgeConfigurationHubPage from "@/app/(admin)/admin/lodge-ops/lodges/[id]/page";
 import { lodgeCapacitySettingsHref } from "@/components/admin/lodge-capacity-settings-link";
 
 const LODGE = {

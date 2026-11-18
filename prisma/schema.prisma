@@ -1982,6 +1982,7 @@ model Booking {
   // non-member guests cannot be accommodated, instead of the default partial
   // bump (drop the non-members, keep the members). Both happen pre-charge.
   cancelIfGuestsBumped      Boolean            @default(false)
+  savedCardClaimAt          DateTime? // Durable off-session charge claim; swept after interruption.
   nonMemberHoldUntil        DateTime?
   // Split-booking group link (issue #738). A mixed member/non-member party is
   // stored as two bookings: a member booking that is paid up front and holds
@@ -3646,6 +3647,12 @@ model PaymentRecoveryOperation {
   lastError            String?                        @db.Text
   processingStartedAt  DateTime?
   succeededAt          DateTime?
+  // #4755: the carried ask the replay last saw in a 3D Secure challenge, and
+  // when it first saw it; null when none. Only `CREATE_ADDITIONAL_PAYMENT_INTENT`
+  // rows set them (`carriedAskPaymentWait`): the replay waits up to an hour from
+  // that first sighting before it supersedes the ask the member is confirming.
+  carriedAskChallengeIntentId String?
+  carriedAskChallengeSeenAt   DateTime?
   createdAt            DateTime                       @default(now())
   updatedAt            DateTime                       @updatedAt
 
@@ -9553,6 +9560,10 @@ model MemberMoneyRefundReservationRelease {
 /// M13 (#4525): the outbound document families whose coverage a manifest records.
 enum MemberMoneyExportDocumentRole {
   PRIMARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): an edit's supplementary invoice, or a review's second ask.
+  SUPPLEMENTARY_BOOKING_INVOICE
+  /// #4525 (ALP-436): a rewrite of an issued primary invoice's descriptions and dates.
+  PRIMARY_BOOKING_INVOICE_UPDATE
 }
 
 enum MemberMoneyExportOutcome {
@@ -9565,6 +9576,10 @@ enum MemberMoneyExportConflictReason {
   STAY_CENTS
   FEE_CENTS
   COMPONENT_UNUSABLE
+  /// A supplementary invoice nets a price reduction against a fee: no component is billed whole or as a slice.
+  REDUCTION_NETTED
+  /// A primary-invoice update whose total is not its covered primary manifest's.
+  PRIMARY_UNMATCHED
 }
 
 /// M13 (#4525): what one sent provider document covers, written once under its
@@ -9590,18 +9605,21 @@ model MemberMoneyExportManifest {
   @@index([bookingId])
 }
 
-/// One journal component a manifest's document bills whole. A component is billed
-/// by at most one document of each role.
+/// One journal component a manifest's document bills: whole (sliceKey ''), or the
+/// slice one journal event moved (sliceKey: that event's key, supplementary only).
+/// A component is billed whole by at most one document of each role, and each
+/// slice by at most one.
 model MemberMoneyExportCoverage {
   id String @id @default(cuid())
   manifestId String
   documentRole MemberMoneyExportDocumentRole
   account MemberMoneyAccount
   chargeIdentity String
+  sliceKey String @default("")
   coveredCents Int
   taxCode String?
   manifest MemberMoneyExportManifest @relation(fields: [manifestId, documentRole], references: [id, documentRole], onDelete: Restrict, onUpdate: Restrict)
-  @@unique([documentRole, account, chargeIdentity])
+  @@unique([documentRole, account, chargeIdentity, sliceKey])
   @@index([manifestId, documentRole])
 }
 

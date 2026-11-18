@@ -41,6 +41,7 @@ import {
   ADMIN_FULL_ADMIN_ONLY_ACTION_REASON,
 } from "@/hooks/use-admin-area-edit-access";
 import { registrationMessage, useLodgeLinkStep, type KeySaveRegistration } from "./server-connect-step";
+import { adminHref } from "@/lib/admin-hubs";
 
 interface InitialState {
   apiKeySet: boolean;
@@ -609,7 +610,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
                 <p className="text-sm text-muted-foreground">
                   The registry of other clubs&apos; lodges (name, location, booking
                   officer, beds).{" "}
-                  <Link href="/admin/lodges" className="font-medium underline underline-offset-4">
+                  <Link href={adminHref("lodges")} className="font-medium underline underline-offset-4">
                     View all lodge details
                   </Link>
                 </p>

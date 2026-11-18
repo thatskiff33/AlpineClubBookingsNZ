@@ -124,6 +124,10 @@ description = "An original-shape saved-card attempt key (no `_v2` suffix), once 
 regexes = ['''^pending_charge_bk_1_txn_1$''']
 
 [[allowlists]]
+description = "A saved-card attempt key the #4993 stranded-claim test in `cron-confirm-pending.test.ts` expects the ordinary pass to replay (commit 203a75cb5 in PR #5129's history first carries it). It is the test's own label for a fabricated booking `b1` and attempt row `txn_stranded`, in the `_v2` key shape: readable snake_case, no credential, and it names no real intent or booking. `generic-api-key` fires on the `idempotencyKey` identifier, not the value. The same class as `pending_charge_b1` above. Only this exact literal is forgiven."
+regexes = ['''^pending_charge_b1_txn_stranded_v2$''']
+
+[[allowlists]]
 description = "A readable fixture idempotency key from the booking ledger's real-PostgreSQL proof (#3595), in a commit this pull request cannot rewrite: `generic-api-key` matched it because the field is called `postingKey`. Not a credential — a test's own label for a line it posted and deleted. The file now uses plain words below the rule's length floor; this literal is forgiven only because history keeps it. Same class as `pending_charge_b1` above."
 regexes = ['''^k-3595-contrast$''']
 

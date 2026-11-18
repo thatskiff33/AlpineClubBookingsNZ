@@ -436,7 +436,7 @@ describe("#2262 guard 1 — the manual settlement runs the ONE settlement body",
           ],
         },
       },
-      data: { status: BookingStatus.PAID, draftExpiresAt: null },
+      data: { status: BookingStatus.PAID, draftExpiresAt: null, savedCardClaimAt: null },
     });
     expect(mocks.reconcileBedAllocationsForBooking).toHaveBeenCalledWith(
       expect.objectContaining({ bookingId: "booking-1", db: tx })
