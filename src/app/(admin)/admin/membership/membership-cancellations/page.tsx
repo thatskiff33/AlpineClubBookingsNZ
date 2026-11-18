@@ -52,6 +52,7 @@ import type {
 import { useClubTime } from "@/components/club-time-provider";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { cn } from "@/lib/utils";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 
@@ -605,6 +606,7 @@ function MembershipCancellationRequests() {
           : base,
       );
       setOrphanedLinks(pickDetachedLinks(body.orphanedLinks));
+      notifyAdminQueueChanged();
       await loadRequests();
     } catch (err) {
       const failure =
@@ -666,6 +668,7 @@ function MembershipCancellationRequests() {
       // #2255: archive runs the same family-link sweep as cancellation, so it
       // gets the same declaration rather than only a count in the audit.
       setOrphanedLinks(pickDetachedLinks(body.orphanedLinks));
+      notifyAdminQueueChanged();
       await loadArchiveRequests();
     } catch (err) {
       setError(
