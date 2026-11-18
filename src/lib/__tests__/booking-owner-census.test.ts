@@ -486,12 +486,12 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/app/api/payments/create-setup-intent/route.ts:59",
   "src/app/api/payments/switch-to-internet-banking/route.ts:132",
   "src/lib/adult-member-hosting-review.ts:3256",
-  "src/lib/booking-batch-modification-service.ts:957",
-  "src/lib/booking-cancel.ts:2529",
-  "src/lib/booking-cancel.ts:549",
-  "src/lib/booking-date-modification-service.ts:338",
-  "src/lib/booking-delete.ts:120",
-  "src/lib/booking-delete.ts:69",
+  "src/lib/booking-batch-modification-service.ts:954",
+  "src/lib/booking-cancel.ts:2531",
+  "src/lib/booking-cancel.ts:551",
+  "src/lib/booking-date-modification-service.ts:316",
+  "src/lib/booking-delete.ts:121",
+  "src/lib/booking-delete.ts:70",
   "src/lib/booking-email-authority.ts:115",
   "src/lib/booking-guest-removal-service.ts:429",
   "src/lib/booking-guest-removal-service.ts:656",
@@ -502,12 +502,12 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/group-booking.ts:276",
   "src/lib/kiosk-access.ts:230",
   "src/lib/manual-refund-task-queue-payload.ts:404",
-  "src/lib/requested-room-write.ts:62",
-  "src/lib/waitlist-cross-lodge.ts:344",
-  "src/lib/waitlist-cross-lodge.ts:532",
-  "src/lib/waitlist.ts:1091",
-  "src/lib/waitlist.ts:949",
-  "src/lib/xero-applied-credit-spent-outside-app.ts:174",
+  "src/lib/requested-room-write.ts:63",
+  "src/lib/waitlist-cross-lodge.ts:346",
+  "src/lib/waitlist-cross-lodge.ts:534",
+  "src/lib/waitlist.ts:1093",
+  "src/lib/waitlist.ts:951",
+  "src/lib/xero-applied-credit-spent-outside-app.ts:175",
   "src/lib/xero-period-lock-guard.ts:569",
 ];
 
@@ -522,7 +522,7 @@ const OPTIONAL_OWNER_READ_SITES: readonly string[] = [
   // records that store the owner's member id (null for a school), and one
   // admin health snapshot that renders the address with its own `?? ""`.
   "src/lib/diagnostics/tools/packs/booking-evidence.ts:1432",
-  "src/lib/member-guest-consent-service.ts:1355",
+  "src/lib/member-guest-consent-service.ts:1356",
   "src/lib/payment-recovery.ts:2813",
   "src/lib/payment-recovery.ts:2865",
   "src/lib/xero-admin-health.ts:423",
@@ -780,7 +780,7 @@ describe("#3369: an `organisation` selection names a relation that exists", () =
 /** Measured, not counted by hand. Re-measure by running this test. */
 const UNROOTED_ORGANISATION_SELECTIONS: readonly string[] = [
   "src/app/api/admin/payments/manual-refund-tasks/route.ts:82",
-  "src/lib/bed-allocation-removal.ts:144",
+  "src/lib/bed-allocation-removal.ts:145",
   // #3750: the change-request decision route's `includeRequestDetail`, moved
   // out of the route file to keep it in budget. Verified by hand: it is passed
   // as `include` to `bookingChangeRequest.findUnique`, and `organisation` sits
