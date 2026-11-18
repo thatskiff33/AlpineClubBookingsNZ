@@ -629,8 +629,10 @@ the one refund Stripe failed later, and that refund's R12 its R13: the
 `reversal:<journalId>` batch's Stripe-clearing debit, covered whole. An invoice
 for less than that R13, because the close paid back part or the card note's
 excess was smaller, is `CENTS` and covers nothing; never a part cover. A row
-owed for no failed refund or several, or an R12 missing or not yet reversed, is
-`COMPONENT_UNUSABLE`; an R13 an earlier reversal covers is `ALREADY_COVERED`.
+owed for no failed refund or several, an R12 missing or not yet reversed, or an
+R13 itself reversed, is `COMPONENT_UNUSABLE`; an R13 an earlier reversal covers
+is `ALREADY_COVERED`. Both replays (this and the primary booking invoice) read
+the stored lines through one reader, `storedInvoiceRequestLines`.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
