@@ -106,9 +106,12 @@ vi.mock("@/lib/email", () => ({
 // #4069: the cash-cover reader is the email's one source of what is owed. It is
 // mocked here so this suite pins what the hook DOES with its answer; the answer
 // itself is `booking-cash-evidence.test.ts` and its realdb twin.
-const readBookingCashCover = vi.fn<
-  (tx: unknown, bookingId: string) => Promise<import("@/lib/booking-cash-evidence").BookingCashCover | null>
->(async () => null);
+type CashCover = import("@/lib/booking-cash-evidence").BookingCashCover | null;
+const readBookingCashCover = vi.fn(async (tx: unknown, bookingId: string): Promise<CashCover> => {
+  void tx;
+  void bookingId;
+  return null;
+});
 vi.mock("@/lib/booking-cash-evidence", () => ({
   readBookingCashCover: (tx: unknown, bookingId: string) => readBookingCashCover(tx, bookingId),
 }));
@@ -1400,7 +1403,7 @@ describe("notifyApproved reads the cash cover and the held beds in one snapshot 
   });
   type Cover = Awaited<ReturnType<typeof readBookingCashCover>>;
 
-  function hooksFor(createdBookingId: string | undefined) {
+  function hooksFor(createdBookingId: string | null) {
     const { hooks, outcome } = buildPolicyExceptionApprovalHooks({
       format: CLUB_FORMAT_TEST,
       todayAtClub: FIXTURE_CLUB_DAY,
@@ -1492,7 +1495,7 @@ describe("notifyApproved reads the cash cover and the held beds in one snapshot 
   it("sends nothing for an approved change to an existing booking", async () => {
     // A MODIFICATION sets no created booking: `modifyBookingBatch` sends the
     // canonical change notice itself, and a second notice would compete with it.
-    await hooksFor(undefined).notifyApproved?.({} as never);
+    await hooksFor(null).notifyApproved?.({} as never);
     expect(snapshotTransaction).not.toHaveBeenCalled();
     expect(bookingFindUnique).not.toHaveBeenCalled();
     expect(sendBookingPolicyExceptionApprovedEmail).not.toHaveBeenCalled();

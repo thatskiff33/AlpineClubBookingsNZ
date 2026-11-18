@@ -608,7 +608,7 @@ export function bookingPolicyExceptionApprovedPaymentNote(
       return {
         amount,
         paymentNote: args.bedsHeld
-          ? `There is ${amount} to pay on this booking. Your beds are currently held. Open it from your account to pay, or to see the bank-transfer instructions if you are paying by bank transfer.`
+          ? `There is ${amount} to pay on this booking. Your beds are held for now; open it from your account to pay, or check the bank-transfer details and deadline there.`
           : `There is ${amount} to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid.`,
       };
     }
@@ -617,8 +617,7 @@ export function bookingPolicyExceptionApprovedPaymentNote(
     case "organiser_pays":
       return {
         amount: "",
-        paymentNote:
-          "Your group organiser pays for this stay, so there is nothing for you to pay on this booking.",
+        paymentNote: "Your group organiser pays for this stay.",
       };
     case "unknown":
     case undefined:
