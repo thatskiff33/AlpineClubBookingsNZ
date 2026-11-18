@@ -7,11 +7,13 @@
  * the stored figure. A correction synced before the settle (or whose sync read
  * the payment while it was still uncaptured) found no such receipt and counted
  * nothing; the settle then captured the receipt at the stored figure, which
- * still includes the corrected amount. The keep counts such a correction in
- * its own transaction when it can (`keptCorrectionRefundCents` in
- * `settle-from-cash.ts`); this recount, after the commit, is the backstop: a
- * replay, a refunded total the keep left alone, and a correction whose sync
- * wrote its links while the settle ran.
+ * still includes the corrected amount. The keep decides the whole refunded
+ * total in its own transaction (#4449, `keptRefundedTotal` in
+ * `settle-from-cash.ts`), and a correction whose allocation the note sync
+ * writes while the settle runs decides it again under the same `Payment` row
+ * (`writeCurrentCreditNoteAllocation`); this recount, after the commit, is the
+ * backstop: a replay, an invoice whose payment only its link names, and any
+ * keep whose decision a later writer moved.
  *
  * It is the inbound recount with no note being synced
  * (`repairRefundedPaymentBusinessState`, `creditNoteId: null`): every note,
@@ -26,8 +28,28 @@
  * after every other write, so the event is retried and the replay recounts.
  */
 import logger from "@/lib/logger";
+import type { ClubFormat } from "@/lib/club-format";
 import { repairRefundedPaymentBusinessState } from "./credit-note-repairs";
+import { type BankTransferFloorAlert, sendBankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
 import type { AppliedCreditNote } from "./settle-from-cash";
+
+/** What a bank-transfer settle leaves for after it commits (#4095, #4449). */
+export type KeptSettleFollowUp = { correctionNotes: AppliedCreditNote[]; floorAlert: BankTransferFloorAlert | null };
+
+/**
+ * After a settle commits: alert a whole refunded total its keep held at the
+ * bank-transfer floor (`INV-ADDPAY-021`), then run the recount below. Returns
+ * the correction ids it could not recount.
+ */
+export async function afterKeptSettleCommits(
+  invoiceId: string,
+  paymentId: string,
+  followUp: KeptSettleFollowUp,
+  format: ClubFormat,
+): Promise<string[]> {
+  if (followUp.floorAlert) await sendBankTransferFloorAlert(followUp.floorAlert, format);
+  return recountCorrectionsAfterKeptSettle(invoiceId, paymentId, followUp.correctionNotes);
+}
 
 export async function recountCorrectionsAfterKeptSettle(
   invoiceId: string,
