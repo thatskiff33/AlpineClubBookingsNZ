@@ -611,7 +611,12 @@ the note's and the payment's existing keys, with the Xero id as the provider
 object; a replay hashes the stored request's lines, never rebuilt ones. A note
 whose cents differ is `CENTS`; one naming no single debt (a watermark note) or a
 missing R05 or R12 is `COMPONENT_UNUSABLE`; a debt an earlier note already
-covers is `ALREADY_COVERED`. A payment left unsettled, part-settled or found
+covers is `ALREADY_COVERED`. A bank note's R14 is read from what is posted:
+`paidAnotherWay(record)` for a close, else `handBackPaid(task)` for a hand-back
+(including a cancellation noted on its own record, a card-shortfall part and a
+review closed by hand), each at its live chain tip, so a reversed R14 is never
+covered. A hand-back paid "In cash" posts its R14 on CASH while its Xero
+payment settles to the bank code: a known `COMPONENT_UNUSABLE` conflict. A payment left unsettled, part-settled or found
 already settled records nothing. The role `FAILED_LATER_REFUND_REVERSAL` is
 reserved: #4369's `createXeroCardRefundReversalInvoice` sends that reversal
 today, and recording its manifest is a later step.

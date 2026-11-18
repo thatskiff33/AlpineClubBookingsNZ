@@ -161,6 +161,7 @@ import { createXeroCreditNote } from "@/lib/xero-credit-notes";
 import { recordSentRefundNotePaymentManifest } from "@/lib/xero-refund-note-settlement";
 import { recordRefundNoteManifest, recordRefundNotePaymentManifest } from "@/lib/member-money/doors";
 import { hutFeeRefundLine } from "@/lib/xero-hut-fee-line-codes";
+import { memberMoneyChainKey, memberMoneyEventKeys } from "@/lib/member-money/internal/keys";
 
 const BOOKING_ID = "cmbooking0001xyz";
 const PAYMENT_ID = "cmpayment0001xyz";
@@ -284,20 +285,44 @@ function written(role?: string) {
   return mocks.writeExportManifest.mock.calls.map((call) => call[1]).filter((row) => !role || row.documentRole === role);
 }
 
-/** An R12's journal, paying one refund debt from Stripe clearing. */
-function cardRefundEvent(obligation: { obligationKey: string; faceCents: number; kind?: string; reversed?: boolean }, cashCents: number) {
+/** The refund debts the stubbed journal holds, read by key (`memberMoneyObligation.findUnique`). */
+const obligations = new Map<string, unknown>();
+beforeEach(() => {
+  obligations.clear();
+  mocks.memberMoneyObligationFindUnique.mockImplementation(async ({ where }: { where: { obligationKey: string } }) =>
+    obligations.get(where.obligationKey) ?? null);
+});
+
+type DebtFixture = { obligationKey: string; faceCents: number; kind?: string; reversed?: boolean };
+
+/** A cash event's journal paying one refund debt, crediting `account`; the debt is registered with the journal. */
+function cashEvent(obligation: DebtFixture, cashCents: number, account: string, options: { reversedBy?: string } = {}) {
+  const row = {
+    obligationKey: obligation.obligationKey, kind: obligation.kind ?? "REFUND", faceCents: obligation.faceCents,
+    journal: { reversedBy: obligation.reversed ? { id: "rev" } : null },
+  };
+  obligations.set(obligation.obligationKey, row);
   return {
+    id: `event:${obligation.obligationKey}`,
     journal: {
-      applications: [{ obligation: {
-        obligationKey: obligation.obligationKey, kind: obligation.kind ?? "REFUND", faceCents: obligation.faceCents,
-        journal: { reversedBy: obligation.reversed ? { id: "rev" } : null },
-      } }],
+      reversedBy: options.reversedBy ? { id: options.reversedBy } : null,
+      applications: [{ obligation: row }],
       lines: [
         { account: "REFUND_PAYABLE", side: "DEBIT", amountCents: cashCents },
-        { account: "STRIPE_CLEARING", side: "CREDIT", amountCents: cashCents },
+        { account, side: "CREDIT", amountCents: cashCents },
       ],
     },
   };
+}
+
+/** An R12's journal, paying one refund debt from Stripe clearing. */
+function cardRefundEvent(obligation: DebtFixture, cashCents: number) {
+  return cashEvent(obligation, cashCents, "STRIPE_CLEARING");
+}
+
+/** A journal holding exactly these events by key; every other key is unposted. */
+function journalHolding(events: Record<string, unknown>) {
+  mocks.memberMoneyEventFindUnique.mockImplementation(async ({ where }: { where: { eventKey: string } }) => events[where.eventKey] ?? null);
 }
 
 const DEBT = "refund-obligation|cancellation|cancel_1";
@@ -441,6 +466,16 @@ describe("recordRefundNoteManifest", () => {
     expect(written()).toEqual([]);
   });
 
+  it("a cancellation hand-back noted on its own record covers the debt its hand-back R14 paid", async () => {
+    journalHolding({ [memberMoneyEventKeys.handBackPaid("task_1")]: cashEvent({ obligationKey: "refund-obligation|hand-back|task_1", faceCents: 5000 }, 5000, "BANK") });
+
+    await recordRefundNoteManifest(built({ handBackTaskId: "task_1", paidAnotherWayTaskId: "task_1" }));
+
+    expect(written()).toEqual([expect.objectContaining({
+      outcome: "COVERED", coverage: [{ account: "REFUND_PAYABLE", chargeIdentity: "refund-obligation|hand-back|task_1", coveredCents: 5000, taxCode: null }],
+    })]);
+  });
+
   it("a request's note reads its live debt from the chain", async () => {
     mocks.memberMoneyEventFindUnique.mockImplementation(async ({ where }: { where: { eventKey: string } }) =>
       where.eventKey === "refund-obligation|refund-request|rr_1" ? { journal: { reversedBy: null } } : null);
@@ -477,6 +512,80 @@ describe("the refund note's payment manifest", () => {
       documentRole: "REFUND_NOTE_PAYMENT", legacyKey: "pay-key", outcome: "COVERED", providerInvoiceId: "pay_1",
       coverage: [{ account: "STRIPE_CLEARING", chargeIdentity: "refund:re_1", coveredCents: 5000, taxCode: null }],
     })]);
+  });
+
+  const HAND_BACK_DEBT = "refund-obligation|hand-back|task_1";
+  const recordPayment = (requestPayload: Record<string, string>) => {
+    mocks.operationFindUnique.mockResolvedValue({ requestPayload });
+    return recordRefundNotePaymentManifest({ paymentId: PAYMENT_ID, creditNoteId: "cn_1", operationId: "op_1", refundMethod: "internet-banking", legacyKey: "pay-key", sent });
+  };
+
+  it("a cancellation hand-back noted on its own record covers its R14 under hand-back-paid, not paid-another-way", async () => {
+    const r14 = memberMoneyEventKeys.handBackPaid("task_1");
+    journalHolding({ [r14]: cashEvent({ obligationKey: HAND_BACK_DEBT, faceCents: 5000 }, 5000, "BANK") });
+
+    await recordPayment({ handBackTaskId: "task_1", paidAnotherWayTaskId: "task_1" });
+
+    expect(written()).toEqual([expect.objectContaining({
+      outcome: "COVERED", coverage: [{ account: "BANK", chargeIdentity: r14, coveredCents: 5000, taxCode: null }],
+    })]);
+  });
+
+  it("a cancel card-shortfall hand-back, which names only paidAnotherWayTaskId, covers its hand-back's R14", async () => {
+    const r14 = memberMoneyEventKeys.handBackPaid("task_2");
+    journalHolding({ [r14]: cashEvent({ obligationKey: "refund-obligation|hand-back|task_2", faceCents: 5000 }, 5000, "BANK") });
+
+    await recordPayment({ paidAnotherWayTaskId: "task_2" });
+
+    expect(written()).toEqual([expect.objectContaining({ outcome: "COVERED", coverage: [expect.objectContaining({ account: "BANK", chargeIdentity: r14 })] })]);
+  });
+
+  it("a genuine paid-another-way close still covers its R14 under paid-another-way", async () => {
+    const r14 = memberMoneyEventKeys.paidAnotherWay("close_1");
+    journalHolding({ [r14]: cashEvent({ obligationKey: DEBT, faceCents: 5000 }, 5000, "BANK") });
+
+    await recordPayment({ paidAnotherWayTaskId: "close_1" });
+
+    expect(written()).toEqual([expect.objectContaining({ outcome: "COVERED", coverage: [expect.objectContaining({ chargeIdentity: r14 })] })]);
+  });
+
+  it("an edit review's hand-back note covers the R14 its completion posted under the review task", async () => {
+    const r14 = memberMoneyEventKeys.handBackPaid("review_1");
+    journalHolding({ [r14]: cashEvent({ obligationKey: "refund-obligation|review|review_1", faceCents: 5000 }, 5000, "BANK") });
+
+    await recordPayment({ reviewTaskId: "review_1" });
+
+    expect(written()).toEqual([expect.objectContaining({ outcome: "COVERED", coverage: [expect.objectContaining({ account: "BANK", chargeIdentity: r14 })] })]);
+  });
+
+  it("an R14 reversed and re-posted is covered under its live successor, never the reversed base", async () => {
+    const base = memberMoneyEventKeys.handBackPaid("task_1");
+    const successor = memberMoneyChainKey(base, "journal_rev");
+    journalHolding({
+      [base]: cashEvent({ obligationKey: HAND_BACK_DEBT, faceCents: 5000 }, 5000, "BANK", { reversedBy: "journal_rev" }),
+      [successor]: cashEvent({ obligationKey: HAND_BACK_DEBT, faceCents: 5000 }, 5000, "BANK"),
+    });
+
+    await recordPayment({ handBackTaskId: "task_1" });
+
+    expect(written()).toEqual([expect.objectContaining({ outcome: "COVERED", coverage: [expect.objectContaining({ chargeIdentity: successor })] })]);
+  });
+
+  it("a hand-back paid in cash posts its R14 on CASH: a known COMPONENT_UNUSABLE conflict, never coverage", async () => {
+    journalHolding({ [memberMoneyEventKeys.handBackPaid("task_1")]: cashEvent({ obligationKey: HAND_BACK_DEBT, faceCents: 5000 }, 5000, "CASH") });
+
+    await recordPayment({ handBackTaskId: "task_1" });
+
+    expect(written()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE", coverage: [] })]);
+  });
+
+  it("a reversed cash journal is no live slice: COMPONENT_UNUSABLE, never coverage", async () => {
+    mocks.operationFindUnique.mockResolvedValue({ requestPayload: { cardRefundId: "re_1" } });
+    journalHolding({ [memberMoneyEventKeys.refund("re_1")]: cashEvent({ obligationKey: DEBT, faceCents: 5000 }, 5000, "STRIPE_CLEARING", { reversedBy: "r13" }) });
+
+    await recordRefundNotePaymentManifest({ paymentId: PAYMENT_ID, creditNoteId: "cn_1", operationId: "op_1", refundMethod: "card", legacyKey: "pay-key", sent });
+
+    expect(written()).toEqual([expect.objectContaining({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE", coverage: [] })]);
   });
 
   it("records nothing for a payment skipped, failed or part-settled", async () => {
