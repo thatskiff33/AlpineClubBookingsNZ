@@ -273,6 +273,51 @@ describe("CSP policy", () => {
     }
   });
 
+  // C11 part 1 (#4808): the preview host and the builder also answer at their
+  // Lodge hub address. The relaxations are granted there by exactly the same
+  // exact-match rule, so the hub URL works the day the switch turns on, and no
+  // sibling under the hub gains anything.
+  it("grants the same relaxations at the Lodge hub address of the preview and the builder", () => {
+    const NORMAL_IMG_SRC =
+      "img-src 'self' data: blob: https: https://www.google-analytics.com https://*.google-analytics.com";
+    const preview = buildContentSecurityPolicy("unit-test-nonce", {
+      pathname: "/admin/lodge-ops/display/preview",
+    });
+    expect(directive(preview, "frame-src")).toContain("'self'");
+    expect(directive(preview, "img-src")).toBe("img-src 'self' data:");
+    expect(directive(preview, "frame-ancestors")).toBe("frame-ancestors 'none'");
+
+    for (const pathname of [
+      "/admin/lodge-ops/display/builder",
+      // A single trailing slash canonicalises, as at the old address.
+      "/admin/lodge-ops/display/builder/",
+    ]) {
+      const builder = buildContentSecurityPolicy("unit-test-nonce", { pathname });
+      expect(directive(builder, "frame-src"), pathname).toContain("'self'");
+      expect(directive(builder, "img-src"), pathname).toBe(NORMAL_IMG_SRC);
+      expect(directive(builder, "frame-ancestors"), pathname).toBe("frame-ancestors 'none'");
+    }
+
+    for (const pathname of [
+      "/admin/lodge-ops/display/templates",
+      "/admin/lodge-ops/display/builder/extra",
+      "/admin/lodge-ops/display/builder-foo",
+      "//admin/lodge-ops/display/builder",
+      "/admin/lodge-ops/display/builder//",
+      "/admin/lodge-ops/display/previews",
+      "/admin/lodge-ops/display",
+      "/admin/lodge-ops",
+    ]) {
+      const policy = buildContentSecurityPolicy("unit-test-nonce", { pathname });
+      expect(directive(policy, "frame-src"), `${pathname} must not gain frame-src 'self'`).toBe(
+        "frame-src https://js.stripe.com https://hooks.stripe.com",
+      );
+      expect(directive(policy, "img-src"), `${pathname} must keep the normal img-src`).toBe(
+        NORMAL_IMG_SRC,
+      );
+    }
+  });
+
   // Case sensitivity is load-bearing on BOTH sides (#2246). The app compares
   // `normalisePathname(pathname) === "/display"`, and the Caddyfiles use
   // `path_regexp` — not Caddy's case-INSENSITIVE `path` matcher — precisely so
@@ -526,6 +571,26 @@ describe("CSP proxy", () => {
     ).toContain("'self'");
     expect(
       directive(templatesResponse.headers.get(CSP_HEADER) as string, "frame-src"),
+    ).not.toContain("'self'");
+  });
+
+  it("serves the relaxations on real requests at the Lodge hub address (C11 part 1 #4808)", async () => {
+    const preview = await proxy(
+      new NextRequest("https://example.org/admin/lodge-ops/display/preview?templateId=tpl-1"),
+    );
+    const builder = await proxy(
+      new NextRequest("https://example.org/admin/lodge-ops/display/builder?templateId=tpl-1"),
+    );
+    const templates = await proxy(
+      new NextRequest("https://example.org/admin/lodge-ops/display/templates"),
+    );
+
+    const previewPolicy = preview.headers.get(CSP_HEADER) as string;
+    expect(directive(previewPolicy, "img-src")).toBe("img-src 'self' data:");
+    expect(directive(previewPolicy, "frame-src")).toContain("'self'");
+    expect(directive(builder.headers.get(CSP_HEADER) as string, "frame-src")).toContain("'self'");
+    expect(
+      directive(templates.headers.get(CSP_HEADER) as string, "frame-src"),
     ).not.toContain("'self'");
   });
 

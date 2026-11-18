@@ -373,3 +373,74 @@ describe("POST preview (test config without saving)", () => {
     expect(mocks.fetchWhakapapaCurlData).not.toHaveBeenCalled();
   });
 });
+
+describe("POST refresh from the stored config", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.auth.mockResolvedValue({ user: ADMIN_USER });
+    mocks.requireActiveSessionUser.mockResolvedValue(null);
+    mocks.upsert.mockImplementation(async (args) => ({
+      source: args.where.source,
+      payload: args.update.payload,
+      config: args.create?.config ?? null,
+      fetchedAt: args.update.fetchedAt,
+      frozenUntil: null,
+      updatedAt: new Date("2026-07-08T12:00:00.000Z"),
+    }));
+  });
+
+  function storedRow(selectorOverrides: Record<string, string>) {
+    return {
+      source: "whakapapa-report",
+      payload: emptyWhakapapaCurlData(),
+      config: {
+        sourceUrl: "https://www.whakapapa.com/report",
+        selectorOverrides,
+      },
+      fetchedAt: new Date("2026-07-08T09:00:00.000Z"),
+      frozenUntil: null,
+      updatedAt: new Date("2026-07-08T09:00:00.000Z"),
+    };
+  }
+
+  function refreshRequest() {
+    return new NextRequest("http://localhost/api/admin/mountain-conditions", {
+      method: "POST",
+    });
+  }
+
+  // jsdom 31 (#5183) refuses `:contains()`, which the engine before it accepted
+  // quietly, so an override saved earlier can now throw on every scrape. The
+  // admin pressing Update is told which field, not given a bare 500.
+  it("names a saved selector the engine now refuses, and neither fetches nor writes", async () => {
+    mocks.findUnique.mockResolvedValue(
+      storedRow({ itemName: "p:contains(Lifts)" }),
+    );
+
+    const response = await POST(refreshRequest());
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("Item: name");
+    expect(mocks.fetchWhakapapaCurlData).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("still refreshes with a saved selector the engine accepts", async () => {
+    mocks.findUnique.mockResolvedValue(
+      storedRow({ itemName: ':is([class*="name_"], [class*="Name_"])' }),
+    );
+    mocks.fetchWhakapapaCurlData.mockResolvedValue(cachedReport());
+
+    const response = await POST(refreshRequest());
+
+    expect(response.status).toBe(200);
+    expect(mocks.fetchWhakapapaCurlData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectors: expect.objectContaining({
+          itemName: ':is([class*="name_"], [class*="Name_"])',
+        }),
+      }),
+    );
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+  });
+});

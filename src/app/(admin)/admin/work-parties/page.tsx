@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { calendarDateOfSerialisedDbDateOrNull } from "@/lib/club-time";
 import { CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,14 +13,6 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AdminDataTable } from "@/components/admin/admin-data-table";
-import {
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,7 +28,18 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { formatCents } from "@/lib/pricing";
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import {
+  apiErrorMessageFromResponse,
+  apiRefusalFromResponse,
+  refusalMessageOr,
+} from "@/lib/api-error-message";
+import {
+  DETAIL_FALLBACK,
+  ExpandedEventBookings,
+  fetchEventDetail,
+  formatStoredDate,
+  type EventDetail,
+} from "./_components/event-bookings";
 import { useClubFormat } from "@/components/club-format-provider";
 
 interface WorkPartyEventRow {
@@ -51,30 +53,6 @@ interface WorkPartyEventRow {
   lodgeId: string | null;
   lodgeName: string | null;
   bookingCount: number;
-  totalDiscountCents: number;
-}
-
-interface AttendingBooking {
-  id: string;
-  discountCents: number;
-  createdAt: string;
-  booking: {
-    id: string;
-    checkIn: string;
-    checkOut: string;
-    status: string;
-    finalPriceCents: number;
-  };
-  member: {
-    id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-  };
-}
-
-interface EventDetail {
-  attendingBookings: AttendingBooking[];
   totalDiscountCents: number;
 }
 
@@ -99,66 +77,6 @@ const emptyForm: EventFormState = {
   lodgeId: "",
 };
 
-// CT-4 (#2870): a work-party day and a booking's check-in/check-out are
-// CALENDAR DATES, serialised from `@db.Date` columns as UTC midnight. Decoding
-// that encoding in UTC is the identity for every club; reading it through
-// APP_TIME_ZONE was a projection that named the previous day for any club
-// behind UTC (INV-DATE-019). The rendered shape — the stored `yyyy-MM-dd` — is
-// unchanged.
-function formatStoredDate(value: string) {
-  return calendarDateOfSerialisedDbDateOrNull(value) ?? value;
-}
-
-/**
- * The attending-bookings table for one expanded event, or the loading state.
- *
- * Extracted (#2801) so the expanded detail is looked up ONCE: the row above
- * used to test `details[event.id]` and then read `.attendingBookings` off a
- * second lookup of the same key, which under stricter indexed access is the
- * compiler pointing out that the two reads were never provably the same value.
- * "Have I loaded this event's bookings yet" is now one question with one
- * answer, in one place.
- */
-function ExpandedEventBookings({ detail }: { detail: EventDetail | undefined }) {
-  const format = useClubFormat();
-  if (!detail) {
-    return (
-      <div className="rounded-md border p-3 text-sm text-muted-foreground">
-        Loading bookings...
-      </div>
-    );
-  }
-  return (
-    <AdminDataTable showDensityToggle={false}>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Member</TableHead>
-          <TableHead>Stay</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead className="text-right">Discount</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {detail.attendingBookings.map((row) => (
-          <TableRow key={row.id}>
-            <TableCell>
-              {row.member.firstName} {row.member.lastName}
-            </TableCell>
-            <TableCell>
-              {formatStoredDate(row.booking.checkIn)} to{" "}
-              {formatStoredDate(row.booking.checkOut)}
-            </TableCell>
-            <TableCell>{row.booking.status}</TableCell>
-            <TableCell className="text-right">
-              {formatCents(row.discountCents, format)}
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </AdminDataTable>
-  );
-}
-
 export default function AdminWorkPartiesPage() {
   const format = useClubFormat();
   // Work-party events are lodge config; the write routes enforce lodge:edit, so
@@ -175,6 +93,8 @@ export default function AdminWorkPartiesPage() {
   const [saving, setSaving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, EventDetail>>({});
+  // Why an event's attending-bookings read failed, shown in that event's card.
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   // Lodge options for the form's lodge field and per-event lodge labels; the
   // field and labels only render once a second lodge exists (ADR-002).
   const {
@@ -214,16 +134,14 @@ export default function AdminWorkPartiesPage() {
       setLoading(false);
       return;
     }
+    const fallback = "Failed to load work party events";
     try {
       const res = await fetch("/api/admin/work-parties");
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
       const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Failed to load work party events");
-        return;
-      }
       setEvents(data.events);
-    } catch {
-      setError("Failed to load work party events");
+    } catch (err) {
+      setError(refusalMessageOr(err, fallback));
     } finally {
       setLoading(false);
     }
@@ -275,6 +193,7 @@ export default function AdminWorkPartiesPage() {
 
     setSaving(true);
     setError("");
+    const fallback = "Failed to save work party event";
     try {
       const payload = {
         name: form.name.trim(),
@@ -297,17 +216,13 @@ export default function AdminWorkPartiesPage() {
         setError(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Failed to save work party event");
-        return;
-      }
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
       setShowForm(false);
       setEditingId(null);
       setForm(emptyForm);
       await fetchEvents();
-    } catch {
-      setError("Failed to save work party event");
+    } catch (err) {
+      setError(refusalMessageOr(err, fallback));
     } finally {
       setSaving(false);
     }
@@ -316,26 +231,28 @@ export default function AdminWorkPartiesPage() {
   async function toggleActive(event: WorkPartyEventRow) {
     if (!lodgeScopeReady) return;
     setError("");
-    const res = await fetch(`/api/admin/work-parties/${event.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: event.name,
-        description: event.description,
-        startDate: event.startDate.slice(0, 10),
-        endDate: event.endDate.slice(0, 10),
-        discountPercent: event.discountPercent,
-        active: !event.active,
-        lodgeId: event.lodgeId,
-      }),
-    });
-    if (res.status === 403) {
-      setError(ADMIN_FORBIDDEN_SAVE_REASON);
-      return;
-    }
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error || "Failed to update work party event");
+    const fallback = "Failed to update work party event";
+    try {
+      const res = await fetch(`/api/admin/work-parties/${event.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: event.name,
+          description: event.description,
+          startDate: event.startDate.slice(0, 10),
+          endDate: event.endDate.slice(0, 10),
+          discountPercent: event.discountPercent,
+          active: !event.active,
+          lodgeId: event.lodgeId,
+        }),
+      });
+      if (res.status === 403) {
+        setError(ADMIN_FORBIDDEN_SAVE_REASON);
+        return;
+      }
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
+    } catch (err) {
+      setError(refusalMessageOr(err, fallback));
       return;
     }
     await fetchEvents();
@@ -371,18 +288,22 @@ export default function AdminWorkPartiesPage() {
       return;
     }
     setExpandedId(eventId);
-    if (!details[eventId]) {
-      const res = await fetch(`/api/admin/work-parties/${eventId}`);
-      const data = await res.json();
-      if (res.ok) {
-        setDetails((prev) => ({
-          ...prev,
-          [eventId]: {
-            attendingBookings: data.attendingBookings,
-            totalDiscountCents: data.totalDiscountCents,
-          },
-        }));
-      }
+    if (!details[eventId]) await loadDetail(eventId);
+  }
+
+  // Each attempt clears the card's earlier reason first, so a retry that
+  // succeeds never leaves the old failure beside the table.
+  async function loadDetail(eventId: string) {
+    setDetailErrors((prev) => {
+      const next = { ...prev };
+      delete next[eventId];
+      return next;
+    });
+    try {
+      const detail = await fetchEventDetail(eventId);
+      setDetails((prev) => ({ ...prev, [eventId]: detail }));
+    } catch (err) {
+      setDetailErrors((prev) => ({ ...prev, [eventId]: refusalMessageOr(err, DETAIL_FALLBACK) }));
     }
   }
 
@@ -611,7 +532,12 @@ export default function AdminWorkPartiesPage() {
                   )}
                 </div>
                 {expandedId === event.id && (
-                  <ExpandedEventBookings detail={details[event.id]} />
+                  <ExpandedEventBookings
+                    eventId={event.id}
+                    detail={details[event.id]}
+                    error={detailErrors[event.id] ?? ""}
+                    onRetry={() => void loadDetail(event.id)}
+                  />
                 )}
               </CardContent>
             </Card>

@@ -415,13 +415,14 @@ Not done here, and still true after it:
   baseline.
 - These member routes still show the default tab title: `/profile`, `/book`,
   `/induction`, `/maintenance-report`, `/forgot-password`, `/register`,
-  `/login/verify`, `/login/enroll` and `/chores/[token]`.
+  `/login/verify`, `/login/enroll` and `/chores/[token]`. Superseded by #5217
+  below, which titles them.
 - Lodge and hut-leader instruction bodies are admin-written HTML shown as
   written, so an H1 inside one adds a second level-1 heading to that page.
 - The membership application page (`/join/apply`, under `src/app/(website)`)
   is outside the census roots. Its "Application submitted" state has no
   level-1 heading, and the right level depends on whether the page is embedded
-  in a CMS page that already has one.
+  in a CMS page that already has one. Superseded by #5217 below.
 - The collapsible profile cards put their level-2 title inside a `<summary>`.
   That is valid HTML, but whether each screen reader lists it in its heading
   list is untested.
@@ -500,3 +501,37 @@ Stated limits:
   membership-cancellation and nomination confirmations). Whether a given screen
   reader reads such a line once or twice is untested, so the manual screen-reader
   pass should listen for it.
+
+## #5217 Remaining Member Tab Titles and the Application Confirmation (2026-11-18)
+
+Static fix, finishing the two items #4951 left open.
+
+- **Tab titles.** `/profile`, `/book`, `/induction`, `/maintenance-report`,
+  `/forgot-password`, `/register`, `/login/verify`, `/login/enroll` and
+  `/chores/[token]` now set a fixed title, the same way as the #4951 routes.
+  `/chores/[token]` is "Your chores": it carries neither the guest's name nor
+  the token. `/register` only redirects to `/join/apply`, so its title shows
+  for no longer than the redirect takes. With these, every page under
+  `src/app/(public)`, `src/app/(authenticated)` and `src/app/(website-dynamic)`
+  sets its own title, and `src/app/__tests__/member-route-titles.test.ts` now
+  fails a new page there that sets none.
+- **"Application submitted" on `/join/apply`.** The page's hero holds its
+  `<h1>` and stays on screen when the form gives way to the confirmation, so
+  the page never lacked a level-1 heading; what was missing was the
+  confirmation itself, whose title only looked like a heading. It is now a
+  level-2 heading under the page's `<h1>`, on `/join/apply` and on any CMS
+  page that embeds the form, so someone who has just applied can jump to it.
+  The form component can also draw the hero itself; there the hero goes away
+  with the form, and the confirmation is level 1 instead. No visual change.
+  Pinned by `src/app/__tests__/join-apply-state-headings.test.tsx`, which
+  renders the real page and form together in each state.
+
+Not done here, and still true after it:
+
+- `/chores/[token]` shows only "Loading..." while it fetches, with no level-1
+  heading in that state.
+- The lodge kiosk screens under `src/app/(lodge)` are not member routes and
+  still show the default tab title.
+- The "Enter your details" card title on `/join/apply` is still unclassified,
+  like the rest of the public website's card titles. Card-title classification
+  is tracked in #5216.
