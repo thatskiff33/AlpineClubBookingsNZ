@@ -70,7 +70,10 @@ export function HutLeaderInstructionsClient({
     return (
       <Card className="mx-auto max-w-2xl">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+          {/* This "incomplete link" card is the page's whole content with no
+              h1 in this render state — the verified-instructions branch's h1
+              never renders alongside it. */}
+          <CardTitle headingLevel={1} className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5 text-warning-11" />
             Lodge Instructions
           </CardTitle>
@@ -175,7 +178,9 @@ export function HutLeaderInstructionsClient({
   return (
     <Card className="mx-auto max-w-md">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+        {/* PIN entry is the page's whole content with no h1 in this render
+            state, same as the incomplete-link branch above. */}
+        <CardTitle headingLevel={1} className="flex items-center gap-2">
           <KeyRound className="h-5 w-5 text-muted-foreground" />
           Lodge Instructions
         </CardTitle>

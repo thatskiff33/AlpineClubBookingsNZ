@@ -26,6 +26,7 @@ import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { XeroAccountSelect, XeroItemSelect } from "@/components/admin/xero-code-select";
 import { adminHref } from "@/lib/admin-hubs";
 import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache";
+import { ApiRefusalError, apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 
 // The Joining Fees + Annual Membership Fees + Family billing sections of the
 // consolidated /admin/fees console (#1933, E7). Moved verbatim from the former
@@ -208,12 +209,12 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
       setError(null);
       return;
     }
+    if (!response.ok) throw await apiRefusalFromResponse(response, "Failed to load fee configuration");
     const body = await response.json();
-    if (!response.ok) throw new Error(body.error ?? "Failed to load fee configuration");
     setForbidden(false);
     setData(body);
   }, []);
-  useEffect(() => { load().catch((cause) => setError(cause instanceof Error ? cause.message : "Failed to load")); }, [load]);
+  useEffect(() => { load().catch((cause) => setError(refusalMessageOr(cause, "Failed to load fee configuration"))); }, [load]);
   // Load the Xero account/item lists for the component pickers on mount (#2068).
   // Mirrors FinanceReportMappingsPanel's fetch/amber-fallback pattern; the two
   // requests are independent so one failing still lets the other populate.
@@ -222,19 +223,21 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
     async function loadXeroReference() {
       try {
         const response = await fetch("/api/admin/xero/chart-of-accounts", { credentials: "same-origin" });
+        if (!response.ok) throw await apiRefusalFromResponse(response, "Failed to load Xero chart of accounts");
         const body = await response.json();
-        if (!response.ok || !Array.isArray(body.accounts)) throw new Error(body?.error ?? "Failed to load Xero chart of accounts");
+        if (!Array.isArray(body.accounts)) throw new ApiRefusalError("Failed to load Xero chart of accounts");
         if (!cancelled) setAccounts(body.accounts);
       } catch (cause) {
-        if (!cancelled) { setAccounts([]); setCoaError(cause instanceof Error ? cause.message : "Failed to load Xero chart of accounts"); }
+        if (!cancelled) { setAccounts([]); setCoaError(refusalMessageOr(cause, "Failed to load Xero chart of accounts")); }
       }
       try {
         const response = await fetch("/api/admin/xero/items", { credentials: "same-origin" });
+        if (!response.ok) throw await apiRefusalFromResponse(response, "Failed to load Xero items");
         const body = await response.json();
-        if (!response.ok || !Array.isArray(body.items)) throw new Error(body?.error ?? "Failed to load Xero items");
+        if (!Array.isArray(body.items)) throw new ApiRefusalError("Failed to load Xero items");
         if (!cancelled) setItems(body.items);
       } catch (cause) {
-        if (!cancelled) { setItems([]); setItemsError(cause instanceof Error ? cause.message : "Failed to load Xero items"); }
+        if (!cancelled) { setItems([]); setItemsError(refusalMessageOr(cause, "Failed to load Xero items")); }
       }
     }
     void loadXeroReference();
@@ -272,16 +275,15 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
     setSaving(true); setError(null);
     try {
       const response = await fetch("/api/admin/fee-configuration", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Failed to save fee configuration");
-      setData(body);
+      if (!response.ok) throw await apiRefusalFromResponse(response, "Failed to save fee configuration");
+      setData(await response.json());
       // The family-billing loop suppresses per-call success toasts and fires one
       // summary instead; errors still toast so a mid-loop failure is visible.
       const action = String(payload.action);
       if (!options?.silent) toast.success(action.startsWith("DELETE_") ? "Fee schedule deleted" : action === "SET_FAMILY_BILLING_MEMBER" ? "Billing member updated" : "Fee schedule saved");
       return true;
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Failed to save";
+      const message = refusalMessageOr(cause, "Failed to save fee configuration");
       setError(message);
       toast.error(message);
       return false;
@@ -516,7 +518,7 @@ export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boole
       <div className="space-y-3">{data?.membershipTypes.map((type) => <div key={type.id} className="rounded-md border p-3"><div className="font-medium">{type.name}</div>{type.annualFees.length === 0 ? <p className="text-sm text-muted-foreground">Not configured</p> : type.annualFees.map((fee) => <div key={fee.id}><div className="mt-2 flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">{tierLabel(fee.ageTier ?? null)}</Badge><Badge variant="outline">{dollars(fee.amountCents, format)}</Badge><span>{fee.billingBasis?.replaceAll("_", " ")}</span>{fee.billingBasis !== "NO_INVOICE" && <Badge variant="outline">{prorationLabel(fee.prorationRule)}</Badge>}<span>{fee.effectiveFrom} – {fee.effectiveTo ?? "ongoing"}</span>{membershipEditing && <><Button size="icon" variant="ghost" aria-label={`Edit ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => { setEditingMembershipFeeId(fee.id); setMembershipTypeId(type.id); setMembershipTier(fee.ageTier ?? "FLAT"); setMembershipAmount(formatCentsPlain(fee.amountCents)); setBillingBasis(fee.billingBasis ?? "PER_MEMBER"); setProrationRule(fee.prorationRule ?? "NONE"); setMembershipFrom(fee.effectiveFrom); setMembershipTo(fee.effectiveTo ?? ""); setComponentRows(fee.components && fee.components.length > 0 ? fee.components.map((component) => ({ label: component.label, amount: formatCentsPlain(component.amountCents), prorate: component.prorate, xeroAccountCode: component.xeroAccountCode ?? "", xeroItemCode: component.xeroItemCode ?? "" })) : [defaultComponentDraft()]); scrollToPanelTop(membershipPanelRef); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" aria-label={`Delete ${type.name} ${tierLabel(fee.ageTier ?? null)} fee`} disabled={saving} onClick={() => setDeleteTarget({ action: "DELETE_MEMBERSHIP_FEE", id: fee.id, label: `${type.name} ${tierLabel(fee.ageTier ?? null)} annual fee from ${fee.effectiveFrom}` })}><Trash2 className="h-4 w-4" /></Button></>}</div>{fee.components && fee.components.length > 0 && <ul className="mt-1 space-y-0.5 pl-3 text-xs text-muted-foreground">{fee.components.map((component) => <li key={component.id}>{component.label} · {dollars(component.amountCents, format)} · {componentIsProrated(fee, component) ? "prorated" : "full"}{component.xeroAccountCode ? ` · acct ${component.xeroAccountCode}` : ""}{component.xeroItemCode ? ` · item ${component.xeroItemCode}` : ""}</li>)}</ul>}</div>)}</div>)}</div>
     </CardContent></Card>
 
-    <Card ref={categoryPanelRef} role="region" aria-labelledby="subscription-category-fees-title" tabIndex={-1} className="scroll-mt-20 focus:outline-none"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle id="subscription-category-fees-title">Subscription category fees</CardTitle><CardDescription>flat subscription rates for billing categories (e.g. Couple, Family) that are independent of membership type — see <Link className="underline" href={adminHref("subscription-categories")}>Subscription Categories</Link></CardDescription></div>{data?.canEdit && !categoryEditing && <Button variant="outline" size="sm" aria-label="Edit subscription category fees" onClick={() => { setCategoryEditing(true); scrollToPanelTop(categoryPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
+    <Card ref={categoryPanelRef} role="region" aria-labelledby="subscription-category-fees-title" tabIndex={-1} className="scroll-mt-20 focus:outline-none"><CardHeader className="flex flex-row items-center justify-between"><div className="space-y-1"><CardTitle headingLevel={2} id="subscription-category-fees-title">Subscription category fees</CardTitle><CardDescription>flat subscription rates for billing categories (e.g. Couple, Family) that are independent of membership type — see <Link className="underline" href={adminHref("subscription-categories")}>Subscription Categories</Link></CardDescription></div>{data?.canEdit && !categoryEditing && <Button variant="outline" size="sm" aria-label="Edit subscription category fees" onClick={() => { setCategoryEditing(true); scrollToPanelTop(categoryPanelRef); }}>Edit</Button>}</CardHeader><CardContent className="space-y-5">
       <p className="text-sm text-muted-foreground">A category fee is always a flat, always-invoiced amount — there is no age tier or billing-basis choice. Members sharing a category bill together as one flat charge, independent of their membership type.</p>
       {data?.subscriptionCategories.length === 0 && <p className="text-sm text-muted-foreground">No subscription categories yet. <Link className="underline" href={adminHref("subscription-categories")}>Create one</Link> to configure its fee.</p>}
       {categoryEditing && <>

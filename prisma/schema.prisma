@@ -2260,6 +2260,7 @@ model Booking {
   @@index([otherLodgeId])
   @@index([organisationId])
   memberMoneyLines MemberMoneyLine[]
+  memberMoneyExportManifests MemberMoneyExportManifest[]
 }
 
 // Durable booking-lifecycle event store (issue #740). One row per transition
@@ -5000,13 +5001,17 @@ model ProcessedWebhookEvent {
   // F16 (issue #1887): the dedup claim is a processing LEASE, not a bare
   // "seen" marker. `status` is "PROCESSING" (claimed, handler in flight) or
   // "COMPLETED" (handler finished). `processingStartedAt` stamps when the
-  // current attempt took the lease. A redelivery hitting an existing claim
-  // returns 200 only when COMPLETED; a PROCESSING claim still inside the lease
-  // window forces a provider retry (500), and an expired lease (a crashed
-  // prior attempt) is taken over and reprocessed. This closes the two
-  // lost-event windows: (a) a crash between claim-insert and completion no
-  // longer ACKs every redelivery as a duplicate, and (b) a concurrent
-  // redelivery is no longer ACKed while the in-flight attempt later fails.
+  // current attempt took the lease. Stripe and SES/SNS claim through
+  // `webhook-claim-lease.ts` (INV-INT-039, #4921). A redelivery hitting an
+  // existing claim returns 200 only when COMPLETED; a PROCESSING claim still
+  // inside the lease window forces a provider retry (Stripe 500, SES 503), and
+  // an expired lease (a crashed prior attempt) is taken over and reprocessed.
+  // Xero rows are plain dedup markers, never COMPLETED: the XeroInboundEvent
+  // row holds that claim, and its stale-event takeover deletes the marker.
+  // This closes the two lost-event windows: (a) a crash between claim-insert
+  // and completion no longer ACKs every redelivery as a duplicate, and (b) a
+  // concurrent redelivery is no longer ACKed while the in-flight attempt
+  // later fails.
   //
   // Blue/green-safe: `status` defaults to "PROCESSING" so an old-colour insert
   // (which omits the column and never marks COMPLETED) is reprocessed by the
@@ -9556,6 +9561,61 @@ model MemberMoneyRefundReservationRelease {
   reservation MemberMoneyRefundReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   application MemberMoneyApplication? @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   @@index([applicationId])
+}
+
+/// M13 (#4525): the outbound document families whose coverage a manifest records.
+enum MemberMoneyExportDocumentRole {
+  PRIMARY_BOOKING_INVOICE
+}
+
+enum MemberMoneyExportOutcome {
+  COVERED
+  CONFLICT
+}
+
+/// Why a document's lines could not be matched to the journal components they bill.
+enum MemberMoneyExportConflictReason {
+  STAY_CENTS
+  FEE_CENTS
+  COMPONENT_UNUSABLE
+}
+
+/// M13 (#4525): what one sent provider document covers, written once under its
+/// legacy correlation key. Immutable; the sender's XeroSyncOperation stays the
+/// delivery record and Payment.xeroInvoiceId the provider link.
+model MemberMoneyExportManifest {
+  id String @id @default(cuid())
+  documentRole MemberMoneyExportDocumentRole
+  legacyKey String
+  renderRevision Int
+  bookingId String
+  outcome MemberMoneyExportOutcome
+  reason MemberMoneyExportConflictReason?
+  payloadHash String
+  frozenMapping Json
+  lineTotalCents Int
+  providerInvoiceId String
+  createdAt DateTime @default(now())
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  coverage MemberMoneyExportCoverage[]
+  @@unique([documentRole, legacyKey])
+  @@unique([id, documentRole])
+  @@index([bookingId])
+}
+
+/// One journal component a manifest's document bills whole. A component is billed
+/// by at most one document of each role.
+model MemberMoneyExportCoverage {
+  id String @id @default(cuid())
+  manifestId String
+  documentRole MemberMoneyExportDocumentRole
+  account MemberMoneyAccount
+  chargeIdentity String
+  coveredCents Int
+  taxCode String?
+  manifest MemberMoneyExportManifest @relation(fields: [manifestId, documentRole], references: [id, documentRole], onDelete: Restrict, onUpdate: Restrict)
+  @@unique([documentRole, account, chargeIdentity])
+  @@index([manifestId, documentRole])
 }
 
 /// Privacy disclosure is its own domain singleton: branding saves must not

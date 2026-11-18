@@ -12,6 +12,7 @@ import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import { isStaleRunningXeroOperation } from "@/lib/xero-stale-operations";
 import { refundNoteResolveShape, resolveCreditNotePrompt } from "@/lib/xero-resolve-refund-note";
 import { findSupersededRefundNoteRowIds } from "@/lib/xero-operation-resolve-guards";
+import { adminListPageField } from "@/lib/admin-list-page";
 import {
   endOfClubDayInclusive,
   requireCalendarDate,
@@ -33,7 +34,7 @@ const querySchema = z.object({
   createdTo: dateOnlyStringSchema.optional(),
   failureState: z.enum(["all", "ACTIVE", "REPAIRED", "SUPERSEDED"]).optional().default("all"),
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
-  page: z.coerce.number().int().min(1).optional().default(1),
+  page: adminListPageField,
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
 });
 

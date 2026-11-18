@@ -237,7 +237,7 @@ emits a sentence when one is supplied — so #2365 re-enables it by flipping
 `PUBLIC_EXCEPTION_CAPACITY_COPY_ENABLED` in `public-page-content-tokens.ts` once
 the review workflow ships. Even then the token receives only the display copy,
 never the policy id/version or the internal capacity-mode enum. The **admin**
-Minimum Night Stay card is unaffected and has always stated the stored mode: an
+Minimum Stay card is unaffected and has always stated the stored mode: an
 operator configuring the rule needs to see what they chose.
 
 `{{booking-policies}}` also publishes one sentence for the adult-member hosting

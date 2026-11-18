@@ -10,14 +10,14 @@ import {
 } from "@/lib/finance-booking-metrics";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { dateOnlyStringSchema } from "@/lib/date-only-schema";
+import { adminListPageQueryFields } from "@/lib/admin-list-page";
 import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
 
 const querySchema = z
   .object({
     from: dateOnlyStringSchema.optional(),
     to: dateOnlyStringSchema.optional(),
-    page: z.coerce.number().int().min(1).optional().default(1),
-    pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+    ...adminListPageQueryFields,
   })
   .superRefine((value, context) => {
     for (const field of ["from", "to"] as const) {

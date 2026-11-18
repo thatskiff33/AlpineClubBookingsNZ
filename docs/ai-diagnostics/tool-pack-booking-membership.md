@@ -882,18 +882,17 @@ model reads as "there is no problem" — is the failure mode the whole
   run over a lodge, a night or an arbitrary range.
 - **The audit category is optional, so an empty audit result is not evidence that
   nothing happened.** A row recorded with no category at all is matched by no
-  diagnostics tool anywhere. Re-measured by RUNNING the census on the merged tree
-  (`pnpm run audit:census`, pinned by `src/lib/__tests__/audit-writer-census.test.ts`),
-  it counts **553 row-producing production audit write sites**, and **zero** of
-  them record no category. That zero is new and it is narrower than it sounds. This page said
-  425, then 426-of-which-82, and the merge with `main` that brought #2676 in
-  classified all 82 remaining sites at the source — so **no new audit row is born
-  uncategorised**, but **every row written before that runtime deployed still
+  diagnostics tool anywhere. The census (`pnpm run audit:census`, checked site by
+  site by `src/lib/__tests__/audit-writer-census.test.ts` on every build) finds
+  **no** current production audit write site that records no category. That is
+  new and it is narrower than it sounds. When #2581 opened, 82 sites recorded
+  none, and the merge with `main` that brought #2676 in classified all 82 at the
+  source, so **no new audit row is born uncategorised**, but **every row written before that runtime deployed still
   carries no category** and is still invisible to every entry in this pack. Back-
   filling those rows is a separate, independently reviewable data change that has
-  not run, so the caveat stands for historical events and only for those. The
-  figure is re-measured on every merge rather than carried forward, because a stale
-  count here is a claim about what a diagnostic can see. On top of that, `booking_record_audit_history` reads the entity type
+  not run, so the caveat stands for historical events and only for those. This
+  page publishes no site count (#5211): a count goes stale with every new writer,
+  and a stale one here is a claim about what a diagnostic can see. On top of that, `booking_record_audit_history` reads the entity type
   `Booking` only — an event on the booking's payment, its bed allocation or its
   change request is filed under that record's own type and id — and both
   audit entries read only their own domain's categories. The honest answer to an
@@ -1680,7 +1679,7 @@ audit row — which now also records whether consent was granted or refused.
 | `member_eligibility_state` alone is unavailable | The persisted financial-year settings read failed, or a connected Xero tenant's year-end month is not stored locally | Retry the database read or inspect Membership Lockout settings; Diagnostics will not substitute the March default for a failed read or call Xero |
 | The party looks smaller than the operator expects | The result was refused as `result_too_large`, or the rendered block listed only some rows | The header says how many of how many were listed; Admin > Booking detail shows the whole party |
 | A guest's stay range looks wrong | The envelope is not the stay — a guest may occupy non-contiguous nights | Read `nightsAreContiguous`: true means no gap, false means there is one, and null means the guest has no per-night rows at all |
-| An audit history is empty for something an operator watched happen | A historical pre-categorisation event lacks category, or the event is filed under another entity type or another domain. Current exact-head production writers have 553 row-producing sites and zero uncategorised sites. | Admin > Audit Log lists historical uncategorised rows and every category and entity type together |
+| An audit history is empty for something an operator watched happen | A historical pre-categorisation event lacks category, or the event is filed under another entity type or another domain. No current production writer omits a category; the census checks every site on every build. | Admin > Audit Log lists historical uncategorised rows and every category and entity type together |
 | `booking_block_state` reports no blockers on a booking the member cannot see | The booking is soft-deleted or terminal, so every other check is suppressed by design | Read `bookingLifecycleState` on the same row; its money may still need finance attention |
 
 Incident response is unchanged from AID-6A: the audit trail for tool use is

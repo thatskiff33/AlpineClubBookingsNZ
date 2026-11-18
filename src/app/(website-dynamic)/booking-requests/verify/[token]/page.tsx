@@ -5,7 +5,9 @@ import { getCachedClubIdentity } from "@/lib/public-layout-config";
 // The email-confirmation link carries a one-time token and must never be indexed
 // (#2421). The group layout also sets this; kept here so the route states its own
 // reason.
+// A fixed tab title (#4951): it lands in history, so never the token or a name.
 export const metadata: Metadata = {
+  title: "Confirm your booking request",
   robots: { index: false, follow: false },
 };
 

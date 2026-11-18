@@ -12,7 +12,7 @@ to look like the absence of a decision.
 way.** #2755 unified the three writers of *an officer editing somebody else's
 member record* on `admin` by moving the two bulk-screen branches IN, rather than
 moving the member-page writer out into a member-visible category. Eight of the
-nine remain held. `admin` therefore reads 101 sites now, not 96, and the rule that
+nine remain held. `admin` therefore read 98 sites after #2755, not 96, and the rule that
 came out of it is `INV-PRIV-012` — which is also where the fifteen lodge-gated
 sites and the `lockers` group (unresolved then, settled by #2777) are now
 recorded, instead of only in the open-question section at the foot of this page.
@@ -579,19 +579,21 @@ land.
 
 ## How to check this page is still true
 
-`pnpm run audit:census` prints the live distribution, and
-`src/lib/__tests__/audit-writer-census.test.ts` fails CI if it moves without the
-manifest moving with it. The numbers this page was written against:
+`pnpm run audit:census` prints the live distribution and every site's category.
+`scripts/audit/audit-write-sites.ts` records each production write site's
+category and sink, one line per site, and
+`src/lib/__tests__/audit-writer-census.test.ts` fails CI when any site is added,
+removed or reclassified without its line changing with it. A pull request that
+adds a writer regenerates that file with `pnpm run audit:census --write`.
 
-```
-row-producing sites:  553
-uncategorised:        0
-category values: admin 116, booking 109, xero 51, family 35, payment 73,
-                 lodge 73, account 19, security 26, privacy 25,
-                 communication 21, system 4
-```
+This page publishes no current count, and no longer records each new writer
+(#5211). A pasted count went stale with every new writer, and each pull request
+that added one edited the same lines here, so any two of them conflicted. The
+paragraphs below are the record up to #5211, kept because each says why its
+writer files where it does; the figures in them are the ones measured at the
+time.
 
-`admin` was 96 when this page was written for #2730 (87 kept + 9 held) and is 98
+`admin` was 96 when this page was written for #2730 (87 kept + 9 held) and was 98
 after #2755 moved the two `bulk-update/route.ts` branches in, against `account`
 20 → 19 and `security` 19 → 18. #2755 moved categories and added no writer;
 #2760 then added the late-capture auto-refund record writer (`payment` 34 → 35),
@@ -816,15 +818,6 @@ lodges, no member. A library writer, so it joins no keep.
 Fees page (`OTHER_LODGE_RATES_FROM_FEES`, `lodge` 67 -> 68, 500 -> 501,
 MEASURED): the lodge, the trigger and the fields that changed, no member. A
 library writer, so it joins no keep.
-
-Fork #121 (upstream PR #5143) added the four food-order writers (`lodge` 68 -> 72,
-543 -> 547 on the merge of thatskiff33/main, MEASURED with the census): an order
-placed, an order marked received, a price recorded or changed (old and new
-cents), and the Food Orders settings saved.
-Food orders are Lodge Operations, so `lodge` under the domain rule; none joins a
-keep, and `lodge` is not readable with `support:view` alone. The owner's
-change to receive orders item by item (13 Nov 2026) added one more,
-`food_order.items_received` (`lodge` 72 -> 73, 547 -> 548, MEASURED).
 `main` then added #3750's executed approval of a change request on a finished
 stay (`booking` 107 -> 108, `booking-change-request.approve` with
 `executed: true`). The sync of `main` into epic #3789 composed #3819's addition
