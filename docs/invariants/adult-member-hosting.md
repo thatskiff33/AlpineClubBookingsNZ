@@ -331,22 +331,22 @@ standing, age, member-guest consent, exceptions, reason and evidence structures 
 and adds only WHERE the host may be:
 
 - **The relationship is the exact `Booking.memberId`.** An administrator entering
-  bookings on behalf of different members never links them.
+  bookings for different members never links them.
 - **Only confirmed active attendance counts.** Drafts, holds,
   payment-pending, waitlist entries and offers, bookings awaiting review or an
   exception, bumped, cancelled, archived and expired bookings supply nothing, read
   through the canonical lifecycle helpers, never a second status list.
 - **Exact lodge and exact NZ lodge-night.** Lodge A on Friday covers neither Lodge
   B on Friday nor Lodge A on Saturday; a stay may be partly covered.
-- **Coverage is existential, not an assignment.** Nothing stores a dependency
-  on a particular person or booking: both `where` builders are re-derived from
+- **Coverage is existential, not an assignment.** Nothing stores a permanent
+  dependency on a particular person or booking: both `where` builders are re-derived from
   live rows at every evaluation, and evidence naming the source observed never
   becomes an authorisation, so another eligible source keeps the dependent
   compliant with no incident or loss-of-coverage message.
 - **Ownership is never attendance.** A booking owned by an adult member supplies
   nothing unless a qualifying adult member is recorded as attending that
-  lodge-night; any qualifying adult participant may cover, not only the account
-  holder.
+  lodge-night; any qualifying adult member participant may cover, not only the
+  account holder.
 - **No capacity is consumed twice** (§15). The covering adult arrives as a
   `hostOnly` participant: their real attendance on their own booking is evidence
   for the dependent booking, and they are never duplicated as a guest on it. The
@@ -480,7 +480,7 @@ compliant indefinitely.
   included. Account deletion inherits this fence after its global → lodge →
   member-lifecycle prefix, with no route-only duplicate.
 
-  **Deletion and Xero contacts (#2623).** Under its target `Member FOR UPDATE`,
+  **Deletion and Xero contacts (#2597, #2623).** Under its target `Member FOR UPDATE`,
   deletion re-checks the Xero contact-create reservation/recovery blocker and
   every RUNNING member CONTACT UPDATE before anonymising. A member UPDATE
   commits a short `FOR KEY SHARE` reservation, calls Xero outside transactions,
@@ -874,7 +874,7 @@ compliant indefinitely.
   **Member-owned and non-member-owned joins consume this cover on identical
   terms.** Nothing about who owns a source or a dependent booking is consulted.
   Enforced by `adult-member-hosting-group-trip-cover.test.ts`, whose failure
-  messages carry this id. History: #3037.
+  messages carry this id. History: #3038.
 
 ### INV-HOST-045
 

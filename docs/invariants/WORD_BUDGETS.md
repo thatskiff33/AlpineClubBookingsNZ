@@ -83,8 +83,9 @@ semantic damage. By owner decision on #4990 (15 Nov 2026) each stays here at its
 new, lower count, and later waves take them off. After wave 1 the table held 88
 rows and 56,846 words (70,395 before it). Wave 2 compacted the sixteen
 `INV-HOST` rows: thirteen reached 300 and left, and `INV-HOST-029`,
-`INV-HOST-045` and `INV-HOST-050` stay at their new counts while their
-exceptions are proposed on #4990. The table now holds 75 rows and 46,237 words.
+`INV-HOST-045` and `INV-HOST-050` stay at their new counts while exceptions
+are proposed on their deciding issues (#2576, #3040, #3232). The table now holds
+75 rows and 46,238 words.
 
 | ID | Words |
 | --- | ---: |
@@ -114,7 +115,7 @@ exceptions are proposed on #4990. The table now holds 75 rows and 46,237 words.
 | `INV-DATE-013` | 780 |
 | `INV-GUEST-016` | 781 |
 | `INV-INT-016` | 762 |
-| `INV-HOST-029` | 516 |
+| `INV-HOST-029` | 517 |
 | `INV-MOD-021` | 672 |
 | `INV-MONEY-029` | 808 |
 | `INV-LIFE-062` | 639 |
