@@ -17,16 +17,17 @@ const mocks = vi.hoisted(() => ({
   lockPayment: vi.fn(async () => undefined),
   withdraw: vi.fn(async () => true),
   audit: vi.fn(async () => undefined),
+  transactionOptions: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    $transaction: async (fn: (tx: unknown) => unknown) => fn({
+    $transaction: async (fn: (tx: unknown) => unknown, options?: unknown) => (mocks.transactionOptions(options), fn({
       $executeRaw: (...a: unknown[]) => mocks.executeRaw(...(a as [])),
       manualRefundTask: { findUnique: mocks.taskFindUnique, findUniqueOrThrow: mocks.taskFindUniqueOrThrow, updateMany: mocks.taskUpdateMany, findMany: mocks.taskFindMany },
       stripeDispute: { findMany: mocks.disputeFindMany },
-    }),
+    })),
   },
 }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
@@ -49,6 +50,7 @@ import {
   DISPUTED_HAND_BACK_FULLY_LOST_REDUCTION_REFUSAL, DISPUTED_HAND_BACK_NOTHING_TO_REDUCE, disputedHandBackReductionRefusal, NOT_A_DISPUTED_HAND_BACK_REDUCTION_REFUSAL,
 } from "@/lib/manual-refund-task-copy";
 import { memberMoneyEventKeys } from "@/lib/member-money";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 const TASK = {
   id: "task-1", bookingId: "booking-1", paymentId: "payment-1", kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: null as string | null, partPaymentReviewPaymentId: null,
@@ -82,6 +84,13 @@ describe("reducing a disputed card payment's hand-back by a dispute lost for par
     const order = [mocks.executeRaw, mocks.lockBookingRow, mocks.taskFindUniqueOrThrow, mocks.lockPayment, mocks.disputeFindMany, mocks.taskUpdateMany, mocks.withdraw, mocks.audit]
       .map((m) => m.mock.invocationCallOrder[0]!);
     expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  // INV-LOCK-006 (#4998 merged after the lock(1) budget follow-up): it waits for lock(1) behind the same holders as
+  // the dismissal it shares its decision with, so it opens on the shared budget, not Prisma's 2 s / 5 s defaults.
+  it("opens its one transaction on the shared lock(1) budget", async () => {
+    await reduce();
+    expect(mocks.transactionOptions).toHaveBeenCalledExactlyOnceWith(LOCK1_HOLDER_TRANSACTION_BUDGET);
   });
 
   it("review: a legacy row with no raised amount records its original with the first reduction, so the same loss never reduces twice", async () => {

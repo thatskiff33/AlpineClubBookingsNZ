@@ -36,7 +36,8 @@ an id disagree, the id wins.
 [Tier 2, global `lock(1)`](#tier-2--global-booking-status--money-serialisation) ·
 [both tiers, global first](#a-writer-that-does-both-takes-both--global-first) ·
 [fresh reads after a lock wait](#fresh-reads-after-waiting-on-locks) ·
-[status-guarded claims](#status-guarded-claims-defense-in-depth).
+[status-guarded claims](#status-guarded-claims-defense-in-depth) ·
+[the lock(1) transaction budget and its exceptions (#4933)](#the-lock1-transaction-budget-4933).
 Guarded row claims and leases:
 [email retry (#2362)](#email-retry-authority-uses-a-guarded-row-claim-not-an-advisory-lock-2362) ·
 [organiser extra invoices (#4299)](#organiser-bank-transfer-extra-invoices-4299) ·
@@ -202,6 +203,12 @@ on the constant, an alias of it, or a commented exception: the follow-up to
 literals, and `lock1-transaction-budget-census.test.ts` now fails on a new one.
 The classified list, with each exception and its reason, is
 [`audits/lock1-transaction-budgets.md`](audits/lock1-transaction-budgets.md).
+Two writers that arrived after the follow-up: the disputed hand-back reduction
+(`reduceDisputedHandBack`, #4998) is on the budget and answers contention with
+its sibling dismissal's one-step 503; the saved-card claim release
+(`runSavedCardClaimRelease`, #5129) keeps 5 s / 10 s as the fifth exception,
+for the compensating-transaction reasons below, and never answers "try again"
+because it runs after the card was tried.
 Interactive routes answer contention through `transactionContendedResponse`
 (`src/lib/transaction-contended-response.ts`): 503, `Retry-After: 2`, and a
 "check the current status" message where an earlier step may already have
@@ -6231,7 +6238,9 @@ Stripe outside any transaction, and compensate a non-capture by releasing the
 claim. That release follows the three rules through one helper,
 `runSavedCardClaimRelease` (`src/lib/saved-card-charge-claim.ts`): global
 `lock(1)` then the booking's lodge key, `maxWait` 5s / `timeout` 10s (two of the
-three doors have a person waiting), one retry on P2028/P2034, and the outcome
+three doors have a person waiting; an `INV-LOCK-006` exception to the shared
+lock(1) budget, stated in an exception comment at the transaction), one retry on
+P2028/P2034, and the outcome
 returned as data, never thrown. Its status guard (`status: CONFIRMED`) leaves a
 booking the webhook settled PAID alone. Where it differs from the waitlist case
 is the operator door: this state self-heals. The claim stamps
@@ -7650,7 +7659,9 @@ stated limit in the payments guide. The reduce action
 and dispute re-read through the same decision, then claims with an `updateMany`
 guarded on `status: OPEN` and the amount it read, before the journal's part
 withdrawal (under the Payment row it holds) and the audit row; a lost claim
-writes nothing. A dispute-held edit's hand-back (#5151) is dismissed and
+writes nothing. It runs on the shared lock(1) budget (`INV-LOCK-006`), as the
+dismissal does, and its route answers contention with the same 503: one
+transaction is all it writes, so nothing was saved. A dispute-held edit's hand-back (#5151) is dismissed and
 reduced through the same decision and the same three locks (owner decision,
 18 Nov 2026), which also re-reads every task on the payment: lost cents go once
 across the payment's hand-backs, oldest open task first (`INV-PAY-157`). Every

@@ -1291,7 +1291,11 @@ describe("POST /api/payments/charge-saved-method", () => {
       },
     );
 
-    it("a contended release after a non-captured charge asks for a status check", async () => {
+    // #5129: the release is `runSavedCardClaimRelease`, an INV-LOCK-006
+    // exception (5 s / 10 s, two attempts) that never throws. Its contention
+    // therefore never reaches the 503 below: once the card was tried the route
+    // says what Stripe answered, and never "try again".
+    it("a contended release after a non-captured charge is retried on its own budget and answers what happened, not a retryable 503", async () => {
       mockChargePaymentMethod.mockResolvedValue({
         id: "pi_3ds_contended",
         status: "requires_action",
@@ -1301,6 +1305,45 @@ describe("POST /api/payments/charge-saved-method", () => {
       mockPrismaTransaction
         .mockImplementationOnce(async (fn: (tx: unknown) => unknown) => fn(txClient))
         .mockRejectedValueOnce(contention("P2028"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(409);
+      expect(response.headers.get("Retry-After")).toBeNull();
+      expect(await response.json()).toMatchObject({ success: false, paymentIntentId: "pi_3ds_contended" });
+      const releases = mockPrismaTransaction.mock.calls.slice(1);
+      expect(releases).toHaveLength(2);
+      for (const [, options] of releases) expect(options).toEqual({ maxWait: 5_000, timeout: 10_000 });
+      expect(releaseCall()).toBeDefined();
+      expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+    });
+
+    it("a release contended on both attempts still never answers 'try again' after the card was tried; the marker is left for recovery", async () => {
+      mockChargePaymentMethod.mockResolvedValue({
+        id: "pi_3ds_contended_twice",
+        status: "requires_action",
+        amount: 12500,
+        payment_method: "pm_123",
+      });
+      mockPrismaTransaction
+        .mockImplementationOnce(async (fn: (tx: unknown) => unknown) => fn(txClient))
+        .mockRejectedValueOnce(contention("P2028"))
+        .mockRejectedValueOnce(contention("P2034"));
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(409);
+      expect(response.headers.get("Retry-After")).toBeNull();
+      expect(JSON.stringify(await response.json())).not.toContain(TRANSACTION_CONTENDED_CODE);
+      expect(mockPrismaTransaction).toHaveBeenCalledTimes(3);
+      expect(releaseCall()).toBeUndefined();
+      expect(mockCreateAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "booking.saved_card_claim_release_failed", severity: "critical" }),
+      );
+    });
+
+    it("contention after the charge was attempted, outside the release, asks for a status check", async () => {
+      mockChargePaymentMethod.mockRejectedValue(contention("P2028"));
 
       const response = await POST(makeRequest());
 

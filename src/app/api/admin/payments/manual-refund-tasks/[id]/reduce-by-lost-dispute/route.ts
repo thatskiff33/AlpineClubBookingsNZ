@@ -7,6 +7,7 @@ import { z } from "zod";
 import { clubFormatValues } from "@/lib/club-format-server";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { ManualBookingPaymentError } from "@/lib/manual-booking-payment-error";
 import { disputedHandBackReductionMessage, reduceDisputedHandBack } from "@/lib/manual-refund-task-dispute-reduction";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
@@ -68,6 +69,14 @@ export async function POST(
     if (error instanceof ManualBookingPaymentError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+    // `INV-LOCK-006`: one transaction is all the reduction writes, so a contended
+    // one saved nothing and the same confirmed figures can be sent again.
+    const contended = transactionContendedResponse(
+      error,
+      "Disputed hand-back reduction contended for the lock(1) budget",
+      { context: { taskId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, taskId: id }, "Disputed hand-back reduction failed");
     return NextResponse.json({ error: DISPUTED_HAND_BACK_REDUCTION_FAILED }, { status: 500 });
   }

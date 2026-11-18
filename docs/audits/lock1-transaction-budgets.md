@@ -37,7 +37,8 @@ holds it on a reasoned allowlist that fails once a caller appears.
 
 ## Summary
 
-157 openers (an opener reached by two routes is counted twice). Rebasing onto
+155 openers (an opener reached by two routes is counted twice), five of them
+reasoned exceptions. Rebasing onto
 main on 14 Nov 2026 brought four the first run did not see: three new writers
 on Prisma's defaults, now on the constant, and the #4919 group-invoice email
 fence, which moved to `xero-group-settlement-invoice-email.ts` with its own
@@ -48,6 +49,28 @@ first count missed three routes the reader already followed, where
 `modifyBookingBatch` runs inside a caller's transaction: once into the
 change-request approval and twice into the linked date move. Both openers were
 already on the list and already on the budget.
+
+Re-run on 19 Nov 2026 after merging main (#4998, #5129, #5231 and the PRs
+merged with them): 155 openers, two new and four gone. The other 153 are
+unchanged, and no other merged PR added an opener or changed one's options.
+
+- #5129 moved the saved-card charge claim's release out of the three places
+  that hand a claim back (`confirm-pending-guests` `POST#3`,
+  `charge-saved-method` `POST#2`, and `releaseChargeClaim` and the bump branch
+  of `confirmPendingBookings` in `cron-confirm-pending.ts`) into one helper,
+  `runSavedCardClaimRelease` (`src/lib/saved-card-charge-claim.ts`), which
+  also runs the stale-claim recovery. Those four openers were on the budget
+  here; the helper's one opener keeps #5129's 5 s / 10 s and is the fifth
+  exception (below).
+- #4998 added `reduceDisputedHandBack`
+  (`src/lib/manual-refund-task-dispute-reduction.ts`) on Prisma's defaults. It
+  takes lock(1) in the same order as the hand-back dismissal it shares its
+  decision with, so it now runs on the budget, and its route answers
+  contention with the dismissal's one-step 503.
+
+The summary table below is as of 18 Nov (157 openers) and is not re-cut: the
+four removed rows were defaults before the follow-up, and the two new
+writers came after it.
 
 | Before the follow-up | Openers | Now |
 | --- | ---: | --- |
@@ -64,7 +87,7 @@ already on the list and already on the budget.
 on the list: no transaction it governs waits for lock(1), so it stays a separate
 budget for row-lock waits.
 
-## The four exceptions
+## The five exceptions
 
 - `src/lib/deleted-booking-modification-payment.ts` (5 s / 10 s). A Stripe
   webhook handler. Stripe's delivery timeout caps it; 30 s here would trade a lost
@@ -80,6 +103,16 @@ budget for row-lock waits.
   `XERO_EMAIL_FENCE_TRANSACTION_OPTIONS`). The one Xero call held inside lock(1)
   is bounded by its own deadline, and the timeout is sized to it, so a slow
   answer defers the email rather than outliving the transaction (#4919).
+- `src/lib/saved-card-charge-claim.ts` (5 s / 10 s, two attempts,
+  `RELEASE_BUDGET`). `runSavedCardClaimRelease` hands back a saved-card charge
+  claim that did not capture (#5129). It is a compensating transaction in a
+  bounded retry loop, sized as the waitlist-confirm release is, because an
+  officer's request may be waiting on it after the card was tried. It never
+  throws: a release that still loses keeps its claim marker, writes a critical
+  audit row, and the confirm-pending job's recovery hands the booking back
+  later. A tighter budget therefore delays the hand-back and never loses it,
+  and no caller turns its contention into a "try again" answer after the card
+  was tried.
 
 ## How contention is answered
 
@@ -121,7 +154,6 @@ the opener's callback.
 | --- | --- | --- | --- | --- | --- |
 | `app/api/admin/bookings/[id]/confirm-pending-guests/route.ts` | \$transaction | `POST#1` | direct | defaults | budget |
 | `app/api/admin/bookings/[id]/confirm-pending-guests/route.ts` | \$transaction | `POST#2` | direct | defaults | budget |
-| `app/api/admin/bookings/[id]/confirm-pending-guests/route.ts` | \$transaction | `POST#3` | direct | defaults | budget |
 | `app/api/admin/bookings/[id]/exclusive-hold/route.ts` | \$transaction | `POST#1` | direct | defaults | budget |
 | `app/api/admin/bookings/[id]/force-confirm/route.ts` | \$transaction | `POST#1` | direct | defaults | budget |
 | `app/api/admin/bookings/[id]/return-to-waitlist/route.ts` | \$transaction | `POST#1` | direct | 10 s / 30 s, named copy | budget |
@@ -140,7 +172,6 @@ the opener's callback.
 | `app/api/lodge/guests/[date]/depart/route.ts` | \$transaction | `PUT#1` | direct | defaults | budget |
 | `app/api/lodge/roster/[date]/confirm/route.ts` | \$transaction | `lockRosterEligibilityMutation#1` | `lockRosterEligibilityMutation` | defaults | budget |
 | `app/api/payments/charge-saved-method/route.ts` | \$transaction | `POST#1` | direct | defaults | budget |
-| `app/api/payments/charge-saved-method/route.ts` | \$transaction | `POST#2` | direct | defaults | budget |
 | `app/api/payments/create-payment-intent/route.ts` | \$transaction | `POST#1` | direct | defaults | budget |
 | `app/api/payments/switch-to-internet-banking/route.ts` | \$transaction | `POST#1` | direct | defaults | budget |
 | `lib/additional-ask-queue-transaction.ts` | \$transaction | `lockAdditionalAskQueue#1` | `lockAdditionalAskQueue` | 10 s / 30 s, named copy | alias |
@@ -208,8 +239,6 @@ the opener's callback.
 | `lib/credit-release-ask-close.ts` | \$transaction | `recordReleasePaidInXeroCash#1` | direct | 10 s / 30 s literal | budget |
 | `lib/cron-complete-bookings.ts` | \$transaction | `completeBookings#1` | direct | defaults | budget |
 | `lib/cron-confirm-pending.ts` | \$transaction | `resolveHoldWindowUnderLock#1` | direct | defaults | budget |
-| `lib/cron-confirm-pending.ts` | \$transaction | `releaseChargeClaim#1` | direct | defaults | budget |
-| `lib/cron-confirm-pending.ts` | \$transaction | `confirmPendingBookings#1` | direct | defaults | budget |
 | `lib/cron-group-settlement-reaper.ts` | \$transaction | `releaseSettlementChildren#1` | direct | defaults | budget |
 | `lib/cron-group-settlement-reaper.ts` | \$transaction | `cancelReapedChildren#1` | direct | defaults | budget |
 | `lib/cron-quote-expiry-reminders.ts` | \$transaction | `releaseExpiredQuoteHolds#1` | direct | defaults | budget |
@@ -234,6 +263,7 @@ the opener's callback.
 | `lib/hut-leader-assignment-service.ts` | \$transaction | `applyHutLeaderAssignmentEditUnderLocks#1` | direct | defaults | budget |
 | `lib/internet-banking-payment-cron.ts` | \$transaction | `releaseOneHold#1` | direct | timeout 15 s only | budget |
 | `lib/late-capture-refund-hold.ts` | \$transaction | `holdLateCaptureForTreasurerIfRequired#1` | direct | defaults | budget |
+| `lib/manual-refund-task-dispute-reduction.ts` | \$transaction | `reduceDisputedHandBack#1` | direct | defaults (#4998) | budget |
 | `lib/manual-refund-task-reopen.ts` | \$transaction | `reopenManualRefundTask#1` | direct | defaults | budget |
 | `lib/manual-refund-task-resolution.ts` | \$transaction | `resolveManualRefundTask#1` | direct | defaults | budget |
 | `lib/member-guest-consent-service.ts` | \$transaction | `respondToMemberGuestConsent#1` | direct | defaults | budget |
@@ -253,6 +283,7 @@ the opener's callback.
 | `lib/payment-recovery.ts` | \$transaction | `lockAdditionalAskQueue#1` | `lockAdditionalAskQueue` | 10 s / 30 s, named copy | alias |
 | `lib/privacy-retention-jobs.ts` | \$transaction | `anonymiseFormerMember#1` | `anonymiseFormerMember` | timeout 15 s only | budget |
 | `lib/requested-room-write.ts` | \$transaction | `writeRequestedRoom#1` | direct | defaults | budget |
+| `lib/saved-card-charge-claim.ts` | \$transaction | `runSavedCardClaimRelease#1` | direct | 5 s / 10 s, named (#5129) | exception |
 | `lib/school-booking-request.ts` | \$transaction | `approveSchoolBookingRequest#1` | direct | defaults | budget |
 | `lib/school-booking-request.ts` | \$transaction | `approveMemberWholeLodgeRequest#1` | direct | defaults | budget |
 | `lib/school-pending-adult-resolution.ts` | \$transaction | `resolveAcceptedSchoolPendingAdults#1` | direct | defaults | budget |
