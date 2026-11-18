@@ -9564,6 +9564,12 @@ enum MemberMoneyExportDocumentRole {
   SUPPLEMENTARY_BOOKING_INVOICE
   /// #4525 (ALP-436): a rewrite of an issued primary invoice's descriptions and dates.
   PRIMARY_BOOKING_INVOICE_UPDATE
+  /// #4525 (ALP-439): a refund credit note, covering the one live R05 refund debt it answers.
+  REFUND_NOTE
+  /// #4525 (ALP-439): the cash payment that settles a refund note, covering its R12 or R14 slice.
+  REFUND_NOTE_PAYMENT
+  /// #4525 (ALP-439): reserved for the failed-later refund reversal invoice; nothing writes it yet.
+  FAILED_LATER_REFUND_REVERSAL
 }
 
 enum MemberMoneyExportOutcome {
@@ -9580,6 +9586,10 @@ enum MemberMoneyExportConflictReason {
   REDUCTION_NETTED
   /// A primary-invoice update whose total is not its covered primary manifest's.
   PRIMARY_UNMATCHED
+  /// A refund note whose cents are not its one obligation's.
+  CENTS
+  /// The component is already covered by an earlier document of the same role.
+  ALREADY_COVERED
 }
 
 /// M13 (#4525): what one sent provider document covers, written once under its
