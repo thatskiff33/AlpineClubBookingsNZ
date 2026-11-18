@@ -2642,7 +2642,7 @@ describe("AdminBookPage view-only gating (#1997, bookings)", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: /Book on Behalf of Member/i }),
+        screen.getByRole("heading", { name: /Book on Behalf/i }),
       ).toBeInTheDocument(),
     );
     expect(
@@ -2737,7 +2737,7 @@ describe("MemberApplicationsPage view-only gating (#1997, membership)", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: /Member Applications/i }),
+        screen.getByRole("heading", { name: /^Applications$/i }),
       ).toBeInTheDocument(),
     );
     expect(
@@ -2786,7 +2786,7 @@ describe("MembershipCancellationsPage view-only gating (#1997, membership)", () 
 
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: /Membership Cancellations/i }),
+        screen.getByRole("heading", { name: /Cancellation Requests/i }),
       ).toBeInTheDocument(),
     );
     expect(

@@ -100,7 +100,7 @@ rows and 56,846 words (70,395 before it).
 | `INV-HOST-053` | 1434 |
 | `INV-OPS-013` | 1354 |
 | `INV-CONFIG-004` | 1304 |
-| `INV-OPS-012` | 1214 |
+| `INV-OPS-012` | 1200 |
 | `INV-PAY-047` | 1164 |
 | `INV-MOD-055` | 1002 |
 | `INV-ADDPAY-036` | 1137 |
@@ -123,7 +123,7 @@ rows and 56,846 words (70,395 before it).
 | `INV-MONEY-029` | 808 |
 | `INV-LIFE-062` | 639 |
 | `INV-ADDPAY-017` | 637 |
-| `INV-PRIV-013` | 627 |
+| `INV-PRIV-013` | 625 |
 | `INV-MOD-006` | 623 |
 | `INV-HOST-042` | 607 |
 | `INV-ADDPAY-023` | 584 |

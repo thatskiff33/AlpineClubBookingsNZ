@@ -1049,6 +1049,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
 | `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
 | `INV-SSOT-009` | A charge's dedup key and display name share one builder only |
+| `INV-SSOT-010` | An admin page's heading is its registry label; a census holds it |
 
 ## Authentication
 
