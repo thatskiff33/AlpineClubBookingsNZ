@@ -1249,6 +1249,8 @@ describe("markBookingPaymentSucceeded", () => {
       // #4154: the $10.00 no refund covers is a task to check, raised in the void's own claim transaction.
       expect(shortfallAlert.raiseCapacityRaceRefundShortfallTask).toHaveBeenCalledWith(tx, {
         bookingId: "booking-1", paymentId: expect.any(String), paymentIntentId: "pi_race", chargedCents: 10000, plannedRefundCents: 9000, format: CLUB_FORMAT_TEST,
+        // #4516 (M4d): the claim's journal context, so the bank part's hand-back R05 posts with it.
+        journal: expect.objectContaining({ currency: "NZD" }),
       });
       // #4125: the officers are told about the $10.00 no refund covers - and (#4154) that its task was raised.
       expect(shortfallAlert.alertCapacityRaceRefundShortfall).toHaveBeenCalledWith(
