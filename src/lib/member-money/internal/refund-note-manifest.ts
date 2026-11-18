@@ -2,7 +2,7 @@ import { Prisma, type MemberMoneyAccount, type MemberMoneyExportDocumentRole } f
 import type { LineItem } from "xero-node";
 import { prisma } from "../../prisma";
 import logger from "../../logger";
-import { asRecord, readString } from "../../xero-json";
+import { asRecord, readString, storedInvoiceRequestLines } from "../../xero-json";
 import type { CashRefundMethod } from "../../xero-refund-method";
 import { CARD_REFUND_STILL_OWED_ORIGIN_SELECT, cardRefundStillOwedOrigin } from "../../card-refund-still-owed-origin";
 import { paymentRecoveryOperationIdOfPaidAnotherWay } from "../../manual-refund-task-settlement-rules";
@@ -356,9 +356,11 @@ async function resolveFailedLaterRefundReversal(db: Db, closeTaskId: string): Pr
   const eventKey = memberMoneyEventKeys.reversal(r12.journal.id);
   const reversal = await db.memberMoneyEvent.findUnique({
     where: { eventKey },
-    select: { journal: { select: { lines: { select: { account: true, side: true, amountCents: true } } } } },
+    select: { journal: { select: { reversedBy: { select: { id: true } }, lines: { select: { account: true, side: true, amountCents: true } } } } },
   });
   if (!reversal?.journal) return { problem: `${r12Key} is not reversed: no ${eventKey} is posted` };
+  // As for a note's cash (`resolveRefundNoteCash`): an undone R13 is no live slice.
+  if (reversal.journal.reversedBy) return { problem: `${eventKey} was itself reversed` };
   const debits = reversal.journal.lines.filter((line) => line.account === "STRIPE_CLEARING" && line.side === "DEBIT");
   if (debits.length === 0) return { problem: `${eventKey} moves nothing back onto STRIPE_CLEARING` };
   return { account: "STRIPE_CLEARING", chargeIdentity: eventKey, cents: debits.reduce((sum, line) => sum + line.amountCents, 0) };
@@ -370,12 +372,10 @@ export type FailedLaterRefundReversalManifestSource =
   /** An invoice an earlier attempt raised: the operation's stored request is read, never rebuilt. */
   | { kind: "REPLAY"; operationId: string };
 
-/** A replay's stored invoice lines, or null when the row stores none. */
+/** A replay's stored invoice lines (`storedInvoiceRequestLines`), or null when the row stores none. */
 async function readStoredReversalLines(operationId: string): Promise<LineItem[] | null> {
   const row = await prisma.xeroSyncOperation.findUnique({ where: { id: operationId }, select: { requestPayload: true } });
-  const invoices = asRecord(row?.requestPayload)?.invoices;
-  const invoice = asRecord(Array.isArray(invoices) ? invoices[0] : null);
-  return Array.isArray(invoice?.lineItems) && invoice.lineItems.length > 0 ? (invoice.lineItems as LineItem[]) : null;
+  return storedInvoiceRequestLines(row?.requestPayload);
 }
 
 /**

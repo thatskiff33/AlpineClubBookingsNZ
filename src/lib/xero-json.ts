@@ -7,6 +7,8 @@
  * subsystem — not part of the `@/lib/xero` compatibility facade surface.
  */
 
+import type { LineItem } from "xero-node";
+
 export function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -34,6 +36,20 @@ export function readNumber(value: unknown): number | null {
 
 export function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+/**
+ * #4525 (Ledger M13, `INV-SSOT`): the lines an ACCREC invoice operation sent,
+ * read from its stored request (`requestPayload.invoices[0].lineItems`) as
+ * stored, or null where the row stores none. The one reader of that shape for
+ * every export-manifest replay (the primary booking invoice and the
+ * failed-later refund reversal); an empty stored array is returned as stored,
+ * so its manifest records the mismatch rather than skipping it.
+ */
+export function storedInvoiceRequestLines(requestPayload: unknown): LineItem[] | null {
+  const invoices = asRecord(requestPayload)?.invoices;
+  const lines = Array.isArray(invoices) ? asRecord(invoices[0])?.lineItems : undefined;
+  return Array.isArray(lines) ? (lines as LineItem[]) : null;
 }
 
 /**

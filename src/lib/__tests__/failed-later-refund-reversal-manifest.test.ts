@@ -64,19 +64,26 @@ function recoveryRow(id: string, idempotencyKey: string, allocationPlan: unknown
     paymentId: PAYMENT_ID, paymentIntentId: "pi_1", amountCents: 8_000, allocationPlan };
 }
 
-/** The journal: R12 for the failed refund, reversed by its R13 for `reversedCents` (null: not reversed). */
-function journal(reversedCents: number | null) {
+/**
+ * The journal: R12 for the failed refund, reversed by its R13 for `reversedCents` (null: not reversed).
+ * `r12: false` posts no R12; `clearing: false` gives the R13 no Stripe-clearing debit; `r13Reversed` undoes the R13.
+ */
+function journal(reversedCents: number | null, options: { r12?: boolean; clearing?: boolean; r13Reversed?: boolean } = {}) {
+  const { r12 = true, clearing = true, r13Reversed = false } = options;
   mocks.eventFindUnique.mockImplementation(async ({ where }: { where: { eventKey: string } }) => {
-    if (where.eventKey === `refund:${REFUND_ID}`) return { journal: { id: R12_JOURNAL } };
+    if (where.eventKey === `refund:${REFUND_ID}`) return r12 ? { journal: { id: R12_JOURNAL } } : null;
     if (where.eventKey === `reversal:${R12_JOURNAL}` && reversedCents !== null) {
-      return { journal: { lines: [
-        { account: "STRIPE_CLEARING", side: "DEBIT", amountCents: reversedCents },
+      return { journal: { reversedBy: r13Reversed ? { id: "journal_r13_undo" } : null, lines: [
+        { account: clearing ? "STRIPE_CLEARING" : "BANK", side: "DEBIT", amountCents: reversedCents },
         { account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: reversedCents },
       ] } };
     }
     return null;
   });
 }
+
+/** The problem the recorder logged with its conflict. */
+const loggedProblem = () => (mocks.logger.warn.mock.calls[0]?.[0] as { problem?: string } | undefined)?.problem;
 
 const record = (lines = [line(8_000)]) => recordFailedLaterRefundReversalManifest({
   paymentId: PAYMENT_ID, bookingId: BOOKING_ID, closeTaskId: CLOSE_ID, invoiceId: "inv_1", legacyKey: LEGACY_KEY,
@@ -122,6 +129,44 @@ describe("recordFailedLaterRefundReversalManifest", () => {
     expect(written()).toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE", coverage: [] });
   });
 
+  it.each([
+    {
+      name: "a close that is not a card refund's paid-another-way close",
+      arrange: () => mocks.manualRefundTaskFindUnique.mockResolvedValue({ kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: "hand-back:other" }),
+      problem: `close ${CLOSE_ID} is not a card refund's paid-another-way close`,
+    },
+    {
+      name: "a close that is gone",
+      arrange: () => mocks.manualRefundTaskFindUnique.mockResolvedValue(null),
+      problem: `close ${CLOSE_ID} is not a card refund's paid-another-way close`,
+    },
+    {
+      name: "a card refund row the close names that is gone",
+      arrange: () => mocks.operationFindUnique.mockResolvedValue(null),
+      problem: `the card refund row ${OPERATION_ID} close ${CLOSE_ID} names is gone`,
+    },
+    {
+      name: "a failed refund with no R12 posted",
+      arrange: () => journal(8_000, { r12: false }),
+      problem: `no card refund cash is posted for refund:${REFUND_ID}`,
+    },
+    {
+      name: "an R13 that moves nothing back onto Stripe clearing",
+      arrange: () => journal(8_000, { clearing: false }),
+      problem: `reversal:${R12_JOURNAL} moves nothing back onto STRIPE_CLEARING`,
+    },
+    {
+      name: "an R13 that was itself reversed",
+      arrange: () => journal(8_000, { r13Reversed: true }),
+      problem: `reversal:${R12_JOURNAL} was itself reversed`,
+    },
+  ])("$name answers no live R13: COMPONENT_UNUSABLE, with the reason logged", async ({ arrange, problem }) => {
+    arrange();
+    await record();
+    expect(written()).toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE", coverage: [] });
+    expect(loggedProblem()).toBe(problem);
+  });
+
   it("a row owed for two failed refunds names no one R13: COMPONENT_UNUSABLE", async () => {
     mocks.operationFindUnique.mockResolvedValue(recoveryRow(OPERATION_ID, "booking_cancellation_refund_x", [
       { paymentTransactionId: "tx_1", amountCents: 4_000, failedRefundIds: [REFUND_ID] },
@@ -156,6 +201,14 @@ describe("recordFailedLaterRefundReversalManifest", () => {
       invoiceId: "inv_1", legacyKey: LEGACY_KEY, source: { kind: "REPLAY", operationId: "op_1" } });
     expect(mocks.syncOperationFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "op_1" } }));
     expect(written()).toMatchObject({ outcome: "COVERED", frozenMapping: { source: "STORED_REQUEST" } });
+
+    // An empty stored invoice is read as stored (one reader, `storedInvoiceRequestLines`): a CENTS conflict, not silence.
+    vi.clearAllMocks();
+    mocks.writeExportManifest.mockResolvedValue("WRITTEN");
+    mocks.syncOperationFindUnique.mockResolvedValue({ requestPayload: { invoices: [{ lineItems: [] }] } });
+    await recordFailedLaterRefundReversalManifest({ paymentId: PAYMENT_ID, bookingId: BOOKING_ID, closeTaskId: CLOSE_ID,
+      invoiceId: "inv_1", legacyKey: LEGACY_KEY, source: { kind: "REPLAY", operationId: "op_1" } });
+    expect(written()).toMatchObject({ outcome: "CONFLICT", reason: "CENTS", lineTotalCents: 0, coverage: [] });
 
     vi.clearAllMocks();
     mocks.syncOperationFindUnique.mockResolvedValue({ requestPayload: { queueType: "CARD_REFUND_REVERSAL_INVOICE" } });
