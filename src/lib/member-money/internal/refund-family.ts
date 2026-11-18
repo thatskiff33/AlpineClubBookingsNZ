@@ -41,9 +41,14 @@ export type RefundBooking = { bookingId: string; lodgeId: string };
  * The R05 key a door's refund debt lives under now: its chain's live tip (`memberMoneyChainKey`), or null when no
  * live R05 is posted for it. `next` is the key a fresh R05 for that door posts under.
  */
-export async function refundObligationChain(tx: Db, scope: RefundObligationScope, id: string): Promise<{ live: MemberMoneyEventKey | null; next: MemberMoneyEventKey }> {
-  const tip = await walkMemberMoneyChain(memberMoneyEventKeys.refundObligation(scope, id), async (eventKey) =>
+/** The live tip of a reversal chain. The reversal sits on the journal, never on the event. */
+export async function memberMoneyChainTip(tx: Db, base: MemberMoneyEventKey): Promise<MemberMoneyEventKey> {
+  return walkMemberMoneyChain(base, async (eventKey) =>
     (await tx.memberMoneyEvent.findUnique({ where: { eventKey }, select: { journal: { select: { reversedBy: { select: { id: true } } } } } }))?.journal ?? null);
+}
+
+export async function refundObligationChain(tx: Db, scope: RefundObligationScope, id: string): Promise<{ live: MemberMoneyEventKey | null; next: MemberMoneyEventKey }> {
+  const tip = await memberMoneyChainTip(tx, memberMoneyEventKeys.refundObligation(scope, id));
   return (await eventPosted(tx, tip)) ? { live: tip, next: tip } : { live: null, next: tip };
 }
 
@@ -87,13 +92,18 @@ export async function refundFamilyTip(tx: Db, context: MemberMoneyPostingContext
   return refundFamily(await readMemberMoneyApplicationState(tx, booking.bookingId), rootKey).tip;
 }
 
-/** The R06 receipt's credit leg for a card capture, or null when the capture has no live receipt in the journal. */
-export async function cardReceiptLine(tx: Db, paymentIntentId: string) {
-  const event = await tx.memberMoneyEvent.findUnique({ where: { eventKey: memberMoneyEventKeys.capture(paymentIntentId) },
+/** The live receivable credit of one receipt event, or null when that event is missing or reversed. */
+export async function receiptCreditLine(tx: Db, eventKey: string) {
+  const event = await tx.memberMoneyEvent.findUnique({ where: { eventKey },
     select: { journal: { select: { reversedBy: { select: { id: true } }, lines: { where: { account: "MEMBER_RECEIVABLE", side: "CREDIT" },
       select: { id: true, amountCents: true, debtorKind: true, memberId: true, organisationId: true } } } } } });
   if (!event?.journal || event.journal.reversedBy) return null;
   return event.journal.lines[0] ?? null;
+}
+
+/** The R06 receipt's credit leg for a card capture, or null when the capture has no live receipt in the journal. */
+export async function cardReceiptLine(tx: Db, paymentIntentId: string) {
+  return receiptCreditLine(tx, memberMoneyEventKeys.capture(paymentIntentId));
 }
 
 /**

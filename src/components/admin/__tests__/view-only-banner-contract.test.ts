@@ -333,6 +333,7 @@ const KEEPS_OWN_REASON: Readonly<Record<string, number>> = {
   "components/admin/committee-photo-display-control.tsx": 1,
   "components/admin/family-groups/login-holder-section.tsx": 2,
   "components/admin/family-groups/request-review-card.tsx": 2,
+  "components/admin/manual-refund-task-dispute-reduction.tsx": 1,
   "components/admin/manual-refund-task-queue.tsx": 2,
   "components/admin/manual-refund-task-reopen-card.tsx": 1,
   "components/admin/non-member-contact-form.tsx": 2,

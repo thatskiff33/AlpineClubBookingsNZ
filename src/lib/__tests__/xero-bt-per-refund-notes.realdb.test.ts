@@ -351,12 +351,15 @@ function answerRefundsAsStripeWould(params: { paymentIntentId: string; amountCen
       expect(await refunded()).toBe(0);
       expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, kind: "BANK_REFUND" } })).toBe(0);
       if (dismissAndReopen) {
+        // #4516 (owner decision, 14 Nov 2026): the officer's dismissal is refused for now, so the row is put in the
+        // state an earlier release (or the old colour mid-deploy) left it in, then reopened as before.
         const { resolveManualRefundTask } = await import("@/lib/manual-refund-task-resolution");
-        await resolveManualRefundTask({
+        await expect(resolveManualRefundTask({
           taskId: task.id, resolution: "dismissed", note: "No bank payment was made.",
           actingMemberId: OFFICER_ID, recordedNightPrices: null,
-        }, CLUB_FORMAT_TEST);
-        expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "DISMISSED" });
+        }, CLUB_FORMAT_TEST)).rejects.toMatchObject({ status: 409 });
+        expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "OPEN" });
+        await prisma.manualRefundTask.update({ where: { id: task.id }, data: { status: "DISMISSED", note: "No bank payment was made.", completedAt: new Date(), completedByMemberId: OFFICER_ID } });
         await reconcile(noteId, 5_000, "AUTHORISED", true);
         await recount();
         expect(await refunded()).toBe(0);

@@ -938,6 +938,34 @@ member-money:refund-reservations` lists them, answers those a recovery row marks
 made by an exact refund, and releases any other only on the owner's explicit
 OPERATOR command ([maintenance](../MAINTENANCE.md#reconcile-and-census-card-refund-reservations-m4c)).
 
+### M4d bank and cash hand-backs
+
+A hand-back the club pays by bank transfer or in cash posts its refund debt
+(R05, scope `hand-back`) with the task, then pays it (R14, `hand-back-paid:<task>`)
+when the treasurer marks it paid. The payment is funded only from the receipts
+that completion placed the money on. Cash is never refused for a cap: the
+applied part trims to what the debt still has open, and the rest debits the
+owner's receivable. A task raised before this milestone has no debt in the
+journal, so its payment posts unapplied (Dr receivable, Cr bank or cash).
+Dismissing a real bank or cash hand-back, whenever it was raised, is refused
+for now, so its debt stays open until it is paid (owner decision, 14 Nov 2026,
+#4516); a four-way dismissal that records why follows in its own change. A card
+shortfall's part to check keeps its dismissal, and a disputed card payment's
+hand-back, a cancellation's or a dispute-held edit's, is dismissed once its
+dispute is lost, or reduced by a dispute lost for part of it, lost cents counted
+once across the payment's hand-backs, oldest first (owner decisions, 15 and 18
+Nov 2026, `INV-PAY-157`); each withdraws its debt, or that
+part of it, exactly (a part is a Dr refund payable, Cr receivable batch paying
+the debt). An
+approved appeal's bank part posts its concession against goodwill first, as
+its card part does, so once paid the member owes nothing. A late capture the treasurer keeps closes the capture-return debt,
+then records the keep: collected against the booking for the cents an invoice
+already bills, and a retained component (`kept-capture:<intent>`) for the rest.
+Approving that keep later reverses the component before the return posts. The
+comparison counts a kept-capture component on the ledger side as the gross it
+still carries. No card reservation is taken: the bank payment happens in the
+same transaction as the task. Organiser shares stay M6's.
+
 ## 11. Proposed children, in shipping order
 
 The owner approves this design before these issues are filed or built. Labels
