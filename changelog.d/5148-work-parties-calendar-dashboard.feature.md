@@ -6,8 +6,10 @@
   Work parties module is off, its entries are hidden from the calendar too. The
   entries are read-only on the calendar, with a link to the work party. Work
   parties made before this have an **Add to calendar** button, so a club that
-  typed one in by hand does not get it twice. A work party can now run for at
-  most 366 nights, the calendar's limit.
+  typed one in by hand does not get it twice. New work-party dates can now
+  span at most 366 nights, the calendar's limit. An existing longer work party
+  can still be deactivated or re-described; only changing its dates asks for
+  the shorter window, and its calendar shows its first 366 nights.
 - **Members see upcoming work parties on their dashboard and can join one in a
   click.** A new **Work Parties** card lists up to five upcoming active work
   parties, and is not shown when there are none. Each opens a work party page

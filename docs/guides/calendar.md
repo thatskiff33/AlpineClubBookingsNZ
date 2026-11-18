@@ -127,7 +127,8 @@ event, not a repeating one: no repeat marker and no "Daily" line. See
   sees them (including non-member logins), even though only members see the
   Work Parties card and page.
 - A work party can run for at most 366 nights, the calendar's series limit;
-  a longer window is refused when the work party is saved.
+  new dates longer than that are refused when the work party is saved. One
+  saved longer before the limit shows its first 366 nights.
 - The entry's location is the lodge's name when the work party was last
   saved. Renaming a lodge does not change existing entries until the work
   party is saved again.

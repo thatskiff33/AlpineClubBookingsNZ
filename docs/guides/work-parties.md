@@ -68,8 +68,11 @@ calendar shows an **On calendar** badge.
 - **Deactivating** hides the entries; **activating** shows them again. While
   the **Work parties** module is off, every work party's entries are hidden,
   and they come back when it is turned on.
-- A work party can run for at most 366 nights, the calendar's limit; a longer
-  window is refused when you save.
+- A work party can run for at most 366 nights, the calendar's limit: new
+  dates longer than that are refused when you save. A work party saved longer
+  before this limit keeps working: you can still deactivate it or change its
+  name or description with its dates as they are, and its calendar shows its
+  first 366 nights. Changing its dates means bringing it within the limit.
 - The entries are read-only on the calendar. Change the work party instead.
 - **Add to calendar** appears, while the Events calendar module is on, on an
   active work party with nights still to come and no entries — one made
@@ -95,8 +98,10 @@ that never runs working bees sees no empty card.
 2. **Join Work Party** opens **Book a Stay** with the stay filled in — check-in on
    the first night (or today, if it has started), check-out the morning after the
    last night — and the lodge and "I am attending a working bee" ticked.
-   An unfinished booking kept in the browser tab is not brought back over it;
-   it is still there the next time the member opens **Book** directly.
+   An unfinished booking kept in the browser tab is not brought back over it.
+   Once the Join has filled in the dates, the Join booking is kept instead, so
+   a detour (to add a family member on the profile, say) comes back to it. A
+   Join that fills nothing in leaves the older booking kept as it was.
 3. The member adds guests and pays as usual. Joining *is* a booking: there is no
    separate sign-up list, every booking rule still applies (capacity, minimum
    stay, booking windows), and a full lodge shows the usual message. A booking

@@ -68,7 +68,7 @@ Journey: Read upcoming stays and account notices, then open a booking or choose 
 
 Screen: `/book`.
 
-Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer. Work survives profile detours and refreshes in the same tab; expired dates are dropped. Submit, waitlist join, draft save, exception request, sign-out or Start again clears it.
+Journey: Choose lodge and nights, add guests, review the price and rules, then confirm and follow the offered payment step. If a rule blocks the stay, use the available exception-request journey. A refused confirm, draft or waitlist join, or a Continue from the guests step that is stopped, moves the page and focus to the explanation above the steps, with any button that fixes it (or a link down to the Booking Officer request, when one is offered); a full lodge does the same with its waitlist offer. Work survives profile detours and refreshes in the same tab; expired dates are dropped. A Join Work Party visit does not bring back older kept work; once its dates are filled in it is kept itself, so a detour returns to the Join booking, and a Join that fills nothing in leaves the older work for the next visit. Submit, waitlist join, draft save, exception request, sign-out or Start again clears it.
 
 [Guide](user-guide/booking-a-stay.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -495,7 +495,7 @@ Screen: `/admin/calendar`.
 
 Shows: Club events and the controls for managing them.
 
-Journey: Choose a date range, inspect events, and open an event to manage it.
+Journey: Choose a date range, inspect events, and open an event to manage it. A work party's entries open read-only, with a link to Work Parties, where they are changed.
 
 [Guide](guides/calendar.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
