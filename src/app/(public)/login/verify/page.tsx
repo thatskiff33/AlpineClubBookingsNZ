@@ -10,6 +10,11 @@ import { resolvePostLoginLandingPath } from "@/lib/post-login-landing";
 import { isSecondFactorEnrolled } from "@/lib/second-factor-enrolment";
 import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
 import { TwoFactorVerifyPanel } from "../two-factor-panels";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Verify your sign-in",
+};
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;

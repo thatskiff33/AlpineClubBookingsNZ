@@ -8,7 +8,7 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
 /**
- * #4951 — each member-facing route names its own browser tab.
+ * #4951, #5217 — each member-facing route names its own browser tab.
  *
  * The root layout's `generateMetadata` supplies a default (`<Club> — <Lodge>`)
  * and a template (`%s | <Club>`). A route that sets no title of its own falls
@@ -71,9 +71,26 @@ const ROUTES: Array<[route: string, load: () => Promise<{ metadata?: Metadata }>
     () => import("../(website-dynamic)/booking-requests/verify/[token]/page"),
     "Confirm your booking request",
   ],
+  ["/profile", () => import("../(authenticated)/profile/page"), "Profile"],
+  ["/book", () => import("../(authenticated)/book/layout"), "Book a stay"],
+  ["/induction", () => import("../(authenticated)/induction/layout"), "Lodge induction"],
+  [
+    "/maintenance-report",
+    () => import("../(authenticated)/maintenance-report/layout"),
+    "Report a maintenance issue",
+  ],
+  ["/forgot-password", () => import("../(public)/forgot-password/layout"), "Forgot your password"],
+  ["/register", () => import("../(public)/register/page"), "Register"],
+  ["/login/verify", () => import("../(public)/login/verify/page"), "Verify your sign-in"],
+  [
+    "/login/enroll",
+    () => import("../(public)/login/enroll/page"),
+    "Set up two-factor authentication",
+  ],
+  ["/chores/[token]", () => import("../(public)/chores/[token]/layout"), "Your chores"],
 ];
 
-describe("member-facing routes set their own tab title (#4951)", () => {
+describe("member-facing routes set their own tab title (#4951, #5217)", () => {
   it.each(ROUTES)("%s is titled by the root template", async (_route, load, title) => {
     const { metadata } = await load();
     // A plain string is what the root `%s | <Club>` template wraps; anything

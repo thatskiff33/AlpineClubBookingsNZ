@@ -9,6 +9,11 @@ import {
 import { resolvePostLoginLandingPath } from "@/lib/post-login-landing";
 import { officerMayEnrolAuthenticatorApp } from "@/lib/second-factor-enrolment";
 import { TwoFactorEnrollPanel } from "../two-factor-panels";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Set up two-factor authentication",
+};
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
