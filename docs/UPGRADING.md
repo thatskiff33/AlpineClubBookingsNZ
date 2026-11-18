@@ -1941,7 +1941,7 @@ reverse script beside it,
 which recreates `enabled` from the mode (**Let them book normally** → false, the
 other two → true) and lets the previous release run again. Both directions were
 rehearsed against a production-shaped database before this shipped; the transcript
-is in `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §7.1, and the full sequence is in
+is in [the runbook §7.1](PRODUCTION_UPGRADE_RUNBOOK.md#71-windowed-migration-rehearsal-20260803010000_contract_subscription_lockout_drop_enabled), and the full sequence is in
 `DEPLOYMENT.md` → "Windowed migrations".
 
 See also point 3 below on configuration bundles.
