@@ -60,6 +60,15 @@ reason: the only growth is the import of `notifyAdminQueueChanged` and the
   add a file and still need a call here. Splitting this page is its own
   piece of work.
 
+file: src/components/admin/manual-refund-task-queue.tsx
+lines: 2081
+reason: the only growth is the import of `notifyAdminQueueChanged` and the
+  call at each decision that changes this queue, so the Needs Attention badge
+  refetches after the officer acts (#4962). The call has to sit at the
+  mutation site, after the request succeeds; moving it into a helper would
+  add a file and still need a call here. Main's #4998 grew this file to 2079
+  lines first; splitting it is its own piece of work.
+
 function: src/app/(admin)/admin/finance/refund-requests/page.tsx#RefundRequestsPage
 lines: 844
 reason: the only growth is the `notifyAdminQueueChanged` call at each
@@ -149,7 +158,7 @@ reason: the only growth is the `notifyAdminQueueChanged` call at each
   this component is its own piece of work.
 
 function: src/components/admin/manual-refund-task-queue.tsx#ManualRefundTaskQueue
-lines: 1325
+lines: 1329
 reason: the only growth is the `notifyAdminQueueChanged` call at each
   decision inside this component that changes its queue, so the Needs
   Attention badge refetches after the officer acts (#4962). The call has to
