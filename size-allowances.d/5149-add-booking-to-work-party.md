@@ -20,9 +20,9 @@ budget.
 file: src/lib/booking-guests.ts
 lines: 832
 reason: `getAllowedGuestMemberIds` is the one definition of a member's family
-  (INV-SSOT). It is now exported for a second reader, "Add to work party", which
-  refuses the officer's own and family's bookings when money comes back; the
-  two-line doc names that second use. Moving the function out would split the
+  (INV-SSOT). It is now exported for a second reader, "Add to work party"
+  (`work-party-booking-facts.ts`), which refuses the officer's own and family's
+  bookings (owner decision 3, 18 Nov 2026); the two-line doc names that second use. Moving the function out would split the
   member-guest boundary from the set it is built on.
 
 function: src/lib/booking-batch-modification-service.ts#modifyBookingBatch

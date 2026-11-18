@@ -104,6 +104,11 @@ What happens:
   The discount comes back to the member's balance as credit, up to the credit
   the booking had used: only the part the cash can't return, capped at the
   credit applied.
+- **An additional payment still owed:** the discount cancels what is still
+  owed first, as on any change that lowers the price. Only the rest comes
+  back. When the discount is no more than what is owed, nothing comes back
+  and there is nothing to choose: the figures say "The discount cancels the
+  $50.00 still owed on this booking, so nothing comes back".
 - **Paid by the group organiser:** the money goes back to the organiser, the way
   every change to a joiner's booking does: to the organiser's card, or by bank
   transfer if they paid by Internet Banking. The figures show "Returned to the
@@ -127,16 +132,18 @@ reason:
 - it is priced by its quote (a school or booking-request quote);
 - it already has another promo code and the club allows only one discount per
   booking (the same rule as when booking);
-- the work party is held at another lodge.
+- the work party is held at another lodge;
+- its card payment is disputed: the treasurer must settle the dispute first,
+  because any money back would be held for them;
+- it is your own or your family's booking (below).
 
-**Your own or your family's booking.** You can add your own booking, or one of
-someone in your family group, when nothing comes back, for example an unpaid
-booking with no account credit applied, whose price just drops. When the change
-would refund or credit any money, including account credit an unpaid booking
-had applied that is now more than its new total, **Show the new total** says
-another officer must add it, and nothing is saved. For a joiner's booking the
-group organiser paid for, the same applies when you, or someone in your family
-group, organised the group, because the money goes back to the organiser.
+**Your own or your family's booking.** You can never add your own booking, or
+one belonging to someone in your family group, to a work party, even when no
+money would come back. That covers the booking's owner and, for a joiner's
+booking the group organiser paid for, the organiser too, and everyone in either
+person's family groups. The work party is greyed out with the reason; ask
+another Booking Officer or Full Admin to do it. Being a guest on someone else's
+booking does not count: that booking is theirs.
 
 A booking can be on only one work party.
 
@@ -163,17 +170,30 @@ What happens:
 - **The difference is owed on the booking**, as with any change that raises the
   price. Unpaid: the amount owed goes up. Paid by card: the member is asked to
   pay the difference ("Asked of the member now"). Where an invoice was issued,
-  Xero gets a supplementary invoice.
+  Xero gets a supplementary invoice. On a stay that has started, that request
+  is chased only until check-out; after that it is for the club to follow up
+  (see [Chase money still owed after a booking change](bookings.md#chase-money-still-owed-after-a-booking-change)).
 - **Nothing is taken back.** Club credit the Add gave (spent or not) stays on
   the member's account, and a refund already paid stays paid.
 - A stay that has started can be removed too; the same nights lose the
   discount.
-- No change fee is charged. Removing hands no money back, so you can remove
-  your own or your family's booking.
+- No change fee is charged.
 - A joiner's booking the group organiser paid by card can't be raised this way,
   as with any change to one that raises its price. Where the group organiser is
   invoiced for a joiner's changes, the increase goes on the organiser's invoice
   ("Invoiced to the group organiser").
+
+**When a booking can't be removed.** The dialog says why instead:
+
+- it is your own or your family's booking, as for an Add: another officer must
+  remove it;
+- it isn't pending, confirmed or paid, its stay has finished, or it is priced
+  by its quote;
+- it isn't on that work party;
+- it was settled at no charge, with nothing paid: for example an unpaid booking
+  a 100% work party brought to nothing, which was then marked paid and given
+  its beds. Removing the work party would leave it paid and holding beds while
+  owing its whole price, so **cancel the booking, or ask the treasurer**.
 
 ## Settings reference
 
@@ -197,7 +217,9 @@ What happens:
 | Work Parties is missing from the sidebar / 404s | The `workParties` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view work parties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | A work party is "not available" in **Add to work party** | One of the reasons listed under "When a booking can't be added" | The dialog names the reason |
-| "Another officer must add this booking" after **Show the new total** | It is your own or your family's booking (or you organised the group that paid for it), and money would come back | Ask another Booking Officer or Full Admin to add it |
+| "This is your own or your family's booking, so another officer must change its work party" | You, or someone in your family group, own the booking or organised the group that paid for it | Ask another Booking Officer or Full Admin to add or remove it |
+| "This booking's card payment is disputed" | The member's card payment has an open or lost Stripe dispute | The treasurer settles the dispute first |
+| "This booking was settled at no charge by the work party" on **Remove** | A 100% work party brought an unpaid booking to nothing and it was marked paid | Cancel the booking, or ask the treasurer |
 | There's no Delete button on an event | It already has attending bookings | Deactivate it instead — delete is blocked to keep the discount history |
 | A member says the discount didn't apply | The event is inactive, their nights fall outside the window, or they didn't tick the working-bee option | Check the event is Active, its dates cover their nights, and that they selected it when booking |
 | "Discount must be a whole number between 1 and 100" | A non-integer or out-of-range discount was entered | Enter a whole number from 1 to 100 |

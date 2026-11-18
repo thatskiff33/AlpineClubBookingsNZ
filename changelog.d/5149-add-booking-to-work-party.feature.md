@@ -10,9 +10,10 @@
   bank transfer for one paid by Internet Banking (the treasurer's task in
   **Money to settle**). A booking paid wholly with account credit gets its
   credit back. A joiner's booking that the group organiser paid for goes back
-  to the organiser, as with any change to it. An officer can add their own or a
-  family member's booking only when no money comes back (for example an unpaid
-  booking whose price just drops); otherwise another officer must. A stay that
-  has already started, or one priced by a quote, can't be added. The change
+  to the organiser, as with any change to it. An officer can never add their
+  own booking or a family member's, nor one whose group they or their family
+  organised and paid for, even when no money comes back; another officer must.
+  A booking priced by a quote, or one whose card payment is disputed, can't be
+  added. The change
   goes through the normal booking change, so the history, ledger, Xero and any
   refund are recorded and made like any other.

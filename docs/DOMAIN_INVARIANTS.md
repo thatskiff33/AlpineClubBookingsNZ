@@ -460,7 +460,6 @@ Prefix `INV-MOD`.
 | `INV-MOD-017` | Legacy stamped applications are repaired under the lock before any use |
 | `INV-MOD-018` | Every modification path applies the same lifecycle transitions, whichever endpoint changed it |
 | `INV-MOD-019` | Self-service edits obey the date-window policy; in-progress stays extend future nights only |
-| `INV-MOD-063` | An officer's work-party correction prices a started stay whole |
 | `INV-MOD-025` | In-progress edits price held nights, sell only new ones; never negative |
 | `INV-MOD-020` | Minimum stay is the first exception-foundation consumer; only two soft reason codes |
 | `INV-MOD-021` | A frozen violation explains a refusal, never authorises one; server-side stops |
@@ -495,6 +494,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-060` | An ordinary price ask's door and replay send one Stripe request |
 | `INV-MOD-061` | An edit's card refund and its replay send one Stripe request |
 | `INV-MOD-062` | An edit settles only the figures its preview showed |
+| `INV-MOD-063` | An officer's work-party correction prices a started stay whole |
 
 ### Adult-member hosting
 

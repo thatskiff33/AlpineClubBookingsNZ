@@ -6617,7 +6617,7 @@ An officer's "Add to work party" (`addBookingToWorkParty`,
 `src/lib/work-party-booking-correction.ts`) composes only existing keys and adds
 one registered global site, `correctWorkParty#1` (`INV-LOCK-002`,
 `INV-LOCK-003`). It is the #3750 execution's shape without a request row.
-Fork fork #130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
+Fork #130's "Remove from work party" (`removeBookingFromWorkParty`) is the same
 writer in the other direction: it adds no key, site or participant, and the
 steps below are its steps too (its eligibility rule is
 `workPartyRemovalEligibility`). Order, in one transaction:
@@ -6628,14 +6628,16 @@ steps below are its steps too (its eligibility rule is
 2. Reauthorise the officer from fresh roles (`reauthorizeBookingOfficerFromDb`).
 3. Re-read the booking and the work party under the locks and apply the shared
    eligibility rule (`workPartyBookingEligibility`), including "already has a
-   work party". Fork #129: the money's recipient's family rows are read on
-   this `tx` too, and the own-or-family refusal is decided on the edit's
-   figures, before the preview's rollback or the save's commit.
+   work party". The list's facts (`readWorkPartyBookingFacts`) are re-read on
+   this `tx`: the family rows of the owner and, for an organiser-paid joiner,
+   the paying organiser (owner decision 3 of 18 Nov 2026 on #5149), a card
+   dispute hold and a $0 settle, so each refusal is made before the edit runs.
 4. Run `modifyBookingBatch` on the same `tx` with `officerWorkPartyCorrection`
    and a `preTransaction` resolved before the transaction (`INV-LOCK-004`). The
    service re-enters all three keys and takes the member keys after them. Any
    refusal throws and rolls everything back.
 5. A preview throws a sentinel after the edit and so rolls it back; an apply
+   hands the edit the preview's figures for its own check (`INV-MOD-062`) and
    refuses if any money figure differs from the preview's, then commits and runs
    the service's `deferredPostCommit` (Stripe, Xero, email, audit) outside every
    lock.

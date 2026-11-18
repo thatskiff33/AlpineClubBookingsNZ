@@ -346,21 +346,22 @@ These family rules are enforced by automated tests (issue #1132):
     Internet Banking (any other method is refused, 409) — and an organiser-paid
     joiner's money back to the organiser by the pipeline's organiser
     disposition. It adds no refund path, calls no provider itself, and refuses
-    any refund the offered options did not mean. When the change would refund
-    or credit money to the acting officer or their family (the member-guest
-    family boundary; for an organiser-paid joiner, the group organiser's), it
-    refuses on the preview and the save alike, decided on the figures under
-    its locks. It applies only the figures the
+    any refund the offered options did not mean. It never changes the acting
+    officer's own or family's booking (the member-guest family boundary, over
+    the owner and, for an organiser-paid joiner, the paying organiser; owner
+    decision 3 of 18 Nov 2026 on #5149), whatever the money does: the list
+    greys it out for the signed-in officer, and the service refuses it again
+    under its locks, on Add and Remove alike. It applies only the figures the
     officer was shown, settlement method included, and answers 404 while the
     Work Parties module is off. Its POST is on the step-up list
     (`INV-AUTH-010`): the canonical edit it calls reaches the refund
     operations, so it asks for a fresh proof before reading the body.
-    Fork fork #130: `action: "remove"` takes the
+    Fork #130: `action: "remove"` takes the
     booking off the work party it carries through the same service argument
     and edit; the price rises and the difference is owed on the booking. A
     removal carries no settlement method (400 if sent) and refuses, 409, any
     money it would hand back. Its checked figures include an increase invoiced
-    to the group organiser, so a stale preview cannot save it. Fork fork #127: on a started stay the argument also
+    to the group organiser, so a stale preview cannot save it. Fork #127: on a started stay the argument also
     asks the edit policy to price the whole stay (an officer-only mode no body
     can reach), so the promotion re-runs over nights already slept; every
     other in-progress edit still refuses a promo change.
