@@ -26,7 +26,7 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
-import { workPartyCreditBackCents } from "@/lib/edit-money-back";
+import { workPartyAskAbsorbedSentence, workPartyCreditBackCents } from "@/lib/edit-money-back";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { BookingWorkPartyRemoveControls } from "@/components/admin/booking-work-party-remove-controls";
@@ -419,6 +419,14 @@ function WorkPartyMoneyBackLines({
   options: WorkPartySettlementOptions | null;
   money: (cents: number) => string;
 }) {
+  // An unpaid ask took the whole reduction (#5149 B-L1): nothing comes back.
+  if (options?.absorbedByUnpaidAskCents) {
+    return (
+      <p data-testid="work-party-ask-absorbed">
+        {workPartyAskAbsorbedSentence(money(options.absorbedByUnpaidAskCents))}
+      </p>
+    );
+  }
   // Every cent coming back as credit: paid money credited, a paid booking's
   // applied credit given back, and an unpaid one's applied credit freed (fork #129).
   const creditBackCents = workPartyCreditBackCents(figures);

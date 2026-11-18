@@ -17,7 +17,7 @@
  * PAYMENT_PENDING, or an unpaid confirmed whole-lodge hold), and no edit moves
  * a paid booking back to pending. `BatchModificationResponse` carries all four.
  * The hosting linked-move quote (`combineLinkedMoveQuote`, fork #132) and
- * "Add to work party" (fork #129, its own/family rule and Remove's guard) both count every
+ * "Add to work party" (Remove's guard, and the absorbed-ask test, #5149) both count every
  * cent, so what the member is told comes back matches their balance change.
  * Client-safe: no imports.
  */
@@ -48,4 +48,16 @@ export function editTotalMoneyBackCents(result: EditMoneyBack): number {
  */
 export function workPartyCreditBackCents(figures: EditMoneyBack): number {
   return editTotalMoneyBackCents(figures) - figures.refundAmountCents;
+}
+
+/**
+ * #5149 (B-L1 of the maintainers' comment
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211):
+ * what "Add to work party" says when an unpaid additional ask took the whole
+ * reduction (#3954, `INV-PAY-120`), so nothing comes back and there is nothing
+ * to choose. One sentence for the server's refusal and the confirm dialog;
+ * `amount` is already formatted for the club.
+ */
+export function workPartyAskAbsorbedSentence(amount: string): string {
+  return `The discount cancels the ${amount} still owed on this booking, so nothing comes back.`;
 }

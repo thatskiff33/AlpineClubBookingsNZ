@@ -24,7 +24,7 @@ import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
 export type OfficerWorkPartyCorrection = {
   readonly workPartyEventId: string;
   readonly promoCodeId: string;
-  /** Fork fork #130: "remove" drops the code instead, and the difference is owed. */
+  /** Fork #130: "remove" drops the code instead, and the difference is owed. */
   readonly direction: "add" | "remove";
 };
 
@@ -34,11 +34,16 @@ const OFFICER_WORK_PARTY_MONEY_RULE = {
   remove: { changeFee: "none", increase: "owed on the booking" },
 } as const;
 
-/** The only request fields a work-party correction may carry. */
+/**
+ * The only request fields a work-party correction may carry. `quotedFigures`
+ * is the save's figures check (`INV-MOD-062`), built by the correction from
+ * the figures its preview showed (#5149, maintainers' comment D).
+ */
 const OFFICER_WORK_PARTY_INPUT_KEYS: ReadonlySet<string> = new Set([
   "promoCodes",
   "settlementMethod",
   "notifyMember",
+  "quotedFigures",
 ]);
 
 /**
@@ -71,7 +76,7 @@ export function workPartyCorrectionRecord(correction: OfficerWorkPartyCorrection
 }
 
 /**
- * Fork fork #127: the day a correction's codes are judged on. On a started stay it
+ * Fork #127: the day a correction's codes are judged on. On a started stay it
  * is the check-in day, as a finished stay's are (#3750) — on the real today an
  * expired second code would be released and its discount billed back.
  */

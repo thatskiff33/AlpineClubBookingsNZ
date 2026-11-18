@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   addBookingToWorkParty: vi.fn(),
   removeBookingFromWorkParty: vi.fn(),
   bookingFindUnique: vi.fn(),
+  familyFindMany: vi.fn(async () => [] as Array<{ memberId: string; familyGroupId: string }>),
   findActiveWorkParties: vi.fn(),
   modules: { workParties: true },
 }));
@@ -28,6 +29,7 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: h.bookingFindUnique },
+    familyGroupMember: { findMany: h.familyFindMany },
   },
 }));
 vi.mock("@/lib/lodges", () => ({ getDefaultLodgeId: vi.fn(async () => "lodge-1") }));
@@ -60,7 +62,10 @@ vi.mock("@/lib/work-party-booking-correction", async (importOriginal) => ({
 }));
 
 import { ApiError } from "@/lib/api-error";
-import { WorkPartyCorrectionFiguresChangedError } from "@/lib/work-party-booking-correction";
+import {
+  WORK_PARTY_OWN_BOOKING_MESSAGE,
+  WorkPartyCorrectionFiguresChangedError,
+} from "@/lib/work-party-booking-correction";
 import { GET, POST } from "../route";
 
 const params = Promise.resolve({ id: "booking-1" });
@@ -292,11 +297,39 @@ describe("GET", () => {
     },
   ];
 
-  it("lists the officer's own booking like any other: the money-back rule is the preview's (fork #129 decision 6)", async () => {
+  it("owner decision 3: greys out the signed-in officer's own booking with the reason, and its Remove", async () => {
     h.bookingFindUnique.mockResolvedValue(ownBooking("officer-1"));
     h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
     const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
-    expect(body.workParties[0]).toMatchObject({ eligible: true, reason: null });
+    expect(body.workParties[0]).toMatchObject({ eligible: false, reason: WORK_PARTY_OWN_BOOKING_MESSAGE });
+
+    h.bookingFindUnique.mockResolvedValue({
+      ...ownBooking("officer-1"),
+      promoRedemptions: [
+        { id: "r-1", applicationOrder: 0, promoCode: { workPartyEvent: { id: "wp-1", name: "Here" } } },
+      ],
+    });
+    const removal = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(removal.removal).toEqual({ eligible: false, reason: WORK_PARTY_OWN_BOOKING_MESSAGE });
+  });
+
+  it("owner decision 3: greys out a family member's booking, read for the signed-in officer", async () => {
+    h.bookingFindUnique.mockResolvedValue(ownBooking("member-1"));
+    h.familyFindMany.mockImplementation(async (args?: unknown) => {
+      const where = (args as { where: { memberId?: string; familyGroupId?: { in: string[] } } }).where;
+      const links = [
+        { memberId: "member-1", familyGroupId: "fam-1" },
+        { memberId: "officer-1", familyGroupId: "fam-1" },
+      ];
+      return links.filter((row) =>
+        where.memberId !== undefined ? row.memberId === where.memberId : where.familyGroupId!.in.includes(row.familyGroupId),
+      );
+    });
+    h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
+    const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(body.workParties[0]).toMatchObject({ eligible: false, reason: WORK_PARTY_OWN_BOOKING_MESSAGE });
+    h.familyFindMany.mockReset();
+    h.familyFindMany.mockResolvedValue([]);
   });
 
   it("lists overlapping open work parties with the eligibility answer", async () => {

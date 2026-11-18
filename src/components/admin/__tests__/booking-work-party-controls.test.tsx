@@ -88,6 +88,20 @@ afterEach(() => {
 });
 
 describe("BookingWorkPartyControls settlement (fork #129)", () => {
+  it("#5149 B-L1: says the discount cancels what is still owed, offering no choice and no credit line", async () => {
+    serve(() => ({
+      outcome: "quoted",
+      figures: figures({ accountCreditAmountCents: 0, settlementMethod: null }),
+      settlementOptions: { methods: [], paidByOrganiser: false, refundTo: null, absorbedByUnpaidAskCents: 5_000 },
+    }));
+    await openAndPreview();
+    expect(screen.getByTestId("work-party-ask-absorbed")).toHaveTextContent(
+      "The discount cancels the $50.00 still owed on this booking, so nothing comes back.",
+    );
+    expect(screen.queryByRole("group", { name: "How the discount comes back" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Account credit to the member/)).not.toBeInTheDocument();
+  });
+
   it("offers Club credit and Refund to card on a card-paid booking, and re-runs the preview on a new choice", async () => {
     serve((body) => ({
       outcome: "quoted",

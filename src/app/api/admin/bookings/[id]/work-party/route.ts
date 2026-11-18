@@ -11,11 +11,9 @@ import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
-import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
-import { bookingOwner } from "@/lib/booking-owner";
+import { readWorkPartyBookingFacts, WORK_PARTY_BOOKING_SELECT } from "@/lib/work-party-booking-facts";
 import { prepareBatchModificationForCallerTransaction } from "@/lib/booking-batch-modification-service";
 import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
@@ -47,68 +45,32 @@ export async function GET(
   }
   const { id } = await params;
 
-  const booking = await prisma.booking.findUnique({
-    where: { id },
-    select: {
-      status: true,
-      checkIn: true,
-      checkOut: true,
-      lodgeId: true,
-      memberId: true,
-      promoRedemptions: {
-        select: {
-          id: true,
-          applicationOrder: true,
-          promoCode: {
-            select: { workPartyEvent: { select: { id: true, name: true } } },
-          },
-        },
-      },
-    },
-  });
+  const booking = await prisma.booking.findUnique({ where: { id }, select: WORK_PARTY_BOOKING_SELECT });
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
-  const redemptions = bookingPromoRedemptions(booking);
-  const current =
-    redemptions.find((row) => row.promoCode?.workPartyEvent)?.promoCode?.workPartyEvent ?? null;
-  const ownerMemberId = bookingOwner(booking).memberId;
-  // fork #129 decision 6: an officer's own or family's booking is listed like any
-  // other; whether money would come back to them is decided on the preview's
-  // figures, under the service's locks.
-  const [bookingLodgeId, today, quotePriced, multiPromoCodes, events] = await Promise.all([
+  // The service's own facts, for this officer: their own or family's booking
+  // (owner decision 3, #5149) is greyed out with its reason, as the service
+  // refuses it again under its locks.
+  const [facts, bookingLodgeId, today, multiPromoCodes, events] = await Promise.all([
+    readWorkPartyBookingFacts(prisma, id, booking, guard.session.user.id),
     booking.lodgeId ?? getDefaultLodgeId(prisma),
     clubTodayDateOnlyInstant(),
-    isQuotePricedBooking(prisma, id),
     multiPromoCodesEnabled(prisma),
     // Every lodge's, so one at another lodge is listed with its reason.
     findActiveWorkPartyEventsForRange(booking.checkIn, booking.checkOut, prisma),
   ]);
-  const eligibilityBooking = {
-    status: booking.status,
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-    hasWorkParty: current !== null,
-    hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
-    quotePriced,
-    memberOwned: Boolean(ownerMemberId),
-  };
+  const current = facts.current;
 
   // fork #130: whether the work party on the booking can be taken off it.
-  const removal = current
-    ? workPartyRemovalEligibility(
-        { status: booking.status, checkOut: booking.checkOut, quotePriced, workPartyEventId: current.id },
-        { today },
-        current.id,
-      )
-    : null;
+  const removal = current ? workPartyRemovalEligibility(facts.remove, { today }, current.id) : null;
 
   return NextResponse.json({
     currentWorkParty: current,
     removal: removal && { eligible: removal.ok, reason: removal.ok ? null : removal.reason },
     workParties: events.map((event) => {
       const eligibility = workPartyBookingEligibility(
-        eligibilityBooking,
+        facts.add,
         { bookingLodgeId, today, multiPromoCodes },
         event,
       );

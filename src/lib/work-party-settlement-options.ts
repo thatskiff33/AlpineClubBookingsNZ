@@ -10,9 +10,15 @@ import { paidByOrganiser } from "@/lib/group-organiser-paid";
 import { hasSettledCardPayment } from "@/lib/booking-payment-state";
 import { defaultCorrectionSettlementMethod } from "@/lib/booking-finished-stay-correction";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
+import type { ClubFormat } from "@/lib/club-format";
+import { workPartyAskAbsorbedSentence } from "@/lib/edit-money-back";
+import { formatCents } from "@/lib/utils";
 
 export interface WorkPartySettlementOptions {
-  /** The methods offered, the default first. Always one for an organiser-paid joiner. */
+  /**
+   * The methods offered, the default first. Always one for an organiser-paid
+   * joiner; none when an unpaid ask took the whole reduction.
+   */
   methods: readonly BookingModificationSettlementMethod[];
   /** A joiner's booking its group organiser paid: the money goes back to the organiser. */
   paidByOrganiser: boolean;
@@ -22,6 +28,12 @@ export interface WorkPartySettlementOptions {
    * `raiseEditRefundHandBackIfOwed`) for Internet Banking. Null when none is.
    */
   refundTo: "card" | "bank" | null;
+  /**
+   * Present only when an unpaid additional ask took the whole reduction (#3954,
+   * `reductionWhollyAbsorbedByUnpaidAskCents`): what it cancelled, in cents.
+   * Nothing comes back, so no method is offered (`workPartyAskAbsorbedSentence`).
+   */
+  absorbedByUnpaidAskCents?: number;
 }
 
 /** What `workPartySettlementOptions` reads: the booking's lifecycle and payment. */
@@ -52,12 +64,18 @@ export interface WorkPartySettlementBooking {
  *    reduction can return, whatever it was paid by. Credit, or a refund: to the
  *    card when paid by card (`hasSettledCardPayment`, the test that also
  *    decides a Stripe refund), else by the bank-transfer hand-back.
+ *  - `absorbedByUnpaidAskCents`: an unpaid ask took the whole reduction (after
+ *    Add, Remove, Add the reduction cancels the ask the Remove raised; B-L1 of
+ *    the maintainers' comment
+ *    https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211).
+ *    Nothing comes back, so nothing is offered.
  *  - Otherwise (unpaid, paid wholly with account credit, nothing refundable):
  *    credit only, as the ordinary edit offers no choice either.
  */
 export function workPartySettlementOptions(
   booking: WorkPartySettlementBooking,
   editAsksForMethod: boolean,
+  absorbedByUnpaidAskCents = 0,
 ): WorkPartySettlementOptions {
   if (paidByOrganiser(booking)) {
     return {
@@ -65,6 +83,9 @@ export function workPartySettlementOptions(
       paidByOrganiser: true,
       refundTo: null,
     };
+  }
+  if (absorbedByUnpaidAskCents > 0) {
+    return { methods: [], paidByOrganiser: false, refundTo: null, absorbedByUnpaidAskCents };
   }
   if (!editAsksForMethod) return { methods: ["credit"], paidByOrganiser: false, refundTo: null };
   return {
@@ -89,20 +110,24 @@ export const WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE =
 
 /**
  * The method the change settles by: the officer's, when it is one offered;
- * the default otherwise. A method not offered — `card` where the edit offers
- * no refund — is refused (409), never quietly changed.
+ * the default otherwise, or none where nothing is offered (an unpaid ask took
+ * the whole reduction). A method not offered — `card` where the edit offers
+ * no refund — is refused (409), never quietly changed, with the reason.
  */
 export function resolveWorkPartySettlementMethod(
   options: WorkPartySettlementOptions,
   requested: BookingModificationSettlementMethod | undefined,
-): BookingModificationSettlementMethod {
+  format: ClubFormat,
+): BookingModificationSettlementMethod | null {
   if (requested !== undefined && !options.methods.includes(requested)) {
     throw new ApiError(
       options.paidByOrganiser
         ? "This booking was paid by its group organiser, so the discount goes back to the organiser."
-        : WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
+        : options.absorbedByUnpaidAskCents
+          ? workPartyAskAbsorbedSentence(formatCents(options.absorbedByUnpaidAskCents, format))
+          : WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
       409,
     );
   }
-  return requested ?? options.methods[0]!;
+  return requested ?? options.methods[0] ?? null;
 }

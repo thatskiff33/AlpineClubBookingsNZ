@@ -11,11 +11,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *    refund is offered exactly where the edit asked for a method
  *    (`requiresSettlementMethod`), on a card- or bank-paid booking alike, and
  *    one requested where the edit offers none is refused (409);
- *  - fork #129 decision 6 (16 Nov): the officer's own or family's booking is refused
- *    exactly when money would come back to them, on the preview and the save;
- *    for an organiser-paid joiner the recipient is the group organiser;
+ *  - owner decision 3 (18 Nov 2026, maintainers' comment
+ *    https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6951626920):
+ *    the officer's own or family's booking — its owner, or for an
+ *    organiser-paid joiner the organiser who paid, and their family groups —
+ *    is refused on Add and Remove, whatever the money does, before the edit
+ *    runs; a disputed card payment is refused up front too;
  *  - the settlement method is a checked figure on its own: a save whose figures
- *    differ ONLY in the method is refused.
+ *    differ ONLY in the method is refused, and the edit's own quoted-figures
+ *    check (`INV-MOD-062`) runs on the save;
+ *  - an unpaid ask that took the whole reduction offers no method (B-L1), and
+ *    a Remove on a booking PAID with nothing taken is refused.
  *
  * The real money paths are proved on PostgreSQL in
  * `work-party-booking-correction.realdb.test.ts`.
@@ -26,16 +32,26 @@ const h = vi.hoisted(() => ({
   family: [] as Array<{ memberId: string; familyGroupId: string }>,
   modified: null as Record<string, unknown> | null,
   modifyCalls: [] as Array<Record<string, unknown>>,
+  disputedCents: 0,
+  takenTransactions: 0,
+  modificationNewData: {} as Record<string, unknown>,
+  /** When set, the doubled edit refuses a save quoted with other figures, as `assertEditQuotedFigures` does. */
+  editFreshFigures: null as Record<string, number> | null,
 }));
 
 const tx = {
   $executeRaw: vi.fn(async () => 0),
   booking: {
-    findUnique: vi.fn(async ({ select }: { select: Record<string, unknown> }) =>
-      "lodgeId" in select && Object.keys(select).length === 1 ? { lodgeId: "lodge-1" } : h.booking,
-    ),
-    findUniqueOrThrow: vi.fn(async () => h.parent),
+    findUnique: vi.fn(async ({ select }: { select: Record<string, unknown> }) => {
+      const keys = Object.keys(select);
+      if (keys.length === 1 && keys[0] === "lodgeId") return { lodgeId: "lodge-1" };
+      // The organiser's booking, read for an organiser-paid joiner (owner decision 3).
+      if (keys.length === 1 && keys[0] === "memberId") return h.parent;
+      return h.booking;
+    }),
   },
+  paymentTransaction: { count: vi.fn(async () => h.takenTransactions) },
+  bookingModification: { findUnique: vi.fn(async () => ({ newData: h.modificationNewData })) },
   workPartyEvent: {
     findUnique: vi.fn(async () => ({
       name: "Spring Bee",
@@ -68,21 +84,34 @@ vi.mock("@/lib/booking-row-lock", () => ({ lockBookingRowForOwnerRead: vi.fn(asy
 vi.mock("@/lib/booking-exception-approval", () => ({ reauthorizeBookingOfficerFromDb: vi.fn(async () => true) }));
 vi.mock("@/lib/booking-modify-quote-priced", () => ({ isQuotePricedBooking: vi.fn(async () => false) }));
 vi.mock("@/lib/promo-redemption-slot", () => ({ multiPromoCodesEnabled: vi.fn(async () => false) }));
-vi.mock("@/lib/booking-batch-modification-service", () => ({
-  modifyBookingBatch: vi.fn(async (args: Record<string, unknown>) => {
-    h.modifyCalls.push(args);
-    return h.modified;
-  }),
+vi.mock("@/lib/booking-modify-settlement-options", () => ({
+  editReductionDisputeHold: vi.fn(async () => ({ cents: h.disputedCents, disputes: [] })),
 }));
+vi.mock("@/lib/booking-batch-modification-service", async () => {
+  const { EditPriceChangedError } = await import("@/lib/edit-quoted-figures");
+  return {
+    modifyBookingBatch: vi.fn(async (args: { input: Record<string, unknown> }) => {
+      h.modifyCalls.push(args);
+      const quoted = args.input.quotedFigures as Record<string, number> | undefined;
+      const fresh = h.editFreshFigures;
+      if (quoted && fresh && Object.keys(fresh).some((key) => quoted[key] !== fresh[key])) {
+        throw new EditPriceChangedError(fresh as never);
+      }
+      return h.modified;
+    }),
+  };
+});
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { requireCalendarDate } from "@/lib/club-time";
 import {
   addBookingToWorkParty,
   removeBookingFromWorkParty,
+  WORK_PARTY_DISPUTED_PAYMENT_MESSAGE,
   WORK_PARTY_NOT_ON_BOOKING_MESSAGE,
-  WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
+  WORK_PARTY_OWN_BOOKING_MESSAGE,
   WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE,
+  WORK_PARTY_SETTLED_AT_ZERO_MESSAGE,
   WorkPartyCorrectionFiguresChangedError,
   type WorkPartyCorrectionFigures,
 } from "@/lib/work-party-booking-correction";
@@ -153,6 +182,10 @@ beforeEach(() => {
   h.family = [];
   h.parent = null;
   h.modifyCalls = [];
+  h.disputedCents = 0;
+  h.takenTransactions = 0;
+  h.modificationNewData = {};
+  h.editFreshFigures = null;
   seedBooking();
   edit({ accountCreditAmountCents: 5_000 });
 });
@@ -225,53 +258,81 @@ describe("the options are the ordinary edit's (upstream owner decision, 15 Nov 2
   });
 });
 
-describe("own or family booking (fork #129 decision 6, 16 Nov)", () => {
-  it("allows the officer's own booking when nothing comes back", async () => {
+describe("own or family booking: never, whatever the money does (owner decision 3, 18 Nov)", () => {
+  /** What an officer would have been shown on the default paid booking. */
+  const shown: WorkPartyCorrectionFigures = {
+    previousFinalPriceCents: 20_000,
+    newFinalPriceCents: 15_000,
+    priceDiffCents: -5_000,
+    accountCreditAmountCents: 5_000,
+    appliedCreditGivenBackCents: 0,
+    refundedExcessCreditCents: 0,
+    additionalAmountCents: 0,
+    billedToOrganiserCents: 0,
+    refundAmountCents: 0,
+    settlementMethod: "credit",
+  };
+  const OWN = { status: 409, message: WORK_PARTY_OWN_BOOKING_MESSAGE };
+
+  it("refuses the officer's own UNPAID booking, where nothing would come back, before the edit runs", async () => {
     seedBooking({ memberId: "officer-1", status: "PAYMENT_PENDING", payment: null });
     edit({}, false);
-    const result = await addBookingToWorkParty({ ...common, dryRun: true });
-    expect(result.outcome).toBe("quoted");
+    expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual(OWN);
+    expect(h.modifyCalls).toEqual([]);
   });
 
-  it.each([
-    ["credit", { accountCreditAmountCents: 5_000 }, "credit"],
-    ["a card refund", { refundAmountCents: 5_000 }, "card"],
-    ["applied credit given back", { appliedCreditGivenBackCents: 5_000 }, "credit"],
-  ] as const)("refuses the officer's own booking when %s would come back, on preview and apply", async (_label, money, method) => {
+  it.each(["credit", "card"] as const)("refuses the officer's own paid booking by %s, on preview and apply", async (method) => {
     seedBooking({ memberId: "officer-1" });
-    edit(money);
-    expect(await refusal(addBookingToWorkParty({ ...common, settlementMethod: method, dryRun: true }))).toEqual({
-      status: 409,
-      message: WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
-    });
-    const shown: WorkPartyCorrectionFigures = {
-      previousFinalPriceCents: 20_000,
-      newFinalPriceCents: 15_000,
-      priceDiffCents: -5_000,
-      accountCreditAmountCents: 0,
-      appliedCreditGivenBackCents: 0,
-      refundedExcessCreditCents: 0,
-      additionalAmountCents: 0,
-      billedToOrganiserCents: 0,
-      refundAmountCents: 0,
-      ...money,
-      settlementMethod: method,
-    };
+    expect(await refusal(addBookingToWorkParty({ ...common, settlementMethod: method, dryRun: true }))).toEqual(OWN);
     expect(
       await refusal(addBookingToWorkParty({ ...common, settlementMethod: method, dryRun: false, expectedFigures: shown })),
-    ).toEqual({ status: 409, message: WORK_PARTY_OWN_MONEY_BACK_MESSAGE });
+    ).toEqual(OWN);
+    expect(h.modifyCalls).toEqual([]);
   });
 
-  it("refuses the officer's own UNPAID booking whose applied credit the lower price frees (F1)", async () => {
-    seedBooking({
-      memberId: "officer-1",
-      status: "PAYMENT_PENDING",
-      payment: { status: "PENDING", amountCents: 2_000, creditAppliedCents: 18_000, source: "STRIPE" },
+  it("refuses a family member's booking", async () => {
+    h.family = [
+      { memberId: "member-1", familyGroupId: "fam-1" },
+      { memberId: "officer-1", familyGroupId: "fam-1" },
+    ];
+    expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual(OWN);
+    expect(h.modifyCalls).toEqual([]);
+  });
+
+  it("allows anyone else's booking, money back and all: an officer only a guest on it is not its owner", async () => {
+    const result = await addBookingToWorkParty({ ...common, dryRun: true });
+    expect(result.figures.accountCreditAmountCents).toBe(5_000);
+  });
+
+  describe("an organiser-paid joiner: the owner and the organiser who paid", () => {
+    beforeEach(() => {
+      seedBooking({ organiserSettled: true, parentBookingId: "organiser-booking" });
+      h.parent = { memberId: "organiser-1" };
+      edit({ refundAmountCents: 5_000 }, false);
     });
-    edit({ refundedExcessCreditCents: 3_000 }, false);
-    expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual({
-      status: 409,
-      message: WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
+
+    it("refuses when the acting officer is the group organiser", async () => {
+      h.parent = { memberId: "officer-1" };
+      expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual(OWN);
+    });
+
+    it("refuses when the organiser is in the officer's family", async () => {
+      h.family = [
+        { memberId: "organiser-1", familyGroupId: "fam-2" },
+        { memberId: "officer-1", familyGroupId: "fam-2" },
+      ];
+      expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual(OWN);
+    });
+
+    it("refuses the officer as the joiner, though the money goes to the organiser", async () => {
+      seedBooking({ memberId: "officer-1", organiserSettled: true, parentBookingId: "organiser-booking" });
+      expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual(OWN);
+      expect(h.modifyCalls).toEqual([]);
+    });
+
+    it("allows it when neither is the officer or their family", async () => {
+      const result = await addBookingToWorkParty({ ...common, dryRun: true });
+      expect(result.settlementOptions).toEqual({ methods: ["card"], paidByOrganiser: true, refundTo: null });
     });
   });
 
@@ -287,52 +348,84 @@ describe("own or family booking (fork #129 decision 6, 16 Nov)", () => {
     }).then(() => null, (error: unknown) => error);
     expect(refused).toBeInstanceOf(WorkPartyCorrectionFiguresChangedError);
   });
+});
 
-  it("refuses a family member's booking when money comes back", async () => {
-    h.family = [
-      { memberId: "member-1", familyGroupId: "fam-1" },
-      { memberId: "officer-1", familyGroupId: "fam-1" },
-    ];
+describe("a disputed card payment (#5151, INV-PAY-154)", () => {
+  it("is refused up front with the plain reason, before the edit runs", async () => {
+    h.disputedCents = 20_000;
     expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual({
       status: 409,
-      message: WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
+      message: WORK_PARTY_DISPUTED_PAYMENT_MESSAGE,
     });
+    expect(h.modifyCalls).toEqual([]);
+  });
+});
+
+describe("an unpaid ask that took the whole reduction (B-L1)", () => {
+  beforeEach(() => {
+    edit({}, false);
+    h.modificationNewData = { unpaidAskOffsetCents: 5_000 };
   });
 
-  it("allows anyone else's booking when money comes back", async () => {
+  it("offers no method and settles by none: nothing comes back", async () => {
     const result = await addBookingToWorkParty({ ...common, dryRun: true });
-    expect(result.figures.accountCreditAmountCents).toBe(5_000);
+    expect(result.settlementOptions).toEqual({
+      methods: [],
+      paidByOrganiser: false,
+      refundTo: null,
+      absorbedByUnpaidAskCents: 5_000,
+    });
+    expect(result.figures).toMatchObject({ settlementMethod: null, accountCreditAmountCents: 0, refundAmountCents: 0 });
   });
 
-  describe("an organiser-paid joiner: the recipient is the group organiser", () => {
-    beforeEach(() => {
-      seedBooking({ organiserSettled: true, parentBookingId: "organiser-booking" });
-      edit({ refundAmountCents: 5_000 }, false);
+  it("refuses a refund with that reason, not 'only as club credit'", async () => {
+    expect(await refusal(addBookingToWorkParty({ ...common, settlementMethod: "card", dryRun: true }))).toEqual({
+      status: 409,
+      message: "The discount cancels the $50.00 still owed on this booking, so nothing comes back.",
     });
+  });
 
-    it("refuses when the acting officer is the group organiser", async () => {
-      h.parent = { memberId: "officer-1" };
-      expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual({
-        status: 409,
-        message: WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
-      });
-    });
+  it("is not claimed when the ask took only part of it", async () => {
+    h.modificationNewData = { unpaidAskOffsetCents: 3_000 };
+    expect((await addBookingToWorkParty({ ...common, dryRun: true })).settlementOptions.methods).toEqual(["credit"]);
+  });
+});
 
-    it("refuses when the organiser is in the officer's family", async () => {
-      h.parent = { memberId: "organiser-1" };
-      h.family = [
-        { memberId: "organiser-1", familyGroupId: "fam-2" },
-        { memberId: "officer-1", familyGroupId: "fam-2" },
-      ];
-      expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toMatchObject({ status: 409 });
-    });
+describe("the edit's own quoted-figures check (INV-MOD-062) runs on the save", () => {
+  const saved: WorkPartyCorrectionFigures = {
+    previousFinalPriceCents: 20_000,
+    newFinalPriceCents: 15_000,
+    priceDiffCents: -5_000,
+    accountCreditAmountCents: 5_000,
+    appliedCreditGivenBackCents: 0,
+    refundedExcessCreditCents: 0,
+    additionalAmountCents: 0,
+    billedToOrganiserCents: 0,
+    refundAmountCents: 0,
+    settlementMethod: "credit",
+  };
 
-    it("allows the officer as the joiner, because the money goes to the organiser", async () => {
-      seedBooking({ memberId: "officer-1", organiserSettled: true, parentBookingId: "organiser-booking" });
-      h.parent = { memberId: "organiser-1" };
-      const result = await addBookingToWorkParty({ ...common, dryRun: true });
-      expect(result.settlementOptions).toEqual({ methods: ["card"], paidByOrganiser: true, refundTo: null });
+  it("hands the edit the preview's figures on apply, and none on a dry run", async () => {
+    await addBookingToWorkParty({ ...common, dryRun: true });
+    expect(h.modifyCalls[0]!.input).not.toHaveProperty("quotedFigures");
+    await addBookingToWorkParty({ ...common, dryRun: false, expectedFigures: saved });
+    expect(h.modifyCalls[1]!.input).toMatchObject({
+      quotedFigures: { newFinalPriceCents: 15_000, priceDiffCents: -5_000, changeFeeCents: 0, netChargeCents: -5_000 },
     });
+  });
+
+  it("answers the edit's refusal as a figures change, with the figures a fresh dry run gives", async () => {
+    // The edit's own figures differ from the ones shown (a fee where none was quoted).
+    h.editFreshFigures = { newFinalPriceCents: 15_000, priceDiffCents: -5_000, changeFeeCents: 100, netChargeCents: -4_900 };
+    const refused = await addBookingToWorkParty({ ...common, dryRun: false, expectedFigures: saved }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(WorkPartyCorrectionFiguresChangedError);
+    expect((refused as WorkPartyCorrectionFiguresChangedError).actual).toEqual(saved);
+    // The save, then the dry run that re-read the figures.
+    expect(h.modifyCalls).toHaveLength(2);
+    expect(h.modifyCalls[1]!.input).not.toHaveProperty("quotedFigures");
   });
 });
 
@@ -455,8 +548,38 @@ describe("Remove from work party (fork #130): the service's own guards", () => {
     ).rejects.toBeInstanceOf(WorkPartyCorrectionFiguresChangedError);
   });
 
-  it("allows the officer's own booking: nothing comes back", async () => {
+  it("owner decision 3: refuses the officer's own booking, a family member's, and one the officer organised and paid for", async () => {
+    const OWN = { status: 409, message: WORK_PARTY_OWN_BOOKING_MESSAGE };
     seedBooking({ memberId: "officer-1", finalPriceCents: 15_000, promoRedemptions: ON_WORK_PARTY });
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toEqual(OWN);
+
+    seedBooking({ finalPriceCents: 15_000, promoRedemptions: ON_WORK_PARTY });
+    h.family = [
+      { memberId: "member-1", familyGroupId: "fam-1" },
+      { memberId: "officer-1", familyGroupId: "fam-1" },
+    ];
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toEqual(OWN);
+
+    h.family = [];
+    seedBooking({ finalPriceCents: 15_000, promoRedemptions: ON_WORK_PARTY, organiserSettled: true, parentBookingId: "organiser-booking" });
+    h.parent = { memberId: "officer-1" };
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toEqual(OWN);
+    expect(h.modifyCalls).toEqual([]);
+  });
+
+  it("owner decision 18 Nov: refuses a booking PAID with nothing taken, before the edit runs", async () => {
+    const SETTLED_AT_ZERO = { status: "SUCCEEDED", amountCents: 0, creditAppliedCents: 0, source: "STRIPE" };
+    seedBooking({ finalPriceCents: 0, promoRedemptions: ON_WORK_PARTY, payment: SETTLED_AT_ZERO });
+    expect(await refusal(removeBookingFromWorkParty({ ...common, dryRun: true }))).toEqual({
+      status: 409,
+      message: WORK_PARTY_SETTLED_AT_ZERO_MESSAGE,
+    });
+    expect(h.modifyCalls).toEqual([]);
+    // Something was taken (a captured ledger row), or credit applied: allowed.
+    h.takenTransactions = 1;
+    expect((await removeBookingFromWorkParty({ ...common, dryRun: true })).outcome).toBe("quoted");
+    h.takenTransactions = 0;
+    seedBooking({ finalPriceCents: 0, promoRedemptions: ON_WORK_PARTY, payment: { ...SETTLED_AT_ZERO, creditAppliedCents: 1 } });
     expect((await removeBookingFromWorkParty({ ...common, dryRun: true })).outcome).toBe("quoted");
   });
 });

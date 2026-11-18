@@ -3,24 +3,26 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BookingStatus } from "@prisma/client";
 import {
-  actorIsMemberOrFamily,
-  WORK_PARTY_OWN_MONEY_BACK_MESSAGE,
+  WORK_PARTY_DISPUTED_PAYMENT_MESSAGE,
   WORK_PARTY_NOT_ON_BOOKING_MESSAGE,
+  WORK_PARTY_OWN_BOOKING_MESSAGE,
+  WORK_PARTY_SETTLED_AT_ZERO_MESSAGE,
   workPartyBookingEligibility,
   workPartyRemovalEligibility,
-  workPartyOwnMoneyBackRefusal,
   type WorkPartyCorrectionFigures,
   type WorkPartyEligibilityBooking,
   type WorkPartyEligibilityContext,
   type WorkPartyEligibilityEvent,
 } from "@/lib/work-party-booking-correction";
+import { actorIsMemberOrFamily } from "@/lib/work-party-booking-facts";
 import {
   resolveWorkPartySettlementMethod,
   WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
   workPartySettlementOptions,
 } from "@/lib/work-party-settlement-options";
 import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";
-import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
+import { editTotalMoneyBackCents, workPartyAskAbsorbedSentence } from "@/lib/edit-money-back";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
  * Fork #119: the eligibility rule for "Add booking to work party", one case per
@@ -39,6 +41,8 @@ const booking: WorkPartyEligibilityBooking = {
   hasOtherPromoCode: false,
   quotePriced: false,
   memberOwned: true,
+  actorIsOwnerOrFamily: false,
+  cardPaymentDisputed: false,
 };
 
 const context: WorkPartyEligibilityContext = {
@@ -68,6 +72,8 @@ describe("workPartyRemovalEligibility (fork #130)", () => {
     checkOut: d("2026-08-04"),
     quotePriced: false,
     workPartyEventId: "event-1",
+    actorIsOwnerOrFamily: false,
+    settledAtZero: false,
   };
 
   it("accepts a booking that carries this work party, future or started", () => {
@@ -96,6 +102,22 @@ describe("workPartyRemovalEligibility (fork #130)", () => {
     expect(
       workPartyRemovalEligibility({ ...onBooking, quotePriced: true }, context, "event-1"),
     ).toMatchObject(refusal(/priced by its quote/));
+  });
+
+  it("owner decision 3: refuses the officer's own or family's booking, before anything else", () => {
+    expect(workPartyRemovalEligibility({ ...onBooking, actorIsOwnerOrFamily: true }, context, "event-1")).toEqual(
+      refusal(WORK_PARTY_OWN_BOOKING_MESSAGE),
+    );
+    expect(
+      workPartyRemovalEligibility({ ...onBooking, actorIsOwnerOrFamily: true, status: BookingStatus.CANCELLED }, context, "event-1"),
+    ).toEqual(refusal(WORK_PARTY_OWN_BOOKING_MESSAGE));
+  });
+
+  it("owner decision 18 Nov: refuses a booking PAID with nothing taken, telling the officer to cancel or ask the treasurer", () => {
+    expect(workPartyRemovalEligibility({ ...onBooking, settledAtZero: true }, context, "event-1")).toEqual(
+      refusal(WORK_PARTY_SETTLED_AT_ZERO_MESSAGE),
+    );
+    expect(WORK_PARTY_SETTLED_AT_ZERO_MESSAGE).toMatch(/Cancel it, or ask the treasurer/);
   });
 });
 
@@ -182,6 +204,26 @@ describe("workPartyBookingEligibility", () => {
     // same terms as any booking, and its money goes back to the organiser.
     expect(Object.keys(booking)).not.toContain("paidByOrganiser");
     expect(workPartyBookingEligibility(booking, context, event)).toEqual({ ok: true });
+  });
+
+  it("owner decision 3: refuses the officer's own or family's booking, whatever the money does", () => {
+    expect(workPartyBookingEligibility({ ...booking, actorIsOwnerOrFamily: true }, context, event)).toEqual(
+      refusal(WORK_PARTY_OWN_BOOKING_MESSAGE),
+    );
+    // An unpaid booking (nothing would come back) is refused all the same.
+    expect(
+      workPartyBookingEligibility(
+        { ...booking, status: BookingStatus.PAYMENT_PENDING, actorIsOwnerOrFamily: true },
+        context,
+        event,
+      ),
+    ).toEqual(refusal(WORK_PARTY_OWN_BOOKING_MESSAGE));
+  });
+
+  it("refuses a booking whose card payment is disputed, with the plain reason (#5151)", () => {
+    expect(workPartyBookingEligibility({ ...booking, cardPaymentDisputed: true }, context, event)).toEqual(
+      refusal(WORK_PARTY_DISPUTED_PAYMENT_MESSAGE),
+    );
   });
 
   it("refuses an organisation's booking, which holds no account credit", () => {
@@ -305,33 +347,49 @@ describe("workPartySettlementOptions and the settlement guard (fork #129, upstre
     expect(workPartySettlementOptions(shape, editAsks)).toEqual({ methods, paidByOrganiser: organiser, refundTo });
   });
 
+  it("B-L1: offers no method when an unpaid ask took the whole reduction, and refuses one with the reason", () => {
+    const absorbed = workPartySettlementOptions(paidCard, false, 5_000);
+    expect(absorbed).toEqual({ methods: [], paidByOrganiser: false, refundTo: null, absorbedByUnpaidAskCents: 5_000 });
+    expect(resolveWorkPartySettlementMethod(absorbed, undefined, CLUB_FORMAT_TEST)).toBeNull();
+    for (const method of ["card", "credit"] as const) {
+      expect(() => resolveWorkPartySettlementMethod(absorbed, method, CLUB_FORMAT_TEST)).toThrow(
+        expect.objectContaining({ status: 409, message: workPartyAskAbsorbedSentence("$50.00") }),
+      );
+    }
+    expect(workPartyAskAbsorbedSentence("$50.00")).toBe(
+      "The discount cancels the $50.00 still owed on this booking, so nothing comes back.",
+    );
+    // An organiser-paid joiner keeps the organiser's one disposition.
+    expect(workPartySettlementOptions({ ...paidCard, organiserSettled: true, parentBookingId: "parent" }, false, 5_000).methods).toEqual(["card"]);
+  });
+
   it("defaults to the first method offered", () => {
-    expect(resolveWorkPartySettlementMethod({ methods: ["credit", "card"], paidByOrganiser: false, refundTo: "card" }, undefined)).toBe("credit");
-    expect(resolveWorkPartySettlementMethod({ methods: ["card"], paidByOrganiser: true, refundTo: null }, undefined)).toBe("card");
+    expect(resolveWorkPartySettlementMethod({ methods: ["credit", "card"], paidByOrganiser: false, refundTo: "card" }, undefined, CLUB_FORMAT_TEST)).toBe("credit");
+    expect(resolveWorkPartySettlementMethod({ methods: ["card"], paidByOrganiser: true, refundTo: null }, undefined, CLUB_FORMAT_TEST)).toBe("card");
   });
 
   it("takes the officer's choice when it is offered, by card or by bank", () => {
     for (const refundTo of ["card", "bank"] as const) {
       const options = { methods: ["credit", "card"] as const, paidByOrganiser: false, refundTo };
-      expect(resolveWorkPartySettlementMethod(options, "card")).toBe("card");
-      expect(resolveWorkPartySettlementMethod(options, "credit")).toBe("credit");
+      expect(resolveWorkPartySettlementMethod(options, "card", CLUB_FORMAT_TEST)).toBe("card");
+      expect(resolveWorkPartySettlementMethod(options, "credit", CLUB_FORMAT_TEST)).toBe("credit");
     }
   });
 
   it("refuses a refund where only credit is offered, with 409", () => {
     expect(() =>
-      resolveWorkPartySettlementMethod({ methods: ["credit"], paidByOrganiser: false, refundTo: null }, "card"),
+      resolveWorkPartySettlementMethod({ methods: ["credit"], paidByOrganiser: false, refundTo: null }, "card", CLUB_FORMAT_TEST),
     ).toThrow(expect.objectContaining({ status: 409, message: WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE }));
   });
 
   it("refuses credit on an organiser-paid joiner, whose money goes back to the organiser", () => {
     expect(() =>
-      resolveWorkPartySettlementMethod({ methods: ["card"], paidByOrganiser: true, refundTo: null }, "credit"),
+      resolveWorkPartySettlementMethod({ methods: ["card"], paidByOrganiser: true, refundTo: null }, "credit", CLUB_FORMAT_TEST),
     ).toThrow(expect.objectContaining({ status: 409, message: expect.stringMatching(/group organiser/) }));
   });
 });
 
-describe("own or family booking: refused only when money comes back (fork #129 decision 6, 16 Nov)", () => {
+describe("every cent that comes back is counted once (Remove's guard, the absorbed-ask test)", () => {
   const unpaid: WorkPartyCorrectionFigures = {
     previousFinalPriceCents: 20_000,
     newFinalPriceCents: 15_000,
@@ -356,26 +414,6 @@ describe("own or family booking: refused only when money comes back (fork #129 d
         refundedExcessCreditCents: 8,
       }),
     ).toBe(15);
-  });
-
-  it("allows the officer's own or family's booking when nothing comes back (the price just drops)", () => {
-    expect(workPartyOwnMoneyBackRefusal(unpaid, true)).toBeNull();
-    // An unpaid ask taking the reduction is not money back either.
-    expect(workPartyOwnMoneyBackRefusal({ ...unpaid, additionalAmountCents: 1_000 }, true)).toBeNull();
-  });
-
-  it.each([
-    ["a card refund", { refundAmountCents: 5_000, settlementMethod: "card" as const }],
-    ["account credit", { accountCreditAmountCents: 5_000 }],
-    ["applied credit given back", { appliedCreditGivenBackCents: 5_000 }],
-    ["an unpaid booking's applied credit freed by the lower price (F1)", { refundedExcessCreditCents: 3_000 }],
-    ["one cent of credit", { accountCreditAmountCents: 1 }],
-  ])("refuses when %s would go to the officer or their family", (_label, change) => {
-    expect(workPartyOwnMoneyBackRefusal({ ...unpaid, ...change }, true)).toBe(WORK_PARTY_OWN_MONEY_BACK_MESSAGE);
-  });
-
-  it("allows money back to anyone else", () => {
-    expect(workPartyOwnMoneyBackRefusal({ ...unpaid, accountCreditAmountCents: 5_000 }, false)).toBeNull();
   });
 });
 
@@ -423,14 +461,6 @@ describe("the officer-only internal-code admission (census)", () => {
     expect(plan).toContain(
       "const requested = withoutRemovedWorkPartyCode(requestedPromoCodeListFor(input, storedCodes, multiPromoCodes), existing, officerWorkPartyCorrection);",
     );
-  });
-
-  it("fork #127: only the batch service asks the edit policy for the work-party mode", () => {
-    const callers = files
-      .filter((file) => /\bworkPartyCorrection:/.test(readFileSync(file, "utf8")))
-      .map(rel)
-      .sort();
-    expect(callers).toEqual(["src/lib/booking-batch-modification-service.ts"]);
   });
 
   it("M1: a work-party correction skips only the pricing pass's bed check", () => {
