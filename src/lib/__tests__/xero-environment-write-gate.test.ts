@@ -308,6 +308,8 @@ describe("every operation name this repository passes to callXeroApi", () => {
       "getContactGroups",
       "getContacts",
       "getCreditNote",
+      // #5066: the booking page's credit-note download reads Xero's own PDF.
+      "getCreditNoteAsPdf",
       // #4162: the "already in Xero" answer reads the hand-made note by its number.
       "getCreditNotes",
       "getInvoice",
