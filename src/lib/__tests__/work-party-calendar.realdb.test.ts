@@ -19,10 +19,17 @@
  *     entries even on a path that forgot to (the series is then left empty,
  *     which is why the writer clears it itself).
  *  5. The calendar's own edit and delete refuse a linked entry.
- *  6. Under the lock: two edits racing, and an edit racing "Add to calendar",
- *     leave exactly one set of entries matching the work party as it ended up,
- *     never a duplicate; an edit racing the delete neither deadlocks nor leaves
- *     an entry behind.
+ *  6. The lock (`lockWorkPartyCalendar`), with the interleaving FORCED rather
+ *     than hoped for: the first writer is held just after taking the lock
+ *     (inside its resolver, or between the delete's steps), the second is
+ *     seen WAITING on that advisory lock in `pg_locks`, and only then is the
+ *     first released. Edit against Add, edit against delete, and Add against
+ *     Add (a double click) each end with one set of entries matching the work
+ *     party as it ended up, no orphaned series, and no deadlock. Two edits
+ *     racing are also covered, but they prove the outcome only: the
+ *     WorkPartyEvent row lock alone would serialise them.
+ *  7. A failure after the work party's update rolls the whole edit back: the
+ *     row, its promo and its entries are as they were.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL the race harness provisions (#1881), and the
@@ -33,6 +40,7 @@ import type { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
 vi.mock("server-only", () => ({}));
 
@@ -107,6 +115,70 @@ async function visibleIds(modules: { workParties: boolean }) {
     select: { id: true, workPartyEventId: true },
   });
   return rows;
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Wait until `count` sessions in THIS database are queued on an advisory lock
+ * (the race files take turns on the one race database, so nothing else is).
+ * Measured with `realElapsedMs`: `Date` is frozen in tests.
+ */
+async function waitForPendingAdvisoryLocks(count: number): Promise<void> {
+  const startedAt = process.hrtime.bigint();
+  while (realElapsedMs(startedAt) < 5_000) {
+    const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT COUNT(*)::int AS "count"
+      FROM pg_locks
+      WHERE locktype = 'advisory'
+        AND granted = false
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+    `;
+    if ((rows[0]?.count ?? 0) >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(
+    `Timed out waiting for ${count} session(s) to queue on the work-party calendar lock`,
+  );
+}
+
+/**
+ * "Add to calendar" exactly as `addWorkPartyToCalendar` runs it, but held just
+ * after the lock (its resolver runs after the lock and the linked read) until
+ * `gate` opens. `entered` fires once it holds the lock.
+ */
+function heldAdd(workPartyEventId: string, entered: () => void, gate: Promise<void>) {
+  return entries.replaceWorkPartyCalendarEvents(
+    workPartyEventId,
+    async (tx) => {
+      entered();
+      await gate;
+      const row = await tx.workPartyEvent.findUnique({
+        where: { id: workPartyEventId },
+        select: {
+          name: true,
+          description: true,
+          startDate: true,
+          endDate: true,
+          lodge: { select: { name: true } },
+        },
+      });
+      return row ? workPartyCalendar.workPartyCalendarEntry(row) : null;
+    },
+    ACTOR_ID,
+  );
+}
+
+async function orphanedSeriesCount() {
+  return prisma.calendarEventSeries.count({
+    where: { createdById: ACTOR_ID, events: { none: {} } },
+  });
 }
 
 async function clean(): Promise<void> {
@@ -318,7 +390,7 @@ async function clean(): Promise<void> {
       expect(await linkedEntries(event.id)).toHaveLength(3);
     });
 
-    it("6a. two edits racing leave one set of entries matching the saved work party", async () => {
+    it("6a. two edits racing end matching the saved work party (outcome only: the row lock alone serialises them)", async () => {
       const event = await createWorkParty("Race 5148 race");
       await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
 
@@ -340,51 +412,121 @@ async function clean(): Promise<void> {
       const rows = await linkedEntries(event.id);
       expect(rows).toHaveLength(expectedNights);
       expect(new Set(rows.map((row) => row.seriesId)).size).toBe(1);
+      expect(await orphanedSeriesCount()).toBe(0);
     });
 
-    it("6b. an edit racing Add to calendar never duplicates the entries", async () => {
+    it("6b. an edit queued behind a held Add to calendar ends with the edit's entries, once", async () => {
       const event = await createWorkParty("Race 5148 add race");
+      // Already on the calendar, so the edit has entries to rewrite.
       await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+      const held = deferred();
+      const gate = deferred();
+      const add = heldAdd(event.id, held.resolve, gate.promise);
+      await held.promise;
 
-      await Promise.all([
-        workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID),
-        workPartyCalendar.updateWorkPartyWithCalendar(
-          event.id,
-          input("Race 5148 add race", SEPTEMBER),
-          ACTOR_ID,
-        ),
-      ]);
+      const edit = workPartyCalendar.updateWorkPartyWithCalendar(
+        event.id,
+        input("Race 5148 add race", SEPTEMBER),
+        ACTOR_ID,
+      );
+      await waitForPendingAdvisoryLocks(1);
+      gate.resolve();
+      await Promise.all([add, edit]);
 
       const rows = await linkedEntries(event.id);
       expect(rows).toHaveLength(4);
       expect(new Set(rows.map((row) => row.seriesId)).size).toBe(1);
+      expect(await orphanedSeriesCount()).toBe(0);
     });
 
-    it("6c. an edit racing the delete neither deadlocks nor leaves an entry behind", async () => {
+    it("6c. an edit queued behind a held delete waits, finds no row to update, and no entry survives", async () => {
       const event = await createWorkParty("Race 5148 delete race");
       await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+      const held = deferred();
+      const gate = deferred();
+      const remove = prisma.$transaction(async (tx) => {
+        await entries.removeWorkPartyCalendarEventsInTransaction(tx, event.id);
+        held.resolve();
+        await gate.promise;
+        await tx.workPartyEvent.delete({ where: { id: event.id } });
+        await tx.promoCode.delete({ where: { id: event.promoCodeId } });
+      });
+      await held.promise;
 
-      const results = await Promise.allSettled([
-        workPartyCalendar.updateWorkPartyWithCalendar(
-          event.id,
-          input("Race 5148 delete race", SEPTEMBER),
-          ACTOR_ID,
-        ),
-        prisma.$transaction(async (tx) => {
-          await entries.removeWorkPartyCalendarEventsInTransaction(tx, event.id);
-          await tx.workPartyEvent.delete({ where: { id: event.id } });
-          await tx.promoCode.delete({ where: { id: event.promoCodeId } });
-        }),
-      ]);
+      const edit = workPartyCalendar
+        .updateWorkPartyWithCalendar(event.id, input("Race 5148 delete race", SEPTEMBER), ACTOR_ID)
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      await waitForPendingAdvisoryLocks(1);
+      gate.resolve();
+      await remove;
+      const editError = await edit;
 
-      // The delete always wins in the end (it either runs last, or the edit
-      // that waited on its lock then finds no row to update).
-      expect(results[1]!.status).toBe("fulfilled");
-      if (results[0]!.status === "rejected") {
-        expect(String(results[0]!.reason)).not.toMatch(/deadlock/i);
-      }
+      // The edit waited on the lock before touching the row the delete needed,
+      // so there is no deadlock; its update then finds no row (P2025).
+      expect(editError).toMatchObject({ code: "P2025" });
+      expect(String(editError)).not.toMatch(/deadlock/i);
       expect(await prisma.workPartyEvent.findUnique({ where: { id: event.id } })).toBeNull();
       expect(await prisma.calendarEvent.count({ where: { workPartyEventId: event.id } })).toBe(0);
+      expect(await orphanedSeriesCount()).toBe(0);
+    });
+
+    it("6d. Add to calendar clicked twice writes one set of entries and no orphaned series", async () => {
+      const event = await createWorkParty("Race 5148 double add");
+      const held = deferred();
+      const gate = deferred();
+      const first = heldAdd(event.id, held.resolve, gate.promise);
+      await held.promise;
+
+      const second = workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+      await waitForPendingAdvisoryLocks(1);
+      gate.resolve();
+      await Promise.all([first, second]);
+
+      const rows = await linkedEntries(event.id);
+      expect(rows).toHaveLength(3);
+      expect(new Set(rows.map((row) => row.seriesId)).size).toBe(1);
+      expect(await orphanedSeriesCount()).toBe(0);
+    });
+
+    it("7. a failure after the update rolls the whole edit back", async () => {
+      const event = await createWorkParty("Race 5148 rollback");
+      await workPartyCalendar.addWorkPartyToCalendar(event.id, ACTOR_ID);
+      const before = await linkedEntries(event.id);
+      // A real database failure inside the rewrite, after the work party's
+      // update has run: inserting the moved entries raises.
+      await prisma.$executeRawUnsafe(
+        "CREATE OR REPLACE FUNCTION race_5148_refuse_insert() RETURNS trigger AS " +
+          "'BEGIN RAISE EXCEPTION ''race 5148 injected failure''; END;' LANGUAGE plpgsql",
+      );
+      await prisma.$executeRawUnsafe(
+        'CREATE TRIGGER race_5148_refuse_insert BEFORE INSERT ON "CalendarEvent" ' +
+          "FOR EACH ROW WHEN (NEW.title = 'Work party: Race 5148 rollback moved') " +
+          "EXECUTE FUNCTION race_5148_refuse_insert()",
+      );
+      try {
+        await expect(
+          workPartyCalendar.updateWorkPartyWithCalendar(
+            event.id,
+            input("Race 5148 rollback moved", AUGUST),
+            ACTOR_ID,
+          ),
+        ).rejects.toThrow();
+      } finally {
+        await prisma.$executeRawUnsafe(
+          'DROP TRIGGER IF EXISTS race_5148_refuse_insert ON "CalendarEvent"',
+        );
+        await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS race_5148_refuse_insert()");
+      }
+
+      const saved = await prisma.workPartyEvent.findUniqueOrThrow({ where: { id: event.id } });
+      expect(saved.name).toBe("Race 5148 rollback");
+      expect(saved.startDate.getTime()).toBe(JULY.startDate.getTime());
+      const promo = await prisma.promoCode.findUniqueOrThrow({ where: { id: event.promoCodeId } });
+      expect(promo.description).toBe("Working bee: Race 5148 rollback");
+      expect(await linkedEntries(event.id)).toEqual(before);
     });
   },
 );
