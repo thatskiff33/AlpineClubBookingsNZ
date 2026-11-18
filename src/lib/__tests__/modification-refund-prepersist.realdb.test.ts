@@ -84,11 +84,12 @@ async function clean(): Promise<void> {
 /**
  * $200 paid by two captured slices; either guest's two nights cost $100.
  * `NO_STRIPE_RECORD` (#5212) is a succeeded card payment with no intent and no
- * captured transaction: nothing Stripe could refund. `journaled` posts the
+ * captured transaction: nothing Stripe could refund. `intentlessCapture` gives
+ * it one captured ledger row that names no intent either. `journaled` posts the
  * booking's charge to the member-money journal as its settle would, so an edit's
  * card refund payable (R05) posts too.
  */
-async function seed(shape: "STRIPE" | "INTERNET_BANKING" | "NO_STRIPE_RECORD" = "STRIPE", { journaled = false } = {}): Promise<void> {
+async function seed(shape: "STRIPE" | "INTERNET_BANKING" | "NO_STRIPE_RECORD" = "STRIPE", { journaled = false, intentlessCapture = false } = {}): Promise<void> {
   const source = shape === "NO_STRIPE_RECORD" ? "STRIPE" : shape;
   await prisma.booking.create({ data: {
     id: BOOKING, memberId: OWNER, lodgeId: LODGE, checkIn: N1, checkOut: END,
@@ -115,6 +116,12 @@ async function seed(shape: "STRIPE" | "INTERNET_BANKING" | "NO_STRIPE_RECORD" = 
         stripePaymentIntentId: intent, createdAt: new Date(capturedAt),
       } });
     }
+  }
+  if (intentlessCapture) {
+    await prisma.paymentTransaction.create({ data: {
+      id: PRIMARY, paymentId: PAYMENT, kind: "PRIMARY", source: "STRIPE", amountCents: 20_000, status: "SUCCEEDED",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+    } });
   }
   if (journaled) {
     await prisma.$transaction(async (tx) => {
@@ -398,7 +405,17 @@ function remove(settlementMethod?: "card" | "credit", consentAuthority?: {
       await handedBackWithNoCardDebt(20_000);
     });
 
+    it("a captured ledger row that names no intent is still no card to refund", async () => {
+      await clean();
+      await seed("NO_STRIPE_RECORD", { journaled: true, intentlessCapture: true });
+      const result = await remove("card");
+      expect(result).toMatchObject({ pendingRefundAmountCents: 0, refundAmountCents: 10_000, hasSucceededPayment: false });
+      await handedBackWithNoCardDebt();
+    });
+
     it("account credit is still the member's to choose, and owes nothing by hand or by card", async () => {
+      await clean();
+      await seed("NO_STRIPE_RECORD", { journaled: true, intentlessCapture: true });
       const result = await remove("credit");
       expect(result).toMatchObject({ pendingRefundAmountCents: 0, accountCreditAmountCents: 10_000 });
       expect(await prisma.manualRefundTask.count({ where: { bookingId: BOOKING } })).toBe(0);

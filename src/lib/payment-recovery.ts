@@ -92,6 +92,7 @@ import { finishApprovedLateCaptureRefundAfterReplay } from "@/lib/late-capture-r
 import { holdSupersededLateCaptureIfRequired } from "@/lib/late-capture-refund-hold";
 import { supersededMachineryOwnsCapture } from "@/lib/superseded-capture-ownership";
 import { LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { readRefundableCardIntentId } from "@/lib/refundable-card-intent";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
@@ -266,25 +267,8 @@ async function enqueueLedgerRefundRecovery({
   allocationPlan?: RefundAllocationSlice[];
   store?: PaymentRecoveryStore;
 }) {
-  const payment = await store.payment.findUnique({
-    where: { id: paymentId },
-    include: {
-      transactions: {
-        orderBy: [...LEDGER_ROWS_NEWEST_FIRST],
-      },
-    },
-  });
-
-  const capturedTransaction = payment?.transactions.find(
-    (transaction) =>
-      transaction.source === PaymentSource.STRIPE &&
-      Boolean(transaction.stripePaymentIntentId) &&
-      isCapturedTransactionStatus(transaction.status),
-  );
-  const representativePaymentIntentId =
-    capturedTransaction?.stripePaymentIntentId ??
-    payment?.stripePaymentIntentId ??
-    null;
+  // #5212 (`INV-PAY-157`): the read an edit asked before it promised this debt.
+  const representativePaymentIntentId = await readRefundableCardIntentId(store, paymentId);
 
   if (!representativePaymentIntentId) {
     throw new NoRefundPaymentIntentError();
