@@ -5,13 +5,9 @@ capture receipt, at the point it stores the payment id. The helpers that read
 what a sender stored live in `src/lib/capture-receipt-senders.ts`; what is left
 in each sender is the call itself, which belongs beside the payment it records.
 
-file: src/lib/xero-operation-retry.ts
-lines: 2068
-reason: the PARTIAL invoice repair records its payment's capture receipt on both of its paths (sent now, or already linked).
-
 function: src/lib/xero-operation-retry.ts#retryXeroSyncOperation
 lines: 754
-reason: the same two calls, beside the payment each path stores.
+reason: the PARTIAL invoice repair records its payment's capture receipt on both of its paths (sent now, or already linked), beside the payment each stores.
 
 function: src/lib/additional-capture-xero-receipt.ts#recordAdditionalCaptureReceipt
 lines: 415

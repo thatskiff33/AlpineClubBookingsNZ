@@ -71,7 +71,7 @@ import {
 } from "@/lib/xero-sync";
 import { holdsXeroOperationClaim } from "@/lib/xero-operation-claim";
 import logger from "@/lib/logger";
-import { recordRepairCaptureReceipt } from "@/lib/capture-receipt-senders";
+import { primaryInvoicePaymentKey, recordRepairCaptureReceipt } from "@/lib/capture-receipt-senders";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
   parseRefundMethod,
@@ -752,12 +752,7 @@ function parsePartialInvoiceRepairInput(
       invoiceId: operation.xeroObjectId,
       amountCents,
       linkRole: "INVOICE_PAYMENT",
-      idempotencyKey: buildXeroIdempotencyKey(
-        "payment",
-        operation.localId,
-        "invoice-payment",
-        "v1"
-      ),
+      idempotencyKey: primaryInvoicePaymentKey(operation.localId),
       reference:
         amountCents > 0
           ? `${CLUB_NAME} invoice payment ${operation.localId.slice(0, 8)}`
