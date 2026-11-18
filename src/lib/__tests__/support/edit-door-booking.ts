@@ -188,6 +188,7 @@ export function editDoorBooking(overrides: EditDoorBookingOverrides = {}): Loade
     finalPriceCents: 0,
     hasNonMembers: false,
     cancelIfGuestsBumped: false,
+    savedCardClaimAt: null,
     nonMemberHoldUntil: null,
     parentBookingId: null,
     organiserSettled: false,

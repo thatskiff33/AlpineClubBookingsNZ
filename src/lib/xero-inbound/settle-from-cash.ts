@@ -32,61 +32,17 @@ import {
   deriveAggregatePaymentStatus,
   grossCapturedCents,
   isCapturedTransactionStatus,
-  LEGACY_PRIMARY_BACKFILL_REASON,
 } from "@/lib/payment-transaction-status";
 import { readModificationNoteCash } from "@/lib/xero-inbound/account-credit-modification-notes";
 import { type CreditNoteAllocationCents, sumAppliedCentsByCreditNote } from "@/lib/xero-inbound/amounts";
-import { CLEARING_ALLOCATION_LINK_WHERE, distinctClearingAllocations } from "@/lib/xero-clearing-allocations";
-import { isIncludedRefundCreditNoteStatus, readRefundCreditNoteLinkStatus } from "@/lib/xero-refund-note-status";
 import type { IbSettlementKeptReason } from "@/lib/ib-settlement-figure-note";
+import { IB_RECEIPT_FROM_CASH_REASON, IB_RECEIPT_KEPT_REASON, isInternetBankingPrimary } from "./ib-receipt-reasons";
+import { decideLinkedRefundedTotalCents } from "./linked-refunded-total";
+import { type BankTransferFloorAlert } from "./credit-note-bank-transfer-floor";
+import { decideXeroRefundedColumns } from "./xero-refunded-columns";
 
 /** The paid invoice's cash, as `quantifyXeroInvoiceCashCents` measures it. */
 export type InvoiceCash = { knownCents: number; complete: boolean };
-
-/**
- * The `reason` on a bank-transfer PRIMARY receipt the settle recorded at the
- * invoice's cash. The refunded-total repair reads it (`INV-PAY-126`): an invoice
- * correction counts as refunded only against a receipt recorded at the stored
- * figure (before #3979, or kept), never against one recorded from cash.
- */
-export const IB_RECEIPT_FROM_CASH_REASON = "xero_invoice_paid_cash";
-
-/** The `reason` on a PRIMARY receipt the settle creates when none exists and it keeps the stored figure. */
-export const IB_RECEIPT_KEPT_REASON = "xero_invoice_paid_reconciliation";
-
-/**
- * The reasons a bank-transfer PRIMARY receipt carries when it holds the figure
- * the payment was BORN with, not cash read from Xero: the payment's creation
- * (`booking-create.ts`, the switch to bank transfer), the settle before #3979 or
- * when it keeps the stored figure (`xero_invoice_paid_reconciliation`), the
- * legacy backfill, and none. An explicit allowlist (#3979 final review): any
- * other reason - the cash marker above, a part payment recognised at cancel
- * (`PART_PAYMENT_RECOGNISED_REASON`), an officer's cash - is cash-sized.
- */
-const STORED_FIGURE_RECEIPT_REASONS: ReadonlySet<string | null> = new Set([
-  null,
-  "internet_banking_booking_payment",
-  "internet_banking_switch_at_pay",
-  IB_RECEIPT_KEPT_REASON,
-  LEGACY_PRIMARY_BACKFILL_REASON,
-]);
-
-/**
- * #3979 (`INV-PAY-126`): whether an invoice correction still counts as refunded
- * against this payment - a bank-transfer PRIMARY receipt is captured, and every
- * captured one holds the stored figure (`STORED_FIGURE_RECEIPT_REASONS`). Such a
- * receipt is the figure the payment was born with (settled before #3979, or
- * kept by the settle), so it still includes the corrected amount, and counting
- * the correction keeps the payment's net at the cash. A payment never
- * captured, or with a cash-sized receipt, never counts one. Pure, over the
- * payment's rows: the refunded-total repair and the Xero repair tool both read it.
- */
-export function receiptCountsInvoiceCorrections(
-  rows: ReadonlyArray<{ kind: PaymentTransactionKind; source: PaymentSource; status: PaymentStatus; reason: string | null }>,
-): boolean {
-  const receipts = rows.filter((row) => isInternetBankingPrimary(row) && isCapturedTransactionStatus(row.status));
-  return receipts.length > 0 && receipts.every((row) => STORED_FIGURE_RECEIPT_REASONS.has(row.reason));
-}
 
 /**
  * Why a settle kept the stored figure instead of the invoice's cash: the
@@ -129,10 +85,6 @@ export type CashSettlementTransaction = {
   amountCents: number;
   refundedAmountCents: number;
 };
-
-function isInternetBankingPrimary(row: Pick<CashSettlementTransaction, "kind" | "source">): boolean {
-  return row.kind === PaymentTransactionKind.PRIMARY && row.source === PaymentSource.INTERNET_BANKING;
-}
 
 /**
  * The one decision (`INV-PAY-125`). It is taken only at the TRANSITION, while
@@ -207,37 +159,29 @@ export function paidInvoiceFacts(invoice: Pick<Invoice, "total" | "creditNotes">
 }
 
 /**
- * #4095 (`INV-PAY-126`, review item 1): what a KEEP counts as refunded, in the
- * settle's own transaction, for the invoice corrections already synced. The
- * receipt it captures holds the stored figure, which still includes each
- * corrected amount, so such a correction counts now, as the note's own sync
- * would count it against that receipt: a writer queued on the settle's locks
- * (a cancel on `lock(1)`) then reads the net the cash supports, never the
- * figure before the correction.
- *
- * A correction counts when its note's link records it live and its allocation
- * to this invoice is linked - by the note's own role or a role-less link for
- * the same allocation (#4786, `distinctClearingAllocations`) - both read
- * here; one whose sync writes them while the settle runs is left to that sync
- * and to the recount after the commit (`recountCorrectionsAfterKeptSettle`). Nothing is counted when the refunded
- * total holds more than the payment's rows record - an older fold may already
- * hold the correction - nor when the receipt would not hold the stored figure
- * (`receiptCountsInvoiceCorrections`): that recount decides both. Before the
- * receipt is captured no correction counts against the payment, so a total
- * its rows explain holds none.
+ * #4449 (`INV-PAY-126`): the whole refunded total a KEEP leaves on the payment,
+ * decided in the settle's own transaction from every link it reads there
+ * (`decideLinkedRefundedTotalCents`), with the receipt as the keep captures it.
+ * That receipt holds the stored figure, which still includes each invoice
+ * correction, so every correction already synced counts now, as the note's
+ * own sync would count it against that receipt, and a refunded total the rows
+ * do not record (a refund note folded into it) is the links' too: a writer
+ * queued on the settle's locks (a cancel on `lock(1)`) reads the net the cash
+ * supports. A correction whose allocation the note sync writes while the
+ * settle runs waits on the Payment row the settle holds, and its sync decides
+ * the total again after this commit (`writeCurrentCreditNoteAllocation`). The
+ * bank-transfer floor applies (`INV-ADDPAY-021`); its alert waits for the commit,
+ * and goes out only when the keep moves the stored total.
  */
-async function keptCorrectionRefundCents(
+async function keptRefundedTotal(
   tx: Prisma.TransactionClient,
   input: {
     invoiceId: string;
-    payment: { refundedAmountCents: number };
+    payment: { id: string; bookingId: string; amountCents: number; refundedAmountCents: number };
     rows: ReadonlyArray<CashSettlementTransaction & { reason: string | null }>;
-    corrections: readonly AppliedCreditNote[];
   },
-): Promise<number> {
-  if (input.corrections.length === 0) return 0;
-  const rowsRefundedCents = input.rows.reduce((sum, row) => sum + row.refundedAmountCents, 0);
-  if (input.payment.refundedAmountCents !== rowsRefundedCents) return 0;
+): Promise<{ refundedAmountCents: number; status: PaymentStatus; floorAlert: BankTransferFloorAlert | null }> {
+  const { payment } = input;
   // The receipt as the keep captures it: every uncaptured bank-transfer PRIMARY
   // row SUCCEEDED, or one created when there is none.
   const capturedRows = input.rows.some(isInternetBankingPrimary)
@@ -246,34 +190,23 @@ async function keptCorrectionRefundCents(
         ...input.rows,
         { kind: PaymentTransactionKind.PRIMARY, source: PaymentSource.INTERNET_BANKING, status: PaymentStatus.SUCCEEDED, reason: IB_RECEIPT_KEPT_REASON },
       ];
-  if (!receiptCountsInvoiceCorrections(capturedRows)) return 0;
-  const noteIds = input.corrections.map((note) => note.id);
-  const [noteLinks, allocationLinks] = await Promise.all([
-    tx.xeroObjectLink.findMany({
-      where: { xeroObjectType: "CREDIT_NOTE", role: "MODIFICATION_CREDIT_NOTE", active: true, xeroObjectId: { in: noteIds } },
-      select: { xeroObjectId: true, metadata: true },
-    }),
-    // #4786: the note's own role, or a role-less link an older repair wrote
-    // on the note's anchor for the same allocation (`distinctClearingAllocations`).
-    tx.xeroObjectLink.findMany({
-      where: {
-        xeroObjectType: "ALLOCATION",
-        AND: [CLEARING_ALLOCATION_LINK_WHERE],
-        active: true,
-        metadata: { path: ["invoiceId"], equals: input.invoiceId },
-      },
-      select: { role: true, metadata: true, updatedAt: true },
-    }),
-  ]);
-  const liveNoteIds = new Set(
-    noteLinks
-      .filter((link) => isIncludedRefundCreditNoteStatus(readRefundCreditNoteLinkStatus(link.metadata)))
-      .map((link) => link.xeroObjectId),
+  const linked = await decideLinkedRefundedTotalCents(
+    tx,
+    [{ ...payment, source: PaymentSource.INTERNET_BANKING, xeroInvoiceId: input.invoiceId }],
+    { transactionRowsOverride: new Map([[payment.id, capturedRows]]) },
   );
-  const allocatedNoteIds = new Set(distinctClearingAllocations(allocationLinks).map((allocation) => allocation.creditNoteId));
-  return input.corrections
-    .filter((note) => liveNoteIds.has(note.id) && allocatedNoteIds.has(note.id))
-    .reduce((sum, note) => sum + note.appliedCents, 0);
+  // #4449 (`INV-SSOT`): the clamp, floor and status step every writer from Xero takes, from the status
+  // the keep leaves the payment in: captured, so SUCCEEDED before any refund.
+  const decided = await decideXeroRefundedColumns(tx, {
+    payment: { ...payment, source: PaymentSource.INTERNET_BANKING, status: PaymentStatus.SUCCEEDED, booking: { organiserSettled: false } },
+    decidedCents: linked.get(payment.id) ?? 0,
+    creditNoteId: null,
+  });
+  // A keep that leaves the stored total where it was alerts nothing (as before #4449): a refund on
+  // record whose note is still in the outbox is not a shortfall in Xero. A keep that moves the
+  // total and is held at the floor does alert.
+  const moved = decided.refundedAmountCents !== payment.refundedAmountCents;
+  return { refundedAmountCents: decided.refundedAmountCents, status: decided.status ?? PaymentStatus.SUCCEEDED, floorAlert: moved ? decided.floorAlert : null };
 }
 
 /**
@@ -285,9 +218,9 @@ async function keptCorrectionRefundCents(
 export async function decideInternetBankingReceiptFigure(
   tx: Prisma.TransactionClient,
   input: {
-    /** The paid invoice: a keep counts the corrections allocated to it (#4095). */
+    /** The paid invoice: a keep decides the refunded total its links record, by this invoice too (#4449). */
     invoiceId: string;
-    payment: { id: string; amountCents: number; refundedAmountCents: number };
+    payment: { id: string; bookingId: string; amountCents: number; refundedAmountCents: number };
     cash: InvoiceCash;
     matchedPayments: number;
     secondInstrument: boolean;
@@ -300,10 +233,13 @@ export async function decideInternetBankingReceiptFigure(
   /** What the PRIMARY row update adds: the cash marker, and the amount where it differs. */
   primaryRowWrite: { amountCents?: number; reason?: string };
   /**
-   * The payment's columns when the plan rewrote them, or when a keep counted
-   * an applied correction already synced (#4095, its figure unchanged); else null.
+   * The payment's columns when the plan rewrote them, or when a keep's whole
+   * refunded total (#4449, `keptRefundedTotal`) differs from the stored one
+   * (its figure unchanged); else null.
    */
   paymentColumns: { amountCents: number; refundedAmountCents: number; status: PaymentStatus } | null;
+  /** A keep's bank-transfer floor alert (`INV-ADDPAY-021`), for the settle to send after its commit. */
+  floorAlert: BankTransferFloorAlert | null;
   /**
    * The cash the invoice expected - its total less the member's own account
    * credit and the correction and no-cash notes applied to it - when the cash
@@ -398,20 +334,21 @@ export async function decideInternetBankingReceiptFigure(
     (mint.mintPartial && mint.mintableCents < partialFaceCents) || mixedInvoiceExpectedCents !== null;
 
   if (plan.kind !== "rewrite") {
-    const keptCorrectionCents =
-      plan.kind === "keep"
-        ? await keptCorrectionRefundCents(tx, { invoiceId: input.invoiceId, payment, rows, corrections: appliedCorrectionNotes })
-        : 0;
-    const refundedAmountCents = Math.min(payment.refundedAmountCents + keptCorrectionCents, payment.amountCents);
+    // On an invoice matched to several payments no payment's share of a
+    // correction is known, so a keep there leaves the stored total.
+    const kept =
+      plan.kind === "keep" && input.matchedPayments === 1
+        ? await keptRefundedTotal(tx, { invoiceId: input.invoiceId, payment, rows })
+        : null;
     const paymentColumns =
-      keptCorrectionCents > 0
+      kept && kept.refundedAmountCents !== payment.refundedAmountCents
         ? {
             amountCents: payment.amountCents,
-            refundedAmountCents,
-            status: deriveAggregatePaymentStatus(PaymentStatus.SUCCEEDED, payment.amountCents, refundedAmountCents, PaymentStatus.SUCCEEDED),
+            refundedAmountCents: kept.refundedAmountCents,
+            status: kept.status,
           }
         : null;
-    return { plan, receiptCents, primaryRowWrite: {}, paymentColumns, mixedInvoiceExpectedCents, isPartPayment, appliedCorrectionNotes };
+    return { plan, receiptCents, primaryRowWrite: {}, paymentColumns, floorAlert: kept?.floorAlert ?? null, mixedInvoiceExpectedCents, isPartPayment, appliedCorrectionNotes };
   }
   const primaryDiffers = uncapturedPrimary.some((row) => row.amountCents !== plan.receiptCents);
   return {
@@ -426,6 +363,7 @@ export async function decideInternetBankingReceiptFigure(
       refundedAmountCents: plan.refundedAmountCents,
       status: plan.status,
     },
+    floorAlert: null,
     mixedInvoiceExpectedCents,
     isPartPayment,
     appliedCorrectionNotes,

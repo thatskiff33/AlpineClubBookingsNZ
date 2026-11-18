@@ -55,8 +55,9 @@ CI also runs independent static and container checks:
   `pnpm audit --audit-level=high --json` and reports which of three things
   happened — see "When the advisory service is down" below — plus a fourth
   passing verdict, MITIGATED (never CLEAN), for a reviewed unfixed advisory
-  under an expiring owner-approved record (introduced in #3843; none is live
-  since #3851 — see "Mitigated advisories" below). It runs from a bare
+  under an expiring owner-approved record (introduced in #3843; the live
+  records are listed in the mitigations README — see "Mitigated advisories"
+  below). It runs from a bare
   checkout with no install: measured on npm 11.16.0 / Node 24 the audit built
   its tree from `package-lock.json` and returned the same verdict with or without
   `node_modules`, and `pnpm audit` likewise reads `pnpm-lock.yaml` alone (#3673).
@@ -141,7 +142,7 @@ output names the case**:
 | First line | What it means | What to do |
 | --- | --- | --- |
 | `Dependency audit: CLEAN - ...` | The advisory service answered and this branch has nothing at high or above. | Nothing. The job exits 0. |
-| `Dependency audit: MITIGATED — NOT CLEAN ...` | One reviewed, unfixed high advisory is still reported, and an owner-approved record in `dependency-mitigations.d/` says a reviewed patch covers the copy the audit sees. The raw advisory, the record's scope (including copies it does **not** cover) and the unfiltered pnpm report are printed underneath. | Nothing until the record expires or a fixed release ships; then retire it ([`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md) -> "Retiring a record"). The job exits 0 and raises a warning annotation. |
+| `Dependency audit: MITIGATED — NOT CLEAN ...` | One reviewed, unfixed high advisory is still reported, and an owner-approved record in `dependency-mitigations.d/` says reviewed patches cover every copy the audit sees. The raw advisory, the record's scope (including copies it does **not** cover) and the unfiltered pnpm report are printed underneath. | Nothing until the record expires or a fixed release ships; then retire it ([`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md) -> "Retiring a record"). The job exits 0 and raises a warning annotation. |
 | `Dependency audit: FAILED - VULNERABILITY FOUND ...` | A real finding. The service answered; the packages are listed underneath. When a mitigation record exists but does not apply, each reason is printed as `Mitigation record NOT applied: ...`. | Upgrade the dependency, or add a deliberate override with its reasoning to the register above. When a record was refused (expired, or its patch or dependency inputs changed), extend or retire it per [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md). **Re-running will not help.** |
 | `Dependency audit: FAILED - ADVISORY SERVICE UNREACHABLE ...` | npmjs.org did not answer, after four attempts. Nothing is known to be wrong with the branch - but it has not been cleared either. | Check <https://status.npmjs.org>, then re-run the job once the service has recovered. |
 | `Dependency audit: FAILED - THE AUDIT COULD NOT RUN ...` | pnpm answered with something that is not a readable audit report - usually a missing or malformed `pnpm-lock.yaml`, or a report whose severity counts are missing or non-numeric. | Read the pnpm output above the verdict. The verdict names which severities it could not read when that is the cause. |
@@ -183,14 +184,15 @@ goes red again the moment anything the approval relied on changes.
 
 The pieces, all in one reviewed pull request:
 
-- a reviewed patch under `patches/`, registered for exactly the affected
-  `package@version` in `patchedDependencies` in `pnpm-workspace.yaml` (pnpm
-  records its hash in `pnpm-lock.yaml`), and copied into the Docker `deps`
-  stage before its frozen install;
+- a reviewed patch under `patches/` for each affected installed copy,
+  registered for exactly that `package@version` in `patchedDependencies` in
+  `pnpm-workspace.yaml` (pnpm records its hash in `pnpm-lock.yaml`), and copied
+  into the Docker `deps` stage before its frozen install;
 - one record in [`dependency-mitigations.d/`](../dependency-mitigations.d/README.md)
-  binding the GHSA, version, dependency path, the owner-decision comment URLs,
-  an expiry, the patch's SHA256, and the SHA256 of the exact reviewed
-  `pnpm-workspace.yaml` and `pnpm-lock.yaml`.
+  binding the GHSA, each covered copy (exact version, dev flag, its patch's
+  SHA256, and the exact set of dependency paths the audit reports for it, since
+  #5252), the owner-decision comment URLs, an expiry, and the SHA256 of the
+  exact reviewed `pnpm-workspace.yaml` and `pnpm-lock.yaml`.
 
 Exactly when the wrapper accepts a record, who authorises one, the 14-day
 expiry cap, the warning annotation a MITIGATED pass raises, and the retirement
@@ -220,9 +222,11 @@ altogether.
 ### The override register
 
 Every row below was verified by removing that entry and re-resolving (#2863),
-and re-checked for #3673 against the ranges the installed parents declare. Two
-bind today: `postcss` (`next` pins 8.5.23 exactly) and the `nodemailer` pair
-(`next-auth`'s optional peer stops at `^8`). The `mysql2` override retired in
+and re-checked for #3673 against the ranges the installed parents declare. Four
+bind today: `postcss` (`next` pins 8.5.23 exactly), the `nodemailer` pair
+(`next-auth`'s optional peer stops at `^8`), and, since #5252, `qs` and
+`minimatch`, which hold development tooling outside its parents' declared
+ranges and say why in their rows. The `mysql2` override retired in
 #4363, once `prisma` 7.10.1 pinned mysql2 3.24.4.
 `eslint-plugin-react-hooks` is a deliberate hold that is currently non-binding.
 `browserslist` is a security floor its parents' ranges do not guarantee
@@ -253,6 +257,8 @@ than the last install. Scope an override to its parent (`parent>name`) instead.
 | `eslint-plugin-react-hooks` | **Compatibility hold**, not security — `b1989558f` introduced it as "hold eslint-plugin-react-hooks at 7.0.1", and it has since been stepped forward to 7.1.1. Currently non-binding: natural resolution lands on 7.1.1 with or without it. | The hold is reviewed and lifted on purpose. |
 | `browserslist` (`^4.28.7`) | **Security.** Two high advisories against `browserslist <= 4.28.6` — unbounded memory growth with no cache eviction (GHSA-c83g-rgw3-j3cx), and an uncaught crash / prototype write via untrusted `browserslist-stats.json` (GHSA-73wf-gq98-2v4g). Transitive only; nothing declares it directly. A **range**, not a pin, so it keeps floating with future patches. | every package that depends on browserslist (today `webpack` `^4.28.1`, `@babel/helper-compilation-targets` `^4.24.0`, and `update-browserslist-db`'s peer `>= 4.21.0`) *requires* 4.28.7 or later, meaning the lowest version its range accepts is 4.28.7 or higher (e.g. `^4.28.7`). A range that only *includes* 4.28.7 does not count, and `pnpm audit` cannot show this because highest-version resolution clears the advisory with or without the override. |
 | `ajv>fast-uri` (`^3.1.9`) | **Security, in build tooling only.** `fast-uri < 3.1.9` carries four advisories (GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr, GHSA-333x-w4r6-6crp). It arrives only through `ajv@8` under Prisma's dev tooling (`prisma > @prisma/dev > @prisma/streams-local`), which the running application never loads. `ajv@8.20.0` accepts any `fast-uri@^3.0.1`, so the pin does not conflict with its range; remove it when the resolved version is at least 3.1.9 without it (#4326). |
+| `typed-rest-client>qs` (`^6.16.1`) | **Security, in development tooling only.** `qs 6.15.1` carries four moderate advisories (GHSA-q8mj-m7cp-5q26, GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g, GHSA-6pq8-jhm2-2vcw; all fixed by 6.16.1). It arrives only through `@stryker-mutator/core > typed-rest-client@2.3.1`, which pins qs at **exactly** 6.15.1, so this override sits outside the parent's declared range. Checked for #5252: typed-rest-client calls qs only in `Util.getUrlWithParsedQueryParams` (`qs.stringify` with standard options), reached by Stryker's dashboard reporter (not configured here) and `stryker init`; qs's changelog from 6.15.1 to 6.17.1 lists fixes and one new opt-in format, no breaking change; the call returns the same query strings on 6.17.1; and typed-rest-client 3.1.x itself declares `^6.16.1`. Cleared with the overrides that let the #5252 mitigation record apply. | `@stryker-mutator/core` depends on a `typed-rest-client` whose own qs range requires 6.16.1 or later (3.1.x does; Stryker 10.1.1 asks for `~2.3.0`). |
+| `minimatch@>=7.0.0 <11.0.1` (`^11.0.5`) | **Security, in development tooling only.** GHSA-g3hv-75wg-m249 (moderate) covers minimatch `>=7.0.0 <11.0.1` with no 10.x fix. The selector is the advisory's own range, so `minimatch@3.1.5` (under `eslint-plugin-import`, `-jsx-a11y` and `-react`, outside the range and on a different API) is untouched. It moves `eslint@10.14.0` (`^10.2.6`), `@eslint/config-array@0.23.5` (`^10.2.4`), `@typescript-eslint/typescript-estree@8.62.1` (`^10.2.2`) and `@stryker-mutator/core@10.1.1` (`~10.2.4`) **outside their declared ranges** onto the 11.0.5 that `glob` already used. Checked for #5252: 11.0's breaking changes remove `makeRe`, `Minimatch#regexp`, `AST`, `debug` and `matchOne` and change what `Minimatch.set` holds; none of the four parents uses any of them (they call `minimatch()`, `new Minimatch()`, `.match(path[, partial])`, `.negate`, `.pattern` and `.hasMagic()`); a differential of 10.2.6 against 11.0.5 over every glob in the repository's tool configs and every tracked path, in each parent's call shape, found no difference; and eslint, knip, vitest and the production build ran. | Each of those four parents requires 11.0.1 or later. eslint 10.15.0, `@eslint/config-array` 0.23.6 and typescript-eslint 8.73.0 already do, but were younger than the seven-day release age on 18 Nov 2026; Stryker 10.1.1 does not. |
 
 ### The direct-dependency hold register
 

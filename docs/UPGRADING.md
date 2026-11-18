@@ -165,6 +165,62 @@ day's share of Xero calls), carry on the next day with the
 **Rollback.** Nothing to undo: the report changes no booking, payment,
 credit, link or Xero record.
 
+### Starter privacy policy lists its recipients and names your host (#5007)
+
+**Be on v0.14.0 or later before you upgrade to this release.** v0.14.0 is the
+release that added the `{{data-hosting}}` token and the **Where members' data
+is held** setting this change relies on
+([#4918's note](#privacy-incident-guide-and-hosting-disclosure-settings-4918)).
+An app that does not know the token shows it as raw braces. This change ships in
+the release after v0.14.0, so a club on v0.13.2 or earlier deploys v0.14.0
+first and upgrades from there; never go straight from an older release to this
+one.
+
+`20261222030000_rewrite_starter_privacy_recipients` is a **data-only
+correction**. It adds and removes no schema and is safe to run in the ordinary
+deploy window with the previous app colour (v0.14.0 or later) still serving,
+because that colour already knows the token.
+
+**What changes.** The migration rewrites the privacy page's body only where it
+still holds, byte for byte, the starter text that #4915 wrote (the text an
+unedited page holds after the #4914 and #4915 corrections) or the earlier text
+from #4914, #4031 or #1945. On such a page:
+
+- section 5 lists every outside service in the
+  [recipient register](PRIVACY_RECIPIENTS.md) that can receive members'
+  information, links to the privacy notice the register records for each, and
+  marks the optional ones "Only if the club turns it on";
+- section 5 names your host and data location through `{{data-hosting}}`, and
+  says the System does not fix the country your data is held in;
+- section 6 refers to the hosting company described in section 5, its backup
+  line moves to section 5's list, and its admin note is removed;
+- the header's "Last updated" date moves to 18 November 2026, unless the header
+  was edited, in which case it is kept.
+
+**An edited privacy page keeps every byte**, including its header. Check its
+sections 5 and 6 against the recipient register and your hosting yourself.
+
+**Post-upgrade action: fill in Where members' data is held, then read
+`/privacy`.** The setting is on **Admin → Setup & Configuration → Site
+Appearance & Content → Club Identity**. Until it is filled in, section 5 tells
+members to ask your Privacy Officer which company hosts the System and where
+their information is held. Then remove from section 5 any optional service your
+club does not use, or leave the "Only if the club turns it on" marking.
+
+The migration runs once. Two things can write the old text back afterwards:
+
+- an admin who had **Privacy** open in the Page Content editor *before* the
+  upgrade and presses Save *afterwards*;
+- importing a configuration bundle exported before this release. The import
+  now skips a privacy body that exactly matches any of the four replaced
+  starter texts and warns in the preview (#2511), but a starter body older than
+  those still imports. The import keeps the new text but can set the "Last
+  updated" date back, because the bundle's header is still written; re-check the
+  header.
+
+Re-export your configuration bundle after upgrading, and re-check `/privacy`
+after any bundle import.
+
 ---
 
 ## v0.13.2 → v0.14.0

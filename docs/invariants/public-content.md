@@ -95,19 +95,29 @@ Pinned by `image-derivatives.test.ts`, `admin-image-manager-derivatives.test.ts`
 
 ## INV-PUB-006
 
+- Every page under the member route groups (`(public)`, `(authenticated)`,
+  `(website-dynamic)`) sets a page-specific tab title through the root
+  `%s | <Club>` template: a fixed string, or on `/booking-requests` and
+  `/school-bookings` the title the club published for that page; never a
+  name, amount or token. A client page gets it from a server `layout.tsx`
+  beside it. None falls back to the default title:
+  `member-route-titles.test.ts` fails a page that sets none, and its `ROUTES`
+  table pins the wording of the titles it lists. The source check proves only
+  that a title exists, so a route with no `ROUTES` row can change its wording
+  unnoticed. A new such route adds a row.
 - The screens a member reaches from an email link, and login, dashboard,
-  bookings and notices, each have a page-specific tab title through the root
-  `%s | <Club>` template (a fixed string, never a name, amount or token) and
-  exactly one level-1 heading in every render state. A new such route adds its
-  title and a row to `member-route-titles.test.ts`; member routes not listed
-  there still show the default tab title until swept.
+  bookings, notices and `/join/apply`, have exactly one level-1 heading in
+  every render state.
 - Every `CardTitle` declares a heading level or `"none"`; there is no default
   level (#2796 D1). `card-title-classification-census.test.ts` forbids
   unclassified titles under the member-facing roots and in the member cards it
   lists, and ratchets the rest down (#4951).
 - Limit: a notice body's H1 renders as an H2. Lodge and hut-leader instruction
   bodies render as the admin wrote them, so an H1 there adds a second level-1
-  heading.
+  heading; so does an H1 in the stored header or body HTML of `/join/apply`,
+  which keeps it. The guest chore sheet (`/chores/[token]`) has no level-1
+  heading while it loads.
 - Proof: `member-route-titles.test.ts`,
   `card-title-classification-census.test.ts`,
-  `member-token-screen-headings.test.tsx`, `single-card-screen-headings.test.tsx`.
+  `member-token-screen-headings.test.tsx`, `single-card-screen-headings.test.tsx`,
+  `join-apply-state-headings.test.tsx`.

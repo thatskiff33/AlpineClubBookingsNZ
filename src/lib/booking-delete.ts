@@ -18,6 +18,7 @@ import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 type BookingDeleteDb = Prisma.TransactionClient | typeof prisma;
 
@@ -162,7 +163,7 @@ async function hardDeleteDraftBooking(
         message: "Draft booking deleted",
       },
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 async function softDeleteCancelledBooking(
@@ -428,7 +429,7 @@ async function softDeleteCancelledBookingInTransaction(
       // second read of a booking that is now deleted.
       payment: booking.payment,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 async function loadBookingForDelete(db: BookingDeleteDb, bookingId: string) {

@@ -73,26 +73,33 @@ export function readBookingRequestPendingCounts(
 export type BookingRequestsTabCounts = Record<BookingRequestsTab, number>;
 
 /**
- * Which pending count each tab shows (#4969). The sidebar badge is the sum of
- * these four, so the tab badges always add up to it.
+ * The pending count each tab shows, by name (#4969). The one tab-to-count
+ * mapping: `bookingRequestsTabCounts` below reads it, and so does the Booking
+ * Requests officer work queue (`ADMIN_WORK_QUEUES`, #4962), whose sidebar badge
+ * and dashboard card sum exactly these four counts.
+ */
+export const BOOKING_REQUESTS_TAB_COUNT_KEYS = {
+  approvals: "bookingReviews",
+  changes: "lockedPeriodChangeRequests",
+  exceptions: "policyExceptionRequests",
+  public: "publicBookingRequests",
+} as const satisfies Record<BookingRequestsTab, keyof BookingRequestPendingCounts>;
+
+/**
+ * Which pending count each tab shows (#4969), read through
+ * `BOOKING_REQUESTS_TAB_COUNT_KEYS` above. The sidebar badge is the Booking
+ * Requests work queue's sum of these four (`ADMIN_WORK_QUEUES`), so the tab
+ * badges always add up to it.
  */
 export function bookingRequestsTabCounts(
   counts: BookingRequestPendingCounts,
 ): BookingRequestsTabCounts {
-  return {
-    approvals: counts.bookingReviews,
-    changes: counts.lockedPeriodChangeRequests,
-    exceptions: counts.policyExceptionRequests,
-    public: counts.publicBookingRequests,
-  };
-}
-
-/** The sidebar's Booking Requests badge: every tab's pending count added up. */
-export function totalBookingRequestsPending(
-  counts: BookingRequestPendingCounts,
-): number {
-  const tabCounts = bookingRequestsTabCounts(counts);
-  return BOOKING_REQUESTS_TABS.reduce((sum, tab) => sum + tabCounts[tab], 0);
+  return Object.fromEntries(
+    BOOKING_REQUESTS_TABS.map((tab) => [
+      tab,
+      counts[BOOKING_REQUESTS_TAB_COUNT_KEYS[tab]],
+    ]),
+  ) as BookingRequestsTabCounts;
 }
 
 /**

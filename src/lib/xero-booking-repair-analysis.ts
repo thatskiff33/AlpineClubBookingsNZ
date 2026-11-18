@@ -5,7 +5,7 @@ import { reductionLeftAfterUnpaidAskCents } from "@/lib/additional-payment-ask";
 import { recordedUnpaidAskOffsetCents } from "@/lib/unpaid-ask-offset-marker";
 import { isOwnModificationNoteOperation } from "@/lib/unpaid-ask-billed-offset-order";
 import { modificationNoteCashOf } from "@/lib/xero-inbound/account-credit-modification-notes";
-import { receiptCountsInvoiceCorrections } from "@/lib/xero-inbound/settle-from-cash";
+import { receiptCountsInvoiceCorrections } from "@/lib/xero-inbound/ib-receipt-reasons";
 import type {
   BookingModificationRecord,
   BookingRepairRecord,
