@@ -33,7 +33,7 @@ import { useWorkingBeeDiscount } from "./use-working-bee-discount";
 import { useSelectionCancellationSchedule } from "./use-selection-cancellation-schedule";
 import { useWizardWorkPersistence } from "./use-wizard-work-persistence";
 import type { SavedWizardWork } from "@/lib/booking-wizard-work";
-import { useWorkPartyPrefill } from "./use-work-party-prefill";
+import { readWorkPartyJoinId, useWorkPartyPrefill } from "./use-work-party-prefill";
 import { fetchStayWorkParties, reconcileWorkPartySelection } from "./stay-work-parties";
 import {
   getBookingErrorPaymentTargets,
@@ -276,9 +276,8 @@ export function useBookingWizard() {
    */
   const replaceExceptionRequestId =
     searchParams?.get("replaceRequest")?.trim() || null;
-  // #5148: a "Join Work Party" link's `/book?workParty=<id>`. Its own entry path,
-  // like a replace visit: a copy kept in the tab (#4950) neither overrides nor absorbs it.
-  const workPartyJoinId = searchParams?.get("workParty")?.trim() || null;
+  // #5148: a "Join Work Party" link's work party: a fresh entry (see useWizardWorkPersistence).
+  const workPartyJoinId = readWorkPartyJoinId(searchParams);
   const { lodgeCapacity } = useClubIdentity();
   const [step, setStep] = useState<BookingWizardStep>("dates");
   // Lodge being booked (multi-lodge phase 8). /api/lodges only returns
@@ -922,7 +921,8 @@ export function useBookingWizard() {
         : null;
   }
   const workPersistence = useWizardWorkPersistence({
-    enabled: replaceExceptionRequestId === null && workPartyJoinId === null,
+    enabled: replaceExceptionRequestId === null,
+    freshEntry: workPartyJoinId !== null,
     memberId: session?.user?.id ?? null,
     lodges,
     lodgesLoading,

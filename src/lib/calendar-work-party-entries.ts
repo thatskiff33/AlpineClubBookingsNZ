@@ -34,8 +34,8 @@ export async function lockWorkPartyCalendar(
 /**
  * What a work party puts on the calendar (#5148): one all-day entry per
  * club day in `days`, which the caller derives from the work party's date-only
- * window. More than one day is stored as a daily series so the calendar shows
- * the ↻ marker and the entries move together; one day is a standalone entry.
+ * window. More than one day is stored as a daily series so the entries move
+ * together; one day is a standalone entry.
  */
 export interface WorkPartyCalendarEntry {
   title: string;
@@ -105,8 +105,10 @@ export async function removeWorkPartyCalendarEventsInTransaction(
  * shape. It takes `lockWorkPartyCalendar` first (re-entrant, so a caller that
  * already holds it, like the edit, loses nothing), so two officers saving the
  * same work party cannot interleave and duplicate its entries. A window is
- * capped at MAX_OCCURRENCES nights, the calendar's own series limit; the
- * work-party form refuses a longer one (`workPartyEventDatesError`).
+ * capped at MAX_OCCURRENCES nights, the calendar's own series limit: the
+ * work-party form refuses new dates longer than that
+ * (`workPartyEventDatesError`), and a work party saved longer before the cap
+ * shows its first MAX_OCCURRENCES nights.
  *
  * `resolveEntry` is called after the lock, so the entries are built from the
  * work party as it is now rather than from a caller's earlier read; null means

@@ -12,6 +12,7 @@ import {
   workPartyEventSchema,
 } from "@/lib/work-party";
 import { syncCreatedWorkPartyCalendar } from "@/lib/work-party-calendar";
+import { isUpcomingWorkParty } from "@/lib/work-party-rules";
 
 export async function GET() {
   const guard = await requireAdmin({
@@ -38,7 +39,6 @@ export async function GET() {
     loadEffectiveModuleFlags(),
     clubTodayDateOnlyInstant(),
   ]);
-  const todayKey = formatDateOnly(today);
 
   return NextResponse.json({
     events: events.map(({ promoCode, lodge, _count, ...event }) => ({
@@ -51,7 +51,7 @@ export async function GET() {
         modules.eventsCalendar &&
         _count.calendarEvents === 0 &&
         event.active &&
-        formatDateOnly(event.endDate) >= todayKey,
+        isUpcomingWorkParty(event, today),
       bookingCount: promoCode.redemptions.length,
       totalDiscountCents: promoCode.redemptions.reduce(
         (sum, redemption) => sum + redemption.discountCents,

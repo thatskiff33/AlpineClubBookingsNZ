@@ -272,17 +272,30 @@ export const workPartyEventSchema = z
 /** The longest window a work party may have: the calendar's series cap. */
 const MAX_WORK_PARTY_NIGHTS = MAX_OCCURRENCES;
 
-export function workPartyEventDatesError(data: {
-  startDate: Date;
-  endDate: Date;
-}): string | null {
+/**
+ * Why a work party's dates cannot be saved, or null. `existing` is the row an
+ * edit changes (omit it on create).
+ *
+ * #5148: the calendar shows a work party as one entry per night, and a
+ * calendar series holds at most MAX_OCCURRENCES of them, so a NEW window
+ * longer than that is refused rather than cut short on the calendar without a
+ * word. The cap applies only when the dates themselves change: a work party
+ * saved longer before the cap existed can still be deactivated, renamed or
+ * re-described with its dates as they are (its calendar shows its first
+ * MAX_OCCURRENCES nights), and is refused only when its dates are edited.
+ */
+export function workPartyEventDatesError(
+  data: { startDate: Date; endDate: Date },
+  existing?: { startDate: Date; endDate: Date },
+): string | null {
   if (formatDateOnly(data.endDate) < formatDateOnly(data.startDate)) {
     return "End date must be on or after the start date";
   }
-  // #5148: the calendar shows a work party as one entry per night, and a
-  // calendar series holds at most MAX_OCCURRENCES of them. A longer window
-  // would be cut short on the calendar without a word, so it is refused here.
-  if (workPartyNightCount(data) > MAX_WORK_PARTY_NIGHTS) {
+  const datesUnchanged =
+    existing !== undefined &&
+    formatDateOnly(existing.startDate) === formatDateOnly(data.startDate) &&
+    formatDateOnly(existing.endDate) === formatDateOnly(data.endDate);
+  if (!datesUnchanged && workPartyNightCount(data) > MAX_WORK_PARTY_NIGHTS) {
     return `A work party can run for at most ${MAX_WORK_PARTY_NIGHTS} nights`;
   }
   return null;

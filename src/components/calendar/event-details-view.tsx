@@ -17,6 +17,7 @@ import { parseInstant } from "@/lib/club-time";
 import { formatEventDateLong, formatInstantTime } from "@/lib/calendar-client";
 import { describeRecurrence } from "@/lib/calendar-recurrence";
 import { memberWorkPartyHref } from "@/lib/work-party-rules";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * Where a work party's calendar entry points (#5148): the admin Work
@@ -29,7 +30,7 @@ function workPartyHref(
   mode: CalendarWorkPartyLink,
   workPartyEventId: string,
 ): string | null {
-  if (mode === "admin") return "/admin/work-parties";
+  if (mode === "admin") return adminHref("work-parties");
   if (mode === "member") return memberWorkPartyHref(workPartyEventId);
   return null;
 }

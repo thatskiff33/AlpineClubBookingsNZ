@@ -10,6 +10,7 @@ import {
 } from "@/lib/club-time";
 import { canViewWorkParties } from "@/lib/work-party-access";
 import { findMemberWorkParty } from "@/lib/work-party-member";
+import { bookJoinWorkPartyHref } from "@/lib/work-party-rules";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -126,7 +127,7 @@ export default async function MemberWorkPartyPage({
       {workParty.join ? (
         <div className="space-y-2">
           <Button asChild>
-            <Link href={`/book?workParty=${encodeURIComponent(workParty.id)}`}>
+            <Link href={bookJoinWorkPartyHref(workParty.id)}>
               Join Work Party
             </Link>
           </Button>

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
 import type { CalendarWorkPartyLink } from "../event-details-view";
 import { EventDialog } from "../event-dialog";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * #5148 (review F5): a work party's calendar entry opens read-only for
@@ -69,7 +70,7 @@ describe("a work party's calendar entry", () => {
     renderEntry("admin");
     expect(
       screen.getByRole("link", { name: /Open the work party/ }),
-    ).toHaveAttribute("href", "/admin/work-parties");
+    ).toHaveAttribute("href", adminHref("work-parties"));
   });
 
   it("links a member to the member page under /dashboard", () => {

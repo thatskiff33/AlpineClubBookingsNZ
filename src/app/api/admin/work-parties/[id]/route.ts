@@ -94,7 +94,9 @@ export async function PUT(
     );
   }
 
-  const datesError = workPartyEventDatesError(parsed.data);
+  // #5148: the night cap binds only a change of dates, so a work party saved
+  // longer before the cap can still be deactivated or re-described.
+  const datesError = workPartyEventDatesError(parsed.data, existing);
   if (datesError) {
     return NextResponse.json({ error: datesError }, { status: 400 });
   }

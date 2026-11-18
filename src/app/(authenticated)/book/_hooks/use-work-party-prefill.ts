@@ -1,6 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { WORK_PARTY_JOIN_PARAM } from "@/lib/work-party-rules";
+
+/** The work party a "Join Work Party" link names (`bookJoinWorkPartyHref`), or null. */
+export function readWorkPartyJoinId(
+  searchParams: Pick<URLSearchParams, "get"> | null,
+): string | null {
+  return searchParams?.get(WORK_PARTY_JOIN_PARAM)?.trim() || null;
+}
 
 /** What `GET /api/work-parties/[id]` returns that the prefill needs. */
 type WorkPartyPrefill = {

@@ -20,6 +20,7 @@ import type { Prisma } from "@prisma/client";
 import {
   addCalendarDays,
   calendarDateOfDateOnlyInstant,
+  compareCalendarDates,
   countClubNights,
   type CalendarDate,
 } from "@/lib/club-time";
@@ -35,6 +36,29 @@ export function isOpenWorkPartyEvent(event: {
 }): boolean {
   return (
     event.active && event.promoCode.active && !event.promoCode.archivedAt
+  );
+}
+
+/**
+ * Still upcoming (#5148): its LAST night is on or after the club's today, so a
+ * work party finishing tonight still counts. `today` is the club's today as a
+ * date-only instant (`clubTodayDateOnlyInstant()`). The query form and the row
+ * form are the same rule; the dashboard card, the Join stay and "Add to
+ * calendar" all use one of them.
+ */
+export function upcomingWorkPartyWhere(today: Date) {
+  return { endDate: { gte: today } } satisfies Prisma.WorkPartyEventWhereInput;
+}
+
+export function isUpcomingWorkParty(
+  event: { endDate: Date },
+  today: Date,
+): boolean {
+  return (
+    compareCalendarDates(
+      calendarDateOfDateOnlyInstant(event.endDate),
+      calendarDateOfDateOnlyInstant(today),
+    ) >= 0
   );
 }
 
@@ -65,4 +89,12 @@ export function workPartyNightCount(event: {
  */
 export function memberWorkPartyHref(workPartyEventId: string): string {
   return `/dashboard/work-parties/${encodeURIComponent(workPartyEventId)}`;
+}
+
+/** The booking page's query parameter a "Join Work Party" link carries. */
+export const WORK_PARTY_JOIN_PARAM = "workParty";
+
+/** "Join Work Party": the booking page, told which work party to fill in. */
+export function bookJoinWorkPartyHref(workPartyEventId: string): string {
+  return `/book?${WORK_PARTY_JOIN_PARAM}=${encodeURIComponent(workPartyEventId)}`;
 }

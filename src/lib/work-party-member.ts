@@ -22,7 +22,9 @@ import {
   compareCalendarDates,
 } from "@/lib/club-time";
 import {
+  isUpcomingWorkParty,
   OPEN_WORK_PARTY_EVENT_WHERE,
+  upcomingWorkPartyWhere,
   workPartyCheckOutDay,
   workPartyFirstNight,
 } from "@/lib/work-party-rules";
@@ -79,9 +81,8 @@ export function workPartyJoinStay(
   workParty: { startDate: Date; endDate: Date },
   today: Date,
 ): { checkIn: string; checkOut: string } | null {
+  if (!isUpcomingWorkParty(workParty, today)) return null;
   const todayDay = calendarDateOfDateOnlyInstant(today);
-  const lastNight = calendarDateOfDateOnlyInstant(workParty.endDate);
-  if (compareCalendarDates(lastNight, todayDay) < 0) return null;
   const firstNight = workPartyFirstNight(workParty);
   return {
     checkIn: compareCalendarDates(firstNight, todayDay) < 0 ? todayDay : firstNight,
@@ -127,7 +128,7 @@ export async function listUpcomingMemberWorkParties(
   take: number,
 ): Promise<MemberWorkPartyDTO[]> {
   const rows = await prisma.workPartyEvent.findMany({
-    where: { ...OPEN_WORK_PARTY_EVENT_WHERE, endDate: { gte: today } },
+    where: { ...OPEN_WORK_PARTY_EVENT_WHERE, ...upcomingWorkPartyWhere(today) },
     select: MEMBER_WORK_PARTY_SELECT,
     orderBy: [{ startDate: "asc" }, { endDate: "asc" }, { id: "asc" }],
     take,

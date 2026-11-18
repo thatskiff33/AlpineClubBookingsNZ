@@ -153,6 +153,55 @@ describe("edit", () => {
     );
     expect(res.status).toBe(200);
   });
+
+  describe("a work party saved longer than the cap before it existed (400 nights)", () => {
+    const long = { startDate: "2026-07-10", endDate: "2027-08-13" };
+    beforeEach(() => {
+      h.prisma.workPartyEvent.findUnique.mockResolvedValue({
+        ...saved,
+        startDate: new Date("2026-07-10T00:00:00.000Z"),
+        endDate: new Date("2027-08-13T00:00:00.000Z"),
+      });
+    });
+
+    it("can still be deactivated with its dates as they are", async () => {
+      const res = await updateRoute(json("PUT", { ...body, ...long, active: false }), { params });
+      expect(res.status).toBe(200);
+      expect(h.updateWithCalendar).toHaveBeenCalledWith(
+        "wp-1",
+        expect.objectContaining({ active: false }),
+        "admin-1",
+      );
+    });
+
+    it("can still have its description edited", async () => {
+      const res = await updateRoute(
+        json("PUT", { ...body, ...long, description: "Bring a hammer" }),
+        { params },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("is refused when its dates are changed and still exceed the cap", async () => {
+      const res = await updateRoute(
+        json("PUT", { ...body, startDate: "2026-07-10", endDate: "2027-08-14" }),
+        { params },
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("A work party can run for at most 366 nights");
+      expect(h.updateWithCalendar).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("create over the night cap", () => {
+  it("refuses a new work party longer than 366 nights", async () => {
+    const res = await createRoute(
+      json("POST", { ...body, startDate: "2026-07-10", endDate: "2027-07-11" }),
+    );
+    expect(res.status).toBe(400);
+    expect(h.createWorkParty).not.toHaveBeenCalled();
+  });
 });
 
 describe("delete", () => {
