@@ -24,7 +24,7 @@ import { formatBasisPoints, type XeroTaxRateOption } from "@/lib/xero-tax-rate-o
 export function ClubTaxCardHeader() {
   return (
     <CardHeader>
-      <CardTitle>GST / tax treatment</CardTitle>
+      <CardTitle headingLevel={2}>GST / tax treatment</CardTitle>
       <CardDescription>
         How the club&apos;s prices are taxed on Xero documents and in the member-money journal. Prices
         members pay never change; only how much of each price is GST does.
