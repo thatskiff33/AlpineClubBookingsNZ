@@ -548,6 +548,34 @@ describe("findInvalidSelectorOverrides", () => {
     expect(invalid).toEqual(["itemName", "itemStatus"]);
   });
 
+  // jsdom 31 replaced its selector engine (#5183). The old one quietly accepted
+  // an unknown pseudo-class, nwsapi's `:contains()` and an empty `:has()`, and
+  // they matched nothing; the new one throws a SyntaxError on each, as a browser
+  // does, so the save-time check refuses them instead of letting them save and
+  // then throw on every scrape.
+  it("refuses a pseudo-class the engine does not know, which the scraper would throw on", () => {
+    expect(
+      findInvalidSelectorOverrides({
+        item: "div:unknown",
+        itemName: "p:contains(Lifts)",
+        itemStatus: "div:has()",
+      }),
+    ).toEqual(["item", "itemName", "itemStatus"]);
+  });
+
+  it("accepts the modern selectors an admin override might use", () => {
+    expect(
+      findInvalidSelectorOverrides({
+        item: 'div:has(> [class*="name_"])',
+        itemName: ':is([class*="name_"], [class*="Name_"])',
+        itemStatus: '[class*="STATUS_" i]',
+        sectionWrapper: "body > div:nth-of-type(n + 2)",
+        sectionItems: ":where(div):not(.x)",
+        conditionRow: ":nth-child(odd of .item_3CiH98)",
+      }),
+    ).toEqual([]);
+  });
+
   it("ignores blank overrides and the non-selector trailsHeadingId", () => {
     const invalid = findInvalidSelectorOverrides({
       item: "   ", // blank -> skipped (falls back to default)

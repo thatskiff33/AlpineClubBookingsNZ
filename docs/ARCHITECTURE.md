@@ -1881,11 +1881,17 @@ already change, such as a scope select, is not what Edit opened and is skipped,
 as is an unchecked radio whose group has a checked one (Tab's own rule). The
 reveal moves nothing when focus has moved off the control that opened the
 editor — an opening that awaited a fetch first ("Create override", which
-carries Edit's `editTriggerProps` so the reveal knows it opened) — or when
-the card is hidden behind a modal, as the analytics card is while its dialog
-holds Edit. The hook's `revealTarget` option instead reveals a given element at
-the top; it exists only for the two sections whose card reveal predates #4115 —
-allocation preferences and club identity — and a new section omits it. The way back out: Save and Cancel unmount
+carries Edit's `editTriggerProps` so the reveal knows it opened). An Edit that
+lives in a dialog outside the section's card, as the analytics card's does
+(the card is `aria-hidden` while the dialog is open), reveals inside that
+dialog instead: focus goes to the first control the edit made editable there,
+never to the hidden card. The dialog's own focus scope cannot be relied on for
+it: React reuses the Edit button as the disabled Save, a browser drops focus
+from a control that becomes disabled, and Radix's focus scope notices only a
+removed node (#5183). The hook's `revealTarget` option instead reveals a given
+element at the top; it exists only for the two sections whose card reveal
+predates #4115 — allocation preferences and club identity — and a new section
+omits it. The way back out: Save and Cancel unmount
 the button that held focus too, so the hook records the focused element when
 `startEditing` runs and, after Cancel or a successful save, returns focus to it,
 to the Edit re-rendered in its place, or — when Edit is missing or disabled for

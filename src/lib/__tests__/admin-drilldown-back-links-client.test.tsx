@@ -54,7 +54,7 @@ describe("admin drill-down BackLink conversions (client-gated)", () => {
       vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })),
     );
     const LodgeConfigurationHubPage = (
-      await import("@/app/(admin)/admin/lodges/[id]/page")
+      await import("@/app/(admin)/admin/lodge-ops/lodges/[id]/page")
     ).default;
 
     render(<LodgeConfigurationHubPage />);
@@ -72,7 +72,7 @@ describe("admin drill-down BackLink conversions (client-gated)", () => {
       vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })),
     );
     const LodgeSetupWizardPage = (
-      await import("@/app/(admin)/admin/lodges/[id]/setup/page")
+      await import("@/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page")
     ).default;
 
     render(<LodgeSetupWizardPage />);
@@ -104,7 +104,7 @@ describe("admin drill-down BackLink conversions (client-gated)", () => {
       }),
     );
     const LodgeSetupWizardPage = (
-      await import("@/app/(admin)/admin/lodges/[id]/setup/page")
+      await import("@/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page")
     ).default;
 
     render(<LodgeSetupWizardPage />);

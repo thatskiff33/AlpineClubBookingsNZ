@@ -310,11 +310,11 @@ const NOTICE = "AdminViewOnlyNotice";
 const KEEPS_OWN_REASON: Readonly<Record<string, number>> = {
   "app/(admin)/admin/alpine-server/setup/alpine-server-setup.tsx": 2,
   "app/(admin)/admin/booking-desk/bookings/page.tsx": 1,
-  "app/(admin)/admin/display/setup/display-wizard-steps.tsx": 1,
   "app/(admin)/admin/finance/subscriptions/page.tsx": 2,
   "app/(admin)/admin/finance/xero/setup/xero-completion-steps.tsx": 1,
   "app/(admin)/admin/finance/xero/setup/xero-wizard-steps.tsx": 1,
   "app/(admin)/admin/google/setup/google-wizard-steps.tsx": 2,
+  "app/(admin)/admin/lodge-ops/display/setup/display-wizard-steps.tsx": 1,
   "app/(admin)/admin/membership/member-applications/_components/approval-mapping-panel.tsx": 2,
   "app/(admin)/admin/membership/members/[id]/_components/member-account-access-group.tsx": 2,
   "app/(admin)/admin/membership/members/[id]/_components/member-contact-group.tsx": 2,
@@ -349,7 +349,7 @@ const KEEPS_OWN_REASON: Readonly<Record<string, number>> = {
  */
 const NOTICE_ONLY_FILES: readonly string[] = [
   "app/(admin)/admin/booking-desk/booking-requests/page.tsx",
-  "app/(admin)/admin/display/builder/page.tsx",
+  "app/(admin)/admin/lodge-ops/display/builder/page.tsx",
   "app/(admin)/admin/rules/fees/_components/finance-fees-sections.tsx",
   "app/(admin)/admin/system/ai-assistant/ai-assistant-client.tsx",
   "app/(admin)/admin/system/health/_components/email-deliverability-section.tsx",
