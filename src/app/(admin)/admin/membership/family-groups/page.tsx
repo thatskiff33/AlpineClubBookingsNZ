@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useConfirm } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
@@ -31,6 +32,7 @@ import { formatPayloadInstantDate } from "../../_lib/payload-instant";
 import { useRevealAttention } from "@/hooks/use-scroll-to-feedback";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import { useActionFailure } from "@/hooks/use-action-failure";
 
 import { adminHref } from "@/lib/admin-hubs";
 type PartnerInvite = {
@@ -60,6 +62,7 @@ export default function FamilyGroupsPage() {
 }
 
 function FamilyGroupsTab() {
+  const { confirm, confirmDialog } = useConfirm();
   // A partner invite's `expiresAt` and a group's `createdAt` are real INSTANTS,
   // read in the club's PERSISTED zone (`INV-CONFIG-002`). The shared helper they
   // used to go through pinned `APP_TIME_ZONE`, so an expiry an admin abroad was
@@ -75,7 +78,8 @@ function FamilyGroupsTab() {
   const [groups, setGroups] = useState<FamilyGroupSummary[]>([]);
   const [requests, setRequests] = useState<FamilyGroupRequest[]>([]);
   const [partnerInvites, setPartnerInvites] = useState<PartnerInvite[]>([]);
-  const [partnerInviteError, setPartnerInviteError] = useState("");
+  // A failed revoke — an action, so it is focused and re-announced (#4975).
+  const partnerInviteFailure = useActionFailure();
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingGroup, setEditingGroup] = useState<FamilyGroupSummary | null>(null);
@@ -89,9 +93,14 @@ function FamilyGroupsTab() {
   const [selectedMembers, setSelectedMembers] = useState<MemberIdentityOption[]>([]);
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  // A refused delete, shown above the list: `error` sits inside the form, which is hidden then.
-  const [listError, setListError] = useState("");
+  // A refused create or edit is an action, so it is focused and re-announced (#4975).
+  const saveFailure = useActionFailure();
+  const clearSaveFailure = saveFailure.clear;
+  // A refused delete, shown above the list: `saveFailure` sits inside the form, which
+  // may be closed when Delete is clicked on a row (#4973, #4976). The same hook, so a
+  // second identical refusal (the same 404 twice) still takes focus.
+  const deleteFailure = useActionFailure();
+  const clearDeleteFailure = deleteFailure.clear;
   // #2256: the create/edit form renders in the anchor below the filter card and
   // the two queue cards (pending changes, outstanding partner invites), while
   // its triggers sit elsewhere — New Group in the page header, Edit on a row in
@@ -246,8 +255,8 @@ function FamilyGroupsTab() {
     setSelectedMembers([]);
     setMemberSearch("");
     setSearchResults([]);
-    setError("");
-    setListError("");
+    clearSaveFailure();
+    clearDeleteFailure();
     setShowForm(true);
     setFormOpenNonce((nonce) => nonce + 1);
   }
@@ -261,11 +270,11 @@ function FamilyGroupsTab() {
     );
     setMemberSearch("");
     setSearchResults([]);
-    setError("");
-    setListError("");
+    clearSaveFailure();
+    clearDeleteFailure();
     setShowForm(true);
     setFormOpenNonce((nonce) => nonce + 1);
-  }, []);
+  }, [clearSaveFailure, clearDeleteFailure]);
 
   // On mount: fetch data, then auto-open edit dialog if ?edit=GROUP_ID is set.
   useEffect(() => {
@@ -330,12 +339,13 @@ function FamilyGroupsTab() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canEditMembership) return;
-    setError("");
+    clearSaveFailure();
     if (selectedMembers.length < 1) {
-      setError("At least one member is required");
+      saveFailure.fail("At least one member is required");
       return;
     }
     setSubmitting(true);
+    const fallback = "Failed to save";
 
     try {
       const payload = {
@@ -356,43 +366,50 @@ function FamilyGroupsTab() {
           });
 
       if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Failed to save");
+        saveFailure.fail(await apiErrorMessageFromResponse(res, fallback));
         return;
       }
 
       closeForm();
       fetchData();
+    } catch {
+      saveFailure.fail(fallback);
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(group: FamilyGroupSummary) {
     if (!canEditMembership) return;
-    if (!confirm("Delete this family group? Members will be unlinked.")) return;
+    if (!(await confirm({
+      title: `Delete ${group.name || "Unnamed Group"}?`,
+      description:
+        "Members will be unlinked. Each member's billing-family choice for this group is cleared. Its requests, partner invitations and any \"already invoiced\" season markers are deleted with it. This cannot be undone.",
+      confirmLabel: "Delete group",
+      destructive: true,
+    }))) return;
     const fallback = "Failed to delete family group";
-    setListError("");
+    clearDeleteFailure();
     try {
-      const res = await fetch(`/api/admin/family-groups/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/admin/family-groups/${group.id}`, { method: "DELETE" });
       if (res.ok) {
         fetchData();
         return;
       }
-      setListError(await apiErrorMessageFromResponse(res, fallback));
+      deleteFailure.fail(await apiErrorMessageFromResponse(res, fallback));
     } catch {
-      setListError(fallback);
+      deleteFailure.fail(fallback);
     }
   }
 
   async function handleRevokePartnerInvite(invite: PartnerInvite) {
-    if (
-      !confirm(
-        `Revoke the outstanding invitation to ${invite.invitedEmail}? The link they were sent will stop working.`
-      )
-    )
-      return;
-    setPartnerInviteError("");
+    if (!(await confirm({
+      title: `Revoke invitation to ${invite.invitedEmail}?`,
+      description: "The link they were sent will stop working.",
+      confirmLabel: "Revoke invitation",
+      destructive: true,
+    }))) return;
+    partnerInviteFailure.clear();
     try {
       const res = await fetch(
         `/api/admin/family-groups/partner-invites?id=${encodeURIComponent(invite.id)}`,
@@ -403,12 +420,12 @@ function FamilyGroupsTab() {
         return;
       }
       const data = await res.json().catch(() => ({}));
-      setPartnerInviteError(
+      partnerInviteFailure.fail(
         data.error ||
           `Could not revoke the invitation to ${invite.invitedEmail}. It may have just been claimed or already revoked.`
       );
     } catch {
-      setPartnerInviteError(
+      partnerInviteFailure.fail(
         `Could not revoke the invitation to ${invite.invitedEmail}. Please try again.`
       );
     }
@@ -432,6 +449,7 @@ function FamilyGroupsTab() {
 
   return (
     <div>
+      {confirmDialog}
       {viewOnlyBanner}
       <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -553,11 +571,11 @@ function FamilyGroupsTab() {
           </p>
         </CardHeader>
         <CardContent className="space-y-3">
-          {partnerInviteError && (
-            <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
-              {partnerInviteError}
-            </div>
-          )}
+          <FocusedActionError
+            id="partner-invite-action-error"
+            error={partnerInviteFailure.error}
+            attentionKey={partnerInviteFailure.attentionKey}
+          />
           {loading ? (
             <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               Loading outstanding partner invitations...
@@ -740,7 +758,11 @@ function FamilyGroupsTab() {
                   </p>
                 </div>
 
-                {error && <p className="text-sm text-danger-11">{error}</p>}
+                <FocusedActionError
+                  id="family-group-save-error"
+                  error={saveFailure.error}
+                  attentionKey={saveFailure.attentionKey}
+                />
 
                 <div className="flex gap-2">
                   <ViewOnlyActionButton
@@ -763,7 +785,12 @@ function FamilyGroupsTab() {
       </div>
 
       {/* Groups table */}
-      <FocusedActionError id="family-groups-list-error" error={listError} className="scroll-mt-20" />
+      <FocusedActionError
+        id="family-groups-list-error"
+        error={deleteFailure.error}
+        attentionKey={deleteFailure.attentionKey}
+        className="scroll-mt-20"
+      />
       <Card>
         <CardContent className="p-0">
           {loading ? (
@@ -875,7 +902,7 @@ function FamilyGroupsTab() {
                             describeReason={false}
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleDelete(g.id)}
+                            onClick={() => handleDelete(g)}
                             className="text-danger-11 hover:text-danger-11 hover:bg-danger-3"
                             aria-label={`Delete ${g.name || "Unnamed Group"}`}
                           >

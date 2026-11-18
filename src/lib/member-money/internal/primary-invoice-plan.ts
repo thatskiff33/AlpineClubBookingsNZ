@@ -1,27 +1,23 @@
 import { LineAmountTypes, type LineItem } from "xero-node";
 import type { MemberMoneyExportConflictReason } from "@prisma/client";
-import { buildInvoiceLineItems } from "../../xero-booking-invoice-lines";
 import { buildXeroBookingInvoiceCorrelationKey } from "../../xero-booking-invoice-key";
-import type { HutFeeItemCodeResolver, ResolvedAccountMapping } from "../../xero-mappings";
-import { CHANGE_FEE_LINE_DESCRIPTION, changeFeeLineItem, invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
-import {
-  planPromoAdjustmentLines,
-  promoAdjustmentLineItems,
-  type PromoLineAdjustmentRow,
-  type PromoLineRedemption,
-} from "../../xero-promo-adjustment-lines";
+import { CHANGE_FEE_LINE_DESCRIPTION, invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
+import { buildPrimaryInvoiceLines, type PrimaryInvoiceLineInput } from "../../xero-primary-invoice-lines";
 import { sanitizeForJson } from "../../xero-sync";
 import { stableDigest } from "../../stable-digest";
+import { compareOrdinal } from "@/lib/ordinal-order";
 import { bookingChargeIdentity } from "./booking-charges";
-import { liveComponentSplit, type PostedRevenueLeg } from "./components";
+import { componentKey, componentsPostedBy, liveComponentSplit, type PostedRevenueLeg } from "./components";
 
 /**
  * THE PRIMARY BOOKING INVOICE, PLANNED FROM THE JOURNAL (#4525, Ledger M13).
  * Pure: no database, clock, settings or provider. It builds the lines
- * `createXeroInvoiceForBooking` builds, by calling the same builders
- * (`INV-SSOT`), and says which journal components those lines bill in whole,
- * or why they do not. The sender keeps sending its own lines; the export
- * manifest records this answer beside the invoice it raised.
+ * `createXeroInvoiceForBooking` builds, by calling the one composition it
+ * calls, `buildPrimaryInvoiceLines` (`INV-SSOT`), and says which journal
+ * components those lines bill in whole, or why they do not. The sender keeps
+ * sending its own lines; the export manifest records this answer beside the
+ * invoice it raised, once `confirmBilledPrimaryInvoice` has held it to the
+ * lines Xero says that invoice bills.
  *
  * The match, in cents through `invoiceLineItemsTotalCents`: guest and promo
  * lines equal the stay component's live gross, the change-fee line equals the
@@ -31,24 +27,9 @@ import { liveComponentSplit, type PostedRevenueLeg } from "./components";
  * frozen, neither is translated, and a difference is never a conflict.
  */
 
-/** The arguments the sender already passes to the line builders, and the booking's posted charge legs. */
-export interface PrimaryInvoicePlanInput {
+/** The sender's own line input, and the booking's posted charge legs. */
+export interface PrimaryInvoicePlanInput extends PrimaryInvoiceLineInput {
   bookingId: string;
-  guests: Parameters<typeof buildInvoiceLineItems>[0];
-  checkIn: Date;
-  checkOut: Date;
-  nights: number;
-  hutFeeMapping: ResolvedAccountMapping;
-  hutFeeItemCodeMap: HutFeeItemCodeResolver;
-  seasonType: string | null;
-  promo: {
-    aggregateCents: number;
-    redemptions: ReadonlyArray<PromoLineRedemption> | null | undefined;
-    adjustmentRows: ReadonlyArray<PromoLineAdjustmentRow> | null | undefined;
-    firstGuest: Parameters<typeof promoAdjustmentLineItems>[1]["firstGuest"];
-  };
-  /** `recordedChangeFeeCents(payment)`: the fee line is billed when it is positive. */
-  changeFeeCents: number;
   /** The booking's posted BOOKING_REVENUE and FEE_REVENUE legs (`readBookingChargeLegs`). */
   postedLegs: readonly PostedRevenueLeg[];
 }
@@ -78,35 +59,11 @@ export function primaryInvoicePayloadHash(lines: ReadonlyArray<LineItem>): strin
 
 /** Plan the primary invoice the sender builds: the same lines, then their coverage or conflict. */
 export function planPrimaryBookingInvoice(input: PrimaryInvoicePlanInput): PrimaryInvoicePlan {
-  const lines = buildInvoiceLineItems(
-    input.guests,
-    input.checkIn,
-    input.checkOut,
-    input.nights,
-    input.hutFeeMapping.code ?? "200",
-    input.hutFeeMapping.itemCode,
-    input.hutFeeMapping.codeExplicitlyConfigured,
-    input.hutFeeItemCodeMap,
-    input.seasonType,
-  );
-  const promoPlan = planPromoAdjustmentLines({
-    aggregateCents: input.promo.aggregateCents,
-    redemptions: input.promo.redemptions,
-    adjustmentRows: input.promo.adjustmentRows,
-  });
-  lines.push(...promoAdjustmentLineItems(promoPlan, {
-    firstGuest: input.promo.firstGuest,
-    itemCodeResolver: input.hutFeeItemCodeMap,
-    seasonType: input.seasonType,
-    hutFeeMapping: input.hutFeeMapping,
-  }));
-  const stayCents = invoiceLineItemsTotalCents(lines);
-  const feeLines = input.changeFeeCents > 0 ? [changeFeeLineItem(input.changeFeeCents, input.hutFeeMapping)] : [];
-  lines.push(...feeLines);
+  const { lines, stayLines, feeLines } = buildPrimaryInvoiceLines(input);
   return coverPrimaryInvoiceLines({
     bookingId: input.bookingId,
     lines,
-    stayCents,
+    stayCents: invoiceLineItemsTotalCents(stayLines),
     feeCents: invoiceLineItemsTotalCents(feeLines),
     postedLegs: input.postedLegs,
     mapping: {
@@ -117,7 +74,7 @@ export function planPrimaryBookingInvoice(input: PrimaryInvoicePlanInput): Prima
         codeExplicitlyConfigured: input.hutFeeMapping.codeExplicitlyConfigured,
       },
       itemCodeMap: {
-        byKey: [...input.hutFeeItemCodeMap.byKey].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        byKey: [...input.hutFeeItemCodeMap.byKey].sort(([a], [b]) => compareOrdinal(a, b)),
         fullTypeId: input.hutFeeItemCodeMap.fullTypeId,
         nonMemberTypeId: input.hutFeeItemCodeMap.nonMemberTypeId,
         legacyItemCode: input.hutFeeItemCodeMap.legacyItemCode,
@@ -143,21 +100,59 @@ export function planReplayedPrimaryBookingInvoice(input: {
   storedLines: LineItem[];
   postedLegs: readonly PostedRevenueLeg[];
 }): PrimaryInvoicePlan {
-  const isFee = (line: LineItem) => line.description === CHANGE_FEE_LINE_DESCRIPTION;
   return coverPrimaryInvoiceLines({
     bookingId: input.bookingId,
     lines: input.storedLines,
-    stayCents: invoiceLineItemsTotalCents(input.storedLines.filter((line) => !isFee(line))),
-    feeCents: invoiceLineItemsTotalCents(input.storedLines.filter(isFee)),
+    ...splitStayAndFeeCents(input.storedLines),
     postedLegs: input.postedLegs,
     mapping: {
       source: "STORED_REQUEST",
-      lineCodes: input.storedLines.map((line) => ({
-        accountCode: line.accountCode ?? null,
-        itemCode: line.itemCode ?? null,
-      })),
+      lineCodes: frozenLineCodes(input.storedLines),
     },
   });
+}
+
+/** The account and item code of each line sent, frozen beside a manifest (every invoice planner). */
+export function frozenLineCodes(lines: ReadonlyArray<LineItem>): { accountCode: string | null; itemCode: string | null }[] {
+  return lines.map((line) => ({ accountCode: line.accountCode ?? null, itemCode: line.itemCode ?? null }));
+}
+
+/**
+ * A line array's stay and change-fee cents, the fee line known by the words
+ * `changeFeeLineItem` gives it. The one split every invoice planner uses.
+ */
+export function splitStayAndFeeCents(lines: ReadonlyArray<LineItem>): { stayCents: number; feeCents: number } {
+  const isFee = (line: LineItem) => line.description === CHANGE_FEE_LINE_DESCRIPTION;
+  return {
+    stayCents: invoiceLineItemsTotalCents(lines.filter((line) => !isFee(line))),
+    feeCents: invoiceLineItemsTotalCents(lines.filter(isFee)),
+  };
+}
+
+/**
+ * Hold a built plan to the invoice Xero returned (#4525 review). A create replayed
+ * under the same idempotency key returns the ORIGINAL invoice, which may bill
+ * lines built before the booking last changed. A COVERED plan stands only when
+ * the returned lines bill the same stay and fee cents as the lines planned;
+ * otherwise it becomes a conflict that covers nothing, because the manifest is
+ * write-once and must never claim the invoice bills what it does not.
+ */
+export function confirmBilledPrimaryInvoice(plan: PrimaryInvoicePlan, billedLines: ReadonlyArray<LineItem>): PrimaryInvoicePlan {
+  if (plan.outcome !== "COVERED") return plan;
+  const planned = splitStayAndFeeCents(plan.lines);
+  const billed = splitStayAndFeeCents(billedLines);
+  if (planned.stayCents === billed.stayCents && planned.feeCents === billed.feeCents) return plan;
+  const reason: MemberMoneyExportConflictReason = planned.stayCents !== billed.stayCents ? "STAY_CENTS" : "FEE_CENTS";
+  return {
+    legacyKey: plan.legacyKey,
+    payloadHash: plan.payloadHash,
+    lineTotalCents: plan.lineTotalCents,
+    lines: plan.lines,
+    outcome: "CONFLICT",
+    reason,
+    problem: "the invoice Xero returned bills other lines than were planned",
+    frozenMapping: { ...plan.frozenMapping, componentTaxCodes: [] },
+  };
 }
 
 function coverPrimaryInvoiceLines(input: {
@@ -185,10 +180,12 @@ function coverPrimaryInvoiceLines(input: {
     ({ outcome: "CONFLICT", lines, reason, problem, ...rendering([]) });
 
   const stayIdentity = bookingChargeIdentity(bookingId);
-  const identities = [...new Set(postedLegs.flatMap((leg) => (leg.chargeIdentity === null ? [] : [`${leg.account}\u0000${leg.chargeIdentity}`])))].sort();
+  const identities = componentsPostedBy({ lines: postedLegs }).sort((a, b) =>
+    compareOrdinal(componentKey(a.account, a.chargeIdentity), componentKey(b.account, b.chargeIdentity)));
   const components: PrimaryInvoiceCoverage[] = [];
-  for (const key of identities) {
-    const [account, chargeIdentity] = key.split("\u0000") as [PrimaryInvoiceCoverage["account"], string];
+  for (const identity of identities) {
+    const account = identity.account as PrimaryInvoiceCoverage["account"];
+    const { chargeIdentity } = identity;
     const split = liveComponentSplit(postedLegs, account, chargeIdentity);
     if (!split) continue;
     if ("problem" in split) return conflict("COMPONENT_UNUSABLE", split.problem);
@@ -217,4 +214,57 @@ function coverPrimaryInvoiceLines(input: {
     return conflict("STAY_CENTS", "the lines' total is not what the components carry");
   }
   return { outcome: "COVERED", lines, coverage, ...rendering(coverage) };
+}
+
+/** The primary manifest an update stands on: the one recorded for the same booking's invoice. */
+export interface PrimaryManifestForUpdate {
+  id: string;
+  outcome: "COVERED" | "CONFLICT";
+  lineTotalCents: number;
+  providerInvoiceId: string;
+}
+
+export type PrimaryInvoiceUpdatePlan =
+  | (PrimaryInvoiceRendering & { outcome: "COVERED" })
+  | (PrimaryInvoiceRendering & { outcome: "CONFLICT"; reason: "PRIMARY_UNMATCHED"; problem: string });
+
+/**
+ * THE UPDATE OF AN ISSUED PRIMARY INVOICE (#4525, ALP-436). Pure.
+ * `updateXeroBookingInvoiceForBooking` rewrites descriptions and dates and
+ * copies every amount from the invoice Xero holds, so an update bills nothing
+ * of its own: it covers no component, and it matches when its total is the
+ * total of the covered primary manifest for the same invoice. The database
+ * holds the same rule (`member_money_require_export_coverage`). Null when no
+ * primary manifest was recorded: there is nothing for an update to stand on.
+ */
+export function planPrimaryInvoiceUpdate(input: {
+  legacyKey: string;
+  providerInvoiceId: string;
+  lines: LineItem[];
+  /** What the update sends: the issued invoice's own, so the frozen value is the provider's. */
+  lineAmountTypes: LineAmountTypes;
+  /** The provider's gross invoice total, including discounts and tax, converted at its boundary. */
+  providerTotalCents: number;
+  primary: PrimaryManifestForUpdate | null;
+}): PrimaryInvoiceUpdatePlan | null {
+  const { lines, primary } = input;
+  if (!primary) return null;
+  const lineTotalCents = input.providerTotalCents;
+  const rendering: PrimaryInvoiceRendering = {
+    legacyKey: input.legacyKey,
+    payloadHash: primaryInvoicePayloadHash(lines),
+    frozenMapping: {
+      source: "UPDATED_FROM_PROVIDER",
+      primaryManifestId: primary.id,
+      lineCodes: frozenLineCodes(lines),
+      lineAmountTypes: input.lineAmountTypes,
+    },
+    lineTotalCents,
+  };
+  const unmatched = (problem: string): PrimaryInvoiceUpdatePlan =>
+    ({ outcome: "CONFLICT", reason: "PRIMARY_UNMATCHED", problem, ...rendering });
+  if (primary.providerInvoiceId !== input.providerInvoiceId) return unmatched("the primary manifest names another invoice");
+  if (primary.outcome !== "COVERED") return unmatched("the primary manifest records a conflict");
+  if (primary.lineTotalCents !== lineTotalCents) return unmatched("the updated lines' total is not the primary invoice's");
+  return { outcome: "COVERED", ...rendering };
 }

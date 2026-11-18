@@ -17,7 +17,7 @@ export function PayStep({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Complete Payment</CardTitle>
+        <CardTitle headingLevel={2}>Complete Payment</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
@@ -27,7 +27,6 @@ export function PayStep({
           bookingId={createdBooking.id}
           amountCents={createdBooking.amountCents}
           paymentMode={getBookingPaymentMode(createdBooking.status)}
-          returnUrl={createdBooking.returnUrl}
           onPaymentComplete={() =>
             router.push(`/bookings/${createdBooking.id}`)
           }

@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { BaseSequencer } from "vitest/node";
 
 import { parseWorkflowYaml } from "./check-workflow-suite-checkout-depth.mjs";
+import { escapeRegex } from "./escape-regex.mjs";
 import { parseArtifactWaitArgs } from "./wait-for-run-artifacts.mjs";
 import {
   EXPECTED_SHARD_COUNT,
@@ -125,7 +126,7 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
 
   it("gates exactly these jobs, by the names GitHub reports them under", () => {
     const options = parseShardGateArgs(splitArgs(verifyGateStep().run.slice(GATE.length)));
-    expect(options.required.toSorted()).toEqual(SPLIT_JOBS.map(({ id }) => workflow.jobs[id].name).toSorted());
+    expect(options.required.toSorted()).toEqual([...SPLIT_JOBS.map(({ id }) => workflow.jobs[id].name), workflow.jobs["realdb-all"].name].toSorted());
   });
 
   it.each(SPLIT_JOBS)("$id has no needs/if/continue-on-error, verify's env, and runs `$command` unconditionally, not in verify", ({ id, command }) => {
@@ -148,6 +149,44 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
     const step = workflow.jobs.typecheck.steps.find((item) => item.run === "pnpm run typecheck");
     const heapMb = Number(/--max-old-space-size=(\d+)/.exec(step.env?.NODE_OPTIONS ?? "")?.[1]);
     expect(heapMb).toBeGreaterThanOrEqual(12288);
+  });
+
+  // #5164: `next build` type-checks the app project in a worker that inherits
+  // NODE_OPTIONS, and a cold run peaked at about 4.6 GB (#5053), over Node's
+  // ~4 GB default on the hosted runner. Every `next build` CI runs gets the
+  // one ceiling ci.yml's `Build` step states the reason for. A census of every
+  // workflow, not a named list, so a new build site cannot quietly miss it.
+  it("gives every `next build` in CI the same 8 GB heap ceiling", () => {
+    const HEAP = "--max-old-space-size=8192";
+    const workflowsDir = path.join(root, ".github", "workflows");
+    const sites = [];
+    for (const file of readdirSync(workflowsDir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
+      const parsed = parseWorkflowYaml(readFileSync(path.join(workflowsDir, file), "utf8"));
+      for (const [id, job] of Object.entries(parsed.jobs ?? {})) {
+        for (const step of job.steps ?? []) {
+          const where = `${file} → ${id} → ${step.name ?? step.uses ?? step.run}`;
+          const run = step.run ?? "";
+          if (/\bpnpm run build(?:\s|$)|\bnext build\b|server-only-boundary-selftest\.mjs/.test(run)) {
+            sites.push(where);
+            expect(step.env?.NODE_OPTIONS, where).toBe(HEAP);
+          } else if (/\bdocker build\b/.test(run)) {
+            sites.push(where);
+            expect(run, where).toContain('--build-arg NODE_OPTIONS="${NODE_BUILD_OPTIONS}"');
+            expect(job.env?.NODE_BUILD_OPTIONS, where).toBe(HEAP);
+          } else if (step.uses?.startsWith("docker/build-push-action@")) {
+            sites.push(where);
+            expect(step.with?.["build-args"]?.split("\n"), where).toContain("NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}");
+            expect(job.env?.NODE_BUILD_OPTIONS, where).toBe(HEAP);
+          }
+        }
+      }
+    }
+    // Build + self-test, the Trivy image, two GHCR images, the E2E image and
+    // its cache export, the rollover proof's image: the census is not empty.
+    expect(sites.length, sites.join("\n")).toBeGreaterThanOrEqual(8);
+    // The local E2E stack builds the same image through compose.
+    const stack = readFileSync(path.join(root, "scripts", "e2e-stack.sh"), "utf8");
+    expect(stack).toContain(`export NODE_BUILD_OPTIONS="\${NODE_BUILD_OPTIONS:-${HEAP}}"`);
   });
 
   it("keeps the build's output proofs after the build, in the build job, unconditional", () => {
@@ -191,6 +230,73 @@ describe("verify's typecheck, lint and build jobs (#4425)", () => {
       loadJobs: async () => [shard(1, "in_progress", null), lint("completed", "failure")],
       sleep: async () => { throw new Error("waited instead of failing"); },
     })).rejects.toThrow(/Required job "Lint" completed as failure/);
+  });
+});
+
+// #4907 (owner decision, 11 Nov 2026, option B): every real-PostgreSQL suite
+// reaches the merge gate through `verify`'s poll, by the job's display name.
+// `realdb-ci-coverage-census.test.ts` pins that name and the job's wiring.
+describe("verify's real-database gate (#4907)", () => {
+  const options = () => parseShardGateArgs(splitArgs(verifyGateStep().run.slice(GATE.length)));
+  const name = workflow.jobs["realdb-all"].name;
+  const realdb = (conclusion = "success", status = "completed") => ({ name, status, conclusion });
+  const otherJobs = () => [...passed(), ...["typecheck", "lint", "build"].map((id) => ({
+    name: workflow.jobs[id].name, status: "completed", conclusion: "success",
+  }))];
+
+  it("polls the real-database job by the name GitHub reports it under", () => {
+    expect(options().required).toContain(name);
+  });
+
+  it.each(["failure", "cancelled", "timed_out", "skipped", null])(
+    "fails verify at once when the real-database result is %s",
+    async (conclusion) => {
+      await expect(requireTestShards({
+        ...options(),
+        loadJobs: async () => [...otherJobs(), realdb(conclusion)],
+        sleep: async () => { throw new Error("waited instead of failing"); },
+      })).rejects.toThrow(new RegExp(`Required job "${escapeRegex(name)}" completed as`));
+    },
+  );
+
+  it("fails verify when this attempt has no real-database result", async () => {
+    await expect(requireTestShards({
+      ...options(), loadJobs: async () => otherJobs(), maxWaitMs: 0,
+    })).rejects.toThrow(new RegExp(`Timed out.*missing "${escapeRegex(name)}"`));
+  });
+
+  it("cannot reuse a successful real-database result from an earlier attempt", async () => {
+    const urls = [];
+    await expect(requireTestShards({
+      ...options(),
+      maxWaitMs: 0,
+      loadJobs: () => getAttemptJobs({
+        apiUrl: "https://api.github.com",
+        repository: "club/repo",
+        runId: "123",
+        attempt: "2",
+        token: "test-token",
+        fetchImpl: async (url) => {
+          urls.push(url.pathname);
+          // A run-wide lookup can include the successful first attempt.
+          // Only the second attempt lacks the real-database result.
+          const jobs = url.pathname.includes("/attempts/2/")
+            ? otherJobs() : [...otherJobs(), realdb()];
+          return { ok: true, json: async () => ({ total_count: jobs.length, jobs }) };
+        },
+      }),
+    })).rejects.toThrow(new RegExp(`Timed out.*missing "${escapeRegex(name)}"`));
+    expect(urls).toEqual(["/repos/club/repo/actions/runs/123/attempts/2/jobs"]);
+  });
+
+  it("waits for the real-database job, then accepts its success", async () => {
+    let calls = 0;
+    await expect(requireTestShards({
+      ...options(),
+      loadJobs: async () => [...otherJobs(), ++calls === 1 ? realdb(null, "in_progress") : realdb()],
+      sleep: async () => {},
+    })).resolves.toBeUndefined();
+    expect(calls).toBe(2);
   });
 });
 
@@ -466,5 +572,30 @@ describe("e2e.yml's required jobs, their shards and the run action", () => {
     const checkedOrBuiltin = new Set(["seed_database", "reset_database", "capture_fixture_date", "local", "echo", "mkdir", "compose", "cp", "snapshot"]);
     expect(called.filter((name) => !checkedOrBuiltin.has(name))).toEqual([]);
     expect(stack.slice(stack.indexOf("prepare() {"))).toContain("e2e/setup/seed-stripe-credentials.ts");
+  });
+});
+
+// #5192: `ubuntu-latest` is a moving label. While GitHub rolled it from 24.04
+// to 26.04, the same commit got either image by chance, and on 26.04 the
+// runner's PostgreSQL 17 `pg_dump` broke the required roles proof against the
+// PostgreSQL 16 service. Every job in every workflow names one pinned image;
+// moving to a newer one changes this constant and every workflow together.
+describe("every workflow job runs on the one pinned runner image (#5192)", () => {
+  const RUNNER_IMAGE = "ubuntu-24.04";
+
+  it("names the pinned image on every job, never a moving label", () => {
+    const workflowsDir = path.join(root, ".github", "workflows");
+    const jobs = [];
+    for (const file of readdirSync(workflowsDir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
+      const parsed = parseWorkflowYaml(readFileSync(path.join(workflowsDir, file), "utf8"));
+      for (const [id, job] of Object.entries(parsed.jobs ?? {})) {
+        // A job that calls a reusable workflow has no runner of its own.
+        if (job.uses) continue;
+        jobs.push(`${file} → ${id}`);
+        expect(job["runs-on"], `${file} → ${id}`).toBe(RUNNER_IMAGE);
+      }
+    }
+    // Vacuity guard: the census read real workflows.
+    expect(jobs.length).toBeGreaterThanOrEqual(30);
   });
 });

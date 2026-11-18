@@ -19,6 +19,7 @@ vi.mock("@/components/lodge-select", () => ({
 }));
 
 import { expectToHoldFocus } from "@/lib/__tests__/helpers/focus";
+import { getAdminPage } from "@/lib/admin-hubs";
 import { BookingPeriodsSection } from "../booking-periods-section";
 import { MinimumNightStaySection } from "../minimum-night-stay-section";
 
@@ -93,7 +94,7 @@ describe("BookingPeriodsSection returns focus from its editor (#4087)", () => {
     await screen.findByRole("button", { name: "Edit" });
 
     expect(
-      screen.getByRole("region", { name: "Date-Specific Periods" }),
+      screen.getByRole("region", { name: getAdminPage("booking-policies-periods").label }),
     ).toBeTruthy();
     expect(screen.queryByRole("region", { name: "School Holidays" })).toBeNull();
   });

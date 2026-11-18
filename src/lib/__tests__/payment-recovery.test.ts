@@ -1926,7 +1926,7 @@ describe("payment recovery worker", () => {
 
   // Mutation proof: dropping the door's allocationPlan made this refund 10000, not 8000 cents.
   it("replays the edit's same Stripe key after recording fails and the webhook records it (#3984)", async () => {
-    const { executeBookingModificationRefund } = await import("@/lib/booking-modification-settlement");
+    const { executeBookingModificationRefund, reserveModificationRefundDebts } = await import("@/lib/booking-modification-settlement");
     const { PartialRefundError } = await import("@/lib/payment-transactions");
     const { refundSliceStripeIdempotencyKey } = await import("@/lib/payment-recovery-keys");
     const slice = { paymentTransactionId: "txn-1", amountCents: 8000 };
@@ -1949,11 +1949,16 @@ describe("payment recovery worker", () => {
       return { refunds: [{ refundId: refund.id, paymentIntentId: "pi_original", amountCents: refund.amount, status: refund.status, slice: sent }] };
     });
 
-    const outcome = await executeBookingModificationRefund({ format: CLUB_FORMAT_TEST, bookingId: "booking-1",
-      result: { pendingRefundAmountCents: 8000, paymentId: "payment-1", bookingModificationId: "mod-1", organiserChildRefund: null } as never,
-      idempotencyKeyPrefix: "mod_dates_refund_booking-1", failureMessage: "refund failed", recoveryFailureMessage: "enqueue failed" });
-    expect(outcome.refundDestination).toBe("own_card_pending");
+    // #4992: the edit's transaction writes the row with its frozen plan before the attempt.
+    const { prisma } = await import("@/lib/prisma");
+    const ownCardRefund = await reserveModificationRefundDebts(prisma as never, { door: "dateChange", pendingRefundAmountCents: 8000,
+      plan: null, bookingId: "booking-1", payment: { id: "payment-1" } as never, bookingModificationId: "mod-1" });
     const data = mockPaymentRecoveryCreateMany.mock.calls[0][0].data[0];
+    const outcome = await executeBookingModificationRefund({ format: CLUB_FORMAT_TEST, bookingId: "booking-1",
+      result: { pendingRefundAmountCents: 8000, paymentId: "payment-1", bookingModificationId: "mod-1", organiserChildRefund: null, ownCardRefund } as never,
+      door: "dateChange", failureMessage: "refund failed" });
+    expect(outcome.refundDestination).toBe("own_card_pending");
+    expect(mockPaymentRecoveryCreateMany).toHaveBeenCalledTimes(1);
 
     // charge.refunded has now recorded the $80; only $20 headroom remains.
     transaction.refundedAmountCents = 8000;
@@ -5315,7 +5320,7 @@ describe("payment recovery worker", () => {
       expect(stopped[0]).not.toMatch(/retrying|earlier card request|Nothing was charged or cancelled/i);
     });
 
-    it("#4015 review: the read is bounded and runs with no transaction open, before the mint; a mid-3DS ask is superseded", async () => {
+    it("#4015 review: the read is bounded and runs with no transaction open, before the mint; an unpaid ask is superseded", async () => {
       primeQueue(additionalIntentOperation());
       mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
       mockPaymentTransactionFindMany.mockResolvedValueOnce([
@@ -5324,7 +5329,7 @@ describe("payment recovery worker", () => {
       const openAtRead: number[] = [];
       mockGetPaymentIntent.mockImplementationOnce(async (id: unknown) => {
         openAtRead.push(openTransactions.count);
-        return { id, status: "requires_action" };
+        return { id, status: "requires_payment_method" };
       });
 
       const result = await processPaymentRecoveryOperations({ limit: 1 });
@@ -5333,6 +5338,25 @@ describe("payment recovery worker", () => {
       expect(openAtRead).toEqual([0]);
       expect(mockGetPaymentIntent).toHaveBeenCalledWith("pi_later_edit", { timeoutMs: 5_000, expand: ["latest_charge"] });
       expect(mockGetPaymentIntent.mock.invocationCallOrder[0]!).toBeLessThan(mockCreatePaymentIntent.mock.invocationCallOrder[0]!);
+    });
+
+    it("#4755: a mid-3DS ask is waited on - nothing minted or cancelled, the sighting recorded and a recheck due by the next 15-minute run, in the fenced wait write", async () => {
+      primeQueue(additionalIntentOperation());
+      mockPaymentFindUnique.mockResolvedValue(paymentWithLaterEditAsk());
+      mockGetPaymentIntent.mockResolvedValueOnce({ id: "pi_later_edit", status: "requires_action" });
+
+      const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+      expect(result).toMatchObject({ processed: 1, succeeded: 0, failed: 0 });
+      expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+      expect(mockCancelPaymentIntentIfCancellableWithResult).not.toHaveBeenCalled();
+      const waitWrites = mockPaymentRecoveryUpdateMany.mock.calls
+        .map(([args]) => args as { data: Record<string, unknown> })
+        .filter((args) => args.data?.status === PaymentRecoveryOperationStatus.FAILED);
+      expect(waitWrites).toHaveLength(1);
+      const seenAt = waitWrites[0]!.data.carriedAskChallengeSeenAt as Date;
+      expect(waitWrites[0]!.data).toMatchObject({ carriedAskChallengeIntentId: "pi_later_edit", nextRetryAt: new Date(seenAt.getTime() + 14 * 60 * 1000) });
+      expect(recoveryFailureAlerts()).toEqual([]);
     });
 
     it("a FROZEN figure (no modification to read) still completes without creating when a later edit minted a newer additional intent", async () => {

@@ -11,6 +11,7 @@ import {
 } from "@/lib/school-booking-request";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
@@ -207,6 +208,11 @@ export async function POST(
       paymentLinkExpiresAt: result.paymentLinkExpiresAt.toISOString(),
     });
   } catch (err) {
+    // `INV-LOCK-006`: the approval's one transaction rolled back.
+    const contended = transactionContendedResponse(err, "Booking request approval contended for the lock(1) budget", {
+      context: { requestId: id },
+    });
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     if (err instanceof BookingMemberNightConflictError) {
@@ -216,10 +222,7 @@ export async function POST(
       );
     }
     if (err instanceof MembershipTypeBookingPolicyError) {
-      return NextResponse.json(
-        getMembershipTypeBookingPolicyErrorBody(err),
-        { status: err.status },
-      );
+      return NextResponse.json(getMembershipTypeBookingPolicyErrorBody(err), { status: err.status });
     }
     if (err instanceof BookingRequestError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
@@ -239,10 +242,7 @@ export async function POST(
     // sentence already states how many nights and guest-nights are uncovered, and
     // the request itself is untouched — the throw rolled the approval back.
     if (err instanceof AdultMemberHostingRequiredError) {
-      return NextResponse.json(
-        { error: err.message, code: err.code },
-        { status: err.status },
-      );
+      return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
     }
     throw err;
   }

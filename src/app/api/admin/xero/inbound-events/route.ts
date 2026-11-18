@@ -7,6 +7,7 @@ import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { canReplayXeroInboundEvent } from "@/lib/xero-stale-operations";
+import { adminListPageField } from "@/lib/admin-list-page";
 import {
   inboundEventCategoriesForXeroObjectType,
   inboundEventCategoryFilter,
@@ -31,7 +32,7 @@ const querySchema = z.object({
   createdFrom: dateOnlyStringSchema.optional(),
   createdTo: dateOnlyStringSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
-  page: z.coerce.number().int().min(1).optional().default(1),
+  page: adminListPageField,
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
 });
 

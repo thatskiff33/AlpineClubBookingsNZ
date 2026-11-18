@@ -16,6 +16,8 @@ import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { useClubTime } from "@/components/club-time-provider";
+import { FocusedActionError } from "@/components/focused-action-error";
+import { useActionFailure } from "@/hooks/use-action-failure";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import type {
   GoogleCredentialKey,
@@ -153,7 +155,7 @@ export function CredentialsStep({
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [saving, setSaving] = useStepSaving(helpers);
-  const [error, setError] = useState("");
+  const failure = useActionFailure();
   const [success, setSuccess] = useState("");
 
   const canWrite = context.isFullAdmin;
@@ -162,7 +164,7 @@ export function CredentialsStep({
 
   async function handleSave() {
     setSaving(true);
-    setError("");
+    failure.clear();
     setSuccess("");
     try {
       // Write only the fields the operator actually filled in (Replace flow).
@@ -176,7 +178,7 @@ export function CredentialsStep({
       );
       helpers.refresh();
     } catch (saveError) {
-      setError(
+      failure.fail(
         saveError instanceof Error ? saveError.message : "Failed to save.",
       );
     } finally {
@@ -271,7 +273,11 @@ export function CredentialsStep({
         </FieldHint>
       </div>
 
-      {error ? <Alert variant="error">{error}</Alert> : null}
+      <FocusedActionError
+        id="google-wizard-credentials-error"
+        error={failure.error}
+        attentionKey={failure.attentionKey}
+      />
       {success ? <Alert variant="success">{success}</Alert> : null}
 
       <div className="flex items-center gap-3">
@@ -303,7 +309,7 @@ export function VerifyStep({
   helpers: WizardStepHelpers;
 }) {
   const [starting, setStarting] = useState(false);
-  const [error, setError] = useState("");
+  const failure = useActionFailure();
 
   // On a session-mismatch verify failure the signIn callback redirects back
   // here with `?googleVerifyError=1` (src/lib/auth.ts). Without this the
@@ -325,7 +331,7 @@ export function VerifyStep({
 
   async function startVerify() {
     setStarting(true);
-    setError("");
+    failure.clear();
     try {
       const res = await fetch(VERIFY_START_ENDPOINT, {
         method: "POST",
@@ -335,7 +341,7 @@ export function VerifyStep({
         const data = (await res.json().catch(() => null)) as {
           error?: string;
         } | null;
-        setError(data?.error || "Could not start verification. Try again.");
+        failure.fail(data?.error || "Could not start verification. Try again.");
         setStarting(false);
         return;
       }
@@ -345,7 +351,7 @@ export function VerifyStep({
       // is minted and no account is linked.
       await signIn("google", { callbackUrl: "/admin/google/setup" });
     } catch {
-      setError("Could not start verification. Try again.");
+      failure.fail("Could not start verification. Try again.");
       setStarting(false);
     }
   }
@@ -406,7 +412,11 @@ export function VerifyStep({
         </Alert>
       ) : null}
 
-      {error ? <Alert variant="error">{error}</Alert> : null}
+      <FocusedActionError
+        id="google-wizard-verify-error"
+        error={failure.error}
+        attentionKey={failure.attentionKey}
+      />
 
       <div className="flex flex-wrap items-center gap-3">
         {/* KEEPS its own reason (#2324): Full Admin, not `finance`. */}

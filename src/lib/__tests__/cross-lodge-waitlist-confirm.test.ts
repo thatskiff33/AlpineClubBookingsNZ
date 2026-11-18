@@ -355,6 +355,21 @@ describe("confirmCrossLodgeWaitlistOffer in-transaction duplicate-stay guard (M2
       }),
     );
   });
+
+  // INV-LOCK-006: the create rolled back and nothing earlier committed, so
+  // contention reaches the route's retryable 503 rather than the generic result.
+  it.each(["P2028", "P2034"] as const)(
+    "rethrows %s transaction contention from the replacement create",
+    async (code) => {
+      const contended = Object.assign(new Error("contended"), { code });
+      mocks.createConfirmedBooking.mockRejectedValueOnce(contended);
+
+      await expect(
+        confirmCrossLodgeWaitlistOffer("entry-1", "member-1", CLUB_FORMAT_TEST),
+      ).rejects.toBe(contended);
+      expect(mocks.bookingUpdate).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("confirmCrossLodgeWaitlistOffer minimum-stay guard (#2363)", () => {

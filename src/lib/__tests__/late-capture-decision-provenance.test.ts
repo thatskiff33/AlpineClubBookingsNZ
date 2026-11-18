@@ -114,6 +114,8 @@ const PROVENANCE_SCANNED_FILES = [
   // #3638: the second-instrument alert cites #2774's locking reasoning.
   "src/lib/email/admin-alerts-settlement.ts",
   "src/components/admin/manual-refund-task-queue.tsx",
+  // #4926 split: the automatic-refund card moved out of the queue verbatim, citing #2773/#2774.
+  "src/components/admin/automatic-refund-notices-card.tsx",
   // #3635: the receipt rule cites the #2760/#2773 task row that names the intent.
   "src/lib/late-capture-xero-receipt.ts",
   // #4149: the shared epilogue cites #2761/#2773 for the alert it sends.
@@ -136,8 +138,9 @@ const PROVENANCE_SCANNED_FILES = [
   "src/lib/email/__tests__/admin-late-capture-auto-refund-alert.test.ts",
   "src/lib/email/__tests__/admin-late-capture-hand-back-conflict-alert.test.ts",
   "src/components/admin/__tests__/manual-refund-task-queue-auto-refunded.test.tsx",
-  "changelog.d/2773-late-capture-both-paths-and-hand-back-fence.md",
-  "changelog.d/2760-auto-refund-record-and-alert.md",
+  // The #2773 and #2760 changelog fragments were compiled into the 0.14.0
+  // section and deleted by the v0.14.0 release cut; their text is checked here.
+  "CHANGELOG.md",
   // ALP-7: the fragility ranking lists PR #2783 (#2773/#2774) in its repeat chains.
   "docs/audits/FRAGILITY_RANKING_2026-10.md",
 ] as const;

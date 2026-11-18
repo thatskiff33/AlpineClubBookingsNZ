@@ -23,6 +23,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { ApiRefusalError } from "@/lib/api-error-message";
 import type { ModuleSettingsValues } from "@/config/modules";
 import {
   DEFAULT_MAGIC_LINK_TTL_MINUTES,
@@ -71,15 +72,24 @@ interface MagicLinkDraft {
 }
 
 async function putJson(url: string, body: unknown, failMessage: string) {
-  const res = await fetchWithRecentAuth(url, {
-    method: "PUT",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetchWithRecentAuth(url, {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // A write that never got an answer (offline, a dropped connection) fails
+    // THIS step's own sentence. Left to reject, the hook would show the
+    // card-wide fallback, which words the toggle step, so an offline expiry
+    // save would read as an email sign-in link failure.
+    throw new ApiRefusalError(failMessage);
+  }
   if (!res.ok) {
     if (res.status === 403) throw new ForbiddenSaveError();
-    throw new Error(failMessage);
+    throw new ApiRefusalError(failMessage);
   }
   return res;
 }

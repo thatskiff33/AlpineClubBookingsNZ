@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import { useEditorFocusReturn } from "@/hooks/use-editor-focus-return"
 import { useRowActionFocusReturn } from "@/hooks/use-row-action-focus-return"
 import { rowKey, toggleKey, useRowHeadings } from "./list-row-focus"
+import { getAdminPage } from "@/lib/admin-hubs"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
@@ -14,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { PolicyFeedback } from "./policy-feedback"
 import {
   isPolicyScopeReady,
+  POLICY_SCOPE_NOT_READY_REASON,
   PolicyScopeSelect,
   usePolicyScopeOptions,
 } from "./policy-scope-select"
@@ -26,11 +28,13 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
+import { apiErrorMessageFromResponse, ApiRefusalError } from "@/lib/api-error-message"
 import { dateOnlyFromIsoString } from "@/lib/date-only"
 import { formatStayDateOrNull } from "@/lib/club-time"
 import { useClubFormat } from "@/components/club-format-provider"
 import { DAY_LABELS, type MinStayPolicy } from "./types"
+
+const SAVE_FALLBACK = "Failed to save"
 
 /**
  * One open minimum-stay editor's draft. Like the booking-periods section, the
@@ -140,6 +144,7 @@ function MinStayForm({
     // The section renders its own `PolicyFeedback` above the list, so the
     // success copy is set by the parent when the form closes.
     successMessage: "",
+    saveErrorFallback: SAVE_FALLBACK,
     // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
     // logs and revalidates unconditionally. Creating is the first-save
     // exception: there is no persisted row for the draft to be unchanged FROM.
@@ -247,9 +252,9 @@ function MinStayForm({
             This applies when a booking needs an approved exception to this
             minimum-stay rule. New policies have no automatic choice. A hold is
             not open-ended: it lasts until the request is decided or its deadline
-            passes — 7 days after it is raised, never past the start of the first
-            night held, and never less than 24 hours — after which the beds return
-            to the pool and the request is marked Expired.
+            passes — the club&apos;s hold length (Cancellation policy page) after it
+            is raised, never past the first night held, never under 24 hours —
+            after which the beds return to the pool and the request is Expired.
           </FieldHint>
         </div>
 
@@ -476,7 +481,7 @@ export function MinimumNightStaySection() {
   const submitMinStay = useCallback(
     async (draft: MinStayDraft): Promise<MinStayDraft> => {
       if (!policyScopeReady) {
-        throw new Error("Choose an available policy scope before saving")
+        throw new ApiRefusalError(POLICY_SCOPE_NOT_READY_REASON)
       }
       setError("")
       setSuccess("")
@@ -502,7 +507,7 @@ export function MinimumNightStaySection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const message = await apiErrorMessageFromResponse(res, "Failed to save")
+        const message = await apiErrorMessageFromResponse(res, SAVE_FALLBACK)
         if (res.status === 409) {
           const refreshed = await refreshAfterMutation()
           setError(
@@ -513,7 +518,7 @@ export function MinimumNightStaySection() {
           editorFocus.close()
           return draft
         }
-        throw new Error(message)
+        throw new ApiRefusalError(message)
       }
       const wasEditing = editingMinStayId !== null
       const saved = parseMinStayPolicy(await res.json().catch(() => null))
@@ -737,8 +742,8 @@ export function MinimumNightStaySection() {
                 <div>
                   <CardTitle {...editorFocus.titleProps}>
                     {scopeLodgeName
-                      ? `Minimum Night Stay — ${scopeLodgeName}`
-                      : "Minimum Night Stay"}
+                      ? `${getAdminPage("booking-policies-minimum-stay").label} — ${scopeLodgeName}`
+                      : getAdminPage("booking-policies-minimum-stay").label}
                   </CardTitle>
                   <CardDescription>
                     Require a minimum number of nights when a booking touches specific days of the week
@@ -843,7 +848,7 @@ export function MinimumNightStaySection() {
                         </div>
                         <p className="mt-2 text-sm text-muted-foreground">
                           {policy.capacityMode === "HOLD"
-                            ? "Exception requests hold the requested capacity while they wait, until they are decided or the hold expires (7 days, and never past the first night held)."
+                            ? "Exception requests hold the requested capacity while they wait, until they are decided or the hold expires (the club's hold length, never past the first night held)."
                             : "Exception requests do not hold capacity until approval."}{" "}
                           Revision {policy.version}.
                         </p>

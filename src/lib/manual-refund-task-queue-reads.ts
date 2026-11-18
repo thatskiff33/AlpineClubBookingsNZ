@@ -8,6 +8,8 @@ import {
   REOPENABLE_DISMISSAL_WINDOW_DAYS,
 } from "@/lib/manual-refund-task-reopen-bounds";
 import type { DismissedManualRefundTaskRow } from "@/lib/manual-refund-task-queue-payload";
+import { readPaymentHandBackTasks, type HandBackDisputeContext } from "@/lib/manual-refund-task-hand-back-journal";
+import { readDisputesByBookingId } from "@/lib/stripe-dispute-hold";
 
 /**
  * The finance settlement queue's SECONDARY reads, and the rule that neither of
@@ -47,6 +49,32 @@ export function readOrDegrade<T>(
       return { rows: [], unavailable: true };
     },
   );
+}
+
+/**
+ * #4516 (owner decisions, 15 and 18 Nov 2026): the card disputes on the open tasks'
+ * bookings, keyed by booking, through #5061's one read (`readDisputesByBookingId`),
+ * with every task on those disputes' payments for the once-only allocation of lost
+ * cents (`disputeLossAvailableToTask`), for the dismissal rule the server asks too
+ * (`journalHandBackDismissal`). It degrades like the cards beside it, and failing
+ * closed: with either read missing, a disputed card payment's hand-back offers no
+ * Dismiss or Reduce, and the server, which re-reads both under its locks, decides.
+ */
+export async function readOpenTaskDisputes(
+  db: Parameters<typeof readDisputesByBookingId>[0] & Parameters<typeof readPaymentHandBackTasks>[0],
+  tasks: readonly { bookingId: string }[],
+): Promise<Map<string, HandBackDisputeContext>> {
+  const read = await readOrDegrade(
+    readDisputesByBookingId(db, tasks.map((task) => task.bookingId)).then((byBooking) => [...byBooking]),
+    "card disputes on the open tasks' bookings",
+  );
+  const paymentIds = [...new Set(read.rows.flatMap(([, disputes]) => disputes.flatMap((dispute) => dispute.paymentId ?? [])))];
+  const paymentTasks = await readOrDegrade(readPaymentHandBackTasks(db, paymentIds), "tasks on the disputed payments");
+  if (paymentTasks.unavailable) return new Map();
+  return new Map(read.rows.map(([bookingId, disputes]) => {
+    const payments = new Set(disputes.flatMap((dispute) => dispute.paymentId ?? []));
+    return [bookingId, { disputes, paymentTasks: paymentTasks.rows.filter((task) => task.paymentId !== null && payments.has(task.paymentId)) }];
+  }));
 }
 
 /**

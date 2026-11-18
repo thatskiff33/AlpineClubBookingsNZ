@@ -2,15 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useConfirm } from "@/components/confirm-dialog"
+import { FocusedActionError } from "@/components/focused-action-error"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { useActionFailure } from "@/hooks/use-action-failure"
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
 import { fetchJson, postJson, type ActionResponse } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
 import { xeroSectionId } from "./types"
+import { useAutoLoadOncePerOpening } from "./use-auto-load-once-per-opening"
 import type {
   ContactGroup,
   DuplicateGroup,
@@ -67,7 +70,13 @@ export function SetupPanels({
   const [duplicates, setDuplicates] = useState<DuplicateResult | null>(null)
   const [scanningDuplicates, setScanningDuplicates] = useState(false)
   const [creatingFamilyGroup, setCreatingFamilyGroup] = useState<string | null>(null)
-  const [error, setError] = useState("")
+  // Every button press here is an action, so its failure takes focus: Load
+  // Contact Groups, Refresh Contact Groups from Xero (which rebuilds the group
+  // cache and spends Xero API calls), the duplicate scan, an import, a repair
+  // and a family-group write. Only the load this section runs itself on
+  // opening stays a passive notice (#4975).
+  const [loadError, setLoadError] = useState("")
+  const { error: actionError, attentionKey, fail: failAction, clear: clearActionError } = useActionFailure()
   // #4161: a link repair that ran but could not heal every refund note.
   const [warning, setWarning] = useState("")
 
@@ -76,10 +85,13 @@ export function SetupPanels({
       refreshFromXero?: boolean
       fallbackToRefreshIfEmpty?: boolean
       repairMissingContactCache?: boolean
+      pressed?: boolean
     }) => {
       if (options?.refreshFromXero) setRefreshingGroups(true)
       else setLoadingGroups(true)
-      setError("")
+      // Every attempt replaces the passive notice, so a failure shows once.
+      setLoadError("")
+      if (options?.pressed) clearActionError()
       try {
         const result = await loadAdminXeroContactGroups({
           refreshFromXero: options?.refreshFromXero,
@@ -100,20 +112,28 @@ export function SetupPanels({
             }
           })
         )
+        setLoadError("")
         onRefreshDiagnostics()
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load Xero contact groups")
+        const message = err instanceof Error ? err.message : "Failed to load Xero contact groups"
+        if (options?.pressed) failAction(message)
+        else setLoadError(message)
       } finally {
         setLoadingGroups(false)
         setRefreshingGroups(false)
       }
     },
-    [onRefreshDiagnostics]
+    [clearActionError, failAction, onRefreshDiagnostics]
   )
 
-  useEffect(() => {
-    if (connected && open && contactGroups.length === 0 && !loadingGroups && !refreshingGroups) void loadContactGroups()
-  }, [connected, contactGroups.length, loadContactGroups, loadingGroups, open, refreshingGroups])
+  // Auto-load the groups once per opening while the list is empty; Reset
+  // re-arms it (ALP-591).
+  const { rearm: rearmGroupAutoLoad } = useAutoLoadOncePerOpening({
+    active: connected && open,
+    needed: contactGroups.length === 0,
+    busy: loadingGroups || refreshingGroups,
+    load: loadContactGroups,
+  })
 
   // #2108: load active membership types (for the type selects) once the section
   // is open. Only active types are offered — the import rejects inactive ones.
@@ -193,7 +213,7 @@ export function SetupPanels({
   const importMembers = async () => {
     const selectedMappings = groupMappings.filter(isGroupMapped)
     if (selectedMappings.length === 0) {
-      setError("Please fully map at least one group to import")
+      failAction("Please fully map at least one group to import")
       return
     }
     const groupNames = selectedMappings.map((mapping) => mapping.groupName).join(", ")
@@ -205,7 +225,7 @@ export function SetupPanels({
     if (!confirmed) return
     setSyncing("import")
     setSyncResult(null)
-    setError("")
+    clearActionError()
     try {
       const data = await postJson<SyncResult>(
         "/api/admin/xero/import-members",
@@ -219,7 +239,7 @@ export function SetupPanels({
       setSyncResult(data)
       onRefreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Member import failed")
+      failAction(err instanceof Error ? err.message : "Member import failed")
     } finally {
       setSyncing(null)
     }
@@ -227,7 +247,7 @@ export function SetupPanels({
 
   const repairXeroLinks = async () => {
     setRepairingXeroLinks(true)
-    setError("")
+    clearActionError()
     setWarning("")
     onMessage("")
     try {
@@ -238,7 +258,7 @@ export function SetupPanels({
       onRefreshDiagnostics()
       onRefreshOperations()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to repair Xero link ledger")
+      failAction(err instanceof Error ? err.message : "Failed to repair Xero link ledger")
     } finally {
       setRepairingXeroLinks(false)
     }
@@ -247,11 +267,11 @@ export function SetupPanels({
   const scanDuplicates = async () => {
     setScanningDuplicates(true)
     setDuplicates(null)
-    setError("")
+    clearActionError()
     try {
       setDuplicates(await fetchJson<DuplicateResult>("/api/admin/xero/duplicate-contacts", undefined, "Duplicate scan failed"))
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Duplicate scan failed")
+      failAction(err instanceof Error ? err.message : "Duplicate scan failed")
     } finally {
       setScanningDuplicates(false)
     }
@@ -260,7 +280,7 @@ export function SetupPanels({
   const createFamilyGroup = async (group: DuplicateGroup) => {
     const name = group.suggestedGroupName || `Family (${group.email})`
     setCreatingFamilyGroup(group.email)
-    setError("")
+    clearActionError()
     try {
       await postJson<{ id?: string }>("/api/admin/family-groups", { name, memberIds: group.eligibleMemberIds }, "Failed to create family group")
       setDuplicates((prev) =>
@@ -273,7 +293,7 @@ export function SetupPanels({
           : prev
       )
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create family group")
+      failAction(err instanceof Error ? err.message : "Failed to create family group")
     } finally {
       setCreatingFamilyGroup(null)
     }
@@ -289,6 +309,11 @@ export function SetupPanels({
   }
 
   return (
+    <>
+    {/* Outside the card's body, which unmounts while the section is collapsed:
+        an alert inside it would remount on re-opening and take focus for a
+        stale failure. */}
+    <FocusedActionError id="xero-setup-action-error" className="mb-4" error={actionError} attentionKey={attentionKey} />
     <SectionCard
       id={xeroSectionId("setup")}
       title="Setup Tools"
@@ -298,7 +323,7 @@ export function SetupPanels({
     >
       <div className="space-y-6">
         {confirmDialog}
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
+        {loadError ? <p className="text-sm text-danger">{loadError}</p> : null}
         {warning ? <p className="text-sm text-warning" role="status">{warning}</p> : null}
         <div className="space-y-4">
           <div className="space-y-1">
@@ -306,7 +331,7 @@ export function SetupPanels({
             <p className="text-sm text-muted-foreground">Import members from Xero contact groups into {bookingsName}. Map each group to an age tier, a membership type, or both.</p>
           </div>
           {contactGroups.length === 0 ? (
-            <Button onClick={() => void loadContactGroups({ fallbackToRefreshIfEmpty: true, repairMissingContactCache: true })} disabled={loadingGroups}>
+            <Button onClick={() => void loadContactGroups({ fallbackToRefreshIfEmpty: true, repairMissingContactCache: true, pressed: true })} disabled={loadingGroups}>
               {loadingGroups ? "Loading Groups..." : "Load Contact Groups"}
             </Button>
           ) : (
@@ -325,7 +350,7 @@ export function SetupPanels({
                     </Select>
                   </div>
                 </div>
-                <Button variant="outline" onClick={() => void loadContactGroups({ refreshFromXero: true, repairMissingContactCache: true })} disabled={refreshingGroups}>
+                <Button variant="outline" onClick={() => void loadContactGroups({ refreshFromXero: true, repairMissingContactCache: true, pressed: true })} disabled={refreshingGroups}>
                   {refreshingGroups ? "Refreshing Groups..." : "Refresh Contact Groups from Xero"}
                 </Button>
               </div>
@@ -389,7 +414,7 @@ export function SetupPanels({
                 <Button onClick={() => void importMembers()} disabled={syncing !== null || !groupMappings.some(isGroupMapped)}>
                   {syncing === "import" ? "Importing..." : "Import Members"}
                 </Button>
-                <Button variant="outline" onClick={() => { setContactGroups([]); setGroupMappings([]) }}>Reset</Button>
+                <Button variant="outline" onClick={() => { rearmGroupAutoLoad(); setContactGroups([]); setGroupMappings([]) }}>Reset</Button>
               </div>
             </>
           )}
@@ -414,6 +439,7 @@ export function SetupPanels({
         />
       </div>
     </SectionCard>
+    </>
   )
 }
 

@@ -37,6 +37,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { assertSafeRaceDbUrl } from "@/lib/__tests__/support/race-db-url";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -61,6 +62,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
   { timeout: 60_000 },
   () => {
     async function clearRun() {
+      // #4525 (M13): the refund note and its payment this suite records leave export manifests naming the booking.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       const ops = await prisma.xeroSyncOperation.findMany({ where: { localModel: "Payment", localId: PAYMENT_ID }, select: { id: true } });
       await prisma.alertCooldown.deleteMany({ where: { key: { in: ops.map((op) => `xero-success-after-resolution:${op.id}:${NOTE_B}`) } } });
       await prisma.alertCooldown.deleteMany({ where: { key: { in: ops.map((op) => `xero-success-after-resolution:${op.id}`) } } });

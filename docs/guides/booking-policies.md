@@ -7,13 +7,13 @@ Audience: Operator
 The hub for the rules that shape how bookings are priced, held, and refunded.
 Five sub-pages sit under it:
 
-- **Default Cancellation Policy** — the club-wide refund schedule and the
+- **Cancellation Policy** — the club-wide refund schedule and the
   "Members First" non-member hold.
-- **Date-Specific Periods** — override the cancellation policy for named date
+- **Booking Periods** — override the cancellation policy for named date
   ranges (for example school holidays).
 - **Group Discount** — charge everyone at member rates once a booking is big
   enough.
-- **Minimum Night Stay** — require a minimum number of nights when a booking
+- **Minimum Stay** — require a minimum number of nights when a booking
   touches certain days.
 - **Public Booking Requests** — control indicative pricing and quote timing on
   the public request form.
@@ -54,9 +54,9 @@ rules — see
    -->
 
 
-### Default Cancellation Policy
+### Cancellation Policy
 
-1. Open **Default Cancellation Policy** and click **Edit**.
+1. Open **Cancellation Policy** and click **Edit**.
 
    ![Default Cancellation Policy: the Members First toggle, non-member confirmation threshold, and the cancellation refund rules table with a plain-English preview](../images/admin/admin-booking-policies-cancellation.png)
 
@@ -75,9 +75,9 @@ rules — see
    is available straight away so you can commit the starting rules once.
    **Cancel** puts every field back exactly as it was saved.
 
-### Date-Specific Periods
+### Booking Periods
 
-1. Open **Date-Specific Periods** and click **Add Period**.
+1. Open **Booking Periods** and click **Add Period**.
 
    ![Date-Specific Periods: the empty state explaining the default policy applies to all bookings, with an Add Period button](../images/admin/admin-booking-policies-periods.png)
 
@@ -115,9 +115,9 @@ rules — see
    night they have already paid for, and never changes a booking that is not
    being edited.
 
-### Minimum Night Stay
+### Minimum Stay
 
-1. Open **Minimum Night Stay** and click **Add Policy**.
+1. Open **Minimum Stay** and click **Add Policy**.
 
    ![Minimum Night Stay: the empty state and Add Policy button for weekday minimum-stay rules](../images/admin/admin-booking-policies-minimum-stay.png)
 
@@ -127,7 +127,7 @@ rules — see
 
    - **Hold requested capacity while it waits** means an exception request
      reserves the affected beds while the club decides — but not forever. The
-     hold ends when the request is decided or when its deadline passes: 7 days
+     hold ends when the request is decided or when its deadline passes: the configured policy-exception hold length (7 days by default)
      after the request is raised, never past the start of the first night held,
      and never less than 24 hours. Once the deadline passes, the beds go back to
      the pool automatically and the request is marked **Expired**, so a request
@@ -459,7 +459,10 @@ into every lodge.
 | Apply to nights added after booking | Group Discount | Whether a later edit (extra nights, extra guests) earns the discount on the nights it adds | on | Nights already booked keep their booked price in either state; a club with the discount off is unaffected |
 | Minimum nights | Minimum Stay | Nights required when a trigger day is included | 2 | Minimum 2 |
 | Trigger days | Minimum Stay | Which weekdays activate the rule | Sat | At least one day |
-| Exception capacity handling | Minimum Stay | Whether a future exception request holds the affected capacity while it waits | Existing rows: Hold | Required on create; Hold wins when several eligible rules apply; a hold ends when the request is decided or its deadline passes (7 days, never past the first night held, never under 24 hours) |
+| Pre-arrival reminder | Cancellation → club-wide defaults | Days before check-in to send arrival details | 3 days | 1–30; a booking already reminded is not reminded again |
+| First reminder to pay an extra amount | Cancellation → club-wide defaults | Delay after an additional amount is raised | 3 days | 1–30; immediate reminders for released credit keep their existing rule |
+| Policy-exception hold | Cancellation → club-wide defaults | Review window for a new held request | 7 days | 1–30; capped at the first held night, with a 24-hour floor. Existing requests keep their stamped deadline |
+| Exception capacity handling | Minimum Stay | Whether a future exception request holds the affected capacity while it waits | Existing rows: Hold | Required on create; Hold wins when several eligible rules apply; a hold ends when the request is decided or its deadline passes (the configured hold length, 7 days by default, never past the first night held, never under 24 hours) |
 | Non-member guests without adult member cover | Adult Member Hosting | Allowed; allowed but sent to a Booking Officer; or stopped unless corrected or an exception is approved | Allowed (club); Use the club-wide setting (lodge) | The club-wide scope cannot inherit; no upgrade selects "stopped" |
 | Adult members who count | Adult Member Hosting | Either or both of: on the same booking; on another booking on the same account | Inherit (lodge and club) — the built-in default is "on the same booking" | At least one must be ticked when you set your own; there are two options and no others |
 | Exception capacity handling | Adult Member Hosting | Whether a future exception request holds the affected capacity while it waits | None — you must choose | Required on every save; the same hold deadline applies |

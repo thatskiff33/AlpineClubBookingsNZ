@@ -363,7 +363,7 @@ describe("panel contents (#108)", () => {
 
     const moduleOff = getPanelAdminNavSections(
       CLUB_DAY,
-      { ...allOn, skifieldConditions: false } as FeatureFlags,
+      { ...allOn, skifieldWhakapapa: false } as FeatureFlags,
       "content",
       matrixFor("ADMIN_CONTENT"),
     ).flatMap((section) => section.items.map((item) => item.label));
@@ -385,7 +385,7 @@ describe("panel contents (#108)", () => {
         "Booking Policies",
         "Fees",
         "Payments",
-        "Roster",
+        "Chore Roster",
         "Calendar",
       ]),
     );

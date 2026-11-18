@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -98,10 +99,7 @@ export async function PUT(
       select: { id: true, active: true },
     });
     if (!lodge || !lodge.active) {
-      return NextResponse.json(
-        { error: "Lodge not found or not active" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Lodge not found or not active" }, { status: 400 });
     }
     updateData.lodgeId = lodge.id;
   }
@@ -193,6 +191,10 @@ export async function PUT(
   } catch (err) {
     const custodianResponse = custodianBedHoldErrorResponse(err);
     if (custodianResponse) return custodianResponse;
+    const contended = transactionContendedResponse(err, "Hut leader assignment edit contended for the lock(1) budget", {
+      context: { assignmentId: id },
+    });
+    if (contended) return contended;
     logger.error({ err }, "Error updating hut leader assignment");
     return NextResponse.json({ error: "Failed to update assignment" }, { status: 500 });
   }

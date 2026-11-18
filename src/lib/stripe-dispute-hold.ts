@@ -10,9 +10,9 @@
  *
  * DB only: no Stripe import, so `stripe.ts` can read it without a cycle.
  */
-import { StripeDisputeStatus, type Prisma } from "@prisma/client";
+import type { Prisma, StripeDisputeStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { HOLDING_DISPUTE_STATUSES, namedDisputes } from "@/lib/stripe-dispute-note";
+import { disputeIsLost, HOLDING_DISPUTE_STATUSES, namedDisputes } from "@/lib/stripe-dispute-note";
 
 type DisputeReader = Pick<Prisma.TransactionClient, "stripeDispute">;
 
@@ -72,6 +72,19 @@ export async function paymentCaptureIntentIds(
   return [...new Set(ids.filter((id): id is string => Boolean(id)))];
 }
 
+/**
+ * #4911, #5061 follow-up (`INV-PAY-154`): THE payment-level read - the hold on
+ * every capture a booking payment holds (`paymentCaptureIntentIds`). A paid
+ * cancel, its preview, a price-reducing edit and its quote all read it here, so
+ * none can miss a capture the others see. Read it after the caller's locks.
+ */
+export async function paymentDisputedCaptureCents(
+  db: DisputeReader & Pick<Prisma.TransactionClient, "paymentTransaction">,
+  payment: { id: string; stripePaymentIntentId: string | null; additionalPaymentIntentId: string | null },
+): Promise<CaptureDisputeHold> {
+  return disputedCaptureCents(db, await paymentCaptureIntentIds(db, payment));
+}
+
 /** A refund the chokepoint refused because its capture is disputed. */
 export class DisputedCaptureRefundRefusedError extends Error {
   override name = "DisputedCaptureRefundRefusedError";
@@ -90,7 +103,7 @@ export class DisputedCaptureRefundRefusedError extends Error {
 
   /** True when any dispute is LOST: waiting will not release the refund. */
   get lost(): boolean {
-    return this.disputes.some((dispute) => dispute.status === StripeDisputeStatus.LOST);
+    return this.disputes.some((dispute) => disputeIsLost(dispute.status));
   }
 }
 
@@ -122,7 +135,11 @@ export function disputedCaptureRefusal(error: unknown): DisputedCaptureRefundRef
 }
 
 /** One dispute as the booking page and Finance -> Payments mark it. */
-export type DisputeMarker = { stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number };
+export type DisputeMarker = {
+  stripeDisputeId: string; status: StripeDisputeStatus; amountCents: number;
+  /** The payment whose capture it disputes; null for a group organiser's settlement (#4516: the hand-back rule counts only its own payment's). */
+  paymentId: string | null;
+};
 
 /**
  * #4911 (`INV-PAY-154`): the disputes on these bookings, newest first, keyed by
@@ -140,7 +157,7 @@ export async function readDisputesByBookingId(
   if (bookingIds.length === 0) return byBooking;
   const disputes = await db.stripeDispute.findMany({
     where: { bookingId: { in: bookingIds } },
-    select: { bookingId: true, stripeDisputeId: true, status: true, amountCents: true },
+    select: { bookingId: true, stripeDisputeId: true, status: true, amountCents: true, paymentId: true },
     orderBy: [{ stripeCreatedAt: "desc" }, { stripeDisputeId: "asc" }],
   });
   for (const { bookingId, ...dispute } of disputes) {

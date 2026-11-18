@@ -8,7 +8,9 @@ import { CARD_REFUND_STILL_OWED_ORIGIN_SELECT, cardRefundStillOwedOrigin } from 
 import { paymentRecoveryOperationIdOfPaidAnotherWay } from "../../manual-refund-task-settlement-rules";
 import { cardRefundRowFailedRefundIds } from "../../open-card-refund-owed";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
-import { refundObligationChain } from "./refund-family";
+import { eventPosted } from "./booking-journal-read";
+import { memberMoneyChainTip, refundObligationChain } from "./refund-family";
+import { appliedObligationsOfEvents, cardRefundAppliedObligations } from "./refund-obligation-map";
 import { planFailedLaterRefundReversal, planRefundNote, type RefundExportComponent, type RefundExportPlan, type RefundExportProblem } from "./refund-note-plan";
 import { planRefundNotePayment } from "./refund-payment-plan";
 import { writeExportManifest } from "./store";
@@ -59,13 +61,50 @@ export function refundNoteDoorOfPayload(payload: unknown): RefundNoteDoor {
   };
 }
 
-/** The bank-side cash event a door's note is paid by, if any: R12 (or its answer), R14, or a hand-back's payment. */
-function cashEventKeys(door: RefundNoteDoor): { keys: MemberMoneyEventKey[]; account: "STRIPE_CLEARING" | "BANK" } | null {
-  if (door.paidAnotherWayTaskId) return { keys: [memberMoneyEventKeys.paidAnotherWay(door.paidAnotherWayTaskId)], account: "BANK" };
-  if (door.handBackTaskId) return { keys: [memberMoneyEventKeys.handBackPaid(door.handBackTaskId)], account: "BANK" };
-  if (door.cardRefundId) {
-    return { keys: [memberMoneyEventKeys.refund(door.cardRefundId), memberMoneyEventKeys.refundAnswer(door.cardRefundId)], account: "STRIPE_CLEARING" };
+/**
+ * The cash event a door's note is paid by: a card refund's R12 (or the answer that applied it) on STRIPE_CLEARING,
+ * or an R14 on BANK. Bank keys are read from what is posted, not from which field is set: a cancellation hand-back
+ * noted on its own record names `paidAnotherWayTaskId` (and often `handBackTaskId`) but posts its R14 under
+ * `handBackPaid(task)`, and a close posts under `paidAnotherWay(record)`. Each base key is walked to its live chain
+ * tip, so an R14 reversed and re-posted resolves to its successor, never the reversed one.
+ */
+type CashEvent =
+  | { kind: "CARD"; stripeRefundId: string; keys: MemberMoneyEventKey[]; account: "STRIPE_CLEARING" }
+  | { kind: "BANK"; keys: MemberMoneyEventKey[]; account: "BANK" };
+
+/** The R14 base keys a door may have posted under, most specific first. */
+function bankCashKeys(door: RefundNoteDoor): MemberMoneyEventKey[] {
+  const keys: MemberMoneyEventKey[] = [];
+  if (door.handBackTaskId) keys.push(memberMoneyEventKeys.handBackPaid(door.handBackTaskId));
+  if (door.paidAnotherWayTaskId) {
+    keys.push(memberMoneyEventKeys.paidAnotherWay(door.paidAnotherWayTaskId), memberMoneyEventKeys.handBackPaid(door.paidAnotherWayTaskId));
   }
+  return [...new Set(keys)];
+}
+
+/** The first of `bases` whose live tip is posted, else every tip (for the problem message); null when none is posted and `onlyIfPosted`. */
+async function postedBankCash(db: Db, bases: MemberMoneyEventKey[], onlyIfPosted: boolean): Promise<CashEvent | null> {
+  const tips: MemberMoneyEventKey[] = [];
+  for (const base of bases) {
+    const tip = await memberMoneyChainTip(db, base);
+    if (await eventPosted(db, tip)) return { kind: "BANK", keys: [tip], account: "BANK" };
+    tips.push(tip);
+  }
+  return onlyIfPosted || tips.length === 0 ? null : { kind: "BANK", keys: tips, account: "BANK" };
+}
+
+/**
+ * `reviewHandBack`: a review's note that names no other door is paid by the hand-back the review closed by hand
+ * (`postHandBackCompletion` posts its R14 under `handBackPaid(reviewTaskId)`), when one is posted.
+ */
+async function cashEventOf(db: Db, door: RefundNoteDoor, options: { reviewHandBack: boolean }): Promise<CashEvent | null> {
+  const bank = bankCashKeys(door);
+  if (bank.length > 0) return postedBankCash(db, bank, false);
+  if (door.cardRefundId) {
+    return { kind: "CARD", stripeRefundId: door.cardRefundId, account: "STRIPE_CLEARING",
+      keys: [memberMoneyEventKeys.refund(door.cardRefundId), memberMoneyEventKeys.refundAnswer(door.cardRefundId)] };
+  }
+  if (options.reviewHandBack && door.reviewTaskId) return postedBankCash(db, [memberMoneyEventKeys.handBackPaid(door.reviewTaskId)], true);
   return null;
 }
 
@@ -85,22 +124,22 @@ function obligationComponent(obligation: ObligationRow | null | undefined, named
   return { account: "REFUND_PAYABLE", chargeIdentity: obligation.obligationKey, cents: obligation.faceCents };
 }
 
+/** The debts a cash event applied, with the event that applied them, through the one reader in `refund-obligation-map.ts`. */
+async function appliedByCash(db: Db, cash: CashEvent): Promise<{ eventKey: string; obligationKeys: string[] } | null> {
+  // An R12 posted unapplied pays no debt itself; its answer (Dr RP, Cr AR) names the debt later.
+  if (cash.kind === "CARD") return cardRefundAppliedObligations(db, cash.stripeRefundId);
+  return appliedObligationsOfEvents(db, cash.keys);
+}
+
 /** The one live refund debt (R05) a note answers, read from its door; a watermark note names none. */
 export async function resolveRefundNoteObligation(db: Db, door: RefundNoteDoor): Promise<RefundExportComponent | RefundExportProblem> {
-  const cash = cashEventKeys(door);
+  const cash = await cashEventOf(db, door, { reviewHandBack: false });
   if (cash) {
-    for (const eventKey of cash.keys) {
-      const event = await db.memberMoneyEvent.findUnique({
-        where: { eventKey },
-        select: { journal: { select: { applications: { select: { obligation: { select: OBLIGATION_SELECT } } } } } },
-      });
-      const debts = [...new Map((event?.journal?.applications ?? []).map((a) => [a.obligation.obligationKey, a.obligation])).values()];
-      // An R12 posted unapplied pays no debt itself; its answer (Dr RP, Cr AR) names the debt later.
-      if (debts.length === 0) continue;
-      if (debts.length !== 1) return { problem: `cash event ${eventKey} pays ${debts.length} refund debts, not one` };
-      return obligationComponent(debts[0], eventKey);
-    }
-    return { problem: `no cash event posted for ${cash.keys.join(" or ")} pays a refund debt` };
+    const applied = await appliedByCash(db, cash);
+    if (!applied) return { problem: `no cash event posted for ${cash.keys.join(" or ")} pays a refund debt` };
+    if (applied.obligationKeys.length !== 1) return { problem: `cash event ${applied.eventKey} pays ${applied.obligationKeys.length} refund debts, not one` };
+    const [key] = applied.obligationKeys as [string];
+    return obligationComponent(await db.memberMoneyObligation.findUnique({ where: { obligationKey: key }, select: OBLIGATION_SELECT }), applied.eventKey);
   }
   const chained = door.refundRequestId ? { scope: "refund-request" as const, id: door.refundRequestId }
     : door.reviewTaskId ? { scope: "review" as const, id: door.reviewTaskId } : null;
@@ -110,17 +149,22 @@ export async function resolveRefundNoteObligation(db: Db, door: RefundNoteDoor):
   return obligationComponent(await db.memberMoneyObligation.findUnique({ where: { obligationKey: live }, select: OBLIGATION_SELECT }), live);
 }
 
-/** The cash slice a note's payment records: the whole of its R12 on clearing, or its R14 or hand-back on BANK. */
+/**
+ * The cash slice a note's payment records: the whole of its R12 on clearing, or its R14 on BANK. A reversed cash
+ * journal is no live slice. A hand-back paid "In cash" posts its R14 on CASH while its Xero payment settles to the
+ * bank code, so it moves nothing on BANK and is a known COMPONENT_UNUSABLE conflict (member-money-ledger.md).
+ */
 export async function resolveRefundNoteCash(db: Db, door: RefundNoteDoor): Promise<RefundExportComponent | RefundExportProblem> {
-  const cash = cashEventKeys(door);
+  const cash = await cashEventOf(db, door, { reviewHandBack: true });
   if (!cash) return { problem: "the note answers no recorded cash event" };
   // The R12 itself is the slice; an answer applies it later and moves no cash.
   const eventKey = cash.keys[0]!;
   const event = await db.memberMoneyEvent.findUnique({
     where: { eventKey },
-    select: { journal: { select: { lines: { select: { account: true, side: true, amountCents: true } } } } },
+    select: { journal: { select: { reversedBy: { select: { id: true } }, lines: { select: { account: true, side: true, amountCents: true } } } } },
   });
-  if (!event?.journal) return { problem: `no cash event is posted for ${eventKey}` };
+  if (!event?.journal) return { problem: `no cash event is posted for ${cash.keys.join(" or ")}` };
+  if (event.journal.reversedBy) return { problem: `cash event ${eventKey} was reversed` };
   const credits = event.journal.lines.filter((line) => line.account === cash.account && line.side === "CREDIT");
   if (credits.length === 0) return { problem: `cash event ${eventKey} moves nothing on ${cash.account}` };
   return { account: cash.account, chargeIdentity: eventKey, cents: credits.reduce((sum, line) => sum + line.amountCents, 0) };

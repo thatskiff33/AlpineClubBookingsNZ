@@ -24,7 +24,8 @@
  * - A zero plan (the payment's ledger reads the card refunded, its record does
  *   not): no Stripe call, the whole refund raised as owed. It cannot be marked
  *   paid back against a ledger with nothing left on it, so the treasurer
- *   dismisses it with a note, and it stops being owed.
+ *   dismisses it with a note (a part to check keeps its dismissal, #4516 owner
+ *   decision 15 Nov 2026), and it stops being owed.
  *
  * Ordinary Vitest runs skip the whole file. It reuses the guarded, disposable
  * loopback PostgreSQL `concurrency-lock-races.realdb.test.ts` provisions
@@ -366,10 +367,11 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       expect(task).toMatchObject({ status: "OPEN", amountCents: PRICE_CENTS });
       expect((await refundsOwedNow()) - owedBefore).toBe(PRICE_CENTS);
 
-      // Nothing on the ledger to record it against: refused, still OPEN, and told to dismiss it.
-      await expect(resolve("completed", task.id)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/dismiss this task with a note/) });
+      // Nothing on the ledger to record it against: refused, still OPEN, and told to dismiss it once the card refund is confirmed.
+      await expect(resolve("completed", task.id)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/once you have confirmed the card refund reached the member, dismiss this task with a note saying how/) }); // #4516 (owner, 15 Nov 2026)
       expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).toEqual({ status: "OPEN" });
 
+      // #4516 (owner decision, 15 Nov 2026): a part to check keeps its dismissal.
       await resolve("dismissed", task.id, "Refunded in the Stripe dashboard on 2 July.");
       expect(await prisma.manualRefundTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).toEqual({ status: "DISMISSED" });
       expect(await refundsOwedNow()).toBe(owedBefore);
