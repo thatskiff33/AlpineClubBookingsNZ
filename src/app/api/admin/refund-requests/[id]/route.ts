@@ -49,6 +49,7 @@ import {
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { reviewSchema } from "@/lib/refund-request-review-schema";
+import { reviewedRefundRequestInclude } from "@/lib/refund-request-reviewed-include";
 
 /** #3827 (`INV-PAY-118`): thrown inside the approval to roll its claim back. */
 class RefundRequestHandBackNotRaisedError extends Error {}
@@ -741,26 +742,7 @@ export async function PUT(
 
   const updated = await prisma.refundRequest.findUnique({
     where: { id },
-    include: {
-      booking: {
-        select: {
-          id: true,
-          checkIn: true,
-          checkOut: true,
-          finalPriceCents: true,
-          status: true,
-          payment: {
-            select: {
-              amountCents: true,
-              refundedAmountCents: true,
-            },
-          },
-        },
-      },
-      member: {
-        select: { id: true, firstName: true, lastName: true, email: true },
-      },
-    },
+    include: reviewedRefundRequestInclude,
   });
 
   return NextResponse.json({ ...updated, ...cardRefund });

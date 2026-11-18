@@ -118,7 +118,7 @@ reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call 
   Moving it out would split one route's error mapping across two files.
 
 file: src/app/api/payments/charge-saved-method/route.ts
-lines: 699
+lines: 689
 reason: the INV-LOCK-006 contention answer: a transactionContendedResponse call and
   its import in this route's own catch, ordered against the route's other error
   answers (captured-payment and committed-step recovery answers stay first).
@@ -168,7 +168,7 @@ reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
   a wrapper would hide it from that census; the module already exceeded its budget.
 
 file: src/lib/cron-confirm-pending.ts
-lines: 2047
+lines: 2008
 reason: one import of LOCK1_HOLDER_TRANSACTION_BUDGET (INV-LOCK-006). The budget
   must be written at the transaction call so the budget census can read it, and
   a wrapper would hide it from that census; the module already exceeded its budget.
@@ -275,12 +275,6 @@ reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   ordered against its other error answers; lifting the catch out is the
   handler split its own issue has to plan.
 
-function: src/app/api/admin/refund-requests/[id]/route.ts#PUT
-lines: 702
-reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
-  ordered against its other error answers; lifting the catch out is the
-  handler split its own issue has to plan.
-
 function: src/app/api/bookings/[id]/confirm-draft/route.ts#POST
 lines: 370
 reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
@@ -318,7 +312,7 @@ reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   handler split its own issue has to plan.
 
 function: src/app/api/payments/charge-saved-method/route.ts#POST
-lines: 620
+lines: 610
 reason: the INV-LOCK-006 contention answer sits in this handler's own catch,
   ordered against its other error answers; lifting the catch out is the
   handler split its own issue has to plan.
