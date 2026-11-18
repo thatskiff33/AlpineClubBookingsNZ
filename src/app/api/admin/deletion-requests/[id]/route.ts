@@ -982,9 +982,9 @@ export async function POST(
         tx.emailChangeToken.deleteMany({ where: { memberId: member.id } }),
         tx.twoFactorEmailCode.deleteMany({ where: { memberId: member.id } }),
         tx.twoFactorRecoveryCode.deleteMany({ where: { memberId: member.id } }),
-        tx.twoFactorSessionChallenge.deleteMany({
-          where: { memberId: member.id },
-        }),
+        tx.twoFactorSessionChallenge.deleteMany({ where: { memberId: member.id } }),
+        // ALP-653: an AI app connection signs in as the member (INV-MCP-005).
+        tx.mcpGrant.deleteMany({ where: { memberId: member.id } }),
         tx.sessionReauthChallenge.deleteMany({
           where: { memberId: member.id },
         }),

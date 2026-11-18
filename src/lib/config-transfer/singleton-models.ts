@@ -69,6 +69,11 @@ export const SINGLETON_MODELS_REGISTERED_ELSEWHERE: Record<string, string> = {
  * a real, currently singleton-shaped model (both asserted by the guard test).
  */
 export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
+  McpSettings:
+    "who may connect an AI app to THIS install's live data, how much a " +
+    "connection may do and which apps are approved (ALP-653): a security and " +
+    "privacy decision each club makes for its own deployment, like the " +
+    "non-travelling mcpServer module flag it sits behind — instance-local",
   XeroInboundSettings:
     "webhook receipt and quiet-period monitoring policy belong to this install's " +
     "Xero subscription (#4432); importing either could hide a target install's " +

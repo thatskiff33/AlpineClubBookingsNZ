@@ -58,6 +58,14 @@ sequencing):
 one club, and the hosting provider and storage locations describe that
 installation, including backups across all lodges. It has no lodge key.
 
+## AI app connections (ALP-653)
+
+`McpClient`, `McpGrant`, `McpAuthCode`, `McpToken` and the `McpSettings`
+singleton (`id = "default"`) are club-wide and have no lodge key. A connection
+is a way of signing in as a member, and a sign-in has no lodge. Each action a
+connection runs is scoped by the route it calls, exactly as for a browser
+(`INV-MCP-004`).
+
 ## Privacy retention
 
 `PrivacyRetentionSettings` is a club-wide singleton (`id = "default"`). Email

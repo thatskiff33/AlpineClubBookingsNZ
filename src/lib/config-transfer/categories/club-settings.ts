@@ -332,6 +332,15 @@ export const SINGLETONS: SingletonSpec[] = [
       // would advertise an outward data-sharing arrangement the target club has
       // not entered into. A fresh import keeps the target's own value (default
       // OFF) and its admin turns it on after being issued a key.
+      // AI app connections (ALP-653): NON-TRAVELLING. Switching it on opens a
+      // new way into this deployment's live data and sends that data to
+      // outside AI providers, so it is a per-install security and privacy
+      // decision like magicLink/googleLogin. Its settings (McpSettings) and
+      // every connection stay behind as well.
+      mcpServer:
+        "opens an authenticated machine door onto this deployment's live data " +
+        "and sends it to outside AI providers; a per-install security and " +
+        "privacy decision, not portable club config (ALP-653)",
       alpineCentralServer:
         "outward data-sharing integration gated on a deployment-local encrypted " +
         "ServerNZ API key and per-install central-server base URL (both " +

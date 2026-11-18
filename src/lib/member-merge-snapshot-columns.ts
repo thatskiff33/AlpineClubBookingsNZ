@@ -79,6 +79,9 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // @relation, kept pointing at the loser as the immutable answer to "who set
   // this", which is the person who set it, not whoever absorbed their record.
   "ClubPostSettings.updatedByMemberId",
+  // ALP-653: who last changed the AI-connection policy. The same kind of bare
+  // settings-audit scalar as the column above.
+  "McpSettings.updatedByMemberId",
   "MembershipSubscriptionChargeCoverage.memberId",
   "AuditLog.actorMemberId",
   "AuditLog.subjectMemberId",

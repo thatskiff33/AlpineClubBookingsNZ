@@ -21,6 +21,7 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
     DeletionRequest, AdminCreditAdjustmentRequest, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
+    McpGrant,
   ] = await Promise.all([
     prisma.membershipSubscriptionChargeCoverage.findMany({ where: own, select: { chargeId: true, releasedAt: true, createdAt: true } }),
     prisma.membershipBillingException.findMany({ where: own, select: { seasonYear: true, code: true, firstSeenAt: true, resolvedAt: true } }),
@@ -66,6 +67,10 @@ export async function readAdditionalSubjectRecords(memberId: string) {
       where: { signerMemberId: memberId },
       select: { signerName: true, signerRole: true, signedAt: true, declarationAccepted: true },
     }),
+    prisma.mcpGrant.findMany({
+      where: own,
+      select: { scope: true, status: true, createdAt: true, lastUsedAt: true, endedAt: true, client: { select: { name: true } } },
+    }),
   ]);
   return {
     MembershipSubscriptionChargeCoverage, MembershipBillingException, SeasonalMembershipAssignment,
@@ -74,5 +79,6 @@ export async function readAdditionalSubjectRecords(memberId: string) {
     BookingModification, NewBookingPolicyExceptionRequest, MemberLodgeAccess, FamilyGroupJoinRequest,
     DeletionRequest, AdminCreditAdjustmentRequest, CommitteeAssignment, OrganisationContact,
     SchoolMemberClassification, MemberMoneyObligation, MemberInductionAssignedSigner, MemberInductionSignOff,
+    McpGrant,
   } satisfies Record<AdditionalRecordModel, unknown>;
 }

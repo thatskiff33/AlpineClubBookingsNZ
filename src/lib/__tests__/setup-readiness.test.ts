@@ -123,6 +123,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     maintenanceReports: true,
     alpineCentralServer: false,
     commsPortal: false,
+    mcpServer: false,
     memberLodgeRoster: false,
     multiPromoCodes: false,
   },
