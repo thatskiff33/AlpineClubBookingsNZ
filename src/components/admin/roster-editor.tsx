@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback"
 import { useSectionEditState } from "@/hooks/use-section-edit-state"
+import { ApiRefusalError, apiErrorMessageFromBody } from "@/lib/api-error-message"
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy"
 
 export interface RosterGuest {
@@ -270,6 +271,8 @@ export function RosterEditor({
     isDirty: (draft, saved) => !assignmentsEqual(draft.assignments, saved.assignments),
     isValid: rosterDraftIsValid,
     successMessage: "Roster saved. All assignments are now Suggested and ready to confirm.",
+    // Anything else went wrong after the request was sent, so it may have landed.
+    saveErrorFallback: UNVERIFIED_COPY,
     save: async (draft) => {
       setRowErrors({})
       let response: Response
@@ -286,7 +289,7 @@ export function RosterEditor({
         })
       } catch {
         // #2668: the request may or may not have arrived. Only the server knows.
-        throw new Error(UNVERIFIED_COPY)
+        throw new ApiRefusalError(UNVERIFIED_COPY)
       }
 
       let body: unknown
@@ -295,7 +298,7 @@ export function RosterEditor({
       } catch {
         // #2668: the server ANSWERED — it just answered with something this
         // client could not read. Whatever it did, it has already done.
-        throw new Error(UNVERIFIED_COPY)
+        throw new ApiRefusalError(UNVERIFIED_COPY)
       }
       const errorBody = isRecord(body) ? body : {}
       const details = isRecord(errorBody.details) ? errorBody.details : {}
@@ -304,18 +307,18 @@ export function RosterEditor({
           ? PERMISSION_COPY
           : response.status >= 500
             ? NETWORK_COPY
-            : (typeof errorBody.error === "string" ? errorBody.error : REFUSED_COPY)
+            : apiErrorMessageFromBody(errorBody, REFUSED_COPY)
         if (typeof details.rowKey === "string") {
           const rowKey = details.rowKey
           setRowErrors({ [rowKey]: message })
           requestRowFocus(rowKey)
         }
-        throw new Error(message)
+        throw new ApiRefusalError(message)
       }
       // #2668: a 2xx whose body is not the roster. The server called the save a
       // success; this client simply cannot show the result. Telling the
       // operator it was "not saved" contradicts the only party that knows.
-      if (!isRosterData(body)) throw new Error(UNVERIFIED_COPY)
+      if (!isRosterData(body)) throw new ApiRefusalError(UNVERIFIED_COPY)
       const authoritative = body
       onRosterUpdate(authoritative)
       setAcknowledgeCompletedReset(false)
