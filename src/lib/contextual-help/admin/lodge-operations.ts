@@ -87,7 +87,7 @@ export const adminLodgeOperationsHelpEntries: HelpEntry[] = [
   entry(
     "/admin/roster",
     help(
-      "Roster",
+      "Chore Roster",
       "Roster manages lodge day rosters and printable operational lists.",
       [
         "Select the roster date, review expected guests, and prepare the daily view.",

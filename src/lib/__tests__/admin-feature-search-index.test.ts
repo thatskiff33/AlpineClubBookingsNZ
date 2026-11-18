@@ -350,8 +350,8 @@ describe("getAdminFeatureSearchIndex — keywords", () => {
     expect(keywordsOf(adminHref("booking-requests"))).not.toContain("Needs Attention");
     // The queue views sit only in Needs Attention.
     expect(keywordsOf(buildUnpaidFinishedStaysHref(CLUB_DAY))).toContain("Needs Attention");
-    // A page the sidebar does not link has no section to carry.
-    expect(keywordsOf(adminHref("chores"))).toEqual([]);
+    // A page the sidebar does not link has no section to carry, only its own keywords.
+    expect(keywordsOf(adminHref("chores"))).toEqual(getAdminPage("chores").keywords);
   });
 
   it("carries every sidebar section name onto the pages it lists", () => {
@@ -427,7 +427,7 @@ describe("getAdminFeatureSearchIndex — a retired page under its old name", () 
 describe("adminPageLabel — one relabel for the sidebar and the palette", () => {
   it("pluralises the club's term on Hut Leaders only", () => {
     expect(adminPageLabel(getAdminPage("hut-leaders"), { hutLeaderLabel: "Warden" })).toBe("Wardens");
-    expect(adminPageLabel(getAdminPage("roster"), { hutLeaderLabel: "Warden" })).toBe("Roster");
+    expect(adminPageLabel(getAdminPage("roster"), { hutLeaderLabel: "Warden" })).toBe("Chore Roster");
   });
 
   it("is what both surfaces show", () => {

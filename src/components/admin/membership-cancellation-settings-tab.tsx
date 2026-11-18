@@ -7,7 +7,7 @@ import { useCanOpenAdminPath } from "@/hooks/use-admin-area-edit-access";
 import { adminHref } from "@/lib/admin-hubs";
 
 /**
- * The Settings tab of Membership Cancellations (S1 #4796): the settings panel
+ * The Settings tab of Cancellation Requests (S1 #4796): the settings panel
  * as it was on its own page, `/admin/membership-cancellation`, and the Email
  * Messages link the Cancellation setup page carried, shown only to an admin
  * who can open it (`support`), as that page's card was. The panel keeps its

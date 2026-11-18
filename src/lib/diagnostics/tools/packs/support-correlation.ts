@@ -43,8 +43,8 @@
  * sites when #2581 opened — 69 `logAudit`, 11 `createAuditLog`, 2 hand-built Prisma
  * writes, none through `createStructuredAuditLog` — and `main` still measured those
  * same 82 immediately before this change, out of 426 write sites in total. #2581's
- * second child classified all 82 at the source, so the census now reads 548 write
- * sites and ZERO uncategorised: no NEW row is born invisible to these five entries.
+ * second child classified all 82 at the source, so the census now finds ZERO
+ * uncategorised write sites: no NEW row is born invisible to these five entries.
  *
  * THE GAP STOPPED GROWING WITH CHILD 2 AND CHILD 3 CLOSED THE MEASURED PART, and the
  * declarations below stay for what is left. `WHERE "category" = ANY ($1)` is NULL for

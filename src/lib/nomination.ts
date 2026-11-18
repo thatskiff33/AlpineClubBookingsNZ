@@ -19,7 +19,22 @@ import {
   sendNominationRequestEmail,
 } from "@/lib/email";
 import { createMemberInduction } from "@/lib/induction";
+import {
+  getNominatorSlot,
+  getOtherSlotMemberId,
+  getSlotConfirmedAtField,
+  getSlotEmailField,
+  getSlotIdField,
+  getSlotMemberId,
+  isSlotConfirmed,
+  type NominatorSlot,
+} from "@/lib/nomination-slots";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { isXeroInvoicingEnabled } from "@/lib/xero-invoicing-guard";
+import {
+  JOINING_FEE_INVOICING_XERO_OFF_MESSAGE,
+  SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE,
+} from "@/lib/xero-invoicing-off";
 import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
 import logger from "@/lib/logger";
 import {
@@ -139,7 +154,7 @@ export type EntranceFeeInvoiceApprovalDecision =
       reason: string;
     };
 
-export type NominatorSlot = "nominator1" | "nominator2";
+export type { NominatorSlot } from "@/lib/nomination-slots";
 
 function appendPostApprovalWarnings(
   adminNotes: string | null | undefined,
@@ -348,62 +363,6 @@ function getApplicationDisplayName(
   application: Pick<MemberApplication, "applicantFirstName" | "applicantLastName">
 ) {
   return `${application.applicantFirstName} ${application.applicantLastName}`.trim();
-}
-
-function getNominatorSlot(
-  application: Pick<MemberApplication, "nominator1Id" | "nominator2Id">,
-  nominatorMemberId: string
-): NominatorSlot | null {
-  if (application.nominator1Id === nominatorMemberId) {
-    return "nominator1";
-  }
-
-  if (application.nominator2Id === nominatorMemberId) {
-    return "nominator2";
-  }
-
-  return null;
-}
-
-function isSlotConfirmed(
-  application: Pick<MemberApplication, "nominator1ConfirmedAt" | "nominator2ConfirmedAt">,
-  slot: NominatorSlot
-) {
-  return slot === "nominator1"
-    ? Boolean(application.nominator1ConfirmedAt)
-    : Boolean(application.nominator2ConfirmedAt);
-}
-
-function getSlotMemberId(
-  application: Pick<MemberApplication, "nominator1Id" | "nominator2Id">,
-  slot: NominatorSlot
-) {
-  return slot === "nominator1"
-    ? application.nominator1Id
-    : application.nominator2Id;
-}
-
-function getOtherSlotMemberId(
-  application: Pick<MemberApplication, "nominator1Id" | "nominator2Id">,
-  slot: NominatorSlot
-) {
-  return slot === "nominator1"
-    ? application.nominator2Id
-    : application.nominator1Id;
-}
-
-function getSlotEmailField(slot: NominatorSlot) {
-  return slot === "nominator1" ? "nominator1Email" : "nominator2Email";
-}
-
-function getSlotIdField(slot: NominatorSlot) {
-  return slot === "nominator1" ? "nominator1Id" : "nominator2Id";
-}
-
-function getSlotConfirmedAtField(slot: NominatorSlot) {
-  return slot === "nominator1"
-    ? "nominator1ConfirmedAt"
-    : "nominator2ConfirmedAt";
 }
 
 async function sendNominationRequestForApplication({
@@ -1334,11 +1293,23 @@ export async function approveMemberApplication(
   // inside it (#1886, F22). A mapped applicant defaults to SKIP (never
   // double-charged) unless the admin explicitly supplied a decision; the SKIP is
   // resolved here so the in-tx enqueue is simply never made.
-  const entranceFeeDecision: EntranceFeeInvoiceApprovalDecision =
+  //
+  // #4986 (`INV-INT-040`): with Xero off the joining-fee row would wait in the
+  // outbox and be invoiced unchecked the day Xero is switched back on, so the
+  // module is read here, outside the transaction, and a CREATE becomes a
+  // recorded SKIP with the plain warning below. The approval itself proceeds.
+  const requestedEntranceFeeDecision: EntranceFeeInvoiceApprovalDecision =
     entranceFeeInvoiceDecision ??
     (applicantMapped
       ? { action: "SKIP", reason: "Mapped to existing member" }
       : { action: "CREATE" });
+  const entranceFeeSkippedForXeroOff =
+    requestedEntranceFeeDecision.action === "CREATE" &&
+    !(await isXeroInvoicingEnabled());
+  const entranceFeeDecision: EntranceFeeInvoiceApprovalDecision =
+    entranceFeeSkippedForXeroOff
+      ? { action: "SKIP", reason: JOINING_FEE_INVOICING_XERO_OFF_MESSAGE }
+      : requestedEntranceFeeDecision;
 
   const approved = await prisma.$transaction(async (tx) => {
     await lockMembershipApplication(tx, applicationId);
@@ -2156,7 +2127,9 @@ export async function approveMemberApplication(
       memberIds: billingMemberIds,
       approvedByMemberId: adminMemberId,
     });
-    if (subscriptionBilling.exceptionCount > 0) {
+    if (subscriptionBilling.xeroInvoicingOff) {
+      warnings.push(SUBSCRIPTION_INVOICING_XERO_OFF_MESSAGE);
+    } else if (subscriptionBilling.exceptionCount > 0) {
       warnings.push(
         `${subscriptionBilling.exceptionCount} membership subscription billing exception${subscriptionBilling.exceptionCount === 1 ? " requires" : "s require"} Finance review`,
       );
@@ -2188,6 +2161,9 @@ export async function approveMemberApplication(
       });
     }
   } else {
+    if (entranceFeeSkippedForXeroOff) {
+      warnings.push(JOINING_FEE_INVOICING_XERO_OFF_MESSAGE);
+    }
     await logAudit({
       action: "XERO_ENTRANCE_FEE_INVOICE_SKIPPED",
       memberId: adminMemberId,

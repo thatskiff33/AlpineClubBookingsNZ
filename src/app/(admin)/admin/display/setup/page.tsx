@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import { BackLink } from "@/components/admin/back-link";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { DisplaySetupWizard } from "./display-setup-wizard";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 export const metadata: Metadata = {
-  title: "Lodge Display setup",
+  title: getAdminPage("display-setup").label,
 };
 
 // Guided Lodge Display setup wizard (#2249). Registered under the `lodge`
@@ -33,7 +34,7 @@ export default async function DisplaySetupPage() {
           a background request that 404s in the very state step 1 exists to fix
           (#2249). The link itself still works; it just is not warmed. */}
       <BackLink href="/admin/display" label="Lobby Display" prefetch={false} />
-      <h1 className="mt-2 mb-2 text-2xl font-bold">Lodge Display setup</h1>
+      <h1 className="mt-2 mb-2 text-2xl font-bold">{getAdminPage("display-setup").label}</h1>
       <p className="mb-6 text-muted-foreground">
         Six steps from nothing to a TV in the lodge showing the right board:
         turn the module on, make sure the built-in boards exist, pick one, fill

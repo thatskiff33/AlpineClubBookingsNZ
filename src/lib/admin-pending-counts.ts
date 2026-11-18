@@ -1,6 +1,9 @@
 import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
 import { prisma } from "@/lib/prisma";
-import { buildBookingRequestListWhere } from "@/lib/booking-request";
+import {
+  getBookingRequestPendingCounts,
+  type BookingRequestPendingCounts,
+} from "@/lib/admin-booking-request-pending-counts";
 import { getPendingMembershipCancellationReviewCount } from "@/lib/membership-cancellation-admin";
 import {
   getPendingMemberArchiveReviewCount,
@@ -16,7 +19,12 @@ import {
 } from "@/lib/unpaid-finished-stays";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
-export type AdminPendingCounts = {
+/**
+ * The four booking-request queues (`bookingReviews`, `lockedPeriodChangeRequests`,
+ * `policyExceptionRequests`, `publicBookingRequests`) come from
+ * `getBookingRequestPendingCounts`, the definition the dashboard shares (#4969).
+ */
+export type AdminPendingCounts = BookingRequestPendingCounts & {
   xeroSilentWebhook?: number;
   familyRequests: number;
   memberApplications: number;
@@ -24,17 +32,6 @@ export type AdminPendingCounts = {
   /** B5 (#2262): open hand-back tasks for cancelled cash-settled bookings. */
   manualRefundTasks: number;
   creditApprovals: number;
-  bookingReviews: number;
-  bookingChangeRequests: number;
-  /**
-   * #2526: NEW-booking policy-exception requests awaiting a Booking Officer.
-   * Counted separately because they live in their own table — a MODIFICATION
-   * exception request is a `BookingChangeRequest` and is already inside
-   * `bookingChangeRequests` above. The sidebar sums the two, so a member waiting
-   * on either kind raises the same badge.
-   */
-  newBookingPolicyExceptionRequests: number;
-  publicBookingRequests: number;
   unpaidFinishedStays: number;
   unsettledAdditionalFinishedStays: number;
   /**
@@ -62,10 +59,9 @@ export type AdminPendingCounts = {
  * ponytail: each count mirrors the where-clause of its queue route/service
  * (family-groups/requests, member-applications, refund-requests,
  * manual refund tasks (#2262, the cash hand-back queue),
- * credit-approvals, booking-reviews, booking-change-requests,
- * new-booking policy-exception requests (#2526),
- * booking-requests, unpaid-finished-stays and unsettled stay
- * additions, both finished and still-upcoming (shared helpers with the
+ * credit-approvals, the four booking-request queues (defined once in
+ * `admin-booking-request-pending-counts.ts`, #4969), unpaid-finished-stays
+ * and unsettled stay additions, both finished and still-upcoming (shared helpers with the
  * dashboard cards, #1709/#1731/#1723/#2350),
  * membership-cancellation-requests,
  * member-lifecycle-action-requests (ARCHIVE and DELETE review queues),
@@ -85,10 +81,7 @@ export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
     refundAppeals,
     manualRefundTasks,
     creditApprovals,
-    bookingReviews,
-    bookingChangeRequests,
-    newBookingPolicyExceptionRequests,
-    publicBookingRequests,
+    bookingRequestCounts,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
     unsettledAdditionalUpcomingStays,
@@ -106,16 +99,7 @@ export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
     prisma.refundRequest.count({ where: { status: "PENDING" } }),
     prisma.manualRefundTask.count({ where: { status: "OPEN" } }),
     prisma.adminCreditAdjustmentRequest.count({ where: { status: "PENDING" } }),
-    prisma.booking.count({
-      where: { deletedAt: null, adminReviewStatus: "PENDING" },
-    }),
-    prisma.bookingChangeRequest.count({ where: { status: "REQUESTED" } }),
-    prisma.newBookingPolicyExceptionRequest.count({
-      where: { status: "REQUESTED" },
-    }),
-    prisma.bookingRequest.count({
-      where: buildBookingRequestListWhere("QUEUE"),
-    }),
+    getBookingRequestPendingCounts(),
     prisma.booking.count({
       where: buildUnpaidFinishedStaysWhere(today),
     }),
@@ -143,10 +127,7 @@ export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
     refundAppeals,
     manualRefundTasks,
     creditApprovals,
-    bookingReviews,
-    bookingChangeRequests,
-    newBookingPolicyExceptionRequests,
-    publicBookingRequests,
+    ...bookingRequestCounts,
     unpaidFinishedStays,
     unsettledAdditionalFinishedStays,
     unsettledAdditionalUpcomingStays,

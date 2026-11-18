@@ -1,1 +1,0 @@
-- Fix the backup restore drill for dumps containing deployment ownership and privilege statements, reusing the restore validator's streaming filter and skipping archive ACLs without modifying the supplied backup (#4483).

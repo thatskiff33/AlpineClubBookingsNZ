@@ -59,7 +59,10 @@ page — see [Family billing](#family-billing) below.
    outstanding partner invitations) rather than next to the button, so the page
    scrolls down to it for you.
 2. Use the edit icon on a group row to open the full editor, or the trash icon to
-   **Delete** it (members are unlinked, not deleted). The editor opens in that
+   **Delete** it (members are unlinked, not deleted; the confirmation names the
+   group and also says that billing-family choices for it are cleared, that its
+   requests, partner invitations and "already invoiced" season markers are
+   deleted with it, and that this cannot be undone). The editor opens in that
    same place — above the group list — so the page scrolls to it, and the row
    you are editing is highlighted and badged **Editing** until you close or
    save. When you opened the editor from this page, closing or saving puts the
@@ -157,7 +160,7 @@ Whether families are billed together is not set here — it is the club-level
 | Members | The members in the group | At least one required; primary active members. Each shows its calculated age (#2568) |
 | Approve / Reject (request queue) | Action a pending family-link request | Child/group-create approvals offer a member-email choice |
 | Revoke (partner invite) | Disable an unclaimed partner invitation link | Fails gracefully if just claimed |
-| Delete (group) | Remove the group and unlink its members | Members are not deleted |
+| Delete (group) | Remove the group, unlink its members and delete its requests, partner invitations and invoiced markers | Members are not deleted; cannot be undone |
 
 ## Troubleshooting
 
@@ -173,6 +176,7 @@ Whether families are billed together is not set here — it is the club-level
 | "This parent has no email address the club can send to, so there is nothing for the dependant to inherit" | Since #2716 inheritance is **direct-parent only**, so this is about that one parent — not about anybody further up the family. They are a young parent, hold a placeholder address, have left the club, or are themselves inheriting | Record an email address for **that parent**, or choose **Use child's own email** to approve without inheriting. Looking further up the family will not help: the address no longer travels past them |
 | "A member with this email already exists" when saving a login holder | Someone else already signs in with that address, and only one member per address can. Usually that is a member outside this family group — but it can also be a second member *inside* it who has **Can Login** on while storing a different address of their own | Search the address on Members and change or de-login one of them, or merge the duplicate. If nobody outside the family turns up, check this family's own members for a second one with **Can Login** ticked |
 | A revoke fails | The invitation was just claimed or already revoked | Refresh; it may have been accepted |
+| A group delete fails (the reason shows above the group list) | The group was already deleted, your role cannot edit membership, or the server errored | Refresh the list; if the group is still there, read the message and retry or ask a full admin |
 | A family isn't being invoiced | It has no active billing member (in billing-member mode) | Set its billing member on the member's detail Family card or the [Fees](fees.md) family-billing panel |
 
 ## Related links

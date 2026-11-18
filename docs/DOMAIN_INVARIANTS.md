@@ -20,7 +20,7 @@ description, so you can find the right file without opening more than one.
 
 | File under `docs/invariants/` | Prefixes | Read it when you are changing… |
 | --- | --- | --- |
-| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies |
+| [`public-content.md`](invariants/public-content.md) | `INV-PUB` | public fee/policy page content, named lodge tokens, gallery image copies, a member page's tab title and headings |
 | [`money.md`](invariants/money.md) | `INV-MONEY` | anything holding cents: fee authorities, whole-lodge pricing, promo caps, subscription charges, or the Xero invoice identity behind them |
 | [`booking-dates-and-capacity.md`](invariants/booking-dates-and-capacity.md) | `INV-DATE`, `INV-CAP`, plus `INV-LIFE-062` | what day it is, who is present, how many beds, which bed, custodian bed holds |
 | [`payment-and-settlement.md`](invariants/payment-and-settlement.md) | `INV-PAY` | taking, clearing, crediting or refunding money |
@@ -68,7 +68,8 @@ operative ones:
 
 ## Public authoritative content
 
-What the public site is allowed to publish.
+What the public site is allowed to publish, the image copies a gallery serves, and a
+member page's outline and title.
 File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 `INV-PUB`.
 
@@ -79,6 +80,7 @@ File: [`invariants/public-content.md`](invariants/public-content.md). Prefix
 | `INV-PUB-003` | A named lodge token resolves one active lodge or nothing |
 | `INV-PUB-004` | `{{data-hosting}}` publishes only the two typed hosting values, escaped, or fallback |
 | `INV-PUB-005` | Galleries serve current, smaller copies made at upload; originals kept |
+| `INV-PUB-006` | Member pages: own tab title, one h1; CardTitles declare a level |
 
 ## Money
 
@@ -365,12 +367,13 @@ Prefix `INV-PAY`.
 | `INV-PAY-147` | Refund slice evidence prevents replay after Stripe forgets idempotency keys |
 | `INV-PAY-148` | Organiser bank-transfer edit invoices, unpaid-first netting and historical repair |
 | `INV-PAY-149` | A dead card refund closes with nothing owed or retries its card |
-| `INV-PAY-150` | Refund doors leave a live superseded capture to its own refund |
+| `INV-PAY-150` | Cancels, reviews, hand closes leave superseded captures to their refund |
 | `INV-PAY-151` | Paid another way reverses a covered failed card refund |
 | `INV-PAY-152` | Cancellation credit events commit with the credit they describe |
 | `INV-PAY-153` | Stuck States settles dead group organiser card refunds |
 | `INV-PAY-154` | A disputed capture is never refunded or credited |
 | `INV-PAY-155` | The inbound recount takes each failed-later card refund off once |
+| `INV-PAY-156` | Stuck States signals name their records with the count's filter |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
@@ -960,6 +963,8 @@ File: [`invariants/integrations.md`](invariants/integrations.md). Prefix
 | `INV-INT-036` | An account-credit note stamps the one member credit it was raised for |
 | `INV-INT-037` | A manual grant queues one Xero note at approval |
 | `INV-INT-038` | An abandoned inbound reconcile row is taken over, never shared |
+| `INV-INT-039` | A dead webhook attempt is taken over past the lease |
+| `INV-INT-040` | No subscription or joining-fee invoice work while Xero is off |
 
 ## Operations
 
@@ -998,6 +1003,8 @@ the row-locking rules it is the sibling of.
 | `INV-OPS-017` | Third-party deployment and workflow container images require digest pins |
 | `INV-OPS-018` | First Bootstrap provisions restricted roles and a separate data key |
 | `INV-OPS-019` | Production deploys only a published annotated release tag, or a recorded override |
+| `INV-OPS-021` | Every main push run completes; releases tag only published commits |
+| `INV-OPS-022` | The documented Docker first install, seed included, is what CI runs |
 
 ## Product Configuration
 
@@ -1041,6 +1048,7 @@ ten pre-split domain headings the index keeps verbatim.
 | `INV-SSOT-007` | A failed admin list load shows `AdminLoadError`, never the empty state |
 | `INV-SSOT-008` | No static import cycles, Xero facade imports or component-to-route imports |
 | `INV-SSOT-009` | A charge's dedup key and display name share one builder only |
+| `INV-SSOT-010` | An admin page's heading is its registry label; a census holds it |
 
 ## Authentication
 
