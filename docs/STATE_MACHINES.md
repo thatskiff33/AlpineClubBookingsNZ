@@ -2520,7 +2520,10 @@ status. To verify: `stripe-dispute.test.ts`, `stripe-dispute-edit.realdb.test.ts
 OPEN -> COMPLETED   (finance:edit; writes the local refund allocation and a
                      REFUNDED BookingEvent — the ONLY moment the ledger says
                      the money went back)
-OPEN -> DISMISSED   (finance:edit; requires a note; moves no money)
+OPEN -> DISMISSED   (finance:edit; requires a note; moves no money. #4516:
+                     refused (409), task OPEN, for a real bank or cash
+                     hand-back the journal holds as a debt; a card
+                     shortfall's part to check still dismisses; see below)
 OPEN -> DISMISSED   (#2700: the Stripe webhook, with NO acting member at all —
                      `completedByMemberId` stays null and no operator note is
                      required. Fires only on a task raised by the deleted-booking
@@ -2676,9 +2679,9 @@ amount no card refund carries, inside the approval's transaction under
 `lock(1)`, keyed one per `RefundRequest`, and nets it as above. Its completion
 queues that request's own Xero refund credit note for the amount paid back
 (owner decision D-3813-8; the approval queues none for this part), and its
-`REFUNDED` event is marked the same way. It may be DISMISSED with a note even
-though the booking is cancelled, because the cancel came first and never
-counted it. See
+`REFUNDED` event is marked the same way. The cancel came first and never
+counted it, so the booking's status never stopped it being DISMISSED; since
+#4516 it is not dismissed at all for now (below). See
 [`INV-PAY-118`](invariants/payment-and-settlement.md#inv-pay-118).
 
 **#3949 (owner decisions, 15 and 21 Oct 2026): on a joiner the organiser paid
@@ -2742,8 +2745,11 @@ card refund recovery is not SUCCEEDED and, for the part to check, while its
 bank-transfer sibling is OPEN; it settles on the non-card charges first,
 posts its `BANK_REFUND` line on the card payment, which no refund row will
 post, and queues one Xero refund note of its own, keyed on the task. Where the
-payment's ledger has nothing left to allocate, COMPLETED is refused with a
-message naming DISMISSED, which the treasurer then uses. See
+payment's ledger has nothing left to allocate, COMPLETED is refused. For the
+part to check the message names DISMISSED, once the officer has confirmed the
+card refund reached the member; for the bank-transfer part it says to leave it
+open and take money still owed to the treasurer, because its DISMISSED is
+refused (#4516, below). See
 [`INV-PAY-129`](invariants/payment-and-settlement.md#inv-pay-129).
 A capacity race whose card refund plan is short of the charge raises the
 part to check alone, OPEN inside the void's claim and keyed on the race's
@@ -2751,9 +2757,59 @@ intent (#4154); its COMPLETED is refused while any of the race's own card
 refund rows is not SUCCEEDED, and settles only on that intent's own charge.
 Where that charge holds too little, the completion first lowers its refunded
 total to its refund rows when every guard holds (the owner's guarded
-recalculation), else is refused naming the guard (DISMISSED and a Xero note by
-hand). See
+recalculation), else is refused naming the guard (DISMISSED once the card
+refund is confirmed, or the treasurer for money still owed). See
 [`INV-PAY-135`](invariants/payment-and-settlement.md#inv-pay-135).
+
+**#4516 (owner decisions, 14 and 15 Nov 2026): for now a real bank or cash
+hand-back is never dismissed.** A task the member-money journal records as a
+hand-back debt, other than a card shortfall's part to check
+(`refusesJournalHandBackDismissal`: a cash cancellation's, a card shortfall's
+bank part, an edit's, an approved appeal's, an organisation's late cash),
+refuses OPEN -> DISMISSED with a 409 (bar a disputed card payment's, below),
+under `lock(1)` and the booking row, before any claim: the task stays OPEN, its
+refund debt (R05) stays open, and nothing is written. It closes only by
+COMPLETED. Wherever this section says such a task is dismissed, that is a row
+dismissed before this change (or by the old colour during a deploy); reopen
+still puts those back OPEN. A four-way dismissal that records why replaces the
+refusal in a later change. Every other kind keeps its dismissal.
+
+**A card shortfall's part to check keeps its dismissal** (a capacity race's
+too), for an officer who has confirmed the card refund reached the member. **So
+does a disputed card payment's hand-back, a cancellation's (#5061) or a
+dispute-held edit's (#5151), once the LOST disputes on its own payment cover its
+amount** (owner decisions, 15 and 18 Nov 2026; lost cents go once across the
+payment's hand-backs, oldest open task first, `INV-PAY-157`; a
+group settlement's dispute filed on the organiser's booking never counts): the cardholder already
+has that money back through their bank. While a dispute is open, if the lost
+cents cover less, or if it was won or closed with no funds taken, OPEN ->
+DISMISSED is refused with a 409 saying which, writing nothing. Either dismissal
+takes `lock(1)`, the booking row and the Payment row before its claim (a
+disputed hand-back re-reads its disputes only then), and after a won claim
+withdraws its R05 exactly, so raising and
+dismissing it leaves the journal as it was. The queue asks the same rule
+(`journalHandBackDismissal`) with the same dispute read.
+
+**OPEN -> OPEN, reduced by a dispute lost for part of it** (owner decision,
+15 Nov 2026, #4516). A disputed card payment's hand-back whose lost disputes,
+on its own payment, cover a positive amount less than what is still owed can
+be reduced by exactly the lost cents not yet applied (applied = raised less
+still owed). Same locks and re-read as the dismissal, then a status- and
+amount-guarded claim that writes the smaller `amountCents` (`raisedAmountCents`
+keeps the original); the journal then withdraws exactly that part of the R05,
+paying it, and an audit row records was, reduced by, still owed and the lost
+disputes counted. The confirmed amount and reduction must still be the
+server's, so a second click, a replay or a dispute recorded since writes
+nothing. Every reader of the task's amount (Refunds owed, the netting, Mark
+paid, its Xero note) reads the reduced figure. Once the lost disputes cover
+the rest, OPEN -> DISMISSED withdraws the debt's open rest. OPEN -> COMPLETED
+is refused while lost cents are unapplied (reduce first, or, beside a dispute
+still open on the same payment, wait for it) or cover it all (dismiss
+instead), read under `lock(1)` and the booking row, so the lost part
+is never paid twice. A legacy row with no `raisedAmountCents` records its
+original with the first reduction. A Stripe late win after a reduction leaves
+it reduced: a stated limit, with #5197. Reopened, it has no live R05, and Mark paid then
+posts its R14 unapplied, as for a task raised before M4d.
 
 **#3498: and one of the two terminal states is no longer terminal.** A DISMISSED
 row can be put back OPEN by an officer, which is the arm above; a COMPLETED row

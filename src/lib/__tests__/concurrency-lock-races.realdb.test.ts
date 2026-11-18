@@ -259,6 +259,17 @@ import "./ib-capacity-cancel-credit-restore.realdb.test";
 // `race-3979-` fixtures, and its email and Xero doubles pass through for every
 // other suite.
 import "./ib-settle-from-cash.realdb.test";
+// #4449 reuses it to prove a cancel queued behind a KEPT bank-transfer settle
+// reads the net the cash supports: the REAL settle decides the whole refunded
+// total in its own transaction, and the REAL credit-note allocation write takes
+// the Payment row first and decides it under that lock, in either commit order.
+// Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own
+// `race-4449-` fixtures.
+import "./kept-settle-queued-cancel.realdb.test";
+// #4449 review: a kept settle takes a card refund Stripe failed later off the total it decides (#4370).
+import "./kept-settle-failed-card-refund.realdb.test";
+// #4449 verify: one bank-transfer floor alert per payment per inbound credit-note sync.
+import "./allocation-floor-alert-once.realdb.test";
 // #4047: read-only invoice discovery and post-provider audience/lifecycle fences.
 import "./booking-outstanding-observation.realdb.test";
 // #3864 reuses it to prove an edit's stored credit election is never spent on top
