@@ -689,7 +689,9 @@ export function buildPolicyExceptionApprovalHooks(
           "Could not read the approved booking's cash cover; the approval email will say so neutrally",
         );
       }
-      const booking = read ? read.booking : await prisma.booking.findUnique({ where: { id: bookingId }, select: approvedBookingEmailSelect });
+      const booking = read
+        ? read.booking
+        : await prisma.booking.findUnique({ where: { id: bookingId }, select: approvedBookingEmailSelect });
       // #3369: ONE home for "is there an address to send to?".
       // `bookingOwnerEmail()` turns the organisation projection's honest `""`
       // into an explicit null, and carries the named-but-unreadable-member case

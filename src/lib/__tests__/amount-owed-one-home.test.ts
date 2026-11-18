@@ -26,11 +26,10 @@ import { bookingAmountOwedCents, bookingWorthCents, savedCardChargeCents } from 
  *    cover the booking?" asked without the fee (#3955 round 5, finding 1:
  *    `appliedCreditCents + reviewGiveBacksCents < previousFinalPriceCents`);
  *  - over every non-test file under `src/`: an `amountDueCents` property set
- *    from a bare final price. It is the field the member-facing emails that
- *    quote what is owed take (the exception-approved email, the pay-link
- *    emails), so a bare price there tells a member to pay less than the page
- *    asks (#4058). `readBookingAmountOwed` is the one reader. (`priceCents`
- *    on those emails is the booking's PRICE and stays one.)
+ *    from a bare final price. It is the field the pay-link emails take, so a
+ *    bare price there tells a member to pay less than the page asks (#4058).
+ *    `readBookingAmountOwed` is the one reader. (`priceCents` on those emails
+ *    is the booking's PRICE and stays one.)
  *  - over every file that calls one of those senders: each `amountDueCents`
  *    property, shorthand included, reads `readBookingAmountOwed` or is pinned
  *    by its text with the reason it cannot owe more than the price.
@@ -40,6 +39,14 @@ import { bookingAmountOwedCents, bookingWorthCents, savedCardChargeCents } from 
  * with its ledger credit, #3991), and none may hand it a bare price as
  * `dueCents`; the booking page's figures themselves are pinned by
  * `booking-detail-history-amount-owed.test.ts`.
+ *
+ * #4069 (`INV-PAY-157`): the exception-approved email left this census. It no
+ * longer quotes an unpaid figure from the booking's status; it reads whether
+ * the booking's CASH covers it through `readBookingCashCover`
+ * (`booking-cash-evidence.ts`), which builds its owed side on the same
+ * `bookingAmountOwedCents`. The last block here pins that reader's boundaries:
+ * it never reads the ledger balance (`INV-MONEY-037`) or
+ * `readBookingAmountOwed`, whose contract is unchanged.
  *
  * WHAT THIS CANNOT SEE: an amount spelled another way (a sum in a different
  * order, a helper of its own, a variable that holds the bare price); and a
@@ -73,9 +80,6 @@ const PAY_STEPS = [
   // #4058: it reads `readBookingAmountOwed`, the one reader the pay-link emails
   // share, so the page and the email agree.
   "src/lib/payment-link-context.ts",
-  // #4058: not a pay step, but the email that tells a member what to pay once an
-  // exception is approved - it must quote what the pay step will ask for.
-  "src/lib/booking-exception-approval.ts",
   // #3991: the booking page's history narrative, which quotes the amount due,
   // and the one read every surface here shares.
   "src/app/(authenticated)/bookings/[id]/_lib/booking-detail-history.ts",
@@ -90,7 +94,6 @@ const ONE_READ_USERS = [
   "src/lib/payment-link-intent.ts",
   "src/app/api/payments/create-payment-intent/route.ts",
   // #4058: the emails that quote what is owed, read through the same helper.
-  "src/lib/booking-exception-approval.ts",
   "src/lib/cron-confirm-pending.ts",
   "src/lib/payment-link-reissue.ts",
   "src/lib/payment-link-split-guest.ts",
@@ -110,6 +113,11 @@ const KNOWN_COMPOSERS = [
   "src/lib/edit-financial-review-account-credit.ts",
   "src/lib/policies/booking-route-decisions.ts",
 ];
+// #4069 (`INV-PAY-157`): the cash-cover reader. It composes the owed side from
+// `bookingAmountOwedCents` inside its own snapshot, by design, and is not one of
+// the composers `booking-amount-owed.ts` still has to absorb.
+const CASH_COVER_HOME = "src/lib/booking-cash-evidence.ts";
+const CASH_COVER_EMAIL = "src/lib/booking-exception-approval.ts";
 // Reading the one home: the two helpers, the one read built on them (#3991),
 // or the saved-card figure built on worth (#4357).
 const READS_ONE_HOME = /\b(?:booking(?:AmountOwed|Worth)Cents|readBookingAmountOwed|savedCardChargeCents)\(/;
@@ -139,11 +147,10 @@ const BARE_PRICE_DUE = /\b(?:owed|due)Cents:\s*[\w.?!]*[Ff]inalPriceCents\b(?!\s
 
 // An email's amount-due field set from a bare final price (#4058).
 const BARE_PRICE_QUOTED = /\bamountDueCents:\s*[^,;}]*[Ff]inalPriceCents\b/g;
-// A pay-link or exception-approved email send, and the `amountDueCents` property
-// inside it, shorthand (`amountDueCents,`) included - a type position
+// A pay-link email send, and the `amountDueCents` property inside it, shorthand (`amountDueCents,`) included - a type position
 // (`amountDueCents: number`) and a read (`params.amountDueCents`) are not one.
 const QUOTING_SENDER =
-  /\bsend(?:BookingRequestApproved|SplitGuestPaymentLink|BookingPolicyExceptionApproved)Email\(/;
+  /\bsend(?:BookingRequestApproved|SplitGuestPaymentLink)Email\(/;
 const DUE_PROPERTY = /(?<![.\w])amountDueCents\b(?!\s*\??:\s*number\b)(?:\s*:\s*([^,;}]*))?/g;
 
 /**
@@ -245,7 +252,9 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
   it("every other composer of the owed figure is a known one (#3991)", () => {
     const composers = sourceFiles(path.join(REPO, "src"))
       .filter((file) => /\bbookingAmountOwedCents\(/.test(read(file)))
-      .filter((file) => file !== ONE_HOME_READ && file !== "src/lib/booking-payment-state.ts");
+      .filter(
+        (file) => file !== ONE_HOME_READ && file !== "src/lib/booking-payment-state.ts" && file !== CASH_COVER_HOME,
+      );
     expect(composers.sort(), "INV-PAY-119: read it through readBookingAmountOwed, or list it in booking-amount-owed.ts").toEqual(
       [...KNOWN_COMPOSERS].sort(),
     );
@@ -404,9 +413,8 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
     const callers = sourceFiles(path.join(REPO, "src")).filter(
       (file) => !file.startsWith("src/lib/email/") && QUOTING_SENDER.test(read(file)),
     );
-    // The five senders of a pay link plus the exception-approved email.
+    // The five senders of a pay link.
     expect(callers.sort()).toEqual([
-      "src/lib/booking-exception-approval.ts",
       "src/lib/booking-request.ts",
       "src/lib/cron-confirm-pending.ts",
       "src/lib/group-booking.ts",
@@ -487,5 +495,46 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
       expect(matchesIn(expression), expression).toHaveLength(1);
     }
     expect(matchesIn("newFinalPriceCents - booking.finalPriceCents")).toEqual([]);
+  });
+});
+
+// #4069 (`INV-PAY-157`): "is this booking covered?" has one home too, and it
+// stays apart from the two readers it must not become.
+describe("the cash-cover reader keeps its boundaries (#4069)", () => {
+  const importsOf = (file: string) =>
+    [...read(file).matchAll(/\bfrom\s*"([^"]+)"|\bimport\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1] ?? match[2]);
+
+  it("never reads the ledger balance or the pay step's owed reader", () => {
+    const imports = importsOf(CASH_COVER_HOME);
+    expect(imports.length, "the census read the reader's imports").toBeGreaterThan(5);
+    // `INV-MONEY-037`: the ledger balance is no decision input before the
+    // owner's whole-history proof. `INV-PAY-119`: the owed reader sizes a pay
+    // step and is unchanged.
+    expect(imports).not.toContain("@/lib/booking-ledger-balance");
+    expect(imports).not.toContain("@/lib/booking-amount-owed");
+    expect(read(CASH_COVER_HOME)).not.toMatch(/\b(?:bookingLedgerBalance|readBookingAmountOwed)\b/);
+  });
+
+  it("builds its owed side on the one home, with the ledger's applied credit read once", () => {
+    const text = read(CASH_COVER_HOME);
+    expect(text.match(/\bbookingAmountOwedCents\(/g)).toHaveLength(1);
+    expect(text.match(/\bderiveBookingAppliedCreditCents\(/g)).toHaveLength(1);
+    // Held cash is Net Collected's cash half, not a second derivation of it.
+    expect(text).toMatch(/\bgetNetCollectedCashParts\(/);
+  });
+
+  it("writes nothing, and reads only through the client it is handed", () => {
+    const text = read(CASH_COVER_HOME);
+    expect(text, "no default client").not.toMatch(/from\s*"@\/lib\/prisma"/);
+    expect(text).not.toMatch(/\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw|\$queryRaw/);
+  });
+
+  it("is what the exception-approved email reads, with no status shortcut beside it", () => {
+    const text = read(CASH_COVER_EMAIL);
+    expect(text).toMatch(/\breadBookingCashCover\(tx,/);
+    expect(text).toMatch(/\bwithReadOnlySnapshot\(/);
+    expect(text, "the email takes a cash cover, never an amount it composed").not.toMatch(
+      /\b(?:amountDueCents|readBookingAmountOwed|bookingAmountOwedCents|deriveBookingAppliedCreditCents)\b/,
+    );
   });
 });
