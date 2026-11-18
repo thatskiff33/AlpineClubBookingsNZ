@@ -6855,16 +6855,17 @@ writers (`INV-LOCK-001`–`003`). Each mutation and its tiers:
   against a merge, which holds booking rows from its owner move on (#4823 made
   merge never wait for a Payment row). No other cycle is known: a journal line names its debtor by id,
   with no foreign key, so the R06 takes no lock on the Member row. A
-  treasurer-approved late capture takes the
-  Payment row before it reads what the capture still holds and plans its
-  refund (#4824), so before its task's claim (review F2), and reads the owner
-  without the booking row (its `lock(1)` arrives in M4d). Read first, a
+  treasurer-approved late capture takes
+  `lock(1)` and the booking row in `resolveManualRefundTask` before the Payment
+  row `prepareLateCaptureDecision` takes (#4824, #4516 M4d), and reads the owner
+  under that row. Read first, a
   `charge.refunded` sync, a "Paid another way" close, or an automatic refund or its recovery replay
   committing before the claim was planned again; proven against real
   PostgreSQL by `late-capture-approval-refund-race.realdb.test.ts`.
-- **A kept late capture** (the approval task dismissed) takes the same Payment
-  row before its claim and reverses an unpaid, unreserved capture-return R05 an
-  automatic refund posted (review M5).
+- **A kept late capture** (the approval task dismissed) takes the same
+  `lock(1)`, booking row and Payment row before its claim, reverses an unpaid,
+  unreserved capture-return R05 an automatic refund posted (review M5), then
+  posts the keep.
 - **A #2700 hand-back** of a late capture (no approval intent) takes the same
   Payment row before it reads what its capture still holds, then claims
   (#4838). Nothing between takes a lodge, member-credit or task-row lock: the
@@ -7596,9 +7597,35 @@ of a dismissed appeal task (`reopenManualRefundTask#1`, for that task only).
 takes (`INV-LOCK-002`; the paid cancel, "Paid another way", the organiser
 child refund recorder), and no holder of the Payment row takes `lock(1)` after
 it, so it closes no cycle. Under both, nothing that writes those figures can
-commit between the reads: this writer, every other refunded-total writer and a
-cancellation hand-back's completion hold the row; every other hand-back writer
-and the late-cash mint hold `lock(1)`. Re-taking the row later in the same
+commit between the reads: this writer and every other refunded-total writer
+hold the Payment row. A cancellation hand-back's completion holds `lock(1)`,
+then the booking row, then the Payment row (#4516 M4d), so its cash posts
+against the owner. A card shortfall part to check's dismissal, and a disputed
+card payment's hand-back's, take the same three before the claim, then withdraw
+the R05 (owner decisions, 15 Nov 2026); a lost claim withdraws nothing. The
+disputed one re-reads its booking's disputes after the Payment row and answers
+them as recorded at that read: the dispute writer takes none of these locks and
+serialises only on its own `StripeDispute` row, so no cycle exists. An open,
+won or short read refuses, writing nothing. A dispute never reopens to open;
+Stripe's rare "late win" (lost to won) can still land after the read, and is a
+stated limit in the payments guide. The reduce action
+(`reduceDisputedHandBack`) takes the same `lock(1)`, booking row, Payment row
+and dispute re-read through the same decision, then claims with an `updateMany`
+guarded on `status: OPEN` and the amount it read, before the journal's part
+withdrawal (under the Payment row it holds) and the audit row; a lost claim
+writes nothing. A dispute-held edit's hand-back (#5151) is dismissed and
+reduced through the same decision and the same three locks (owner decision,
+18 Nov 2026), which also re-reads every task on the payment: lost cents go once
+across the payment's hand-backs, oldest open task first (`INV-PAY-157`). Every
+door that applies them holds `lock(1)`, so two officers on two tasks of one
+payment run one after the other and the second reads what the first applied;
+an older task's dismissal or reduction never changes a younger one's share. Mark
+paid reads the same rule under `lock(1)` and the booking row, before its own
+Payment row. No new advisory key or row-lock statement. Every other hand-back writer and the late-cash mint hold
+`lock(1)`. An organisation's late-cash hand-back (`invoice-paid-effects.ts`)
+posts its R05 after the delivery's Payment row, so it reads the owner plainly
+rather than taking the booking row: no Payment -> booking edge, and no member
+merge moves an organisation's booking (#4516 review C). Re-taking the row later in the same
 transaction (the approval's allocation) waits on nothing. The member's request,
 the review screen and the booking page read the same figure unlocked, as advice. The provider calls - the
 webhook's own Stripe payload, and the cron's read-back

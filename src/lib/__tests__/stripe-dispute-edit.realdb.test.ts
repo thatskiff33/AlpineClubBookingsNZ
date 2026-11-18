@@ -86,6 +86,7 @@ let batchService: typeof import("@/lib/booking-batch-modification-service");
 let dateService: typeof import("@/lib/booking-date-modification-service");
 let removalService: typeof import("@/lib/booking-guest-removal-service");
 let clubTimeServer: typeof import("@/lib/club-time/server");
+let money: typeof import("@/lib/member-money");
 
 (RUN ? describe : describe.skip)(
   "a disputed card capture is never refunded or credited by an edit - real PostgreSQL (#5061 follow-up)",
@@ -286,6 +287,7 @@ let clubTimeServer: typeof import("@/lib/club-time/server");
       dateService = await import("@/lib/booking-date-modification-service");
       removalService = await import("@/lib/booking-guest-removal-service");
       clubTimeServer = await import("@/lib/club-time/server");
+      money = await import("@/lib/member-money");
 
       await deleteFixtures();
       for (const [id, role] of [
@@ -380,6 +382,35 @@ let clubTimeServer: typeof import("@/lib/club-time/server");
       await batchRemoveGuest("credit");
 
       await expectHandedToTreasurer(GUEST_CENTS);
+    });
+
+    // #4516 x #5151: the held reduction on a booking whose journal is active. The edit raises ONE hand-back, and the
+    // journal holds ONE refund debt for it (`hand-back` R05, the task's cents); no card R05 and no recovery row,
+    // since nothing goes back to the disputed card.
+    it("a lost dispute, then a guest removal on a journal-era booking: one treasurer task and one hand-back R05 for its cents", async () => {
+      await recordDispute("LOST");
+      const charge = money.memberMoneyEventKeys.bookingCharge(BOOKING_ID);
+      const where = { bookingId: BOOKING_ID, lodgeId: LODGE_ID };
+      await prisma.$transaction((tx) => money.postMemberMoneyEvent(tx, memberMoneyTestContext(), {
+        kind: "CHARGE", eventKey: charge, origin: "APP", source: { kind: "BOOKING", id: BOOKING_ID, version: "1" }, reason: "Synthetic R01",
+        obligations: [{ key: charge, kind: "CHARGE", debtor: { kind: "MEMBER", memberId: MEMBER_ID }, faceCents: PRICE_CENTS, evidence: {} }],
+        legs: [
+          { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: PRICE_CENTS, booking: where, debtor: { kind: "MEMBER", memberId: MEMBER_ID }, obligationKey: charge, evidence: {} },
+          { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: PRICE_CENTS, booking: where, chargeIdentity: `booking:${BOOKING_ID}:test`, evidence: {} },
+        ] }));
+
+      const result = await removeGuest("card");
+
+      expect(result).toMatchObject({ refundHeldForDispute: true, pendingRefundAmountCents: 0 });
+      await expectHandedToTreasurer(GUEST_CENTS);
+      const task = await prisma.manualRefundTask.findFirstOrThrow({ where: { bookingId: BOOKING_ID }, select: { id: true, amountCents: true } });
+      const modification = await prisma.bookingModification.findFirstOrThrow({ where: { bookingId: BOOKING_ID }, select: { id: true } });
+      const debts = (scope: "hand-back" | "modification", id: string) => prisma.memberMoneyObligation.findMany({
+        where: { obligationKey: { startsWith: money.memberMoneyEventKeys.refundObligation(scope, id) } }, select: { obligationKey: true, faceCents: true } });
+      expect(await debts("hand-back", task.id)).toEqual([
+        { obligationKey: money.memberMoneyEventKeys.refundObligation("hand-back", task.id), faceCents: task.amountCents },
+      ]);
+      expect(await debts("modification", modification.id)).toEqual([]);
     });
 
     it("a won dispute restores the normal path: a credit date change credits the account and raises no task", async () => {
