@@ -1240,9 +1240,8 @@ told apart) and hand the result to `apiErrorMessageFromBody`; do not spell the
 `admin-failed-response-json-census.test.ts` fails on a new bare
 `await res.json()` read of a failed reply under `src/app/(admin)`. It does not
 see a `.then((r) => r.json())` chain or an `err.message` shown from a catch, so
-review those by eye. Its per-file ceilings cover only files an open lane was
-still converting, each naming that lane; lower an entry when you convert its
-reads.
+review those by eye. It has no allowance list: an unguarded failure read
+anywhere under `src/app/(admin)` fails.
 
 Admin settings sections follow one canonical edit model (developer rule, binding
 for new or modified sections; the `AGENTS.md` routing table sends you here for it, and this page is where it is stated in full).
@@ -1861,7 +1860,13 @@ same shortcut against a normalising route would silently diverge. Each card
 keeps its own `save` callback — the
 GET-fresh-then-merge step above, multi-endpoint writes, and per-endpoint failure
 copy all stay local — and throws the hook's `ForbiddenSaveError` for a 403 so it
-maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Feedback rendering stays
+maps to the shared `ADMIN_FORBIDDEN_SAVE_REASON` copy. Any other sentence the
+officer should read is thrown as an `ApiRefusalError`
+(`src/lib/api-error-message.ts`; `apiRefusalFromResponse` reads a route's
+refusal into one). Everything else (a request that never got an answer, an
+unreadable body, a bug) shows the section's required `saveErrorFallback`, and
+its `loadErrorFallback` when it has a `load`, never the browser's own words such
+as "Failed to fetch" (#4976). Feedback rendering stays
 in the component, because booking-policy sections use `PolicyFeedback` while the
 security cards use `Alert`. Where the admin's attention goes is not per-card
 either, and the section wires nothing for the way in: Edit unmounts the button

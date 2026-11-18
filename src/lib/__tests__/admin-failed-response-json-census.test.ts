@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -29,12 +29,8 @@ import { describe, expect, it } from "vitest";
   A success read (`if (!x.ok) throw …; const data = await x.json()`, or one
   inside `if (x.ok)` or `x.ok ? read : …`) is not counted either: a route that answered 2xx with HTML is a different defect.
 
-  KNOWN_UNGUARDED is a CEILING per file, not a pin. Those files are being
-  edited by other lanes that had not merged when this census landed (their own
-  fixes may remove reads); converging one is always green here, and adding a
-  read to any file — listed or not — is red. Lower or delete an entry when you
-  converge its reads. Each entry names the open lane that owns its file, so the
-  reason stays true for that file and a reader knows whom to ask.
+  There is no allowance list: ALP-649 converged the last files other lanes
+  were still editing when this census landed, so any hit, in any file, is red.
 
   What it does NOT see: only `await x.json()` with a plain identifier receiver
   is counted. A `.then((r) => r.json())` chain, or a receiver that is not an
@@ -47,36 +43,6 @@ import { describe, expect, it } from "vitest";
 */
 
 const SCANNED_DIR = join(process.cwd(), "src", "app", "(admin)");
-
-/**
- * Files whose unguarded failure reads were left to the lane already editing
- * them, with the most reads each may still hold. Every entry is a ceiling: a
- * lower count passes, a higher one fails.
- *
- * Each reason names the open pull requests that really edit the file when this
- * census landed. ALP-649 (#5187) is the stacked successor of this change: it
- * carries the sweep to every file below and so is the lane that empties the
- * list; the other lanes are named where they also edit the file.
- */
-const ALP_578 = "ALP-578 (#5146)";
-const ALP_581 = "ALP-581 (#5130)";
-const ALP_649 = "ALP-649 (#5187)";
-const ALP_521 = "ALP-521 (#5107)";
-const editedBy = (...lanes: string[]) =>
-  `Not yet converted; open pull requests editing this file: ${lanes.join(", ")}.`;
-
-const KNOWN_UNGUARDED: Record<string, { reads: number; reason: string }> = {
-  "src/app/(admin)/admin/booking-desk/book/page.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_649, ALP_521) },
-  "src/app/(admin)/admin/chores/page.tsx": { reads: 3, reason: editedBy(ALP_649, ALP_521) },
-  "src/app/(admin)/admin/membership/family-groups/page.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_581, ALP_649) },
-  "src/app/(admin)/admin/lockers/page.tsx": { reads: 3, reason: editedBy(ALP_649) },
-  "src/app/(admin)/admin/membership/members/[id]/_components/member-lodge-access-card.tsx": { reads: 2, reason: editedBy(ALP_578, ALP_649) },
-  "src/app/(admin)/admin/rules/age-tier-settings/page.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_649, ALP_521) },
-  "src/app/(admin)/admin/rules/fees/_components/hut-fees-section.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_581, ALP_649) },
-  "src/app/(admin)/admin/rules/seasons/page.tsx": { reads: 1, reason: editedBy(ALP_578, ALP_581, ALP_649) },
-  "src/app/(admin)/admin/website/mountain-conditions/_components/mountain-conditions-panel.tsx": { reads: 7, reason: editedBy(ALP_578, ALP_649) },
-  "src/app/(admin)/admin/work-parties/page.tsx": { reads: 5, reason: editedBy(ALP_581, ALP_649) },
-};
 
 type Hit = { line: number; kind: "failure-branch" | "parse-before-check" };
 
@@ -365,14 +331,9 @@ describe("admin failed-response JSON reads (#4976, ALP-589)", () => {
     }`)).toEqual([]);
   });
 
-  it("lists only files that still exist", () => {
-    const missing = Object.keys(KNOWN_UNGUARDED).filter((rel) => !existsSync(join(process.cwd(), rel)));
-    expect(missing, "delete the KNOWN_UNGUARDED entry of a moved or deleted file").toEqual([]);
-  });
-
-  it("finds no unguarded failure read outside the known ceilings", () => {
+  it("finds no unguarded failure read in any admin file", () => {
     const over = measured
-      .filter(({ rel, hits }) => hits.length > (KNOWN_UNGUARDED[rel]?.reads ?? 0))
+      .filter(({ hits }) => hits.length > 0)
       .map(({ rel, hits }) => `${rel}: ${hits.map((h) => `${h.line} (${h.kind})`).join(", ")}`);
     expect(
       over,
