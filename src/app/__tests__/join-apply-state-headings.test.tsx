@@ -30,7 +30,10 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/page-content-html", () => ({
   getPublishedPageContentByPath: mocks.getPublishedPageContentByPath,
-  pageContentHtmlToPlainText: (html: string) => html.replace(/<[^>]*>/g, ""),
+  // Parsed, not stripped with a pattern: a tag-stripping regex can leave markup
+  // behind (CodeQL js/incomplete-multi-character-sanitization), even in a mock.
+  pageContentHtmlToPlainText: (html: string) =>
+    new DOMParser().parseFromString(html, "text/html").body.textContent ?? "",
 }));
 vi.mock("@/lib/page-content-embeds", () => ({
   buildEmbeddedBody: mocks.buildEmbeddedBody,
