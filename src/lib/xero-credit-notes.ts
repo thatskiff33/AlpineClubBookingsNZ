@@ -837,7 +837,7 @@ export async function createXeroCreditNote(
     );
     // #4525 (M13): the note's and its payment's export manifests, each in its own transaction; never throw.
     const door = { cardRefundId, refundRequestId, paidAnotherWayTaskId: options?.paidAnotherWayTaskId ?? null, handBackTaskId: options?.handBackTaskId ?? null, reviewTaskId: options?.reviewTaskId ?? null };
-    await recordRefundNoteManifest({ paymentId, bookingId: payment.booking.id, creditNoteId: createdNote.creditNoteID, source: { kind: "BUILT", lines: [refundLineItem], legacyKey: creditNoteIdempotencyKey, door } });
+    await recordRefundNoteManifest({ paymentId, bookingId: payment.booking.id, creditNoteId: createdNote.creditNoteID, source: { kind: "BUILT", lines: [refundLineItem], legacyKey: creditNoteIdempotencyKey, door, taxRendering } });
     await recordSentRefundNotePaymentManifest(outcome, { paymentId, creditNoteId: createdNote.creditNoteID, operationId: operationId!, refundMethod });
 
     return createdNote.creditNoteID;
