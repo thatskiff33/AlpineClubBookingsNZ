@@ -125,8 +125,7 @@ event, not a repeating one: no repeat marker and no "Daily" line. See
   activating it, or turning the module back on, shows them again unchanged.
 - They are part of the club calendar, so everyone who can see the calendar
   sees them (including non-member logins), even though only members see the
-  Work Parties card and page. That is the maintainers' recommendation on
-  #5148, built as recommended; the owner may still change it.
+  Work Parties card and page.
 - A work party can run for at most 366 nights, the calendar's series limit;
   a longer window is refused when the work party is saved.
 - The entry's location is the lodge's name when the work party was last

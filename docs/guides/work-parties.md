@@ -102,8 +102,7 @@ that never runs working bees sees no empty card.
    stay, booking windows), and a full lodge shows the usual message. A booking
    with "I am attending a working bee" ticked counts as joining; officers see
    those bookings on the work party's card afterwards, and no officer confirms
-   them first (the maintainers' recommendation on #5148, built as recommended;
-   the owner may still change it).
+   them first.
 
 Only **members** see the card, the page and the button — not organisation
 accounts (schools), non-member logins, or kiosk or admin-only accounts. A
