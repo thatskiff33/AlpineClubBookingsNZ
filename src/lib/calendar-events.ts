@@ -138,9 +138,10 @@ export type CalendarEventDTO = {
  * unchanged. With the module off nobody can manage them (the work-party routes
  * answer 404 and the calendar refuses linked entries), so they must not show.
  *
- * The rule is combined with the caller's own filter under `AND`, never spread
- * into it: the visibility rule is an `OR`, and a spread would be silently
- * overwritten by a later `OR` in the caller's query (or overwrite it). Every
+ * The rule joins the caller's filter as one more `AND` clause (after any the
+ * caller already has), never spread into it: the visibility rule is an `OR`,
+ * and a spread would be silently overwritten by an `OR` in the caller's query
+ * (or overwrite it). The caller's own fields stay where it put them. Every
  * calendar read — the list API and the dashboard's Events card — goes through
  * this.
  */
@@ -156,7 +157,9 @@ export function whereVisibleCalendarEvent(
         ],
       }
     : { workPartyEventId: null };
-  return { AND: [where, visible] };
+  const callerAnd =
+    where.AND === undefined ? [] : Array.isArray(where.AND) ? where.AND : [where.AND];
+  return { ...where, AND: [...callerAnd, visible] };
 }
 
 /**

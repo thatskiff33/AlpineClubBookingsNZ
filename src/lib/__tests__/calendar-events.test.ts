@@ -156,24 +156,26 @@ describe("whereVisibleCalendarEvent (#5148)", () => {
 
   it("shows ordinary events, and a work party's only while it is open", () => {
     expect(whereVisibleCalendarEvent({ startsAt: { lte: new Date(0) } }, { workParties: true })).toEqual({
-      AND: [
-        { startsAt: { lte: new Date(0) } },
-        { OR: [{ workPartyEventId: null }, { workPartyEvent: open }] },
-      ],
+      startsAt: { lte: new Date(0) },
+      AND: [{ OR: [{ workPartyEventId: null }, { workPartyEvent: open }] }],
     });
   });
 
   it("hides every work party's entries while the Work parties module is off (review question 4)", () => {
     expect(whereVisibleCalendarEvent({}, { workParties: false })).toEqual({
-      AND: [{}, { workPartyEventId: null }],
+      AND: [{ workPartyEventId: null }],
     });
   });
 
-  it("keeps a caller's own OR intact rather than overwriting it", () => {
+  it("keeps a caller's own OR and AND intact rather than overwriting them", () => {
     const callerOr = [{ endsAt: null }, { endsAt: { gte: new Date(0) } }];
-    const where = whereVisibleCalendarEvent({ OR: callerOr }, { workParties: true });
+    const where = whereVisibleCalendarEvent(
+      { OR: callerOr, AND: { title: "x" } },
+      { workParties: true },
+    );
+    expect(where.OR).toEqual(callerOr);
     expect(where.AND).toEqual([
-      { OR: callerOr },
+      { title: "x" },
       { OR: [{ workPartyEventId: null }, { workPartyEvent: open }] },
     ]);
   });

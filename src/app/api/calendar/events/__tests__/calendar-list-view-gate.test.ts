@@ -59,14 +59,14 @@ describe("GET /api/calendar/events view gate", () => {
     const res = await GET(listReq());
     expect(res.status).toBe(200);
     const where = mocks.calendarEventFindMany.mock.calls[0][0].where;
-    // Combined under AND with the date window, so neither OR overwrites the
-    // other (review nit on the spread).
-    expect(where.AND).toHaveLength(2);
-    expect(where.AND[0].OR).toEqual([
+    // The visibility rule is its own AND clause beside the date window's OR,
+    // so neither overwrites the other (review nit on the spread).
+    expect(where.OR).toEqual([
       { endsAt: null },
       { endsAt: { gte: expect.any(Date) } },
     ]);
-    expect(where.AND[1]).toEqual({
+    expect(where.AND).toHaveLength(1);
+    expect(where.AND[0]).toEqual({
       OR: [
         { workPartyEventId: null },
         {
@@ -84,7 +84,7 @@ describe("GET /api/calendar/events view gate", () => {
     const res = await GET(listReq());
     expect(res.status).toBe(200);
     const where = mocks.calendarEventFindMany.mock.calls[0][0].where;
-    expect(where.AND[1]).toEqual({ workPartyEventId: null });
+    expect(where.AND).toEqual([{ workPartyEventId: null }]);
   });
 
   it("404s an organisation account and never reads the events table", async () => {
