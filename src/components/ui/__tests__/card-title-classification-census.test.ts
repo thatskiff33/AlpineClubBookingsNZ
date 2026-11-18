@@ -67,7 +67,7 @@ const MEMBER_FACING_SHARED_FILES = [
  * The number of production `CardTitle`s that still omit `headingLevel`. Only
  * ever lower it: a sweep that classifies titles sets it to the new count.
  */
-const UNCLASSIFIED_BASELINE = 253;
+const UNCLASSIFIED_BASELINE = 252;
 
 function isMemberFacing(file: string) {
   return (

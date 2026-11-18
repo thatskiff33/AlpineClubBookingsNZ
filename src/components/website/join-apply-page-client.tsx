@@ -310,7 +310,14 @@ export function JoinApplyPageClient({
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
           <Card className="border-brand-ridge/20 bg-card shadow-[0_22px_46px_-34px_rgba(47,47,43,0.38)]">
             <CardHeader className="space-y-3 text-center">
-              <CardTitle className="font-heading text-3xl text-brand-charcoal">
+              {/* The page keeps exactly one level-1 heading once the form is
+                  gone (INV-PUB-006). With `showHero` the hero's h1 went with
+                  the form, so this title takes its place; without it the host
+                  page still shows its own h1 above, and this sits under it. */}
+              <CardTitle
+                headingLevel={showHero ? 1 : 2}
+                className="font-heading text-3xl text-brand-charcoal"
+              >
                 Application submitted
               </CardTitle>
               <CardDescription className="text-base text-brand-deep/75">
