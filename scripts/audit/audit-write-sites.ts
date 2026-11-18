@@ -512,6 +512,8 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/rate-derived-night-price-backfill.ts::runRateDerivedNightPriceBackfill.rows#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.stored-night-price.rate-derived"},
   "src/lib/release-ask-officer-signal.ts::signalCreditReleaseToOfficers#0": {"category":"payment","sink":"createAuditLog","action":"(dynamic) ACTION"},
   "src/lib/requested-room-write.ts::writeRequestedRoom#0": {"category":"booking","sink":"createAuditLog","action":"(dynamic) input.requestedRoomId ? \"booking.requested_room.updated\" : \"booking.requested_room.cleared\""},
+  "src/lib/saved-card-charge-claim.ts::recoverStaleSavedCardClaims#0": {"category":"payment","sink":"createAuditLog","action":"(dynamic) SAVED_CARD_CLAIM_RECOVERED_AUDIT_ACTION"},
+  "src/lib/saved-card-charge-claim.ts::runSavedCardClaimRelease#0": {"category":"payment","sink":"createAuditLog","action":"(dynamic) SAVED_CARD_CLAIM_RELEASE_FAILED_AUDIT_ACTION"},
   "src/lib/school-attendee-confirmation.ts::applySchoolAttendeeConfirmation#0": {"category":"booking","sink":"logAudit","action":"(dynamic) confirmed ? \"booking_request.attendees_confirmed\" : \"booking_request.attendee_names_updated\""},
   "src/lib/school-attendee-confirmation.ts::resendSchoolAttendeeConfirmation#0": {"category":"booking","sink":"logAudit","action":"booking_request.attendee_confirmation_resent"},
   "src/lib/school-attendee-confirmation.ts::sendSchoolAttendeeConfirmationPrompts#0": {"category":"booking","sink":"logAudit","action":"booking_request.attendee_confirmation_prompt_sent"},

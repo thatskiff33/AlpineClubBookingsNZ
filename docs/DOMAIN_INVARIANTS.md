@@ -375,6 +375,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-155` | The inbound recount takes each failed-later card refund off once |
 | `INV-PAY-156` | Stuck States signals name their records with the count's filter |
 | `INV-PAY-157` | Lost dispute cents close a payment's hand-backs once, oldest first |
+| `INV-PAY-158` | A saved-card claim is marked durably and recovered when stranded |
 | `INV-PAY-031` | Organiser-pays settlement applies only if payment matches the settleable children |
 | `INV-PAY-032` | Group children confirmed before payment have a reaper releasing beds and notifying |
 | `INV-PAY-033` | Reverted group children end terminally: a second reap window cancels once |
