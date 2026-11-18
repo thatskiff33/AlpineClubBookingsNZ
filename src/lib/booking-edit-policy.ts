@@ -40,7 +40,7 @@ type BookingEditMode =
   // finished stay. Reachable ONLY through `finishedStayCorrection` below, which
   // no route reads from a request body.
   | "finished-stay-correction"
-  // Fork fork #127/#130: an officer adding a started stay to, or removing it from, a
+  // Fork #127/#130: an officer adding a started stay to, or removing it from, a
   // work party. Reachable ONLY through `workPartyCorrection` below.
   | "work-party-correction";
 
@@ -76,7 +76,7 @@ export interface BookingEditPolicyInput {
    */
   finishedStayCorrection?: boolean;
   /**
-   * Fork fork #127/#130: an officer's "Add to work party" or "Remove from work
+   * Fork #127/#130: an officer's "Add to work party" or "Remove from work
    * party" (`modifyBookingBatch`'s work-party service argument, never a
    * request body). On a stay in its in-progress window it prices the whole
    * stay, so the work party's discount reaches every night inside its window,
@@ -185,7 +185,7 @@ export function getBookingEditPolicy(
     };
   }
 
-  // Fork fork #127/#130: the officer's work-party correction on a started stay. Only
+  // Fork #127/#130: the officer's work-party correction on a started stay. Only
   // the in-progress window qualifies (a future stay keeps "future" below, a
   // finished one its refusal), and only an active-lifecycle status, since the
   // edit moves settlement money. No night moves: `resolveTargetDates` refuses

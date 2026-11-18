@@ -412,7 +412,7 @@ export function resolveTargetDates({
    * mode; never set by a route.
    */
   finishedStayCorrection?: boolean;
-  /** Fork fork #127/#130: an officer's work-party correction; it moves no night. */
+  /** Fork #127/#130: an officer's work-party correction; it moves no night. */
   workPartyCorrection?: boolean;
   /**
    * The club's today, threaded straight into `getBookingEditPolicy` — see it for

@@ -299,7 +299,7 @@ export function AdminBookingToolsCard({
               noEmails={noEmails?.noEmails ?? false}
             />
           )}
-          {/* Fork fork #119: add the booking to a work party the member missed;
+          {/* Fork #119: add the booking to a work party the member missed;
               fork #130: or take it off the one it is on. */}
           {!isDeleted && features.workParties && (
             <BookingWorkPartyControls

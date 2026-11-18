@@ -324,7 +324,8 @@ describe("what the offer says about the money (#3232)", () => {
       CLUB_FORMAT_TEST,
     );
     expect(mixed).toContain("$9.00 would come back to you, of which $3.00 is returned to your account credit, across both bookings.");
-    expect(mixed).toContain("You will be asked once whether that comes back to your card");
+    // #5149 N2: the choice is over the rest, after the freed share named above.
+    expect(mixed).toContain("You will be asked once whether the rest comes back to your card");
     // No freed credit: the wording is as before.
     expect(formatLinkedMoveMoneySentence(money({ combinedRefundCents: 900 }), CLUB_FORMAT_TEST)).not.toContain("of which");
   });

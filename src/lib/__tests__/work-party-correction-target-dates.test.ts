@@ -7,7 +7,7 @@ import {
 } from "@/lib/booking-modify-validation";
 
 /**
- * Fork fork #127/#130: `resolveTargetDates` under the officer's work-party
+ * Fork #127/#130: `resolveTargetDates` under the officer's work-party
  * correction on a started stay. The stay is priced whole (not an in-progress
  * edit), so the promotion can re-run over every night, and no date can move.
  * Every other edit of the same stay keeps the in-progress promo refusal. Today

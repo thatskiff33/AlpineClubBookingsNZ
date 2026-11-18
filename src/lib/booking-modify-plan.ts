@@ -2087,7 +2087,7 @@ export async function applyPromoCodeChanges(
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
-    officerWorkPartyCorrection?: WorkPartyCodeCorrection | null; // Fork fork #119/#130: the one internal code an Add admits or a Remove drops
+    officerWorkPartyCorrection?: WorkPartyCodeCorrection | null; // Fork #119/#130: the one internal code an Add admits or a Remove drops
     newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{

@@ -72,7 +72,7 @@ export function enteredPromoCodeAdmitted<T extends { id: string; internal: boole
   return !promoCode.internal || promoCode.id === admittedInternalPromoCodeId;
 }
 
-/** Fork fork #119/#130: the work party an officer's correction adds or removes, by its internal code. */
+/** Fork #119/#130: the work party an officer's correction adds or removes, by its internal code. */
 export type WorkPartyCodeCorrection = { readonly promoCodeId: string; readonly direction: "add" | "remove" };
 
 /** The one internal code a correction admits: an Add's. A Remove (fork #130) admits none. */
@@ -81,7 +81,7 @@ export function admittedWorkPartyCodeId(correction: WorkPartyCodeCorrection | nu
 }
 
 /**
- * Fork fork #130: with several codes on, a stored internal code a list leaves out
+ * Fork #130: with several codes on, a stored internal code a list leaves out
  * is carried; the officer removing that work party drops it instead.
  */
 export function withoutRemovedWorkPartyCode<E extends { code: string }>(

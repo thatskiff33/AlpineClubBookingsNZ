@@ -287,10 +287,13 @@ export function formatLinkedMoveMoneySentence(
   if (facts.settlementMethodRequired && !facts.settlementMethodChosen) {
     // Neutral about WHERE the control is, because this same sentence is read on
     // the panel (where the Return-method radios sit above the offer) and in the
-    // bare 409 message a surface without them falls back to.
+    // bare 409 message a surface without them falls back to. After a total
+    // that includes freed credit, which never goes to a card, the choice is
+    // over "the rest" (#5149 N2).
+    const settledShare = facts.combinedFreedCreditCents > 0 ? "the rest" : "that";
     parts.push(
       settlementShareCents > 0
-        ? `You will be asked once whether that comes back to your card or as ` +
+        ? `You will be asked once whether ${settledShare} comes back to your card or as ` +
             `account credit; the one choice covers ` +
             // #3949: never a booking the group organiser paid for, whose refund is the organiser's.
             `${facts.combinedOrganiserRefundCents > 0 ? "every booking you paid for" : all}.`
