@@ -3,7 +3,7 @@ import logger from "../../logger";
 import { lockMemberMoneyPayment, readMemberMoneyApplicationState } from "./application-read";
 import { memberMoneyApplicationTotals } from "./application-state";
 import { keptCaptureIdentity } from "./booking-charges";
-import { eventPosted, readBookingLiveChargeCents } from "./booking-journal-read";
+import { eventPosted, readBookingLiveChargeCents, readBookingTaxAnchorDate } from "./booking-journal-read";
 import { CAPTURE_KINDS } from "../../booking-ledger-capture-kinds";
 import { bookingReceiptEventKey, bookingReceiptRow, chargeObligation, lineDebtor, ownedBy } from "./booking-receipts";
 import { isBookingJournalInactive, type BookingJournalContext } from "./journal-activity";
@@ -237,7 +237,9 @@ export async function postKeptCapture(tx: Db, context: BookingJournalContext, in
     reason: "Late capture kept by the treasurer",
     legs: [
       { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: unbilledCents, booking, debtor: owner, evidence },
-      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: unbilledCents, booking, chargeIdentity: identity, evidence },
+      // #4632: a booking's charge, so the treatment in force when the booking was made, as every other door posts it.
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: unbilledCents, booking,
+        taxAnchorDate: await readBookingTaxAnchorDate(tx, input.bookingId, context.zone), chargeIdentity: identity, evidence },
     ],
     applications }, { liveChargeCents: liveCharge });
   return true;
