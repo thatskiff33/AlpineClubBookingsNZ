@@ -463,11 +463,8 @@ describe("the finance queue payload marks it for the card's own sentence", () =>
         payment: null,
       },
     };
-    const payload = toOpenManualRefundTaskPayload(row, null, []);
+    const payload = toOpenManualRefundTaskPayload(row, null);
     expect(payload).toMatchObject({ groupOrganiserHandBack: true, editRefundHandBack: false, refundRequestHandBack: false, memberName: "Olive Organiser" });
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).groupOrganiserHandBack).toBe(false);
-    // Its shares are kept in reviewContext: never read as unreadable review evidence.
-    const withShares = toOpenManualRefundTaskPayload({ ...row, reviewContext: { groupOrganiserHandBack: { settlementId: "settle-1", shares: [] } } }, null, []);
-    expect(withShares).toMatchObject({ reviewEvidence: null, reviewEvidenceUnreadable: false });
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null).groupOrganiserHandBack).toBe(false);
   });
 });

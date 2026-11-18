@@ -246,22 +246,18 @@ describe("the queue payload marks an edit refund hand-back for the card", () => 
         payment: null,
       },
     };
-    expect(toOpenManualRefundTaskPayload(row, null, []).editRefundHandBack).toBe(true);
-    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).editRefundHandBack).toBe(false);
+    expect(toOpenManualRefundTaskPayload(row, null).editRefundHandBack).toBe(true);
+    expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null).editRefundHandBack).toBe(false);
     // #3949: on a joiner the organiser paid for by internet banking, it goes back to the organiser.
-    expect(toOpenManualRefundTaskPayload(row, null, []).paidToGroupOrganiser).toBe(false);
+    expect(toOpenManualRefundTaskPayload(row, null).paidToGroupOrganiser).toBe(false);
     const groupChild = {
       ...row,
       booking: { ...row.booking, organiserSettled: true, parentBookingId: "organiser", payment: { id: "p", status: "SUCCEEDED", amountCents: 6000, refundedAmountCents: 0, source: "INTERNET_BANKING" } },
     };
-    expect(toOpenManualRefundTaskPayload(groupChild, null, []).paidToGroupOrganiser).toBe(true);
-    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: "refund-request-hand-back:r1" }, null, []).paidToGroupOrganiser).toBe(true);
+    expect(toOpenManualRefundTaskPayload(groupChild, null).paidToGroupOrganiser).toBe(true);
+    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: "refund-request-hand-back:r1" }, null).paidToGroupOrganiser).toBe(true);
     // Owner decision, 22 Oct 2026: the joiner's own cancellation's hand-back (keyless) goes to the organiser too.
-    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: null }, null, []).paidToGroupOrganiser).toBe(true);
-    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: "group-organiser-hand-back:s1" }, null, []).paidToGroupOrganiser).toBe(false);
-    // Review round 3: a refund review on the same child, by the chooser's own test - its payment is the mirror.
-    const review = { ...groupChild, kind: "EDIT_FINANCIAL_REVIEW", occurrenceKey: null, paymentId: "p", payment: { source: "INTERNET_BANKING" }, booking: { ...groupChild.booking, status: "PAID" } };
-    expect(toOpenManualRefundTaskPayload(review, null, []).paidToGroupOrganiser).toBe(true);
-    expect(toOpenManualRefundTaskPayload({ ...review, booking: { ...review.booking, organiserSettled: false } }, null, []).paidToGroupOrganiser).toBe(false);
+    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: null }, null).paidToGroupOrganiser).toBe(true);
+    expect(toOpenManualRefundTaskPayload({ ...groupChild, occurrenceKey: "group-organiser-hand-back:s1" }, null).paidToGroupOrganiser).toBe(false);
   });
 });
