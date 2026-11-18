@@ -59,12 +59,11 @@ import {
   retirePendingClearingNote,
 } from "@/lib/invoice-clearing-note-evidence";
 import {
-  type AppliedCreditNote,
   decideInternetBankingReceiptFigure,
-  IB_RECEIPT_KEPT_REASON,
   paidInvoiceFacts,
 } from "@/lib/xero-inbound/settle-from-cash";
-import { recountCorrectionsAfterKeptSettle } from "@/lib/xero-inbound/kept-settle-correction-recount";
+import { IB_RECEIPT_KEPT_REASON } from "@/lib/xero-inbound/ib-receipt-reasons";
+import { afterKeptSettleCommits, type KeptSettleFollowUp } from "@/lib/xero-inbound/kept-settle-correction-recount";
 import {
   cashSettlementMarkerInTransaction,
   raiseCashSettlementAlert,
@@ -347,14 +346,14 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     // #3979: written inside the transaction, alerted only after it commits.
     // Declared through `as` so the read after the await is not narrowed to null.
     let cashSettlementMarker = null as CashSettlementMarker | null;
-    let correctionNotesToRecount = [] as AppliedCreditNote[];
+    let keptFollowUp = { correctionNotes: [], floorAlert: null } as KeptSettleFollowUp;
     const outcome = await prisma.$transaction(async (tx) => {
       // #4516 (M4b): the PRIMARY rows this delivery moved to captured, the only receipts its hook may collect.
       // Null until the receipt is written: an arm that returns before it posts nothing.
       let receiptRowIds = null as string[] | null;
       const settled = await (async () => {
       cashSettlementMarker = null;
-      correctionNotesToRecount = [];
+      keptFollowUp = { correctionNotes: [], floorAlert: null };
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
       // Pre-lock read: only the lodge key, which is immutable. The booking's
@@ -464,7 +463,7 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
         secondInstrument: secondInstrument !== null,
         invoice: invoiceFacts,
       });
-      if (receiptFigure.plan.kind !== "rewrite") correctionNotesToRecount = receiptFigure.appliedCorrectionNotes;
+      keptFollowUp = { correctionNotes: receiptFigure.plan.kind !== "rewrite" ? receiptFigure.appliedCorrectionNotes : [], floorAlert: receiptFigure.floorAlert };
       const cashSettlementNotice = await readCashSettlementNotice(tx, {
         plan: receiptFigure.plan,
         recordedCents: receiptFigure.receiptCents,
@@ -1347,8 +1346,8 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
 
     // #4095 (`INV-PAY-126`): a kept receipt holds the stored figure, so a
     // correction already synced against it is recounted now; a replay recounts
-    // again, so an event retried for one left unrecounted finishes it.
-    result.unrecountedCorrectionNoteIds.push(...(await recountCorrectionsAfterKeptSettle(invoiceId, outcome.payment.id, correctionNotesToRecount)));
+    // again, so an event retried for one left unrecounted finishes it (#4449: a backstop).
+    result.unrecountedCorrectionNoteIds.push(...(await afterKeptSettleCommits(invoiceId, outcome.payment.id, keptFollowUp, format)));
 
     // #3979 (`INV-PAY-125`): a kept figure, or cash that disagrees with what
     // the booking owes, is never silent on a booking the settle leaves live:

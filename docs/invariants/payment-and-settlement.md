@@ -4040,11 +4040,11 @@ _Split from `INV-PAY-057` (#3220)._
   still includes the corrected amount, so the correction keeps counting and the
   net stays the cash. A recount finds a bank-transfer payment's
   modification notes by its invoice, so a later note never drops an earlier one.
-  A keep counts each applied correction already synced in its own transaction
-  when the rows explain the refunded total, so a writer queued on its locks
-  reads the corrected net. After the commit a keep, and every replay, recounts
-  the payment with no note of its own; failing, the event is retried. One
-  synced during the settle, or beside an older fold, waits for that (#4095).
+  A keep sets the whole refunded total its links record under the `Payment`
+  row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
+  note's allocation write or removal locks that row first and decides it too,
+  so a writer queued on `lock(1)` reads the net (#4449). The recount after a
+  keep or replay is a backstop; failing, the event is retried (#4095).
 - **The refunded-total repair writes through a claim** on the row it read
   (status, totals, `updatedAt`, which every settle transition touches),
   re-running once from scratch when lost, and never un-refunds a payment whose
@@ -4055,8 +4055,10 @@ _Split from `INV-PAY-057` (#3220)._
 - Pinned by `account-credit-modification-notes.test.ts`,
   `xero-credit-note-repairs.test.ts`, `xero-booking-edit-settlement.test.ts`,
   `xero-repair-known-modification-refund.test.ts`,
-  `kept-settle-correction-recount.test.ts` and
-  `ib-settle-from-cash.realdb.test.ts`.
+  `kept-settle-correction-recount.test.ts`,
+  `retire-unlisted-credit-note-allocations.test.ts`,
+  `ib-settle-from-cash.realdb.test.ts` and
+  `kept-settle-queued-cancel.realdb.test.ts`.
 
 ## INV-PAY-148
 
