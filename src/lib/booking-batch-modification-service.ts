@@ -1628,8 +1628,8 @@ export async function modifyBookingBatch({
       bookingId,
       newCheckIn: dates.newCheckIn,
       newFinalPriceCents,
-      // A finished-stay correction's fee is owed with the price. An ordinary edit adds none to the amount owed.
-      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : payments.changeFeeAddedToAmountOwedCents,
+      // Include this edit's recorded fee: the payment snapshot predates settlement.
+      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : payments.feeRecordedHereCents,
       format,
       guestsForPricing: guestPlan.guestsForPricing,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,

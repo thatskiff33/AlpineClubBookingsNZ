@@ -1,3 +1,7 @@
+import logger from "@/lib/logger";
+
+vi.mock("@/lib/logger", () => ({ default: { error: vi.fn() } }));
+
 import { PaymentSource, PaymentStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { editDoorBooking } from "./support/edit-door-booking";
@@ -151,6 +155,7 @@ describe("applyPaymentAdjustments makes the claim for the edit doors (#3980)", (
     const result = await adjust(paidBooking(null), 3_000, 500);
     expect(result.settledAgainstPrimaryInvoice).toBe(true);
     expect(result.hasIssuedXeroInvoice).toBe(false);
+    expect(result.feeRecordedHereCents).toBe(500);
     expect(payment.updateMany).toHaveBeenCalledTimes(1);
     expect(payment.updateMany).toHaveBeenCalledWith({
       where: { id: "payment_1", xeroInvoiceId: null },
@@ -237,4 +242,20 @@ it("organiser refunds never queue a generic note against the joiner's absent pri
     settlement: { id: "settlement", source: "INTERNET_BANKING", xeroInvoiceId: "combined" } });
   const result = await adjust(booking, -1000, 0, { appliedCreditReturnedByCaller: true });
   expect(result).toMatchObject({ xeroRefundAmountCents: 0, pendingRefundAmountCents: 0, refundAmountCents: 1000 });
+});
+
+
+it("reports an unrecorded fee when the payment row is missing without aborting the edit", async () => {
+  await writeEditOnPayment(tx, { payment: null, changeFeeCents: 5000 });
+  expect(logger.error).toHaveBeenCalledWith(
+    { changeFeeCents: 5000 },
+    "Cannot record edit change fee: payment row is missing",
+  );
+  expect(payment.update).not.toHaveBeenCalled();
+  expect(payment.updateMany).not.toHaveBeenCalled();
+});
+
+it("does not report a missing payment when there is no fee to record", async () => {
+  await writeEditOnPayment(tx, { payment: null, changeFeeCents: 0 });
+  expect(logger.error).not.toHaveBeenCalled();
 });

@@ -116,6 +116,8 @@ export type PaymentAdjustmentResult = {
    * for a new edit.
    */
   changeFeeAddedToAmountOwedCents: number;
+  /** Fee recorded here, passed to lifecycle calculations using the pre-edit payment snapshot. */
+  feeRecordedHereCents: number;
   /**
    * #4299 (`INV-PAY-148`): the increase invoiced to the group organiser of an
    * internet-banking group place; 0 otherwise. The joiner is asked for none of
@@ -435,6 +437,7 @@ export async function applyPaymentAdjustments(
     foldedWaitingAsks,
     settledAgainstPrimaryInvoice,
     changeFeeAddedToAmountOwedCents: 0,
+    feeRecordedHereCents,
     billedToOrganiserCents,
     ...unpaidAskSettlement,
   };
@@ -476,12 +479,11 @@ export async function applyLifecycleTransitions(
     newCheckIn: Date;
     newFinalPriceCents: number;
     /**
-     * #3750 (#3955 review F1): a change fee THIS edit recorded on the payment
-     * of a booking with nothing captured ("Add fee to amount owed"), already
-     * written by the caller. With the fee already on the payment it is what
-     * the booking is worth (`bookingWorthCents`), so the credit clamp, the $0
-     * decision and the stale-intent comparison below all read worth, never the
-     * bare price. Every other edit door records none and passes 0.
+     * Fee recorded on the payment by this edit, in settlement or by the
+     * finished-stay caller. The booking snapshot predates that write, so add
+     * it to the stored fee for the credit clamp, $0 decision and stale-intent
+     * comparison. Captured payments can incur a fee while still PENDING.
+     * Doors that record no fee pass 0.
      */
     feeRecordedByThisEditCents: number;
     format: ClubFormat;

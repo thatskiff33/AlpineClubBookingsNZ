@@ -475,3 +475,24 @@ describe("applyLifecycleTransitions — stale credit election on a $0 settle (#2
     expect(mockBookingUpdateMany).not.toHaveBeenCalled();
   });
 });
+
+it("keeps the newly recorded fee in the credit clamp for a PENDING booking with captured payment", async () => {
+  mockDerive.mockResolvedValue(30000);
+  mockClamp.mockResolvedValue({ appliedCreditCents: 25000, refundedExcessCents: 5000 });
+  const booking = baseBooking({ creditAppliedCents: 30000 });
+  const result = await applyLifecycleTransitions(makeTx(), {
+    booking: { ...booking, status: "PENDING", payment: { ...booking.payment!, status: "SUCCEEDED", amountCents: 10000 } },
+    bookingId: "bk-1",
+    newCheckIn: new Date("2026-08-01"),
+    newFinalPriceCents: 20000,
+    feeRecordedByThisEditCents: 5000,
+    format: CLUB_FORMAT_TEST,
+    guestsForPricing: [{ isMember: true }],
+    skipBookingLifecycleRules: false,
+  });
+  expect(mockClamp).toHaveBeenCalledWith(
+    expect.objectContaining({ newWorthCents: 25000 }),
+    expect.anything(),
+  );
+  expect(result.refundedExcessCreditCents).toBe(5000);
+});
