@@ -1262,9 +1262,10 @@ Verified controls already present and intentionally preserved:
   one reviewed advisory under an expiring, owner-approved record.
   The conditions it requires are stated once, in
   [`dependency-mitigations.d/README.md`](../dependency-mitigations.d/README.md)
-  -> "When the wrapper says MITIGATED"; it covers only the copy the audit can
-  see, and a record's known bundled copies it cannot reach are printed on
-  every run. No record is live since the braces record was retired (#3851).
+  -> "When the wrapper says MITIGATED"; it covers only the copies the audit
+  can see, each an exact patched version on exactly its recorded paths
+  (#5252), and a record's known bundled copies it cannot reach are printed on
+  every run. The live records are listed in that README's "Current records".
 - The secret scan reads merge commits. `git log -p` emits no patch for a merge
   commit, and roughly a third of this repository's 7,510 commits are merges, so
   a scan without `--diff-merges=first-parent` never looked at them — and a
