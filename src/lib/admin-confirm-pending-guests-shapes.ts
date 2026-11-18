@@ -24,9 +24,12 @@ export const getOverbookedNightDates = (nightDetails: NightAvailability[]): stri
 /**
  * The 409 body for a refusal a locked branch returned: its error, plus the
  * `code`, `overbookDates` and `blockedNights` it carries when it carries them.
+ * `error` is optional in the type only: the callers' `"error" in` guard leaves
+ * the success member in TypeScript's normalised union with `error?: undefined`,
+ * exactly as the inline body this replaced read it.
  */
 export function lockedClaimRefusalBody(refusal: {
-  error: string;
+  error?: string;
   code?: string;
   overbookDates?: string[];
   blockedNights?: string[];
