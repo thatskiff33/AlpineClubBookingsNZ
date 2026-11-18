@@ -35,6 +35,7 @@ export const workPartyCorrectionBodySchema = z.discriminatedUnion("mode", [
       previousFinalPriceCents: centsField,
       newFinalPriceCents: centsField,
       priceDiffCents: centsField,
+      changeFeeCents: centsField.default(0), // absent from a dialog served before #5149's review: a correction's fee is 0
       accountCreditAmountCents: centsField,
       appliedCreditGivenBackCents: centsField,
       refundedExcessCreditCents: centsField,

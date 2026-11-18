@@ -171,7 +171,7 @@ import {
   type FinishedStayChangeFeeRule,
   type FinishedStayCorrection,
 } from "@/lib/booking-finished-stay-correction";
-import type { BatchModificationTransactionResult, ModifiedBooking } from "@/lib/booking-batch-modification-transaction-result";
+import { batchModificationSettlementFacts, unpaidAskResultFacts, type BatchModificationSettlementFacts, type BatchModificationTransactionResult, type ModifiedBooking } from "@/lib/booking-batch-modification-transaction-result";
 
 /**
  * WHY a change fee on this booking was waived, as it is stored (#3232 D2).
@@ -189,7 +189,7 @@ import type { BatchModificationTransactionResult, ModifiedBooking } from "@/lib/
 export const LINKED_MOVE_CHANGE_FEE_WAIVED_REASON =
   "LINKED_MOVE_SUPERVISION_RULE" as const;
 
-export type BatchModificationResponse = {
+export type BatchModificationResponse = BatchModificationSettlementFacts & {
   booking: ModifiedBooking;
   /**
    * The `BookingModification` row this edit wrote (#3750), so a caller that
@@ -2002,7 +2002,7 @@ export async function modifyBookingBatch({
       additionalAsk: payments.additionalAsk,
       // #3954: the unpaid asks this reduction retired, for the minter to cancel.
       retiredAdditionalAsks: payments.retiredAdditionalAsks,
-      unpaidAskCancelled: payments.unpaidAskCancelled,
+      ...unpaidAskResultFacts(payments),
       pendingRefundAmountCents: payments.pendingRefundAmountCents,
       promoRemoved: promo.promoRemoved,
       promoChanged: promo.promoChanged,
@@ -2258,7 +2258,7 @@ export async function modifyBookingBatch({
       promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
-      policyRetainedAmountCents: result.policyRetainedAmountCents,
+      ...batchModificationSettlementFacts(result),
       capacityOverridden: result.capacityOverridden,
     };
   };
@@ -2305,7 +2305,7 @@ export async function modifyBookingBatch({
       promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
-      policyRetainedAmountCents: result.policyRetainedAmountCents,
+      ...batchModificationSettlementFacts(result),
       capacityOverridden: result.capacityOverridden,
       deferredPostCommit: async () => {
         await runPostCommit();

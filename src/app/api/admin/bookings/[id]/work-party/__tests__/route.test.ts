@@ -73,6 +73,7 @@ const figures = {
   previousFinalPriceCents: 30_000,
   newFinalPriceCents: 25_000,
   priceDiffCents: -5_000,
+  changeFeeCents: 0,
   accountCreditAmountCents: 5_000,
   appliedCreditGivenBackCents: 0,
   refundedExcessCreditCents: 0,
@@ -157,7 +158,9 @@ describe("POST", () => {
   });
 
   it("returns the new figures when they moved", async () => {
-    h.addBookingToWorkParty.mockRejectedValue(new WorkPartyCorrectionFiguresChangedError(figures));
+    h.addBookingToWorkParty.mockRejectedValue(
+      new WorkPartyCorrectionFiguresChangedError(figures, { methods: ["credit", "card"], paidByOrganiser: false, refundTo: "card" }),
+    );
     const res = await post({ mode: "apply", workPartyEventId: "wp-1", expectedFigures: figures });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ code: "FIGURES_CHANGED", figures });
@@ -233,6 +236,7 @@ describe("POST action remove (fork #130)", () => {
     previousFinalPriceCents: 25_000,
     newFinalPriceCents: 30_000,
     priceDiffCents: 5_000,
+    changeFeeCents: 0,
     accountCreditAmountCents: 0,
     additionalAmountCents: 5_000,
     billedToOrganiserCents: 0,

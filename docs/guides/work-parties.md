@@ -106,9 +106,11 @@ What happens:
   credit applied.
 - **An additional payment still owed:** the discount cancels what is still
   owed first, as on any change that lowers the price. Only the rest comes
-  back. When the discount is no more than what is owed, nothing comes back
-  and there is nothing to choose: the figures say "The discount cancels the
-  $50.00 still owed on this booking, so nothing comes back".
+  back, and the figures say how much was cancelled ("Of the discount, $30.00
+  cancels what is still owed on this booking"). When the discount is no more
+  than what is owed, nothing comes back and there is nothing to choose: the
+  figures say "The discount cancels $50.00 of what is still owed on this
+  booking, so nothing comes back".
 - **Paid by the group organiser:** the money goes back to the organiser, the way
   every change to a joiner's booking does: to the organiser's card, or by bank
   transfer if they paid by Internet Banking. The figures show "Returned to the
@@ -133,15 +135,19 @@ reason:
 - it already has another promo code and the club allows only one discount per
   booking (the same rule as when booking);
 - the work party is held at another lodge;
-- its card payment is disputed: the treasurer must settle the dispute first,
-  because any money back would be held for them;
 - it is your own or your family's booking (below).
+
+**A disputed card payment.** When the member's card payment has an open or
+lost Stripe dispute, any money the discount would hand back is held for the
+treasurer to settle by hand, so **Show the new total** says to ask the
+treasurer and nothing is saved. Where nothing would come back (the discount
+only cancels a payment still owed), the booking can be added as usual.
 
 **Your own or your family's booking.** You can never add your own booking, or
 one belonging to someone in your family group, to a work party, even when no
-money would come back. That covers the booking's owner and, for a joiner's
-booking the group organiser paid for, the organiser too, and everyone in either
-person's family groups. The work party is greyed out with the reason; ask
+money would come back. That covers the booking's owner and, for a joiner in a
+group where the organiser pays, the organiser too, whether or not the group
+has been paid for yet, and everyone in either person's family groups. The work party is greyed out with the reason; ask
 another Booking Officer or Full Admin to do it. Being a guest on someone else's
 booking does not count: that booking is theirs.
 
@@ -190,9 +196,9 @@ What happens:
 - it isn't pending, confirmed or paid, its stay has finished, or it is priced
   by its quote;
 - it isn't on that work party;
-- it was settled at no charge, with nothing paid: for example an unpaid booking
-  a 100% work party brought to nothing, which was then marked paid and given
-  its beds. Removing the work party would leave it paid and holding beds while
+- it is marked paid with nothing taken: for example an unpaid booking a 100%
+  work party brought to nothing, which was then marked paid and given its
+  beds. Removing the work party would leave it paid and holding beds while
   owing its whole price, so **cancel the booking, or ask the treasurer**.
 
 ## Settings reference
@@ -217,9 +223,9 @@ What happens:
 | Work Parties is missing from the sidebar / 404s | The `workParties` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
 | Everything is read-only ("… can view work parties but cannot change them") | Your admin role has lodge view but not edit | Ask a full admin for **lodge edit** access |
 | A work party is "not available" in **Add to work party** | One of the reasons listed under "When a booking can't be added" | The dialog names the reason |
-| "This is your own or your family's booking, so another officer must change its work party" | You, or someone in your family group, own the booking or organised the group that paid for it | Ask another Booking Officer or Full Admin to add or remove it |
-| "This booking's card payment is disputed" | The member's card payment has an open or lost Stripe dispute | The treasurer settles the dispute first |
-| "This booking was settled at no charge by the work party" on **Remove** | A 100% work party brought an unpaid booking to nothing and it was marked paid | Cancel the booking, or ask the treasurer |
+| "This is your own or your family's booking, so another officer must change its work party" | You, or someone in your family group, own the booking or organise the group that pays for it | Ask another Booking Officer or Full Admin to add or remove it |
+| "This booking's card payment is disputed" after **Show the new total** | The member's card payment has an open or lost Stripe dispute, and money would come back | Ask the treasurer, who settles the held money by hand |
+| "This booking is marked paid with nothing taken" on **Remove** | For example, a 100% work party brought an unpaid booking to nothing and it was marked paid | Cancel the booking, or ask the treasurer |
 | There's no Delete button on an event | It already has attending bookings | Deactivate it instead — delete is blocked to keep the discount history |
 | A member says the discount didn't apply | The event is inactive, their nights fall outside the window, or they didn't tick the working-bee option | Check the event is Active, its dates cover their nights, and that they selected it when booking |
 | "Discount must be a whole number between 1 and 100" | A non-integer or out-of-range discount was entered | Enter a whole number from 1 to 100 |

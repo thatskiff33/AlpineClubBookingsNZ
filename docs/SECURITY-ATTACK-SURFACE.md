@@ -348,7 +348,7 @@ These family rules are enforced by automated tests (issue #1132):
     disposition. It adds no refund path, calls no provider itself, and refuses
     any refund the offered options did not mean. It never changes the acting
     officer's own or family's booking (the member-guest family boundary, over
-    the owner and, for an organiser-paid joiner, the paying organiser; owner
+    the owner and, for an organiser-pays joiner, the organiser, settled or not; owner
     decision 3 of 18 Nov 2026 on #5149), whatever the money does: the list
     greys it out for the signed-in officer, and the service refuses it again
     under its locks, on Add and Remove alike. It applies only the figures the

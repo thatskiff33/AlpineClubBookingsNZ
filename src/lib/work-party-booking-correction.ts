@@ -70,13 +70,10 @@ import {
 } from "@/lib/booking-batch-modification-service";
 import { workPartyEventRefusal } from "@/lib/work-party";
 import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
-import {
-  readWorkPartyBookingFacts,
-  reductionWhollyAbsorbedByUnpaidAskCents,
-  WORK_PARTY_BOOKING_SELECT,
-} from "@/lib/work-party-booking-facts";
+import { readWorkPartyBookingFacts, WORK_PARTY_BOOKING_SELECT } from "@/lib/work-party-booking-facts";
 import {
   resolveWorkPartySettlementMethod,
+  workPartyAskOffset,
   workPartyDefaultSettlementMethod,
   workPartySettlementOptions,
   type WorkPartySettlementOptions,
@@ -101,8 +98,6 @@ export interface WorkPartyEligibilityBooking {
   memberOwned: boolean;
   /** Owner decision 3: the officer is the owner or paying organiser, or in their family (`workPartyActorIsOwnerOrFamily`). */
   actorIsOwnerOrFamily: boolean;
-  /** A Stripe dispute holds the member's card payment (`editReductionDisputeHold`, `INV-PAY-154`). */
-  cardPaymentDisputed: boolean;
 }
 
 /** The facts outside the booking the rule reads. */
@@ -128,11 +123,12 @@ export interface WorkPartyEligibilityEvent {
 export const WORK_PARTY_OWN_BOOKING_MESSAGE =
   "This is your own or your family's booking, so another officer must change its work party.";
 
+/** Said whether the dispute is still open or already lost: either way the edit holds the money (`INV-PAY-154`). */
 export const WORK_PARTY_DISPUTED_PAYMENT_MESSAGE =
-  "This booking's card payment is disputed, so the treasurer must settle the dispute before its price can change.";
+  "This booking's card payment is disputed, so any money back would be held for the treasurer to settle by hand. Ask the treasurer.";
 
 export const WORK_PARTY_SETTLED_AT_ZERO_MESSAGE =
-  "This booking was settled at no charge by the work party, with nothing paid. Cancel it, or ask the treasurer.";
+  "This booking is marked paid with nothing taken. Cancel it, or ask the treasurer.";
 
 /**
  * The refusals Add and Remove share: owner decision 3 (never the officer's own
@@ -167,8 +163,9 @@ function workPartyStayRefusal(
  * officer's words rather than discovered at the preview. A started stay is
  * allowed (fork #127); a finished one is not. An organiser-paid joiner is allowed
  * (fork #129 decision 5); the officer's own or family's booking never is (owner
- * decision 3), and nor is one whose card payment is disputed, whose reduction
- * the edit would hold for the treasurer (#5151). The event answer is
+ * decision 3). A disputed card payment is refused on the edit's own answer,
+ * only where it would really hold money back (`refundHeldForDispute`, #5151),
+ * so it is not a fact this rule reads. The event answer is
  * `workPartyEventRefusal`; it is not copied.
  */
 export function workPartyBookingEligibility(
@@ -187,7 +184,6 @@ export function workPartyBookingEligibility(
   if (booking.hasWorkParty) {
     return { ok: false, reason: "This booking already has a work party." };
   }
-  if (booking.cardPaymentDisputed) return { ok: false, reason: WORK_PARTY_DISPUTED_PAYMENT_MESSAGE };
   if (booking.hasOtherPromoCode && !context.multiPromoCodes) {
     return { ok: false, reason: PROMO_WORK_PARTY_EXCLUSION_MESSAGE };
   }
@@ -256,6 +252,8 @@ export interface WorkPartyCorrectionFigures {
   newFinalPriceCents: number;
   /** The change in price: negative on an Add, positive on a Remove. */
   priceDiffCents: number;
+  /** The edit's change fee: 0 by a correction's money rule, carried so the save checks it (#5149 review M2). */
+  changeFeeCents: number;
   /** Paid money returned as account credit. */
   accountCreditAmountCents: number;
   /** A PAID booking's applied credit given back to the member's balance (#3809). */
@@ -278,7 +276,7 @@ export interface WorkPartyCorrectionFigures {
   /**
    * The method the change settles by (`resolveWorkPartySettlementMethod`);
    * null on a Remove, which hands nothing back, and on an Add whose whole
-   * reduction an unpaid ask took (`absorbedByUnpaidAskCents`).
+   * reduction an unpaid ask took (`unpaidAskOffsetCents` with no method offered).
    */
   settlementMethod: BookingModificationSettlementMethod | null;
 }
@@ -288,7 +286,11 @@ export const WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE =
 
 export class WorkPartyCorrectionFiguresChangedError extends Error {
   readonly code = "FIGURES_CHANGED";
-  constructor(readonly actual: WorkPartyCorrectionFigures) {
+  /** The fresh figures, and what may now be chosen for them (#5149 review M1). */
+  constructor(
+    readonly actual: WorkPartyCorrectionFigures,
+    readonly settlementOptions: WorkPartySettlementOptions,
+  ) {
     super(WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE);
     this.name = "WorkPartyCorrectionFiguresChangedError";
   }
@@ -328,12 +330,12 @@ export type WorkPartyCorrectionMode =
  * refuses the save — a changed method too (fork #129), so a save is never refunded
  * where the officer was shown credit, or the reverse. A superset of the edit's
  * own four (`editQuotedFiguresSchema`, `INV-MOD-062`), which the save also runs:
- * `quotedFigures` below hands the edit the preview's price and difference, and
- * a correction's change fee is always 0, so its net is the difference.
+ * `quotedFigures` below hands the edit the preview's price, difference and fee.
  */
 const FIGURE_KEYS = [
   "newFinalPriceCents",
   "priceDiffCents",
+  "changeFeeCents",
   "accountCreditAmountCents",
   "appliedCreditGivenBackCents",
   "refundedExcessCreditCents",
@@ -391,12 +393,12 @@ export const WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE =
 
 /** The edit's four quoted figures (`EditQuotedFigures`), from the work party's shown ones. */
 function workPartyQuotedFigures(shown: WorkPartyCorrectionFigures) {
-  const changeFeeCents = 0;
   return {
     newFinalPriceCents: shown.newFinalPriceCents,
     priceDiffCents: shown.priceDiffCents,
-    changeFeeCents,
-    netChargeCents: shown.priceDiffCents + changeFeeCents,
+    changeFeeCents: shown.changeFeeCents,
+    // Before the unpaid-ask offset, as the preview reports it (`EditQuotedFigures`).
+    netChargeCents: shown.priceDiffCents + shown.changeFeeCents,
   };
 }
 
@@ -488,9 +490,8 @@ async function correctWorkParty(
           ...(methodForEdit === null ? {} : { settlementMethod: methodForEdit }),
           ...(params.notifyMember === undefined ? {} : { notifyMember: params.notifyMember }),
           // The edit's own check that the save matches the preview (`INV-MOD-062`),
-          // at its own place before settlement (maintainers' comment D). Built from
-          // the figures the officer was shown: a correction's fee is 0 (its
-          // money rule), so its net is the difference.
+          // at its own place before settlement (maintainers' comment D), built
+          // from the figures the officer was shown.
           ...(params.dryRun ? {} : { quotedFigures: workPartyQuotedFigures(params.expectedFigures) }),
         },
         ipAddress: params.ipAddress,
@@ -533,17 +534,28 @@ async function correctWorkParty(
       // What the ordinary edit offers for this payment shape, on its own answer
       // (upstream owner decision, 15 Nov 2026): a method it does not offer is
       // refused here, rolling the edit back. Otherwise it is `methodForEdit`.
-      // An unpaid ask that took the whole reduction (B-L1 of the maintainers'
-      // second comment) leaves no method to offer: nothing comes back.
-      const absorbedCents =
-        direction === "add" ? await reductionWhollyAbsorbedByUnpaidAskCents(tx, modified, editTotalMoneyBackCents(modified)) : 0;
-      const settlementOptions = workPartySettlementOptions(booking, modified.requiresSettlementMethod, absorbedCents);
+      // #5151 (`INV-PAY-154`): a dispute holds money this Add would hand back, on
+      // the edit's own answer, so the treasurer settles it by hand; asked before
+      // the method, which a hold leaves none of. An Add that hands nothing back
+      // (an unpaid ask took it) holds nothing and goes ahead (#5149 review A2).
+      if (direction === "add" && modified.refundHeldForDispute && editTotalMoneyBackCents(modified) > 0) {
+        throw new ApiError(WORK_PARTY_DISPUTED_PAYMENT_MESSAGE, 409);
+      }
+      // What an unpaid ask took of an Add's reduction, on the edit's own answer:
+      // all of it leaves no method to offer, as nothing comes back (B-L1 of the
+      // maintainers' second comment); part of it is named (review M4).
+      const settlementOptions = workPartySettlementOptions(
+        booking,
+        modified.requiresSettlementMethod,
+        direction === "add" ? workPartyAskOffset(modified) : undefined,
+      );
       const settlementMethod =
         direction === "add" ? resolveWorkPartySettlementMethod(settlementOptions, params.settlementMethod, params.format) : null;
       const figures: WorkPartyCorrectionFigures = {
         previousFinalPriceCents: booking.finalPriceCents,
         newFinalPriceCents: modified.booking.finalPriceCents,
         priceDiffCents: modified.priceDiffCents,
+        changeFeeCents: modified.changeFeeCents,
         accountCreditAmountCents: modified.accountCreditAmountCents,
         appliedCreditGivenBackCents: modified.appliedCreditGivenBackCents,
         refundedExcessCreditCents: modified.refundedExcessCreditCents,
@@ -573,7 +585,7 @@ async function correctWorkParty(
       // (6) Only what the officer was shown (#4030 C4). A throw rolls it all back.
       const expected = params.expectedFigures;
       if (FIGURE_KEYS.some((key) => expected[key] !== figures[key])) {
-        throw new WorkPartyCorrectionFiguresChangedError(figures);
+        throw new WorkPartyCorrectionFiguresChangedError(figures, settlementOptions);
       }
 
       deferredPostCommit = modified.deferredPostCommit ?? null;
@@ -595,9 +607,8 @@ async function correctWorkParty(
       // The edit's own check (`INV-MOD-062`) refused a save whose figures moved:
       // answer as step (6) does, with the figures a fresh dry run now gives.
       if (error instanceof EditPriceChangedError && !params.dryRun) {
-        throw new WorkPartyCorrectionFiguresChangedError(
-          (await correctWorkParty(direction, { ...params, dryRun: true, expectedFigures: undefined })).figures,
-        );
+        const fresh = await correctWorkParty(direction, { ...params, dryRun: true, expectedFigures: undefined });
+        throw new WorkPartyCorrectionFiguresChangedError(fresh.figures, fresh.settlementOptions);
       }
       throw error;
     });

@@ -26,7 +26,11 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
-import { workPartyAskAbsorbedSentence, workPartyCreditBackCents } from "@/lib/edit-money-back";
+import {
+  workPartyAskAbsorbedSentence,
+  workPartyAskPartlyAbsorbedSentence,
+  workPartyCreditBackCents,
+} from "@/lib/edit-money-back";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { BookingWorkPartyRemoveControls } from "@/components/admin/booking-work-party-remove-controls";
@@ -161,7 +165,9 @@ function BookingWorkPartyAddControls({
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409 && data.code === "FIGURES_CHANGED") {
+        // The choice may have changed with the figures (#5149 review M1).
         setFigures(data.figures);
+        setSettlementOptions(data.settlementOptions ?? null);
         setError(data.error);
         return;
       }
@@ -420,12 +426,9 @@ function WorkPartyMoneyBackLines({
   money: (cents: number) => string;
 }) {
   // An unpaid ask took the whole reduction (#5149 B-L1): nothing comes back.
-  if (options?.absorbedByUnpaidAskCents) {
-    return (
-      <p data-testid="work-party-ask-absorbed">
-        {workPartyAskAbsorbedSentence(money(options.absorbedByUnpaidAskCents))}
-      </p>
-    );
+  const askOffsetCents = options?.unpaidAskOffsetCents ?? 0;
+  if (askOffsetCents > 0 && options?.methods.length === 0) {
+    return <p data-testid="work-party-ask-absorbed">{workPartyAskAbsorbedSentence(money(askOffsetCents))}</p>;
   }
   // Every cent coming back as credit: paid money credited, a paid booking's
   // applied credit given back, and an unpaid one's applied credit freed (fork #129).
@@ -446,6 +449,9 @@ function WorkPartyMoneyBackLines({
         <p>
           Account credit to the member: <strong>{money(creditBackCents)}</strong>
         </p>
+      )}
+      {askOffsetCents > 0 && (
+        <p data-testid="work-party-ask-partly-absorbed">{workPartyAskPartlyAbsorbedSentence(money(askOffsetCents))}</p>
       )}
     </>
   );

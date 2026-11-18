@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *    the officer's own or family's booking — its owner, or for an
  *    organiser-paid joiner the organiser who paid, and their family groups —
  *    is refused on Add and Remove, whatever the money does, before the edit
- *    runs; a disputed card payment is refused up front too;
+ *    runs; a disputed card payment is refused where the edit would hold money;
  *  - the settlement method is a checked figure on its own: a save whose figures
  *    differ ONLY in the method is refused, and the edit's own quoted-figures
  *    check (`INV-MOD-062`) runs on the save;
@@ -32,9 +32,7 @@ const h = vi.hoisted(() => ({
   family: [] as Array<{ memberId: string; familyGroupId: string }>,
   modified: null as Record<string, unknown> | null,
   modifyCalls: [] as Array<Record<string, unknown>>,
-  disputedCents: 0,
   takenTransactions: 0,
-  modificationNewData: {} as Record<string, unknown>,
   /** When set, the doubled edit refuses a save quoted with other figures, as `assertEditQuotedFigures` does. */
   editFreshFigures: null as Record<string, number> | null,
 }));
@@ -51,7 +49,6 @@ const tx = {
     }),
   },
   paymentTransaction: { count: vi.fn(async () => h.takenTransactions) },
-  bookingModification: { findUnique: vi.fn(async () => ({ newData: h.modificationNewData })) },
   workPartyEvent: {
     findUnique: vi.fn(async () => ({
       name: "Spring Bee",
@@ -84,9 +81,6 @@ vi.mock("@/lib/booking-row-lock", () => ({ lockBookingRowForOwnerRead: vi.fn(asy
 vi.mock("@/lib/booking-exception-approval", () => ({ reauthorizeBookingOfficerFromDb: vi.fn(async () => true) }));
 vi.mock("@/lib/booking-modify-quote-priced", () => ({ isQuotePricedBooking: vi.fn(async () => false) }));
 vi.mock("@/lib/promo-redemption-slot", () => ({ multiPromoCodesEnabled: vi.fn(async () => false) }));
-vi.mock("@/lib/booking-modify-settlement-options", () => ({
-  editReductionDisputeHold: vi.fn(async () => ({ cents: h.disputedCents, disputes: [] })),
-}));
 vi.mock("@/lib/booking-batch-modification-service", async () => {
   const { EditPriceChangedError } = await import("@/lib/edit-quoted-figures");
   return {
@@ -148,6 +142,9 @@ function edit(
     requiresSettlementMethod,
     booking: { finalPriceCents: 15_000 },
     priceDiffCents: -5_000,
+    changeFeeCents: 0,
+    unpaidAskOffsetCents: 0,
+    refundHeldForDispute: false,
     refundAmountCents: 0,
     accountCreditAmountCents: 0,
     appliedCreditGivenBackCents: 0,
@@ -182,9 +179,7 @@ beforeEach(() => {
   h.family = [];
   h.parent = null;
   h.modifyCalls = [];
-  h.disputedCents = 0;
   h.takenTransactions = 0;
-  h.modificationNewData = {};
   h.editFreshFigures = null;
   seedBooking();
   edit({ accountCreditAmountCents: 5_000 });
@@ -264,6 +259,7 @@ describe("own or family booking: never, whatever the money does (owner decision 
     previousFinalPriceCents: 20_000,
     newFinalPriceCents: 15_000,
     priceDiffCents: -5_000,
+    changeFeeCents: 0,
     accountCreditAmountCents: 5_000,
     appliedCreditGivenBackCents: 0,
     refundedExcessCreditCents: 0,
@@ -330,6 +326,14 @@ describe("own or family booking: never, whatever the money does (owner decision 
       expect(h.modifyCalls).toEqual([]);
     });
 
+    it("A1: refuses an UNPAID joiner whose organiser (who will pay) is the officer, before any settlement", async () => {
+      seedBooking({ status: "PAYMENT_PENDING", payment: null, organiserSettled: true, parentBookingId: "organiser-booking" });
+      h.parent = { memberId: "officer-1" };
+      edit({}, false);
+      expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual(OWN);
+      expect(h.modifyCalls).toEqual([]);
+    });
+
     it("allows it when neither is the officer or their family", async () => {
       const result = await addBookingToWorkParty({ ...common, dryRun: true });
       expect(result.settlementOptions).toEqual({ methods: ["card"], paidByOrganiser: true, refundTo: null });
@@ -350,21 +354,28 @@ describe("own or family booking: never, whatever the money does (owner decision 
   });
 });
 
-describe("a disputed card payment (#5151, INV-PAY-154)", () => {
-  it("is refused up front with the plain reason, before the edit runs", async () => {
-    h.disputedCents = 20_000;
+describe("a disputed card payment (#5151, INV-PAY-154): refused only where the edit holds money", () => {
+  it("is refused with the plain reason when the edit holds what would come back", async () => {
+    edit({ refundAmountCents: 5_000 }, false);
+    h.modified!.refundHeldForDispute = true;
     expect(await refusal(addBookingToWorkParty({ ...common, dryRun: true }))).toEqual({
       status: 409,
       message: WORK_PARTY_DISPUTED_PAYMENT_MESSAGE,
     });
-    expect(h.modifyCalls).toEqual([]);
+  });
+
+  it("goes ahead when nothing would come back, so nothing is held (an unpaid ask took it)", async () => {
+    edit({}, false);
+    h.modified!.refundHeldForDispute = true;
+    h.modified!.unpaidAskOffsetCents = 5_000;
+    expect((await addBookingToWorkParty({ ...common, dryRun: true })).outcome).toBe("quoted");
   });
 });
 
 describe("an unpaid ask that took the whole reduction (B-L1)", () => {
   beforeEach(() => {
     edit({}, false);
-    h.modificationNewData = { unpaidAskOffsetCents: 5_000 };
+    h.modified!.unpaidAskOffsetCents = 5_000;
   });
 
   it("offers no method and settles by none: nothing comes back", async () => {
@@ -373,7 +384,7 @@ describe("an unpaid ask that took the whole reduction (B-L1)", () => {
       methods: [],
       paidByOrganiser: false,
       refundTo: null,
-      absorbedByUnpaidAskCents: 5_000,
+      unpaidAskOffsetCents: 5_000,
     });
     expect(result.figures).toMatchObject({ settlementMethod: null, accountCreditAmountCents: 0, refundAmountCents: 0 });
   });
@@ -381,13 +392,19 @@ describe("an unpaid ask that took the whole reduction (B-L1)", () => {
   it("refuses a refund with that reason, not 'only as club credit'", async () => {
     expect(await refusal(addBookingToWorkParty({ ...common, settlementMethod: "card", dryRun: true }))).toEqual({
       status: 409,
-      message: "The discount cancels the $50.00 still owed on this booking, so nothing comes back.",
+      message: "The discount cancels $50.00 of what is still owed on this booking, so nothing comes back.",
     });
   });
 
-  it("is not claimed when the ask took only part of it", async () => {
-    h.modificationNewData = { unpaidAskOffsetCents: 3_000 };
-    expect((await addBookingToWorkParty({ ...common, dryRun: true })).settlementOptions.methods).toEqual(["credit"]);
+  it("M4: names the part an ask took when the rest still comes back", async () => {
+    edit({ accountCreditAmountCents: 2_000 }, true);
+    h.modified!.unpaidAskOffsetCents = 3_000;
+    expect((await addBookingToWorkParty({ ...common, dryRun: true })).settlementOptions).toEqual({
+      methods: ["credit", "card"],
+      paidByOrganiser: false,
+      refundTo: "card",
+      unpaidAskOffsetCents: 3_000,
+    });
   });
 });
 
@@ -396,6 +413,7 @@ describe("the edit's own quoted-figures check (INV-MOD-062) runs on the save", (
     previousFinalPriceCents: 20_000,
     newFinalPriceCents: 15_000,
     priceDiffCents: -5_000,
+    changeFeeCents: 0,
     accountCreditAmountCents: 5_000,
     appliedCreditGivenBackCents: 0,
     refundedExcessCreditCents: 0,
@@ -414,15 +432,33 @@ describe("the edit's own quoted-figures check (INV-MOD-062) runs on the save", (
     });
   });
 
-  it("answers the edit's refusal as a figures change, with the figures a fresh dry run gives", async () => {
+  it("M2: builds the edit's figures from the fee shown, and refuses a save shown another fee", async () => {
+    await addBookingToWorkParty({ ...common, dryRun: false, expectedFigures: { ...saved, changeFeeCents: 0 } });
+    expect(h.modifyCalls.at(-1)!.input).toMatchObject({ quotedFigures: { changeFeeCents: 0, netChargeCents: -5_000 } });
+    await expect(
+      addBookingToWorkParty({ ...common, dryRun: false, expectedFigures: { ...saved, changeFeeCents: 100 } }),
+    ).rejects.toBeInstanceOf(WorkPartyCorrectionFiguresChangedError);
+    // The edit was handed the fee shown, net of it, and the save refused on the fee alone.
+    expect(h.modifyCalls.at(-1)!.input).toMatchObject({ quotedFigures: { changeFeeCents: 100, netChargeCents: -4_900 } });
+  });
+
+  it("answers the edit's refusal as a figures change, with the figures and choices a fresh dry run gives", async () => {
     // The edit's own figures differ from the ones shown (a fee where none was quoted).
     h.editFreshFigures = { newFinalPriceCents: 15_000, priceDiffCents: -5_000, changeFeeCents: 100, netChargeCents: -4_900 };
+    h.modified!.changeFeeCents = 100;
     const refused = await addBookingToWorkParty({ ...common, dryRun: false, expectedFigures: saved }).then(
       () => null,
       (error: unknown) => error,
     );
     expect(refused).toBeInstanceOf(WorkPartyCorrectionFiguresChangedError);
-    expect((refused as WorkPartyCorrectionFiguresChangedError).actual).toEqual(saved);
+    // M2: the fee is a figure of its own, so the fresh figures show it.
+    expect((refused as WorkPartyCorrectionFiguresChangedError).actual).toEqual({ ...saved, changeFeeCents: 100 });
+    // M1: and what may be chosen for them travels with them.
+    expect((refused as WorkPartyCorrectionFiguresChangedError).settlementOptions).toEqual({
+      methods: ["credit", "card"],
+      paidByOrganiser: false,
+      refundTo: "card",
+    });
     // The save, then the dry run that re-read the figures.
     expect(h.modifyCalls).toHaveLength(2);
     expect(h.modifyCalls[1]!.input).not.toHaveProperty("quotedFigures");
@@ -437,6 +473,7 @@ describe("the settlement method is a checked figure", () => {
       previousFinalPriceCents: 20_000,
       newFinalPriceCents: 15_000,
       priceDiffCents: -5_000,
+      changeFeeCents: 0,
       accountCreditAmountCents: 5_000,
       appliedCreditGivenBackCents: 0,
       refundedExcessCreditCents: 0,
@@ -470,6 +507,9 @@ describe("Remove from work party (fork #130): the service's own guards", () => {
     h.modified = {
       booking: { finalPriceCents: 20_000 },
       priceDiffCents: 5_000,
+      changeFeeCents: 0,
+      unpaidAskOffsetCents: 0,
+      refundHeldForDispute: false,
       refundAmountCents: 0,
       accountCreditAmountCents: 0,
       appliedCreditGivenBackCents: 0,

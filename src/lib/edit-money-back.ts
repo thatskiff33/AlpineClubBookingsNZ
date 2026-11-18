@@ -59,5 +59,10 @@ export function workPartyCreditBackCents(figures: EditMoneyBack): number {
  * `amount` is already formatted for the club.
  */
 export function workPartyAskAbsorbedSentence(amount: string): string {
-  return `The discount cancels the ${amount} still owed on this booking, so nothing comes back.`;
+  return `The discount cancels ${amount} of what is still owed on this booking, so nothing comes back.`;
+}
+
+/** The same, when the ask took only part of the discount and the rest comes back (#5149 review M4). */
+export function workPartyAskPartlyAbsorbedSentence(amount: string): string {
+  return `Of the discount, ${amount} cancels what is still owed on this booking.`;
 }

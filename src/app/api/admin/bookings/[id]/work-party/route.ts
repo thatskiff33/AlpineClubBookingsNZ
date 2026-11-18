@@ -170,7 +170,7 @@ export async function POST(
   } catch (error) {
     if (error instanceof WorkPartyCorrectionFiguresChangedError) {
       return NextResponse.json(
-        { error: error.message, code: error.code, figures: error.actual },
+        { error: error.message, code: error.code, figures: error.actual, settlementOptions: error.settlementOptions },
         { status: 409 },
       );
     }

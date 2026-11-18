@@ -26,6 +26,7 @@ const figures = (change: Record<string, unknown> = {}) => ({
   previousFinalPriceCents: 20_000,
   newFinalPriceCents: 15_000,
   priceDiffCents: -5_000,
+  changeFeeCents: 0,
   accountCreditAmountCents: 5_000,
   appliedCreditGivenBackCents: 0,
   refundedExcessCreditCents: 0,
@@ -92,14 +93,65 @@ describe("BookingWorkPartyControls settlement (fork #129)", () => {
     serve(() => ({
       outcome: "quoted",
       figures: figures({ accountCreditAmountCents: 0, settlementMethod: null }),
-      settlementOptions: { methods: [], paidByOrganiser: false, refundTo: null, absorbedByUnpaidAskCents: 5_000 },
+      settlementOptions: { methods: [], paidByOrganiser: false, refundTo: null, unpaidAskOffsetCents: 5_000 },
     }));
     await openAndPreview();
     expect(screen.getByTestId("work-party-ask-absorbed")).toHaveTextContent(
-      "The discount cancels the $50.00 still owed on this booking, so nothing comes back.",
+      "The discount cancels $50.00 of what is still owed on this booking, so nothing comes back.",
     );
     expect(screen.queryByRole("group", { name: "How the discount comes back" })).not.toBeInTheDocument();
     expect(screen.queryByText(/Account credit to the member/)).not.toBeInTheDocument();
+  });
+
+  it("#5149 M4: names the part of the discount an unpaid ask took, beside what comes back", async () => {
+    serve(() => ({
+      outcome: "quoted",
+      figures: figures({ accountCreditAmountCents: 2_000 }),
+      settlementOptions: { methods: ["credit", "card"], paidByOrganiser: false, refundTo: "card", unpaidAskOffsetCents: 3_000 },
+    }));
+    await openAndPreview();
+    expect(screen.getByText(/Account credit to the member/)).toHaveTextContent("$20.00");
+    expect(screen.getByTestId("work-party-ask-partly-absorbed")).toHaveTextContent(
+      "Of the discount, $30.00 cancels what is still owed on this booking.",
+    );
+  });
+
+  it("#5149 M1: a figures change brings its own choices, so a stale 'nothing comes back' is not confirmed", async () => {
+    posts = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string; body?: string }) => {
+        if (init?.method !== "POST") return new Response(JSON.stringify(workParties), { status: 200 });
+        const body = JSON.parse(init.body ?? "{}");
+        posts.push(body);
+        if (body.mode === "preview") {
+          return new Response(
+            JSON.stringify({
+              outcome: "quoted",
+              figures: figures({ accountCreditAmountCents: 0, settlementMethod: null }),
+              settlementOptions: { methods: [], paidByOrganiser: false, refundTo: null, unpaidAskOffsetCents: 5_000 },
+            }),
+            { status: 200 },
+          );
+        }
+        // The member paid the ask meanwhile: the money comes back, and there is a choice again.
+        return new Response(
+          JSON.stringify({
+            code: "FIGURES_CHANGED",
+            error: "The booking changed since the figures were shown. Check the new figures and confirm again.",
+            figures: figures(),
+            settlementOptions: { methods: ["credit", "card"], paidByOrganiser: false, refundTo: "card" },
+          }),
+          { status: 409 },
+        );
+      }),
+    );
+    await openAndPreview();
+    expect(screen.getByTestId("work-party-ask-absorbed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add and email member" }));
+    await screen.findByRole("group", { name: "How the discount comes back" });
+    expect(screen.queryByTestId("work-party-ask-absorbed")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Refund to card/ })).toBeInTheDocument();
   });
 
   it("offers Club credit and Refund to card on a card-paid booking, and re-runs the preview on a new choice", async () => {
@@ -226,6 +278,7 @@ describe("Remove from work party (fork #130)", () => {
     previousFinalPriceCents: 15_000,
     newFinalPriceCents: 20_000,
     priceDiffCents: 5_000,
+    changeFeeCents: 0,
     accountCreditAmountCents: 0,
     additionalAmountCents: 5_000,
     billedToOrganiserCents: 0,

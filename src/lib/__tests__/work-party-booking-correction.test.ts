@@ -3,7 +3,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BookingStatus } from "@prisma/client";
 import {
-  WORK_PARTY_DISPUTED_PAYMENT_MESSAGE,
   WORK_PARTY_NOT_ON_BOOKING_MESSAGE,
   WORK_PARTY_OWN_BOOKING_MESSAGE,
   WORK_PARTY_SETTLED_AT_ZERO_MESSAGE,
@@ -18,10 +17,11 @@ import { actorIsMemberOrFamily } from "@/lib/work-party-booking-facts";
 import {
   resolveWorkPartySettlementMethod,
   WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
+  workPartyAskOffset,
   workPartySettlementOptions,
 } from "@/lib/work-party-settlement-options";
 import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";
-import { editTotalMoneyBackCents, workPartyAskAbsorbedSentence } from "@/lib/edit-money-back";
+import { editTotalMoneyBackCents, workPartyAskAbsorbedSentence, workPartyAskPartlyAbsorbedSentence } from "@/lib/edit-money-back";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 /**
@@ -42,7 +42,6 @@ const booking: WorkPartyEligibilityBooking = {
   quotePriced: false,
   memberOwned: true,
   actorIsOwnerOrFamily: false,
-  cardPaymentDisputed: false,
 };
 
 const context: WorkPartyEligibilityContext = {
@@ -220,12 +219,6 @@ describe("workPartyBookingEligibility", () => {
     ).toEqual(refusal(WORK_PARTY_OWN_BOOKING_MESSAGE));
   });
 
-  it("refuses a booking whose card payment is disputed, with the plain reason (#5151)", () => {
-    expect(workPartyBookingEligibility({ ...booking, cardPaymentDisputed: true }, context, event)).toEqual(
-      refusal(WORK_PARTY_DISPUTED_PAYMENT_MESSAGE),
-    );
-  });
-
   it("refuses an organisation's booking, which holds no account credit", () => {
     expect(
       workPartyBookingEligibility({ ...booking, memberOwned: false }, context, event),
@@ -348,8 +341,8 @@ describe("workPartySettlementOptions and the settlement guard (fork #129, upstre
   });
 
   it("B-L1: offers no method when an unpaid ask took the whole reduction, and refuses one with the reason", () => {
-    const absorbed = workPartySettlementOptions(paidCard, false, 5_000);
-    expect(absorbed).toEqual({ methods: [], paidByOrganiser: false, refundTo: null, absorbedByUnpaidAskCents: 5_000 });
+    const absorbed = workPartySettlementOptions(paidCard, false, { unpaidAskOffsetCents: 5_000, wholly: true });
+    expect(absorbed).toEqual({ methods: [], paidByOrganiser: false, refundTo: null, unpaidAskOffsetCents: 5_000 });
     expect(resolveWorkPartySettlementMethod(absorbed, undefined, CLUB_FORMAT_TEST)).toBeNull();
     for (const method of ["card", "credit"] as const) {
       expect(() => resolveWorkPartySettlementMethod(absorbed, method, CLUB_FORMAT_TEST)).toThrow(
@@ -357,10 +350,31 @@ describe("workPartySettlementOptions and the settlement guard (fork #129, upstre
       );
     }
     expect(workPartyAskAbsorbedSentence("$50.00")).toBe(
-      "The discount cancels the $50.00 still owed on this booking, so nothing comes back.",
+      "The discount cancels $50.00 of what is still owed on this booking, so nothing comes back.",
     );
     // An organiser-paid joiner keeps the organiser's one disposition.
-    expect(workPartySettlementOptions({ ...paidCard, organiserSettled: true, parentBookingId: "parent" }, false, 5_000).methods).toEqual(["card"]);
+    expect(
+      workPartySettlementOptions({ ...paidCard, organiserSettled: true, parentBookingId: "parent" }, false, { unpaidAskOffsetCents: 5_000, wholly: true }).methods,
+    ).toEqual(["card"]);
+  });
+
+  it("M4: an ask that took part of the reduction is named beside the choice the rest still has", () => {
+    expect(workPartySettlementOptions(paidCard, true, { unpaidAskOffsetCents: 3_000, wholly: false })).toEqual({
+      methods: ["credit", "card"],
+      paidByOrganiser: false,
+      refundTo: "card",
+      unpaidAskOffsetCents: 3_000,
+    });
+    expect(workPartyAskPartlyAbsorbedSentence("$30.00")).toBe("Of the discount, $30.00 cancels what is still owed on this booking.");
+  });
+
+  it("M3: whether an ask took it all is the one rule's answer on the edit's own offset", () => {
+    expect(workPartyAskOffset({ priceDiffCents: -5_000, changeFeeCents: 0, unpaidAskOffsetCents: 5_000 })).toEqual({ unpaidAskOffsetCents: 5_000, wholly: true });
+    expect(workPartyAskOffset({ priceDiffCents: -5_000, changeFeeCents: 0, unpaidAskOffsetCents: 3_000 })).toEqual({ unpaidAskOffsetCents: 3_000, wholly: false });
+    expect(workPartyAskOffset({ priceDiffCents: -5_000, changeFeeCents: 0, unpaidAskOffsetCents: 0 })).toEqual({ unpaidAskOffsetCents: 0, wholly: false });
+    // A fee charged on the edit is part of its net, as the edit's own rule reads it.
+    expect(workPartyAskOffset({ priceDiffCents: -5_000, changeFeeCents: 1_000, unpaidAskOffsetCents: 4_000 }).wholly).toBe(true);
+    expect(workPartyAskOffset({ priceDiffCents: 5_000, changeFeeCents: 0, unpaidAskOffsetCents: 0 }).wholly).toBe(false);
   });
 
   it("defaults to the first method offered", () => {
@@ -394,6 +408,7 @@ describe("every cent that comes back is counted once (Remove's guard, the absorb
     previousFinalPriceCents: 20_000,
     newFinalPriceCents: 15_000,
     priceDiffCents: -5_000,
+    changeFeeCents: 0,
     accountCreditAmountCents: 0,
     appliedCreditGivenBackCents: 0,
     refundedExcessCreditCents: 0,

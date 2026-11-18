@@ -11,13 +11,15 @@ import { hasSettledCardPayment } from "@/lib/booking-payment-state";
 import { defaultCorrectionSettlementMethod } from "@/lib/booking-finished-stay-correction";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
 import type { ClubFormat } from "@/lib/club-format";
+import { reductionLeftAfterUnpaidAskCents } from "@/lib/additional-payment-ask";
 import { workPartyAskAbsorbedSentence } from "@/lib/edit-money-back";
 import { formatCents } from "@/lib/utils";
 
 export interface WorkPartySettlementOptions {
   /**
    * The methods offered, the default first. Always one for an organiser-paid
-   * joiner; none when an unpaid ask took the whole reduction.
+   * joiner; none when an unpaid ask took the whole reduction
+   * (`unpaidAskOffsetCents` then names it).
    */
   methods: readonly BookingModificationSettlementMethod[];
   /** A joiner's booking its group organiser paid: the money goes back to the organiser. */
@@ -29,11 +31,13 @@ export interface WorkPartySettlementOptions {
    */
   refundTo: "card" | "bank" | null;
   /**
-   * Present only when an unpaid additional ask took the whole reduction (#3954,
-   * `reductionWhollyAbsorbedByUnpaidAskCents`): what it cancelled, in cents.
-   * Nothing comes back, so no method is offered (`workPartyAskAbsorbedSentence`).
+   * Present only when an unpaid additional ask took some of the reduction
+   * (#3954, the edit's own `unpaidAskOffsetCents`): what it cancelled, in
+   * cents, so the dialog can say so. All of it, with `methods` empty: nothing
+   * comes back (`workPartyAskAbsorbedSentence`); part of it: the rest comes
+   * back as below (`workPartyAskPartlyAbsorbedSentence`).
    */
-  absorbedByUnpaidAskCents?: number;
+  unpaidAskOffsetCents?: number;
 }
 
 /** What `workPartySettlementOptions` reads: the booking's lifecycle and payment. */
@@ -64,7 +68,7 @@ export interface WorkPartySettlementBooking {
  *    reduction can return, whatever it was paid by. Credit, or a refund: to the
  *    card when paid by card (`hasSettledCardPayment`, the test that also
  *    decides a Stripe refund), else by the bank-transfer hand-back.
- *  - `absorbedByUnpaidAskCents`: an unpaid ask took the whole reduction (after
+ *  - `unpaidAskOffsetCents`, all of it: an unpaid ask took the whole reduction (after
  *    Add, Remove, Add the reduction cancels the ask the Remove raised; B-L1 of
  *    the maintainers' comment
  *    https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211).
@@ -75,7 +79,7 @@ export interface WorkPartySettlementBooking {
 export function workPartySettlementOptions(
   booking: WorkPartySettlementBooking,
   editAsksForMethod: boolean,
-  absorbedByUnpaidAskCents = 0,
+  ask: WorkPartyAskOffset = { unpaidAskOffsetCents: 0, wholly: false },
 ): WorkPartySettlementOptions {
   if (paidByOrganiser(booking)) {
     return {
@@ -84,15 +88,39 @@ export function workPartySettlementOptions(
       refundTo: null,
     };
   }
-  if (absorbedByUnpaidAskCents > 0) {
-    return { methods: [], paidByOrganiser: false, refundTo: null, absorbedByUnpaidAskCents };
-  }
-  if (!editAsksForMethod) return { methods: ["credit"], paidByOrganiser: false, refundTo: null };
+  const offset = ask.unpaidAskOffsetCents > 0 ? { unpaidAskOffsetCents: ask.unpaidAskOffsetCents } : {};
+  if (ask.wholly) return { methods: [], paidByOrganiser: false, refundTo: null, ...offset };
+  if (!editAsksForMethod) return { methods: ["credit"], paidByOrganiser: false, refundTo: null, ...offset };
   return {
     methods: ["credit", "card"],
     paidByOrganiser: false,
     refundTo: hasSettledCardPayment(booking) ? "card" : "bank",
+    ...offset,
   };
+}
+
+/** What an unpaid ask took of the reduction, and whether it took all of it. */
+export interface WorkPartyAskOffset {
+  unpaidAskOffsetCents: number;
+  wholly: boolean;
+}
+
+/**
+ * Read off the edit's own answer (`unpaidAskOffsetCents` on its result,
+ * #3954): whether nothing of the reduction is left once the ask took its
+ * offset, by the one rule (`reductionLeftAfterUnpaidAskCents`, `INV-SSOT-001`).
+ */
+export function workPartyAskOffset(edit: {
+  priceDiffCents: number;
+  changeFeeCents: number;
+  unpaidAskOffsetCents: number;
+}): WorkPartyAskOffset {
+  const offset = edit.unpaidAskOffsetCents;
+  const left = reductionLeftAfterUnpaidAskCents({
+    netAmountCents: edit.priceDiffCents + edit.changeFeeCents,
+    unpaidAskOffsetCents: offset,
+  });
+  return { unpaidAskOffsetCents: offset, wholly: offset > 0 && left === 0 };
 }
 
 /** The method the edit is run with when the officer chose none: club credit, or the organiser's disposition. */
@@ -123,8 +151,8 @@ export function resolveWorkPartySettlementMethod(
     throw new ApiError(
       options.paidByOrganiser
         ? "This booking was paid by its group organiser, so the discount goes back to the organiser."
-        : options.absorbedByUnpaidAskCents
-          ? workPartyAskAbsorbedSentence(formatCents(options.absorbedByUnpaidAskCents, format))
+        : options.methods.length === 0 && options.unpaidAskOffsetCents
+          ? workPartyAskAbsorbedSentence(formatCents(options.unpaidAskOffsetCents, format))
           : WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
       409,
     );

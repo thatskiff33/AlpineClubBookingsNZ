@@ -6629,9 +6629,10 @@ steps below are its steps too (its eligibility rule is
 3. Re-read the booking and the work party under the locks and apply the shared
    eligibility rule (`workPartyBookingEligibility`), including "already has a
    work party". The list's facts (`readWorkPartyBookingFacts`) are re-read on
-   this `tx`: the family rows of the owner and, for an organiser-paid joiner,
-   the paying organiser (owner decision 3 of 18 Nov 2026 on #5149), a card
-   dispute hold and a $0 settle, so each refusal is made before the edit runs.
+   this `tx`: the family rows of the owner and, for an organiser-pays joiner,
+   the organiser (owner decision 3 of 18 Nov 2026 on #5149), and a $0 settle,
+   so each refusal is made before the edit runs. A dispute hold is refused on
+   the edit's own `refundHeldForDispute`, before the commit.
 4. Run `modifyBookingBatch` on the same `tx` with `officerWorkPartyCorrection`
    and a `preTransaction` resolved before the transaction (`INV-LOCK-004`). The
    service re-enters all three keys and takes the member keys after them. Any

@@ -12,8 +12,8 @@
   credit back. A joiner's booking that the group organiser paid for goes back
   to the organiser, as with any change to it. An officer can never add their
   own booking or a family member's, nor one whose group they or their family
-  organised and paid for, even when no money comes back; another officer must.
-  A booking priced by a quote, or one whose card payment is disputed, can't be
-  added. The change
+  organise and pay for, paid yet or not, even when no money comes back; another
+  officer must. A booking priced by a quote can't be added, nor one whose card
+  payment is disputed where money would come back. The change
   goes through the normal booking change, so the history, ledger, Xero and any
   refund are recorded and made like any other.

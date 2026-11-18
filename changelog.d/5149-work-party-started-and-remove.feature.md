@@ -7,6 +7,6 @@
   **Remove from work party** action, shown instead of Add on a booking that is
   on a work party, takes the discount off again: the price goes back up and the
   difference is owed on the booking, like any change that raises the price.
-  Credit already given and refunds already paid are left alone. A booking a
-  100% work party settled at no charge can't be removed: cancel it, or ask the
-  treasurer. Both go through the normal booking change, with no change fee.
+  Credit already given and refunds already paid are left alone. A booking marked
+  paid with nothing taken (a 100% work party's) can't be removed: cancel it, or
+  ask the treasurer. Both go through the normal booking change, with no change fee.
