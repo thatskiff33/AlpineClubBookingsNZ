@@ -303,11 +303,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
       // Layouts, Templates, and Reference rather than scattering its leaves
       // through the sidebar. Per-lodge display config remains on each lodge in
       // the lodge configuration hub (/admin/lodges/[id]) since LTV-035/#81.
-      {
-        href: "/admin/display",
-        label: "Lobby Display",
-        icon: Tv,
-      },
+      { ...adminLink("display"), icon: Tv },
     ],
   },
   {
@@ -360,7 +356,7 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         label: "Login & Security",
         icon: LockKeyhole,
       },
-      { href: "/admin/lodges", label: "Lodges", icon: Building2 },
+      { ...adminLink("lodges"), icon: Building2 },
       { ...adminLink("membership-setup"), icon: BadgeCheck },
       { ...adminLink("appearance"), icon: Palette },
       { ...adminLink("bookings-setup"), icon: BedDouble },
