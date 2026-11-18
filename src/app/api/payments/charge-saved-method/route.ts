@@ -1,3 +1,4 @@
+import { releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/saved-card-charge-claim";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { NextRequest, NextResponse } from "next/server";
@@ -8,7 +9,6 @@ import { isHostingCoverageParticipantRetry } from "@/lib/adult-member-hosting-qu
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
-  reconcileBedAllocationsForBookingWithGlobalLockHeld,
   reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -50,6 +50,11 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY, SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contract";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { BELOW_STRIPE_MINIMUM_ADMIN_BODY, BelowStripeMinimumError, chargeCurrencyRefusal, isLocalChargeRefusal, localChargeRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -243,7 +248,7 @@ export async function POST(request: NextRequest) {
         }
         const claimed = await tx.booking.updateMany({
           where: { id: bookingId, status: BookingStatus.PENDING },
-          data: { status: BookingStatus.CONFIRMED, nonMemberHoldUntil: null },
+          data: { status: BookingStatus.CONFIRMED, savedCardClaimAt: new Date(), nonMemberHoldUntil: null },
         });
         if (claimed.count === 0) {
           return { error: "Booking is no longer pending" as const, status: 409 };
@@ -283,7 +288,7 @@ export async function POST(request: NextRequest) {
           paymentId: locked.payment.id,
           amountCents: chargeCents,
         };
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     let claim: Awaited<ReturnType<typeof runClaim>>;
     try {
@@ -348,10 +353,8 @@ export async function POST(request: NextRequest) {
     const releaseChargeClaim = async (answer?: {
       attemptRowId: string;
       paymentIntent: SavedCardChargeAnswer;
-    }) =>
-      prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        await acquireLodgeCapacityLock(tx, lodgeId);
+    }) => {
+      const outcome = await runSavedCardClaimRelease(async (tx) => {
         if (answer) {
           await settleSavedCardChargeAttempt({ journal: receiptJournal, ...answer, paymentId, store: tx });
         }
@@ -382,22 +385,14 @@ export async function POST(request: NextRequest) {
           }
           return { released: false };
         }
-        const released = await tx.booking.updateMany({
-          where: { id: bookingId, status: BookingStatus.CONFIRMED },
-          data: {
-            status: BookingStatus.PENDING,
-            nonMemberHoldUntil: booking.nonMemberHoldUntil,
-          },
+        return releaseSavedCardChargeClaim(tx, {
+          bookingId,
+          restoreHoldUntil: booking.nonMemberHoldUntil,
+          previousRange,
         });
-        if (released.count > 0) {
-          await reconcileBedAllocationsForBookingWithGlobalLockHeld({
-            bookingId,
-            db: tx,
-            previousRange,
-          });
-        }
-        return { released: released.count > 0 };
-      });
+      }, { bookingId, lodgeId });
+      return outcome.ok ? outcome.value : { released: false };
+    };
     claimReleaser = async () => {
       await releaseChargeClaim();
     };
@@ -670,6 +665,21 @@ export async function POST(request: NextRequest) {
             "unknown",
       });
     }
+
+    // Never after a capture (answered above). Only a contended claim saved
+    // nothing; once it committed, or the card was tried, the status may have
+    // moved (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      error,
+      "Saved-method charge contended for the lock(1) budget",
+      {
+        ...(claimReleaser || chargeAttempted
+          ? { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE }
+          : {}),
+        context: { chargeAttempted, claimCommitted: claimReleaser !== null },
+      },
+    );
+    if (contended) return contended;
 
     return NextResponse.json(
       { error: "Failed to charge saved payment method" },

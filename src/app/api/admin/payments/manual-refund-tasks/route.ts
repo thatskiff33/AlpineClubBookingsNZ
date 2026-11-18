@@ -10,11 +10,12 @@ import {
   OPEN_TASK_BOOKING_PAYMENT_SELECT,
   toAutoRefundedManualRefundTaskPayload,
   toDismissedManualRefundTaskPayload,
-  toOpenManualRefundTaskPayload,
+  toOpenManualRefundTaskPayloads,
 } from "@/lib/manual-refund-task-queue-payload";
 import {
   NOT_RETIRED_REVIEW_WHERE,
   readDismissedManualRefundTasks,
+  readOpenTaskDisputes,
   readOrDegrade,
 } from "@/lib/manual-refund-task-queue-reads";
 
@@ -169,6 +170,7 @@ export async function GET() {
         reviewContext: true,
         reason: true,
         createdAt: true,
+        paymentId: true,
         booking: { select: handBackBookingSummary },
       },
     }),
@@ -215,6 +217,8 @@ export async function GET() {
     ),
   ]);
 
+  const disputes = await readOpenTaskDisputes(prisma, tasks);
+
   return NextResponse.json({
     // #3033: whether the "open the booking's payment and rate history" link is
     // offered at all. Sent as an explicit boolean, never inferred by the card
@@ -224,9 +228,7 @@ export async function GET() {
       Shaped by `manual-refund-task-queue-payload.ts`, which is also where the
       redaction lives: the raw context column never crosses the wire.
     */
-    tasks: tasks.map((task) =>
-      toOpenManualRefundTaskPayload(task, guard.session.user.id),
-    ),
+    tasks: toOpenManualRefundTaskPayloads(tasks, guard.session.user.id, disputes),
     // True only when the notices read itself failed. The surface says so in a
     // line of its own rather than showing an empty card, because "no automatic
     // refunds in the last 30 days" is a claim about money and a failed query is

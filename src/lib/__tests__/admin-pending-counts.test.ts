@@ -33,7 +33,17 @@ const mocks = vi.hoisted(() => ({
   getPendingMemberArchiveReviewCount: vi.fn(),
   getPendingMemberDeleteReviewCount: vi.fn(),
   getUnassignedHutLeaderDates: vi.fn(),
+  getStuckStateAffectedCount: vi.fn(),
+  loggerError: vi.fn(),
   clubTimeSettingsFindUnique: vi.fn(),
+}));
+
+vi.mock("@/lib/stuck-state-affected-count", () => ({
+  getStuckStateAffectedCount: mocks.getStuckStateAffectedCount,
+}));
+
+vi.mock("@/lib/logger", () => ({
+  default: { error: mocks.loggerError, warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -127,6 +137,7 @@ describe("getAdminPendingCounts", () => {
     mocks.deletionRequestCount.mockResolvedValue(10);
     mocks.getPendingMemberDeleteReviewCount.mockResolvedValue(14);
     mocks.issueReportCount.mockResolvedValue(11);
+    mocks.getStuckStateAffectedCount.mockResolvedValue(17);
     // Uncovered lodge-nights (#2917), not bare dates: the SAME night at two
     // lodges is two rows, and the badge counts two — the sidebar number is
     // pieces of work, not calendar days.
@@ -171,7 +182,130 @@ describe("getAdminPendingCounts", () => {
       memberDeleteRequests: 14,
       issueReports: 11,
       unassignedHutLeaderDates: 2,
+      stuckStatesAffected: 17,
+      unavailable: [],
     });
+  });
+
+  it("returns the other counts when one counter throws, naming the failed one (#4962)", async () => {
+    // A database blip on ONE queue used to reject the whole Promise.all, and
+    // the sidebar read every count as zero.
+    mocks.issueReportCount.mockRejectedValue(new Error("connection reset"));
+    mocks.getStuckStateAffectedCount.mockRejectedValue(new Error("scan failed"));
+
+    const counts = await getAdminPendingCounts();
+
+    expect(counts.unavailable).toEqual(["issueReports", "stuckStatesAffected"]);
+    expect(counts.issueReports).toBe(0);
+    expect(counts.stuckStatesAffected).toBe(0);
+    expect(counts.bookingReviews).toBe(5);
+    expect(counts.manualRefundTasks).toBe(15);
+    expect(mocks.loggerError).toHaveBeenCalledWith(
+      expect.objectContaining({ count: "issueReports" }),
+      expect.any(String),
+    );
+  });
+
+  // The four Booking Requests counts are one read of the helper the page's tab
+  // badges share (#4969), taken once per batch: four counters each making their
+  // own call would run 20 queries on every sidebar refetch instead of 5.
+  it("reads the four Booking Requests counts once per batch, not once per counter", async () => {
+    await getAdminPendingCounts();
+    expect(mocks.newBookingPolicyExceptionRequestCount).toHaveBeenCalledTimes(1);
+    expect(mocks.bookingRequestCount).toHaveBeenCalledTimes(1);
+    // LOCKED_PERIOD and POLICY_EXCEPTION: two queries, once each.
+    expect(mocks.bookingChangeRequestCount).toHaveBeenCalledTimes(2);
+
+    await getAdminPendingCounts();
+    expect(mocks.newBookingPolicyExceptionRequestCount).toHaveBeenCalledTimes(2);
+  });
+
+  it("names all four Booking Requests counts unavailable when their one read fails, and loads the rest", async () => {
+    // Once only: four counters each making their own read would see one
+    // failure and three successes, so this proves the four share one read.
+    mocks.newBookingPolicyExceptionRequestCount.mockRejectedValueOnce(
+      new Error("connection reset"),
+    );
+
+    const counts = await getAdminPendingCounts();
+
+    expect([...counts.unavailable].sort()).toEqual(
+      [
+        "bookingReviews",
+        "lockedPeriodChangeRequests",
+        "policyExceptionRequests",
+        "publicBookingRequests",
+      ].sort(),
+    );
+    expect(counts.bookingReviews).toBe(0);
+    expect(counts.publicBookingRequests).toBe(0);
+    // Every other queue still arrives.
+    expect(counts.familyRequests).toBe(1);
+    expect(counts.manualRefundTasks).toBe(15);
+    expect(counts.issueReports).toBe(11);
+    expect(counts.unpaidFinishedStays).toBe(12);
+  });
+
+  it("uses a count the caller supplies and does not scan for it a second time (#4962 review)", async () => {
+    // The dashboard already reads the uncovered nights for its hut-leader cards
+    // and hands that number in, so the page holds one number, from one read.
+    const counts = await getAdminPendingCounts({
+      supplied: { unassignedHutLeaderDates: Promise.resolve(7) },
+    });
+
+    expect(counts.unassignedHutLeaderDates).toBe(7);
+    expect(counts.unavailable).toEqual([]);
+    expect(mocks.getUnassignedHutLeaderDates).not.toHaveBeenCalled();
+    // Every other queue is still counted.
+    expect(counts.bookingReviews).toBe(5);
+    expect(counts.issueReports).toBe(11);
+  });
+
+  it("names a supplied count that rejects as unavailable, whenever it rejects (#4962 review)", async () => {
+    // Rejected while the club day is still being read (a real database round
+    // trip, a macrotask here), so nothing awaits it yet: that must be reported as
+    // a failed count, and must not surface as an unhandled rejection, which
+    // vitest turns into a failed run.
+    mocks.clubTimeSettingsFindUnique.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                timeZone: "America/Denver",
+                updatedByMemberId: null,
+                updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+              }),
+            20,
+          ),
+        ),
+    );
+    const failed = Promise.reject(new Error("coverage read failed"));
+
+    const counts = await getAdminPendingCounts({
+      supplied: { unassignedHutLeaderDates: failed },
+    });
+
+    expect(counts.unavailable).toEqual(["unassignedHutLeaderDates"]);
+    expect(counts.unassignedHutLeaderDates).toBe(0);
+    expect(counts.bookingReviews).toBe(5);
+    expect(mocks.getUnassignedHutLeaderDates).not.toHaveBeenCalled();
+    expect(mocks.loggerError).toHaveBeenCalledWith(
+      expect.objectContaining({ count: "unassignedHutLeaderDates" }),
+      expect.any(String),
+    );
+  });
+
+  it("uses the club day a caller passes rather than reading its own", async () => {
+    // The dashboard holds one club day for its whole render (#3123).
+    const passed = new Date("2026-05-01T00:00:00.000Z");
+    await getAdminPendingCounts({ today: passed });
+
+    expect(mocks.getUnassignedHutLeaderDates).toHaveBeenCalledWith({
+      today: passed,
+      scope: { kind: "all" },
+    });
+    expect(mocks.clubTimeSettingsFindUnique).not.toHaveBeenCalled();
   });
 
   // These where-clauses mirror the individual queue routes; if one of these

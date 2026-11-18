@@ -21,6 +21,7 @@ import {
   normaliseManualPaymentNote,
 } from "@/lib/manual-subscription-payment";
 import { prisma } from "@/lib/prisma";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * #3498 (owner decision D2, epic #2797): put a DISMISSED money task back in the
@@ -308,7 +309,7 @@ export async function reopenManualRefundTask({
       kind: task.kind,
       status: ManualRefundTaskStatus.OPEN,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 export { MANUAL_PAYMENT_NOTE_MAX };

@@ -192,7 +192,8 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
       tasks: { id: string; awaitingLateCaptureApproval: boolean }[];
     };
 
-    expect(calls()[0].select).toMatchObject({ lateCaptureApprovalIntentId: true });
+    expect(calls()[0].select).toMatchObject({
+      paymentId: true, lateCaptureApprovalIntentId: true });
     expect(body.tasks.map((t) => [t.id, t.awaitingLateCaptureApproval])).toEqual([
       ["task-held", true],
       ["task-2700", false],

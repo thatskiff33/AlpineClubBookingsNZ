@@ -19,6 +19,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
+import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 
 /**
  * The finance queue's "Money to settle" card: what it says about each kind of
@@ -170,7 +171,9 @@ describe("a cancel's card refund shortfall has its own sentence (#4097, `INV-PAY
     });
     const intro = screen.getByTestId("manual-refund-task-card-shortfall-check-intro");
     expect(intro.textContent).toMatch(/Check Stripe and\s+the bank before paying anything, then contact the member with what you found/);
-    expect(intro.textContent).toMatch(/dismiss it with a note/);
+    // #4516 (owner decision, 15 Nov 2026): a part to check keeps Dismiss, used only once the card refund is confirmed.
+    expect(intro.textContent).toMatch(/Dismiss it with a note saying how only once you have confirmed the card refund reached them/);
+    expect(intro.textContent).not.toMatch(/cannot be dismissed/);
     // Paying it is only the answer once the check shows it is owed - and (#4154 review M3) only after the
     // app has accepted the mark: mark first, then pay, on every surface.
     expect(intro.textContent).toMatch(/If it really is owed, mark it\s+paid\s+back first/);
@@ -287,6 +290,73 @@ describe("a group organiser's Internet Banking hand-back has its own sentence (#
   it("a cancellation's hand-back does not print it", async () => {
     await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
     expect(screen.queryByTestId("manual-refund-task-group-organiser-intro")).not.toBeInTheDocument();
+  });
+});
+
+describe("a real bank or cash hand-back offers no Dismiss for now (#4516, owner decisions 14 and 15 Nov 2026)", () => {
+  it("prints the server's refusal where the Dismiss button would be, and keeps Mark paid back", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, journalHandBackDismissRefusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL }], viewerCanViewBookings: true });
+
+    expect(screen.queryByRole("button", { name: /^dismiss$/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId("manual-refund-task-dismiss-unavailable").textContent).toBe(JOURNAL_HAND_BACK_DISMISS_REFUSAL);
+    expect(screen.getByRole("button", { name: /paid back/i })).toBeInTheDocument();
+  });
+
+  it("CONTROL: a row whose dismissal is not refused keeps its Dismiss and prints no refusal", async () => {
+    await renderQueue({ tasks: [HAND_BACK_TASK], viewerCanViewBookings: true });
+
+    expect(screen.getByRole("button", { name: /^dismiss$/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("manual-refund-task-dismiss-unavailable")).not.toBeInTheDocument();
+  });
+
+  it("a card shortfall's part to check keeps Dismiss, and its dialog says to dismiss only once the card refund is confirmed", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, cardShortfallCheck: true, journalHandBackDismissRefusal: null }], viewerCanViewBookings: true });
+
+    expect(screen.queryByTestId("manual-refund-task-dismiss-unavailable")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^dismiss$/i }));
+    expect(await screen.findByText(/^Only dismiss this once you have confirmed in Stripe that the card refund reached the member\./)).toBeInTheDocument();
+  });
+
+  it("#4516: a disputed card payment's hand-back prints the dispute's own refusal while it is open", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, journalHandBackDismissRefusal: disputedHandBackDismissRefusal("OPEN") }], viewerCanViewBookings: true });
+
+    expect(screen.queryByRole("button", { name: /^dismiss$/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId("manual-refund-task-dismiss-unavailable").textContent).toBe(disputedHandBackDismissRefusal("OPEN"));
+  });
+
+  it("#4516 (owner decision, 15 Nov 2026, comment 6893252570): lost for part, it offers the reduction and the confirmation states was, reduced by and still owed", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, amountCents: 10_000, journalHandBackDismissRefusal: DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, disputeReduction: { reducedByCents: 3_000, stillOwedCents: 7_000 } }], viewerCanViewBookings: true });
+
+    expect(screen.queryByRole("button", { name: /^dismiss$/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reduce by lost dispute/i }));
+    expect((await screen.findByTestId("manual-refund-task-reduction-summary")).textContent).toMatch(/^Was \$100\.00\. Reduced by \$30\.00, the lost card dispute.*Still owed \$70\.00\.$/);
+  });
+
+  it("CONTROL: with no reduction offered there is no reduce button", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, journalHandBackDismissRefusal: JOURNAL_HAND_BACK_DISMISS_REFUSAL, disputeReduction: null }], viewerCanViewBookings: true });
+    expect(screen.queryByRole("button", { name: /reduce by lost dispute/i })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["lost in full: Dismiss, never Mark paid", { journalHandBackDismissRefusal: null, disputedHandBackLost: true, markPaidRefusal: DISPUTED_HAND_BACK_LOST_NOT_PAYABLE }, true],
+    ["lost in part: Reduce, never Mark paid", { journalHandBackDismissRefusal: DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, disputeReduction: { reducedByCents: 3_000, stillOwedCents: 5_000 }, markPaidRefusal: DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING }, false],
+  ])("#4516 (owner decision, 18 Nov 2026): a dispute-held edit's hand-back %s", async (_label, facts, dismissible) => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, kind: "CANCELLED_BOOKING_HAND_BACK", editRefundHandBack: true, ...facts }], viewerCanViewBookings: true });
+
+    expect(screen.queryByRole("button", { name: /mark paid back/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^dismiss$/i }) !== null).toBe(dismissible);
+  });
+
+  it("CONTROL: a won dispute (no Mark paid refusal) keeps Mark paid back", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, kind: "CANCELLED_BOOKING_HAND_BACK", editRefundHandBack: true, journalHandBackDismissRefusal: disputedHandBackDismissRefusal("WON"), markPaidRefusal: null }], viewerCanViewBookings: true });
+    expect(screen.getByRole("button", { name: /mark paid back/i })).toBeInTheDocument();
+  });
+
+  it("#4516: once its dispute is lost it keeps Dismiss, and the dialog says the cardholder already has the money", async () => {
+    await renderQueue({ tasks: [{ ...HAND_BACK_TASK, journalHandBackDismissRefusal: null, disputedHandBackLost: true }], viewerCanViewBookings: true });
+
+    fireEvent.click(screen.getByRole("button", { name: /^dismiss$/i }));
+    expect(await screen.findByText(DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION)).toBeInTheDocument();
   });
 });
 

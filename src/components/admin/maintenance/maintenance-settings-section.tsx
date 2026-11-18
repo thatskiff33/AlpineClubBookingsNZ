@@ -24,6 +24,10 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
+
+const LOAD_FALLBACK = "Failed to load these settings";
+const SAVE_FALLBACK = "Failed to save";
 
 /**
  * The maintenance-report policy section (#2780). Lodge Operations.
@@ -63,7 +67,7 @@ export function MaintenanceSettingsSection({
   const section = useSectionEditState<Draft>({
     load: async (signal) => {
       const res = await fetch(ENDPOINT, { signal });
-      if (!res.ok) throw new Error("Failed to load these settings");
+      if (!res.ok) throw new Error(LOAD_FALLBACK);
       return ((await res.json()) as Payload).settings;
     },
     save: async (draft) => {
@@ -74,14 +78,13 @@ export function MaintenanceSettingsSection({
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown };
-        throw new Error(
-          typeof data.error === "string" ? data.error : "Failed to save",
-        );
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       return ((await res.json()) as { settings: Draft }).settings;
     },
     successMessage: "Maintenance report settings saved",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     isValid: (draft) =>
       Number.isInteger(draft.photoRetentionDays) &&
       draft.photoRetentionDays >= 1 &&

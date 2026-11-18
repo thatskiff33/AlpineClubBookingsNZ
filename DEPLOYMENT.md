@@ -2240,9 +2240,23 @@ bank-transfer refund. When the Finance alert says a dispute was lost:
    the booking and the Stripe dispute id, and a second for the dispute fee,
    coded to bank fees.
 3. Reconcile both against the Stripe payout that carried them.
-4. Do not refund or credit the member: the bank has already returned their
-   money. Resolve the cancellation's or edit's treasurer task, if one was
-   raised, by dismissing it with the dispute id as the reason.
+4. Do not refund or credit the member for the lost amount: the bank has
+   already returned it. Resolve the cancellation's or edit's treasurer task in
+   Finance > Payments. The lost amount is counted once across all the refunds
+   on that card payment, oldest refund first. Where it covers what a task still
+   owes, the task offers **Dismiss** (give the dispute id as the reason). Where
+   it covers only part, the task offers **Reduce by lost dispute**, which takes
+   exactly the lost part off; mark the rest paid once you have sent it. A task
+   the loss does not reach (it went to an older refund) stays owed in full.
+   Neither task offers **Mark paid back** while lost money is set against it,
+   and while another dispute on the payment is still open, wait for it.
+   **Before upgrading to the release with this rule (#4516),** look in
+   Finance > Payments for refund tasks on a disputed card payment that were
+   dismissed while the dispute was still open. The app counts every dismissed
+   one as lost money already applied, so a later refund on that payment is
+   reduced by less than was lost (a $50 refund dismissed early, then $150 lost
+   against a $150 refund, leaves $50 the club pays twice). Note each one for
+   the treasurer, who settles that payment's later refund by hand.
 
 A won dispute needs no Xero entry unless the withdrawal was recorded by hand
 before the win; then record its reversal the same way.
