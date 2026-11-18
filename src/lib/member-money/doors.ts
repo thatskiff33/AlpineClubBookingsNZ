@@ -35,3 +35,5 @@ export { MemberMoneyReservationRefused } from "./internal/store";
 export { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest, recordPrimaryInvoiceUpdateManifest } from "./internal/primary-invoice-manifest";
 // #4525 (ALP-436): a supplementary invoice's manifest, recorded after its operation completes.
 export { recordSupplementaryInvoiceManifest } from "./internal/supplementary-invoice-manifest";
+// #4525 (M13): a refund credit note's and its payment's export manifests, recorded after each send.
+export { recordRefundNoteManifest, recordRefundNotePaymentManifest, type RefundNoteDoor } from "./internal/refund-note-manifest";
