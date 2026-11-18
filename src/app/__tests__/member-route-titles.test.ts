@@ -77,7 +77,7 @@ const ROUTES: Array<[route: string, load: () => Promise<{ metadata?: Metadata }>
     () => import("../(website-dynamic)/booking-requests/verify/[token]/page"),
     "Confirm your booking request",
   ],
-  ["/profile", () => import("../(authenticated)/profile/page"), "Profile"],
+  ["/profile", () => import("../(authenticated)/profile/layout"), "Profile"],
   ["/book", () => import("../(authenticated)/book/layout"), "Book a stay"],
   ["/induction", () => import("../(authenticated)/induction/layout"), "Lodge induction"],
   [

@@ -59,11 +59,6 @@ import {
   grantSelfDietaryAccess,
   loadDietaryRequirementsForDisplay,
 } from "@/lib/member-dietary";
-import type { Metadata } from "next";
-
-export const metadata: Metadata = {
-  title: "Profile",
-};
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
