@@ -50,14 +50,19 @@ describe("GET /api/bookings/[id]/invoice", () => {
     expect(mocks.prepare).not.toHaveBeenCalled();
   });
 
-  it("throttles per member and per booking, with the download's own budgets", async () => {
+  it("throttles per member first, and hands the per-booking budget to the download to charge once on offer", async () => {
     mocks.prepare.mockResolvedValue({ kind: "NOT_FOUND" });
     await call();
-    expect(mocks.checkRateLimit).toHaveBeenNthCalledWith(1, BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT, "member-1");
-    expect(mocks.checkRateLimit).toHaveBeenNthCalledWith(2, BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT, "b1");
-    mocks.checkRateLimit.mockResolvedValueOnce({ success: true }).mockResolvedValueOnce({ success: false });
+    expect(mocks.checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(mocks.checkRateLimit).toHaveBeenCalledWith(BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT, "member-1");
+    const { chargeBookingLimit } = mocks.prepare.mock.calls[0][3];
+    await chargeBookingLimit();
+    expect(mocks.checkRateLimit).toHaveBeenLastCalledWith(BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT, "b1");
+  });
+
+  it("answers a spent per-booking budget with 429", async () => {
+    mocks.prepare.mockResolvedValue({ kind: "RATE_LIMITED", limit: { success: false } });
     expect((await call()).status).toBe(429);
-    expect(mocks.prepare).toHaveBeenCalledTimes(1);
   });
 
   it("gives the download budgets of its own, distinct from every shared limiter", async () => {
@@ -70,18 +75,23 @@ describe("GET /api/bookings/[id]/invoice", () => {
   });
 
   it("serves the PDF privately, uncached, as an attachment", async () => {
-    mocks.prepare.mockResolvedValue({ kind: "PDF", body: Buffer.from("%PDF"), fileName: "Invoice-INV-0042.pdf" });
+    mocks.prepare.mockResolvedValue({ kind: "PDF", body: Buffer.from("%PDF"), fileName: "tac-invoice-INV-0042.pdf" });
     const response = await call();
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("application/pdf");
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(response.headers.get("Content-Disposition")).toBe('attachment; filename="Invoice-INV-0042.pdf"');
+    expect(response.headers.get("Content-Disposition")).toBe('attachment; filename="tac-invoice-INV-0042.pdf"');
   });
 
   it("passes no caller-supplied invoice id through: only the booking id and the session", async () => {
     mocks.prepare.mockResolvedValue({ kind: "NOT_FOUND" });
     await call("?invoiceId=someone-elses-invoice");
-    expect(mocks.prepare).toHaveBeenCalledWith("b1", { user: { id: "member-1" } }, { ipAddress: "203.0.113.9" });
+    expect(mocks.prepare).toHaveBeenCalledWith(
+      "b1",
+      { user: { id: "member-1" } },
+      { kind: "INVOICE" },
+      { ipAddress: "203.0.113.9", chargeBookingLimit: expect.any(Function) },
+    );
   });
 
   it.each([

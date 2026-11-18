@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { prepareBookingInvoiceDownload } from "@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download";
+import { bookingInvoicePdfResponse } from "@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-pdf-response";
 import { auth } from "@/lib/auth";
 import { BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT, BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT } from "@/lib/booking-invoice-rate-limits";
 import { checkRateLimit, getClientIp, rateLimitedResponse } from "@/lib/rate-limit";
@@ -28,43 +29,16 @@ export async function GET(
   });
   if (inactiveResponse) return inactiveResponse;
 
-  // Every download is a live Xero read: a per-member and a per-booking budget
-  // keep one member, or several officers on one booking, from spending the
-  // club's Xero minute and daily limits.
+  // Every download is a live Xero read. The per-member budget comes first; the
+  // per-booking one (shared with the booking's credit notes, so several
+  // officers on one booking cannot multiply the reads) is charged only once the
+  // caller is authorised and the invoice is on offer.
   const memberLimit = await checkRateLimit(BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT, session.user.id);
   if (!memberLimit.success) return rateLimitedResponse(memberLimit);
-  const bookingLimit = await checkRateLimit(BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT, id);
-  if (!bookingLimit.success) return rateLimitedResponse(bookingLimit);
 
-  const download = await prepareBookingInvoiceDownload(id, session, {
+  const download = await prepareBookingInvoiceDownload(id, session, { kind: "INVOICE" }, {
     ipAddress: getClientIp(request),
+    chargeBookingLimit: () => checkRateLimit(BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT, id),
   });
-  switch (download.kind) {
-    case "NOT_FOUND":
-      return NextResponse.json({ error: "Booking not found" }, { status: 404 });
-    case "XERO_NOT_CONNECTED":
-      return NextResponse.json(
-        { error: "The club's accounts are not connected right now, so the invoice cannot be downloaded. Please try again later or ask the club for a copy." },
-        { status: 503 },
-      );
-    case "XERO_UNAVAILABLE":
-      return NextResponse.json(
-        { error: "The invoice could not be fetched from the club's accounts; please try again." },
-        { status: 502 },
-      );
-    case "AUDIT_FAILED":
-      return NextResponse.json(
-        { error: "The invoice could not be downloaded; please try again." },
-        { status: 503 },
-      );
-    case "PDF":
-      return new NextResponse(new Uint8Array(download.body), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition": `attachment; filename="${download.fileName}"`,
-          "Cache-Control": "private, no-store",
-        },
-      });
-  }
+  return bookingInvoicePdfResponse(download, "invoice");
 }

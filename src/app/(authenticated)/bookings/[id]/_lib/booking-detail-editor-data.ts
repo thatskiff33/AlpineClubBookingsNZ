@@ -27,6 +27,8 @@ import type { BookingDetailViewer } from "./booking-detail-viewer";
 import type { BookingDetailConsent } from "./booking-detail-consent";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import type { BookingAmountOwed } from "@/lib/booking-payment-state";
+import { resolveBookingInvoiceAccount } from "./booking-invoice-account";
 import { resolveBookingInvoiceOffer } from "./booking-invoice-download";
 
 /**
@@ -48,7 +50,7 @@ export async function buildBookingDetailEditorData({
   viewer,
   consent,
   access,
-  appliedCreditCents,
+  amountOwed,
 }: {
   session: NonNullable<Awaited<ReturnType<typeof auth>>>;
   booking: BookingDetailRecord;
@@ -57,8 +59,8 @@ export async function buildBookingDetailEditorData({
   viewer: BookingDetailViewer;
   consent: BookingDetailConsent;
   access: BookingDetailEditAccess;
-  /** #3991: the page's one ledger read of applied credit (`history.amountOwed`). */
-  appliedCreditCents: number;
+  /** #3991: the page's one read of what is owed and the ledger's applied credit (`history.amountOwed`). */
+  amountOwed: BookingAmountOwed;
 }): Promise<BookingEditorData> {
   const { viewerAuthorizationRole } = viewer;
   const { consentBadgeAudience, consentResponderNameById } = consent;
@@ -94,7 +96,7 @@ export async function buildBookingDetailEditorData({
             )
           : 0,
         electionCents: booking.creditElectionCents,
-        appliedCents: appliedCreditCents,
+        appliedCents: amountOwed.appliedCreditCents,
       }
     : null;
 
@@ -347,7 +349,7 @@ export async function buildBookingDetailEditorData({
     // #2266: promo lodge restrictions validate against THIS booking's lodge.
     lodgeId: booking.lodgeId,
   };
-  return withBookingInvoiceOffer(editorData, { booking, viewer });
+  return withBookingInvoiceOffer(editorData, { booking, viewer }, amountOwed);
 }
 
 /**
@@ -355,14 +357,18 @@ export async function buildBookingDetailEditorData({
  * hands the editor one object. It is the same answer
  * `GET /api/bookings/[id]/invoice` serves, added as a conditional spread (absent
  * when nothing is offered, on `noEmails`' reasoning above). The module flags are
- * the render's memoised read (`loadEffectiveModuleFlags` is `cache()`d).
+ * the render's memoised read (`loadEffectiveModuleFlags` is `cache()`d). With an
+ * invoice on offer, its account lines (`resolveBookingInvoiceAccount`) ride too.
  */
 async function withBookingInvoiceOffer(
   editorData: BookingEditorData,
   input: Pick<Parameters<typeof resolveBookingInvoiceOffer>[0], "booking" | "viewer">,
+  amountOwed: BookingAmountOwed,
 ): Promise<BookingEditorData> {
   const invoiceOffer = await resolveBookingInvoiceOffer({ ...input, modules: await loadEffectiveModuleFlags() });
-  return invoiceOffer.kind === "NONE" ? editorData : { ...editorData, invoiceOffer };
+  if (invoiceOffer.kind === "NONE") return editorData;
+  if (invoiceOffer.kind !== "XERO_INVOICE") return { ...editorData, invoiceOffer };
+  return { ...editorData, invoiceOffer, invoiceAccount: await resolveBookingInvoiceAccount(input.booking, amountOwed) };
 }
 
 type DetailPromoCode = {

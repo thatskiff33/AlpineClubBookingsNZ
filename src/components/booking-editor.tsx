@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
 import { BookingInvoiceControl } from "@/components/download-invoice-button";
-import type { BookingInvoiceOffer } from "@/lib/booking-invoice-access";
+import { BookingInvoiceAccountCard } from "@/components/booking-invoice-account-card";
+import type { BookingInvoiceAccount, BookingInvoiceOffer } from "@/lib/booking-invoice-access";
 import { bookingOwner } from "@/lib/booking-owner";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
@@ -192,6 +193,8 @@ export interface BookingEditorData {
    * Xero off ships the payload it did before.
    */
   invoiceOffer?: BookingInvoiceOffer;
+  /** #5066: the invoice's account lines, present only beside a `XERO_INVOICE` offer. */
+  invoiceAccount?: BookingInvoiceAccount;
 }
 
 
@@ -470,6 +473,10 @@ export function BookingEditor({
           </div>
         </CardContent>
       </Card>
+
+      {booking.invoiceOffer?.kind === "XERO_INVOICE" && booking.invoiceAccount && (
+        <BookingInvoiceAccountCard bookingId={booking.id} offer={booking.invoiceOffer} account={booking.invoiceAccount} />
+      )}
     </div>
   );
 }

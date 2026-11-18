@@ -1,4 +1,5 @@
 import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
+import type { BookingInvoiceSummary } from "@/lib/booking-invoice-summary";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
 /**
@@ -12,21 +13,45 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
  *
  * - `NONE`: no control at all.
  * - `XERO_INVOICE`: the Download invoice button, for the booking's primary Xero
- *   invoice (`Payment.xeroInvoiceId`).
+ *   invoice (`Payment.xeroInvoiceId`), and one download per Xero credit note
+ *   raised against the booking (`readBookingCreditNotes`; owner decision on
+ *   PR #5201, 17 Nov 2026), each under the same audience, limits and audit.
  * - `ASK_CLUB`: the booking has, or may have, a further Xero invoice for a
  *   change to it (a supplementary invoice). Offering the primary alone would
  *   hand over an incomplete record, so the page says where to get copies:
  *   `staffViewer` (an officer or admin on someone else's booking,
- *   `nonOwnerAdminViewer`) is told to open Xero; anyone else to ask the club.
+ *   `nonOwnerAdminViewer`) is told to check the club's accounts; anyone else
+ *   to ask the club.
  *
- * THE ONE RULE for the button and `GET /api/bookings/[id]/invoice`
- * (`INV-SSOT`): the page renders this answer and the route serves only
- * `XERO_INVOICE`, so neither can disagree with the other.
+ * THE ONE RULE for the buttons, `GET /api/bookings/[id]/invoice` and
+ * `GET /api/bookings/[id]/invoice/credit-notes/[creditNoteId]` (`INV-SSOT`):
+ * the page renders this answer and the routes serve only `XERO_INVOICE` and,
+ * for a credit note, only an id in its `creditNotes`, so neither can disagree
+ * with the other.
  */
+/** One Xero credit note raised against the booking (`readBookingCreditNotes`). */
+export type BookingCreditNoteKind = "CHANGE" | "REFUND" | "ACCOUNT_CREDIT" | "CREDIT_USED";
+export type BookingCreditNote = {
+  creditNoteId: string;
+  creditNoteNumber: string | null;
+  kind: BookingCreditNoteKind;
+};
+
 export type BookingInvoiceOffer =
   | { kind: "NONE" }
-  | { kind: "XERO_INVOICE"; invoiceNumber: string | null }
+  | { kind: "XERO_INVOICE"; invoiceNumber: string | null; creditNotes: BookingCreditNote[] }
   | { kind: "ASK_CLUB"; staffViewer: boolean };
+
+/**
+ * The page-only account lines beside a `XERO_INVOICE` offer: the summary from
+ * the app's own records and, when the app knows the invoice in Xero does not
+ * show the latest change, a plain-words line saying so
+ * (`primaryInvoiceUpdateNotice`). The routes never read it.
+ */
+export type BookingInvoiceAccount = {
+  summary: BookingInvoiceSummary;
+  invoiceUpdateNotice: string | null;
+};
 
 type InvoiceOfferBooking = {
   status: string;

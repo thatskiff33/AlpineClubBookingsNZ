@@ -5,11 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * spread — present only when something is offered, so a club with Xero off
  * ships exactly the payload it did before.
  */
-const mocks = vi.hoisted(() => ({ offer: vi.fn(), modules: vi.fn() }));
+const mocks = vi.hoisted(() => ({ offer: vi.fn(), modules: vi.fn(), account: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/module-settings", () => ({ loadEffectiveModuleFlags: mocks.modules }));
 vi.mock("../_lib/booking-invoice-download", () => ({ resolveBookingInvoiceOffer: mocks.offer }));
+vi.mock("../_lib/booking-invoice-account", () => ({ resolveBookingInvoiceAccount: mocks.account }));
 vi.mock("@/lib/admin-modules", () => ({ isEffectiveModuleEnabled: async () => false }));
 vi.mock("@/lib/member-guest-settings", () => ({ loadMemberGuestSettings: vi.fn() }));
 vi.mock("@/lib/member-credit", () => ({ getMemberCreditBalance: vi.fn() }));
@@ -65,26 +66,47 @@ const input = {
     canFixNonMemberGuestNameTypos: false,
     editPolicy: { mode: "future", today: day("2026-07-01"), editableFrom: null, checkInEditable: true },
   },
-  appliedCreditCents: 0,
+  amountOwed: { owedCents: 1000, dueCents: 1000, appliedCreditCents: 0 },
 } as never;
+const ACCOUNT = {
+  summary: { totalCents: 1000, creditAppliedCents: 0, paidCents: 1000, balanceCents: 0 },
+  invoiceUpdateNotice: null,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.modules.mockResolvedValue({ xeroIntegration: true });
+  mocks.account.mockResolvedValue(ACCOUNT);
 });
 
 describe("buildBookingDetailEditorData carries the invoice offer", () => {
   it("adds the offer resolved from the render's module flags, the booking and the viewer", async () => {
-    mocks.offer.mockResolvedValue({ kind: "XERO_INVOICE", invoiceNumber: "INV-1" });
+    mocks.offer.mockResolvedValue({ kind: "XERO_INVOICE", invoiceNumber: "INV-1", creditNotes: [] });
     const data = await buildBookingDetailEditorData(input);
-    expect(data.invoiceOffer).toEqual({ kind: "XERO_INVOICE", invoiceNumber: "INV-1" });
+    expect(data.invoiceOffer).toEqual({ kind: "XERO_INVOICE", invoiceNumber: "INV-1", creditNotes: [] });
     expect(data.id).toBe("bk-1");
     expect(mocks.offer).toHaveBeenCalledWith({ booking, viewer, modules: { xeroIntegration: true } });
+  });
+
+  it("adds the invoice's account lines from the page's own amount-owed read", async () => {
+    mocks.offer.mockResolvedValue({ kind: "XERO_INVOICE", invoiceNumber: "INV-1", creditNotes: [] });
+    const data = await buildBookingDetailEditorData(input);
+    expect(data.invoiceAccount).toEqual(ACCOUNT);
+    expect(mocks.account).toHaveBeenCalledWith(booking, { owedCents: 1000, dueCents: 1000, appliedCreditCents: 0 });
+  });
+
+  it("carries an ask-the-club line with no account lines", async () => {
+    mocks.offer.mockResolvedValue({ kind: "ASK_CLUB", staffViewer: false });
+    const data = await buildBookingDetailEditorData(input);
+    expect(data.invoiceOffer).toEqual({ kind: "ASK_CLUB", staffViewer: false });
+    expect("invoiceAccount" in data).toBe(false);
+    expect(mocks.account).not.toHaveBeenCalled();
   });
 
   it("leaves the key out entirely when nothing is offered", async () => {
     mocks.offer.mockResolvedValue({ kind: "NONE" });
     const data = await buildBookingDetailEditorData(input);
     expect("invoiceOffer" in data).toBe(false);
+    expect("invoiceAccount" in data).toBe(false);
   });
 });
