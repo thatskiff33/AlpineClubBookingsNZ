@@ -18,7 +18,7 @@ vi.mock("@/lib/mcp/oauth", () => ({
 vi.mock("@/lib/mcp/settings", () => ({ loadMcpSettings: settings }));
 
 import { GET as authorizationMetadata } from "@/app/.well-known/oauth-authorization-server/route";
-import { GET as resourceMetadata } from "@/app/.well-known/oauth-protected-resource/[[...path]]/route";
+import { GET as resourceMetadata } from "@/app/.well-known/oauth-protected-resource/route";
 import { POST as registration } from "@/app/api/mcp/oauth/register/route";
 import { POST as revocation } from "@/app/api/mcp/oauth/revoke/route";
 import { POST as token } from "@/app/api/mcp/oauth/token/route";

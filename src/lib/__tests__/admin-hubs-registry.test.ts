@@ -583,6 +583,7 @@ describe("the hub prefix census", () => {
       "/admin/system/audit-log",
       "/admin/system/ai-diagnostics",
       "/admin/system/ai-assistant",
+      "/admin/system/ai-connections",
       "/admin/system/backups",
       "/admin/system/backups/setup",
       "/admin/system/testing/route-error",
@@ -783,6 +784,7 @@ describe("the entries' shape", () => {
     ).toEqual([
       "age-tier-settings",
       "ai-assistant",
+      "ai-connections",
       "ai-diagnostics",
       "appearance",
       "audit-log",
@@ -1786,6 +1788,7 @@ describe("buildAdminUrlRules", () => {
     const staticMoves = [
       ["/admin/age-tier-settings", "/admin/rules/age-tier-settings"],
       ["/admin/ai-assistant", "/admin/system/ai-assistant"],
+      ["/admin/ai-connections", "/admin/system/ai-connections"],
       ["/admin/ai-diagnostics", "/admin/system/ai-diagnostics"],
       ["/admin/appearance", "/admin/website/appearance"],
       ["/admin/appearance/identity", "/admin/website/appearance/identity"],
@@ -2063,6 +2066,8 @@ describe("the registry is inert", () => {
     "src/app/(admin)/admin/finance/xero/setup/xero-setup-wizard.tsx": "#4972: shares the step parameter and the webhooks and mapping step ids with the shortcuts",
     "src/lib/admin-permissions.ts":
       "C2: the route map's page half, the admission paths and the landing page are generated",
+    "src/lib/admin-route-areas.ts":
+      "ALP-653: the route map itself, moved out of admin-permissions.ts; its page half is generated",
     "src/config/feature-routes.ts":
       "C2: the admin page module gates are generated; C11 part 1 (#4808): the Display Setup exemption is its registry old path",
     "src/lib/__tests__/admin-hubs-registry.test.ts": "this suite",

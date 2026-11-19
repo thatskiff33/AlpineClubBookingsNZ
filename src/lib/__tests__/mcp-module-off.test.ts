@@ -96,7 +96,6 @@ function urlPathOf(file: string): string {
     .split("/")
     .filter((segment) => segment !== "")
     .filter((segment) => !/^\(.*\)$/.test(segment))
-    .filter((segment) => !/^\[\[\.\.\..+\]\]$/.test(segment))
     .map((segment) => (/^\[.+\]$/.test(segment) ? "sample-id" : segment));
   return `/${segments.join("/")}`;
 }
@@ -132,7 +131,7 @@ function requestFor(file: string, method: string): Request {
   });
 }
 
-const context = { params: Promise.resolve({ id: "grant-1", path: ["api", "mcp"] }) };
+const context = { params: Promise.resolve({ id: "grant-1" }) };
 
 beforeEach(() => {
   touched.length = 0;
@@ -167,7 +166,8 @@ describe("the mcpServer module's routes are discovered (INV-MCP-001)", () => {
     expect(mcpRouteFiles).toEqual(
       expect.arrayContaining([
         "src/app/.well-known/oauth-authorization-server/route.ts",
-        "src/app/.well-known/oauth-protected-resource/[[...path]]/route.ts",
+        "src/app/.well-known/oauth-protected-resource/api/mcp/route.ts",
+        "src/app/.well-known/oauth-protected-resource/route.ts",
         "src/app/api/admin/mcp/grants/[id]/route.ts",
         "src/app/api/admin/mcp/grants/route.ts",
         "src/app/api/admin/mcp/settings/route.ts",
@@ -181,12 +181,20 @@ describe("the mcpServer module's routes are discovered (INV-MCP-001)", () => {
     );
   });
 
+  it("serves the metadata address the endpoint's 401 names, with the bare path's handler (RFC 9728)", async () => {
+    const { mcpProtectedResourceMetadataUrl } = await import("@/lib/mcp/oauth");
+    const named = new URL(mcpProtectedResourceMetadataUrl()).pathname;
+    expect(mcpRouteFiles.map(urlPathOf)).toContain(named);
+
+    const bare = await import("@/app/.well-known/oauth-protected-resource/route");
+    const suffixed = await import("@/app/.well-known/oauth-protected-resource/api/mcp/route");
+    expect(suffixed.GET).toBe(bare.GET);
+  });
+
   it("puts every route and page under the module's proxy rule", () => {
     const paths = [
       ...mcpRouteFiles.map(urlPathOf),
       ...MCP_PAGES.map(urlPathOf),
-      // The protected-resource metadata is also asked for path-suffixed (RFC 9728).
-      "/.well-known/oauth-protected-resource/api/mcp",
       // The admin page's pre-hub address.
       "/admin/ai-connections",
     ];

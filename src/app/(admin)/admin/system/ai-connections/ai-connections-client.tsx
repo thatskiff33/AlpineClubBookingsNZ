@@ -288,7 +288,7 @@ function SettingsSection({
               The address a member adds as a connector in their AI app. It is also
               shown on each member&apos;s profile.
             </p>
-            <code className="block break-all rounded-md border bg-muted/40 px-3 py-2 text-xs">
+            <code className="block break-all rounded-md border bg-muted px-3 py-2 text-xs">
               {connectAddress}
             </code>
           </div>

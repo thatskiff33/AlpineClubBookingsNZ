@@ -55,7 +55,7 @@ invariant's file by its permanent id with
 | A screen, navigation path, or admin area's UI | — | [UX_FLOW_MAP.md](docs/UX_FLOW_MAP.md), that area's section; [COVERAGE_MATRIX.md](docs/COVERAGE_MATRIX.md) |
 | Tests, the frozen clock, E2E | — | [TESTING.md](docs/TESTING.md#the-frozen-test-clock), [END_TO_END_TEST_MATRIX.md](docs/END_TO_END_TEST_MATRIX.md), [E2E_PLAYWRIGHT.md](docs/E2E_PLAYWRIGHT.md#flake-invariants--read-before-writing-a-spec-issue-2302) |
 | Auth, sessions, tokens, permissions | `INV-AUTH` → [authentication.md](docs/invariants/authentication.md) | [SECURITY.md](docs/SECURITY.md), [SECURITY-ATTACK-SURFACE.md](docs/SECURITY-ATTACK-SURFACE.md#route-family-coverage), [TOKEN_HASHING.md](docs/TOKEN_HASHING.md) |
-| AI app (MCP) connections | `INV-MCP` → [mcp-connections.md](docs/invariants/mcp-connections.md) | [mcp-server.md](docs/guides/mcp-server.md) |
+| AI app (MCP) connections | `INV-MCP` → [mcp-connections.md](docs/invariants/mcp-connections.md) | — |
 | Documentation, including an invariant entry | — | [STYLE_GUIDE.md](docs/STYLE_GUIDE.md), [WORD_BUDGETS.md](docs/invariants/WORD_BUDGETS.md) |
 | Bounded code, import or Prisma context | — | [SCOPED_CONTEXT.md](docs/agents/SCOPED_CONTEXT.md) |
 | A new worktree's first `pnpm` command; Docker a lane starts | — | [CODEX_WORKFLOW.md](docs/agents/CODEX_WORKFLOW.md) |
@@ -122,9 +122,8 @@ Add a row for a doc an agent must reach; cite ids, never line numbers
   remaining allowance before a sizeable lane, in any agent. If it can't be
   read, finish the active lane but start no new sizeable one without the
   owner. Never publish usage figures.
-- **Scoped context, not a dump:** `pnpm run agent:context --base <ref> --entry <path>`
-  ([`SCOPED_CONTEXT.md`](docs/agents/SCOPED_CONTEXT.md)), never committed or
-  pasted wholesale. Clear issue context before switching lanes.
+- **Scoped context, not a dump:** `pnpm run agent:context --base <ref> --entry <path>`,
+  never committed or pasted wholesale. Clear issue context before switching lanes.
 - **Claude Code:** `/context` must list `CLAUDE.md` and this file — if not,
   stop and say so. `/usage` before a sizeable lane, `/clear` at a checkpoint.
 - **Plan by risk; never hand the owner a document to read** (owner rule,
@@ -198,7 +197,7 @@ Sekreton's exception).
   (do it yourself) or a re-check of verified work.
 - **Briefs** come from the owner's decision read verbatim this session with
   `pnpm run issue <n>`, never memory or the title, and say the issue wins
-  where they disagree (#2400; [`SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md)).
+  where they disagree (#2400).
 - **Worktrees:** each lane has a physical, isolated `node_modules`, never a
   junction or symlink; the lane installs
   ([`CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md)).

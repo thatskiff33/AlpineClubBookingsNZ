@@ -82,7 +82,7 @@ export function ApprovalForm({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5 text-sm">
-        <dl className="rounded-md border bg-muted/40 px-3 py-2">
+        <dl className="rounded-md border bg-muted px-3 py-2">
           <dt className="text-xs text-muted-foreground">If you allow it, the app is sent back to</dt>
           <dd className="break-all font-medium" data-testid="mcp-app-host">
             {onThisDevice ? `An app running on this computer (${appHost})` : appHost}

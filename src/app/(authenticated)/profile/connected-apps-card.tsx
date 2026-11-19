@@ -127,7 +127,7 @@ export function ConnectedAppsCard({
             To connect an app, add this address as a connector in the app&apos;s
             settings. The app sends you back here to sign in and approve it.
           </p>
-          <code className="block break-all rounded-md border bg-muted/40 px-3 py-2 text-xs">
+          <code className="block break-all rounded-md border bg-muted px-3 py-2 text-xs">
             {connectAddress}
           </code>
         </div>

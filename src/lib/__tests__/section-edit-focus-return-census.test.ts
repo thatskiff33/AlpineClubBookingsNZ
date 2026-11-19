@@ -40,6 +40,7 @@ const SECTION_EDIT_ADOPTERS = [
   "src/app/(admin)/admin/lodge-ops/lodges/[id]/_components/lodge-roster-settings-card.tsx",
   "src/app/(admin)/admin/membership/member-fields/page.tsx",
   "src/app/(admin)/admin/privacy-retention/privacy-retention-client.tsx",
+  "src/app/(admin)/admin/system/ai-connections/ai-connections-client.tsx",
   "src/app/(admin)/admin/system/backups/backups-client.tsx",
   "src/app/(admin)/admin/system/backups/local-backup-card.tsx",
   "src/app/(admin)/admin/video-meetings/setup/video-meetings-setup.tsx",
