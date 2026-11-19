@@ -82,20 +82,21 @@ compacted the ten largest rows to rule, pin and link; none reached 300 without
 semantic damage. By owner decision on #4990 (15 Nov 2026) each stays here at its
 new, lower count, and later waves take them off. After wave 1 the table held 88
 rows and 56,846 words (70,395 before it). Wave 2 compacted the sixteen
-`INV-HOST` rows: thirteen reached 300 and left, and `INV-HOST-029`,
-`INV-HOST-045` and `INV-HOST-050` stay at their new counts while exceptions
-are proposed on their deciding issues (#2576, #3040, #3232). The table now holds
-75 rows and 46,238 words.
+`INV-HOST` rows: twelve reached 300 and left, and `INV-HOST-029`,
+`INV-HOST-045`, `INV-HOST-046` and `INV-HOST-050` stay at their new counts
+while exceptions are proposed on their deciding issues (#2576, #3040, #3039,
+#3232). The table now holds 76 rows and 46,710 words.
 
 | ID | Words |
 | --- | ---: |
 | `INV-MOD-025` | 1717 |
 | `INV-ADDPAY-037` | 1417 |
 | `INV-SSOT-004` | 471 |
-| `INV-HOST-050` | 489 |
+| `INV-HOST-050` | 532 |
 | `INV-PRIV-012` | 857 |
 | `INV-CONFIG-005` | 676 |
-| `INV-HOST-045` | 469 |
+| `INV-HOST-046` | 409 |
+| `INV-HOST-045` | 476 |
 | `INV-ADDPAY-039` | 931 |
 | `INV-SSOT-001` | 427 |
 | `INV-PRIV-016` | 1512 |
@@ -115,7 +116,7 @@ are proposed on their deciding issues (#2576, #3040, #3232). The table now holds
 | `INV-DATE-013` | 780 |
 | `INV-GUEST-016` | 781 |
 | `INV-INT-016` | 762 |
-| `INV-HOST-029` | 517 |
+| `INV-HOST-029` | 530 |
 | `INV-MOD-021` | 672 |
 | `INV-MONEY-029` | 808 |
 | `INV-LIFE-062` | 639 |
