@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { mcpModuleOffResponse } from "@/lib/mcp/http";
-import { listNoticesForMember, MEMBER_NOTICE_LIST_LIMIT } from "@/lib/notices";
+import { listNoticesForMember } from "@/lib/notices";
+import { MEMBER_NOTICE_LIST_LIMIT } from "@/lib/notice-list-limit";
 import { requireActiveSession } from "@/lib/session-guards";
 
 /**

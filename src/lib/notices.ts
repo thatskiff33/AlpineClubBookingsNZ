@@ -336,9 +336,6 @@ const OWN_RECEIPT_INCLUDE = (memberId: string) =>
     },
   }) satisfies Prisma.NoticeInclude;
 
-/** How many notices the member's notices page and `GET /api/notices` list. */
-export const MEMBER_NOTICE_LIST_LIMIT = 50;
-
 /**
  * Notices visible to a member, pinned first then newest published. Includes the
  * member's OWN read receipt only.

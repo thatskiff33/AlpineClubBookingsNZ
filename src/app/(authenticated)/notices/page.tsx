@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { Newspaper, Pin } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { listNoticesForMember, MEMBER_NOTICE_LIST_LIMIT } from "@/lib/notices";
+import { listNoticesForMember } from "@/lib/notices";
+import { MEMBER_NOTICE_LIST_LIMIT } from "@/lib/notice-list-limit";
 import { clubTime } from "@/lib/club-time/server";
 import {
   Card,
