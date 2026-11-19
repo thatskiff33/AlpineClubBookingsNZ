@@ -55,6 +55,7 @@ import {
   writeInternetBankingHoldAudit,
 } from "@/lib/internet-banking-hold-kept";
 import type { ClubFormat } from "@/lib/club-format";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export interface InternetBankingHoldReleaseResult {
   scanned: number;
@@ -362,9 +363,9 @@ function releaseOneHold(
       };
     },
     // The enqueue adds a handful of reads under the club-wide advisory lock;
-    // give the interactive transaction headroom over Prisma's 5s default so
-    // lock contention alone cannot abort a release mid-flight.
-    { timeout: 15000 },
+    // the shared lock(1) budget (`INV-LOCK-006`) gives the wait headroom over
+    // Prisma's defaults so lock contention alone cannot abort a release mid-flight.
+    LOCK1_HOLDER_TRANSACTION_BUDGET,
   );
 }
 

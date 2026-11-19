@@ -82,6 +82,9 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
     "each captured row is judged on its own (its line, its event, its amount); the findings are a set, not a sequence.",
   "src/lib/payment-reconciliation.ts > settleBookingPaymentInTransaction":
     "the ids of the rows the officer settle is about to write, a set the receipt hook selects by membership (`includes`).",
+  // #4993 (INV-PAY-158): the stale saved-card claim recovery's locked re-read.
+  "src/lib/saved-card-charge-claim.ts > recoverStaleSavedCardClaims":
+    "reads only each row's status and asks whether ANY row on the payment is captured (`.some`); a captured row anywhere skips the recovery, whatever the order.",
   "src/lib/xero-inbound/invoice-paid-effects.ts > syncInternetBankingPaymentsForPaidInvoice":
     "the ids of the PRIMARY bank rows this delivery moves to captured, a set the receipt hook selects by membership (`includes`).",
   "src/lib/additional-ask-reissue.ts > foldWaitingAsks":
@@ -134,7 +137,7 @@ const UNORDERED_ROW_SETS: Record<string, string> = {
   "src/lib/xero-applied-credit-ledger-state.ts > SETTLED_BY_CANCEL_BOOKING_SELECT":
     "reads only each row's status for paymentHasCaptureEvidence, which asks whether ANY row was captured " +
     "(#4220: the select appliedCreditSettledByCancel and its batched form share).",
-  "src/lib/xero-inbound/modification-note-refunds.ts > paymentsCountingInvoiceCorrections":
+  "src/lib/xero-inbound/linked-refunded-total.ts > paymentsCountingInvoiceCorrections":
     "receiptCountsInvoiceCorrections asks whether every captured IB receipt carries a stored-figure " +
     "reason (`.every` / `.filter`), not which comes first.",
   "src/lib/xero-inbound/modification-note-refunds.ts > uncapturedPrimaryStatus":

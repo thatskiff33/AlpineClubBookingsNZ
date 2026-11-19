@@ -101,11 +101,14 @@ vi.mock(
   () => ({ PublicBookingRequestsPanel: panel("public", "public-panel") }),
 );
 
+import { ADMIN_QUEUE_CHANGED_EVENT } from "@/lib/admin-queue-events";
 import BookingRequestsPage from "@/app/(admin)/admin/booking-desk/booking-requests/page";
+import { BOOKING_REQUESTS_TABS } from "@/lib/admin-booking-requests-path";
 import {
-  BOOKING_REQUESTS_TABS,
-  totalBookingRequestsPending,
-} from "@/lib/admin-booking-requests-path";
+  ADMIN_WORK_QUEUES,
+  ZERO_ADMIN_PENDING_COUNTS,
+  adminWorkQueueCount,
+} from "@/lib/admin-work-queues";
 
 const ZERO_COUNTS = {
   bookingReviews: 0,
@@ -136,7 +139,13 @@ function tab(name: RegExp) {
 }
 
 async function countsLoaded() {
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(COUNTS_URL));
+  // Never from the HTTP cache: a reread after a decision must see it (#4962).
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      COUNTS_URL,
+      expect.objectContaining({ cache: "no-store" }),
+    ),
+  );
   // Let the fetch chain and any landing-tab replace settle.
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -171,7 +180,12 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
     const badgeSum = screen
       .getAllByRole("tab")
       .reduce((sum, trigger) => sum + Number(trigger.textContent?.match(/\d+$/)?.[0] ?? 0), 0);
-    expect(badgeSum).toBe(totalBookingRequestsPending(counts));
+    // The sidebar's Booking Requests badge is the work queue registry's number
+    // for that queue (#4962), so the tab badges must add up to it.
+    const sidebarQueue = ADMIN_WORK_QUEUES.find((queue) => queue.key === "booking-requests")!;
+    expect(badgeSum).toBe(
+      adminWorkQueueCount(sidebarQueue, { ...ZERO_ADMIN_PENDING_COUNTS, ...counts }),
+    );
     // Approvals has work, so the bare URL stays there.
     await countsLoaded();
     expect(nav.query).toBe("tab=approvals");
@@ -324,6 +338,98 @@ describe("BookingRequestsPage tab counts and landing tab (#4969)", () => {
     expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
     expect(tab(/^Approvals/)).toHaveTextContent(/^Approvals$/);
     expect(tab(/^Changes/)).toHaveTextContent(/^Changes$/);
+  });
+
+  // #4962 with #4969: the sidebar's badge refetches after every decision, so
+  // the tab badges must too, or they stop adding up to it.
+  it("rereads the badges after a decision, without moving the officer off their tab", async () => {
+    serveCounts({ bookingReviews: 1, lockedPeriodChangeRequests: 1 });
+    render(<BookingRequestsPage />);
+    await waitFor(() => expect(tab(/^Approvals/)).toHaveTextContent("Approvals1"));
+    await countsLoaded();
+    expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
+    replace.mockClear();
+
+    // The officer approves the last flagged booking; the panel announces it.
+    serveCounts({ bookingReviews: 0, lockedPeriodChangeRequests: 1 });
+    act(() => {
+      window.dispatchEvent(new CustomEvent(ADMIN_QUEUE_CHANGED_EVENT));
+    });
+
+    await waitFor(() => expect(tab(/^Approvals/)).toHaveTextContent(/^Approvals$/));
+    expect(tab(/^Changes/)).toHaveTextContent("Changes1");
+    // Still Approvals: a reread never re-decides the landing tab, though the
+    // first tab with work is now Changes and this page was opened bare.
+    expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
+    expect(new URLSearchParams(nav.query).get("tab")).toBe("approvals");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("rereads the badges when the window regains focus, landing nowhere new", async () => {
+    serveCounts({ publicBookingRequests: 2 });
+    render(<BookingRequestsPage />);
+    await waitFor(() =>
+      expect(tab(/^Public Requests/)).toHaveAttribute("aria-selected", "true"),
+    );
+    await countsLoaded();
+    replace.mockClear();
+
+    // Work arrives on Changes while the officer was elsewhere.
+    serveCounts({ lockedPeriodChangeRequests: 4, publicBookingRequests: 2 });
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() => expect(tab(/^Changes/)).toHaveTextContent("Changes4"));
+    expect(tab(/^Public Requests/)).toHaveAttribute("aria-selected", "true");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  // A page that could not read its counts on open stays where it opened: a
+  // later first success (after the officer has acted) must not move them.
+  it.each([
+    ["a decision", () => window.dispatchEvent(new CustomEvent(ADMIN_QUEUE_CHANGED_EVENT))],
+    ["a focus reread", () => window.dispatchEvent(new Event("focus"))],
+  ])("does not land on another tab when the first read failed and %s brings the counts", async (_label, trigger) => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 500 }));
+    render(<BookingRequestsPage />);
+    await countsLoaded();
+    expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
+    replace.mockClear();
+
+    // Approvals now empty, work waiting on Changes.
+    serveCounts({ lockedPeriodChangeRequests: 2 });
+    act(() => {
+      trigger();
+    });
+
+    await waitFor(() => expect(tab(/^Changes/)).toHaveTextContent("Changes2"));
+    expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  // As the sidebar does with a failed refetch: the last good numbers stay
+  // rather than vanishing or reading as zero.
+  it.each([
+    ["the endpoint errors", () => fetchMock.mockResolvedValue(new Response(null, { status: 500 }))],
+    ["the request fails", () => fetchMock.mockRejectedValue(new Error("offline"))],
+  ])("keeps the last good badges when a reread after a decision fails because %s", async (_label, arrange) => {
+    serveCounts({ bookingReviews: 2, lockedPeriodChangeRequests: 1 });
+    render(<BookingRequestsPage />);
+    await waitFor(() => expect(tab(/^Approvals/)).toHaveTextContent("Approvals2"));
+    await countsLoaded();
+    const calls = fetchMock.mock.calls.length;
+
+    arrange();
+    act(() => {
+      window.dispatchEvent(new CustomEvent(ADMIN_QUEUE_CHANGED_EVENT));
+    });
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(calls + 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(tab(/^Approvals/)).toHaveTextContent("Approvals2");
+    expect(tab(/^Changes/)).toHaveTextContent("Changes1");
+    expect(tab(/^Approvals/)).toHaveAttribute("aria-selected", "true");
   });
 
   it.each([
