@@ -71,6 +71,7 @@ import {
 import { workPartyEventRefusal } from "@/lib/work-party";
 import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
 import { readWorkPartyBookingFacts, WORK_PARTY_BOOKING_SELECT } from "@/lib/work-party-booking-facts";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import {
   resolveWorkPartySettlementMethod,
   workPartyAskOffset,
@@ -595,7 +596,7 @@ async function correctWorkParty(
         settlementOptions,
         bookingModificationId: modified.bookingModificationId ?? null,
       };
-    })
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET)
     .catch(async (error: unknown): Promise<WorkPartyCorrectionResult> => {
       if (error instanceof WorkPartyCorrectionDryRun) {
         return {
