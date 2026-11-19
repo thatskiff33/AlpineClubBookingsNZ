@@ -491,7 +491,7 @@ compliant indefinitely.
   pre-deletion profile to Xero nor regains a link. Manual Link commits the
   Member pointer and FK-less canonical CONTACT ledger row together; deletion
   deactivates that ledger in the anonymisation transaction that clears the
-  pointer. A canonical link commit also claims, in its own transaction and
+  pointer. A canonical link commit also claims, in the same transaction and
   status-guarded, a `FAILED` member CONTACT create proving Xero made the
   now-linked contact as `SUCCEEDED`, touching nothing else: no `RUNNING`
   reservation, no create that made a *different* contact. Merge, deletion and
@@ -584,11 +584,12 @@ compliant indefinitely.
   recipient data and the incident's own evidence at the renewed timestamp; a
   stale or reclaimed worker calls no provider and never substitutes a later live
   booking review into an older claim. Completion and release match the same
-  token. Missing email, placeholder/bounce suppression and a per-booking
-  `noEmails` switch are terminal while the incident stays visible to officers;
-  an unreadable `noEmails` flag is transient — the lease is released and the
-  exact queue claim fails, because `hosting-coverage-lost` has no independent
-  EmailLog retry authority. The provider stays outside transactions. A provider
+  token.
+  Missing email, placeholder/bounce suppression and a per-booking `noEmails`
+  switch are terminal while the incident stays visible to officers; an
+  unreadable `noEmails` flag is transient — the lease is released and the exact
+  queue claim fails, because `hosting-coverage-lost` has no independent EmailLog
+  retry authority. The provider stays outside transactions. A provider
   acceptance followed by a crash before the stamp may be resent: this is
   at-least-once delivery with one durable success stamp, not exactly-once. A
   crashed sender's lease expires after 15 minutes.
@@ -816,29 +817,29 @@ compliant indefinitely.
   relation-based dependent set finds the split parent, not the inheriting child,
   so a Group Trip fan-out must reconcile each dependent through
   `reconcileAdultMemberHostingReviewWithSiblings`, never directly.
-  `inheritedSplitPairGroupTrip` is the one implementation, typed to receive only
+  `inheritedSplitPairGroupTrip` is the one implementation, taking only
   `Pick<LoadedHostingBooking, "parentBookingId">` so it cannot follow children;
-  decoy-sibling fixtures pin the choice within the sibling set.
+  decoy-sibling fixtures pin the choice among siblings.
 
   **Every evaluator applies the carve-out:** `evaluateProposalPartyViolations`
   uses the shared `readInheritedSplitPairGroupTrip`.
 
-  **The roster row comes first:** `createConfirmedBooking` claims the
-  `GroupBookingJoin` row before it creates and reconciles the split child, and
-  `verifyAndCreateNonMemberJoin` claims its row before it reconciles. Both join
+  **Roster row first:** `createConfirmedBooking` claims the `GroupBookingJoin`
+  row before creating and reconciling the split child, and
+  `verifyAndCreateNonMemberJoin` claims its row before reconciling. Both join
   paths must answer the hosting rule before the `Booking` row exists, so
   `groupTripIdentityForJoin` takes identity from the redeemed container, whose
   id the member join hands its preflight.
 
-  **`GroupBooking.status`** decides whether new bookings may join; source and
-  dependent sets are never filtered on it; whether a booking is live is
-  `Booking.status`'s question. The `PAID_UP_ADULT_MEMBER_REQUIRED` lockout stays
-  per-booking.
+  **`GroupBooking.status`** decides whether new bookings may join; a `CANCELLED`
+  container does not cancel the joiners' own bookings, so source and dependent
+  sets are never filtered on it; whether a booking is live is `Booking.status`'s
+  question. The `PAID_UP_ADULT_MEMBER_REQUIRED` lockout stays per-booking.
 
   Enforced by `adult-member-hosting-call-sites.test.ts` (exception-path call,
   single definition, roster-first order), `group-trip-identity.test.ts` and
-  `adult-member-hosting-group-trip-cover.test.ts` (the carve-out, join
-  orderings). History: #3037, #3038.
+  `adult-member-hosting-group-trip-cover.test.ts` (carve-out, join orderings).
+  History: #3037, #3038.
 
 ### INV-HOST-044
 
@@ -951,10 +952,10 @@ compliant indefinitely.
   may throw the stable, non-disclosing `HOSTING_COVERAGE_PARTICIPANT_RETRY` 409
   when its fail-fast trip key loses a race or the sibling set drifts, rolling
   the actor back, so the no-block promise holds of the OUTCOME, not of every
-  attempt. `GroupTripFanOutOptions.bestEffort` (degrade, not refuse) is passed
-  only where the transition cannot remove cover (`invoice-paid-effects.ts`,
-  `PAYMENT_PENDING -> PAID`); the settlement reaper's de-confirming revert never
-  may.
+  attempt. Only `invoice-paid-effects.ts` passes
+  `GroupTripFanOutOptions.bestEffort` (degrade, not refuse), legal only where a
+  transition cannot remove cover (`PAYMENT_PENDING -> PAID`); the settlement
+  reaper's de-confirming revert never may.
 
   **Dependents are the trip at this lodge, with no night clause**: seams run
   after the write, so `groupTripCoverageDependentWhere` composes
