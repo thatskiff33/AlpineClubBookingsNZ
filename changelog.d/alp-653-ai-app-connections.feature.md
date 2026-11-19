@@ -18,3 +18,8 @@
   Connection events and change actions use a new `security` audit writer,
   visible to officers with support view permission. No existing audit rows
   are reclassified; action arguments and results are never recorded.
+
+  The connection list includes page controls and totals so older apps remain
+  reachable, and identifies each app by its approved destination. Concurrent
+  approvals replace the earlier connection safely; settings audits record the
+  values actually replaced. OAuth requests are size-limited before parsing.
