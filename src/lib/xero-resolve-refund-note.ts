@@ -53,6 +53,7 @@ import { parsePaymentCreditNoteRetryInput } from "@/lib/xero-payment-credit-note
 import { countsTowardRefundNoteCoverage, creditNoteCreateRowsRecordingWhere, refundNoteIdSets } from "@/lib/xero-refund-note-status";
 import { stampedUnrecordedNoteId } from "@/lib/xero-refund-note-in-flight";
 import { isRefundNoteCreateRow } from "@/lib/xero-resolved-in-xero-fences";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** The fields of an operation row the shape below reads. */
 export type RefundNoteResolveRow = {
@@ -287,7 +288,7 @@ export async function claimResolveRecordingRefundNote(input: {
       });
       return { outcome: "claimed", resolvedAt };
     },
-    { timeout: 30_000 },
+    LOCK1_HOLDER_TRANSACTION_BUDGET,
   );
 }
 
@@ -328,7 +329,7 @@ export async function withdrawResolveRecordingRefundNote(input: {
         data: { active: false },
       });
     },
-    { timeout: 30_000 },
+    LOCK1_HOLDER_TRANSACTION_BUDGET,
   );
 }
 

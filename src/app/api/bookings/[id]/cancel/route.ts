@@ -18,6 +18,10 @@ import {
   hasAdminAreaAccess,
 } from "@/lib/admin-permissions";
 import { clubFormatValues } from "@/lib/club-format-server";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 export async function POST(
   request: NextRequest,
@@ -129,6 +133,18 @@ export async function POST(
       { status: result.status }
     );
   } catch (error) {
+    // A cancel commits in steps - Stripe intent cancels before its lock(1)
+    // claim, card refunds and linked-child cancels after it - so a contended
+    // transaction (INV-LOCK-006) asks the member to check before retrying.
+    const contended = transactionContendedResponse(
+      error,
+      "Booking cancel contended for the lock(1) budget",
+      {
+        message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        context: { bookingId: (await params).id },
+      },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(error);
     if (hostingRetry) return hostingRetry;
     // #2576 §6. ABOVE the generic branch, and that position is the whole point:

@@ -49,6 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 
 type IssueReportSummary = {
@@ -198,6 +199,7 @@ export default function AdminIssueReportsPage() {
       const body = await response.json();
       setSelectedReport(body.report);
       setResolutionNote(body.report?.resolutionNote ?? "");
+      notifyAdminQueueChanged();
       fetchReports();
     } catch (err) {
       alert(refusalMessageOr(err, "Failed to update report"));

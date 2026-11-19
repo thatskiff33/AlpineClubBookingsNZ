@@ -26,6 +26,7 @@ import {
   type BedAllocationDb,
 } from "@/lib/bed-allocation-admin-contract";
 import type { DashboardRoom } from "@/lib/bed-allocation-board-payload";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { assertGlobalLockHeld } from "@/lib/global-lock-held";
 import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
@@ -324,7 +325,7 @@ export async function updateBedAllocationRoom(input: {
       await acquireLodgeCapacityLock(tx, roomKey.lodgeId);
     }
     return updateBedAllocationRoomWithLocksHeld({ ...input, db: tx, today });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /** Internal room writer for callers that already hold global -> owning lodge. */
@@ -505,7 +506,7 @@ export async function deleteBedAllocationRoom(input: {
       await acquireLodgeCapacityLock(tx, roomKey.lodgeId);
     }
     return deleteBedAllocationRoomWithLocksHeld({ ...input, db: tx });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /** Internal room delete for callers that already hold global -> owning lodge. */

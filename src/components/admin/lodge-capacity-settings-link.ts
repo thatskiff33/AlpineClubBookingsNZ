@@ -1,6 +1,7 @@
 "use client";
 
 import { useAdminAreaViewAccess } from "@/hooks/use-admin-area-edit-access";
+import { adminHref } from "@/lib/admin-hubs";
 
 /**
  * The id of the capacity field on the lodge hub (`/admin/lodges/[id]`). The hub
@@ -16,8 +17,8 @@ export const LODGE_CAPACITY_OVERRIDE_FIELD_ID = "lodge-capacity-override";
  */
 export function lodgeCapacitySettingsHref(lodgeId: string | null): string {
   return lodgeId
-    ? `/admin/lodges/${encodeURIComponent(lodgeId)}#${LODGE_CAPACITY_OVERRIDE_FIELD_ID}`
-    : "/admin/lodges";
+    ? `${adminHref("lodge-detail", { id: lodgeId })}#${LODGE_CAPACITY_OVERRIDE_FIELD_ID}`
+    : adminHref("lodges");
 }
 
 /**
