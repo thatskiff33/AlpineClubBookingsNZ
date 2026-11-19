@@ -31,7 +31,7 @@ const INTENT = "pi_receipt";
 const input = (overrides: Partial<CaptureReceiptManifestInput> = {}): CaptureReceiptManifestInput => ({
   bookingId: "booking-1",
   paymentIntentId: INTENT,
-  applicationKey: "payment:pay-1:invoice-payment:v1",
+  paymentKey: "payment:pay-1:invoice-payment:v1",
   amountCents: 5000,
   providerPaymentId: "XERO-PAY-1",
   invoiceId: "XERO-INV-1",
@@ -60,19 +60,19 @@ describe("recordCaptureReceiptManifest (#4525)", () => {
   it("writes one COVERED receipt naming the capture under the payment's key, after locking the capture's row", async () => {
     await recordCaptureReceiptManifest(input());
     expect(manifestRow()).toMatchObject({
-      documentRole: "CAPTURE_RECEIPT", legacyKey: input().applicationKey, bookingId: "booking-1",
+      documentRole: "CAPTURE_RECEIPT", legacyKey: input().paymentKey, bookingId: "booking-1",
       outcome: "COVERED", reason: null, lineTotalCents: 5000, providerInvoiceId: "XERO-PAY-1",
     });
     expect(coverageRows()).toEqual([expect.objectContaining({
       documentRole: "CAPTURE_RECEIPT", account: "STRIPE_CLEARING", chargeIdentity: `capture:${INTENT}`,
-      coveredCents: 5000, taxCode: null, sliceKey: input().applicationKey,
+      coveredCents: 5000, taxCode: null, sliceKey: input().paymentKey,
     })]);
     // The row lock comes before any read the plan depends on.
     expect(mocks.tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.tx.memberMoneyEvent.findUnique.mock.invocationCallOrder[0]!);
     expect(mocks.tx.$executeRaw.mock.calls[0]?.slice(1)).toEqual([INTENT]);
     // Other receipts' cover is read under other keys only.
     expect(mocks.tx.memberMoneyExportCoverage.aggregate).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ chargeIdentity: `capture:${INTENT}`, sliceKey: { not: input().applicationKey } }),
+      where: expect.objectContaining({ chargeIdentity: `capture:${INTENT}`, sliceKey: { not: input().paymentKey } }),
     }));
   });
 
@@ -116,7 +116,7 @@ describe("recordCaptureReceiptManifest (#4525)", () => {
     mocks.xeroSyncOperation.findFirst.mockResolvedValue({ requestPayload: { payments: [{ account: { code: "607" } }] } });
     await recordCaptureReceiptManifest(input({ bankCode: undefined }));
     expect(mocks.xeroSyncOperation.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { idempotencyKey: input().applicationKey, entityType: "PAYMENT" },
+      where: { idempotencyKey: input().paymentKey, entityType: "PAYMENT" },
     }));
     expect(manifestRow().frozenMapping).toMatchObject({ bankCode: "607" });
   });

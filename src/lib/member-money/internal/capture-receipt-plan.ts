@@ -30,7 +30,7 @@ export interface CaptureReceiptPlanInput {
   /** The card capture the payment records, or null when the sender cannot name one. */
   paymentIntentId: string | null;
   /** The Xero payment's idempotency key: the manifest's legacy key and the coverage row's `sliceKey`. */
-  applicationKey: string;
+  paymentKey: string;
   /** The cents the stored Xero payment sent. */
   amountCents: number;
   invoiceId: string;
@@ -64,13 +64,13 @@ export type CaptureReceiptPlan =
   | (CaptureReceiptRendering & { outcome: "CONFLICT"; reason: Extract<MemberMoneyExportConflictReason, "CAPTURE_CENTS" | "CAPTURE_NOT_JOURNALLED">; problem: string });
 
 /** What a payment hashes to: what it sent, never the date it was sent on. */
-export function captureReceiptPayloadHash(input: Pick<CaptureReceiptPlanInput, "amountCents" | "invoiceId" | "reference" | "bankCode" | "applicationKey">): string {
+export function captureReceiptPayloadHash(input: Pick<CaptureReceiptPlanInput, "amountCents" | "invoiceId" | "reference" | "bankCode" | "paymentKey">): string {
   return stableDigest(sanitizeForJson({
     amountCents: input.amountCents,
     invoiceId: input.invoiceId,
     reference: input.reference,
     bankCode: input.bankCode,
-    applicationKey: input.applicationKey,
+    paymentKey: input.paymentKey,
   }));
 }
 
@@ -79,7 +79,7 @@ export function planCaptureReceipt(input: CaptureReceiptPlanInput): CaptureRecei
     throw new RangeError("a capture receipt records a positive whole number of cents");
   }
   const rendering = {
-    legacyKey: input.applicationKey,
+    legacyKey: input.paymentKey,
     payloadHash: captureReceiptPayloadHash(input),
     frozenMapping: {
       paymentIntentId: input.paymentIntentId,
@@ -91,7 +91,7 @@ export function planCaptureReceipt(input: CaptureReceiptPlanInput): CaptureRecei
   };
   const conflict = (reason: "CAPTURE_CENTS" | "CAPTURE_NOT_JOURNALLED", problem: string): CaptureReceiptPlan =>
     ({ ...rendering, lineTotalCents: 0, outcome: "CONFLICT", reason, problem });
-  if (!input.paymentIntentId) return conflict("CAPTURE_NOT_JOURNALLED", "the payment names no card capture");
+  if (!input.paymentIntentId) return conflict("CAPTURE_NOT_JOURNALLED", "the payment names no one card capture");
   if (input.captureDebitCents === null) return conflict("CAPTURE_NOT_JOURNALLED", "the journal holds no live receipt for the capture");
   if (input.amountCents > input.captureDebitCents - input.alreadyCoveredCents) {
     return conflict("CAPTURE_CENTS", "the payment exceeds what is left of the capture's receipt");
@@ -105,7 +105,7 @@ export function planCaptureReceipt(input: CaptureReceiptPlanInput): CaptureRecei
       chargeIdentity: memberMoneyEventKeys.capture(input.paymentIntentId),
       coveredCents: input.amountCents,
       taxCode: null,
-      sliceKey: input.applicationKey,
+      sliceKey: input.paymentKey,
     }],
   };
 }

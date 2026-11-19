@@ -42,7 +42,7 @@ async function capturedBooking(): Promise<{ bookingId: string; paymentIntentId: 
 function record(capture: { bookingId: string; paymentIntentId: string | null }, key: string, amountCents: number) {
   return doors.recordCaptureReceiptManifest({
     ...capture,
-    applicationKey: `${capture.bookingId}:${key}`,
+    paymentKey: `${capture.bookingId}:${key}`,
     amountCents,
     providerPaymentId: `xero-payment-${capture.bookingId}-${key}`,
     invoiceId: `xero-invoice-${capture.bookingId}`,

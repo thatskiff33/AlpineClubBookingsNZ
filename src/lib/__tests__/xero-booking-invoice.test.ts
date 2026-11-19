@@ -1040,10 +1040,51 @@ describe("createXeroInvoiceForBooking", () => {
         const [, sent, key] = mocks.xeroClientInstance.accountingApi.createPayment.mock.calls[0] as [string, { reference: string; account: { code: string }; amount: number }, string];
         expect(captureReceipts.record).toHaveBeenCalledTimes(1);
         expect(captureReceipts.record).toHaveBeenCalledWith({
-          bookingId: "booking_1", paymentIntentId: "pi_1", applicationKey: key, amountCents: sent.amount * 100,
+          bookingId: "booking_1", paymentIntentId: "pi_1", paymentKey: key, amountCents: sent.amount * 100,
           providerPaymentId: "xpay_1", invoiceId: "inv_1", reference: sent.reference, bankCode: sent.account.code,
         });
         expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder.at(-1)!);
+      });
+
+      // The split saved with the link (`intentsRecordedByPrimaryCash`) names the captures the invoice's cash covers.
+      const cashSplitAtLink = (split: Record<string, unknown>) => mocks.prisma.xeroSyncOperation.findFirst.mockResolvedValue({ id: "op_create", requestPayload: {
+        primaryInvoiceBilledFee: { xeroInvoiceId: "inv_1", billedChangeFeeCents: 0, billedTotalCents: 10_000, recordedChangeFeeCentsAtLink: 0, primaryInvoiceCashCents: 7_000, ...split } } });
+
+      it("names the one capture the split saved with the link says its cash came from", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
+        mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({ body: { payments: [{ paymentID: "xpay_1", amount: 70 }] } });
+        cashSplitAtLink({ paymentIntentIdsRecordedAtLink: ["pi_first"] });
+        try {
+          await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+        } finally {
+          mocks.prisma.xeroSyncOperation.findFirst.mockResolvedValue(null);
+        }
+        expect(captureReceipts.record).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_first", amountCents: 7000, providerPaymentId: "xpay_1" }));
+      });
+
+      it("names no capture, so records a conflict rather than coverage, when its cash came from several", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
+        mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({ body: { payments: [{ paymentID: "xpay_1", amount: 70 }] } });
+        cashSplitAtLink({ paymentIntentIdsRecordedAtLink: ["pi_first"], partiallyRecordedCaptureAtLink: { paymentIntentId: "pi_1", cents: 2_000 } });
+        try {
+          await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+        } finally {
+          mocks.prisma.xeroSyncOperation.findFirst.mockResolvedValue(null);
+        }
+        expect(captureReceipts.record).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: null, amountCents: 7000, providerPaymentId: "xpay_1" }));
+      });
+
+      it("records nothing, and the invoice still stands, when that split cannot be read", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
+        mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({ body: { payments: [{ paymentID: "xpay_1", amount: 70 }] } });
+        mocks.prisma.xeroSyncOperation.findFirst.mockRejectedValue(new Error("database unavailable"));
+        try {
+          await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+        } finally {
+          mocks.prisma.xeroSyncOperation.findFirst.mockResolvedValue(null);
+        }
+        expect(captureReceipts.record).not.toHaveBeenCalled();
+        expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
       });
 
       it("records nothing when Xero refuses the payment, and the invoice still stands", async () => {
@@ -1071,6 +1112,9 @@ describe("createXeroInvoiceForBooking", () => {
           mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue({ invoiceEmailDelivery: null });
         }
         expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder.at(-1)!);
+        // The completion replaces the stored response, so the payment is read before it.
+        const storedRead = mocks.prisma.xeroSyncOperation.findUnique.mock.calls.findIndex(([args]) => (args as { select?: Record<string, boolean> })?.select?.responsePayload);
+        expect(mocks.prisma.xeroSyncOperation.findUnique.mock.invocationCallOrder[storedRead]).toBeLessThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder.at(-1)!);
         expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
         expect(captureReceipts.record).toHaveBeenCalledWith(expect.objectContaining({
           paymentIntentId: "pi_1", amountCents: 7000, providerPaymentId: "xpay_9", invoiceId: "inv_9", reference: "Stripe pi_1", bankCode: "606",

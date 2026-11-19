@@ -219,7 +219,7 @@ export async function completeRecordedReceipt(
     await recordCaptureReceiptManifest({
       bookingId: input.bookingId,
       paymentIntentId: input.paymentIntentId,
-      applicationKey: input.paymentKey(leg.invoiceId),
+      paymentKey: input.paymentKey(leg.invoiceId),
       amountCents: leg.amountCents,
       providerPaymentId,
       invoiceId: leg.invoiceId,

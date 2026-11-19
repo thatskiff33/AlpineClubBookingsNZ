@@ -19,16 +19,18 @@ type Db = Prisma.TransactionClient;
  * Its own short transaction. It locks the capture's PaymentTransaction row
  * (`stripePaymentIntentId` is unique) so two receipts of one capture are
  * planned one after the other and cannot both spend the same cash; that row
- * lock is the only lock it holds, so it orders against nothing. A capture with
- * no PaymentTransaction row relies on the unique keys alone. No advisory lock:
+ * lock is the only lock it asks for (the insert's foreign key shares the
+ * Booking row's key), so it orders against nothing. A capture with no
+ * PaymentTransaction row is not serialised: the unique keys refuse only the
+ * same key twice. No advisory lock:
  * a manifest changes no booking status or settlement money (`INV-LOCK-001`).
  */
 export interface CaptureReceiptManifestInput {
   bookingId: string;
-  /** The card capture the payment records, or null when the sender cannot name one (a conflict is recorded). */
+  /** The card capture the payment records, or null when the sender cannot name one capture (a conflict is recorded). */
   paymentIntentId: string | null;
   /** The Xero payment's idempotency key. */
-  applicationKey: string;
+  paymentKey: string;
   /** The cents the stored payment sent. */
   amountCents: number;
   /** The Xero payment id the sender stored. */
@@ -44,41 +46,41 @@ export interface CaptureReceiptManifestInput {
 
 /** Record the receipt's manifest: COVERED with one coverage row, or CONFLICT alone. First key wins. Never throws. */
 export async function recordCaptureReceiptManifest(input: CaptureReceiptManifestInput): Promise<void> {
-  const { bookingId, applicationKey, providerPaymentId } = input;
+  const { bookingId, paymentKey, providerPaymentId } = input;
   try {
     if (!Number.isSafeInteger(input.amountCents) || input.amountCents <= 0) {
-      logger.warn({ bookingId, applicationKey, providerPaymentId }, "A capture receipt with no positive cents has no export manifest");
+      logger.warn({ bookingId, paymentKey, providerPaymentId }, "A capture receipt with no positive cents has no export manifest");
       return;
     }
-    const bankCode = input.bankCode !== undefined ? input.bankCode : await storedPaymentBankCode(applicationKey);
+    const bankCode = input.bankCode !== undefined ? input.bankCode : await storedPaymentBankCode(paymentKey);
     const { plan, result } = await prisma.$transaction(async (tx) => {
       const intent = input.paymentIntentId;
       if (intent) await tx.$executeRaw`SELECT 1 FROM "PaymentTransaction" WHERE "stripePaymentIntentId" = ${intent} FOR NO KEY UPDATE`;
       const plan = planCaptureReceipt({
         paymentIntentId: intent,
-        applicationKey,
+        paymentKey,
         amountCents: input.amountCents,
         invoiceId: input.invoiceId,
         reference: input.reference,
         bankCode,
         captureDebitCents: intent ? await captureDebitCents(tx, intent) : null,
-        alreadyCoveredCents: intent ? await coveredByOtherReceipts(tx, intent, applicationKey) : 0,
+        alreadyCoveredCents: intent ? await coveredByOtherReceipts(tx, intent, paymentKey) : 0,
       });
       return { plan, result: await writeExportManifest(tx, manifestRow(plan, bookingId, providerPaymentId)) };
     });
     if (plan.outcome === "CONFLICT" && result === "WRITTEN") {
-      logger.warn({ bookingId, applicationKey, providerPaymentId, reason: plan.reason, problem: plan.problem },
+      logger.warn({ bookingId, paymentKey, providerPaymentId, reason: plan.reason, problem: plan.problem },
         "A capture receipt does not match the journal; its manifest records a conflict");
     }
     if (result === "KEPT_FIRST") {
-      logger.info({ bookingId, applicationKey, providerPaymentId }, "The capture receipt's manifest was already recorded differently; the first row stands");
+      logger.info({ bookingId, paymentKey, providerPaymentId }, "The capture receipt's manifest was already recorded differently; the first row stands");
     }
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      logger.info({ bookingId, applicationKey, providerPaymentId }, "Another run recorded the capture receipt's manifest first; the first row stands");
+      logger.info({ bookingId, paymentKey, providerPaymentId }, "Another run recorded the capture receipt's manifest first; the first row stands");
       return;
     }
-    logger.error({ err: error, bookingId, applicationKey, providerPaymentId }, "Could not record the capture receipt's export manifest; a replay tries again");
+    logger.error({ err: error, bookingId, paymentKey, providerPaymentId }, "Could not record the capture receipt's export manifest");
   }
 }
 
@@ -109,13 +111,13 @@ async function captureDebitCents(tx: Db, paymentIntentId: string): Promise<numbe
 }
 
 /** Cents of the capture that receipts recorded under other keys already cover. */
-async function coveredByOtherReceipts(tx: Db, paymentIntentId: string, applicationKey: string): Promise<number> {
+async function coveredByOtherReceipts(tx: Db, paymentIntentId: string, paymentKey: string): Promise<number> {
   const covered = await tx.memberMoneyExportCoverage.aggregate({
     where: {
       documentRole: "CAPTURE_RECEIPT",
       account: CAPTURE_RECEIPT_ACCOUNT,
       chargeIdentity: memberMoneyEventKeys.capture(paymentIntentId),
-      sliceKey: { not: applicationKey },
+      sliceKey: { not: paymentKey },
     },
     _sum: { coveredCents: true },
   });

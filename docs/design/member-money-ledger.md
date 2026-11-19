@@ -632,12 +632,20 @@ both the manifest's legacy key and its coverage row's `sliceKey`. The pure
 `STRIPE_CLEARING` debit (`memberMoneyEventKeys.capture`) less what other
 receipts already cover, so several receipts may name one capture while the
 primary invoice still bills each component once. More cents than are left is
-`CAPTURE_CENTS`; a payment naming no capture, or a capture with no live receipt,
-is `CAPTURE_NOT_JOURNALLED`; either covers nothing. Only cents a stored payment
-sent are coverage, never the unsent rest of a capture. Bank, cash,
+`CAPTURE_CENTS`; a payment naming no one capture, or a capture with no live
+receipt, is `CAPTURE_NOT_JOURNALLED`; either covers nothing. The primary
+invoice's payment names the one capture the split saved with its link says its
+cash came from (`intentsRecordedByPrimaryCash`). This cohort does not split one
+payment across captures: a primary payment whose cash came from several, and a
+primary-invoice gap invoice's payment (its queued payload names several
+captures and no `paymentIntentId`), name no one capture and record that
+conflict from the sender, and nothing from a PARTIAL repair. Only cents a stored
+payment sent are coverage, never the unsent rest of a capture. Bank, cash,
 credit-release and refund-note payments are not this role. The recorder holds
 the capture's `PaymentTransaction` row in its own short transaction, and a
-failure is logged without changing the send. A PARTIAL repair records a recovered
+failure is logged without changing the send; the row is then written only where
+a replay re-reaches the stored payment id, which the supplementary sender and a
+closed repair never do. A PARTIAL repair records a recovered
 payment only when its outbound operation or the original invoice response proves
 which payment was sent; an inbound bank payment may close the repair but adds no
 capture coverage.

@@ -657,9 +657,9 @@ describe("recordAdditionalCaptureReceipt", () => {
     // #4525 (M13): one capture receipt per leg, each under that leg's own payment key and cents.
     const keyOf = (invoiceId: string) => `payment-intent:pi_change:additional-capture-payment:${invoiceId}:v1`;
     expect(captureReceipts.record.mock.calls.map(([input]) => input)).toEqual([
-      { bookingId: "booking_1", paymentIntentId: "pi_change", applicationKey: keyOf(CHANGE), amountCents: 5000,
+      { bookingId: "booking_1", paymentIntentId: "pi_change", paymentKey: keyOf(CHANGE), amountCents: 5000,
         providerPaymentId: "xero_payment_1", invoiceId: CHANGE, reference: "Stripe pi_change" },
-      { bookingId: "booking_1", paymentIntentId: "pi_change", applicationKey: keyOf(PRIMARY), amountCents: 3000,
+      { bookingId: "booking_1", paymentIntentId: "pi_change", paymentKey: keyOf(PRIMARY), amountCents: 3000,
         providerPaymentId: "xero_payment_2", invoiceId: PRIMARY, reference: "Stripe pi_change" },
     ]);
     expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]!);

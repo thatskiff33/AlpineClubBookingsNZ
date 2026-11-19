@@ -368,7 +368,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     });
     const [, paymentBody, , paymentIdempotencyKey] = createPayments.mock.calls[0];
     expect(captureReceipts.record).toHaveBeenCalledWith({
-      bookingId: "bk1", paymentIntentId: null, applicationKey: paymentIdempotencyKey, amountCents: 500,
+      bookingId: "bk1", paymentIntentId: null, paymentKey: paymentIdempotencyKey, amountCents: 500,
       providerPaymentId: "pay_1", invoiceId: "inv_supp", reference: paymentBody.payments[0].reference, bankCode: "606",
     });
     expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]!);

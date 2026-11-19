@@ -12,7 +12,7 @@ const CAPTURE = `capture:${INTENT}`;
 function input(overrides: Partial<CaptureReceiptPlanInput> = {}): CaptureReceiptPlanInput {
   return {
     paymentIntentId: INTENT,
-    applicationKey: "payment:first:v1",
+    paymentKey: "payment:first:v1",
     amountCents: 5000,
     invoiceId: "INV-1",
     reference: `Stripe ${INTENT}`,
@@ -32,12 +32,12 @@ describe("planCaptureReceipt (#4525)", () => {
       lineTotalCents: 5000,
       coverage: [{ account: "STRIPE_CLEARING", chargeIdentity: CAPTURE, coveredCents: 5000, taxCode: null, sliceKey: "payment:first:v1" }],
     });
-    const rest = planCaptureReceipt(input({ applicationKey: "payment:second:v1", amountCents: 3000, alreadyCoveredCents: 5000 }));
+    const rest = planCaptureReceipt(input({ paymentKey: "payment:second:v1", amountCents: 3000, alreadyCoveredCents: 5000 }));
     expect(rest).toMatchObject({ outcome: "COVERED", lineTotalCents: 3000, coverage: [{ chargeIdentity: CAPTURE, coveredCents: 3000 }] });
   });
 
   it("refuses one cent more than the capture has left, and covers nothing", () => {
-    const over = planCaptureReceipt(input({ applicationKey: "payment:second:v1", amountCents: 3001, alreadyCoveredCents: 5000 }));
+    const over = planCaptureReceipt(input({ paymentKey: "payment:second:v1", amountCents: 3001, alreadyCoveredCents: 5000 }));
     expect(over).toMatchObject({ outcome: "CONFLICT", reason: "CAPTURE_CENTS", lineTotalCents: 0 });
     expect(over).not.toHaveProperty("coverage");
   });
@@ -50,7 +50,7 @@ describe("planCaptureReceipt (#4525)", () => {
   it("hashes what was sent, so a conflict and a match of the same payment hash alike, and any sent field moves it", () => {
     const covered = planCaptureReceipt(input());
     expect(planCaptureReceipt(input({ captureDebitCents: null })).payloadHash).toBe(covered.payloadHash);
-    for (const changed of [{ amountCents: 4999 }, { invoiceId: "INV-2" }, { reference: "other" }, { bankCode: null }, { applicationKey: "payment:other:v1" }]) {
+    for (const changed of [{ amountCents: 4999 }, { invoiceId: "INV-2" }, { reference: "other" }, { bankCode: null }, { paymentKey: "payment:other:v1" }]) {
       expect(planCaptureReceipt(input(changed)).payloadHash, JSON.stringify(changed)).not.toBe(covered.payloadHash);
     }
     expect(covered.payloadHash).toMatch(/^[0-9a-f]{64}$/);

@@ -642,7 +642,7 @@ describe("createXeroKeptLateCaptureInvoice", () => {
 
   describe("#4525 (M13): the payment's capture receipt", () => {
     const receipt = {
-      bookingId: QUEUED.bookingId, paymentIntentId: "pi_kept", applicationKey: "manual-refund-task:task_kept:kept-late-capture-payment:v1",
+      bookingId: QUEUED.bookingId, paymentIntentId: "pi_kept", paymentKey: "manual-refund-task:task_kept:kept-late-capture-payment:v1",
       amountCents: 24000, invoiceId: "inv_kept", reference: "Stripe pi_kept",
     };
 

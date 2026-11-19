@@ -632,7 +632,7 @@ export async function createXeroSupplementaryInvoice(params: {
   const releasedForIntent = queuedRequestPayload?.paymentIntentId;
   // #4525 (Ledger M13): the payment's capture receipt, after the row stored its link; a capture the queued payload does not name is a conflict.
   if (sentPayment) await recordCaptureReceiptManifest({ bookingId, paymentIntentId: typeof releasedForIntent === "string" && releasedForIntent ? releasedForIntent : null,
-    applicationKey: sentPayment.key, amountCents: netAmountCents, providerPaymentId: sentPayment.paymentId, invoiceId: createdInvoiceId, reference: sentPayment.reference, bankCode: sentPayment.bankCode });
+    paymentKey: sentPayment.key, amountCents: netAmountCents, providerPaymentId: sentPayment.paymentId, invoiceId: createdInvoiceId, reference: sentPayment.reference, bankCode: sentPayment.bankCode });
   if (typeof releasedForIntent === "string" && releasedForIntent) {
     await queueWaitingPaidAnotherWayNote(releasedForIntent).catch((error: unknown) =>
       logger.error(

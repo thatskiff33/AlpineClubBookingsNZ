@@ -2883,17 +2883,21 @@ mispricing a booking.
   (`recordCaptureReceiptManifest`, Ledger M13): `SELECT 1 FROM "PaymentTransaction"
   WHERE "stripePaymentIntentId" = … FOR NO KEY UPDATE` (the column is unique). Each
   capture sender calls it after storing a Xero payment id, outside any transaction
-  of its own; it runs in a short transaction of its own that holds this row lock
-  and nothing else, then reads the capture's receipt and the cents other receipts
-  already cover, and inserts the manifest. So two receipts of one capture are
+  of its own; it runs in a short transaction of its own that takes this row lock
+  first, then reads the capture's receipt and the cents other receipts already
+  cover, and inserts the manifest. The insert's foreign key takes the usual
+  `FOR KEY SHARE` on the `Booking` row; only a delete or a `FOR UPDATE` of that
+  row makes it wait, and the one `FOR UPDATE` writer (`requested-room-write.ts`)
+  touches no `PaymentTransaction` row. So two receipts of one capture are
   planned one after the other and cannot both spend its cash
   (`capture-receipt-manifest.realdb.test.ts` races two on PostgreSQL). No advisory key and
   no `lock(1)` (`INV-LOCK-001`: a manifest changes no booking status or settlement
   money). Counterpart writers: every ordinary update of that row (its status,
   refunded total or Xero link), each of which waits at most for this short
   transaction; it waits on nothing they hold but the row, so no cycle. A capture
-  with no row takes no lock, and the manifest's unique keys are its only
-  exclusion. Reconciled against the last ten merged PRs touching these senders
+  with no row takes no lock: the manifest's unique keys still refuse one key
+  twice, but two receipts under different keys are then not planned one after
+  the other. Reconciled against the last ten merged PRs touching these senders
   (#5119, #5131, #5136, #5100, #5054, #5018, #5017, #4900, #5003, #4785), none of
   which adds a lock or transaction to them.
 

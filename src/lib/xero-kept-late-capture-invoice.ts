@@ -670,7 +670,7 @@ export async function createXeroKeptLateCaptureInvoice(
       await recordCaptureReceiptManifest({
         bookingId,
         paymentIntentId,
-        applicationKey: paymentKey(taskId),
+        paymentKey: paymentKey(taskId),
         amountCents: capturedCents,
         providerPaymentId: storedPaymentId,
         invoiceId: invoiceId!,
