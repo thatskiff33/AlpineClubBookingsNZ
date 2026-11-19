@@ -415,7 +415,7 @@ compliant indefinitely.
 - **An authorised officer is ASKED TO CONFIRM, then ALLOWED and ESCALATED**
   (#2576 §7). An officer change that would strand a dependent raises
   `SameOwnerCoverageOverrideRequiredError` (409, `requiresOverrideReason: true`)
-  naming what would be stranded. That blocks the UNCONFIRMED change, not the
+  naming what would be stranded; that blocks the UNCONFIRMED change, not the
   officer: §7's override needs the permission, an explicit confirmation, a
   mandatory reason, the affected bookings and nights, and an audit event.
   Re-submitted with `hostingCoverageOverride` (`{ acknowledged: true, reason,
