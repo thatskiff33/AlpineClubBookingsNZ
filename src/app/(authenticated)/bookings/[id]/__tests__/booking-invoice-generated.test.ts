@@ -48,7 +48,7 @@ const dependencies = (appliedCreditCents: number) => ({
   format: vi.fn(async () => ({ currencyCode: "NZD", locale: "en-NZ" })),
   clubTime: vi.fn(async () => ({ today: () => requireCalendarDate("2026-07-01") }) as never),
   ageTierSettings: vi.fn(async () => [{ tier: "ADULT", label: "Adult" }] as never),
-  rateMembershipLabelResolver: vi.fn(async () => null),
+  rateMembershipLabelResolver: vi.fn(async () => ({ nonMemberTypeId: null })),
   amountOwed: vi.fn(async () => ({ owedCents: 18_000 - appliedCreditCents, dueCents: 18_000 - appliedCreditCents, appliedCreditCents })),
 });
 
