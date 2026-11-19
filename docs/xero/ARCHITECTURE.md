@@ -3567,9 +3567,14 @@ page and both routes, so neither can serve what the page does not offer.
   deleted invoice) or failed unresolved, or when a credit note for the booking
   (modification, account-credit or refund note) failed unresolved; and that
   the documents may lag while either is queued or running.
-- **Later work.** A single statement PDF for the booking (invoice, credits,
-  payments and balance in one document) belongs to #5066's generated-document
-  slice, which waits on the club GST status work (#5153).
+- **Xero off** (#5066 slice 2). The same offer serves the app's own document
+  instead (`GENERATED`, `generatedBookingInvoiceOnOffer`) and makes no Xero
+  read; it is never offered while the module is on, so a Xero club has one
+  invoice of record. See `src/lib/booking-invoice.ts`.
+- **Later work.** A single statement PDF for a Xero club's booking (invoice,
+  credits, payments and balance in one document) is not built; the
+  GST-registered form of the generated document ("Tax invoice") waits on the
+  club GST status work (#5153), and any bank details on it on #4526.
 
 ## OAuth and token lifecycle (supporting flow)
 

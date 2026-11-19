@@ -169,9 +169,35 @@ Some things to know:
 - Downloads are limited to 10 an hour per person (and 20 an hour per booking),
   because each one reads the club's accounts.
 
-Clubs that don't use Xero don't show the button yet. A single statement PDF
-for the booking (invoice, credits, payments and balance in one document) is
-planned for a later release.
+### When your club doesn't use Xero
+
+Your booking page still has a **Download invoice** button, and it saves an
+invoice the app makes from your booking:
+
+- titled **Invoice**, from the club's legal name and postal address (set by
+  the club under Club identity), with the lodge named as the place of stay;
+- the date you downloaded it and your booking reference (there is no invoice
+  number);
+- one line per guest for each run of nights at one price, one line per promo
+  code, and any change fee;
+- the total, then the same figures as the **Invoice and credits** card on the
+  booking page: account credit applied, what you have paid less refunds and
+  credits returned, anything kept under the booking's change terms, and what
+  is still to pay (or due once the booking is reviewed or confirmed).
+
+It has no bank details or payment instructions; pay the way your booking page
+shows. A booking the club has not approved yet (for example a school group
+awaiting review) gets an invoice marked **Not yet approved**: nothing is
+payable until the club approves it.
+
+There is no invoice for a cancelled, draft or waitlisted booking, a place your
+group organiser pays for, a group whose organiser pays for everyone, a booking
+with an extra charge asked (it has its own payment link), or a booking with a
+night whose price the club is still reviewing; the button does not show for
+those. Downloads count towards the same limits as above.
+
+A single statement PDF for a Xero club's booking (invoice, credits, payments
+and balance in one document) is planned for a later release.
 
 ## Split charges for non-member guests
 
