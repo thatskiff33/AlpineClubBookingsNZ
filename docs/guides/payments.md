@@ -1205,6 +1205,37 @@ joiners', whose Net Collected already treats that money as refunded.
 | A review row says its recorded evidence **cannot be read** | The evidence was written by a different version of the site | Decide the amount from the booking's own payment and rate history instead, and tell your club administrator — that evidence is the only record of what the change removed |
 | The evidence shows a booking identifier instead of a link | Your admin role covers finance but not bookings, and the booking is not your own | Quote the identifier to an admin who can open bookings, or ask for bookings view access |
 
+### Find older edit refunds with no card recovery record
+
+Before #5212, a price reduction could record a card refund as owed even when
+the payment had no Stripe intent. The fix does not rewrite posted money.
+A database operator can use this read-only query to identify candidates for
+reconciliation; review the payment history before arranging any payment.
+This query is documented, not run against deployment data.
+
+```sql
+SELECT e."id" AS "eventId", e."eventKey", e."effectiveAt"
+FROM "MemberMoneyEvent" e
+JOIN "MemberMoneyJournal" j ON j."eventId" = e."id"
+WHERE e."kind" = 'REFUND_OBLIGATION'
+  AND e."eventKey" LIKE 'refund-obligation|modification|%'
+  AND NOT EXISTS (
+    SELECT 1 FROM "MemberMoneyJournal" reversal
+    WHERE reversal."reversesJournalId" = j."id"
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "PaymentRecoveryOperation" recovery
+    WHERE recovery."idempotencyKey" =
+      'payment_recovery_modification_refund_' || split_part(e."eventKey", '|', 3)
+  )
+ORDER BY e."effectiveAt", e."id";
+```
+
+The key encoding is defined in `src/lib/member-money/internal/keys.ts`:
+the third pipe-separated part is the modification id. Hand-back obligations
+use a different scope and are excluded. These results identify missing
+recovery records, not proof that a member has never been paid another way.
+
 ## Related links
 
 - Back to the [documentation hub](../README.md).
