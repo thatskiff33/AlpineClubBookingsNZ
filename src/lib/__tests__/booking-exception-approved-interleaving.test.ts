@@ -176,6 +176,14 @@ function clientOver(name: "root" | "tx" | "snapshot", rows: () => Rows, statemen
         if (name === "snapshot" && betweenSnapshotReads) { const write = betweenSnapshotReads; betweenSnapshotReads = null; write(); }
         return found;
       },
+      // The organiser-settled children of a parent: the one booking, when it is one.
+      findMany: async ({ where }: { where: WhereInput }) => {
+        const booking = rows().booking;
+        const payment = booking?.payment as PaymentRow | null | undefined;
+        return read("booking.siblings", booking && matchesWhere(booking, where)
+          ? [{ id: booking.id, lodgeId: booking.lodgeId, payment: payment ? { amountCents: payment.amountCents, status: payment.status, source: payment.source } : null }]
+          : []);
+      },
       updateMany: async (args: { where: WhereInput; data: WhereRow }) => update(rows().booking, args),
     },
     payment: {
@@ -275,7 +283,26 @@ function capturedCardPayment(amountCents: number): PaymentRow {
       refundedAmountCents: 0, reason: null, stripePaymentIntentId: "pi_1" }],
   };
 }
+/** A captured card payment after `cents` of it went back to the card: mirror and row together. */
+function refundedCardPayment(amountCents: number, cents: number): PaymentRow {
+  const payment = capturedCardPayment(amountCents);
+  return { ...payment, status: "PARTIALLY_REFUNDED", refundedAmountCents: cents,
+    transactions: [{ ...payment.transactions[0], status: "PARTIALLY_REFUNDED", refundedAmountCents: cents }] };
+}
+/** A joiner's booking in an organiser-pays group: committed, and the organiser's to pay. */
+function organiserPaidChild(settlementStatus: "PENDING" | "SUCCEEDED") {
+  const settled = settlementStatus === "SUCCEEDED";
+  return {
+    ...payableBooking(), status: settled ? "PAID" : "CONFIRMED", organiserSettled: true, parentBookingId: "organiser-booking",
+    parentBooking: { id: "organiser-booking", groupBookingAsOrganiser: { paymentMode: "ORGANISER_PAYS", settlement: {
+      id: "settlement-1", source: "STRIPE", amountCents: 5000, stripePaymentIntentId: "pi_group", refundPlan: null, status: settlementStatus,
+    } } },
+    // The settle writes the child's mirror with the settlement's source and no rows of its own.
+    payment: settled ? { ...capturedCardPayment(5000), stripePaymentIntentId: null, transactions: [] } : null,
+  };
+}
 const sent = () => sendEmail.mock.calls.map(([message]) => message);
+const ORGANISER_PAYS_LINE = "Your group organiser pays for this stay.";
 const NEUTRAL_LINE = "To see whether anything is still to pay on this booking, open it from your account or contact the club.";
 
 beforeEach(() => {
@@ -398,23 +425,65 @@ describe("exception approval post-commit notification", () => {
     ]);
   });
 
+  const UNPAID_UNHELD = "There is $50.00 to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid.";
+  const OWES_25_HELD = "There is $25.00 to pay on this booking. Your beds are held for now; open it from your account to pay, or check the bank-transfer details and deadline there.";
   it.each([
     // A capture: the booking is paid and settled a moment after the snapshot.
-    ["a capture", () => { Object.assign(live.booking!, { status: "PAID", payment: capturedCardPayment(5000) }); }],
+    { name: "a capture", start: payableBooking, amount: "$50.00", paymentNote: UNPAID_UNHELD,
+      write: () => { Object.assign(live.booking!, { status: "PAID", payment: capturedCardPayment(5000) }); } },
     // A credit application covering the whole stay.
-    ["a credit application", () => { live.appliedCreditCents = 5000; }],
+    { name: "a credit application", start: payableBooking, amount: "$50.00", paymentNote: UNPAID_UNHELD,
+      write: () => { live.appliedCreditCents = 5000; } },
     // A switch to a bed-holding bank transfer: now CONFIRMED and holding.
-    ["a bed-holding bank switch", () => { Object.assign(live.booking!, { status: "CONFIRMED" }); }],
-  ])("describes one moment when %s lands between its reads", async (_name, write) => {
+    { name: "a bed-holding bank switch", start: payableBooking, amount: "$50.00", paymentNote: UNPAID_UNHELD,
+      write: () => { Object.assign(live.booking!, { status: "CONFIRMED" }); } },
+    // A refund: a $75.00 stay holding its beds with $50.00 captured owes $25.00.
+    // A cancellation then refunds $25.00 of the capture and lets the beds go: a
+    // later read would owe more and hold nothing.
+    { name: "a refund", start: () => ({ ...payableBooking(), status: "CONFIRMED", finalPriceCents: 7500, totalPriceCents: 7500, payment: capturedCardPayment(5000) }),
+      amount: "$25.00", paymentNote: OWES_25_HELD,
+      write: () => { Object.assign(live.booking!, { status: "CANCELLED", payment: refundedCardPayment(5000, 2500) }); } },
+    // A group settlement: the organiser had not paid at the snapshot, and pays a
+    // moment after. The member is told who pays, with no amount of their own.
+    { name: "a group settlement", start: () => organiserPaidChild("PENDING"), amount: "", paymentNote: ORGANISER_PAYS_LINE,
+      write: () => { Object.assign(live.booking!, organiserPaidChild("SUCCEEDED")); } },
+  ])("describes one moment when $name lands between its reads", async ({ start, write, amount, paymentNote }) => {
+    createsBooking(start());
     betweenSnapshotReads = write;
     expect(await approve()).toMatchObject({ outcome: "executed" });
     expect(betweenSnapshotReads).toBeNull();
-    // The amount and the held-bed sentence are both the snapshot's: unpaid and
-    // unheld, never one read's amount beside another's beds.
-    expect(sent()[0].templateData.paymentNote).toBe(
-      "There is $50.00 to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid.",
-    );
+    // The amount and the held-bed sentence are both the snapshot's, never one
+    // read's amount beside another's beds.
+    expect(sent()[0].templateData).toMatchObject({ amount, paymentNote });
+    expect(sent()[0].html).toContain(paymentNote);
     expect(reads.filter((read) => read.startsWith("root:"))).toEqual([]);
+  });
+
+  it("a snapshot opened after that refund says something else: the cancelled booking gets no amount", async () => {
+    createsBooking({ ...payableBooking(), status: "CANCELLED", finalPriceCents: 7500, totalPriceCents: 7500, payment: refundedCardPayment(5000, 2500) });
+    expect(await approve()).toMatchObject({ outcome: "executed" });
+    expect(sent()[0].templateData).toMatchObject({ amount: "", paymentNote: NEUTRAL_LINE });
+  });
+
+  it("tells a joiner the organiser pays, through the real sender, asking for nothing and naming no amount", async () => {
+    createsBooking(organiserPaidChild("PENDING"));
+    expect(await approve()).toMatchObject({ outcome: "executed" });
+    expect(sent()[0].templateData).toMatchObject({ amount: "", paymentNote: ORGANISER_PAYS_LINE });
+    expect(sent()[0].html).toContain(ORGANISER_PAYS_LINE);
+    expect(sent()[0].html).not.toMatch(/\$\d/);
+    expect(sent()[0].html).not.toContain("to pay on this booking");
+    // The group's share is read inside the snapshot too.
+    expect(reads.filter((read) => !read.startsWith("tx:"))).toEqual([
+      "snapshot:booking", "snapshot:booking", "snapshot:memberCredit", "snapshot:booking.siblings", "snapshot:stripeDispute",
+    ]);
+  });
+
+  it("says nothing about payment to a joiner whose organiser has paid a share the settlement proves", async () => {
+    createsBooking(organiserPaidChild("SUCCEEDED"));
+    expect(await approve()).toMatchObject({ outcome: "executed" });
+    expect(sent()[0].templateData).toMatchObject({ amount: "$0.00", paymentNote: "" });
+    expect(sent()[0].html).not.toContain("to pay on this booking");
+    expect(sent()[0].html).not.toContain(ORGANISER_PAYS_LINE);
   });
 
   it("still tells the member, neutrally and once, when the snapshot cannot be read", async () => {
@@ -455,7 +524,8 @@ describe("the approval email's payment line, one per cash-cover answer", () => {
   });
 
   it("never asks a member whose organiser pays", () => {
-    expect(note({ kind: "organiser_pays" }, true)).toEqual({ amount: "", paymentNote: "Your group organiser pays for this stay." });
+    expect(note({ kind: "organiser_pays" }, true)).toEqual({ amount: "", paymentNote: ORGANISER_PAYS_LINE });
+    expect(note({ kind: "organiser_pays" }, false)).toEqual({ amount: "", paymentNote: ORGANISER_PAYS_LINE });
   });
 
   it.each([
