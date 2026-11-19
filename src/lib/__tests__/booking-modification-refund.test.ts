@@ -125,7 +125,7 @@ describe("reserveModificationRefundDebts", () => {
     await expect(reserveModificationRefundDebts(tx, args())).rejects.toBe(error);
   });
 
-  // #5212 (`INV-PAY-157`): the settlement never promises a card refund on a
+  // #5212 (`INV-PAY-159`): the settlement never promises a card refund on a
   // payment with no Stripe intent, so a reserve that finds none is a
   // disagreement - the edit rolls back rather than commit a refund payable
   // with no debt behind it.

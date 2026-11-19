@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   queueSupersededPrimaryIntentCancellations: vi.fn().mockResolvedValue([]),
@@ -167,6 +168,10 @@ import { POST as createPaymentIntentRoute } from "@/app/api/payments/create-paym
 import { POST as createSetupIntentRoute } from "@/app/api/payments/create-setup-intent/route";
 import { POST as confirmPaymentRoute } from "@/app/api/bookings/[id]/confirm-payment/route";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+} from "@/lib/transaction-contended-response";
 import {
   BELOW_STRIPE_MINIMUM_MEMBER_BODY,
   BelowStripeMinimumError,
@@ -2587,5 +2592,152 @@ describe("generic-catch error-message leak (F31 #1888)", () => {
     ).toBeLessThan(mockFindOrCreateCustomer.mock.invocationCallOrder[0]);
     // The mint is never reached — the customer lookup fails one call earlier.
     expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+});
+
+// INV-LOCK-006: a lock(1) transaction that runs out of its budget (P2028) or
+// loses a write conflict (P2034) is a retryable 503 before any capture is seen,
+// and never displaces the captured-payment recovery answer after one.
+describe("lock(1) transaction contention (INV-LOCK-006)", () => {
+  function contention(code: "P2028" | "P2034" | "P2002") {
+    return new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" });
+  }
+  const CONTENDED_BODY = {
+    error: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+    code: TRANSACTION_CONTENDED_CODE,
+  };
+  function payableBooking(payment: { stripePaymentIntentId: string; status: string } | null) {
+    return {
+      id: "booking-1",
+      memberId: "member-1",
+      status: "CONFIRMED",
+      hasNonMembers: false,
+      organiserSettled: false,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [],
+      payment,
+    };
+  }
+  function createRequest() {
+    return new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  function confirmRequest(paymentIntentId: string) {
+    return new NextRequest("http://localhost/api/bookings/booking-1/confirm-payment", {
+      method: "POST",
+      body: JSON.stringify({ paymentIntentId }),
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  it.each(["P2028", "P2034"] as const)(
+    "create-payment-intent maps %s before any capture to a retryable 503",
+    async (code) => {
+      mockPrisma.booking.findUnique.mockResolvedValue(payableBooking(null));
+      mockStripeCreatePaymentIntent.mockResolvedValue({
+        id: "pi_new",
+        client_secret: "secret_new",
+        amount: 12500,
+        status: "requires_payment_method",
+      });
+      mockPrisma.$transaction.mockRejectedValue(contention(code));
+
+      const response = await createPaymentIntentRoute(createRequest());
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Retry-After")).toBe("2");
+      await expect(response.json()).resolves.toEqual(CONTENDED_BODY);
+    },
+  );
+
+  it("create-payment-intent keeps the generic 500 for an unrelated Prisma error", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue(payableBooking(null));
+    mockFindOrCreateCustomer.mockRejectedValue(contention("P2002"));
+
+    const response = await createPaymentIntentRoute(createRequest());
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("Retry-After")).toBeNull();
+  });
+
+  it("create-payment-intent keeps the payment-received recovery when settling a capture contends", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue(
+      payableBooking({ stripePaymentIntentId: "pi_captured", status: "PROCESSING" }),
+    );
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_captured",
+      amount: 12500,
+      payment_method: "pm_123",
+      status: "succeeded",
+    });
+    mocks.markBookingPaymentSucceeded.mockRejectedValue(contention("P2028"));
+
+    const response = await createPaymentIntentRoute(createRequest());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual(PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY);
+  });
+
+  // Every confirm-payment lock(1) write runs once Stripe reports success, so
+  // its recovery answers win over the 503.
+  it.each(["P2028", "P2034"] as const)(
+    "confirm-payment keeps the unconfirmed-card recovery when %s hits the capture classification",
+    async (code) => {
+      mockPrisma.payment.findUnique.mockResolvedValue({
+        id: "payment-1",
+        stripePaymentIntentId: "pi_classifying",
+        status: "PROCESSING",
+        booking: { memberId: "member-1", finalPriceCents: 12500, status: "CONFIRMED" },
+      });
+      mockGetPaymentIntent.mockResolvedValue({
+        id: "pi_classifying",
+        amount: 12500,
+        payment_method: "pm_123",
+        status: "succeeded",
+      });
+      mocks.findPaymentTransactionByIntentId.mockRejectedValueOnce(contention(code));
+
+      const response = await confirmPaymentRoute(confirmRequest("pi_classifying"), {
+        params: Promise.resolve({ id: "booking-1" }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(response.headers.get("Retry-After")).toBeNull();
+      await expect(response.json()).resolves.toEqual(
+        EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
+      );
+    },
+  );
+
+  it("confirm-payment keeps the payment-received recovery when settling a capture contends", async () => {
+    mockPrisma.payment.findUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_captured",
+      status: "PROCESSING",
+      booking: { memberId: "member-1", finalPriceCents: 12500, status: "CONFIRMED" },
+    });
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_captured",
+      amount: 12500,
+      payment_method: "pm_123",
+      status: "succeeded",
+    });
+    mocks.markBookingPaymentSucceeded.mockRejectedValue(contention("P2034"));
+
+    const response = await confirmPaymentRoute(confirmRequest("pi_captured"), {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual(PAYMENT_RECEIVED_STATUS_UNCONFIRMED_BODY);
   });
 });

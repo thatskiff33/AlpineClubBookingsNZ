@@ -488,6 +488,7 @@ let CLUB_FORMAT_TEST: (typeof import("@/lib/__tests__/support/club-format-fixtur
       expect(await corrections()).toEqual([]);
       expect(await prisma.bookingLedgerLine.count({ where: { bookingId: BOOKING_ID, kind: "BANK_REFUND" } })).toBe(0);
 
+      // #4516 (owner decision, 15 Nov 2026): a part to check keeps its dismissal.
       await resolve("dismissed", task.id, "Refunded in the Stripe dashboard on 2 July.");
       expect(await checkTask()).toMatchObject({ status: "DISMISSED" });
       expect(await taskRefundNotes()).toEqual([]);

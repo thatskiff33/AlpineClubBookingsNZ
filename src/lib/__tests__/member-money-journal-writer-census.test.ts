@@ -102,9 +102,13 @@ const DOORS: Record<string, string> = {
   "src/lib/internet-banking-part-payment-at-cancel.ts": "R07 recognised part bank cash",
   "scripts/member-money-receipt-catch-up.ts": "R26 dry-run-first catch-up receipts unapplied",
   // #4516 (M4c): card refunds. R05 at the doors, the senders' reservations, R12/R13 in the cash writer, R14.
-  "src/lib/booking-cancel.ts": "R05 for a paid card cancellation's frozen plan",
+  "src/lib/booking-cancel.ts": "R05 for a paid card cancellation's frozen plan, and for its bank hand-back",
+  "src/lib/edit-refund-hand-back.ts": "R05 for an edit's bank hand-back and an appeal's bank part",
+  "src/lib/cancel-card-refund-shortfall.ts": "R05 for a card refund's bank or cheque shortfall",
   "src/app/api/admin/refund-requests/[id]/route.ts": "R05 (with its concession) for an approved appeal; withdrawn with release_claim",
   "src/lib/manual-refund-task-resolution.ts": "R05 for an edit review's card refund",
+  // #4516 (M4d): moved out of the resolution for its size budget; the same steps, called from the same transaction.
+  "src/lib/manual-refund-task-hand-back-journal.ts": "R14 for a hand-back paid by hand (and a by-hand review's R05); an allowed dismissal (a part to check, a disputed hand-back once lost) withdraws its R05, and a reduction withdraws part of it",
   "src/lib/late-capture-refund-approval.ts": "R05 for a treasurer-approved late capture's return",
   "src/lib/card-refund-paid-another-way-rest.ts": "R14 for a paid-another-way close, its reservations closed, a kept rest's close-out",
   "scripts/member-money-refund-reservations.ts": "dry-run-first refund census; exact reconciliation of reservations",
@@ -122,6 +126,9 @@ const DOORS: Record<string, string> = {
   "src/lib/booking-ledger-pending-charge.ts": "R01 at a bank-transfer binding; R02/R04 for a charge still pending",
   // #4525 (M13): an export manifest, not a journal row, through the same door.
   "src/lib/xero-booking-invoices.ts": "M13: the primary invoice's export manifest, after its link",
+  "src/lib/xero-supplementary-invoices.ts": "M13: the supplementary invoice's export manifest, after its operation completes",
+  "src/lib/xero-credit-notes.ts": "M13: a refund note's export manifest, after it is recorded",
+  "src/lib/xero-refund-note-settlement.ts": "M13: a refund note payment's export manifest, after it is sent",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -130,6 +137,8 @@ const DOORS: Record<string, string> = {
  * context type.
  */
 const CONTEXT_RESOLVERS: readonly string[] = [
+  // #4516: the disputed hand-back's reduction resolves the journal; its part withdrawal posts through the hand-back journal door.
+  "src/lib/manual-refund-task-dispute-reduction.ts",
   "src/app/api/bookings/[id]/confirm-modification-payment/route.ts",
   "src/app/api/bookings/[id]/guests/route.ts",
   "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
@@ -159,6 +168,8 @@ const CONTEXT_RESOLVERS: readonly string[] = [
   "src/app/api/admin/bookings/[id]/force-confirm/route.ts",
   // #4516 (M4c): a paid-another-way close resolves the context its R14 posts with, before its transaction.
   "src/lib/card-refund-paid-another-way.ts",
+  // #4516 (M4d): the capacity-race shortfall passes the caller's journal into the shortfall door and posts nothing itself.
+  "src/lib/capacity-race-refund-shortfall.ts",
   "src/app/api/bookings/[id]/confirm-draft/route.ts",
   "src/app/api/bookings/[id]/waitlist-confirm/route.ts",
   // #4343: the edit-review clean-up resolves the clock in its script, before any transaction, and hands the context to the re-base's R21 and the review completion.
@@ -173,8 +184,8 @@ const BOUNDARY = "src/lib/member-money/";
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
-/** M3b's door entry points (#4627), M3c's pending charge (#4628), and M13's invoice manifest (#4525). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest)\b/;
+/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice and refund-note manifests (#4525). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's

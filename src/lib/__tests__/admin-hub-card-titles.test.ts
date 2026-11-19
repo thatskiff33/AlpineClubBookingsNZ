@@ -23,10 +23,10 @@ import { DISPLAY_GLOSSARY_LEAD } from "@/lib/lodge-display/display-terminology";
  *
  * Why a census and not a helper that builds the whole card from one id: a card
  * may name a slice of a page, so a helper that forced the label would be wrong
- * for those; and the Display hub keeps literal hrefs, which the builder's
- * `hardNavigate` guard reads from source, so it needs a census whatever the
- * other hubs do. The census reads every form, so the older `adminLink` cards
- * are held to the same rule as the new ones.
+ * for those; and the Display hub's cards are `adminHref` calls that the
+ * builder's `hardNavigate` guard reads from source (C11 part 1, #4808), so it
+ * needs a census whatever the other hubs do. The census reads every form, so
+ * the older `adminLink` cards are held to the same rule as the new ones.
  */
 
 const ROOT = process.cwd();
@@ -35,25 +35,7 @@ const ROOT = process.cwd();
  * Cards allowed another title: `file` to `href` to why. Each must still be
  * found, so a stale entry fails as surely as a new mismatch.
  */
-const EXEMPT: Record<string, Record<string, string>> = {
-  // #4968 (PR #5107) moves the Setup cards into `setup/hub-cards.ts`, titled
-  // from the registry, drops Foundations' card back to Setup, and retitles the
-  // Booking Policies cards. Until it lands, the old titles stay here so the two
-  // changes do not conflict; whichever merges second drops these entries.
-  "src/app/(admin)/admin/setup/setup-page-client.tsx": {
-    "/admin/setup/foundations": "#4968 renames Initial Setup to Foundations Setup",
-    "/admin/setup/finance": "#4968 renames Finance to Finance Setup",
-    'adminHref("notifications")': "#4968 renames Email Messages / Notifications to Notifications & Email",
-  },
-  "src/app/(admin)/admin/setup/foundations/page.tsx": {
-    "/admin/setup": "#4968 removes Foundations' Setup Checklist card",
-  },
-  "src/app/(admin)/admin/rules/booking-policies/page.tsx": {
-    'adminHref("booking-policies-cancellation")': "#4968 renames Default Cancellation Policy to Cancellation Policy",
-    'adminHref("booking-policies-periods")': "#4968 renames Date-Specific Periods to Booking Periods",
-    'adminHref("booking-policies-minimum-stay")': "#4968 renames Minimum Night Stay to Minimum Stay",
-  },
-};
+const EXEMPT: Record<string, Record<string, string>> = {};
 
 /** Every production `.ts`/`.tsx` file under `dir`, tests and the registry left out. */
 function productionFiles(dir: string): string[] {
@@ -182,10 +164,14 @@ describe("admin hub cards are titled with their page's registry label", () => {
   const { files, checked, mismatches, exempted } = scan();
 
   it("PREMISE: the scan reads the production tree and finds the hubs' cards", () => {
-    expect(files).toContain("src/app/(admin)/admin/display/page.tsx");
+    expect(files).toContain("src/app/(admin)/admin/lodge-ops/display/page.tsx");
     expect(files.some((file) => file.includes("__tests__"))).toBe(false);
-    // A literal href and an adminHref one, so both forms are seen.
-    expect(checked).toContain("src/app/(admin)/admin/display/page.tsx: /admin/display/builder");
+    // An `adminHref` card and an `adminLink` one are seen. The Display hub's
+    // cards stopped being literal hrefs when it moved under lodge-ops (C11 part
+    // 1, #4808); the literal form is read by the fixture test below.
+    expect(checked).toContain(
+      'src/app/(admin)/admin/lodge-ops/display/page.tsx: adminHref("display-builder")',
+    );
     expect(checked).toContain('src/app/(admin)/admin/integrations/page.tsx: adminHref("stripe-setup")');
     expect(checked).toContain(
       'src/app/(admin)/admin/membership/membership-setup/page.tsx: adminLink("membership-types").href',
@@ -208,8 +194,7 @@ describe("admin hub cards are titled with their page's registry label", () => {
     );
     expect(
       stale,
-      "a reviewed card is gone or now matches: drop it from EXEMPT. Once #4968 (PR #5107) and this test " +
-        "are both on main, set EXEMPT to {} and delete its comment.",
+      "a reviewed card is gone or now matches: drop it from EXEMPT.",
     ).toEqual([]);
   });
 

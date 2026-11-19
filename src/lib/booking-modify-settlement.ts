@@ -234,7 +234,7 @@ export async function applyPaymentAdjustments(
   // asked by card, as a card-paid one's; every REDUCTION reads `hasSettledPayment`.
   const zeroDollarCardIncrease =
     netAmountCents > 0 && !hasSettledPayment && canAskCardForIncrease(booking);
-  // #5212 (`INV-PAY-157`): a REDUCTION is the card's only where Stripe has a record to refund against.
+  // #5212 (`INV-PAY-159`): a REDUCTION is the card's only where Stripe has a record to refund against.
   const hasSucceededPayment = zeroDollarCardIncrease ||
     (hasSettledPayment && booking.payment?.source === PaymentSource.STRIPE && (netAmountCents >= 0 || (await editRefundHasCardToReturnTo(tx, booking))));
   // #4299: the one home's answer, or the organiser's combined invoice standing for it.

@@ -25,6 +25,7 @@ import {
   ADMIN_PAGES,
   ADMIN_RETIRED_PAGES,
   adminHref,
+  adminPageRoutePath,
   buildAdminUrlRules,
   canonicalAdminPathname,
   getAdminPage,
@@ -350,8 +351,8 @@ describe("getAdminFeatureSearchIndex — keywords", () => {
     expect(keywordsOf(adminHref("booking-requests"))).not.toContain("Needs Attention");
     // The queue views sit only in Needs Attention.
     expect(keywordsOf(buildUnpaidFinishedStaysHref(CLUB_DAY))).toContain("Needs Attention");
-    // A page the sidebar does not link has no section to carry.
-    expect(keywordsOf(adminHref("chores"))).toEqual([]);
+    // A page the sidebar does not link has no section to carry, only its own keywords.
+    expect(keywordsOf(adminHref("chores"))).toEqual(getAdminPage("chores").keywords);
   });
 
   it("carries every sidebar section name onto the pages it lists", () => {
@@ -427,7 +428,7 @@ describe("getAdminFeatureSearchIndex — a retired page under its old name", () 
 describe("adminPageLabel — one relabel for the sidebar and the palette", () => {
   it("pluralises the club's term on Hut Leaders only", () => {
     expect(adminPageLabel(getAdminPage("hut-leaders"), { hutLeaderLabel: "Warden" })).toBe("Wardens");
-    expect(adminPageLabel(getAdminPage("roster"), { hutLeaderLabel: "Warden" })).toBe("Roster");
+    expect(adminPageLabel(getAdminPage("roster"), { hutLeaderLabel: "Warden" })).toBe("Chore Roster");
   });
 
   it("is what both surfaces show", () => {
@@ -615,7 +616,9 @@ describe("getAdminFeatureSearchIndex — it never offers a page that will not op
 
 describe("the census reads the tree it claims to", () => {
   it("classifies display/preview as a page that needs its query", () => {
-    const file = adminPageFiles.find((candidate) => toRawPathname(candidate) === "/admin/display/preview");
+    // The file's own route path: its hub path once moved (C11 part 1 #4808).
+    const routePath = adminPageRoutePath(getAdminPage("display-preview"));
+    const file = adminPageFiles.find((candidate) => toRawPathname(candidate) === routePath);
     expect(file).toBeDefined();
     expect(fs.readFileSync(file!, "utf8")).toMatch(/No template to preview/);
     expect(path.basename(file!)).toBe("page.tsx");

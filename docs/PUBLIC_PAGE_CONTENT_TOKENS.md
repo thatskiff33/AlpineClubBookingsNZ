@@ -189,9 +189,9 @@ and the site footer (they render an escaped string in place, not a block):
 
   An app release that does not know a token leaves it as typed, so an older
   release shows the raw `{{data-hosting}}` braces, not a blank. The starter
-  privacy text adopts the token only in a later release, after one containing
-  it has shipped
-  ([upgrade note](UPGRADING.md#privacy-incident-guide-and-hosting-disclosure-settings-4918)).
+  privacy text's section 5 uses the token from the release after the one that
+  added it, and a guarded migration moves unedited privacy pages to it
+  ([upgrade note](UPGRADING.md#starter-privacy-policy-lists-its-recipients-and-names-your-host-5007)).
 
 For the lodge text tokens the bare form resolves the **default lodge**; a
 `:lodge-slug` parameter targets a named lodge, and an unknown slug falls back to
@@ -237,7 +237,7 @@ emits a sentence when one is supplied — so #2365 re-enables it by flipping
 `PUBLIC_EXCEPTION_CAPACITY_COPY_ENABLED` in `public-page-content-tokens.ts` once
 the review workflow ships. Even then the token receives only the display copy,
 never the policy id/version or the internal capacity-mode enum. The **admin**
-Minimum Night Stay card is unaffected and has always stated the stored mode: an
+Minimum Stay card is unaffected and has always stated the stored mode: an
 operator configuring the rule needs to see what they chose.
 
 `{{booking-policies}}` also publishes one sentence for the adult-member hosting

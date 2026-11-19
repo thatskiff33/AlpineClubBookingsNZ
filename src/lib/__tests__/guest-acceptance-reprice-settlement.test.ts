@@ -62,6 +62,11 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: h.refundPaymentTransactions,
 }));
+// #4516 (M4d): the hand-back's R05 is the journal's (`member-money-refunds.realdb.test.ts` proves R05); here, that the raise asks for it.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postHandBackObligation: vi.fn(async () => null),
+}));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -200,7 +205,12 @@ function tx(loaded: ReturnType<typeof booking>) {
     },
     // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
     paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
-    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), createMany: vi.fn(async () => ({ count: 1 })) },
+    manualRefundTask: {
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
+      createMany: vi.fn(async () => ({ count: 1 })),
+      // #4516 (M4d): the raised hand-back, read for its R05.
+      findUniqueOrThrow: vi.fn(async () => ({ id: "hand-back-1", amountCents: 6000 })),
+    },
   };
 }
 
@@ -592,6 +602,11 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
       ],
       skipDuplicates: true,
     });
+    // #4516 (M4d): the hand-back's refund debt posts with the task, on the acceptance's own transaction.
+    const { postHandBackObligation } = await import("@/lib/member-money/doors");
+    expect(vi.mocked(postHandBackObligation)).toHaveBeenCalledWith(client, JOURNAL, expect.objectContaining({
+      bookingId: "booking-1", taskId: "hand-back-1", amountCents: 6000, debtorRead: "booking-row",
+    }));
     if (!reprice.repriced) throw new Error("expected a re-price");
     h.sendBookingModifiedEmail.mockResolvedValue(undefined);
     // #4070: the real refund helper; no Stripe refund runs, so the member's own wording stands.
@@ -623,7 +638,7 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
     );
   });
 
-  it("MUTATION (#5212, INV-PAY-157): a card payment with no Stripe record goes the same way - one task, no card refund owed or asked", async () => {
+  it("MUTATION (#5212, INV-PAY-159): a card payment with no Stripe record goes the same way - one task, no card refund owed or asked", async () => {
     // Drop `editRefundHasCardToReturnTo` from the settlement and this reserves a
     // card refund the payment has no intent for, with no task and the card wording.
     const loaded = booking({ payment: { ...booking().payment, stripePaymentIntentId: null } });

@@ -18,6 +18,7 @@ import {
   type BedAllocationDb,
 } from "@/lib/bed-allocation-admin-contract";
 import type { BedAllocationDateRange } from "@/lib/bed-allocation-date-range";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { assertGlobalLockHeld } from "@/lib/global-lock-held";
 import { assertLodgeCapacityLockHeld } from "@/lib/lodge-capacity-lock";
 
@@ -190,5 +191,5 @@ export async function approveBedAllocations(input: ApproveBedAllocationsInput) {
       tx,
     );
     return result;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }

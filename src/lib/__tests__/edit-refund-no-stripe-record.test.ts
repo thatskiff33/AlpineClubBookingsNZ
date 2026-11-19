@@ -6,7 +6,7 @@ import type { CalendarDate } from "@/lib/club-time";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 /*
-  #5212 (`INV-PAY-157`, owner decision of 18 Nov 2026): an edit that lowers the
+  #5212 (`INV-PAY-159`, owner decision of 18 Nov 2026): an edit that lowers the
   price of a card-paid booking Stripe holds no record of sends the refund to
   the treasurer, as an Internet Banking payment's goes, and promises the card
   nothing. These pin the one read both the settlement and the debt's writer

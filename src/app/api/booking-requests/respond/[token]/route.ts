@@ -8,6 +8,7 @@ import {
   respondToBookingRequestQuote,
 } from "@/lib/booking-request-quotes";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const responseSchema = z.object({
   action: z.enum(["ACCEPT", "CANCEL", "MODIFY", "QUERY"]),
@@ -78,6 +79,13 @@ export async function POST(
     });
     return NextResponse.json(result);
   } catch (err) {
+    // Each response action commits in one lock(1) transaction (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      err,
+      "Booking request quote response contended for the lock(1) budget",
+      { context: { action: parsed.data.action } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     if (err instanceof BookingRequestQuoteError) {

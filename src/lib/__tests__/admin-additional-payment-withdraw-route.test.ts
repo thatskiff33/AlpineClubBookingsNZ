@@ -5,8 +5,13 @@
  * finance permission, pass the refusal through untouched, and never leak an
  * unexpected error's message.
  */
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  TRANSACTION_CONTENDED_CODE,
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+} from "@/lib/transaction-contended-response";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -112,5 +117,36 @@ describe("admin additional-payment withdraw route", () => {
     const body = await response.json();
     expect(body.error).toBe("Failed to withdraw the payment request");
     expect(JSON.stringify(body)).not.toContain("ECONNREFUSED");
+  });
+
+  // INV-LOCK-006: the PaymentIntent is cancelled before the ledger transaction,
+  // so an exhausted budget answers with the status-check wording.
+  it.each(["P2028", "P2034"])(
+    "answers %s contention with a retryable 503 and the status-check wording",
+    async (code) => {
+      mocks.withdrawAdditionalPaymentAsk.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test" }),
+      );
+
+      const response = await POST(request(), { params });
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Retry-After")).toBe("2");
+      await expect(response.json()).resolves.toEqual({
+        error: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+        code: TRANSACTION_CONTENDED_CODE,
+      });
+    },
+  );
+
+  it("keeps an unrelated Prisma error on the generic 500", async () => {
+    mocks.withdrawAdditionalPaymentAsk.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("x", { code: "P2002", clientVersion: "test" }),
+    );
+
+    const response = await POST(request(), { params });
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("Retry-After")).toBeNull();
   });
 });

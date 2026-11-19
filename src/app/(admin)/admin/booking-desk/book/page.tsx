@@ -52,8 +52,9 @@ import {
   formatStayDateOrNull,
 } from "@/lib/club-time";
 
-import { adminHref } from "@/lib/admin-hubs";
+import { adminHref, getAdminPage } from "@/lib/admin-hubs";
 import { formatCents } from "@/lib/utils";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import { CreditCard, Landmark } from "lucide-react";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { useClubFormat } from "@/components/club-format-provider";
@@ -586,6 +587,7 @@ export default function AdminBookPage() {
     setPriceLoading(true);
     const checkInStr = checkIn!;
     const checkOutStr = checkOut!;
+    const fallback = "Failed to calculate price";
 
     try {
       const res = await fetch("/api/bookings/quote", {
@@ -604,17 +606,14 @@ export default function AdminBookPage() {
           forMemberId: requestedMemberId,
         }),
       });
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
       const data = await res.json();
       if (!ownsQuote()) return;
-      if (res.ok) {
-        setPriceQuote(data);
-        setStep("review");
-      } else {
-        actionFailure.fail(data.error || "Failed to calculate price");
-      }
+      setPriceQuote(data);
+      setStep("review");
     } catch (quoteError) {
       if (quoteError instanceof DOMException && quoteError.name === "AbortError") return;
-      if (ownsQuote()) actionFailure.fail("Failed to calculate price");
+      if (ownsQuote()) actionFailure.fail(refusalMessageOr(quoteError, fallback));
     } finally {
       if (ownsQuote()) setPriceLoading(false);
       if (quoteAbortRef.current === controller) quoteAbortRef.current = null;
@@ -905,7 +904,7 @@ export default function AdminBookPage() {
         first, always" stays the shape everywhere else. See
         `docs/ARCHITECTURE.md` for the whole rule.
       */}
-      <h1 className="mb-6 text-3xl font-bold">Book on Behalf of Member</h1>
+      <h1 className="mb-6 text-3xl font-bold">{getAdminPage("book").label}</h1>
       {viewOnlyBanner}
       <div className="space-y-6">
 

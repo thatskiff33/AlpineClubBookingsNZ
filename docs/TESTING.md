@@ -1695,10 +1695,36 @@ So:
    member of the set, or a real one missing. Commit `5a5e4e748` (#2649) found a
    census claiming "at least nine other producers" that was really six, with two
    of the named ones refuted outright.
-4. **Prefer a census that enumerates over one that only counts.** Listing the
-   entries by name puts two concurrent additions on the same lines, so git
-   raises a conflict and a human classifies both — which is exactly the review a
-   bare integer skipped.
+4. **Prefer a census that enumerates over one that only counts, and publish no
+   total (#5211).** List one entry per line, sorted, with nothing else on the
+   line: two branches adding different entries then merge cleanly AND the merged
+   list is exactly right, which a bare integer never is. Do not pin the length
+   of a list that ordinary feature work grows, and do not quote a total in a
+   comment or document; each is a shared line every lane edits. Pin a number
+   only as a review gate on a small set that changes when someone makes a
+   decision, and say so beside it.
+
+The audit-writer and view-only censuses work this way. A new audit write site
+regenerates `scripts/audit/audit-write-sites.ts` with
+`pnpm run audit:census --write`, which adds that site's line; review it,
+because the line states the category the row is filed under. Each line also
+carries the site's action and the reviewed records that name it, and the census
+compares per function by sink and action, naming every attribute that
+changed, so its failure says NEW, REMOVED, REMOVED+NEW,
+RENUMBERED (ordinals shifted by an earlier addition; nobody's readership
+changed), RECLASSIFIED, SINK MOVED or REVIEW RECORD CHANGED. Two sites in one
+function sharing an action are told apart only by order. The ledger is
+`merge=union`: two lanes whose lines sort together merge cleanly, and the cases
+union cannot get right fail loudly rather than silently. Two lanes appending to
+the SAME function both write `<fn>#1`; with different actions union keeps both
+lines, a repeated key that the census names (and `tsc` refuses), and with the
+identical action and category git merges the identical line and the census
+fails on the missing `#2`. Either way, regenerate on the merged tree, which is
+why the census must run on the composed tree before merging. A new
+`ViewOnlyActionButton` under a section banner needs no entry; one that keeps its
+own per-button reason adds or updates its file's line in `KEEPS_OWN_REASON` in
+`view-only-banner-contract.test.ts`. Neither census has a total to re-measure,
+and each refuses one coming back in its documents.
 
 Censuses reading balanced call arguments or object bodies share
 [`balancedBrackets`](../src/lib/__tests__/support/balanced-brackets.ts).
@@ -1819,6 +1845,20 @@ Two things it does differently from the censuses above, both deliberate:
 Like every disk-scanning test here it has no import edge to the `.tsx` files it
 reads, so `pnpm run test:related` cannot select it from a diff. Run it by name
 when a change adds or edits a numeric input.
+
+### The lock(1) transaction-budget census
+
+[`lock1-transaction-budget-census.test.ts`](../src/lib/__tests__/lock1-transaction-budget-census.test.ts)
+polices `INV-LOCK-006`. It starts from the INV-LOCK-003 site list, follows each
+`pg_advisory_xact_lock(1)` wait out through named helpers to the transaction that
+opens it, and fails on an opener whose options are not the shared budget, a
+plain alias of it, or an
+`INV-LOCK-006 exception:` comment with a reason. Like the others it enumerates
+rather than counts, and it fails if the reader finds too few openers to be
+reading at all. It reads source from disk, so run it by name when a change adds a
+lock(1) site, a helper that takes the key, or a transaction that calls one; it is
+in `ci:fast-censuses` because a lock(1) site landing on `main` can make a green
+branch red.
 
 ### Suites that time out under load and pass alone
 

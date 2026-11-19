@@ -201,7 +201,7 @@ async function reserveBookingModificationCardRefund(
     if (err instanceof Prisma.PrismaClientKnownRequestError || err instanceof Prisma.PrismaClientUnknownRequestError) throw err;
     logger.error({ err, bookingId, paymentId }, "Could not plan the edit's card refund; reserving the whole debt (#4992)");
   }
-  // #5212 (`INV-PAY-157`): any failure rolls the edit back, a payment with no
+  // #5212 (`INV-PAY-159`): any failure rolls the edit back, a payment with no
   // Stripe intent included (`NoRefundPaymentIntentError`). The settlement sent
   // that payment's reduction to the treasurer instead (`editRefundHasCardToReturnTo`),
   // so a card refund is owed here only where this write can record its debt.

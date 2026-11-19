@@ -12,6 +12,10 @@ import {
   getBookingMemberNightConflictResponse,
 } from "@/lib/booking-member-night-conflicts";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { clubFormatValues } from "@/lib/club-format-server";
 
 const holdSchema = z.object({
@@ -77,6 +81,14 @@ export async function POST(
       reused: result.reused,
     });
   } catch (err) {
+    // `INV-LOCK-006`: the hold rolled back, but a stale hold pointer may
+    // already have been detached, so the officer checks rather than assumes.
+    const contended = transactionContendedResponse(
+      err,
+      "Booking request hold contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { requestId: id } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     if (err instanceof BookingMemberNightConflictError) {
