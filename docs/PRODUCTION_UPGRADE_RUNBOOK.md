@@ -53,6 +53,52 @@ Reconciliation totals before and after the upgrade must match to the cent
 
 ## 1. Pre-flight
 
+### Saved-card boundary and incident checks (#5270)
+
+For an upgrade from v0.13.2 or earlier, **stop every old web copy, cron leader
+and worker before starting v0.14.0**, drain in-flight requests and prevent old
+copies restarting. No rolling or blue/green overlap across this boundary unless
+every old copy already reads `_v2` keys. **v0.14.0 is the first public reading
+release and the rollback floor once it has run.** Older copies may retry an
+unresolved saved-card charge under another key and charge twice. This overrides
+the ordinary deployment and rollback sequences, independently of migrations.
+See the [release boundary](UPGRADING.md#saved-card-upgrade-and-rollback-boundary-5270).
+
+If overlap or rollback below that floor occurred, stop incompatible copies and
+pause saved-card charging while the operator reconciles the affected period:
+
+1. Inspect `PaymentTransaction` rows for the same `paymentId` (linked through
+   `Payment.bookingId`). Compare `id`, `reference`, `createdAt`, `status`,
+   `amountCents`, `reason` and `stripePaymentIntentId`. Saved-card references are
+   `pending_charge_<bookingId>_<rowId>`, with `_v2` appended for the new shape.
+   Different references near the incident identify attempts under different
+   keys; legitimate later retries can also produce multiple rows.
+2. Check waiting `_v2` attempts with this read-only query. An empty result does
+   **not** authorise rollback or rule out completed duplicate charges:
+
+   ```sql
+   SELECT "id", "paymentId", "reference", "createdAt", "amountCents",
+          "status", "stripePaymentIntentId"
+   FROM "PaymentTransaction"
+   WHERE "source" = 'STRIPE' AND "kind" = 'PRIMARY'
+     AND starts_with("reference", 'pending_charge_')
+     AND right("reference", 3) = '_v2'
+     AND "status" = 'PENDING' AND "stripePaymentIntentId" IS NULL
+   ORDER BY "createdAt", "id";
+   ```
+
+3. Compare Stripe request logs' idempotency keys and PaymentIntents for that
+   booking (`metadata.bookingId`; `_v2` also carries `metadata.savedCardAttemptId`).
+   Check each intent's charge/capture and refund state. A lost response can
+   leave the local intent id empty even though Stripe took money. Also inspect
+   `UnrecognisedStripePayment` records and unmatched-app-payment alerts. Two
+   local rows alone are not proof of two charges; Stripe's captured payments
+   establish whether money moved twice.
+4. Keep the evidence private and resolve any duplicate or unmatched payment
+   through the normal authorised payment/refund process before resuming charges
+   on v0.14.0 or later. Do not delete attempts, rewrite their keys or restore a
+   backup as a way to undo Stripe charges.
+
 Complete every item below **before** touching the deploy. None of these steps
 writes to production; the SQL is read-only.
 
@@ -214,6 +260,9 @@ needs nothing.
 ---
 
 ## 2. Migrate
+
+Before starting any new process, apply the
+[saved-card stop-before-start rule](#saved-card-boundary-and-incident-checks-5270).
 
 Migrate via the supported blue/green deploy path. Run from the production host:
 
@@ -1868,6 +1917,11 @@ deployment.
 ---
 
 ## 4. Rollback plan
+
+**Once v0.14.0 has run, never roll back below v0.14.0**, the first public
+release that reads `_v2` saved-card keys. This floor overrides the ordinary
+colour-switch instructions below; if crossed, use the
+[incident checks](#saved-card-boundary-and-incident-checks-5270) before retrying charges.
 
 Rollback follows `docs/BLUE_GREEN_MIGRATION_POLICY.md`. The policy's whole point
 is that migrations preserve old-code/new-schema compatibility until the previous

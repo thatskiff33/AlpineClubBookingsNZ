@@ -47,7 +47,8 @@ It complements the two documents next to it and does not repeat them:
    Migration/deployment notes block. `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` is
    the per-migration safety ledger. Together they tell you which migrations
    need a low-traffic window, which are destructive, and which change behaviour.
-4. **Deployments are blue/green.** Migrations run before the new app color
+4. **Deployments are normally blue/green.** Follow release-specific stop-before-start
+   rules first, including the [v0.14.0 saved-card boundary](#saved-card-upgrade-and-rollback-boundary-5270). Migrations run before the new app color
    receives traffic while the **old** color can still be serving requests
    against the shared database (see `docs/BLUE_GREEN_MIGRATION_POLICY.md`). Most
    migrations are written to stay old-code-compatible so the old color keeps
@@ -168,6 +169,34 @@ credit, link or Xero record.
 ---
 
 ## v0.13.2 → v0.14.0
+
+### Saved-card upgrade and rollback boundary (#5270)
+
+**Stop every old copy before starting v0.14.0.** This includes web copies,
+cron leaders and workers, with in-flight requests drained and automatic restarts
+paused. No rolling or blue/green overlap is safe across this boundary unless
+all old copies already run a release that reads `_v2` saved-card charge keys.
+**v0.14.0 is the first public release that reads them**, and also the first
+that mints them; v0.13.2 and earlier cannot read them. This rule applies even
+if your database migrations have already run.
+
+**Once v0.14.0 has run, do not roll back below v0.14.0.** An older copy can
+mistake an unresolved charge for an attempt that never happened, retry under
+a different key and charge the member twice. A database backup cannot undo a
+charge at Stripe. The ordinary blue/green rollback instructions do not override
+this floor.
+
+If incompatible copies overlapped, or a rollback crossed this floor, stop the
+incompatible copies and pause saved-card charging before retrying anything.
+Have the operator reconcile the affected period using the
+[runbook's saved-card checks](PRODUCTION_UPGRADE_RUNBOOK.md#saved-card-boundary-and-incident-checks-5270).
+
+The reader landed in PR #4681 (`71f6247ac`); the mint in PR #5001 (`e642097a`).
+Both are included in v0.14.0. The
+[18 November decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5270#issuecomment-6974536939)
+accepts that release as shipped, superseding the earlier plan to defer minting
+in #4682. The released changelog's #4646 promise of a later switch is therefore
+outdated: the #4682 entry in that same release describes the shipped behaviour.
 
 ### Upgrade checklist for this release
 
