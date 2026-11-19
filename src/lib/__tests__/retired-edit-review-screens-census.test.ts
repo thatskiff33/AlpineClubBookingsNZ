@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { moduleImports, productionSourceFiles } from "./support/static-import-graph";
+import { moduleImports, productionSourceFiles, resolveSpecifier } from "./support/static-import-graph";
 
 /**
  * #4344 (wave C1 of #4302): the officer edit review's screens stay retired.
@@ -42,7 +42,28 @@ const RETIRED_MODULES = [
   "@/components/admin/hand-back-method-choice",
 ];
 
-describe("the officer edit review's screens stay retired (#4344)", () => {
+/** `@/lib/x` as the repo path it names, without its extension: `src/lib/x`. */
+const RETIRED_MODULE_PATHS = new Map(RETIRED_MODULES.map((module) => [`src/${module.slice(2)}`, module]));
+
+/**
+ * The retired module an import names, or null. An `@/` specifier is matched as
+ * written, so it is caught whether or not the file is back. A relative one is
+ * resolved against the tree, which finds it once the file is back - and until
+ * then the import names a file that does not exist, so the build already fails.
+ */
+function retiredModuleNamedBy(file: string, specifier: string): string | null {
+  if (RETIRED_MODULES.includes(specifier)) return specifier;
+  if (!specifier.startsWith(".")) return null;
+  const resolved = resolveSpecifier(file, specifier);
+  return resolved === null ? null : (RETIRED_MODULE_PATHS.get(resolved.replace(/\.[^./]+$/, "")) ?? null);
+}
+
+// Parsing every production file takes several seconds on a CI shard - longer
+// than the 5s default (the same allowance payment-settler-writer-census takes).
+describe("the officer edit review's screens stay retired (#4344)", { timeout: 60_000 }, () => {
+  // Walked once: the census and its control both read the same list.
+  const files = productionSourceFiles();
+
   it("no retired route directory exists again", () => {
     const back = RETIRED_ROUTE_DIRS.filter((dir) => existsSync(resolve(ROOT, dir)));
     expect(
@@ -52,12 +73,12 @@ describe("the officer edit review's screens stay retired (#4344)", () => {
   });
 
   it("no production file imports a retired module", () => {
-    const retired = new Set(RETIRED_MODULES);
     const offenders: string[] = [];
-    for (const file of productionSourceFiles()) {
+    for (const file of files) {
       for (const { specifier } of moduleImports(file, readFileSync(resolve(ROOT, file), "utf8"))) {
-        if (retired.has(specifier)) {
-          offenders.push(`${file} -> ${specifier}`);
+        const retired = retiredModuleNamedBy(file, specifier);
+        if (retired !== null) {
+          offenders.push(`${file} -> ${retired}`);
         }
       }
     }
@@ -90,6 +111,17 @@ describe("the officer edit review's screens stay retired (#4344)", () => {
       "@/components/admin/manual-refund-task-still-owed-notice",
     ]);
     // And it is pointed at a tree that really holds production sources.
-    expect(productionSourceFiles().length).toBeGreaterThan(500);
+    expect(files.length).toBeGreaterThan(500);
+    // An alias is caught as written, with no file on disk.
+    expect(retiredModuleNamedBy("src/app/page.tsx", "@/lib/stored-night-price-repair-queue")).toBe(
+      "@/lib/stored-night-price-repair-queue",
+    );
+    // A relative import is resolved to the file it names, so a retired module
+    // that is back is caught however it is spelled. Shown on kept siblings: the
+    // retired files are not on disk to resolve.
+    expect(resolveSpecifier("src/lib/stored-night-price-repair-store.ts", "./stored-night-price-repair")).toBe(
+      "src/lib/stored-night-price-repair.ts",
+    );
+    expect(retiredModuleNamedBy("src/lib/stored-night-price-repair-store.ts", "./stored-night-price-repair")).toBeNull();
   });
 });
