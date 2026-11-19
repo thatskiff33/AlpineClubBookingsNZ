@@ -82,6 +82,7 @@ import {
 } from "../page-content-embeds";
 import { sanitizePageContentHtml } from "../page-content-html";
 import { starterSiteContent } from "../../../prisma/starter-site-content";
+import { starterPageContent } from "../../../prisma/starter-page-content";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_PRIVACY_RETENTION_SETTINGS, privacyRetentionSettingsSchema } from "@/lib/privacy-retention-shared";
@@ -638,6 +639,26 @@ describe("hosting disclosure token", () => {
     hostingState.dataLocation = `Region & <place>`;
     const html = await resolveTextTokens("<p>{{data-hosting}}</p>", CLUB_FORMAT_TEST);
     expect(html).toBe("<p>Host &amp; &lt;script&gt;&quot;&#39; hosts this System and its database; your information is held in Region &amp; &lt;place&gt;.</p>");
+  });
+  // Release 2 of #4918 (#5007): the starter policy carries the token, so the
+  // rendered /privacy page names the host when the club has filled it in and
+  // points members at the Privacy Officer when it has not.
+  it("renders the starter privacy policy's hosting line for both setting states", async () => {
+    const privacy = starterPageContent.find((p) => p.slug === "privacy")!;
+    const rendered = async () =>
+      (await buildEmbeddedBody(privacy.contentHtml))
+        .map((part) => (part.type === "html" ? part.value : ""))
+        .join("");
+
+    const unset = await rendered();
+    expect(unset).not.toContain("{{data-hosting}}");
+    expect(unset).toContain("A hosting company runs this System and its database. Ask our Privacy Officer which company this is and in which country your information is held.");
+
+    hostingState.hostingProvider = "Example Cloud";
+    hostingState.dataLocation = "New Zealand";
+    const set = await rendered();
+    expect(set).toContain("Example Cloud hosts this System and its database; your information is held in New Zealand.");
+    expect(set).not.toContain("Ask our Privacy Officer which company");
   });
   it("preserves unknown tokens verbatim, explaining the two-release boundary", async () => {
     const html = "<p>{{future-unknown-hosting}}</p>";

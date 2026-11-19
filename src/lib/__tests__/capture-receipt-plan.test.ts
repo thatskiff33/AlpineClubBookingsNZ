@@ -30,7 +30,7 @@ describe("planCaptureReceipt (#4525)", () => {
       outcome: "COVERED",
       legacyKey: "payment:first:v1",
       lineTotalCents: 5000,
-      coverage: [{ account: "STRIPE_CLEARING", chargeIdentity: CAPTURE, coveredCents: 5000, taxCode: null, applicationKey: "payment:first:v1" }],
+      coverage: [{ account: "STRIPE_CLEARING", chargeIdentity: CAPTURE, coveredCents: 5000, taxCode: null, sliceKey: "payment:first:v1" }],
     });
     const rest = planCaptureReceipt(input({ applicationKey: "payment:second:v1", amountCents: 3000, alreadyCoveredCents: 5000 }));
     expect(rest).toMatchObject({ outcome: "COVERED", lineTotalCents: 3000, coverage: [{ chargeIdentity: CAPTURE, coveredCents: 3000 }] });

@@ -5,6 +5,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export interface CompleteBookingsResult {
   completedCount: number;
@@ -73,7 +74,7 @@ export async function completeBookings(): Promise<CompleteBookingsResult> {
         },
       });
       return booking;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     if (completed) bookingsToComplete.push(completed);
   }
 

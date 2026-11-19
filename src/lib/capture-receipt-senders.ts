@@ -51,14 +51,20 @@ export async function recordPrimaryInvoicePaymentReceipt(input: {
   });
 }
 
-/** Read replay evidence before completing the invoice operation; undefined leaves its stored response untouched on a read failure. */
-export async function readStoredPrimaryInvoiceResponse(syncOperationId: string): Promise<unknown> {
+/**
+ * The Stripe payment the raising run stored on its operation
+ * (`responsePayload.payment`), for a replay to read before it completes the
+ * operation over it. Null where it stored none, and on a read failure. The
+ * invoice's other payment links (a PARTIAL repair's, which records its own, or
+ * the inbound sync's bank payments) are not this payment.
+ */
+export async function readStoredPrimaryInvoicePayment(syncOperationId: string): Promise<unknown> {
   try {
     const operation = await prisma.xeroSyncOperation.findUnique({ where: { id: syncOperationId }, select: { responsePayload: true } });
-    return operation?.responsePayload;
+    return asRecord(operation?.responsePayload)?.payment ?? null;
   } catch (error) {
     logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice payment");
-    return undefined;
+    return null;
   }
 }
 

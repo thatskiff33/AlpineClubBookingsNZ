@@ -115,7 +115,7 @@ async function coveredByOtherReceipts(tx: Db, paymentIntentId: string, applicati
       documentRole: "CAPTURE_RECEIPT",
       account: CAPTURE_RECEIPT_ACCOUNT,
       chargeIdentity: memberMoneyEventKeys.capture(paymentIntentId),
-      applicationKey: { not: applicationKey },
+      sliceKey: { not: applicationKey },
     },
     _sum: { coveredCents: true },
   });

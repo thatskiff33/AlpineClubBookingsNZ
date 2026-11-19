@@ -8,6 +8,7 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useActionFailure } from "@/hooks/use-action-failure";
 import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
@@ -58,16 +59,26 @@ export default function AgeTierSettingsPage() {
   });
 
   useEffect(() => {
-    fetch("/api/admin/age-tier-settings")
-      .then((r) => r.json())
-      .then((d) => {
+    // A refused read (401/403 with the guard's JSON) is thrown before parsing,
+    // so it says why instead of passing for "nothing configured" and showing
+    // the built-in defaults as if they were the club's saved tiers.
+    const fallback = "Failed to load settings";
+    async function load() {
+      try {
+        const res = await fetch("/api/admin/age-tier-settings");
+        if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
+        const d = await res.json();
         const rows = d.settings ?? [];
         const data = normalizeAgeTierRows(rows.length > 0 ? rows : AGE_TIER_DEFAULTS);
         setSettings(data);
         setSavedSettings(data);
-      })
-      .catch(() => setLoadError("Failed to load settings"))
-      .finally(() => setLoading(false));
+      } catch (err) {
+        setLoadError(refusalMessageOr(err, fallback));
+      } finally {
+        setLoading(false);
+      }
+    }
+    void load();
   }, []);
 
   const sorted = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -144,6 +155,7 @@ export default function AgeTierSettingsPage() {
       };
     });
 
+    const fallback = "Failed to save";
     try {
       const res = await fetch("/api/admin/age-tier-settings", {
         method: "PUT",
@@ -154,20 +166,17 @@ export default function AgeTierSettingsPage() {
         saveFailure.fail(ADMIN_FORBIDDEN_SAVE_REASON);
         return;
       }
+      if (!res.ok) throw await apiRefusalFromResponse(res, fallback);
       const data = await res.json();
-      if (!res.ok) {
-        saveFailure.fail(data.error ?? "Failed to save");
-      } else {
-        setSettings(data.settings);
-        setSavedSettings(data.settings);
-        setEditing(false);
-        setSuccess(true);
-        // The save landed, so a failed earlier read of the tiers is moot.
-        setLoadError("");
-        setSavesLanded((count) => count + 1);
-      }
-    } catch {
-      saveFailure.fail("Network error");
+      setSettings(data.settings);
+      setSavedSettings(data.settings);
+      setEditing(false);
+      setSuccess(true);
+      // The save landed, so a failed earlier read of the tiers is moot.
+      setLoadError("");
+      setSavesLanded((count) => count + 1);
+    } catch (err) {
+      saveFailure.fail(refusalMessageOr(err, fallback));
     } finally {
       setSaving(false);
     }

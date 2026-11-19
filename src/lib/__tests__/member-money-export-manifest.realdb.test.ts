@@ -7,6 +7,7 @@ import type { PrismaClient } from "@prisma/client";
 import { Client } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { writeExportManifest, type ExportManifestRow } from "@/lib/member-money/internal/store";
+import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 import { createMemberMoneyScratchDatabase, type MemberMoneyScratchDatabase } from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -25,10 +26,7 @@ async function booking(): Promise<string> {
   return id;
 }
 
-type PrimaryRow = Extract<ExportManifestRow, { documentRole: "PRIMARY_BOOKING_INVOICE" }>;
-type ReceiptRow = Extract<ExportManifestRow, { documentRole: "CAPTURE_RECEIPT" }>;
-
-function row(bookingId: string, overrides: Partial<PrimaryRow> = {}): PrimaryRow {
+function row(bookingId: string, overrides: Partial<ExportManifestRow> = {}): ExportManifestRow {
   return {
     documentRole: "PRIMARY_BOOKING_INVOICE",
     legacyKey: `booking:${bookingId}:invoice:v1`,
@@ -48,7 +46,7 @@ function row(bookingId: string, overrides: Partial<PrimaryRow> = {}): PrimaryRow
 }
 
 /** A capture receipt of `cents` of one capture, under its own Xero payment key. */
-function receipt(bookingId: string, key: string, cents: number, capture = `capture:pi_${bookingId}`): ReceiptRow {
+function receipt(bookingId: string, key: string, cents: number): ExportManifestRow {
   return {
     documentRole: "CAPTURE_RECEIPT",
     legacyKey: key,
@@ -59,7 +57,7 @@ function receipt(bookingId: string, key: string, cents: number, capture = `captu
     frozenMapping: { invoiceId: "INV-4525" },
     lineTotalCents: cents,
     providerInvoiceId: `PAY-${key}`,
-    coverage: [{ account: "STRIPE_CLEARING", chargeIdentity: capture, coveredCents: cents, taxCode: null, applicationKey: key }],
+    coverage: [{ account: "STRIPE_CLEARING", chargeIdentity: `capture:pi_${bookingId}`, coveredCents: cents, taxCode: null, sliceKey: key }],
   };
 }
 
@@ -140,38 +138,105 @@ async function stored(bookingId: string) {
       .rejects.toMatchObject({ code: "23514", message: expect.stringContaining("conflict_with_coverage") });
   });
 
+  it("refuses a second refund note covering the same refund debt, while its CONFLICT records with no rows (#4525 M13)", async () => {
+    const id = await booking();
+    const debt = { account: "REFUND_PAYABLE" as const, chargeIdentity: `refund-obligation|cancellation|${id}`, coveredCents: 5000, taxCode: null };
+    const note = (legacyKey: string, overrides: Partial<ExportManifestRow> = {}) => row(id, {
+      documentRole: "REFUND_NOTE", legacyKey, lineTotalCents: 5000, providerInvoiceId: `CN-${legacyKey}`, coverage: [debt], ...overrides,
+    });
+    await expect(write(note("first"))).resolves.toBe("WRITTEN");
+    await expect(write(note("reissue"))).rejects.toMatchObject({ code: "P2002" });
+    await expect(write(note("reissue", { outcome: "CONFLICT", reason: "ALREADY_COVERED", coverage: [] }))).resolves.toBe("WRITTEN");
+    await expect(write(note("short", { outcome: "CONFLICT", reason: "CENTS", lineTotalCents: 4000, coverage: [] }))).resolves.toBe("WRITTEN");
+    // The note's payment and a failed-later reversal cover cash, under their own roles.
+    const cash = { account: "STRIPE_CLEARING" as const, chargeIdentity: `refund:re_${id}`, coveredCents: 5000, taxCode: null };
+    await expect(write(row(id, { documentRole: "REFUND_NOTE_PAYMENT", legacyKey: "pay", lineTotalCents: 5000, providerInvoiceId: "PAY-1", coverage: [cash] })))
+      .resolves.toBe("WRITTEN");
+    await expect(write(row(id, { documentRole: "FAILED_LATER_REFUND_REVERSAL", legacyKey: "rev", lineTotalCents: 5000, providerInvoiceId: "INV-REV",
+      coverage: [{ ...cash, chargeIdentity: `reversal:journal-${id}` }] }))).resolves.toBe("WRITTEN");
+    const { manifests, coverage } = await stored(id);
+    expect(manifests.map((m) => m.outcome).sort()).toEqual(["CONFLICT", "CONFLICT", "COVERED", "COVERED", "COVERED"]);
+    expect(coverage.map((c) => c.chargeIdentity).sort()).toEqual([`refund-obligation|cancellation|${id}`, `refund:re_${id}`, `reversal:journal-${id}`].sort());
+  });
+
+  describe("ALP-436: supplementary invoices and primary invoice updates", () => {
+    const stayOf = (id: string) => `booking:${id}:charge`;
+    const supplementary = (id: string, sliceKey: string, cents: number, overrides: Partial<ExportManifestRow> = {}): ExportManifestRow => row(id, {
+      documentRole: "SUPPLEMENTARY_BOOKING_INVOICE",
+      legacyKey: `booking-mod:${sliceKey}:supplementary-invoice:v1`,
+      lineTotalCents: cents,
+      coverage: [{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(id), sliceKey: `modification:${sliceKey}`, coveredCents: cents, taxCode: "GST_INCLUSIVE_1500BP" }],
+      ...overrides,
+    });
+    const update = (id: string, overrides: Partial<ExportManifestRow> = {}): ExportManifestRow => row(id, {
+      documentRole: "PRIMARY_BOOKING_INVOICE_UPDATE",
+      legacyKey: `booking:${id}:invoice-update:INV-4525:v1`,
+      coverage: [],
+      ...overrides,
+    });
+
+    it("bills each edit's slice of the stay charge once, beside the primary invoice's whole cover", async () => {
+      const id = await booking();
+      await write(row(id));
+      await expect(write(supplementary(id, "mod-a", 4500))).resolves.toBe("WRITTEN");
+      await expect(write(supplementary(id, "mod-b", 3000))).resolves.toBe("WRITTEN");
+      await expect(write(supplementary(id, "mod-a", 4500, { legacyKey: "another-key" }))).rejects.toMatchObject({ code: "P2002" });
+      const slices = (await app.query(`SELECT "sliceKey", "coveredCents" FROM "MemberMoneyExportCoverage" WHERE "chargeIdentity" = $1 ORDER BY "documentRole", "sliceKey"`, [stayOf(id)])).rows;
+      expect(slices).toEqual([
+        { sliceKey: "", coveredCents: 14000 },
+        { sliceKey: "modification:mod-a", coveredCents: 4500 },
+        { sliceKey: "modification:mod-b", coveredCents: 3000 },
+      ]);
+    });
+
+    it("keeps an edit's slice and a later second ask's closure slice apart, and refuses a second cover of the closure on the coverage key", async () => {
+      const id = await booking();
+      const closure = "review-close:task-t:line-1";
+      const secondAsk = (legacyKey: string): ExportManifestRow => supplementary(id, "unused", 1500, {
+        legacyKey,
+        coverage: [{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(id), sliceKey: closure, coveredCents: 1500, taxCode: "GST_INCLUSIVE_1500BP" }],
+      });
+      await write(row(id));
+      // The edit's single fallback line billed only its own movement; the share it did not itemise is billed later.
+      await expect(write(supplementary(id, "mod-e", 4500))).resolves.toBe("WRITTEN");
+      await expect(write(secondAsk("review-task:task-t:supplementary-shortfall-invoice:1500:0:v1"))).resolves.toBe("WRITTEN");
+      const refused = await write(secondAsk("another-key")).catch((error: unknown) => error);
+      expect(refused).toMatchObject({ code: "P2002" });
+      // What the recorder reads to tell this from a race on the manifest's own key.
+      expect(describeUniqueConstraintTarget(refused)).toContain("chargeidenti");
+      const slices = (await app.query(`SELECT "sliceKey" FROM "MemberMoneyExportCoverage" WHERE "chargeIdentity" = $1 ORDER BY "sliceKey"`, [stayOf(id)])).rows;
+      expect(slices).toEqual([{ sliceKey: "" }, { sliceKey: "modification:mod-e" }, { sliceKey: closure }]);
+    });
+
+    it("refuses a slice on the primary invoice's own cover", async () => {
+      const id = await booking();
+      const [stay, fee] = row(id).coverage;
+      await expect(write(row(id, { coverage: [{ ...stay!, sliceKey: "modification:x" }, fee!] })))
+        .rejects.toThrow(/member_money_export_coverage_slice/);
+    });
+
+    it("records a COVERED update with no coverage only against a matching COVERED primary", async () => {
+      const id = await booking();
+      await expect(write(update(id))).rejects.toThrow(/update_without_primary/);
+      await write(row(id));
+      await expect(write(update(id, { lineTotalCents: 16000 }))).rejects.toThrow(/update_without_primary/);
+      await expect(write(update(id, { providerInvoiceId: "INV-other" }))).rejects.toThrow(/update_without_primary/);
+      await expect(write(update(id, { coverage: [row(id).coverage[0]!], lineTotalCents: 14000 }))).rejects.toThrow(/update_with_coverage/);
+      await expect(write(update(id))).resolves.toBe("WRITTEN");
+      await expect(write(update(id, { legacyKey: "update-2", outcome: "CONFLICT", reason: "PRIMARY_UNMATCHED", lineTotalCents: 1 }))).resolves.toBe("WRITTEN");
+    });
+  });
+
   it("lets several receipts cover one capture under their own keys, and refuses a key covering it twice", async () => {
     const id = await booking();
     await expect(write(receipt(id, `payment:${id}:a`, 5000))).resolves.toBe("WRITTEN");
     await expect(write(receipt(id, `payment:${id}:b`, 3000))).resolves.toBe("WRITTEN");
     await expect(write(receipt(id, `payment:${id}:a`, 5000))).resolves.toBe("SAME");
     const { coverage } = await stored(id);
-    expect(coverage).toEqual([{ chargeIdentity: `capture:pi_${id}`, coveredCents: 5000 }, { chargeIdentity: `capture:pi_${id}`, coveredCents: 3000 }]);
+    expect(coverage).toHaveLength(2);
+    expect(coverage).toEqual(expect.arrayContaining([{ chargeIdentity: `capture:pi_${id}`, coveredCents: 5000 }, { chargeIdentity: `capture:pi_${id}`, coveredCents: 3000 }]));
     // One key naming the same capture twice, on a manifest of its own.
     const twice = receipt(id, `payment:${id}:c`, 2000);
-    await expect(write({ ...twice, lineTotalCents: 4000, coverage: [twice.coverage[0], twice.coverage[0]] })).rejects.toMatchObject({ code: "P2002" });
-  });
-
-  it("keeps the primary invoice's whole-component key beside receipts naming the same component", async () => {
-    const id = await booking();
-    await write(row(id));
-    const stay = row(id).coverage[0];
-    await expect(write(receipt(id, `payment:${id}:stay`, 14000, stay.chargeIdentity))).resolves.toBe("WRITTEN");
-    const other = await booking();
-    await expect(write(row(other, { lineTotalCents: 14000, coverage: [stay] }))).rejects.toMatchObject({ code: "P2002" });
-  });
-
-  it("requires an application key on a receipt's coverage and refuses one on the primary invoice's", async () => {
-    const id = await booking();
-    await write(receipt(id, `payment:${id}:k`, 100, `capture:pi_${id}:k`));
-    const [{ id: receiptId }] = (await app.query(`SELECT id FROM "MemberMoneyExportManifest" WHERE "legacyKey" = $1`, [`payment:${id}:k`])).rows;
-    await expect(app.query(`INSERT INTO "MemberMoneyExportCoverage" (id,"manifestId","documentRole",account,"chargeIdentity","coveredCents")
-      VALUES ('nokey-4525', $1, 'CAPTURE_RECEIPT', 'STRIPE_CLEARING', $2, 1)`, [receiptId, `capture:pi_${id}:nokey`]))
-      .rejects.toMatchObject({ code: "23514", constraint: "member_money_export_coverage_application" });
-    await write(row(id, { legacyKey: `booking:${id}:key`, lineTotalCents: 1, coverage: [{ ...row(id).coverage[0], chargeIdentity: `booking:${id}:key`, coveredCents: 1 }] }));
-    const [{ id: invoiceId }] = (await app.query(`SELECT id FROM "MemberMoneyExportManifest" WHERE "legacyKey" = $1`, [`booking:${id}:key`])).rows;
-    await expect(app.query(`INSERT INTO "MemberMoneyExportCoverage" (id,"manifestId","documentRole",account,"chargeIdentity","coveredCents","applicationKey")
-      VALUES ('keyed-4525', $1, 'PRIMARY_BOOKING_INVOICE', 'BOOKING_REVENUE', $2, 1, 'k')`, [invoiceId, `booking:${id}:keyed`]))
-      .rejects.toMatchObject({ code: "23514", constraint: "member_money_export_coverage_application" });
+    await expect(write({ ...twice, lineTotalCents: 4000, coverage: [twice.coverage[0]!, twice.coverage[0]!] })).rejects.toMatchObject({ code: "P2002" });
   });
 });

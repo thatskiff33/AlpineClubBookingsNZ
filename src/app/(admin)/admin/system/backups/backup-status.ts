@@ -58,5 +58,10 @@ export interface BackupStatus {
 }
 
 export const STATUS_URL = "/api/admin/backups/status";
+/**
+ * Shown when a read of {@link STATUS_URL} fails and the route said nothing an
+ * officer should read. Both cards that load from it name the failure this way.
+ */
+export const STATUS_LOAD_FALLBACK = "Could not load config.";
 export const CONFIG_URL = "/api/admin/backups/config";
 export const RUN_URL = "/api/admin/backups/run";

@@ -39,7 +39,7 @@ export interface MemberMoneyFunctionShape {
  */
 export const MEMBER_MONEY_DATABASE_SHAPE = {
   functions: {
-    member_money_require_export_coverage: {"source":"a22e31ec0e5bbe9a3ea9a2082c687142","volatility":"volatile","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
+    member_money_require_export_coverage: {"source":"4a0a39b22c1c55e82b0eeb18c3c04986","volatility":"volatile","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
     member_money_application_state: {"source":"5cc318ede0f6b1b24e0c37d4b213cbc9","volatility":"stable","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
     member_money_require_reservation: {"source":"dfa3c9cf89ec21379d47739531fce19f","volatility":"volatile","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
     member_money_reservation_errors: {"source":"30967e7cec4e6f34f100a0fc631cfc9e","volatility":"stable","securityDefiner":false,"config":["search_path=pg_catalog, public"]},
@@ -172,8 +172,8 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
         `PRIMARY KEY (id)`,
       member_money_export_coverage_shape:
         `CHECK ((("coveredCents" > 0) AND (length("chargeIdentity") > 0)))`,
-      member_money_export_coverage_application:
-        `CHECK (((("documentRole" = 'PRIMARY_BOOKING_INVOICE'::"MemberMoneyExportDocumentRole") = ("applicationKey" IS NULL)) AND (("applicationKey" IS NULL) OR (length("applicationKey") > 0))))`,
+      member_money_export_coverage_slice:
+        `CHECK ((("sliceKey" = ''::text) OR ("documentRole" <> 'PRIMARY_BOOKING_INVOICE'::"MemberMoneyExportDocumentRole")))`,
     },
   },
   triggers: {
@@ -338,12 +338,10 @@ export const MEMBER_MONEY_DATABASE_SHAPE = {
         `CREATE UNIQUE INDEX "MemberMoneyExportManifest_pkey" ON public."MemberMoneyExportManifest" USING btree (id)`,
     },
     MemberMoneyExportCoverage: {
-      MemberMoneyExportCoverage_application_key:
-        `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_application_key" ON public."MemberMoneyExportCoverage" USING btree ("documentRole", account, "chargeIdentity", "applicationKey") WHERE ("applicationKey" IS NOT NULL)`,
+      MemberMoneyExportCoverage_documentRole_account_chargeIdenti_key:
+        `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_documentRole_account_chargeIdenti_key" ON public."MemberMoneyExportCoverage" USING btree ("documentRole", account, "chargeIdentity", "sliceKey")`,
       MemberMoneyExportCoverage_pkey:
         `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_pkey" ON public."MemberMoneyExportCoverage" USING btree (id)`,
-      MemberMoneyExportCoverage_whole_component_key:
-        `CREATE UNIQUE INDEX "MemberMoneyExportCoverage_whole_component_key" ON public."MemberMoneyExportCoverage" USING btree ("documentRole", account, "chargeIdentity") WHERE ("documentRole" = 'PRIMARY_BOOKING_INVOICE'::"MemberMoneyExportDocumentRole")`,
     },
   },
 } as const satisfies {

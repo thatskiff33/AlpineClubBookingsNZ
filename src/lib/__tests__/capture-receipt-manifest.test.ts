@@ -65,14 +65,14 @@ describe("recordCaptureReceiptManifest (#4525)", () => {
     });
     expect(coverageRows()).toEqual([expect.objectContaining({
       documentRole: "CAPTURE_RECEIPT", account: "STRIPE_CLEARING", chargeIdentity: `capture:${INTENT}`,
-      coveredCents: 5000, taxCode: null, applicationKey: input().applicationKey,
+      coveredCents: 5000, taxCode: null, sliceKey: input().applicationKey,
     })]);
     // The row lock comes before any read the plan depends on.
     expect(mocks.tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.tx.memberMoneyEvent.findUnique.mock.invocationCallOrder[0]!);
     expect(mocks.tx.$executeRaw.mock.calls[0]?.slice(1)).toEqual([INTENT]);
     // Other receipts' cover is read under other keys only.
     expect(mocks.tx.memberMoneyExportCoverage.aggregate).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ chargeIdentity: `capture:${INTENT}`, applicationKey: { not: input().applicationKey } }),
+      where: expect.objectContaining({ chargeIdentity: `capture:${INTENT}`, sliceKey: { not: input().applicationKey } }),
     }));
   });
 

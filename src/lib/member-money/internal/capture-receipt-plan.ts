@@ -29,7 +29,7 @@ export const CAPTURE_RECEIPT_ACCOUNT = CAPTURE_KIND_RECEIPTS.CARD_CAPTURE.cash;
 export interface CaptureReceiptPlanInput {
   /** The card capture the payment records, or null when the sender cannot name one. */
   paymentIntentId: string | null;
-  /** The Xero payment's idempotency key: the manifest's legacy key and the coverage's application key. */
+  /** The Xero payment's idempotency key: the manifest's legacy key and the coverage row's `sliceKey`. */
   applicationKey: string;
   /** The cents the stored Xero payment sent. */
   amountCents: number;
@@ -48,7 +48,8 @@ export interface CaptureReceiptCoverage {
   chargeIdentity: string;
   coveredCents: number;
   taxCode: null;
-  applicationKey: string;
+  /** The payment's idempotency key: its slice of the capture. */
+  sliceKey: string;
 }
 
 interface CaptureReceiptRendering {
@@ -104,7 +105,7 @@ export function planCaptureReceipt(input: CaptureReceiptPlanInput): CaptureRecei
       chargeIdentity: memberMoneyEventKeys.capture(input.paymentIntentId),
       coveredCents: input.amountCents,
       taxCode: null,
-      applicationKey: input.applicationKey,
+      sliceKey: input.applicationKey,
     }],
   };
 }

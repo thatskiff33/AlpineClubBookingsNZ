@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   MemberMoneyAccount,
   MemberMoneyExportConflictReason,
+  MemberMoneyExportDocumentRole,
   MemberMoneyExportOutcome,
   MemberMoneyRefundReservationReleaseReason,
   Prisma,
@@ -484,15 +485,9 @@ export async function appendMemberMoneyReservationRelease(db: Db, reservationId:
   await db.memberMoneyRefundReservationRelease.createMany({ data: [{ reservationId, reason }] });
 }
 
-/** One journal component a manifest's document covers. */
-interface ExportCoverageRow { account: MemberMoneyAccount; chargeIdentity: string; coveredCents: number; taxCode: string | null }
-
-/**
- * One export manifest and its coverage (#4525, Ledger M13). A primary invoice
- * bills components whole; a capture receipt covers cents under its own
- * application key, which the database requires of every role but the invoice.
- */
-export type ExportManifestRow = {
+/** One export manifest and its coverage, as `recordPrimaryInvoiceManifest` writes it (#4525, Ledger M13). */
+export interface ExportManifestRow {
+  documentRole: MemberMoneyExportDocumentRole;
   legacyKey: string;
   bookingId: string;
   outcome: MemberMoneyExportOutcome;
@@ -500,12 +495,10 @@ export type ExportManifestRow = {
   payloadHash: string;
   frozenMapping: Prisma.InputJsonObject;
   lineTotalCents: number;
-  /** The provider document the sender stored: the invoice id, or for a receipt the Xero payment id. */
   providerInvoiceId: string;
-} & (
-  | { documentRole: "PRIMARY_BOOKING_INVOICE"; coverage: ReadonlyArray<ExportCoverageRow> }
-  | { documentRole: "CAPTURE_RECEIPT"; coverage: ReadonlyArray<ExportCoverageRow & { applicationKey: string }> }
-);
+  /** `sliceKey`: the journal event whose slice of the component a row bills, or the Xero payment key whose cents of a capture it covers; absent for a whole component. */
+  coverage: ReadonlyArray<{ account: MemberMoneyAccount; chargeIdentity: string; coveredCents: number; taxCode: string | null; sliceKey?: string }>;
+}
 
 /**
  * Insert a manifest under its key, or leave the row already there: the first
@@ -525,11 +518,9 @@ export async function writeExportManifest(db: Db, row: ExportManifestRow): Promi
     lineTotalCents: row.lineTotalCents, providerInvoiceId: row.providerInvoiceId,
   }] });
   if (row.coverage.length > 0) {
-    const coverage: ReadonlyArray<ExportCoverageRow & { applicationKey: string | null }> = row.documentRole === "CAPTURE_RECEIPT"
-      ? row.coverage : row.coverage.map((c) => ({ ...c, applicationKey: null }));
-    await db.memberMoneyExportCoverage.createMany({ data: coverage.map((c) => ({
+    await db.memberMoneyExportCoverage.createMany({ data: row.coverage.map((c) => ({
       id: randomUUID(), manifestId: id, documentRole: row.documentRole, account: c.account,
-      chargeIdentity: c.chargeIdentity, coveredCents: c.coveredCents, taxCode: c.taxCode, applicationKey: c.applicationKey,
+      chargeIdentity: c.chargeIdentity, sliceKey: c.sliceKey ?? "", coveredCents: c.coveredCents, taxCode: c.taxCode,
     })) });
   }
   return "WRITTEN";

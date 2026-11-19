@@ -68,6 +68,11 @@ const ADDED_COLUMN = "organisationId";
 // whole-lodge credit election, #4019) sits after
 // `exclusivityRequested`; `pendingAdultCount` is #3413.
 const LATER_REQUEST_COLUMNS = ["applyAccountCredit", "pendingAdultCount"];
+// Columns added to Booking independently of the organisation rollout, in
+// schema order, each reviewed: `savedCardClaimAt` is the durable saved-card
+// charge claim marker (#4993, `INV-PAY-158`), nullable with no default, so a
+// booking read by old code is unchanged once it is dropped.
+const LATER_BOOKING_COLUMNS = ["savedCardClaimAt"];
 
 /**
  * `Booking`'s scalar columns as the PRE-STAGE schema declared them, in order.
@@ -318,7 +323,7 @@ describe("#3366: no existing query changes its result", () => {
   it("adds only the organisation links and the reviewed later request columns", () => {
     expect(
       columns("Booking").filter((c) => !PRE_STAGE_BOOKING_COLUMNS.includes(c)),
-    ).toEqual([ADDED_COLUMN]);
+    ).toEqual([...LATER_BOOKING_COLUMNS, ADDED_COLUMN]);
     expect(
       columns("BookingRequest").filter(
         (c) => !PRE_STAGE_BOOKING_REQUEST_COLUMNS.includes(c),
@@ -327,7 +332,7 @@ describe("#3366: no existing query changes its result", () => {
   });
 
   it("leaves every pre-stage Booking column present, in the same order", () => {
-    expect(columns("Booking").filter((c) => c !== ADDED_COLUMN)).toEqual(
+    expect(columns("Booking").filter((c) => c !== ADDED_COLUMN && !LATER_BOOKING_COLUMNS.includes(c))).toEqual(
       PRE_STAGE_BOOKING_COLUMNS,
     );
   });
@@ -340,7 +345,7 @@ describe("#3366: no existing query changes its result", () => {
 
   it("serialises a booking read BYTE FOR BYTE as before, once the new column is dropped", () => {
     expect(
-      representativeRow(columns("Booking").filter((c) => c !== ADDED_COLUMN)),
+      representativeRow(columns("Booking").filter((c) => c !== ADDED_COLUMN && !LATER_BOOKING_COLUMNS.includes(c))),
     ).toBe(representativeRow(PRE_STAGE_BOOKING_COLUMNS));
     expect(
       representativeRow(columns("BookingRequest").filter((c) => c !== ADDED_COLUMN && !LATER_REQUEST_COLUMNS.includes(c))),

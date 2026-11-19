@@ -56,7 +56,7 @@ async function recorded(bookingId: string) {
   const manifests = await prisma.memberMoneyExportManifest.findMany({
     where: { bookingId, documentRole: "CAPTURE_RECEIPT" },
     select: { legacyKey: true, outcome: true, reason: true, lineTotalCents: true, providerInvoiceId: true,
-      coverage: { select: { account: true, chargeIdentity: true, coveredCents: true, applicationKey: true } } },
+      coverage: { select: { account: true, chargeIdentity: true, coveredCents: true, sliceKey: true } } },
   });
   return Object.fromEntries(manifests.map(({ legacyKey, ...manifest }) => [legacyKey.slice(bookingId.length + 1), manifest]));
 }
@@ -85,7 +85,7 @@ async function recorded(bookingId: string) {
     await record(capture, "first", 11_000);
 
     const cover = (key: string, coveredCents: number) =>
-      [{ account: "STRIPE_CLEARING", chargeIdentity: `capture:${capture.paymentIntentId}`, coveredCents, applicationKey: `${capture.bookingId}:${key}` }];
+      [{ account: "STRIPE_CLEARING", chargeIdentity: `capture:${capture.paymentIntentId}`, coveredCents, sliceKey: `${capture.bookingId}:${key}` }];
     expect(await recorded(capture.bookingId)).toEqual({
       first: { outcome: "COVERED", reason: null, lineTotalCents: 12_000, providerInvoiceId: `xero-payment-${capture.bookingId}-first`, coverage: cover("first", 12_000) },
       rest: { outcome: "COVERED", reason: null, lineTotalCents: 8_000, providerInvoiceId: `xero-payment-${capture.bookingId}-rest`, coverage: cover("rest", 8_000) },

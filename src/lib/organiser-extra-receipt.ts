@@ -9,6 +9,7 @@ import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sy
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { LEDGER_ROWS_NEWEST_FIRST, LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
 import { ORGANISER_SHARE_RECEIPT_REASON, ORGANISER_EXTRA_RECEIPT_REASON, organiserExtraPaidPriceCents, readOrganiserExtraState, type OrganiserExtraInvoice } from "@/lib/organiser-extra-state";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<void> {
   if (!invoice.invoiceID) return;
@@ -82,7 +83,7 @@ export async function syncOrganiserExtraInvoiceCash(invoice: Invoice): Promise<v
         await tx.payment.update({ where: { id: payment.id }, data: { amountCents: { increment: delta } } });
         await syncBookingLedgerSettlements({ paymentId, store: tx });
       }
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   }
 }
 

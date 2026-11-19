@@ -128,6 +128,7 @@ import { applyLocalRefundAllocation, foldIntoTransactionRefundedAmount, lockPaym
 import { foldMirrorRefundIntoLedger } from "@/lib/mirror-refund-fold";
 import { CAPTURED_TRANSACTION_STATUS_LIST } from "@/lib/payment-transaction-status";
 import { LEDGER_ROWS_OLDEST_FIRST } from "@/lib/payment-ledger-order";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** #4299: the scope of one child's invoice debts, frozen with the group cancel's plan. */
 function groupCancelExtraScope(settlementId: string, childId: string): string {
@@ -267,7 +268,7 @@ export async function settleGroupBookingOnOrganiserCancel(
       settlement,
       queuedVoidOperationId: queuedVoid?.queueOperationId ?? null,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // The compensating row committed atomically with CANCELLED.  This kick is
   // opportunistic only; the normal outbox cron owns durable retry.
@@ -331,7 +332,7 @@ export async function settleGroupBookingOnOrganiserCancel(
         },
         data: { status: PaymentStatus.FAILED },
       });
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   }
 
   // #1881 — RELOAD the FULL settlement row AFTER the guarded FAILED claim so
@@ -435,7 +436,7 @@ export async function settleGroupBookingOnOrganiserCancel(
         }
         await tx.groupBookingSettlement.update({ where: { id: settlement.id }, data: { refundPlan: Object.fromEntries(planned) } });
         return planned;
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     } else {
       for (const child of children) {
         const refund = await planChildRefund(child, prisma);
@@ -734,7 +735,7 @@ export async function settleGroupBookingOnOrganiserCancel(
           journal,
         });
         return queuedOperationId;
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
     } catch (err) {
       logger.error(
         { err, bookingId: child.id, groupBookingId: group.id },

@@ -101,8 +101,8 @@ import {
 } from "@/lib/xero-primary-invoice-fee-gap";
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
-import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest } from "@/lib/member-money/doors";
-import { primaryInvoicePaymentKey, recordPrimaryInvoicePaymentReceipt, readStoredPrimaryInvoiceResponse } from "@/lib/capture-receipt-senders";
+import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest, recordPrimaryInvoiceUpdateManifest } from "@/lib/member-money/doors";
+import { primaryInvoicePaymentKey, recordPrimaryInvoicePaymentReceipt, readStoredPrimaryInvoicePayment } from "@/lib/capture-receipt-senders";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -275,8 +275,8 @@ export async function createXeroInvoiceForBooking(
         booking.payment.xeroInvoiceId,
       );
     }
-    // Preserve the raising run's payment evidence even if this replay's recorder fails.
-    const storedResponse = options?.syncOperation ? await readStoredPrimaryInvoiceResponse(options.syncOperation.id) : undefined;
+    // #4525 (Ledger M13): the Stripe payment that run stored, read before this replay completes the operation over it.
+    const storedPayment = options?.syncOperation ? await readStoredPrimaryInvoicePayment(options.syncOperation.id) : null;
     // #3955 review X4 (round 3), #3980: a prior run that persisted the link but
     // died before or inside its gap check re-runs it here, from what the invoice
     // billed and the booking's worth as recorded with the link. Idempotent.
@@ -299,8 +299,7 @@ export async function createXeroInvoiceForBooking(
     if (options?.syncOperation) {
       await completeXeroSyncOperation(options.syncOperation, {
         status: "SUCCEEDED",
-        responsePayload: storedResponse === undefined ? undefined : {
-          ...asRecord(storedResponse),
+        responsePayload: {
           skipped: true,
           reason: "Invoice already exists for this payment; link re-asserted.",
         },
@@ -310,9 +309,10 @@ export async function createXeroInvoiceForBooking(
         xeroObjectUrl: buildXeroInvoiceUrl(booking.payment.xeroInvoiceId),
       });
     }
+    // Its capture receipt, once the operation is closed; no stored payment, no receipt.
     await recordPrimaryInvoicePaymentReceipt({
       bookingId, payment: booking.payment, invoiceId: booking.payment.xeroInvoiceId,
-      sent: asRecord(storedResponse)?.payment, sentCents: null,
+      sent: storedPayment, sentCents: null,
       reference: primaryInvoiceStripePaymentReference(booking.payment.stripePaymentIntentId), bankCode: null,
     });
     return booking.payment.xeroInvoiceId;
@@ -1528,6 +1528,15 @@ export async function updateXeroBookingInvoiceForBooking(
           role: "PRIMARY_INVOICE",
         },
       ],
+    });
+    // #4525 (ALP-436): what the update sent, beside the primary manifest. Never throws.
+    await recordPrimaryInvoiceUpdateManifest({
+      bookingId,
+      legacyKey: invoiceUpdateIdempotencyKey,
+      providerInvoiceId: invoiceId,
+      lines: updatedInvoice.lineItems ?? [],
+      lineAmountTypes: updatedInvoice.lineAmountTypes!,
+      providerTotal: updated?.total ?? currentInvoice.total,
     });
 
     return updated?.invoiceID ?? invoiceId;

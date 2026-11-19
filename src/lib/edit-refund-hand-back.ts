@@ -1,4 +1,5 @@
 import { bindOrganiserExtraRefundToHandBack } from "@/lib/organiser-extra-netting";
+import { postHandBackObligation, type BookingJournalContext } from "@/lib/member-money/doors";
 import {
   ManualRefundTaskKind,
   type Prisma,
@@ -126,6 +127,9 @@ export async function raiseEditRefundHandBackIfOwed(
     editLabel: string;
     /** #3949: whether the group organiser paid for it, whom the reason names as the payee. */
     booking: Parameters<typeof bankTransferRefundPayee>[0];
+    /** #4516 (M4d): the edit's journal context. Present, the hand-back's refund debt posts with the task. */
+    journal?: BookingJournalContext | null;
+    actorMemberId?: string | null;
   },
 ): Promise<boolean> {
   const { bookingId, paymentId, bookingModificationId, adjusted, editLabel, booking } = params;
@@ -148,9 +152,13 @@ export async function raiseEditRefundHandBackIfOwed(
     ],
     skipDuplicates: true,
   });
-  if (payee === "organiser") {
-    const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId) }, select: { id: true } });
-    await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id });
+  // The task is read only when something needs its id: the organiser binding, or the journal's R05.
+  if (payee !== "organiser" && !params.journal) return true;
+  const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: editRefundHandBackOccurrenceKey(bookingModificationId) }, select: { id: true, amountCents: true } });
+  if (payee === "organiser") await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id });
+  // Replay posts nothing more: the obligation's key is already live.
+  if (params.journal && task.amountCents) {
+    await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "APP", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row" });
   }
   return true;
 }
@@ -184,6 +192,9 @@ export async function raiseRefundRequestHandBack(
     amountCents: number;
     /** #3949: whether the group organiser paid for it, whom the reason names as the payee. */
     booking: Parameters<typeof bankTransferRefundPayee>[0];
+    /** #4516 (M4d): the approval's journal context. Present, the bank part's refund debt posts with the task. */
+    journal?: BookingJournalContext | null;
+    actorMemberId?: string | null;
   },
 ): Promise<number> {
   const { bookingId, paymentId, refundRequestId, amountCents, booking } = params;
@@ -204,6 +215,14 @@ export async function raiseRefundRequestHandBack(
     ],
     skipDuplicates: true,
   });
+  // The journal's R05 for the bank part; a replay posts nothing more (its key is already live).
+  if (params.journal) {
+    const task = await tx.manualRefundTask.findUniqueOrThrow({ where: { occurrenceKey: refundRequestHandBackOccurrenceKey(refundRequestId) }, select: { id: true, amountCents: true } });
+    if (task.amountCents) {
+      // An appeal's give-back is a concession, as the card part's is (refund-requests/[id]/route.ts, design R05).
+      await postHandBackObligation(tx, params.journal, { bookingId, taskId: task.id, amountCents: task.amountCents, origin: "OFFICER", actorMemberId: params.actorMemberId ?? null, debtorRead: "booking-row", concession: true });
+    }
+  }
   return raised.count;
 }
 

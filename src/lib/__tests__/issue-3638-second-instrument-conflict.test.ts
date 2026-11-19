@@ -186,7 +186,7 @@ import {
 } from "@/lib/manual-settlement-reversal-event";
 import { duplicateCaptureRefundOperationWhere } from "@/lib/duplicate-capture-ownership";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { IB_RECEIPT_FROM_CASH_REASON } from "@/lib/xero-inbound/settle-from-cash";
+import { IB_RECEIPT_FROM_CASH_REASON } from "@/lib/xero-inbound/ib-receipt-reasons";
 import {
   isPaymentRecoveryOperationInFlight,
   PAYMENT_RECOVERY_OPERATION_IN_FLIGHT_WHERE,

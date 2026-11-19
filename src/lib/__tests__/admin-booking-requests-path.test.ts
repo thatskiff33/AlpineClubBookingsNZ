@@ -6,10 +6,14 @@ import {
   bookingRequestsTabCounts,
   firstBookingRequestsTabWithWork,
   readBookingRequestPendingCounts,
-  totalBookingRequestsPending,
   type BookingRequestsTab,
   type BookingRequestsTabCounts,
 } from "@/lib/admin-booking-requests-path";
+import {
+  ADMIN_WORK_QUEUES,
+  ZERO_ADMIN_PENDING_COUNTS,
+  adminWorkQueueCount,
+} from "@/lib/admin-work-queues";
 
 // Every combination of zero and non-zero across the four tabs, written out so
 // the expected landing tab is stated, not re-derived from the rule under test.
@@ -94,7 +98,11 @@ describe("bookingRequestsTabCounts (#4969)", () => {
   });
 
   it("adds the tab counts up to the sidebar badge total", () => {
-    expect(totalBookingRequestsPending(pending)).toBe(10);
+    // The sidebar badge is the work queue registry's number (#4962).
+    const sidebarQueue = ADMIN_WORK_QUEUES.find((queue) => queue.key === "booking-requests")!;
+    expect(
+      adminWorkQueueCount(sidebarQueue, { ...ZERO_ADMIN_PENDING_COUNTS, ...pending }),
+    ).toBe(10);
   });
 });
 
