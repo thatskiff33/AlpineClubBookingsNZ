@@ -1257,12 +1257,12 @@ Before #5212, a price reduction could record a card refund as owed even when
 the payment had no Stripe intent. The fix does not rewrite posted money.
 A database operator can use this read-only query to identify candidates for
 reconciliation; review the payment history before arranging any payment.
-This query is documented, not run against deployment data.
 
 ```sql
-SELECT e."id" AS "eventId", e."eventKey", e."effectiveAt"
+SELECT e."id" AS "eventId", e."eventKey", e."effectiveAt", m."bookingId"
 FROM "MemberMoneyEvent" e
 JOIN "MemberMoneyJournal" j ON j."eventId" = e."id"
+JOIN "BookingModification" m ON m."id" = split_part(e."eventKey", '|', 3)
 WHERE e."kind" = 'REFUND_OBLIGATION'
   AND e."eventKey" LIKE 'refund-obligation|modification|%'
   AND NOT EXISTS (
@@ -1272,15 +1272,24 @@ WHERE e."kind" = 'REFUND_OBLIGATION'
   AND NOT EXISTS (
     SELECT 1 FROM "PaymentRecoveryOperation" recovery
     WHERE recovery."idempotencyKey" =
-      'payment_recovery_modification_refund_' || split_part(e."eventKey", '|', 3)
+      'payment_recovery_modification_refund_' || m."id"
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "MemberMoneyRefundReservation" reservation
+    JOIN "MemberMoneyObligation" o ON o."id" = reservation."obligationId"
+    WHERE o."obligationKey" LIKE 'refund-obligation|modification|%'
+      AND split_part(o."obligationKey", '|', 3) = m."id"
   )
 ORDER BY e."effectiveAt", e."id";
 ```
 
 The key encoding is defined in `src/lib/member-money/internal/keys.ts`:
 the third pipe-separated part is the modification id. Hand-back obligations
-use a different scope and are excluded. These results identify missing
-recovery records, not proof that a member has never been paid another way.
+use a different scope and are excluded. So is an edit whose card refund was
+tried without a recovery record, as edits before #4992 were: the journal
+reserved that refund against a Stripe charge, which a payment with no Stripe
+record cannot have. These results identify missing recovery records, not proof
+that a member has never been paid another way.
 
 ## Related links
 
