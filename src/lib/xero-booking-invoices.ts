@@ -11,7 +11,6 @@ import {
   Invoice,
   Invoices,
   LineItem,
-  LineAmountTypes,
   Payment as XeroPayment,
 } from "xero-node";
 import { PaymentSource, PaymentTransactionKind } from "@prisma/client";
@@ -69,6 +68,7 @@ import {
 } from "@/lib/organisation-xero-contacts";
 import { formatDateOnly } from "@/lib/date-only";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { requireContainedXeroContactForInvoiceOperation } from "@/lib/xero-contact-containment-proof";
 import {
@@ -219,18 +219,26 @@ async function enrichClaimedOperationMoneyReconciliation(
  * The lines the claimed operation sent, from its stored request (#4525), or
  * null where it stored none. A read failure is null too: the manifest waits.
  */
-async function readStoredPrimaryInvoiceLines(syncOperationId: string): Promise<LineItem[] | null> {
+async function readStoredPrimaryInvoiceLines(
+  syncOperationId: string,
+): Promise<{ storedLines: LineItem[] | null; storedLineAmountTypes: string | null }> {
   try {
     const operation = await prisma.xeroSyncOperation.findUnique({
       where: { id: syncOperationId },
       select: { requestPayload: true },
     });
     const invoices = asRecord(operation?.requestPayload)?.invoices;
-    const lines = Array.isArray(invoices) ? asRecord(invoices[0])?.lineItems : undefined;
-    return Array.isArray(lines) ? (lines as LineItem[]) : null;
+    const invoice = Array.isArray(invoices) ? asRecord(invoices[0]) : undefined;
+    const lines = invoice?.lineItems;
+    // #4632: the basis the stored invoice was raised under, frozen beside its lines.
+    const basis = invoice?.lineAmountTypes;
+    return {
+      storedLines: Array.isArray(lines) ? (lines as LineItem[]) : null,
+      storedLineAmountTypes: typeof basis === "string" ? basis : null,
+    };
   } catch (error) {
     logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice lines");
-    return null;
+    return { storedLines: null, storedLineAmountTypes: null };
   }
 }
 
@@ -270,7 +278,7 @@ export async function createXeroInvoiceForBooking(
     // records it here from the lines its operation stored. Nothing is rebuilt.
     if (options?.syncOperation) {
       await recordPrimaryInvoiceManifest(
-        { kind: "REPLAY", bookingId, storedLines: await readStoredPrimaryInvoiceLines(options.syncOperation.id) },
+        { kind: "REPLAY", bookingId, ...(await readStoredPrimaryInvoiceLines(options.syncOperation.id)) },
         booking.payment.xeroInvoiceId,
       );
     }
@@ -453,10 +461,12 @@ export async function createXeroInvoiceForBooking(
   });
 
   // Resolve account codes, item codes, and season type
-  const [hutFeeMapping, stripeBankCode, hutFeeItemCodeMap] = await Promise.all([
+  const [hutFeeMapping, stripeBankCode, hutFeeItemCodeMap, taxRendering] = await Promise.all([
     getResolvedAccountMapping("hutFeesIncome"),
     getAccountMapping("stripeBankAccount"),
     getHutFeeItemCodeMap(),
+    // #4632: the treatment in force when the booking was made, for every line.
+    resolveXeroTaxRendering({ kind: "booking", bookingId }),
   ]);
   const bankCode = stripeBankCode ?? "606";
 
@@ -504,6 +514,8 @@ export async function createXeroInvoiceForBooking(
       firstGuest: booking.guests[0] ?? null,
     },
     changeFeeCents: recordedChangeFeeCents(booking.payment),
+    // #4632: the treatment in force when the booking was made, on every line.
+    taxRendering,
   };
   const primaryLines = buildPrimaryInvoiceLines(primaryLineInput);
   const lineItems = primaryLines.lines;
@@ -532,7 +544,7 @@ export async function createXeroInvoiceForBooking(
     dueDate: getBookingInvoiceDueDate(booking, clubZone),
     reference: `Booking ${bookingId.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
   });
 
   // The booking's stable handle, minted in one place so the outbox row this
@@ -1306,9 +1318,10 @@ export async function updateXeroBookingInvoiceForBooking(
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const [hutFeeMapping, hutFeeItemCodeMap] = await Promise.all([
+  const [hutFeeMapping, hutFeeItemCodeMap, taxRendering] = await Promise.all([
     getResolvedAccountMapping("hutFeesIncome"),
     getHutFeeItemCodeMap(),
+    resolveXeroTaxRendering({ kind: "booking", bookingId }),
   ]);
   const incomeCode = hutFeeMapping.code ?? "200";
   const checkIn = new Date(booking.checkIn);
@@ -1335,6 +1348,7 @@ export async function updateXeroBookingInvoiceForBooking(
     hutFeeMapping.codeExplicitlyConfigured,
     hutFeeItemCodeMap,
     bookingSeasonType,
+    taxRendering,
   );
 
   const invoiceUpdateIdempotencyKey = buildXeroIdempotencyKey(
@@ -1469,7 +1483,8 @@ export async function updateXeroBookingInvoiceForBooking(
         getBookingInvoiceDueDate(booking, await readClubTimeZoneOutsideRequest()),
       reference: currentInvoice.reference ?? `Booking ${bookingId.slice(0, 8)}`,
       invoiceNumber: currentInvoice.invoiceNumber,
-      lineAmountTypes: currentInvoice.lineAmountTypes ?? LineAmountTypes.Inclusive,
+      // The basis it was issued under; one Xero did not echo is the booking's own (#4632).
+      lineAmountTypes: currentInvoice.lineAmountTypes ?? taxRendering.lineAmountTypes,
     };
     const requestPayload: Invoices = { invoices: [updatedInvoice] };
 

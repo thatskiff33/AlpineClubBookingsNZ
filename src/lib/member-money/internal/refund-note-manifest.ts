@@ -10,6 +10,7 @@ import { memberMoneyChainTip, refundObligationChain } from "./refund-family";
 import { appliedObligationsOfEvents, cardRefundAppliedObligations } from "./refund-obligation-map";
 import { planRefundNote, type RefundExportComponent, type RefundExportPlan, type RefundExportProblem } from "./refund-note-plan";
 import { planRefundNotePayment } from "./refund-payment-plan";
+import type { XeroTaxRendering } from "../../xero-tax-rendering";
 import { writeExportManifest } from "./store";
 
 /**
@@ -234,8 +235,8 @@ function logOutcome(role: MemberMoneyExportDocumentRole, context: Record<string,
 }
 
 export type RefundNoteManifestSource =
-  /** The note this run built and Xero just returned: its lines, its key and its door. */
-  | { kind: "BUILT"; lines: LineItem[]; legacyKey: string; door: RefundNoteDoor }
+  /** The note this run built and Xero just returned: its lines, its key, its door and the booking's tax rendering it was sent with (#4632). */
+  | { kind: "BUILT"; lines: LineItem[]; legacyKey: string; door: RefundNoteDoor; taxRendering: XeroTaxRendering }
   /** A note an earlier operation raised: its stored request is read, never rebuilt. Null finds the row by the note. */
   | { kind: "REPLAY"; operationId: string | null };
 
@@ -251,7 +252,9 @@ async function readStoredRefundNote(paymentId: string, creditNoteId: string, ope
     const note = asRecord(asRecord(row.requestPayload)?.creditNotes && (asRecord(row.requestPayload)!.creditNotes as unknown[])[0]);
     const lines = Array.isArray(note?.lineItems) ? (note!.lineItems as LineItem[]) : null;
     const legacyKey = row.idempotencyKey ?? row.correlationKey;
-    if (lines && lines.length > 0 && legacyKey) return { lines, legacyKey, door: refundNoteDoorOfPayload(row.requestPayload) };
+    // #4632: the basis the stored note was raised under, frozen beside its lines.
+    const lineAmountTypes = typeof note?.lineAmountTypes === "string" ? note.lineAmountTypes : null;
+    if (lines && lines.length > 0 && legacyKey) return { lines, legacyKey, lineAmountTypes, door: refundNoteDoorOfPayload(row.requestPayload) };
   }
   return null;
 }
@@ -266,7 +269,7 @@ export async function recordRefundNoteManifest(input: {
   const context = { paymentId: input.paymentId, bookingId: input.bookingId, creditNoteId: input.creditNoteId };
   await recordSafely("REFUND_NOTE", context, async () => {
     const stored = input.source.kind === "BUILT"
-      ? { lines: input.source.lines, legacyKey: input.source.legacyKey, door: input.source.door }
+      ? { lines: input.source.lines, legacyKey: input.source.legacyKey, lineAmountTypes: input.source.taxRendering.lineAmountTypes, door: input.source.door }
       : await readStoredRefundNote(input.paymentId, input.creditNoteId, input.source.operationId);
     if (!stored) return;
     const source = input.source.kind === "BUILT" ? "BUILT" : "STORED_REQUEST";
@@ -274,7 +277,7 @@ export async function recordRefundNoteManifest(input: {
       role: "REFUND_NOTE",
       bookingId: input.bookingId,
       providerObjectId: input.creditNoteId,
-      plan: planRefundNote({ lines: stored.lines, legacyKey: stored.legacyKey, source, obligation: await resolveRefundNoteObligation(tx, stored.door) }),
+      plan: planRefundNote({ lines: stored.lines, legacyKey: stored.legacyKey, source, lineAmountTypes: stored.lineAmountTypes, obligation: await resolveRefundNoteObligation(tx, stored.door) }),
     }));
     logOutcome("REFUND_NOTE", context, written);
   });
