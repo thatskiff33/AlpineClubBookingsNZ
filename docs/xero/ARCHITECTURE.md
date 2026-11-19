@@ -3570,7 +3570,11 @@ page and both routes, so neither can serve what the page does not offer.
 - **Xero off** (#5066 slice 2). The same offer serves the app's own document
   instead (`GENERATED`, `generatedBookingInvoiceOnOffer`) and makes no Xero
   read; it is never offered while the module is on, so a Xero club has one
-  invoice of record. See `src/lib/booking-invoice.ts`.
+  invoice of record. A booking holding Xero documents from when the module was
+  on (a primary invoice id, supplementary-invoice evidence or a held credit
+  note) gets `ASK_CLUB` with reason `XERO_DOCUMENTS` instead, never a second
+  "Invoice". The flags are read strictly (`loadEffectiveModuleFlagsStrict`): a
+  failed read offers nothing. See `src/lib/booking-invoice.ts`.
 - **Later work.** A single statement PDF for a Xero club's booking (invoice,
   credits, payments and balance in one document) is not built; the
   GST-registered form of the generated document ("Tax invoice") waits on the

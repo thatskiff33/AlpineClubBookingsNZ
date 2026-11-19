@@ -18,7 +18,12 @@ const PREFIX = "race-5066-";
 const MEMBER = `${PREFIX}member`;
 const PAID = `${PREFIX}paid-booking`;
 const REVIEW = `${PREFIX}review-booking`;
+const KEPT = `${PREFIX}kept-booking`;
+const TWO_CODES = `${PREFIX}two-codes-booking`;
+const UNPRICED = `${PREFIX}unpriced-booking`;
+const BOOKINGS = [PAID, REVIEW, KEPT, TWO_CODES, UNPRICED];
 const PROMO = `${PREFIX}promo`;
+const PROMO_B = `${PREFIX}promo-b`;
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
 let db: PrismaClient;
@@ -28,7 +33,7 @@ let lodgeName: string;
 const session = { user: { id: MEMBER, role: "MEMBER", accessRoles: [{ role: "USER" }] } } as never;
 const allowed = async () => ({ success: true, limit: 20, remaining: 19, resetAt: 0 });
 
-async function seedGuest(bookingId: string, id: string, guest: { firstName: string; ageTier: "ADULT" | "CHILD"; nights: number[] }) {
+async function seedGuest(bookingId: string, id: string, guest: { firstName: string; ageTier: "ADULT" | "CHILD"; nights: Array<number | null> }) {
   await db.bookingGuest.create({
     data: {
       id,
@@ -40,12 +45,12 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
       memberId: guest.ageTier === "ADULT" ? MEMBER : null,
       stayStart: day("2026-08-03"),
       stayEnd: day("2026-08-06"),
-      priceCents: guest.nights.reduce((sum, cents) => sum + cents, 0),
+      priceCents: guest.nights.reduce<number>((sum, cents) => sum + (cents ?? 0), 0),
       nights: {
         create: guest.nights.map((priceCents, index) => ({
           stayDate: day(`2026-08-0${3 + index}`),
           priceCents,
-          priceSource: "SOLD",
+          priceSource: priceCents === null ? "UNKNOWN" : "SOLD",
         })),
       },
     },
@@ -90,6 +95,7 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
       data: { id: MEMBER, firstName: "Aroha", lastName: "Fixture", email: "invoice-5066@example.invalid", passwordHash: "not-a-password" },
     });
     await db.promoCode.create({ data: { id: PROMO, code: "RACE5066", type: "FIXED_AMOUNT" } });
+    await db.promoCode.create({ data: { id: PROMO_B, code: "RACE5066B", type: "FIXED_AMOUNT" } });
 
     // A paid booking: 3 nights for an adult (one dearer night) and a child,
     // a promotion, a recorded change fee, account credit and a card payment.
@@ -97,7 +103,7 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
       data: {
         id: PAID,
         memberId: MEMBER,
-        status: "CONFIRMED",
+        status: "PAID",
         checkIn: day("2026-08-03"),
         checkOut: day("2026-08-06"),
         totalPriceCents: 47_000,
@@ -132,18 +138,56 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
     });
     await seedGuest(REVIEW, `${PREFIX}review-adult`, { firstName: "Tama", ageTier: "ADULT", nights: [10_000, 10_000, 10_000] });
 
+    // A reduction refunded only in part: paid 40,000 by card, now worth 30,000,
+    // 6,000 refunded, so 4,000 is kept under the booking's change terms.
+    await db.booking.create({
+      data: { id: KEPT, memberId: MEMBER, status: "PAID", checkIn: day("2026-08-03"), checkOut: day("2026-08-06"), totalPriceCents: 30_000, finalPriceCents: 30_000 },
+    });
+    await seedGuest(KEPT, `${PREFIX}kept-adult`, { firstName: "Hemi", ageTier: "ADULT", nights: [10_000, 10_000, 10_000] });
+    await db.payment.create({
+      data: { bookingId: KEPT, amountCents: 40_000, refundedAmountCents: 6_000, status: "PARTIALLY_REFUNDED", source: "STRIPE" },
+    });
+
+    // Two promo codes, each with its own redemption row (the booker's order).
+    await db.booking.create({
+      data: {
+        id: TWO_CODES,
+        memberId: MEMBER,
+        status: "CONFIRMED",
+        checkIn: day("2026-08-03"),
+        checkOut: day("2026-08-06"),
+        totalPriceCents: 30_000,
+        promoAdjustmentCents: -1_500,
+        discountCents: 1_500,
+        finalPriceCents: 28_500,
+      },
+    });
+    await seedGuest(TWO_CODES, `${PREFIX}two-codes-adult`, { firstName: "Rangi", ageTier: "ADULT", nights: [10_000, 10_000, 10_000] });
+    await db.promoRedemption.create({
+      data: { bookingId: TWO_CODES, promoCodeId: PROMO_B, memberId: MEMBER, discountCents: 500, priceAdjustmentCents: -500, applicationOrder: 2 },
+    });
+    await db.promoRedemption.create({
+      data: { bookingId: TWO_CODES, promoCodeId: PROMO, memberId: MEMBER, discountCents: 1_000, priceAdjustmentCents: -1_000, applicationOrder: 1 },
+    });
+
+    // A night whose price a parked edit left unknown (#3170).
+    await db.booking.create({
+      data: { id: UNPRICED, memberId: MEMBER, status: "CONFIRMED", checkIn: day("2026-08-03"), checkOut: day("2026-08-06"), totalPriceCents: 20_000, finalPriceCents: 20_000 },
+    });
+    await seedGuest(UNPRICED, `${PREFIX}unpriced-adult`, { firstName: "Kiri", ageTier: "ADULT", nights: [10_000, 10_000, null] });
+
     lodgeName = (await db.booking.findUniqueOrThrow({ where: { id: PAID }, select: { lodge: { select: { name: true } } } })).lodge.name;
   }, 60_000);
 
   afterAll(async () => {
     if (!db) return;
-    await db.auditLog.deleteMany({ where: { entityId: { in: [PAID, REVIEW] } } });
+    await db.auditLog.deleteMany({ where: { entityId: { in: BOOKINGS } } });
     await db.memberCredit.deleteMany({ where: { memberId: MEMBER } });
-    await db.promoRedemption.deleteMany({ where: { bookingId: { in: [PAID, REVIEW] } } });
-    await db.payment.deleteMany({ where: { bookingId: { in: [PAID, REVIEW] } } });
-    await db.bookingGuest.deleteMany({ where: { bookingId: { in: [PAID, REVIEW] } } });
-    await db.booking.deleteMany({ where: { id: { in: [PAID, REVIEW] } } });
-    await db.promoCode.deleteMany({ where: { id: PROMO } });
+    await db.promoRedemption.deleteMany({ where: { bookingId: { in: BOOKINGS } } });
+    await db.payment.deleteMany({ where: { bookingId: { in: BOOKINGS } } });
+    await db.bookingGuest.deleteMany({ where: { bookingId: { in: BOOKINGS } } });
+    await db.booking.deleteMany({ where: { id: { in: BOOKINGS } } });
+    await db.promoCode.deleteMany({ where: { id: { in: [PROMO, PROMO_B] } } });
     await db.member.deleteMany({ where: { id: MEMBER } });
     if (previousIdentity) await db.clubIdentitySettings.update({ where: { id: "default" }, data: previousIdentity });
     else await db.clubIdentitySettings.deleteMany({ where: { id: "default" } });
@@ -231,5 +275,44 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
     ).toEqual({ kind: "NOT_FOUND" });
     // Neither refusal wrote an audit row.
     expect(await db.auditLog.count({ where: { entityId: { in: [PAID, REVIEW] }, action: "booking.invoice.downloaded" } })).toBe(2);
+  });
+
+  it("prints paid, kept and the balance for a reduction refunded only in part", async () => {
+    const { renderGeneratedBookingInvoice } = await import("@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-generated");
+    const { loadBookingDetail } = await import("@/app/(authenticated)/bookings/[id]/_lib/load-booking-detail");
+    const { data } = await renderGeneratedBookingInvoice((await loadBookingDetail(KEPT))!, { notYetApproved: false });
+    expect(data.totalCents).toBe(30_000);
+    expect(data.accountRows).toEqual([
+      { label: "Account credit applied", cents: 0, emphasis: false },
+      { label: "Paid, less refunds and credits returned", cents: 34_000, emphasis: false },
+      { label: "Kept under the booking's change terms", cents: 4_000, emphasis: false },
+      { label: "Still to pay", cents: 0, emphasis: true },
+    ]);
+    const result = await download.prepareBookingInvoiceDownload(KEPT, session, { kind: "INVOICE" }, { ipAddress: null, chargeBookingLimit: allowed }, dependencies);
+    expect(result.kind).toBe("PDF");
+  });
+
+  it("prints one line per promo code, in the booker's order, from the real redemption rows", async () => {
+    const { renderGeneratedBookingInvoice } = await import("@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-generated");
+    const { loadBookingDetail } = await import("@/app/(authenticated)/bookings/[id]/_lib/load-booking-detail");
+    const { data } = await renderGeneratedBookingInvoice((await loadBookingDetail(TWO_CODES))!, { notYetApproved: false });
+    expect(data.lines.filter((line) => line.kind === "PROMO")).toEqual([
+      { kind: "PROMO", description: "Promo adjustment - RACE5066", amountCents: -1_000 },
+      { kind: "PROMO", description: "Promo adjustment - RACE5066B", amountCents: -500 },
+    ]);
+    expect(data.totalCents).toBe(28_500);
+    expect(data.lines.reduce((sum, line) => sum + line.amountCents, 0)).toBe(28_500);
+  });
+
+  it("offers nothing for a booking with a night whose price is not known, and refuses its download", async () => {
+    const { loadBookingDetail } = await import("@/app/(authenticated)/bookings/[id]/_lib/load-booking-detail");
+    const { resolveBookingDetailViewer } = await import("@/app/(authenticated)/bookings/[id]/_lib/booking-detail-viewer");
+    const booking = (await loadBookingDetail(UNPRICED))!;
+    const viewer = resolveBookingDetailViewer({ session, booking });
+    expect(await download.resolveBookingInvoiceOffer({ booking, viewer, modules: { xeroIntegration: false } })).toEqual({ kind: "NONE" });
+    expect(
+      await download.prepareBookingInvoiceDownload(UNPRICED, session, { kind: "INVOICE" }, { ipAddress: null, chargeBookingLimit: allowed }, dependencies),
+    ).toEqual({ kind: "NOT_FOUND" });
+    expect(await db.auditLog.count({ where: { entityId: UNPRICED } })).toBe(0);
   });
 });

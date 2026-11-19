@@ -191,10 +191,12 @@ awaiting review) gets an invoice marked **Not yet approved**: nothing is
 payable until the club approves it.
 
 There is no invoice for a cancelled, draft or waitlisted booking, a place your
-group organiser pays for, a group whose organiser pays for everyone, a booking
-with an extra charge asked (it has its own payment link), or a booking with a
-night whose price the club is still reviewing; the button does not show for
-those. Downloads count towards the same limits as above.
+group organiser pays for, or a booking with a night whose price the club is
+still reviewing; the button does not show for those. A group organiser's own
+booking gets one for its own guests. Instead of the button, the page asks you
+to contact the club when the booking already has an invoice in the club's
+accounts (from before the club stopped using Xero), or when it has an extra
+charge with its own payment link. Downloads count towards the same limits as above.
 
 A single statement PDF for a Xero club's booking (invoice, credits, payments
 and balance in one document) is planned for a later release.
