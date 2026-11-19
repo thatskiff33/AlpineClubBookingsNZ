@@ -32,7 +32,8 @@ Work-party events are a **lodge** permission area: lodge view to read, lodge
    ![Work Parties page showing the "July Working Bee 2026" event card with its date window, discount, attending-bookings count, and total discount given](../images/admin/admin-work-parties.png)
 
 2. On an event with attending bookings, click **Show bookings** to expand the
-   member, stay, status, and per-booking discount.
+   member, stay, status, and per-booking discount. If the bookings cannot be
+   loaded, the card says why and offers **Try again**.
 
 ### Create or edit an event
 

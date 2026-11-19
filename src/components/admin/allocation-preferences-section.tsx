@@ -18,6 +18,7 @@ import {
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
 import {
+  ApiRefusalError,
   MODULE_DISABLED_ERROR_CODE,
   apiErrorCodeFromBody,
   apiErrorMessageFromBody,
@@ -142,21 +143,21 @@ async function refusalFor(
 ): Promise<Error> {
   const body = await readApiErrorBody(response);
   if (apiErrorCodeFromBody(body) === MODULE_DISABLED_ERROR_CODE) {
-    return new Error(ALLOCATION_PREFERENCES_MODULE_OFF_REASON);
+    return new ApiRefusalError(ALLOCATION_PREFERENCES_MODULE_OFF_REASON);
   }
   if (response.status === 401) {
-    return new Error(ALLOCATION_PREFERENCES_SIGNED_OUT_REASON);
+    return new ApiRefusalError(ALLOCATION_PREFERENCES_SIGNED_OUT_REASON);
   }
   if (response.status === 404) {
-    return new Error(ALLOCATION_PREFERENCES_NOT_FOUND_REASON);
+    return new ApiRefusalError(ALLOCATION_PREFERENCES_NOT_FOUND_REASON);
   }
   if (response.status === 403) {
     const message = apiErrorMessageFromBody(body, BARE_FORBIDDEN_ERROR);
     return message === BARE_FORBIDDEN_ERROR
       ? bareForbidden()
-      : new Error(message);
+      : new ApiRefusalError(message);
   }
-  return new Error(apiErrorMessageFromBody(body, fallback));
+  return new ApiRefusalError(apiErrorMessageFromBody(body, fallback));
 }
 
 /**
@@ -242,7 +243,7 @@ export function AllocationPreferencesSection({
         throw await refusalFor(
           response,
           LOAD_FALLBACK,
-          () => new Error(ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON),
+          () => new ApiRefusalError(ALLOCATION_PREFERENCES_VIEW_FORBIDDEN_REASON),
         );
       }
       const settings = settingsOf(await response.json().catch(() => null));
@@ -272,7 +273,7 @@ export function AllocationPreferencesSection({
         );
       }
       const settings = settingsOf(await response.json().catch(() => null));
-      if (!settings) throw new Error(UNREADABLE_SAVE_REPLY);
+      if (!settings) throw new ApiRefusalError(UNREADABLE_SAVE_REPLY);
       return toDraft(draft.lodgeId, settings);
     },
     successMessage: "Allocation preferences saved",

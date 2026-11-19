@@ -322,6 +322,15 @@ export async function POST(request: NextRequest) {
   }
 
   const storedConfig = coerceWhakapapaSourceConfig(existing?.config);
+  // A selector saved under an older selector engine can be one the current engine
+  // refuses (jsdom 31 does, for `:contains()`; #5183). Name the field, as save and
+  // preview do, instead of letting the scrape throw as a bare 500.
+  const storedSelectorError = invalidSelectorResponse(
+    storedConfig.selectorOverrides,
+  );
+  if (storedSelectorError) {
+    return storedSelectorError;
+  }
   const payload = await fetchWhakapapaCurlData({
     sourceUrl: storedConfig.sourceUrl,
     selectors: resolveWhakapapaSelectors(storedConfig.selectorOverrides),

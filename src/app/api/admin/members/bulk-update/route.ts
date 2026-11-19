@@ -6,6 +6,7 @@ import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
@@ -61,6 +62,7 @@ import {
   isDeletedAccountRecord,
 } from "@/lib/deleted-account";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * POST /api/admin/members/bulk-update
@@ -599,7 +601,7 @@ export async function POST(req: NextRequest) {
         }
       }
       return updateResult;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     for (const { memberId, reason, swept } of sweptSharesByMember) {
       const member = existingMembers.find((m) => m.id === memberId);
@@ -733,6 +735,11 @@ export async function POST(req: NextRequest) {
         { status: error.statusCode },
       );
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Admin bulk member update contended for the lock(1) budget",
+    );
+    if (contended) return contended;
     logger.error({ err: error }, "Failed to bulk update members");
     return NextResponse.json({ error: "Failed to bulk update members" }, { status: 500 });
   }

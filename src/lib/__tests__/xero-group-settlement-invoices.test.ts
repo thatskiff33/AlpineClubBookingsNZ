@@ -498,8 +498,14 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
     const FENCE_OPTIONS = { maxWait: 10_000, timeout: 10_000 };
     const EMAIL_KEY = "group-settlement:settle-1:invoice-email:inv-1:v1";
 
-    // The fence is the last transaction a run opens.
+    // The fence is the last transaction a run opens. The run's other lock(1)
+    // transactions carry the shared budget (INV-LOCK-006), so the fence is told
+    // apart by its own options, not by having options at all.
     const fenceOptions = () => mocks.transaction.mock.calls.at(-1)?.[1];
+    const isFence = (options: unknown) =>
+      typeof options === "object" &&
+      options !== null &&
+      Object.entries(FENCE_OPTIONS).every(([key, value]) => (options as Record<string, unknown>)[key] === value);
     const xeroError = (statusCode: number, headers: Record<string, string> = {}) =>
       Object.assign(new Error(`HTTP ${statusCode}`), { response: { statusCode, headers } });
 
@@ -625,7 +631,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
       const ordinary = mocks.transaction.getMockImplementation()!;
       mocks.transaction.mockImplementation(async (callback, options) => {
         const result = await ordinary(callback, options);
-        if (options === undefined) return result;
+        if (!isFence(options)) return result;
         throw new Error("commit failed");
       });
 
@@ -654,7 +660,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
     ])("owes the email when the fence is refused with %s", async (_label, code) => {
       const ordinary = mocks.transaction.getMockImplementation()!;
       mocks.transaction.mockImplementation(async (callback, options) => {
-        if (options === undefined) return ordinary(callback, options);
+        if (!isFence(options)) return ordinary(callback, options);
         throw Object.assign(new Error("Transaction API error"), { code });
       });
 
@@ -669,7 +675,7 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
     it("records any other fence failure before a send as PARTIAL with its error", async () => {
       const ordinary = mocks.transaction.getMockImplementation()!;
       mocks.transaction.mockImplementation(async (callback, options) => {
-        if (options === undefined) return ordinary(callback, options);
+        if (!isFence(options)) return ordinary(callback, options);
         throw new Error("database unavailable");
       });
 

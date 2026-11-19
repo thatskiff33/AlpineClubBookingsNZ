@@ -14,12 +14,16 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import {
   SCHOOL_HUT_LEADER_KINDS,
   type SchoolHutLeaderKind,
   type SchoolHutLeaderKinds,
 } from "@/lib/school-hut-leader-kinds";
+
+const LOAD_FALLBACK = "Failed to load who can be hut leader for school bookings";
+const SAVE_FALLBACK = "Failed to save";
 
 const ENDPOINT = "/api/admin/lodge-settings/school-hut-leaders";
 
@@ -49,7 +53,7 @@ async function readKinds(lodgeId: string, asSaveStep = false): Promise<SchoolHut
   });
   if (!res.ok) {
     if (asSaveStep && res.status === 403) throw new ForbiddenSaveError();
-    throw new Error("Failed to load who can be hut leader for school bookings");
+    throw new Error(LOAD_FALLBACK);
   }
   return ((await res.json()) as { kinds: SchoolHutLeaderKinds }).kinds;
 }
@@ -90,12 +94,13 @@ export function SchoolHutLeaderKindsCard({
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.error ?? "Failed to save");
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       return ((await res.json()) as { kinds: SchoolHutLeaderKinds }).kinds;
     },
     successMessage: "Saved who can be hut leader for school bookings",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
   });
 
   const draft = section.draft;

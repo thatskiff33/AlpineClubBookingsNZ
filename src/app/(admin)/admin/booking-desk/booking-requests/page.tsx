@@ -17,6 +17,7 @@ import { BookingChangeRequestsPanel } from "@/components/admin/booking-requests/
 import { PolicyExceptionRequestsPanel } from "@/components/admin/booking-requests/policy-exception-requests-panel";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useAdminQueueRefresh } from "@/hooks/use-admin-queue-refresh";
 import {
   BOOKING_REQUEST_PENDING_COUNTS_PATH,
   BOOKING_REQUESTS_STATUS_PARAM,
@@ -102,8 +103,9 @@ export default function BookingRequestsPage() {
 
   // One pending count per tab, from the same helper the sidebar badge adds up
   // (#4969), so the four tab badges are counted exactly as it is. Null until
-  // loaded, and left null if the read fails: the badges are best-effort, and a
-  // page with no counts behaves exactly as before (Approvals, no badges).
+  // the first read succeeds, and left null if it fails: the badges are
+  // best-effort, and a page with no counts behaves exactly as before
+  // (Approvals, no badges). A later failed read keeps the last good counts.
   const [tabCounts, setTabCounts] = useState<BookingRequestsTabCounts | null>(
     null,
   );
@@ -122,32 +124,43 @@ export default function BookingRequestsPage() {
     setPublicRequestUrl(`${window.location.origin}/booking-requests`);
   }, []);
 
-  // Read once, when the page opens. The badges do not follow an action taken
-  // on the page: refreshing counts after an action is outside #4969's scope,
-  // so a badge catches up on reload.
-  useEffect(() => {
-    let active = true;
-    fetch(BOOKING_REQUEST_PENDING_COUNTS_PATH)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        const counts = readBookingRequestPendingCounts(data);
-        if (active && counts) {
-          setTabCounts(bookingRequestsTabCounts(counts));
-        }
-      })
-      .catch(() => {
-        /* badges are best-effort; ignore fetch errors */
+  // Read when the page opens, and again on the triggers the sidebar's badge
+  // uses (#4962): a decision on any panel here, window focus, the tab becoming
+  // visible. Without that the sidebar would drop a decided request while this
+  // tab's badge kept it, and the four badges would stop adding up to the
+  // sidebar's. A failed read keeps the last good badges, as the sidebar keeps
+  // its last good counts. Loads never overlap, so an older response cannot
+  // overwrite a newer one. A reread never moves the officer: the landing tab
+  // below is decided once, by the first read to settle. If that first read
+  // fails, the page stays where it opened, so counts that arrive later (say
+  // after the officer has approved something) cannot move them.
+  const landingTabDecided = useRef(false);
+  const refreshTabCounts = useAdminQueueRefresh(async (isMounted) => {
+    let counts: ReturnType<typeof readBookingRequestPendingCounts> = null;
+    try {
+      const res = await fetch(BOOKING_REQUEST_PENDING_COUNTS_PATH, {
+        cache: "no-store",
       });
-    return () => {
-      active = false;
-    };
-  }, []);
+      counts = readBookingRequestPendingCounts(res.ok ? await res.json() : null);
+    } catch {
+      /* badges are best-effort; the last good ones stay */
+    }
+    if (!isMounted()) return;
+    if (counts) {
+      setTabCounts(bookingRequestsTabCounts(counts));
+    } else {
+      landingTabDecided.current = true;
+    }
+  });
+  useEffect(() => {
+    refreshTabCounts();
+  }, [refreshTabCounts]);
 
   // A link that opens this page with no tab (the sidebar's from another page,
   // the dashboard card's, a typed address) opens on the first tab with work
   // (#4969), so an officer who followed the sidebar badge never lands on an
   // empty Approvals while the work sits on another tab. Decided once per
-  // mount, when the counts first arrive, and only for a link that named no
+  // mount, when the first read settles (no move at all if it failed), and only for a link that named no
   // tab, record (bookingId/requestId) or status filter — a status filter
   // belongs to the tab it was set on and means nothing on another. Once the
   // page has opened, the address names the tab (a bookmark taken from it keeps
@@ -162,7 +175,6 @@ export default function BookingRequestsPage() {
   // `replace`, not `push`, so Back still leaves the page in one step.
   const openedFromBareLink = useRef(!hasLandingTarget(searchParams));
   const officerChoseTab = useRef(false);
-  const landingTabDecided = useRef(false);
   useEffect(() => {
     if (landingTabDecided.current || tabCounts === null) return;
     landingTabDecided.current = true;

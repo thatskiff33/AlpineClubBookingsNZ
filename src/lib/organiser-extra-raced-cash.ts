@@ -12,6 +12,7 @@ import {
   organiserExtraRefundBasisCents, readOrganiserExtraAdjustmentPayload,
   XERO_OUTBOX_ORGANISER_EXTRA_ADJUSTMENT_TYPE, type OrganiserExtraAdjustmentPayload,
 } from "@/lib/organiser-extra-adjustment-payload";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /** One extra invoice's figures: its change's price and fee, and the cash Xero shows paid on it. */
 type OrganiserExtraRacedInvoice = { modificationId: string; invoiceId: string; priceCents: number; feeCents: number; cashCents: number };
@@ -119,5 +120,5 @@ export async function reserveOrganiserExtraRacedCash(bookingId: string, invoice:
       await reserveOrganiserExtraRacedRefund(tx, refund);
       await bindOrganiserExtraRefundToHandBack(tx, { bookingId, handBackTaskId: task.id, scopeId: reservation.scopeId });
     }
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }

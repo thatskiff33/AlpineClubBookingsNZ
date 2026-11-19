@@ -580,5 +580,14 @@ describe("BedAllocationRemovalDialog", () => {
     await waitFor(() =>
       expect(screen.getByTestId("success-focus-fallback")).toHaveFocus(),
     );
+    // And it stays there. Focusing the region must not strip the tabindex that
+    // lets it hold focus, or a browser (and jsdom 31) drops focus to the page
+    // a frame later (#5183).
+    await act(async () => {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+    });
+    expect(screen.getByTestId("success-focus-fallback")).toHaveFocus();
   });
 });

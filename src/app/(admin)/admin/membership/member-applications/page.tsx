@@ -27,6 +27,7 @@ import { NotifyChoiceDialog } from "@/components/admin/notify-choice-dialog";
 import ApprovalMappingPanel, {
   type ReviewRequestPayload,
 } from "./_components/approval-mapping-panel";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 import { getAdminPage } from "@/lib/admin-hubs";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
@@ -357,6 +358,7 @@ export default function MemberApplicationsPage() {
           ? `Application approved.${warnings}`
           : "Application rejected.") + suppressed
       );
+      notifyAdminQueueChanged();
       await loadApplications(filter);
     } catch {
       setError("Could not update the application.");

@@ -54,6 +54,7 @@ import {
   queueGuestRemovalXeroSettlement,
   type GuestRemovalXeroSettlement,
 } from "@/lib/booking-guest-removal-xero";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * The member-guest consent state machine ("+ Add Member Guest", epic #2305,
@@ -679,7 +680,7 @@ export async function respondToMemberGuestConsent(params: {
         xeroSettlement: removal.xeroSettlement,
         askRetirement: removal.askRetirement,
       } as const;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     if (!(err instanceof ConsentRemovalRefusal)) throw err;
     return recordBlockedConsentTransition({
@@ -817,7 +818,7 @@ export async function expireMemberGuestConsent(params: {
         xeroSettlement: removal.xeroSettlement,
         askRetirement: removal.askRetirement,
       } as const;
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     if (!(err instanceof ConsentRemovalRefusal)) throw err;
     // A refusal is only raised after the row was read under the lock, so the
