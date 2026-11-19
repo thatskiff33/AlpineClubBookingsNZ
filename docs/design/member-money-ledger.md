@@ -640,7 +640,11 @@ excess was smaller, is `CENTS` and covers nothing; never a part cover. A row
 owed for no failed refund or several, an R12 missing or not yet reversed, or an
 R13 itself reversed, is `COMPONENT_UNUSABLE`; an R13 an earlier reversal covers
 is `ALREADY_COVERED`. Both replays (this and the primary booking invoice) read
-the stored lines through one reader, `storedInvoiceRequestLines`.
+the stored lines and their basis through one reader, `storedInvoiceRequestLines`.
+As on every other manifest since #4632, the frozen mapping records the
+line-amount basis and line tax types the invoice was sent with: the rendering
+the sender resolved for the booking and built it under, or a replay's stored
+request's own, never the schedule's current treatment.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
