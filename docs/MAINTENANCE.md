@@ -3522,7 +3522,9 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      "Published release notes". The documentation hub links the index, not a
      version, so it needs no edit.
    - **The runbook stays release-agnostic.**
-     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` keeps reusable operator templates.
+     `docs/PRODUCTION_UPGRADE_RUNBOOK.md` names no release pair and keeps
+     reusable operator templates. If it has been re-scoped to one release,
+     re-scope it to the new tag, templates included.
      It may record example rehearsal transcripts, including their dates and
      results. Never record secrets, credentials, production data, personal data
      or anything identifying a club's production environment. Operators fill

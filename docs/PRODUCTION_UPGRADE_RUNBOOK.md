@@ -2012,6 +2012,10 @@ A blank template, one copy per release you upgrade to. Fill it in offline;
 never commit a filled-in copy with your deployment's details. Only the owner
 attests a rehearsal, and a blank or unconfirmed record is not a PASS.
 
+Sections 7.1 and 7.2 are recorded example rehearsals using a throwaway database
+and seeded data, kept as worked examples; they do not attest any club's upgrade,
+and operators keep their own §7/§8 record offline.
+
 The minimum rehearsal is
 `pnpm run db:rehearse-epic --database-url <throwaway> --base <from-tag>`
 against a throwaway database
