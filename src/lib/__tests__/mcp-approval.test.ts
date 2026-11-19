@@ -347,10 +347,12 @@ describe("POST /api/member/mcp-grants", () => {
   it("waits for the member lifecycle fence before reading grants to replace", async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
-    const lock = vi.fn((..._args: unknown[]) => held);
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => { entered = resolve; });
+    const lock = vi.fn<(...args: unknown[]) => Promise<void>>(() => { entered(); return held; });
     db.$executeRaw = lock;
     const pending = POST(decisionRequest(approve()));
-    await vi.waitFor(() => expect(lock).toHaveBeenCalled());
+    await waiting;
     expect(lock.mock.calls[0]?.[1]).toBe("member-lifecycle:member-1");
     expect(store.db.mcpGrant.findMany).not.toHaveBeenCalled();
     expect(store.state.grants).toEqual([]);

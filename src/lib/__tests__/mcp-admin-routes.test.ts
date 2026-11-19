@@ -143,14 +143,17 @@ describe("PUT /api/admin/mcp/settings", () => {
   it("claims the settings row before recording the previous values", async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => { entered = resolve; });
     const concurrent = { ...DEFAULT_MCP_SETTINGS, membersMayConnect: false };
     upsert.mockImplementationOnce(async () => {
+      entered();
       await held;
       savedRow = concurrent;
       return concurrent;
     });
     const pending = putSettings(settingsRequest("PUT", update));
-    await vi.waitFor(() => expect(upsert).toHaveBeenCalled());
+    await waiting;
     expect(upsert.mock.calls[0]?.[0].update).toEqual({ id: MCP_SETTINGS_ID });
     expect(upsert).toHaveBeenCalledTimes(1);
     expect(audit).not.toHaveBeenCalled();
@@ -243,6 +246,32 @@ function deleteRequest(id: string, headers: Record<string, string> = {}) {
 }
 
 describe("GET /api/admin/mcp/grants", () => {
+  it("reaches connections after the former 500-row cutoff and reports the total", async () => {
+    for (let index = 0; index < 501; index++) {
+      const id = `grant-${index}`;
+      store.state.grants.push(mcpGrant({ id }));
+      store.state.tokens.push({ id: `token-${index}`, grantId: id, kind: "ACCESS" });
+    }
+    const response = await listGrants(new Request(
+      "https://club.example.test/api/admin/mcp/grants?page=21&pageSize=25",
+    ));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      connections: [{ id: "grant-500" }], total: 501, page: 21, pageSize: 25, totalPages: 21,
+    });
+    expect(store.db.mcpGrant.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      skip: 500, take: 25, orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    }));
+  });
+
+  it("refuses invalid page sizes", async () => {
+    const response = await listGrants(new Request(
+      "https://club.example.test/api/admin/mcp/grants?pageSize=501",
+    ));
+    expect(response.status).toBe(400);
+    expect(store.db.mcpGrant.findMany).not.toHaveBeenCalled();
+  });
+
   it("lists every member's live connection to a support viewer, with whose it is", async () => {
     supportLevel = "view";
     seedClub();

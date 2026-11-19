@@ -108,14 +108,21 @@ describe("MCP token HTTP contract", () => {
   });
 
   it.each([token, registration, revocation])("bounds both declared and streamed OAuth request bodies", async (route) => {
+    const padding = "x".repeat(MCP_OAUTH_BODY_MAX_BYTES);
+    const body = route === registration
+      ? JSON.stringify({ client_name: "Example", redirect_uris: ["https://claude.ai/cb"], padding })
+      : new URLSearchParams({
+          grant_type: "refresh_token", client_id: "client-1", refresh_token: "refresh",
+          token: "revocable-token", padding,
+        }).toString();
     for (const declared of [false, true]) {
       const request = new Request("https://club.example.test/api/mcp/oauth/test", {
         method: "POST",
         headers: {
           "Content-Type": route === registration ? "application/json" : "application/x-www-form-urlencoded",
-          ...(declared ? { "Content-Length": String(MCP_OAUTH_BODY_MAX_BYTES + 1) } : {}),
+          ...(declared ? { "Content-Length": String(Buffer.byteLength(body)) } : {}),
         },
-        body: "x".repeat(MCP_OAUTH_BODY_MAX_BYTES + 1),
+        body,
       });
       expect((await route(request)).status).toBe(400);
       expect(exchange).not.toHaveBeenCalled();
