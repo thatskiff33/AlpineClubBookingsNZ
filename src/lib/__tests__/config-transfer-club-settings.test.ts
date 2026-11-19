@@ -772,6 +772,8 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       shortName: null,
       hutLeaderLabel: null,
       facebookUrl: null,
+      legalName: null,
+      postalAddress: null,
     });
     expect(readJson(files, "email-message-setting")).toEqual({
       clubName: null,

@@ -602,7 +602,8 @@ export const SINGLETONS: SingletonSpec[] = [
     // importing them moves only the admin-set overrides.
     entity: "club-identity-settings",
     delegate: "clubIdentitySettings",
-    fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl"],
+    // legalName / postalAddress (#5066): the generated booking invoice's supplier.
+    fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl", "legalName", "postalAddress"],
     // No override saved = every column null, which is what the admin GET
     // synthesises. See DEFAULTS_INTENTIONALLY_PARTIAL.
     // No `constraints`: every column is nullable (String?), so null is a
