@@ -5445,13 +5445,12 @@ A connection the app never collected stays ACTIVE but is not listed (the
 lists show ACTIVE connections with at least one token) until the member's next
 approval ends it `never-completed`; its code is unusable after five minutes.
 
-To verify: `mcp-oauth.test.ts` (a lost code claim ends the connection, a
-refused use does not spend the code, refresh rotation, revocation ends the whole
+To verify: the `mcp-*.test.ts` suites in `src/lib/__tests__/` —
+`mcp-oauth.test.ts` (a lost code claim ends the connection, a refused use does
+not spend the code, refresh rotation and reuse, revocation ends the whole
 connection), `mcp-principal.test.ts` (a missing connection or an ended sign-in
-reads as signed out) and `mcp-endpoint.test.ts` (a connection that may no
-longer be used answers 401). The `refresh-reuse`, `session-ended` and
-`never-completed` ends, and the officer disconnect route, have no dedicated
-test yet.
+reads as signed out), `mcp-endpoint.test.ts` (a connection that may no longer
+be used answers 401) and `mcp-module-off.test.ts` (module off answers 404).
 
 ## Analytics Consent Lifecycle
 
