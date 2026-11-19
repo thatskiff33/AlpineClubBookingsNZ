@@ -100,6 +100,24 @@ describe("MCP HTTP loopback transport", () => {
     expect(calls).toBe(1);
   });
 
+  it("preserves a UTF-8 character split across response chunks", async () => {
+    await listen((_incoming, response) => {
+      response.writeHead(200, { "content-type": "text/plain" });
+      const bytes = Buffer.from("Māia");
+      response.write(bytes.subarray(0, 2));
+      setImmediate(() => response.end(bytes.subarray(2)));
+    });
+    expect((await sendMcpLoopbackRequest(request)).body).toBe("Māia");
+  });
+
+  it("ends an action that never receives response headers", async () => {
+    await listen(() => {
+      // The route accepted the connection but has not produced any response.
+    });
+    await expect(sendMcpLoopbackRequest({ ...request, timeoutMs: 150 }))
+      .rejects.toThrow("The club website took too long to answer.");
+  });
+
   it("rejects a partial response when the server drops the connection", async () => {
     await listen((_incoming, response) => {
       response.writeHead(200, { "content-type": "application/json" });
