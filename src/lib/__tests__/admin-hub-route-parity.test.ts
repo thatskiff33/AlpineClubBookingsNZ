@@ -1090,6 +1090,7 @@ describe("the Lodge hub's Lobby Display and Lodges pages keep their admission (C
     "maintenance-reports",
     "lockers",
     "calendar",
+    "food-orders", // #5143: the Food Orders settings page, not yet moved into the hub
   ];
 
   const only = (area: AdminPermissionArea, level: "view" | "edit"): AdminPermissionInput => ({
