@@ -998,9 +998,8 @@ joiners', whose Net Collected already treats that money as refunded.
 | **Record manual payment** says there is a Xero invoice | The booking already has an invoice in Xero, or one is queued | Record the payment against that invoice in Xero instead — recording it here would leave the two systems permanently disagreeing |
 | An admin alert says a cash settlement and a Xero payment disagree | The member (or their employer) later paid the Xero invoice for a booking already recorded as paid in cash | Check whether the two are genuinely separate money. Reverse the manual record, or refund the duplicate — the system deliberately changed nothing |
 | **Reverse manual payment** is not offered | A refund, a card payment, an open task against **that payment**, or a Xero invoice has appeared since | Cancel the booking instead; a reversal can no longer be undone cleanly |
-| A row says **Awaiting pricing** instead of an amount | It is a booking change the system would not price. The amount is genuinely unknown, not zero | Work it out from the evidence on the row and the booking's payment history, then record it — or click **No adjustment** if nothing is owed |
-| A review row says its recorded evidence **cannot be read** | The evidence was written by a different version of the site | Decide the amount from the booking's own payment and rate history instead, and tell your club administrator — that evidence is the only record of what the change removed |
-| The evidence shows a booking identifier instead of a link | Your admin role covers finance but not bookings, and the booking is not your own | Quote the identifier to an admin who can open bookings, or ask for bookings view access |
+| An old review row still shows pricing or settlement controls | The page was loaded before officer edit reviews were retired | Reload the page. Reviews can no longer be settled or closed here; their recorded history remains on the booking and in the audit log |
+| A row shows a booking identifier instead of a link | Your admin role covers finance but not bookings, and the booking is not your own | Quote the identifier to an admin who can open bookings, or ask for bookings view access |
 
 ## Related links
 

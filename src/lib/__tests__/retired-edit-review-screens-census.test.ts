@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { moduleImports, productionSourceFiles } from "./support/static-import-graph";
 
 /**
  * #4344 (wave C1 of #4302): the officer edit review's screens stay retired.
@@ -25,7 +27,6 @@ import { describe, expect, it } from "vitest";
  */
 
 const ROOT = process.cwd();
-const SRC = resolve(ROOT, "src");
 
 const RETIRED_ROUTE_DIRS = [
   "src/app/api/admin/bookings/[id]/stored-night-prices",
@@ -41,31 +42,6 @@ const RETIRED_MODULES = [
   "@/components/admin/hand-back-method-choice",
 ];
 
-function productionSources(): string[] {
-  const found: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name === "__tests__" || entry.name === "node_modules") continue;
-        walk(full);
-      } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-        found.push(full);
-      }
-    }
-  };
-  walk(SRC);
-  return found;
-}
-
-/** Every module specifier a file imports or re-exports from, statically or dynamically. */
-function importedSpecifiers(code: string): string[] {
-  const specifiers: string[] = [];
-  const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)["']([^"']+)["']/g;
-  for (const match of code.matchAll(pattern)) specifiers.push(match[1]);
-  return specifiers;
-}
-
 describe("the officer edit review's screens stay retired (#4344)", () => {
   it("no retired route directory exists again", () => {
     const back = RETIRED_ROUTE_DIRS.filter((dir) => existsSync(resolve(ROOT, dir)));
@@ -78,10 +54,10 @@ describe("the officer edit review's screens stay retired (#4344)", () => {
   it("no production file imports a retired module", () => {
     const retired = new Set(RETIRED_MODULES);
     const offenders: string[] = [];
-    for (const file of productionSources()) {
-      for (const specifier of importedSpecifiers(readFileSync(file, "utf8"))) {
+    for (const file of productionSourceFiles()) {
+      for (const { specifier } of moduleImports(file, readFileSync(resolve(ROOT, file), "utf8"))) {
         if (retired.has(specifier)) {
-          offenders.push(`${relative(ROOT, file)} -> ${specifier}`);
+          offenders.push(`${file} -> ${specifier}`);
         }
       }
     }
@@ -94,15 +70,18 @@ describe("the officer edit review's screens stay retired (#4344)", () => {
   it("the import scan sees every import shape it claims to", () => {
     // THE CONTROL: a scanner that found nothing would pass the census above.
     expect(
-      importedSpecifiers(
+      moduleImports(
+        "retired-import-control.ts",
         [
-          'import { A } from "@/lib/stored-night-price-repair-queue";',
+          'import { A } from /* explanatory comment */ "@/lib/stored-night-price-repair-queue";',
           'import type { B } from "@/components/admin/hand-back-method-choice";',
           'export { C } from "@/lib/stored-night-price-strand-reconcile";',
           'import "@/components/admin/unpriced-night-price-fields";',
-          'const d = await import("@/components/admin/manual-refund-task-still-owed-notice");',
+          'const d = await import(`@/components/admin/manual-refund-task-still-owed-notice`);',
+          '// import { ignored } from "@/lib/retired-example";',
+          `const example = 'import { ignored } from "@/lib/retired-example"';`,
         ].join("\n"),
-      ),
+      ).map(({ specifier }) => specifier),
     ).toEqual([
       "@/lib/stored-night-price-repair-queue",
       "@/components/admin/hand-back-method-choice",
@@ -111,6 +90,6 @@ describe("the officer edit review's screens stay retired (#4344)", () => {
       "@/components/admin/manual-refund-task-still-owed-notice",
     ]);
     // And it is pointed at a tree that really holds production sources.
-    expect(productionSources().length).toBeGreaterThan(500);
+    expect(productionSourceFiles().length).toBeGreaterThan(500);
   });
 });
