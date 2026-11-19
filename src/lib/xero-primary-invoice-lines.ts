@@ -18,6 +18,7 @@ import {
   type PromoLineAdjustmentRow,
   type PromoLineRedemption,
 } from "./xero-promo-adjustment-lines";
+import type { XeroTaxRendering } from "./xero-tax-rendering";
 
 /** What the sender reads from the booking and its settings to build the primary invoice. */
 export interface PrimaryInvoiceLineInput {
@@ -36,6 +37,11 @@ export interface PrimaryInvoiceLineInput {
   };
   /** `recordedChangeFeeCents(payment)`: the fee line is billed when it is positive. */
   changeFeeCents: number;
+  /**
+   * The booking's tax treatment (#4632), resolved from its tax anchor
+   * (`xero-tax-anchors.ts`) before the lines are built; every line carries it.
+   */
+  taxRendering: XeroTaxRendering;
 }
 
 export interface PrimaryInvoiceLines {
@@ -63,6 +69,7 @@ export function buildPrimaryInvoiceLines(input: PrimaryInvoiceLineInput): Primar
     input.hutFeeMapping.codeExplicitlyConfigured,
     input.hutFeeItemCodeMap,
     input.seasonType,
+    input.taxRendering,
   );
   // Signed promo adjustment lines, one per code (#3828, `INV-MONEY-040`).
   const promoLinePlan = planPromoAdjustmentLines({
@@ -76,9 +83,9 @@ export function buildPrimaryInvoiceLines(input: PrimaryInvoiceLineInput): Primar
       itemCodeResolver: input.hutFeeItemCodeMap,
       seasonType: input.seasonType,
       hutFeeMapping: input.hutFeeMapping,
-    }),
+    }, input.taxRendering),
   );
   // #3750: the recorded change fee is billed here in full, when there is one.
-  const feeLines = input.changeFeeCents > 0 ? [changeFeeLineItem(input.changeFeeCents, input.hutFeeMapping)] : [];
+  const feeLines = input.changeFeeCents > 0 ? [changeFeeLineItem(input.changeFeeCents, input.hutFeeMapping, input.taxRendering)] : [];
   return { lines: [...stayLines, ...feeLines], stayLines, feeLines, promoLinePlan };
 }

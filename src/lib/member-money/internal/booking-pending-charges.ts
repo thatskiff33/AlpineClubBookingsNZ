@@ -1,3 +1,4 @@
+import type { CalendarDate } from "../../club-time";
 import type { LedgerLineKind } from "@prisma/client";
 import { formatCentsPlain } from "../../utils";
 import {
@@ -64,6 +65,8 @@ export interface PendingChargePlanInput {
   standing: readonly StandingChargeLine[];
   /** Every live charge component the booking's journal carries now, read under `lock(1)`. */
   liveComponents: ReadonlyArray<BookingChargeComponent & { liveGrossCents: number }>;
+  /** The club date the booking was made: its fresh charges' tax treatment (#4632, `readBookingTaxAnchorDate`). */
+  taxAnchorDate: CalendarDate;
 }
 
 /** What the standing lines add up to, per component (`journalComponentOfLegacyLine`, `INV-SSOT-001`). */
@@ -113,7 +116,7 @@ export function planPendingBookingCharge(input: PendingChargePlanInput): MemberM
     moves.set(key, { component, live: moves.get(key)?.live ?? 0, after: grossCents });
   }
   const booking = { bookingId: input.bookingId, lodgeId: input.lodgeId };
-  const revenue = componentMovementLegs(booking, identity.rule, [...moves.values()]);
+  const revenue = componentMovementLegs(booking, identity.rule, input.taxAnchorDate, [...moves.values()]);
   const receivableCents = [...moves.values()].reduce((sum, move) => sum + move.after - move.live, 0);
   const binding = input.event.kind === "binding";
 

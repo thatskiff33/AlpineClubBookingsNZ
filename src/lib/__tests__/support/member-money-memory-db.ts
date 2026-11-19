@@ -23,7 +23,7 @@ const COLUMNS: Record<string, readonly string[]> = {
     "creditLotId", "chargeIdentity", "refundIdentity", "grossCents", "netCents", "taxCents", "taxCode", "evidence", "originalLineId", "obligationId"],
   memberMoneyApplication: ["id", "applicationKey", "journalId", "sourceLineId", "obligationId", "amountCents", "reversesApplicationId"],
   payment: ["id", "bookingId", "manuallyMarkedPaidAt"],
-  booking: ["id", "lodgeId", "memberId", "organisationId"],
+  booking: ["id", "lodgeId", "memberId", "organisationId", "createdAt", "parentBookingId"],
   paymentTransaction: ["id", "paymentId", "source", "kind", "status", "amountCents", "stripePaymentIntentId", "reason"],
   bookingLedgerLine: ["id", "bookingId", "side", "kind", "anchorId", "reversesLineId", "amountCents", "postedAt", "postingKey"],
   // #4516 (M4c): reservations and their releases, the card refund rows R12 reads, and the rows a refund's debt is read from.
@@ -45,6 +45,8 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
   memberMoneyApplication: { journal: one("memberMoneyJournal", "journalId"), obligation: one("memberMoneyObligation", "obligationId"),
     reversedBy: { model: "memberMoneyApplication", many: false, local: "id", foreign: "reversesApplicationId" } },
   payment: { booking: one("booking", "bookingId"), transactions: many("paymentTransaction", "paymentId") },
+  // #4632: a group place's tax anchor is its organiser's booking (`booking-tax-anchor.ts`).
+  booking: { parentBooking: one("booking", "parentBookingId") },
   paymentTransaction: { payment: one("payment", "paymentId") },
   paymentRefund: { payment: one("payment", "paymentId") },
   memberMoneyRefundReservation: { obligation: one("memberMoneyObligation", "obligationId"), fundingJournal: one("memberMoneyJournal", "fundingJournalId"),

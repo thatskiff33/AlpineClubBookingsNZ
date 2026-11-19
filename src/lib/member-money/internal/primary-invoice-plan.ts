@@ -1,4 +1,4 @@
-import { LineAmountTypes, type LineItem } from "xero-node";
+import type { LineAmountTypes, LineItem } from "xero-node";
 import type { MemberMoneyExportConflictReason } from "@prisma/client";
 import { buildXeroBookingInvoiceCorrelationKey } from "../../xero-booking-invoice-key";
 import { CHANGE_FEE_LINE_DESCRIPTION, invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
@@ -23,8 +23,9 @@ import { componentKey, componentsPostedBy, liveComponentSplit, type PostedRevenu
  * lines equal the stay component's live gross, the change-fee line equals the
  * live change-fee components' gross, and the line total equals what is
  * covered. Anything else is a conflict and covers nothing. The Xero tax type
- * (`OUTPUT2`) and the journal's tax codes are separate namespaces: both are
- * frozen, neither is translated, and a difference is never a conflict.
+ * and line-amount basis the lines carry (the booking's treatment, #4632) and the
+ * journal's tax codes are separate namespaces: both are frozen, neither is
+ * translated, and a difference is never a conflict.
  */
 
 /** The sender's own line input, and the booking's posted charge legs. */
@@ -68,6 +69,9 @@ export function planPrimaryBookingInvoice(input: PrimaryInvoicePlanInput): Prima
     postedLegs: input.postedLegs,
     mapping: {
       source: "BUILT",
+      // #4632: the treatment the built lines carry, resolved from the booking's tax anchor.
+      taxType: input.taxRendering.taxType ?? null,
+      lineAmountTypes: input.taxRendering.lineAmountTypes,
       hutFee: {
         accountCode: input.hutFeeMapping.code ?? "200",
         itemCode: input.hutFeeMapping.itemCode,
@@ -93,11 +97,14 @@ export function planPrimaryBookingInvoice(input: PrimaryInvoicePlanInput): Prima
  * The replay's plan (#4525): an invoice already raised, its lines read back from
  * the sync operation's stored request. Nothing is rebuilt. The change-fee line is
  * the one `changeFeeLineItem` words; the rest is the stay. The mapping frozen is
- * what the stored lines carry, because the settings they were built from are gone.
+ * what the stored request carries, because the settings it was built from are
+ * gone: each line's codes and tax type, and the invoice's line-amount basis.
  */
 export function planReplayedPrimaryBookingInvoice(input: {
   bookingId: string;
   storedLines: LineItem[];
+  /** The stored invoice's `lineAmountTypes`, or null when the request holds none. */
+  storedLineAmountTypes: string | null;
   postedLegs: readonly PostedRevenueLeg[];
 }): PrimaryInvoicePlan {
   return coverPrimaryInvoiceLines({
@@ -107,14 +114,21 @@ export function planReplayedPrimaryBookingInvoice(input: {
     postedLegs: input.postedLegs,
     mapping: {
       source: "STORED_REQUEST",
+      lineAmountTypes: input.storedLineAmountTypes,
       lineCodes: frozenLineCodes(input.storedLines),
     },
   });
 }
 
-/** The account and item code of each line sent, frozen beside a manifest (every invoice planner). */
-export function frozenLineCodes(lines: ReadonlyArray<LineItem>): { accountCode: string | null; itemCode: string | null }[] {
-  return lines.map((line) => ({ accountCode: line.accountCode ?? null, itemCode: line.itemCode ?? null }));
+/**
+ * The account code, item code and tax type of each line sent, frozen beside a
+ * manifest (every invoice planner). The tax type is the line's own (#4632): the
+ * booking's rendering for a built line, the provider's for a stored or copied one.
+ */
+export function frozenLineCodes(
+  lines: ReadonlyArray<LineItem>,
+): { accountCode: string | null; itemCode: string | null; taxType: string | null }[] {
+  return lines.map((line) => ({ accountCode: line.accountCode ?? null, itemCode: line.itemCode ?? null, taxType: line.taxType ?? null }));
 }
 
 /**
@@ -170,8 +184,6 @@ function coverPrimaryInvoiceLines(input: {
     payloadHash: primaryInvoicePayloadHash(lines),
     frozenMapping: {
       ...input.mapping,
-      taxType: "OUTPUT2",
-      lineAmountTypes: LineAmountTypes.Inclusive,
       componentTaxCodes: componentTaxCodes.map(({ account, chargeIdentity, taxCode }) => ({ account, chargeIdentity, taxCode })),
     },
     lineTotalCents,

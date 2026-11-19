@@ -14,7 +14,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 // points at the race database (see beforeAll).
 import type { SuiteEnvironmentRoleDeclaration } from "./helpers/environment-role";
 import { memberMoneyEventKeys } from "@/lib/member-money";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { memberMoneyTestContext, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
 import { releaseBookingFinancialHistoryForTeardown } from "./support/booking-financial-history-teardown";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
@@ -221,7 +221,7 @@ async function postR01(): Promise<void> {
     obligations: [{ key: charge, kind: "CHARGE", debtor: { kind: "MEMBER", memberId: OWNER }, faceCents: 20_000, evidence: {} }],
     legs: [
       { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: 20_000, booking, debtor: { kind: "MEMBER", memberId: OWNER }, obligationKey: charge, evidence: {} },
-      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 20_000, booking, chargeIdentity: `booking:${BOOKING}:test`, evidence: {} },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 20_000, booking, chargeIdentity: `booking:${BOOKING}:test`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
     ] }));
 }
 

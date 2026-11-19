@@ -39,8 +39,11 @@ export async function planPrimaryInvoiceManifest(input: Omit<PrimaryInvoicePlanI
 export type PrimaryInvoiceManifestSource =
   /** A raise: the plan made before sending, and the lines Xero says the returned invoice bills. */
   | { kind: "BUILT"; bookingId: string; plan: PrimaryInvoicePlan | null; billedLines: LineItem[] }
-  /** The replay: the claimed operation's stored `invoices[0].lineItems`, or null when it holds none. */
-  | { kind: "REPLAY"; bookingId: string; storedLines: LineItem[] | null };
+  /**
+   * The replay: the claimed operation's stored `invoices[0].lineItems`, or null
+   * when it holds none, and that invoice's stored `lineAmountTypes` (#4632).
+   */
+  | { kind: "REPLAY"; bookingId: string; storedLines: LineItem[] | null; storedLineAmountTypes: string | null };
 
 /**
  * Record the manifest for the invoice just linked. A plan writes COVERED and its
@@ -55,7 +58,12 @@ export async function recordPrimaryInvoiceManifest(source: PrimaryInvoiceManifes
       plan = source.plan && confirmBilledPrimaryInvoice(source.plan, source.billedLines);
     } else {
       if (!source.storedLines) return;
-      plan = planReplayedPrimaryBookingInvoice({ bookingId, storedLines: source.storedLines, postedLegs: await readBookingChargeLegs(prisma, bookingId) });
+      plan = planReplayedPrimaryBookingInvoice({
+        bookingId,
+        storedLines: source.storedLines,
+        storedLineAmountTypes: source.storedLineAmountTypes,
+        postedLegs: await readBookingChargeLegs(prisma, bookingId),
+      });
     }
     if (!plan) return;
     const settled = plan;
