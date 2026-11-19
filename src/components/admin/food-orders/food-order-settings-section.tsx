@@ -24,7 +24,7 @@ import {
   FOOD_OFFICER_EMAIL_MAX_LENGTH,
   FOOD_OFFICER_LABEL_MAX_LENGTH,
 } from "@/lib/food-order-rules";
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 
 /**
  * The Food Orders settings card (fork #121). Lodge Operations.
@@ -52,13 +52,16 @@ function toDraft(settings: Settings): Draft {
   };
 }
 
+const LOAD_FALLBACK = "Failed to load these settings";
+const SAVE_FALLBACK = "Failed to save";
+
 export function FoodOrderSettingsSection() {
   const canEdit = useAdminAreaEditAccess("lodge");
 
   const section = useSectionEditState<Draft>({
     load: async (signal) => {
       const res = await fetch(ENDPOINT, { signal });
-      if (!res.ok) throw new Error("Failed to load these settings");
+      if (!res.ok) throw new Error(LOAD_FALLBACK);
       return toDraft(((await res.json()) as { settings: Settings }).settings);
     },
     save: async (draft) => {
@@ -72,12 +75,12 @@ export function FoodOrderSettingsSection() {
       });
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError();
-        throw new Error(
-          await apiErrorMessageFromResponse(res, "Failed to save"),
-        );
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       return toDraft(((await res.json()) as { settings: Settings }).settings);
     },
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     successMessage: "Food order settings saved",
     isValid: (draft) =>
       draft.officerLabel.trim().length > 0 &&

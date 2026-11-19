@@ -13,7 +13,7 @@ reason: the Order food card is its own component (food-order-dashboard-card.tsx)
   render beside "Report an issue", which has to sit with the other module cards.
 
 file: src/components/admin-sidebar.tsx
-lines: 1097
+lines: 1039
 reason: the Food Orders entry in the Lodge Operations section; the sidebar's
   items are one list and an entry cannot live elsewhere.
 
