@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
-import type { BookingInvoiceOffer } from "@/lib/booking-invoice-access";
+import type { BookingInvoiceAskClubReason, BookingInvoiceOffer } from "@/lib/booking-invoice-access";
 import { saveResponseAsFile } from "@/lib/save-response-as-file";
 
 /**
@@ -73,6 +73,26 @@ export function BookingDocumentDownloadButton({
  * looking at someone else's booking is told to check the club's accounts (not
  * every admin has a Xero login), not addressed as the booker.
  */
+/**
+ * The ask-the-club line for each reason (`BookingInvoiceOffer`), in the reader's
+ * voice (#1289). `FURTHER_INVOICE` is the Xero club's case (no `reason`); the
+ * other two are a Xero-off club's (#5066 slice 2).
+ */
+const ASK_CLUB_LINE: Readonly<Record<BookingInvoiceAskClubReason | "FURTHER_INVOICE", { member: string; staff: string }>> = {
+  FURTHER_INVOICE: {
+    member: "This booking may have more than one invoice. Please ask the club for copies.",
+    staff: "This booking may have more than one invoice. Check the club's accounts for copies.",
+  },
+  XERO_DOCUMENTS: {
+    member: "This booking's invoice is in the club's accounts. Please ask the club for a copy.",
+    staff: "This booking's invoice is in the club's accounts. Check the club's accounts for a copy.",
+  },
+  EXTRA_CHARGE: {
+    member: "This booking has an extra charge with its own payment link, so no single invoice covers it. Please ask the club if you need one.",
+    staff: "This booking has an extra charge asked, so no single invoice covers it. Check the booking's payments.",
+  },
+};
+
 export function BookingInvoiceControl({
   bookingId,
   offer,
@@ -82,13 +102,7 @@ export function BookingInvoiceControl({
 }) {
   if (offer.kind === "NONE") return null;
   if (offer.kind === "ASK_CLUB") {
-    return (
-      <p className="text-sm text-muted-foreground">
-        {offer.staffViewer
-          ? "This booking may have more than one invoice. Check the club's accounts for copies."
-          : "This booking may have more than one invoice. Please ask the club for copies."}
-      </p>
-    );
+    return <p className="text-sm text-muted-foreground">{ASK_CLUB_LINE[offer.reason ?? "FURTHER_INVOICE"][offer.staffViewer ? "staff" : "member"]}</p>;
   }
   const invoiceNumber = offer.kind === "XERO_INVOICE" ? offer.invoiceNumber : null;
   return (

@@ -97,7 +97,15 @@ const XERO_ON = { xeroIntegration: true };
 const XERO_OFF = { xeroIntegration: false };
 const ON_OFFER = { kind: "XERO_INVOICE", invoiceNumber: "INV-0042", creditNotes: [CREDIT_NOTE] };
 
-function offer(b: never, id = OWNER_ID, role = "USER", modules = XERO_ON, deps = noSupplementary) {
+/** A Xero-off club's booking: no Xero invoice id, no Xero documents. */
+const offBooking = (overrides: Record<string, unknown> = {}, payment: Record<string, unknown> = {}) =>
+  booking(overrides, { xeroInvoiceId: null, xeroInvoiceNumber: null, ...payment });
+const noXeroDocuments = {
+  hasAnySupplementaryInvoice: vi.fn(async () => false),
+  creditNotes: vi.fn(async () => []),
+};
+
+function offer(b: never, id = OWNER_ID, role = "USER", modules = XERO_ON, deps: typeof noSupplementary = noSupplementary) {
   return resolveBookingInvoiceOffer({ booking: b, viewer: viewerFor(b, id, role), modules }, deps);
 }
 
@@ -140,20 +148,45 @@ describe("resolveBookingInvoiceOffer: the one rule for the button and the route"
   });
 
   it("offers the app's generated document while the club's Xero module is off, never Xero's invoice (slice 2)", async () => {
-    expect(await offer(booking(), OWNER_ID, "USER", XERO_OFF)).toEqual({ kind: "GENERATED", notYetApproved: false });
-    // No Xero-side read runs for a Xero-off club, whatever ids the payment carries.
-    expect(noSupplementary.hasAnySupplementaryInvoice).not.toHaveBeenCalled();
-    expect(noSupplementary.creditNotes).not.toHaveBeenCalled();
+    expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, noXeroDocuments)).toEqual({ kind: "GENERATED", notYetApproved: false });
+    // It looks for Xero documents left from when the module was on.
+    expect(noXeroDocuments.hasAnySupplementaryInvoice).toHaveBeenCalledWith("ckbooking1234567");
   });
 
   it("with Xero off, keeps the same audience and refusals", async () => {
-    expect(await offer(booking(), "guest-1", "USER", XERO_OFF)).toEqual({ kind: "NONE" });
-    expect(await offer(booking(), "content-1", "ADMIN_CONTENT", XERO_OFF)).toEqual({ kind: "NONE" });
-    expect(await offer(booking(), "officer-1", "ADMIN_BOOKINGS", XERO_OFF)).toEqual({ kind: "GENERATED", notYetApproved: false });
-    expect(await offer(booking({ status: "CANCELLED" }), OWNER_ID, "USER", XERO_OFF)).toEqual({ kind: "NONE" });
-    expect(await offer(booking({ status: "AWAITING_REVIEW" }), OWNER_ID, "USER", XERO_OFF)).toEqual({ kind: "GENERATED", notYetApproved: true });
-    const organiserPaid = booking({ organiserSettled: true, parentBookingId: "organiser-booking" }, { source: "STRIPE" });
-    expect(await offer(organiserPaid, OWNER_ID, "USER", XERO_OFF)).toEqual({ kind: "NONE" });
+    const off = (b: never, id = OWNER_ID, role = "USER") => offer(b, id, role, XERO_OFF, noXeroDocuments);
+    expect(await off(offBooking(), "guest-1")).toEqual({ kind: "NONE" });
+    expect(await off(offBooking(), "content-1", "ADMIN_CONTENT")).toEqual({ kind: "NONE" });
+    expect(await off(offBooking(), "officer-1", "ADMIN_BOOKINGS")).toEqual({ kind: "GENERATED", notYetApproved: false });
+    expect(await off(offBooking({ status: "CANCELLED" }))).toEqual({ kind: "NONE" });
+    expect(await off(offBooking({ status: "AWAITING_REVIEW" }))).toEqual({ kind: "GENERATED", notYetApproved: true });
+    const organiserPaid = offBooking({ organiserSettled: true, parentBookingId: "organiser-booking" }, { source: "STRIPE" });
+    expect(await off(organiserPaid)).toEqual({ kind: "NONE" });
+  });
+
+  it("with Xero off, offers the organiser's own booking in an organiser-pays group", async () => {
+    const organiser = offBooking({ groupBookingAsOrganiser: { paymentMode: "ORGANISER_PAYS" } });
+    expect(await offer(organiser, OWNER_ID, "USER", XERO_OFF, noXeroDocuments)).toEqual({ kind: "GENERATED", notYetApproved: false });
+  });
+
+  it("with Xero off, points a booking that already has Xero documents at the club, never a second Invoice", async () => {
+    const ask = { kind: "ASK_CLUB", staffViewer: false, reason: "XERO_DOCUMENTS" };
+    // A primary Xero invoice from when the module was on: no read needed.
+    expect(await offer(booking(), OWNER_ID, "USER", XERO_OFF, noXeroDocuments)).toEqual(ask);
+    // A supplementary invoice, or a credit note, found by the existing readers.
+    const supplementary = { hasAnySupplementaryInvoice: vi.fn(async () => true), creditNotes: vi.fn(async () => []) };
+    expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, supplementary)).toEqual(ask);
+    const creditNote = { hasAnySupplementaryInvoice: vi.fn(async () => false), creditNotes: vi.fn(async () => [CREDIT_NOTE]) };
+    expect(await offer(offBooking(), OWNER_ID, "USER", XERO_OFF, creditNote)).toEqual(ask);
+    expect(await offer(booking(), "officer-1", "ADMIN_BOOKINGS", XERO_OFF, noXeroDocuments)).toEqual({ ...ask, staffViewer: true });
+  });
+
+  it("with Xero off, explains an extra charge asked instead of offering nothing", async () => {
+    expect(await offer(offBooking({}, { transactions: [{}] }), OWNER_ID, "USER", XERO_OFF, noXeroDocuments)).toEqual({
+      kind: "ASK_CLUB",
+      staffViewer: false,
+      reason: "EXTRA_CHARGE",
+    });
   });
 
   it("offers nothing on a cancelled or bumped booking", async () => {
@@ -358,7 +391,13 @@ describe("prepareBookingInvoiceDownload", () => {
   });
 
   describe("with the Xero module off: the app's generated document (slice 2)", () => {
-    const off = (overrides: Record<string, unknown> = {}) => deps({ modules: vi.fn(async () => XERO_OFF), ...overrides });
+    const off = (overrides: Record<string, unknown> = {}) =>
+      deps({
+        modules: vi.fn(async () => XERO_OFF),
+        loadBooking: vi.fn(async () => offBooking()),
+        offer: (input: Parameters<typeof resolveBookingInvoiceOffer>[0]) => resolveBookingInvoiceOffer(input, noXeroDocuments),
+        ...overrides,
+      });
 
     it("renders the generated document, never reads Xero, and audits it as generated with its figures", async () => {
       const d = off();
@@ -391,18 +430,19 @@ describe("prepareBookingInvoiceDownload", () => {
     });
 
     it("marks a booking awaiting review as not yet approved, in the document and the audit row", async () => {
-      const d = off({ loadBooking: vi.fn(async () => booking({ status: "AWAITING_REVIEW" })) });
+      const d = off({ loadBooking: vi.fn(async () => offBooking({ status: "AWAITING_REVIEW" })) });
       await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d);
       expect(d.renderGenerated).toHaveBeenCalledWith(expect.anything(), { kind: "GENERATED", notYetApproved: true });
       expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ notYetApproved: true }) }));
     });
 
     it.each([
-      ["a cancelled booking", booking({ status: "CANCELLED" })],
-      ["a waitlisted booking", booking({ status: "WAITLISTED" })],
-      ["a place the organiser pays for", booking({ organiserSettled: true, parentBookingId: "organiser-booking" })],
-      ["a booking with a night awaiting a price (#3170)", booking({ guests: [{ ...GUEST, nights: [{ stayDate: new Date("2026-08-03T00:00:00.000Z"), priceCents: null }] }] })],
-      ["a booking with an extra charge asked", booking({}, { transactions: [{}] })],
+      ["a cancelled booking", offBooking({ status: "CANCELLED" })],
+      ["a waitlisted booking", offBooking({ status: "WAITLISTED" })],
+      ["a place the organiser pays for", offBooking({ organiserSettled: true, parentBookingId: "organiser-booking" })],
+      ["a booking with a night awaiting a price (#3170)", offBooking({ guests: [{ ...GUEST, nights: [{ stayDate: new Date("2026-08-03T00:00:00.000Z"), priceCents: null }] }] })],
+      ["a booking with an extra charge asked", offBooking({}, { transactions: [{}] })],
+      ["a booking with a Xero invoice from when Xero was on", booking()],
     ])("refuses %s as not found, before any limit, render or audit", async (_label, b) => {
       const d = off({ loadBooking: vi.fn(async () => b) });
       expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "NOT_FOUND" });

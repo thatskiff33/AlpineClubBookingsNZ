@@ -47,6 +47,17 @@ describe("BookingInvoiceControl", () => {
     expect(screen.queryByText(/Xero/)).toBeNull();
   });
 
+  it("with Xero off, explains Xero documents and an extra charge in the reader's voice (#5066 slice 2)", () => {
+    const { rerender } = render(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: false, reason: "XERO_DOCUMENTS" }} />);
+    expect(screen.getByText("This booking's invoice is in the club's accounts. Please ask the club for a copy.")).toBeInTheDocument();
+    rerender(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: true, reason: "XERO_DOCUMENTS" }} />);
+    expect(screen.getByText(/Check the club's accounts for a copy/)).toBeInTheDocument();
+    rerender(<BookingInvoiceControl bookingId="bk-1" offer={{ kind: "ASK_CLUB", staffViewer: false, reason: "EXTRA_CHARGE" }} />);
+    expect(screen.getByText(/extra charge with its own payment link/)).toBeInTheDocument();
+    expect(screen.queryByText(/more than one invoice/)).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
   it("downloads the booking's invoice through the shared file saver", async () => {
     const response = new Response("%PDF", { status: 200 });
     fetchMock.mockResolvedValue(response);

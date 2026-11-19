@@ -74,4 +74,26 @@ describe("renderGeneratedBookingInvoice", () => {
     ]);
     expect(balanceCents).toBe(15_000);
   });
+
+  it("bills an organiser-pays organiser's own guests only, never the places the group settlement pays for", async () => {
+    const joinerBooking = {
+      status: "CONFIRMED",
+      organiserSettled: true,
+      finalPriceCents: 50_000,
+      guests: [{ id: "joiner-guest", priceCents: 50_000 }],
+    };
+    const organiser = booking({
+      status: "CONFIRMED",
+      groupBookingAsOrganiser: {
+        id: "group-1",
+        paymentMode: "ORGANISER_PAYS",
+        settlement: { id: "settlement-1", status: "SUCCEEDED", amountCents: 50_000 },
+        joins: [{ id: "join-1", booking: joinerBooking }],
+      },
+    });
+    const { data } = await renderGeneratedBookingInvoice(organiser, { notYetApproved: false }, dependencies(0));
+    expect(data.lines.filter((line) => line.kind === "GUEST").map((line) => line.guest)).toEqual(["Tama Teacher"]);
+    expect(data.totalCents).toBe(18_000);
+    expect(data.lines.reduce((sum, line) => sum + line.amountCents, 0)).toBe(18_000);
+  });
 });

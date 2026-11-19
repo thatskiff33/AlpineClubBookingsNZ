@@ -109,9 +109,7 @@ export async function resolveBookingInvoiceOffer(
   dependencies = offerDependencies,
 ): Promise<BookingInvoiceOffer> {
   const { booking } = input;
-  if (!input.modules.xeroIntegration) {
-    return generatedBookingInvoiceOnOffer({ viewer: input.viewer, booking, xeroModuleOn: false }) ?? { kind: "NONE" };
-  }
+  if (!input.modules.xeroIntegration) return generatedOffer(input, dependencies);
   const primary = primaryXeroInvoiceOnOffer({
     viewer: input.viewer,
     booking,
@@ -130,6 +128,33 @@ export async function resolveBookingInvoiceOffer(
     modificationIds: booking.modifications.map((modification) => modification.id),
   });
   return { kind: "XERO_INVOICE", invoiceNumber: primary.invoiceNumber, creditNotes };
+}
+
+/**
+ * The Xero-off offer: the generated document's pure rule, then, only once it
+ * says GENERATED, whether the booking already has Xero documents from when the
+ * module was on (a supplementary invoice, or a credit note the app holds the
+ * id of). One is enough to point the booking at the club instead: a generated
+ * "Invoice" beside Xero's would be a second document for the same debt.
+ */
+async function generatedOffer(
+  input: Parameters<typeof resolveBookingInvoiceOffer>[0],
+  dependencies: typeof offerDependencies,
+): Promise<BookingInvoiceOffer> {
+  const { booking, viewer } = input;
+  const offer = generatedBookingInvoiceOnOffer({ viewer, booking, xeroModuleOn: false });
+  if (offer?.kind !== "GENERATED") return offer ?? { kind: "NONE" };
+  const xeroDocuments =
+    (await dependencies.hasAnySupplementaryInvoice(booking.id)) ||
+    (
+      await dependencies.creditNotes({
+        id: booking.id,
+        paymentId: booking.payment?.id ?? null,
+        ownerMemberId: bookingOwner(booking).memberId,
+        modificationIds: booking.modifications.map((modification) => modification.id),
+      })
+    ).length > 0;
+  return xeroDocuments ? { kind: "ASK_CLUB", staffViewer: viewer.nonOwnerAdminViewer, reason: "XERO_DOCUMENTS" } : offer;
 }
 
 /** `<club>-invoice-<number>.pdf` / `<club>-credit-note-<number>.pdf`, else the booking reference; header-safe characters only. */

@@ -1,6 +1,8 @@
 import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
+import { BookingStatus } from "@prisma/client";
 import { planBookingInvoiceLines, type BookingInvoiceLineSource } from "@/lib/booking-invoice";
 import type { BookingInvoiceSummary } from "@/lib/booking-invoice-summary";
+import { PAID_LIKE_BOOKING_STATUSES, PAYMENT_OWED_BOOKING_STATUSES } from "@/lib/booking-status";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
 /** One Xero credit note raised against the booking (`readBookingCreditNotes`). */
@@ -30,7 +32,11 @@ export type BookingCreditNote = {
  *   hand over an incomplete record, so the page says where to get copies:
  *   `staffViewer` (an officer or admin on someone else's booking,
  *   `nonOwnerAdminViewer`) is told to check the club's accounts; anyone else
- *   to ask the club.
+ *   to ask the club. With Xero off it carries a `reason` (absent, the Xero
+ *   case above): `XERO_DOCUMENTS` when the booking already has Xero documents
+ *   from when the module was on, so no generated "Invoice" is made beside
+ *   them; `EXTRA_CHARGE` when an extra charge was asked, which the generated
+ *   document's figures do not cover.
  * - `GENERATED` (Xero off only): the Download invoice button, for the app's own
  *   document (`buildBookingInvoiceData`), marked "Not yet approved" on a
  *   booking awaiting review (`notYetApproved`). Its account lines ride beside
@@ -45,8 +51,11 @@ export type BookingCreditNote = {
 export type BookingInvoiceOffer =
   | { kind: "NONE" }
   | { kind: "XERO_INVOICE"; invoiceNumber: string | null; creditNotes: BookingCreditNote[] }
-  | { kind: "ASK_CLUB"; staffViewer: boolean }
+  | { kind: "ASK_CLUB"; staffViewer: boolean; reason?: BookingInvoiceAskClubReason }
   | { kind: "GENERATED"; notYetApproved: boolean };
+
+/** Why a Xero-off booking is pointed at the club instead of a generated document. */
+export type BookingInvoiceAskClubReason = "XERO_DOCUMENTS" | "EXTRA_CHARGE";
 
 /**
  * The page-only account lines beside a `XERO_INVOICE` or `GENERATED` offer: the summary from
@@ -108,19 +117,16 @@ export function primaryXeroInvoiceOnOffer(input: {
  * marked "Not yet approved"). Draft, pending, waitlisted and offered bookings
  * owe nothing yet; cancelled and bumped ones are ended.
  */
-const GENERATED_INVOICE_STATUSES: ReadonlySet<string> = new Set([
-  "PAYMENT_PENDING",
-  "CONFIRMED",
-  "PAID",
-  "COMPLETED",
-  "AWAITING_REVIEW",
+const GENERATED_INVOICE_STATUSES: ReadonlySet<string> = new Set<string>([
+  ...PAYMENT_OWED_BOOKING_STATUSES,
+  ...PAID_LIKE_BOOKING_STATUSES,
+  BookingStatus.AWAITING_REVIEW,
 ]);
 
 type GeneratedOfferBooking = BookingInvoiceLineSource & {
   status: string;
   organiserSettled: boolean;
-  payment: { transactions: readonly unknown[] } | null;
-  groupBookingAsOrganiser?: { paymentMode: string } | null;
+  payment: { transactions: readonly unknown[]; xeroInvoiceId?: string | null } | null;
 };
 
 /**
@@ -135,27 +141,33 @@ type GeneratedOfferBooking = BookingInvoiceLineSource & {
  *   approved".
  * - Not a group place the organiser pays for (`organiserSettled`, before or
  *   after the organiser pays): the organiser's settlement carries that money,
- *   so a document from the place would bill the joiner for it. Nor the
- *   organiser's own booking in an organiser-pays group, whose document would
- *   leave out the places the organiser pays for.
- * - Not a booking with an extra charge asked (any ADDITIONAL ledger row): the
- *   summary does not cover additional asks, which have their own pay link, so
- *   the document would understate what was billed.
+ *   so a document from the place would bill the joiner for it. The organiser's
+ *   own booking is offered: its figures are its own guests only, and the
+ *   group's settlement covers only the places (`groupSettlementTotalCents`).
  * - Its lines must be printable (`planBookingInvoiceLines`): no night whose
  *   price is not known (#3170), and lines that add up to the booking's price.
+ * - Otherwise printable, a booking is pointed at the club (`ASK_CLUB`, never a
+ *   silent nothing) when it already has a primary Xero invoice from when the
+ *   module was on (`XERO_DOCUMENTS`), or an extra charge asked (any ADDITIONAL
+ *   ledger row, `EXTRA_CHARGE`): the summary does not cover additional asks,
+ *   which have their own pay link. The download refuses both. Other Xero
+ *   documents (supplementary invoices, credit notes) need a read, so
+ *   `resolveBookingInvoiceOffer` asks after this says GENERATED.
  */
 export function generatedBookingInvoiceOnOffer(input: {
-  viewer: { canSeeOwnerCredit: boolean };
+  viewer: { canSeeOwnerCredit: boolean; nonOwnerAdminViewer: boolean };
   booking: GeneratedOfferBooking;
   xeroModuleOn: boolean;
-}): Extract<BookingInvoiceOffer, { kind: "GENERATED" }> | null {
+}): Extract<BookingInvoiceOffer, { kind: "GENERATED" | "ASK_CLUB" }> | null {
   const { viewer, booking } = input;
   if (!viewer.canSeeOwnerCredit) return null;
   if (input.xeroModuleOn) return null;
   if (!GENERATED_INVOICE_STATUSES.has(booking.status)) return null;
   if (booking.organiserSettled) return null;
-  if (booking.groupBookingAsOrganiser?.paymentMode === "ORGANISER_PAYS") return null;
-  if ((booking.payment?.transactions.length ?? 0) > 0) return null;
   if (planBookingInvoiceLines(booking).kind !== "LINES") return null;
-  return { kind: "GENERATED", notYetApproved: booking.status === "AWAITING_REVIEW" };
+  const askClub = (reason: BookingInvoiceAskClubReason) =>
+    ({ kind: "ASK_CLUB", staffViewer: viewer.nonOwnerAdminViewer, reason }) as const;
+  if (booking.payment?.xeroInvoiceId) return askClub("XERO_DOCUMENTS");
+  if ((booking.payment?.transactions.length ?? 0) > 0) return askClub("EXTRA_CHARGE");
+  return { kind: "GENERATED", notYetApproved: booking.status === BookingStatus.AWAITING_REVIEW };
 }

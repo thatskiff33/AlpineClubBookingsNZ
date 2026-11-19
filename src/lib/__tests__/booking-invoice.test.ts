@@ -327,7 +327,7 @@ describe("resolveClubInvoiceSupplier and the address lines", () => {
 });
 
 describe("generatedBookingInvoiceOnOffer: who is offered the app's document, and for which bookings", () => {
-  const owner = { canSeeOwnerCredit: true };
+  const owner = { canSeeOwnerCredit: true, nonOwnerAdminViewer: false };
   const offerable = (overrides: Record<string, unknown> = {}) => ({
     ...input(),
     status: "CONFIRMED",
@@ -349,10 +349,12 @@ describe("generatedBookingInvoiceOnOffer: who is offered the app's document, and
     const withXeroInvoice = offerable({ payment: { source: "STRIPE", xeroInvoiceId: "x-1", xeroInvoiceNumber: "INV-1", transactions: [] } });
     expect(primaryXeroInvoiceOnOffer({ viewer: owner, booking: withXeroInvoice, xeroModuleOn: false })).toBeNull();
     expect(offer(withXeroInvoice, true)).toBeNull();
+    // With Xero off, a booking holding a Xero invoice is pointed at the club, not given a second one.
+    expect(offer(withXeroInvoice, false)).toMatchObject({ kind: "ASK_CLUB", reason: "XERO_DOCUMENTS" });
   });
 
   it("offers it only to the owner-credit audience", () => {
-    expect(offer(offerable(), false, { canSeeOwnerCredit: false })).toBeNull();
+    expect(offer(offerable(), false, { canSeeOwnerCredit: false, nonOwnerAdminViewer: false })).toBeNull();
   });
 
   it("marks a booking awaiting review, and offers paid, completed and pending-payment bookings unmarked", () => {
@@ -368,14 +370,20 @@ describe("generatedBookingInvoiceOnOffer: who is offered the app's document, and
     }
   });
 
-  it("offers nothing on a place the organiser pays for, nor on the organiser's own booking in that group", () => {
+  it("offers nothing on a place the organiser pays for, but does offer the organiser's own booking", () => {
     expect(offer(offerable({ organiserSettled: true, parentBookingId: "organiser-booking" }))).toBeNull();
-    expect(offer(offerable({ groupBookingAsOrganiser: { paymentMode: "ORGANISER_PAYS" } }))).toBeNull();
-    expect(offer(offerable({ groupBookingAsOrganiser: { paymentMode: "EACH_PAYS" } }))).toEqual({ kind: "GENERATED", notYetApproved: false });
+    expect(offer(offerable({ groupBookingAsOrganiser: { paymentMode: "ORGANISER_PAYS" } }))).toEqual({ kind: "GENERATED", notYetApproved: false });
   });
 
-  it("offers nothing on a booking with an extra charge asked, which its summary does not cover", () => {
-    expect(offer(offerable({ payment: { source: "STRIPE", xeroInvoiceId: null, xeroInvoiceNumber: null, transactions: [{}] } }))).toBeNull();
+  it("points a booking with an extra charge asked, or a Xero invoice from when Xero was on, at the club", () => {
+    const payment = { source: "STRIPE", xeroInvoiceId: null, xeroInvoiceNumber: null, transactions: [{}] };
+    expect(offer(offerable({ payment }))).toEqual({ kind: "ASK_CLUB", staffViewer: false, reason: "EXTRA_CHARGE" });
+    expect(offer(offerable({ payment: { ...payment, transactions: [], xeroInvoiceId: "x-1" } }))).toEqual({
+      kind: "ASK_CLUB",
+      staffViewer: false,
+      reason: "XERO_DOCUMENTS",
+    });
+    expect(offer(offerable({ payment }), false, { canSeeOwnerCredit: true, nonOwnerAdminViewer: true })).toMatchObject({ staffViewer: true });
   });
 
   it("offers nothing on a booking with an unpriced night, or lines that do not add up", () => {
