@@ -1,0 +1,36 @@
+{
+ "extends": "./tsconfig.test.json",
+ "compilerOptions": {
+  "incremental": false
+ },
+ "include": [],
+ "files": [
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/app/(admin)/admin/system/ai-connections/__tests__/ai-connections-client.test.tsx",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/app/(authenticated)/connect/authorize/__tests__/approval-form.test.tsx",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/app/(authenticated)/profile/__tests__/connected-apps-card.test.tsx",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/config/__tests__/schema.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/admin-bookings-consent-chips.test.tsx",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/admin-bookings-page.test.tsx",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/admin-route-area-matrix.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/booking-owner-census.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/diagnostics-published-view-bookings.test.tsx",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-admin-routes.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-approval.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-dispatch.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-endpoint.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-grant-lifecycle.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-loopback.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-module-off.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-oauth-routes.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-oauth.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-principal.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-route-census.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/mcp-settings.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/phase-b1.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/setup-readiness.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/stuck-state-dashboard.test.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/src/lib/__tests__/support/mcp-grant-store.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/next-env.d.ts",
+  "/data/worktrees/alpineclubbookingsnz/alp-653/vitest.setup.ts"
+ ]
+}

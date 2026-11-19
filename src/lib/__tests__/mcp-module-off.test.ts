@@ -7,6 +7,10 @@
  * a route added later under one of the module's prefixes, or one that reaches
  * into `@/lib/mcp`, is held to the same rule without anyone listing it here.
  *
+ * The member reads the module added beside older routes (`MCP_READ_HANDLERS`)
+ * cannot sit under a proxy prefix, so the handler's own check is their gate
+ * and only the method the module added is held to it.
+ *
  * The admin page has no gate of its own: like every admin page since #4799 it
  * is gated by the proxy rule its hub registry entry's `mcpServer` flag
  * generates, and its data comes only through the API routes gated below.
@@ -64,6 +68,9 @@ vi.mock("@/lib/prisma", () => {
     ),
   };
 });
+// The older DELETE beside `GET /api/bookings/[id]` pulls in the whole booking
+// engine, none of which the read uses.
+vi.mock("@/lib/booking-delete", () => ({ deleteBooking: vi.fn() }));
 vi.mock("next/navigation", () => ({
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");
@@ -110,12 +117,28 @@ function allRouteFiles(): string[] {
   return [...found].sort();
 }
 
+/**
+ * The member reads ALP-653 added for an AI app action to call. Each sits in or
+ * beside a route that is older than the module, so it names the one method
+ * the module owns.
+ */
+const MCP_READ_HANDLERS: Readonly<Record<string, readonly string[]>> = {
+  "src/app/api/bookings/[id]/route.ts": ["GET"],
+  "src/app/api/bookings/mine/route.ts": ["GET"],
+  "src/app/api/notices/route.ts": ["GET"],
+  "src/app/api/profile/summary/route.ts": ["GET"],
+};
+
+function underMcpPrefix(file: string): boolean {
+  return mcpPrefixes.some((prefix) => underPrefix(urlPathOf(file), prefix));
+}
+
 /** Every route the module adds: under one of its prefixes, or built on `@/lib/mcp`. */
 const mcpRouteFiles = allRouteFiles().filter(
-  (file) =>
-    mcpPrefixes.some((prefix) => underPrefix(urlPathOf(file), prefix)) ||
-    readFileSync(file, "utf8").includes("@/lib/mcp/"),
+  (file) => underMcpPrefix(file) || readFileSync(file, "utf8").includes("@/lib/mcp/"),
 );
+/** The ones the proxy rule covers whole, whatever the method. */
+const mcpPrefixedRouteFiles = mcpRouteFiles.filter(underMcpPrefix);
 
 const MCP_PAGES = [
   "src/app/(authenticated)/connect/authorize/page.tsx",
@@ -177,7 +200,15 @@ describe("the mcpServer module's routes are discovered (INV-MCP-001)", () => {
         "src/app/api/mcp/route.ts",
         "src/app/api/member/mcp-grants/[id]/route.ts",
         "src/app/api/member/mcp-grants/route.ts",
+        ...Object.keys(MCP_READ_HANDLERS),
       ]),
+    );
+  });
+
+  it("lists every route built on the module that no proxy prefix covers", () => {
+    // A new one must say which of its methods the module owns.
+    expect(mcpRouteFiles.filter((file) => !underMcpPrefix(file))).toEqual(
+      Object.keys(MCP_READ_HANDLERS).sort(),
     );
   });
 
@@ -193,7 +224,7 @@ describe("the mcpServer module's routes are discovered (INV-MCP-001)", () => {
 
   it("puts every route and page under the module's proxy rule", () => {
     const paths = [
-      ...mcpRouteFiles.map(urlPathOf),
+      ...mcpPrefixedRouteFiles.map(urlPathOf),
       ...MCP_PAGES.map(urlPathOf),
       // The admin page's pre-hub address.
       "/admin/ai-connections",
@@ -210,7 +241,12 @@ describe("every route handler answers 404 and does nothing with the module off",
 
   it.each(cases)("%s", async (file) => {
     const routeModule = (await import(/* @vite-ignore */ resolve(file))) as Record<string, unknown>;
-    const methods = HTTP_METHODS.filter((method) => typeof routeModule[method] === "function");
+    const methods = HTTP_METHODS.filter(
+      (method) =>
+        typeof routeModule[method] === "function" &&
+        (MCP_READ_HANDLERS[file]?.includes(method) ?? true),
+    );
+    expect(methods.length, file).toBe(MCP_READ_HANDLERS[file]?.length ?? methods.length);
     expect(methods.length, file).toBeGreaterThan(0);
 
     for (const method of methods) {

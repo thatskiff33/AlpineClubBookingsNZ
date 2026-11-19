@@ -42,8 +42,8 @@ export const MCP_AUTHORIZE_PATH = "/connect/authorize";
 
 export const MCP_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 /**
- * A ceiling only. A connection ends when the sign-in that approved it would
- * (`INV-MCP-005`), which the club's maximum session age makes far sooner.
+ * A ceiling only. A connection ends when the sign-in that approved it reaches
+ * the club's maximum session age (`INV-MCP-005`), which is far sooner.
  */
 export const MCP_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const MCP_AUTH_CODE_TTL_SECONDS = 5 * 60;
@@ -467,9 +467,19 @@ async function issueTokens(grantId: string, scope: McpGrantScope): Promise<McpTo
   const access = issueActionToken();
   const refresh = issueActionToken();
   const now = Date.now();
-  await prisma.$transaction([
-    prisma.mcpToken.deleteMany({ where: { grantId, expiresAt: { lt: new Date(now) } } }),
-    prisma.mcpToken.createMany({
+  const stillActive = await prisma.$transaction(async (tx) => {
+    // A status-guarded write that changes nothing. It holds the connection's
+    // row, so a disconnect racing this either has already won (nothing is
+    // written) or waits for it and then deletes the tokens written below
+    // (`endMcpGrants`). No token outlives its connection (`INV-MCP-004`).
+    const held = await tx.mcpGrant.updateMany({
+      where: { id: grantId, status: "ACTIVE" },
+      data: { status: "ACTIVE" },
+    });
+    if (held.count === 0) return false;
+
+    await tx.mcpToken.deleteMany({ where: { grantId, expiresAt: { lt: new Date(now) } } });
+    await tx.mcpToken.createMany({
       data: [
         {
           tokenHash: access.tokenHash,
@@ -484,8 +494,12 @@ async function issueTokens(grantId: string, scope: McpGrantScope): Promise<McpTo
           expiresAt: new Date(now + MCP_REFRESH_TOKEN_TTL_SECONDS * 1000),
         },
       ],
-    }),
-  ]);
+    });
+    return true;
+  });
+  if (!stillActive) {
+    return failure("invalid_grant", "This connection has ended. Connect the app again.");
+  }
 
   return {
     ok: true,

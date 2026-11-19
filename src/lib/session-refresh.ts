@@ -8,7 +8,9 @@
  * them (`INV-SSOT`): an AI app connection (`INV-MCP-005`) builds its token
  * from the connection and passes it through both functions, so login
  * revocation, the maximum session age (`INV-AUTH-007`), `canLogin`, roles and
- * the two-factor rules apply to it exactly as to a browser session. Neither
+ * the two-factor rules reach it by the code a browser session runs. The
+ * browser's idle expiry and sign-out live in the cookie, not here, and do not
+ * end a connection. Neither
  * function stamps `lastAuthenticatedAt` for such a caller: that is written
  * only on a password sign-in, which a connection never is.
  */

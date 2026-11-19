@@ -51,7 +51,8 @@ set of member actions; see [The roadmap](#the-roadmap).
 
 While the module is off, every AI-connection address answers **Not Found**:
 the MCP endpoint, its sign-in endpoints and discovery documents, the approval
-screen, the profile card and the admin page. Connected apps stop working.
+screen, the profile card, the admin page and the four member reads added for
+the actions. Connected apps stop working.
 Connections are kept, not ended, and work again when you switch it back on
 (`INV-MCP-001`).
 
@@ -154,14 +155,14 @@ calls an existing API route, and the route decides, exactly as for a browser.
 | --- | --- | --- | --- |
 | `get_availability` | Free beds at a lodge for each night of one month | read | `GET /api/availability` |
 | `list_lodges` | The lodges that can be booked, with their ids | read | `GET /api/lodges` |
-| `list_my_bookings` | The member's bookings, made by them or as a guest | read | `GET /api/bookings/mine` |
-| `get_my_booking` | One of those bookings in full | read | `GET /api/bookings/[id]` |
+| `list_my_bookings` | The member's newest 200 bookings, made by them or as a guest; says when there are older ones | read | `GET /api/bookings/mine` |
+| `get_my_booking` | A summary of one of those bookings; the price and note only on a booking the member made, and whether the price is still being checked | read | `GET /api/bookings/[id]` |
 | `get_my_family_group` | The member and their family groups' active members | read | `GET /api/members/family` |
-| `get_my_profile` | The member's own contact details and membership | read | `GET /api/profile/summary` |
+| `get_my_profile` | The member's own name, contact details, address and age group | read | `GET /api/profile/summary` |
 | `list_notices` | Club notices the member can see | read | `GET /api/notices` |
 | `create_draft_booking` | Saves a **draft** booking: holds no beds, takes no payment; the member finishes and pays on the website | write | `POST /api/bookings` (always `draft: true`) |
 | `preview_cancel_booking` | What cancelling would refund, without cancelling | read | `GET /api/bookings/[id]/cancel-preview` |
-| `cancel_my_booking` | Cancels a booking and refunds it under the club's policy | destructive | `POST /api/bookings/[id]/cancel` |
+| `cancel_my_booking` | Cancels a booking and refunds it under the club's policy. An officer who may cancel members' bookings on the website may through this action too | destructive | `POST /api/bookings/[id]/cancel` |
 | `list_my_draft_bookings` | The member's unconfirmed drafts | read | `GET /api/bookings/drafts` |
 | `get_my_credit_balance` | The member's account credit, in cents | read | `GET /api/member/credit-balance` |
 | `get_my_subscription_status` | Whether this season's subscription is paid | read | `GET /api/member/subscription-status` |
@@ -222,8 +223,10 @@ shows that it was used.
 An officer's connection acts with the officer's permissions, so whatever the
 officer asks about — another member's details, bookings or payments — goes to
 that officer's AI provider. Stage 1's actions are member actions, but the
-follow-on stages add officer actions, and the switch governs the connection,
-not the action list. That is why **Officers may
+route decides whose record an action may touch: `preview_cancel_booking` and
+`cancel_my_booking` already accept any member's booking from an officer who
+may cancel bookings on the website. The follow-on stages add officer actions,
+and the switch governs the connection, not the action list. That is why **Officers may
 connect an AI app** is a separate switch, off by default. Before switching it
 on, the club should cover it in its privacy notice and decide which AI
 providers are acceptable.

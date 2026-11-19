@@ -23,7 +23,10 @@ export const cancelBookingMutationSchema = z.object({
   hostingCoverageOverride: hostingCoverageOverrideSchema.optional(),
 });
 
-/** The route's `[id]` segment, shared with the catalogue for the same reason. */
-export const cancelBookingParamsSchema = z.object({
+/**
+ * The `[id]` segment of the booking routes (`/api/bookings/[id]` and the
+ * routes under it), shared with the catalogue for the same reason.
+ */
+export const bookingIdParamsSchema = z.object({
   id: z.string().min(1),
 });

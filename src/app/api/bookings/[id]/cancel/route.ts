@@ -8,7 +8,7 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { auth } from "@/lib/auth";
 import { cancelBooking } from "@/lib/booking-cancel";
-import { cancelBookingMutationSchema, cancelBookingParamsSchema } from "@/lib/booking-cancel-schema";
+import { cancelBookingMutationSchema, bookingIdParamsSchema } from "@/lib/booking-cancel-schema";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -28,7 +28,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const parsedParams = cancelBookingParamsSchema.safeParse(await params);
+    const parsedParams = bookingIdParamsSchema.safeParse(await params);
     if (!parsedParams.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsedParams.error.flatten() },

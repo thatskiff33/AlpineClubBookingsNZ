@@ -544,7 +544,7 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
     description:
       "Let a signed-in person connect an approved AI app, such as Claude or ChatGPT, to their own account. The app acts as that person, with that person's permissions only. SENDS DATA OUTSIDE THE CLUB: whatever the person asks about is sent to the AI app's provider. Off unless you turn it on.",
     dependencies: [
-      "Choose who may connect, the most a connection may do, and which apps are approved under Admin → Help & system → AI connections. Connections start view-only.",
+      "Choose who may connect, the most a connection may do, and which apps are approved under Admin → Help & system → AI app connections. Connections start view-only.",
       "An officer's connection can read other members' details, so officers have their own switch, off by default. Cover this in the club's privacy notice before switching it on.",
       "Actions that need a fresh sign-in proof stay on the website, and card details are never entered through an AI app.",
       "When off, the connection endpoints and screens return Not Found and every connected app stops working. Existing connections are kept and work again when it is switched back on.",

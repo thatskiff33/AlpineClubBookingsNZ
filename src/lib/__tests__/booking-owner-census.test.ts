@@ -502,7 +502,7 @@ const OWNERSHIP_COMPARISON_SITES: readonly string[] = [
   "src/lib/group-booking.ts:276",
   "src/lib/kiosk-access.ts:230",
   "src/lib/manual-refund-task-queue-payload.ts:404",
-  "src/lib/member-self-read.ts:64",
+  "src/lib/member-self-read.ts:82",
   "src/lib/requested-room-write.ts:63",
   "src/lib/waitlist-cross-lodge.ts:346",
   "src/lib/waitlist-cross-lodge.ts:534",

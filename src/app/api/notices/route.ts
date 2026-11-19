@@ -1,18 +1,23 @@
 import { NextResponse } from "next/server";
 
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { listNoticesForMember } from "@/lib/notices";
+import { mcpModuleOffResponse } from "@/lib/mcp/http";
+import { listNoticesForMember, MEMBER_NOTICE_LIST_LIMIT } from "@/lib/notices";
 import { requireActiveSession } from "@/lib/session-guards";
-
-const NOTICE_LIST_LIMIT = 50;
 
 /**
  * GET /api/notices
  *
  * The notices the signed-in member can see, pinned first and then newest: the
  * same read as the notices page. Listing marks nothing as read.
+ *
+ * Added for AI app connections (ALP-653), so it is absent while that module is
+ * off (`INV-MCP-001`), as well as while notices are.
  */
 export async function GET() {
+  const off = await mcpModuleOffResponse();
+  if (off) return off;
+
   const guard = await requireActiveSession();
   if (!guard.ok) {
     return guard.response;
@@ -25,7 +30,7 @@ export async function GET() {
   }
 
   const notices = await listNoticesForMember(guard.session.user.id, {
-    limit: NOTICE_LIST_LIMIT,
+    limit: MEMBER_NOTICE_LIST_LIMIT,
   });
   return NextResponse.json({ notices });
 }

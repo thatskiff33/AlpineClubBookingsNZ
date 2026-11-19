@@ -16,7 +16,7 @@
 import { z } from "zod";
 
 import { availabilityQuerySchema } from "@/lib/availability-query-schema";
-import { cancelBookingMutationSchema, cancelBookingParamsSchema } from "@/lib/booking-cancel-schema";
+import { bookingIdParamsSchema, cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
 import { bookingCreateCoreShape } from "@/lib/booking-create-fields";
 import type { StepUpHttpMethod } from "@/lib/step-up-routes";
 
@@ -68,7 +68,7 @@ export interface McpWebsiteOnlyAction {
   readonly needsId: boolean;
 }
 
-const bookingIdParams = cancelBookingParamsSchema;
+const bookingIdParams = bookingIdParamsSchema;
 
 export const MCP_ACTIONS: readonly McpAction[] = [
   {
@@ -95,7 +95,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "list_my_bookings",
     title: "List my bookings",
     summary:
-      "The signed-in member's bookings, newest stay first: the ones they made and the ones they are a guest on.",
+      "The signed-in member's bookings, newest stay first: the ones they made and the ones they are a guest on. `truncated` is true when there are older ones than the 200 listed. `finalPriceCents` is null on a booking someone else made, and `priceBeingChecked` means the club has not yet confirmed the figure.",
     method: "GET",
     path: "/api/bookings/mine",
     kind: "read",
@@ -104,7 +104,8 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "get_my_booking",
     title: "Read one of my bookings",
-    summary: "One booking the signed-in member made or is a guest on: dates, lodge, status, price and party.",
+    summary:
+      "A summary of one booking the signed-in member made or is a guest on: dates, lodge, status, party and, for a booking they made, the price and their note. `priceBeingChecked` means the club has not yet confirmed the figure.",
     method: "GET",
     path: "/api/bookings/[id]",
     params: bookingIdParams,
@@ -124,7 +125,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "get_my_profile",
     title: "Read my profile",
-    summary: "The signed-in member's own contact details and membership.",
+    summary: "The signed-in member's own name, contact details, address and age group.",
     method: "GET",
     path: "/api/profile/summary",
     kind: "read",
@@ -168,7 +169,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "cancel_my_booking",
     title: "Cancel a booking",
     summary:
-      "Cancels a booking the signed-in member made and refunds it under the club's cancellation policy. This cannot be undone. `refundMethod` is `card` or `credit`.",
+      "Cancels a booking and refunds it under the club's cancellation policy. This cannot be undone. `refundMethod` is `card` or `credit`. The website's rule decides whose booking it may be: the member's own, or any member's for an officer who may cancel bookings there.",
     method: "POST",
     path: "/api/bookings/[id]/cancel",
     params: bookingIdParams,

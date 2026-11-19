@@ -7,7 +7,7 @@ const { db, resolveUse, endGrant } = vi.hoisted(() => ({
     mcpClient: { findUnique: vi.fn(), create: vi.fn(), deleteMany: vi.fn() },
     mcpAuthCode: { findUnique: vi.fn(), updateMany: vi.fn() },
     mcpToken: { findUnique: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
-    mcpGrant: { findUnique: vi.fn() },
+    mcpGrant: { findUnique: vi.fn(), updateMany: vi.fn() },
     $transaction: vi.fn(),
   },
   resolveUse: vi.fn(),
@@ -77,7 +77,8 @@ beforeEach(() => {
   db.mcpToken.findUnique.mockResolvedValue(refreshRecord());
   db.mcpToken.updateMany.mockResolvedValue({ count: 1 });
   db.mcpGrant.findUnique.mockResolvedValue({ id: "grant-1", status: "ACTIVE" });
-  db.$transaction.mockImplementation((operations: Promise<unknown>[]) => Promise.all(operations));
+  db.mcpGrant.updateMany.mockResolvedValue({ count: 1 });
+  db.$transaction.mockImplementation((run: (tx: typeof db) => Promise<unknown>) => run(db));
   resolveUse.mockResolvedValue({ ok: true, scope: "READ" });
 });
 
@@ -139,6 +140,17 @@ describe("MCP authorization code exchange", () => {
       { tokenHash: hashActionToken(result.body.refresh_token), kind: "REFRESH", grantId: "grant-1",
         expiresAt: new Date("2026-07-31T00:00:00.000Z") },
     ] });
+  });
+
+  it("writes no token for a connection that ended while the code was being redeemed", async () => {
+    db.mcpGrant.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await exchangeMcpAuthorizationCode(exchange)).toMatchObject({ ok: false, error: "invalid_grant" });
+    expect(db.mcpGrant.updateMany).toHaveBeenCalledWith({
+      where: { id: "grant-1", status: "ACTIVE" },
+      data: { status: "ACTIVE" },
+    });
+    expect(db.mcpToken.createMany).not.toHaveBeenCalled();
   });
 
   it.each([

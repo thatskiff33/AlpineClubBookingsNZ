@@ -44,6 +44,10 @@ only the rules.
   (`mcpModuleOffResponse`), so the gate never lives only in the proxy (#2780).
   The admin page is gated by its hub registry entry's `mcpServer` flag and the
   profile card is not rendered.
+- **The member reads added for the actions are absent too.**
+  `GET /api/bookings/mine`, `GET /api/bookings/[id]`, `GET /api/profile/summary`
+  and `GET /api/notices` sit beside older routes, so no proxy prefix can cover
+  them: each handler's own `mcpModuleOffResponse` check is the gate.
 - **Existing connections cannot be used while it is off**, because `/api/mcp`
   and the token endpoint answer 404 before reading a token. They are kept, not
   ended, and work again when the module is switched back on, subject to every
