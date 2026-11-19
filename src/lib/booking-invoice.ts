@@ -1,57 +1,90 @@
 /**
- * The generated booking invoice (fork #115), as plain data.
+ * THE APP'S GENERATED BOOKING INVOICE (#5066, slice 2), as plain data.
  *
- * Used when a booking has no Xero invoice: a club that does not use Xero, or an
- * organisation that needs an invoice while its group booking is not approved
- * yet. When Xero has an invoice for the booking, the download is Xero's own
- * PDF instead and nothing here runs.
+ * Owner decisions of 15 Nov 2026 on #5066:
  *
- * Pure: the booking, lodge, tax and payment facts in, everything the PDF
- * prints out, in integer cents and formatted dates. No database, no provider
- * and no PDF code, so the totals can be tested without rendering a page.
+ * 1. Made ONLY while the club's Xero module is off. With Xero on, the booking
+ *    page offers Xero's own invoice (slice 1, `primaryXeroInvoiceOnOffer`) and
+ *    nothing here runs, so a Xero club never gets a second document for the
+ *    same debt.
+ * 2. Titled "Invoice", with NO GST wording at all: no GST number, no "includes
+ *    GST", no tax line. That is the decided form for a club that has not
+ *    recorded its GST status, and nothing on main records it yet
+ *    (`ClubTaxSettings` has no writer, `INV-CONFIG-007`). The GST-registered
+ *    form ("Tax invoice", the club's GST number and the GST included) follows
+ *    the GST-status setting (#4632, PR #5153); until then nothing here may read
+ *    `ClubTaxSettings`.
+ * 4. The supplier is the club's legal name and postal address
+ *    (`getClubInvoiceSupplier`), with the lodge named as the place of stay. No
+ *    issuer contact line.
+ * 5. A booking awaiting review gets a document marked "Not yet approved"; a
+ *    cancelled booking gets none; account credit is its own line, with the
+ *    balance from the shared amount-owed figure.
  *
- * The totals are the booking's own: the guest lines come from the shared
- * per-guest builder the Xero invoice uses (`buildGuestInvoiceLines`), and any
- * difference between them and the booking's final price is printed as its own
- * discount line, so the invoice always adds up to what the booking is worth
- * (`bookingWorthCents`) and never to a figure re-derived here.
+ * No payment box and no bank details: the club's bank details are #4526's
+ * setting, not built yet. No invoice number: the document carries the date it
+ * was downloaded, in club time, and each download is audited instead.
+ *
+ * Pure: the booking and its figures in, everything the PDF prints out, in
+ * integer cents. Each figure has one home (`INV-SSOT`, `INV-MONEY`):
+ *
+ * - guest lines: the runs `buildGuestInvoiceLines` cuts, the builder the Xero
+ *   invoice's guest lines are made from;
+ * - promotions: one line per code with the booking page's own amounts and
+ *   fallback (`perCodePromoAdjustmentRows`, `INV-MONEY-040`), never a remainder;
+ * - the change fee: the fee recorded on the payment (`recordedChangeFeeCents`,
+ *   through the summary);
+ * - the total, credit, paid and balance: `bookingInvoiceSummary`, the figures
+ *   the booking page's Invoice and credits card shows, in its words
+ *   (`bookingInvoiceAccountRows`).
+ *
+ * The lines must add up to the booking's price. When they do not (a stored-side
+ * defect the booking's money reconciliation reports), or a guest holds a night
+ * whose price is not known (#3170), no document is made: the offer is withheld
+ * (`planBookingInvoiceLines`), rather than printing an invented split or a
+ * balancing line.
  */
 import { formatAgeTierName } from "@/lib/age-tier-name";
 import {
   buildGuestInvoiceLines,
   guestInvoiceLineAmountCents,
+  type GuestInvoiceLine,
+  type GuestInvoiceLineGuest,
 } from "@/lib/booking-guest-invoice-lines";
-import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
-import { bookingWorthCents, isSettledBookingStatus } from "@/lib/booking-payment-state";
+import type { BookingInvoiceSummary } from "@/lib/booking-invoice-summary";
+import { bookingInvoiceAccountRows, type BookingInvoiceSummaryRow } from "@/lib/booking-invoice-summary-rows";
+import {
+  bookingPromoCodeAdjustments,
+  bookingPromoRedemptions,
+  perCodePromoAdjustmentRows,
+} from "@/lib/booking-promo-redemptions";
 import { formatBookingReference } from "@/lib/booking-reference";
-import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
-import {
-  calendarDateOfDateOnlyInstant,
-  formatClubLongWeekdayDate,
-  type ClubDateFormat,
-} from "@/lib/club-time";
+import type { ClubInvoiceSupplier } from "@/lib/club-invoice-supplier";
+import { calendarDateOfDateOnlyInstant, formatClubLongWeekdayDate, type ClubDateFormat } from "@/lib/club-time";
 import { getStayNights } from "@/lib/policies/pricing";
-import {
-  describeGuestRateMembershipLabel,
-  type RateMembershipLabelResolver,
-} from "@/lib/rate-membership-label";
+import { describeGuestRateMembershipLabel, type RateMembershipLabelResolver } from "@/lib/rate-membership-label";
 import { CHANGE_FEE_LINE_DESCRIPTION } from "@/lib/xero-modification-line-items";
 import { promoAdjustmentLineDescription } from "@/lib/xero-promo-adjustment-lines";
 
-/** The issuer line where a person or role is named (owner decision 7). */
-export const BOOKING_INVOICE_CONTACT_LINE = "Booking Officer";
+/** The document's title. "Tax invoice" waits for the club's recorded GST status (#5153). */
+export const BOOKING_INVOICE_TITLE = "Invoice";
+/** The mark on a booking the club has not approved yet (owner decision 5). */
+export const BOOKING_INVOICE_NOT_YET_APPROVED = "Not yet approved";
+export const BOOKING_INVOICE_NOT_YET_APPROVED_NOTE =
+  "The club has not approved this booking yet, so nothing is payable until it does.";
 
-export interface BookingInvoiceGuest {
+export interface BookingInvoiceGuest extends GuestInvoiceLineGuest {
   firstName: string;
   lastName: string;
   ageTier: string;
   isMember: boolean;
   rateMembershipTypeId?: string | null;
-  priceCents: number;
-  nights?: Array<{ stayDate: Date; priceCents: number | null }> | null;
 }
 
 export interface BookingInvoicePromoRedemption {
+  id?: string | null;
+  applicationOrder?: number | null;
+  priceAdjustmentCents: number;
   promoCode: {
     code: string;
     internal?: boolean | null;
@@ -59,108 +92,125 @@ export interface BookingInvoicePromoRedemption {
   } | null;
 }
 
-export interface BookingInvoiceLodge {
-  name: string;
-  address: string | null;
-  postalAddress: string | null;
-  bankAccountName: string | null;
-  bankAccountDetails: string | null;
-  gstNumber: string | null;
-}
-
-export interface BookingInvoiceInput {
-  bookingId: string;
+/** What the lines are made from: the booking's own stored figures. */
+export interface BookingInvoiceLineSource {
   checkIn: Date;
   checkOut: Date;
   finalPriceCents: number;
-  /** The change fee recorded on the payment (`recordedChangeFeeCents`). */
-  changeFeeCents: number;
+  promoAdjustmentCents: number;
   guests: readonly BookingInvoiceGuest[];
-  promoRedemptions: readonly BookingInvoicePromoRedemption[];
-  /** The organisation's name when there is one, otherwise the booker's (owner decision 6). */
+  promoRedemptions?: readonly BookingInvoicePromoRedemption[] | null;
+}
+
+export type BookingInvoiceLinePlan =
+  | {
+      kind: "LINES";
+      stayNights: number;
+      guestRuns: Array<GuestInvoiceLine<BookingInvoiceGuest>>;
+      promoLines: Array<{ description: string; amountCents: number }>;
+    }
+  /** A guest holds a night whose price is not known yet (#3170). */
+  | { kind: "UNPRICED_NIGHT" }
+  /** The guest and promotion lines do not come to the booking's price. */
+  | { kind: "LINES_DO_NOT_ADD_UP" };
+
+type InvoicePromoCode = NonNullable<BookingInvoicePromoRedemption["promoCode"]>;
+
+/**
+ * A code's words: the booking page's own for a work party's internal code
+ * (which is the club's, never printed), else the Xero invoice's
+ * `Promo adjustment - CODE`.
+ */
+function promoName(promo: InvoicePromoCode): string {
+  if (!promo.internal) return promoAdjustmentLineDescription(promo.code);
+  return promo.workPartyEvent?.name ? `Working bee discount (${promo.workPartyEvent.name})` : "Working bee discount";
+}
+
+/**
+ * One line per code with its own adjustment, exactly when the booking page and
+ * the confirmation email show one row per code (`perCodePromoAdjustmentRows`);
+ * otherwise their one combined row, naming the code (or every code), at the
+ * booking's `promoAdjustmentCents`.
+ */
+function promoLines(source: BookingInvoiceLineSource): Array<{ description: string; amountCents: number }> {
+  const redemptions = bookingPromoRedemptions({ promoRedemptions: source.promoRedemptions ?? [] });
+  const promos = redemptions.flatMap((redemption) => (redemption.promoCode ? [redemption.promoCode] : []));
+  const byCode = new Map(promos.map((promo) => [promo.code, promo] as const));
+  const perCode = perCodePromoAdjustmentRows(
+    bookingPromoCodeAdjustments({ promoRedemptions: redemptions }),
+    source.promoAdjustmentCents,
+  );
+  if (perCode) {
+    return perCode.map((row) => ({ description: promoName(byCode.get(row.code)!), amountCents: row.amountCents }));
+  }
+  if (source.promoAdjustmentCents === 0) return [];
+  const names = promos.map((promo) => (promo.internal ? "working bee" : promo.code));
+  const description = promos.length === 1 ? promoName(promos[0]!) : promoAdjustmentLineDescription(names.join(", ") || null);
+  return [{ description, amountCents: source.promoAdjustmentCents }];
+}
+
+/**
+ * The document's stay lines, or why there can be none. Pure: the one check
+ * both the offer (so the page never shows a dead button) and the download make.
+ */
+export function planBookingInvoiceLines(source: BookingInvoiceLineSource): BookingInvoiceLinePlan {
+  const stayNights = getStayNights(source.checkIn, source.checkOut).length;
+  const guestRuns = buildGuestInvoiceLines(source.guests, source.checkIn, source.checkOut, stayNights);
+  if (guestRuns.some((line) => line.hasUnpricedNight)) return { kind: "UNPRICED_NIGHT" };
+  const promo = promoLines(source);
+  const lineTotal =
+    guestRuns.reduce((sum, line) => sum + guestInvoiceLineAmountCents(line), 0) +
+    promo.reduce((sum, line) => sum + line.amountCents, 0);
+  if (lineTotal !== source.finalPriceCents) return { kind: "LINES_DO_NOT_ADD_UP" };
+  return { kind: "LINES", stayNights, guestRuns, promoLines: promo };
+}
+
+export type BookingInvoiceLine =
+  | { kind: "GUEST"; guest: string; category: string; nights: number; ratePerNightCents: number; amountCents: number }
+  | { kind: "PROMO" | "FEE"; description: string; amountCents: number };
+
+export interface BookingInvoiceInput extends BookingInvoiceLineSource {
+  bookingId: string;
+  /** The booking's owner as `bookingOwner(...).member` names them: the organisation, else the member. */
   billToName: string;
-  lodge: BookingInvoiceLodge;
-  gstRegistered: boolean;
-  /** Cash still held plus account credit applied, in cents. */
-  amountPaidCents: number;
+  supplier: ClubInvoiceSupplier;
+  /** The lodge, named as the place of stay (owner decision 4). */
+  lodgeName: string;
+  /** `bookingInvoiceSummary` for the booking: the booking page's own figures. */
+  summary: BookingInvoiceSummary;
+  notYetApproved: boolean;
   /**
-   * The invoice date, already formatted: the club's today through
+   * The download date, already formatted: the club's today through
    * `formatClubDate`, by the caller. Kept out of this module so it never pairs
    * a stay-date decoder with `formatClubDate` (`INV-SSOT-001`).
    */
-  invoiceDate: string;
+  documentDate: string;
   format: ClubDateFormat;
   ageTierLabels: ReadonlyMap<string, string>;
   rateMembershipLabelResolver: RateMembershipLabelResolver | null;
 }
 
-export type BookingInvoiceLine =
-  | {
-      kind: "GUEST";
-      guest: string;
-      category: string;
-      nights: number;
-      ratePerNightCents: number;
-      amountCents: number;
-    }
-  | { kind: "ADJUSTMENT" | "FEE"; description: string; amountCents: number };
-
 export interface BookingInvoiceData {
-  issuer: {
-    lodgeName: string;
-    addressLines: string[];
-    contactLine: string;
-    gstNumber: string | null;
-  };
-  /** Always null here: a generated invoice carries no number (owner decision 4). */
-  invoiceNumber: null;
-  invoiceDate: string;
+  title: typeof BOOKING_INVOICE_TITLE;
+  supplier: ClubInvoiceSupplier;
+  placeOfStay: string;
+  documentDate: string;
+  bookingReference: string;
+  notYetApproved: boolean;
   billTo: string;
   stay: { checkIn: string; checkOut: string; nights: number; guests: number };
   lines: BookingInvoiceLine[];
-  subtotalCents: number;
+  /** The booking's worth: its price plus its recorded change fee. */
   totalCents: number;
-  includesGst: boolean;
-  /** Present once any payment has arrived (owner decision 5). */
-  payments: { amountPaidCents: number; balanceDueCents: number } | null;
-  /** Present only when the lodge has bank details. */
-  paymentDetails: {
-    accountName: string | null;
-    accountDetails: string | null;
-    reference: string;
-  } | null;
+  accountRows: BookingInvoiceSummaryRow[];
 }
 
-/**
- * The statuses a generated invoice may be made for: a booking that owes its
- * price or has paid it, and one awaiting the club's approval — the group
- * booking an organisation needs an invoice for before approval (owner decision
- * 9). A cancelled, draft or waitlisted booking owes nothing, so an invoice for
- * it would ask for money that is not due.
- */
-export function canGenerateBookingInvoiceForStatus(status: string): boolean {
-  return (
-    isPaymentOwedBookingStatus(status) ||
-    isSettledBookingStatus(status) ||
-    status === "AWAITING_REVIEW"
-  );
-}
-
-/** A guest night whose price is not known yet blocks the generated invoice. */
-export class BookingInvoiceUnpricedNightError extends Error {
-  constructor() {
-    super(
-      "This booking has a night whose price is still being reviewed, so an invoice cannot be generated yet.",
-    );
-    this.name = "BookingInvoiceUnpricedNightError";
+/** Why a document could not be built. The offer withholds the button first, so this is a race only. */
+export class BookingInvoiceNotAvailableError extends Error {
+  constructor(readonly reason: Exclude<BookingInvoiceLinePlan["kind"], "LINES"> | "TOTAL_DIFFERS") {
+    super(`A booking invoice cannot be generated for this booking (${reason}).`);
+    this.name = "BookingInvoiceNotAvailableError";
   }
-}
-
-function textLines(value: string | null): string[] {
-  return (value ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
 }
 
 function guestCategory(
@@ -171,123 +221,45 @@ function guestCategory(
   return `${tier} · ${describeGuestRateMembershipLabel(input.rateMembershipLabelResolver, guest)}`;
 }
 
-/**
- * The words for the line that carries the difference between the guest lines
- * and the booking's final price. A work party's internal code is never printed
- * (it is the club's, not the booker's): its line names the work party.
- */
-function adjustmentDescription(
-  redemptions: readonly BookingInvoicePromoRedemption[],
-): string {
-  const promos = redemptions.flatMap((redemption) =>
-    redemption.promoCode ? [redemption.promoCode] : [],
-  );
-  if (promos.length === 0) return "Price adjustment";
-  if (promos.length > 1) return "Discounts and promotions";
-  const [promo] = promos;
-  if (promo!.internal) {
-    // The booking page's own words for a work party's discount.
-    return promo!.workPartyEvent?.name
-      ? `Working bee discount (${promo!.workPartyEvent.name})`
-      : "Working bee discount";
-  }
-  return promoAdjustmentLineDescription(promo!.code);
-}
-
 export function buildBookingInvoiceData(input: BookingInvoiceInput): BookingInvoiceData {
-  const stayNights = getStayNights(input.checkIn, input.checkOut).length;
-  const guestLines = buildGuestInvoiceLines(
-    input.guests,
-    input.checkIn,
-    input.checkOut,
-    stayNights,
-  );
-  if (guestLines.some((line) => line.hasUnpricedNight)) {
-    throw new BookingInvoiceUnpricedNightError();
-  }
-
-  const lines: BookingInvoiceLine[] = guestLines.map((line) => ({
-    kind: "GUEST",
-    guest: `${line.guest.firstName} ${line.guest.lastName}`.trim(),
-    category: guestCategory(line.guest, input),
-    nights: line.run.nightCount,
-    ratePerNightCents: line.run.perNightCents,
-    amountCents: guestInvoiceLineAmountCents(line),
-  }));
-
-  const guestTotalCents = lines.reduce((sum, line) => sum + line.amountCents, 0);
-  const adjustmentCents = input.finalPriceCents - guestTotalCents;
-  if (adjustmentCents !== 0) {
-    lines.push({
-      kind: "ADJUSTMENT",
-      description: adjustmentDescription(input.promoRedemptions),
-      amountCents: adjustmentCents,
-    });
-  }
-  if (input.changeFeeCents > 0) {
-    lines.push({
-      kind: "FEE",
-      description: CHANGE_FEE_LINE_DESCRIPTION,
-      amountCents: input.changeFeeCents,
-    });
-  }
-
-  const totalCents = bookingWorthCents({
-    finalPriceCents: input.finalPriceCents,
-    changeFeeCents: input.changeFeeCents,
-  });
-  const subtotalCents = lines.reduce((sum, line) => sum + line.amountCents, 0);
-
-  const addressLines = textLines(input.lodge.postalAddress);
-  const hasBankDetails = Boolean(
-    input.lodge.bankAccountName?.trim() || input.lodge.bankAccountDetails?.trim(),
-  );
+  const plan = planBookingInvoiceLines(input);
+  if (plan.kind !== "LINES") throw new BookingInvoiceNotAvailableError(plan.kind);
+  const { summary } = input;
+  // The summary is read from the same booking row, so this holds unless a
+  // caller hands over a summary for another price: refuse rather than print a
+  // total the lines do not reach.
+  if (summary.totalCents !== input.finalPriceCents) throw new BookingInvoiceNotAvailableError("TOTAL_DIFFERS");
+  const lines: BookingInvoiceLine[] = [
+    ...plan.guestRuns.map((line) => ({
+      kind: "GUEST" as const,
+      guest: `${line.guest.firstName} ${line.guest.lastName}`.trim(),
+      category: guestCategory(line.guest, input),
+      nights: line.run.nightCount,
+      ratePerNightCents: line.run.perNightCents,
+      amountCents: guestInvoiceLineAmountCents(line),
+    })),
+    ...plan.promoLines.map((line) => ({ kind: "PROMO" as const, ...line })),
+    ...(summary.changeFeeCents > 0
+      ? [{ kind: "FEE" as const, description: CHANGE_FEE_LINE_DESCRIPTION, amountCents: summary.changeFeeCents }]
+      : []),
+  ];
 
   return {
-    issuer: {
-      lodgeName: input.lodge.name,
-      addressLines: addressLines.length > 0 ? addressLines : textLines(input.lodge.address),
-      contactLine: BOOKING_INVOICE_CONTACT_LINE,
-      gstNumber: input.lodge.gstNumber?.trim() || null,
-    },
-    invoiceNumber: null,
-    invoiceDate: input.invoiceDate,
+    title: BOOKING_INVOICE_TITLE,
+    supplier: input.supplier,
+    placeOfStay: input.lodgeName,
+    documentDate: input.documentDate,
+    bookingReference: formatBookingReference(input.bookingId),
+    notYetApproved: input.notYetApproved,
     billTo: input.billToName,
     stay: {
       checkIn: formatClubLongWeekdayDate(calendarDateOfDateOnlyInstant(input.checkIn), input.format),
       checkOut: formatClubLongWeekdayDate(calendarDateOfDateOnlyInstant(input.checkOut), input.format),
-      nights: stayNights,
+      nights: plan.stayNights,
       guests: input.guests.length,
     },
     lines,
-    subtotalCents,
-    totalCents,
-    includesGst: input.gstRegistered,
-    payments:
-      input.amountPaidCents > 0
-        ? {
-            amountPaidCents: input.amountPaidCents,
-            balanceDueCents: Math.max(0, totalCents - input.amountPaidCents),
-          }
-        : null,
-    paymentDetails: hasBankDetails
-      ? {
-          accountName: input.lodge.bankAccountName?.trim() || null,
-          accountDetails: input.lodge.bankAccountDetails?.trim() || null,
-          reference: buildInternetBankingPaymentReference(input.bookingId),
-        }
-      : null,
+    totalCents: summary.totalCents + summary.changeFeeCents,
+    accountRows: bookingInvoiceAccountRows(summary),
   };
-}
-
-/** The download's file name: Xero's invoice number when there is one, else the booking's short reference. */
-export function bookingInvoiceFileName(
-  bookingId: string,
-  xeroInvoiceNumber: string | null | undefined,
-): string {
-  const label = (xeroInvoiceNumber?.trim() || formatBookingReference(bookingId)).replace(
-    /[^A-Za-z0-9._-]/g,
-    "-",
-  );
-  return `Invoice-${label}.pdf`;
 }

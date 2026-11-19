@@ -28,6 +28,7 @@ import type { BookingDetailConsent } from "./booking-detail-consent";
 import type { BookingDetailEditAccess } from "./booking-detail-edit-access";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import type { BookingAmountOwed } from "@/lib/booking-payment-state";
+import { bookingInvoiceSummary } from "@/lib/booking-invoice-summary";
 import { resolveBookingInvoiceAccount } from "./booking-invoice-account";
 import { resolveBookingInvoiceOffer } from "./booking-invoice-download";
 
@@ -358,7 +359,10 @@ export async function buildBookingDetailEditorData({
  * `GET /api/bookings/[id]/invoice` serves, added as a conditional spread (absent
  * when nothing is offered, on `noEmails`' reasoning above). The module flags are
  * the render's memoised read (`loadEffectiveModuleFlags` is `cache()`d). With an
- * invoice on offer, its account lines (`resolveBookingInvoiceAccount`) ride too.
+ * invoice on offer, its account lines ride too: for Xero's invoice through
+ * `resolveBookingInvoiceAccount`; for the app's generated one (Xero off) the
+ * same summary with no Xero notice, so the card and the PDF show one set of
+ * figures.
  */
 async function withBookingInvoiceOffer(
   editorData: BookingEditorData,
@@ -367,6 +371,9 @@ async function withBookingInvoiceOffer(
 ): Promise<BookingEditorData> {
   const invoiceOffer = await resolveBookingInvoiceOffer({ ...input, modules: await loadEffectiveModuleFlags() });
   if (invoiceOffer.kind === "NONE") return editorData;
+  if (invoiceOffer.kind === "GENERATED") {
+    return { ...editorData, invoiceOffer, invoiceAccount: { summary: bookingInvoiceSummary(input.booking, amountOwed), invoiceUpdateNotice: null } };
+  }
   if (invoiceOffer.kind !== "XERO_INVOICE") return { ...editorData, invoiceOffer };
   return { ...editorData, invoiceOffer, invoiceAccount: await resolveBookingInvoiceAccount(input.booking, amountOwed) };
 }

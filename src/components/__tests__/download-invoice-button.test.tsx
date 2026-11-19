@@ -5,8 +5,9 @@ import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * #5066 slice 1: the booking page's invoice control and its invoice account card
- * render the page's offer, and nothing else.
+ * #5066: the booking page's invoice control and its invoice account card
+ * render the page's offer, and nothing else — Xero's invoice (slice 1) or, with
+ * Xero off, the app's generated one (slice 2).
  */
 const mocks = vi.hoisted(() => ({ toastError: vi.fn(), save: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: mocks.toastError } }));
@@ -112,6 +113,23 @@ describe("BookingEditor renders the offer it is handed", () => {
     expect(screen.getByRole("button", { name: "Download credit note CN-0007" })).toBeInTheDocument();
   });
 
+  it("with Xero off, offers the generated invoice's download and its account card, with no credit notes (#5066 slice 2)", async () => {
+    const response = new Response("%PDF", { status: 200 });
+    fetchMock.mockResolvedValue(response);
+    render(
+      <BookingEditor
+        booking={editorData({ invoiceOffer: { kind: "GENERATED", notYetApproved: true }, invoiceAccount: ACCOUNT })}
+        canModify={false}
+      />,
+    );
+    expect(screen.getByRole("heading", { level: 2, name: "Invoice and credits" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Booking account summary")).toHaveTextContent("Account credit applied$50.00");
+    expect(screen.queryByText("Credit notes")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Download invoice" }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(response, "invoice.pdf"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/bookings/bk-1/invoice");
+  });
+
   it("shows no account card beside an ask-the-club line", () => {
     render(<BookingEditor booking={editorData({ invoiceOffer: { kind: "ASK_CLUB", staffViewer: false }, invoiceAccount: ACCOUNT })} canModify={false} />);
     expect(screen.queryByText("Invoice and credits")).toBeNull();
@@ -127,7 +145,7 @@ describe("BookingEditor renders the offer it is handed", () => {
 
 describe("BookingInvoiceAccountCard", () => {
   it("shows the summary from the app's own records, in the club's money format", () => {
-    render(<BookingInvoiceAccountCard bookingId="bk-1" offer={{ kind: "XERO_INVOICE", invoiceNumber: "INV-7", creditNotes: [] }} account={ACCOUNT} />);
+    render(<BookingInvoiceAccountCard bookingId="bk-1" creditNotes={[]} account={ACCOUNT} />);
     const summary = screen.getByLabelText("Booking account summary");
     expect(summary).toHaveTextContent("Booking total$450.00");
     expect(summary).toHaveTextContent("Account credit applied$50.00");
@@ -144,8 +162,7 @@ describe("BookingInvoiceAccountCard", () => {
       summary: { totalCents: 45_000, changeFeeCents: 5_000, creditAppliedCents: 0, paidCents: 55_000, keptCents: 5_000, balanceCents: 0, balanceWhen: "NOW" },
       invoiceUpdateNotice: null,
     };
-    const offer = { kind: "XERO_INVOICE" as const, invoiceNumber: "INV-7", creditNotes: [] };
-    const { rerender } = render(<BookingInvoiceAccountCard bookingId="bk-1" offer={offer} account={account} />);
+    const { rerender } = render(<BookingInvoiceAccountCard bookingId="bk-1" creditNotes={[]} account={account} />);
     const summary = screen.getByLabelText("Booking account summary");
     expect(summary).toHaveTextContent("Booking total$450.00");
     expect(summary).toHaveTextContent("Change fees$50.00");
@@ -153,7 +170,7 @@ describe("BookingInvoiceAccountCard", () => {
     rerender(
       <BookingInvoiceAccountCard
         bookingId="bk-1"
-        offer={offer}
+        creditNotes={[]}
         account={{ ...account, summary: { ...account.summary, paidCents: 0, keptCents: 0, balanceCents: 50_000, balanceWhen: "AFTER_REVIEW" } }}
       />,
     );
@@ -165,7 +182,7 @@ describe("BookingInvoiceAccountCard", () => {
     render(
       <BookingInvoiceAccountCard
         bookingId="bk-1"
-        offer={{ kind: "XERO_INVOICE", invoiceNumber: "INV-7", creditNotes: [] }}
+        creditNotes={[]}
         account={{ ...ACCOUNT, invoiceUpdateNotice: notice }}
       />,
     );
@@ -179,7 +196,7 @@ describe("BookingInvoiceAccountCard", () => {
       CREDIT_NOTE,
       { creditNoteId: "xero-cn-2", creditNoteNumber: null, kind: "REFUND" as const },
     ];
-    render(<BookingInvoiceAccountCard bookingId="bk-1" offer={{ kind: "XERO_INVOICE", invoiceNumber: "INV-7", creditNotes: notes }} account={ACCOUNT} />);
+    render(<BookingInvoiceAccountCard bookingId="bk-1" creditNotes={notes} account={ACCOUNT} />);
     expect(screen.getByRole("heading", { level: 3, name: "Credit notes" })).toBeInTheDocument();
     expect(screen.getByText("For a change to the booking")).toBeInTheDocument();
     expect(screen.getByText("For a refund")).toBeInTheDocument();
@@ -191,7 +208,7 @@ describe("BookingInvoiceAccountCard", () => {
 
   it("says a credit note's 404 means the page is stale", async () => {
     fetchMock.mockResolvedValue(Response.json({ error: "Booking not found" }, { status: 404 }));
-    render(<BookingInvoiceAccountCard bookingId="bk-1" offer={{ kind: "XERO_INVOICE", invoiceNumber: "INV-7", creditNotes: [CREDIT_NOTE] }} account={ACCOUNT} />);
+    render(<BookingInvoiceAccountCard bookingId="bk-1" creditNotes={[CREDIT_NOTE]} account={ACCOUNT} />);
     fireEvent.click(screen.getByRole("button", { name: "Download credit note CN-0007" }));
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith("This credit note is no longer available from this page; please refresh."),

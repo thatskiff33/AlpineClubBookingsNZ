@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-/** #5066 slice 1: the invoice route's guards and its answer for each download outcome. */
+/** #5066: the invoice route's guards and its answer for each download outcome, Xero's PDF or the generated one. */
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActive: vi.fn(),
@@ -81,6 +81,14 @@ describe("GET /api/bookings/[id]/invoice", () => {
     expect(response.headers.get("Content-Type")).toBe("application/pdf");
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(response.headers.get("Content-Disposition")).toBe('attachment; filename="tac-invoice-INV-0042.pdf"');
+  });
+
+  it("serves the app's generated PDF (Xero off) with the same private headers", async () => {
+    mocks.prepare.mockResolvedValue({ kind: "PDF", body: Buffer.from("%PDF-1.3"), fileName: "tac-invoice-CKBOOKIN.pdf" });
+    const response = await call();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(response.headers.get("Content-Disposition")).toBe('attachment; filename="tac-invoice-CKBOOKIN.pdf"');
   });
 
   it("passes no caller-supplied invoice id through: only the booking id and the session", async () => {

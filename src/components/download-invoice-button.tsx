@@ -61,10 +61,12 @@ export function BookingDocumentDownloadButton({
 }
 
 /**
- * The booking page's invoice control (#5066, slice 1), beside Edit Booking. It
- * renders the page's `BookingInvoiceOffer` and nothing else: a Download invoice
- * button for the booking's Xero invoice, a line saying where to get copies when
- * the booking may have more than one invoice, or nothing at all. The booking's
+ * The booking page's invoice control (#5066), beside Edit Booking. It renders
+ * the page's `BookingInvoiceOffer` and nothing else: a Download invoice button
+ * for the booking's Xero invoice or, with Xero off, the app's own document
+ * (`GENERATED`, which the route marks "Not yet approved" on a booking awaiting
+ * review), a line saying where to get copies when the booking may have more
+ * than one invoice, or nothing at all. The booking's
  * credit notes and account summary are `BookingInvoiceAccountCard`'s.
  *
  * The "more than one invoice" line knows its reader (#1289): an officer or admin
@@ -88,10 +90,11 @@ export function BookingInvoiceControl({
       </p>
     );
   }
+  const invoiceNumber = offer.kind === "XERO_INVOICE" ? offer.invoiceNumber : null;
   return (
     <BookingDocumentDownloadButton
       href={`/api/bookings/${bookingId}/invoice`}
-      label={offer.invoiceNumber ? `Download invoice ${offer.invoiceNumber}` : "Download invoice"}
+      label={invoiceNumber ? `Download invoice ${invoiceNumber}` : "Download invoice"}
       documentName="invoice"
       fallbackName="invoice.pdf"
     />

@@ -1,4 +1,5 @@
 import { isAdditionalAskRetiredBookingStatus } from "@/lib/additional-payment-chase";
+import { planBookingInvoiceLines, type BookingInvoiceLineSource } from "@/lib/booking-invoice";
 import type { BookingInvoiceSummary } from "@/lib/booking-invoice-summary";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 
@@ -11,13 +12,13 @@ export type BookingCreditNote = {
 };
 
 /**
- * WHAT THE BOOKING PAGE OFFERS AS THE BOOKING'S INVOICE (#5066, slice 1).
+ * WHAT THE BOOKING PAGE OFFERS AS THE BOOKING'S INVOICE (#5066).
  *
  * Owner decisions on #5066 (15 Nov 2026): with the club's Xero module on, the
  * booking page offers Xero's own invoice PDF, so there is one invoice of record;
- * only the booking's owner, admins and booking officers may download it; a
- * cancelled booking's invoice is not offered. With Xero off nothing is offered
- * yet — the app's own generated document is a later slice.
+ * only with Xero off does the app generate its own document (slice 2). Only the
+ * booking's owner, admins and booking officers may download either; a
+ * cancelled booking's invoice is not offered.
  *
  * - `NONE`: no control at all.
  * - `XERO_INVOICE`: the Download invoice button, for the booking's primary Xero
@@ -30,20 +31,25 @@ export type BookingCreditNote = {
  *   `staffViewer` (an officer or admin on someone else's booking,
  *   `nonOwnerAdminViewer`) is told to check the club's accounts; anyone else
  *   to ask the club.
+ * - `GENERATED` (Xero off only): the Download invoice button, for the app's own
+ *   document (`buildBookingInvoiceData`), marked "Not yet approved" on a
+ *   booking awaiting review (`notYetApproved`). Its account lines ride beside
+ *   it as for `XERO_INVOICE`, with no credit notes.
  *
  * THE ONE RULE for the buttons, `GET /api/bookings/[id]/invoice` and
  * `GET /api/bookings/[id]/invoice/credit-notes/[creditNoteId]` (`INV-SSOT`):
- * the page renders this answer and the routes serve only `XERO_INVOICE` and,
- * for a credit note, only an id in its `creditNotes`, so neither can disagree
- * with the other.
+ * the page renders this answer and the routes serve only `XERO_INVOICE` or
+ * `GENERATED` and, for a credit note, only an id in a `XERO_INVOICE` offer's
+ * `creditNotes`, so neither can disagree with the other.
  */
 export type BookingInvoiceOffer =
   | { kind: "NONE" }
   | { kind: "XERO_INVOICE"; invoiceNumber: string | null; creditNotes: BookingCreditNote[] }
-  | { kind: "ASK_CLUB"; staffViewer: boolean };
+  | { kind: "ASK_CLUB"; staffViewer: boolean }
+  | { kind: "GENERATED"; notYetApproved: boolean };
 
 /**
- * The page-only account lines beside a `XERO_INVOICE` offer: the summary from
+ * The page-only account lines beside a `XERO_INVOICE` or `GENERATED` offer: the summary from
  * the app's own records and, when the app knows the invoice in Xero does not
  * show the latest change, a plain-words line saying so
  * (`primaryInvoiceUpdateNotice`). The routes never read it.
@@ -94,4 +100,62 @@ export function primaryXeroInvoiceOnOffer(input: {
   const invoiceId = booking.payment?.xeroInvoiceId ?? null;
   if (!invoiceId) return null;
   return { invoiceId, invoiceNumber: booking.payment?.xeroInvoiceNumber ?? null };
+}
+
+/**
+ * The statuses the app's own document is made for: a booking that owes its
+ * price or has paid it, and one awaiting the club's review (owner decision 5:
+ * marked "Not yet approved"). Draft, pending, waitlisted and offered bookings
+ * owe nothing yet; cancelled and bumped ones are ended.
+ */
+const GENERATED_INVOICE_STATUSES: ReadonlySet<string> = new Set([
+  "PAYMENT_PENDING",
+  "CONFIRMED",
+  "PAID",
+  "COMPLETED",
+  "AWAITING_REVIEW",
+]);
+
+type GeneratedOfferBooking = BookingInvoiceLineSource & {
+  status: string;
+  organiserSettled: boolean;
+  payment: { transactions: readonly unknown[] } | null;
+  groupBookingAsOrganiser?: { paymentMode: string } | null;
+};
+
+/**
+ * Whether the page may offer the app's GENERATED invoice (#5066, slice 2), and
+ * marked how. Pure: the same answer for the button and the route, so the page
+ * never shows a control the route refuses (review finding 12).
+ *
+ * - Audience: `canSeeOwnerCredit`, as for the Xero invoice.
+ * - Only while the Xero module is OFF (owner decision 1): a Xero club's
+ *   invoice of record is Xero's, so no second document is ever made for it.
+ * - Status: `GENERATED_INVOICE_STATUSES`; `AWAITING_REVIEW` is marked "Not yet
+ *   approved".
+ * - Not a group place the organiser pays for (`organiserSettled`, before or
+ *   after the organiser pays): the organiser's settlement carries that money,
+ *   so a document from the place would bill the joiner for it. Nor the
+ *   organiser's own booking in an organiser-pays group, whose document would
+ *   leave out the places the organiser pays for.
+ * - Not a booking with an extra charge asked (any ADDITIONAL ledger row): the
+ *   summary does not cover additional asks, which have their own pay link, so
+ *   the document would understate what was billed.
+ * - Its lines must be printable (`planBookingInvoiceLines`): no night whose
+ *   price is not known (#3170), and lines that add up to the booking's price.
+ */
+export function generatedBookingInvoiceOnOffer(input: {
+  viewer: { canSeeOwnerCredit: boolean };
+  booking: GeneratedOfferBooking;
+  xeroModuleOn: boolean;
+}): Extract<BookingInvoiceOffer, { kind: "GENERATED" }> | null {
+  const { viewer, booking } = input;
+  if (!viewer.canSeeOwnerCredit) return null;
+  if (input.xeroModuleOn) return null;
+  if (!GENERATED_INVOICE_STATUSES.has(booking.status)) return null;
+  if (booking.organiserSettled) return null;
+  if (booking.groupBookingAsOrganiser?.paymentMode === "ORGANISER_PAYS") return null;
+  if ((booking.payment?.transactions.length ?? 0) > 0) return null;
+  if (planBookingInvoiceLines(booking).kind !== "LINES") return null;
+  return { kind: "GENERATED", notYetApproved: booking.status === "AWAITING_REVIEW" };
 }

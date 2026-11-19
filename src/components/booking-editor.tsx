@@ -189,11 +189,10 @@ export interface BookingEditorData {
   otherLodgeRateEligibleGuestIds?: string[];
   /**
    * #5066: the page's `resolveBookingInvoiceOffer` answer — the route's own
-   * rule. Absent (a conditional spread) when nothing is offered, so a club with
-   * Xero off ships the payload it did before.
+   * rule. Absent (a conditional spread) when nothing is offered.
    */
   invoiceOffer?: BookingInvoiceOffer;
-  /** #5066: the invoice's account lines, present only beside a `XERO_INVOICE` offer. */
+  /** #5066: the invoice's account lines, present only beside a `XERO_INVOICE` or `GENERATED` offer. */
   invoiceAccount?: BookingInvoiceAccount;
 }
 
@@ -474,8 +473,12 @@ export function BookingEditor({
         </CardContent>
       </Card>
 
-      {booking.invoiceOffer?.kind === "XERO_INVOICE" && booking.invoiceAccount && (
-        <BookingInvoiceAccountCard bookingId={booking.id} offer={booking.invoiceOffer} account={booking.invoiceAccount} />
+      {(booking.invoiceOffer?.kind === "XERO_INVOICE" || booking.invoiceOffer?.kind === "GENERATED") && booking.invoiceAccount && (
+        <BookingInvoiceAccountCard
+          bookingId={booking.id}
+          creditNotes={booking.invoiceOffer.kind === "XERO_INVOICE" ? booking.invoiceOffer.creditNotes : []}
+          account={booking.invoiceAccount}
+        />
       )}
     </div>
   );
