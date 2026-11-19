@@ -79,7 +79,7 @@ vi.mock("@/lib/booking-credit-election", () => ({ consumeStoredCreditElection: a
 vi.mock("@/lib/payment-transactions", () => ({
   recordInternetBankingPaymentTransaction: async (args: { amountCents: number; status: string; reason: string }) => {
     (live.booking?.payment as PaymentRow).transactions.push({
-      kind: "PRIMARY", source: "INTERNET_BANKING", status: args.status, amountCents: args.amountCents,
+      id: "txn-bank-1", kind: "PRIMARY", source: "INTERNET_BANKING", status: args.status, amountCents: args.amountCents,
       refundedAmountCents: 0, reason: args.reason, stripePaymentIntentId: null,
     });
   },
@@ -191,6 +191,7 @@ function clientOver(name: "root" | "tx" | "snapshot", rows: () => Rows, statemen
       findMany: async () => read("paymentTransaction", structuredClone((rows().booking?.payment as PaymentRow | null)?.transactions ?? [])),
     },
     stripeDispute: { findMany: async () => read("stripeDispute", []) },
+    paymentRecoveryOperation: { findMany: async () => read("paymentRecoveryOperation", []) },
     memberCredit: { aggregate: async () => read("memberCredit", { _sum: { amountCents: -rows().appliedCreditCents } }) },
     newBookingPolicyExceptionRequest: {
       findUnique: async ({ where }: { where: WhereInput }) => matchesWhere(requestRow, where) ? structuredClone(requestRow) : null,
@@ -270,7 +271,7 @@ function capturedCardPayment(amountCents: number): PaymentRow {
   return {
     id: "payment-1", status: "SUCCEEDED", source: "STRIPE", amountCents, refundedAmountCents: 0,
     changeFeeCents: null, stripePaymentIntentId: "pi_1", additionalPaymentIntentId: null,
-    transactions: [{ kind: "PRIMARY", source: "STRIPE", status: "SUCCEEDED", amountCents,
+    transactions: [{ id: "txn-card-1", kind: "PRIMARY", source: "STRIPE", status: "SUCCEEDED", amountCents,
       refundedAmountCents: 0, reason: null, stripePaymentIntentId: "pi_1" }],
   };
 }
@@ -343,6 +344,15 @@ describe("exception approval post-commit notification", () => {
     expect(sent()[0].html).not.toContain("beds are not held");
   });
 
+  it("does not call the beds held for a whole-lodge flag left on a booking that holds no capacity", async () => {
+    // The exclusive-hold route refuses to set the flag on a booking that holds nothing,
+    // and enforcement reads it only on a holding booking: a stale flag blocks nobody.
+    createsBooking({ ...payableBooking(), wholeLodgeHold: true });
+    expect(await approve()).toMatchObject({ outcome: "executed" });
+    expect(sent()[0].html).toContain("the beds are not held until it is paid.");
+    expect(sent()[0].html).not.toContain("Your beds are held for now");
+  });
+
   it.each(["paid", "succeeded-confirmed", "zero-price", "credit-covered"])("omits the payment note for %s", async (kind) => {
     createsBooking({ ...payableBooking(), ...((kind === "paid" || kind === "succeeded-confirmed") ? { status: kind === "paid" ? "PAID" : "CONFIRMED", payment: capturedCardPayment(5000) } : kind === "zero-price" ? { finalPriceCents: 0 } : {}) });
     if (kind === "credit-covered") live.appliedCreditCents = 5000;
@@ -377,6 +387,15 @@ describe("exception approval post-commit notification", () => {
     }]);
     const emailReads = reads.filter((read) => !read.startsWith("tx:"));
     expect(emailReads).toEqual(["snapshot:booking", "snapshot:booking", "snapshot:memberCredit"]);
+  });
+
+  it("reads a paid booking's captures, disputes and superseded-capture ownership inside that snapshot too", async () => {
+    createsBooking({ ...payableBooking(), status: "PAID", payment: capturedCardPayment(5000) });
+    expect(await approve()).toMatchObject({ outcome: "executed" });
+    expect(reads.filter((read) => !read.startsWith("tx:"))).toEqual([
+      "snapshot:booking", "snapshot:booking", "snapshot:memberCredit",
+      "snapshot:paymentTransaction", "snapshot:stripeDispute", "snapshot:paymentRecoveryOperation",
+    ]);
   });
 
   it.each([
