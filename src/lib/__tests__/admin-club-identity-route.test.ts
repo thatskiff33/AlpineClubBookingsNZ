@@ -181,6 +181,14 @@ describe("admin club-identity route — invoice supplier (#5066)", () => {
     expect("legalName" in create).toBe(false);
   });
 
+  it("refuses a legal name with a line break with 400 and writes nothing", async () => {
+    for (const legalName of ["Alpine Club\nIncorporated", "Alpine Club\rIncorporated"]) {
+      expect((await put({ ...validBody, legalName })).status).toBe(400);
+    }
+    expect((await put({ ...validBody, legalName: "x".repeat(201) })).status).toBe(400);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
   it("refuses an over-long address with 400 and writes nothing", async () => {
     const response = await put({ ...validBody, postalAddress: "x".repeat(501) });
     expect(response.status).toBe(400);

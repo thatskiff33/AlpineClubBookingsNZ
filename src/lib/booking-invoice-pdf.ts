@@ -20,12 +20,14 @@ import {
   type BookingInvoiceLine,
 } from "@/lib/booking-invoice";
 import type { ClubFormat } from "@/lib/club-format";
-import { formatCents } from "@/lib/utils";
+import { formatCents, formatCentsWithCurrencyCode } from "@/lib/utils";
 
 const PAGE = { width: 210, height: 297, margin: 18 } as const;
 const FOOTER_Y = PAGE.height - 12;
 const CONTENT_BOTTOM = PAGE.height - 24;
 const LINE = 5;
+/** The supplier block's width (mm), clear of the title and date on the right. */
+const SUPPLIER_WIDTH = 100;
 
 // Column right edges / left edges for the line table (mm).
 const COLUMNS = {
@@ -36,23 +38,43 @@ const COLUMNS = {
   amountRight: PAGE.width - PAGE.margin,
 } as const;
 
+/** Characters outside Latin-1 that WinAnsi (and so Helvetica) still draws. */
+const WIN_ANSI_EXTRAS = "•–—‘’“”€";
+const UNICODE_MINUS = String.fromCharCode(0x2212);
+
+/**
+ * One character as Helvetica can draw it, or null when it cannot. The Unicode
+ * minus (U+2212, which sv-SE, nb-NO and fi-FI put before a negative amount) is
+ * the ASCII hyphen-minus; anything else outside Latin-1 folds to its base
+ * letter (a Māori macron, a narrow no-break space) when it has one.
+ */
+function pdfChar(char: string): string | null {
+  if (char.codePointAt(0)! <= 0xff || WIN_ANSI_EXTRAS.includes(char)) return char;
+  if (char === UNICODE_MINUS) return "-";
+  const folded = char.normalize("NFKD").replace(/\p{M}/gu, "");
+  return folded && [...folded].every((c) => c.codePointAt(0)! <= 0xff) ? folded : null;
+}
+
 /**
  * jsPDF's built-in Helvetica covers WinAnsi only. Names can carry macrons and
  * other letters outside it (Māori names, for example), which would print as
- * garbage, so anything outside Latin-1 is folded to its base letter, or "?"
- * when it has none.
+ * garbage, so each character is drawn as `pdfChar` gives it, or "?" when it
+ * has no drawable form.
  */
 export function pdfSafeText(value: string): string {
-  let out = "";
-  for (const char of value) {
-    if (char.codePointAt(0)! <= 0xff || "•–—‘’“”€".includes(char)) {
-      out += char;
-      continue;
-    }
-    const folded = char.normalize("NFKD").replace(/[̀-ͯ]/g, "");
-    out += folded && [...folded].every((c) => c.codePointAt(0)! <= 0xff) ? folded : "?";
-  }
-  return out;
+  return [...value].map((char) => pdfChar(char) ?? "?").join("");
+}
+
+/**
+ * An amount in the club's currency and locale, drawable: `formatCents`, unless
+ * that has a character Helvetica cannot draw even folded (`zł`, `₹`, `₺`, `₩`,
+ * `₽`), when the same amount is formatted with the ISO code instead
+ * (`formatCentsWithCurrencyCode`). Never a hand-built string.
+ */
+export function pdfMoney(cents: number, format: ClubFormat): string {
+  const symbol = formatCents(cents, format);
+  const drawable = [...symbol].every((char) => pdfChar(char) !== null);
+  return pdfSafeText(drawable ? symbol : formatCentsWithCurrencyCode(cents, format));
 }
 
 type Pen = {
@@ -75,7 +97,7 @@ function pen(doc: jsPDF, format: ClubFormat): Pen {
     // actually drew, so a wrapped row never overlaps the next one.
     wrap: (value, width) => doc.splitTextToSize(pdfSafeText(value), width) as string[],
     drawLines: (lines, x, top) => lines.forEach((line, index) => doc.text(line, x, top + index * LINE)),
-    money: (cents) => pdfSafeText(formatCents(cents, format)),
+    money: (cents) => pdfMoney(cents, format),
   };
 }
 
@@ -84,7 +106,7 @@ function drawHeader(p: Pen, data: BookingInvoiceData) {
   const { doc } = p;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(14);
-  const supplierLines = p.wrap(data.supplier.name, 100);
+  const supplierLines = p.wrap(data.supplier.name, SUPPLIER_WIDTH);
   p.drawLines(supplierLines, PAGE.margin, p.y);
   doc.setFontSize(22);
   p.text(data.title, COLUMNS.amountRight, p.y + 2, right);
@@ -92,10 +114,11 @@ function drawHeader(p: Pen, data: BookingInvoiceData) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   let y = p.y + supplierLines.length * LINE + 1;
-  for (const line of data.supplier.addressLines) {
-    p.text(line, PAGE.margin, y);
-    y += LINE;
-  }
+  // Each address line wraps within the supplier column, so a long one never
+  // runs under the date and booking reference.
+  const addressLines = data.supplier.addressLines.flatMap((line) => p.wrap(line, SUPPLIER_WIDTH));
+  p.drawLines(addressLines, PAGE.margin, y);
+  y += addressLines.length * LINE;
 
   let metaY = PAGE.margin + 14;
   for (const [label, value] of [
@@ -213,6 +236,20 @@ function drawTotals(p: Pen, data: BookingInvoiceData, format: ClubFormat) {
   doc.setFont("helvetica", "normal");
 }
 
+/**
+ * The footer's left text, fitted to `width` (mm) so it never runs into
+ * "Page x of y": the title and any "Not yet approved" mark are always kept
+ * whole, and only the supplier's name is shortened, with an ellipsis.
+ */
+function footerText(p: Pen, data: BookingInvoiceData, width: number): string {
+  const suffix = [data.title, ...(data.notYetApproved ? [BOOKING_INVOICE_NOT_YET_APPROVED] : [])].join(" • ");
+  const fits = (text: string) => p.doc.getTextWidth(pdfSafeText(text)) <= width;
+  let name = data.supplier.name;
+  if (fits(`${name} • ${suffix}`)) return `${name} • ${suffix}`;
+  while (name.length > 0 && !fits(`${name}... • ${suffix}`)) name = name.slice(0, -1).trimEnd();
+  return name ? `${name}... • ${suffix}` : suffix;
+}
+
 export function renderBookingInvoicePdf(data: BookingInvoiceData, format: ClubFormat): Buffer {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const p = pen(doc, format);
@@ -230,9 +267,10 @@ export function renderBookingInvoicePdf(data: BookingInvoiceData, format: ClubFo
 
   // Footer on every page, repeating the mark on an unapproved booking.
   const pages = doc.getNumberOfPages();
-  const footer = [data.supplier.name, data.title, ...(data.notYetApproved ? [BOOKING_INVOICE_NOT_YET_APPROVED] : [])].join(" • ");
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
+  const pageLabelWidth = doc.getTextWidth(`Page ${pages} of ${pages}`);
+  const footer = footerText(p, data, COLUMNS.amountRight - PAGE.margin - pageLabelWidth - 6);
   for (let page = 1; page <= pages; page += 1) {
     doc.setPage(page);
     p.text(footer, PAGE.margin, FOOTER_Y);

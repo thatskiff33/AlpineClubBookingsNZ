@@ -6,6 +6,7 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import { primeClubIdentitySync } from "@/lib/club-identity-settings";
+import { clubLegalNameSchema, clubPostalAddressSchema } from "@/lib/club-invoice-supplier-fields";
 import { storedPostalAddress } from "@/lib/postal-address-lines";
 import { isHttpUrl } from "@/lib/http-url";
 import { prisma } from "@/lib/prisma";
@@ -41,8 +42,9 @@ const settingsSchema = z
         message: "facebookUrl must be a valid http(s) URL",
       })
       .nullable(),
-    legalName: z.string().trim().max(200).nullable().optional(),
-    postalAddress: z.string().trim().max(500).nullable().optional(),
+    // One line, and the lengths config transfer also enforces (`club-invoice-supplier-fields.ts`).
+    legalName: clubLegalNameSchema.nullable().optional(),
+    postalAddress: clubPostalAddressSchema.nullable().optional(),
   })
   .strict();
 

@@ -1,4 +1,5 @@
 import { privacyHostingSchema, PRIVACY_HOSTING_DEFAULTS, PRIVACY_HOSTING_TEXT_REFUSAL } from "@/lib/privacy-hosting";
+import { CLUB_INVOICE_SUPPLIER_IMPORT_CONSTRAINTS } from "@/lib/club-invoice-supplier-fields";
 import { strToU8, strFromU8 } from "fflate";
 import { Prisma } from "@prisma/client";
 
@@ -597,16 +598,15 @@ export const SINGLETONS: SingletonSpec[] = [
     defaults: () => DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS,
   },
   {
-    // DB-first club identity (E3 #1929). Singleton row id="default"; all fields
-    // nullable and served through the runtime fallback chain, so exporting/
-    // importing them moves only the admin-set overrides (legalName/postalAddress: #5066's invoice supplier).
+    // DB-first club identity (E3 #1929; legalName/postalAddress: #5066's invoice supplier). Singleton row
+    // id="default"; all fields nullable overrides of the runtime fallback chain, so only admin-set ones move.
     entity: "club-identity-settings",
     delegate: "clubIdentitySettings",
     fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl", "legalName", "postalAddress"],
     // No override saved = every column null, which is what the admin GET
     // synthesises. See DEFAULTS_INTENTIONALLY_PARTIAL.
-    // No `constraints`: every column is nullable (String?), so null is a
-    // legitimate value — nothing to require (#2200 nullability audit).
+    // Null is always allowed (#2200); the #5066 supplier fields take the admin save's rules.
+    constraints: CLUB_INVOICE_SUPPLIER_IMPORT_CONSTRAINTS,
     defaults: () => ({}),
   },
   {

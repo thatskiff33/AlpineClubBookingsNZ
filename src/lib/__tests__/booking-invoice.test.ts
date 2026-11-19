@@ -9,7 +9,7 @@ import {
   type BookingInvoiceInput,
 } from "@/lib/booking-invoice";
 import { generatedBookingInvoiceOnOffer, primaryXeroInvoiceOnOffer } from "@/lib/booking-invoice-access";
-import { pdfSafeText, renderBookingInvoicePdf } from "@/lib/booking-invoice-pdf";
+import { pdfMoney, pdfSafeText, renderBookingInvoicePdf } from "@/lib/booking-invoice-pdf";
 import type { BookingInvoiceSummary } from "@/lib/booking-invoice-summary";
 import { resolveClubInvoiceSupplier } from "@/lib/club-invoice-supplier";
 import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
@@ -244,6 +244,64 @@ describe("renderBookingInvoicePdf", () => {
     expect((content.match(/Invoice . Not yet approved/g) ?? []).length).toBe(pages);
     // The table header repeats on every page too.
     expect((content.match(/\(Rate \/ night\)/g) ?? []).length).toBe(pages);
+  });
+
+  it("draws a negative amount in sv-SE with a hyphen-minus, never a ?", () => {
+    const sv = { currencyCode: "EUR", locale: "sv-SE" };
+    const amount = pdfMoney(-123_450, sv);
+    expect(amount).not.toContain("?");
+    expect(amount.startsWith("-")).toBe(true);
+    expect(amount).toContain("€");
+    for (const locale of ["nb-NO", "fi-FI"]) expect(pdfMoney(-100, { currencyCode: "EUR", locale })).not.toContain("?");
+  });
+
+  it("falls back to the currency code for a symbol Helvetica cannot draw", () => {
+    expect(pdfMoney(123_450, { currencyCode: "PLN", locale: "pl-PL" })).toMatch(/PLN/);
+    for (const [currencyCode, locale] of [["INR", "en-IN"], ["TRY", "tr-TR"], ["KRW", "ko-KR"], ["RUB", "ru-RU"]]) {
+      const amount = pdfMoney(-123_450, { currencyCode: currencyCode!, locale: locale! });
+      expect(amount).toContain(currencyCode);
+      expect(amount).not.toContain("?");
+    }
+    // A drawable symbol is kept.
+    expect(pdfMoney(123_450, FORMAT)).toBe("$1,234.50");
+  });
+
+  it("prints a PLN invoice with codes, and a sv-SE one with no ? anywhere in its amounts", () => {
+    for (const format of [{ currencyCode: "PLN", locale: "pl-PL" }, { currencyCode: "EUR", locale: "sv-SE" }]) {
+      const data = buildBookingInvoiceData(
+        input({
+          format,
+          finalPriceCents: 8000,
+          promoAdjustmentCents: -1000,
+          promoRedemptions: [redemption("r1", 1, "SKI10", -1000)],
+          summary: summary({ totalCents: 8000, balanceCents: 8000 }),
+        }),
+      );
+      const content = pdfText(renderBookingInvoicePdf(data, format));
+      // The negative promotion prints with a hyphen-minus, never a "?" (the
+      // space before the symbol is drawn by its own PDF escape, so the digits are matched).
+      expect(content).toContain("-10,00");
+      expect(content).not.toContain("?10,00");
+      expect(pdfMoney(-1000, format)).not.toContain("?");
+      if (format.currencyCode === "PLN") expect(content).toContain("PLN");
+    }
+  });
+
+  it("wraps a long address line within the supplier column", () => {
+    const longLine = "Level 12, The Very Long Building Name, 123 Some Extremely Long Street Name Avenue, Ohakune";
+    const data = buildBookingInvoiceData(input({ supplier: { name: "ASC", addressLines: [longLine] } }));
+    const content = pdfText(renderBookingInvoicePdf(data, FORMAT));
+    expect(content).not.toContain(longLine);
+    expect(content).toContain("Level 12");
+    expect(content).toContain("Ohakune");
+  });
+
+  it("shortens a long supplier name in the footer so it never reaches Page x of y, keeping the mark whole", () => {
+    const name = "The Extraordinarily Long Incorporated Society Name Of An Alpine Sports And Mountaineering Club";
+    const data = buildBookingInvoiceData(input({ supplier: { name, addressLines: [] }, notYetApproved: true }));
+    const content = pdfText(renderBookingInvoicePdf(data, FORMAT));
+    expect(content).toMatch(/\.\.\. . Invoice . Not yet approved/);
+    expect(content).toContain("Page 1 of 1");
   });
 
   it("folds letters outside Latin-1 so a name prints instead of garbage", () => {
