@@ -8,16 +8,18 @@ import { stableDigest } from "@/lib/stable-digest";
 import { sanitizeForJson } from "@/lib/xero-sync";
 import { planRefundNote } from "@/lib/member-money/internal/refund-note-plan";
 import { planRefundNotePayment } from "@/lib/member-money/internal/refund-payment-plan";
+import { LineAmountTypes } from "xero-node";
+import { BASELINE_XERO_TAX_RENDERING as BASELINE, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
 
 /** #4525 (Ledger M13): the refund note and its payment, planned. */
 
 const mapping = { code: "260", itemCode: null, codeExplicitlyConfigured: true };
 const debt = { account: "REFUND_PAYABLE" as const, chargeIdentity: "refund-obligation|cancellation|c-1", cents: 5000 };
-const line = hutFeeRefundLine("Refund - booking b-1", 5000, mapping);
+const line = hutFeeRefundLine("Refund - booking b-1", 5000, mapping, BASELINE);
 
 describe("planRefundNote", () => {
   it("covers only the live refund debt, whole, and hashes the lines it sent", () => {
-    const plan = planRefundNote({ lines: [line], legacyKey: "key-1", source: "BUILT", obligation: debt });
+    const plan = planRefundNote({ lines: [line], legacyKey: "key-1", source: "BUILT", lineAmountTypes: "Inclusive", obligation: debt });
     expect(plan).toMatchObject({
       outcome: "COVERED",
       legacyKey: "key-1",
@@ -29,16 +31,38 @@ describe("planRefundNote", () => {
   });
 
   it("is a CENTS conflict with no rows when the note is not the debt's whole gross", () => {
-    const plan = planRefundNote({ lines: [line], legacyKey: "key-1", source: "BUILT", obligation: { ...debt, cents: 6000 } });
+    const plan = planRefundNote({ lines: [line], legacyKey: "key-1", source: "BUILT", lineAmountTypes: "Inclusive", obligation: { ...debt, cents: 6000 } });
     expect(plan).toMatchObject({ outcome: "CONFLICT", reason: "CENTS" });
     expect(plan).not.toHaveProperty("coverage");
   });
 
   it("never covers revenue, and a watermark note naming no debt is unusable", () => {
-    expect(planRefundNote({ lines: [line], legacyKey: "k", source: "BUILT", obligation: { ...debt, account: "BOOKING_REVENUE" } }))
+    expect(planRefundNote({ lines: [line], legacyKey: "k", source: "BUILT", lineAmountTypes: "Inclusive", obligation: { ...debt, account: "BOOKING_REVENUE" } }))
       .toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE" });
-    expect(planRefundNote({ lines: [line], legacyKey: "k", source: "STORED_REQUEST", obligation: { problem: "no one debt" } }))
+    expect(planRefundNote({ lines: [line], legacyKey: "k", source: "STORED_REQUEST", lineAmountTypes: "Inclusive", obligation: { problem: "no one debt" } }))
       .toMatchObject({ outcome: "CONFLICT", reason: "COMPONENT_UNUSABLE", problem: "no one debt", frozenMapping: { source: "STORED_REQUEST" } });
+  });
+});
+
+describe("planRefundNote under each treatment a tax period can hold (#4632)", () => {
+  it.each([
+    ["the baseline (registered, OUTPUT2)", BASELINE],
+    ["a registered period with another code", { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "OUTPUT3" }],
+    ["an unregistered period", { lineAmountTypes: LineAmountTypes.NoTax }],
+  ] as Array<[string, XeroTaxRendering]>)("freezes the basis and line tax type the note was sent with under %s", (_label, rendering) => {
+    const sent = hutFeeRefundLine("Refund - booking b-1", 5000, mapping, rendering);
+    const plan = planRefundNote({ lines: [sent], legacyKey: "key-1", source: "BUILT", lineAmountTypes: rendering.lineAmountTypes, obligation: debt });
+    expect(plan).toMatchObject({
+      outcome: "COVERED",
+      frozenMapping: { lineAmountTypes: rendering.lineAmountTypes, lineCodes: [{ taxType: rendering.taxType ?? null }] },
+    });
+  });
+
+  it("freezes a replayed note's own stored basis, or null when the request held none", () => {
+    expect(planRefundNote({ lines: [line], legacyKey: "k", source: "STORED_REQUEST", lineAmountTypes: "NoTax", obligation: debt }).frozenMapping)
+      .toMatchObject({ source: "STORED_REQUEST", lineAmountTypes: "NoTax" });
+    expect(planRefundNote({ lines: [line], legacyKey: "k", source: "STORED_REQUEST", lineAmountTypes: null, obligation: debt }).frozenMapping)
+      .toMatchObject({ lineAmountTypes: null });
   });
 });
 

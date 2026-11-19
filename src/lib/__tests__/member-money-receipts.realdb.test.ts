@@ -8,7 +8,7 @@ import { memberMoneyApplicationTotals } from "@/lib/member-money/internal/applic
 import { readBookingReceiptCensus } from "@/lib/member-money/internal/receipt-census";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { memberMoneyTestContext, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 /**
@@ -71,7 +71,7 @@ async function booking(charge = 10_000, zero = false, memberId = names.memberId)
       obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId }, faceCents: charge, evidence: {} }],
       legs: [
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: charge, booking: { bookingId: id, lodgeId: names.lodgeId }, debtor: { kind: "MEMBER", memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
-        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: charge, booking: { bookingId: id, lodgeId: names.lodgeId }, chargeIdentity: `booking:${id}:test`, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: charge, booking: { bookingId: id, lodgeId: names.lodgeId }, chargeIdentity: `booking:${id}:test`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
       ] }));
   return id;
 }
@@ -214,7 +214,7 @@ function counting(tx: Prisma.TransactionClient) {
     await db.$transaction((tx) => postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.modification(id), origin: "APP",
       source: { kind: "BOOKING", id, version: "edit" }, reason: "Synthetic increase from zero", legs: [
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: 10_000, debtor: { kind: "MEMBER", memberId: names.memberId }, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
-        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 10_000, chargeIdentity: `booking:${id}:test`, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 10_000, chargeIdentity: `booking:${id}:test`, booking: { bookingId: id, lodgeId: names.lodgeId }, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
       ] }));
     const row = await cash(id, 5_000);
     await post(id, { transactionIds: [row.id], collect: true });
@@ -347,7 +347,7 @@ function counting(tx: Prisma.TransactionClient) {
       await postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.modification(id), origin: "APP",
         source: { kind: "BOOKING", id, version: "increase" }, reason: "Synthetic price increase after a merge", legs: [
           { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: 3_000, debtor: { kind: "MEMBER", memberId: to }, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
-          { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 3_000, chargeIdentity: `booking:${id}:increase`, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+          { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 3_000, chargeIdentity: `booking:${id}:increase`, booking: { bookingId: id, lodgeId: names.lodgeId }, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
         ] });
     });
     const next = await cash(id, 3_000);
@@ -475,7 +475,7 @@ function counting(tx: Prisma.TransactionClient) {
       await postMemberMoneyEvent(tx, context, { kind: "ADJUSTMENT", eventKey: memberMoneyEventKeys.modification(id), origin: "APP",
         source: { kind: "BOOKING", id, version: "price-edit" }, reason: "Synthetic price edit racing the collect", legs: [
           { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: 10_000, chargeIdentity: `booking:${id}:test`, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
-          { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 6_000, chargeIdentity: `booking:${id}:test`, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
+          { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 6_000, chargeIdentity: `booking:${id}:test`, booking: { bookingId: id, lodgeId: names.lodgeId }, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
           { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 4_000, debtor: { kind: "MEMBER", memberId: names.memberId }, booking: { bookingId: id, lodgeId: names.lodgeId }, evidence: {} },
         ] });
     }).then(() => undefined);
