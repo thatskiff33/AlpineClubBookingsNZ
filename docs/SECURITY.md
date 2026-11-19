@@ -665,6 +665,88 @@ Admin lost their factor runs, on the server,
 is a Full Admin view only. An emailed code still signs a member in where the
 club-wide module allows it; it just does not meet this rule.
 
+## AI app connections (ALP-653)
+
+Audience: Operator, Developer.
+
+**The threat.** A member can hand an AI app (an MCP client) the power to act
+as them on the club's live site. A stolen app credential, an app that is not
+what it says, or an app steered by text it reads could then read or change
+that member's club data, and whatever the app reads goes to its provider. The
+rules are `INV-MCP-001` … `INV-MCP-008`
+([`mcp-connections.md`](invariants/mcp-connections.md)); the operator view is
+[the guide](guides/mcp-server.md).
+
+**The controls.**
+
+- **Off by default.** The `mcpServer` module is the only switch; while it is
+  off every connection route, the approval screen and the discovery documents
+  answer 404, each handler checking the flag itself (`INV-MCP-001`).
+- **The club decides who may connect, and how far** (`McpSettings`): members on,
+  officers off, view only and three approved app hosts by default. The policy
+  is checked at approval and on every request, so changing it reaches existing
+  connections at once (`INV-MCP-002`). Saving it needs `support` edit and is on
+  the fresh-proof list (`INV-AUTH-010`).
+- **Approval only on the website, by a signed-in member.** Kiosk accounts and
+  unverified emails are refused; a forced password change or owed two-factor
+  step comes first. A connection can never approve, list or end connections,
+  or read or save the policy: those routes refuse the internal principal header
+  with 403.
+- **OAuth 2.1, public clients only** (`INV-MCP-003`): authorisation code with
+  PKCE S256; redirects only to an exact approved host or to loopback, checked at
+  registration and again at approval; five-minute single-use codes; one-hour
+  access tokens; single-use rotating refresh tokens; every code and token stored
+  as a SHA-256 hash ([`TOKEN_HASHING.md`](TOKEN_HASHING.md)) and bound to this
+  site's `/api/mcp`. Reusing a code or refresh token ends the connection.
+- **The connection is the member's sign-in, not a new identity**
+  (`INV-MCP-005`). `auth()` accepts a 30-second HMAC-signed `x-mcp-principal`
+  header (key derived from `AUTH_SECRET` with its own label) and builds the
+  session through the same `session-refresh.ts` code as a browser, from the
+  approving sign-in's time and two-factor result. The maximum session age,
+  password changes, disabled logins and role changes therefore end or narrow
+  a connection by the same code. A header that does not verify reads as
+  signed out and never falls back to a cookie. `lastAuthenticatedAt` is never
+  set.
+- **Every action meets the route's own guards** (`INV-MCP-007`): it is sent to
+  the site over loopback, never by calling a handler. Fresh-proof, sign-in,
+  provider, scheduler, kiosk and browser-only routes are permanent exclusions,
+  refused before dispatch even if catalogued, and every API route method must
+  be classified or a census test fails (`INV-MCP-006`).
+- **Rate limits.** `mcpClientRegister` 20 an hour per address;
+  `mcpToken` 60 per 10 minutes per address (token and revoke);
+  `mcpUnauthenticated` 60 a minute per address for a request without a valid
+  token; `mcpCall` 120 a minute per connection; `mcpApprove` 20 an hour per
+  member. Calls are limited per connection, not per address, because every
+  member of one AI provider arrives from that provider's addresses.
+- **Audit** (`INV-MCP-008`, category `security`): approvals, member and
+  officer disconnects, policy saves, and every call of a change action, never
+  its arguments or result.
+
+**Stated limits.**
+
+- **Prompt injection is not preventable here.** Text members type into
+  bookings, notices and profiles can try to steer the app. Mitigations: view
+  only by default, destructive actions marked for the app, payments and sign-in
+  out of reach, a draft booking that holds no beds, server instructions telling
+  the app that such text is information, and an audit row for every change.
+- **Officers' connections export other members' data** to the officer's AI
+  provider, which is why `officersMayConnect` is a separate switch, off by
+  default; a club should cover it in its privacy notice first.
+- **Not audited:** read-only action calls, and connections ended by the app or
+  the system (app revocation, reuse, replacement, the approving sign-in
+  ending, an approval never collected). `McpGrant.endedReason` and
+  `lastUsedAt` are the record.
+- **The fresh-proof prompt is not shown yet.** `requireRecentAuth` does not read
+  the session while `OFFICER_SIGN_IN_ENFORCED` is false (#4620), so the policy
+  save goes through without a confirmation today. Connections still cannot
+  reach fresh-proof routes, because those are permanent exclusions.
+- **Loopback is assumed.** Actions go to `127.0.0.1:$PORT`; a server not
+  listening on loopback answers no action.
+- **No scheduled job sweeps MCP codes or tokens.** A connection's expired
+  tokens are deleted at its next token issue, and its codes and remaining
+  tokens when it ends; until then they stay as hashed rows that can no longer
+  be used.
+
 ## Data-encryption key ring (#4456)
 
 Audience: Operator, Developer.
