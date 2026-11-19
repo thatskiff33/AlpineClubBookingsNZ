@@ -63,7 +63,6 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
     download = await import("@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download");
     const { loadBookingDetail } = await import("@/app/(authenticated)/bookings/[id]/_lib/load-booking-detail");
     const { renderGeneratedBookingInvoice } = await import("@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-generated");
-    const { createAuditLog } = await import("@/lib/audit");
     const { getClubIdentity } = await import("@/lib/club-identity-settings");
     const neverXero = async () => {
       throw new Error("a Xero-off club's download must not reach Xero");
@@ -79,7 +78,6 @@ async function seedGuest(bookingId: string, id: string, guest: { firstName: stri
       fetchXeroInvoicePdf: neverXero,
       fetchXeroCreditNotePdf: neverXero,
       renderGenerated: renderGeneratedBookingInvoice,
-      writeAudit: createAuditLog,
     } as never;
 
     previousIdentity = await db.clubIdentitySettings.findUnique({ where: { id: "default" } });

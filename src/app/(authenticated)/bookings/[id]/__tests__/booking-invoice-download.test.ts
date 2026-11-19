@@ -228,7 +228,6 @@ describe("prepareBookingInvoiceDownload", () => {
       fetchXeroInvoicePdf: vi.fn(async () => pdf),
       fetchXeroCreditNotePdf: vi.fn(async () => pdf),
       renderGenerated: vi.fn(async () => GENERATED_RENDER),
-      writeAudit: vi.fn(async () => undefined),
       ...overrides,
     } as never as NonNullable<Parameters<typeof prepareBookingInvoiceDownload>[4]>;
   }
@@ -245,8 +244,8 @@ describe("prepareBookingInvoiceDownload", () => {
     const result = await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d);
     expect(result).toEqual({ kind: "PDF", body: pdf, fileName: "tac-invoice-INV-0042.pdf" });
     expect(d.fetchXeroInvoicePdf).toHaveBeenCalledWith("xero-primary-id");
-    expect(d.writeAudit).toHaveBeenCalledTimes(1);
-    expect(d.writeAudit).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createAuditLog).toHaveBeenCalledTimes(1);
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: "booking.invoice.downloaded",
       category: "booking",
       actorMemberId: OWNER_ID,
@@ -257,14 +256,14 @@ describe("prepareBookingInvoiceDownload", () => {
       metadata: { bookingId: "ckbooking1234567", source: "XERO", xeroInvoiceNumber: "INV-0042", onBehalf: false },
     }));
     const fetchOrder = (d.fetchXeroInvoicePdf as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-    const auditOrder = (d.writeAudit as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const auditOrder = vi.mocked(createAuditLog).mock.invocationCallOrder[0];
     expect(fetchOrder).toBeLessThan(auditOrder);
   });
 
   it("marks an officer's download as on behalf of the owner", async () => {
     const d = deps();
     await prepareBookingInvoiceDownload("ckbooking1234567", session("officer-1", "ADMIN_BOOKINGS"), INVOICE, request, d);
-    expect(d.writeAudit).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       actorMemberId: "officer-1",
       subjectMemberId: OWNER_ID,
       metadata: expect.objectContaining({ onBehalf: true }),
@@ -282,7 +281,7 @@ describe("prepareBookingInvoiceDownload", () => {
     const result = await prepareBookingInvoiceDownload("ckbooking1234567", session(id as string, "USER"), INVOICE, request, d);
     expect(result).toEqual({ kind: "NOT_FOUND" });
     expect(d.fetchXeroInvoicePdf).not.toHaveBeenCalled();
-    expect(d.writeAudit).not.toHaveBeenCalled();
+    expect(createAuditLog).not.toHaveBeenCalled();
     // L2: an unauthorised caller never spends the booking's allowance.
     expect(chargeBookingLimit).not.toHaveBeenCalled();
   });
@@ -294,7 +293,7 @@ describe("prepareBookingInvoiceDownload", () => {
     expect(d.fetchXeroCreditNotePdf).toHaveBeenCalledWith("xero-cn-1");
     expect(d.fetchXeroInvoicePdf).not.toHaveBeenCalled();
     expect(chargeBookingLimit).toHaveBeenCalledTimes(1);
-    expect(d.writeAudit).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: "booking.credit_note.downloaded",
       category: "booking",
       actorMemberId: "officer-1",
@@ -309,7 +308,7 @@ describe("prepareBookingInvoiceDownload", () => {
     expect(result).toEqual({ kind: "NOT_FOUND" });
     expect(chargeBookingLimit).not.toHaveBeenCalled();
     expect(d.fetchXeroCreditNotePdf).not.toHaveBeenCalled();
-    expect(d.writeAudit).not.toHaveBeenCalled();
+    expect(createAuditLog).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -329,7 +328,7 @@ describe("prepareBookingInvoiceDownload", () => {
     expect(result).toEqual({ kind: "RATE_LIMITED", limit: spent });
     expect(d.xeroConnected).not.toHaveBeenCalled();
     expect(d.fetchXeroInvoicePdf).not.toHaveBeenCalled();
-    expect(d.writeAudit).not.toHaveBeenCalled();
+    expect(createAuditLog).not.toHaveBeenCalled();
   });
 
   it("refuses a booking that does not exist", async () => {
@@ -341,19 +340,20 @@ describe("prepareBookingInvoiceDownload", () => {
     const d = deps({ xeroConnected: vi.fn(async () => false) });
     expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "XERO_NOT_CONNECTED" });
     expect(d.fetchXeroInvoicePdf).not.toHaveBeenCalled();
-    expect(d.writeAudit).not.toHaveBeenCalled();
+    expect(createAuditLog).not.toHaveBeenCalled();
   });
 
   it("reports a failed or empty Xero read, writing no audit row", async () => {
     for (const fetchXeroInvoicePdf of [vi.fn(async () => { throw new Error("503"); }), vi.fn(async () => Buffer.alloc(0))]) {
       const d = deps({ fetchXeroInvoicePdf });
       expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "XERO_UNAVAILABLE" });
-      expect(d.writeAudit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
     }
   });
 
   it("withholds the PDF when the audit row cannot be written", async () => {
-    const d = deps({ writeAudit: vi.fn(async () => { throw new Error("db down"); }) });
+    vi.mocked(createAuditLog).mockRejectedValueOnce(new Error("db down"));
+    const d = deps();
     expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "AUDIT_FAILED" });
   });
 
@@ -368,8 +368,8 @@ describe("prepareBookingInvoiceDownload", () => {
       expect(d.xeroConnected).not.toHaveBeenCalled();
       expect(d.fetchXeroInvoicePdf).not.toHaveBeenCalled();
       expect(chargeBookingLimit).toHaveBeenCalledTimes(1);
-      expect(d.writeAudit).toHaveBeenCalledTimes(1);
-      expect(d.writeAudit).toHaveBeenCalledWith(expect.objectContaining({
+      expect(createAuditLog).toHaveBeenCalledTimes(1);
+      expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
         action: "booking.invoice.downloaded",
         category: "booking",
         actorMemberId: "officer-1",
@@ -386,7 +386,7 @@ describe("prepareBookingInvoiceDownload", () => {
         },
       }));
       const renderOrder = (d.renderGenerated as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
-      const auditOrder = (d.writeAudit as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+      const auditOrder = vi.mocked(createAuditLog).mock.invocationCallOrder[0];
       expect(renderOrder).toBeLessThan(auditOrder);
     });
 
@@ -394,7 +394,7 @@ describe("prepareBookingInvoiceDownload", () => {
       const d = off({ loadBooking: vi.fn(async () => booking({ status: "AWAITING_REVIEW" })) });
       await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d);
       expect(d.renderGenerated).toHaveBeenCalledWith(expect.anything(), { kind: "GENERATED", notYetApproved: true });
-      expect(d.writeAudit).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ notYetApproved: true }) }));
+      expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ notYetApproved: true }) }));
     });
 
     it.each([
@@ -408,7 +408,7 @@ describe("prepareBookingInvoiceDownload", () => {
       expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "NOT_FOUND" });
       expect(d.renderGenerated).not.toHaveBeenCalled();
       expect(chargeBookingLimit).not.toHaveBeenCalled();
-      expect(d.writeAudit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
     });
 
     it("serves no credit note while Xero is off", async () => {
@@ -421,11 +421,12 @@ describe("prepareBookingInvoiceDownload", () => {
     it("answers a booking that changed under the offer as no longer available, writing no audit row", async () => {
       const d = off({ renderGenerated: vi.fn(async () => { throw new BookingInvoiceNotAvailableError("LINES_DO_NOT_ADD_UP"); }) });
       expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "NOT_FOUND" });
-      expect(d.writeAudit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
     });
 
     it("withholds the generated PDF when its audit row cannot be written", async () => {
-      const d = off({ writeAudit: vi.fn(async () => { throw new Error("db down"); }) });
+      vi.mocked(createAuditLog).mockRejectedValueOnce(new Error("db down"));
+      const d = off();
       expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "AUDIT_FAILED" });
     });
   });
@@ -435,7 +436,7 @@ describe("prepareBookingInvoiceDownload", () => {
     const d = deps({ loadBooking: vi.fn(async () => school) });
     const result = await prepareBookingInvoiceDownload("ckbooking1234567", session("officer-1", "ADMIN_BOOKINGS"), INVOICE, request, d);
     expect(result).toMatchObject({ kind: "PDF" });
-    expect(d.writeAudit).toHaveBeenCalledWith(expect.objectContaining({ subjectMemberId: null }));
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ subjectMemberId: null }));
   });
 });
 

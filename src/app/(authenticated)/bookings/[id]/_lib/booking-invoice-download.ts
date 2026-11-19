@@ -174,7 +174,6 @@ const downloadDependencies = {
     return Buffer.from(result.body);
   },
   renderGenerated: renderGeneratedBookingInvoice,
-  writeAudit: createAuditLog,
 };
 
 /** The one document a download serves, once the offer has said yes to it. */
@@ -283,7 +282,7 @@ export async function prepareBookingInvoiceDownload(
   const isCreditNote = served.kind === "XERO_CREDIT_NOTE";
   const owner = bookingOwner(booking);
   try {
-    await dependencies.writeAudit({
+    await createAuditLog({
       action: isCreditNote ? "booking.credit_note.downloaded" : "booking.invoice.downloaded",
       memberId: session.user.id,
       actorMemberId: session.user.id,
