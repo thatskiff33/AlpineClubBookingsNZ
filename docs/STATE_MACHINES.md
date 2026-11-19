@@ -25,6 +25,16 @@ WAITLISTED -> WAITLIST_OFFERED -> CONFIRMED/PAID or WAITLISTED/CANCELLED
 AWAITING_REVIEW -> PENDING or PAYMENT_PENDING (officer approval after quote acceptance, the only writer of this transition, #3415) or CONFIRMED/PAID or CANCELLED
 ```
 
+A status is the booking's lifecycle, never proof of payment (#4069,
+`INV-PAY-159`). `CONFIRMED` can owe a whole bank transfer: the bed-holding
+Internet Banking switch, a saved-card claim mid-charge, or an approved
+whole-lodge request with no `Payment` row. `PAID` with a `PARTIALLY_REFUNDED`
+payment can be fully covered at a lower price. Whether a booking is covered is
+read from its cash records by `readBookingCashCover`
+(`src/lib/booking-cash-evidence.ts`), which can also answer that the records
+cannot prove it. The decisions that still read status are listed in
+[`design/paid-from-cash.md`](design/paid-from-cash.md).
+
 `AWAITING_REVIEW -> CANCELLED` is an officer's or the system's arc (review
 reject, request decline, hold release), never a member self-cancel: the
 member-facing cancel doors read `MEMBER_CANCELLABLE_BOOKING_STATUSES`, which
