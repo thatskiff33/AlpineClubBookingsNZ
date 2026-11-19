@@ -50,7 +50,7 @@ import {
   type GroupChildSettlement,
   type GroupChildSibling,
 } from "@/lib/booking-ledger-group-child-plan";
-import { bookingAmountOwedCents } from "@/lib/booking-payment-state";
+import { bookingAmountOwedCents, isCapturedPaymentStatus } from "@/lib/booking-payment-state";
 import { DUPLICATE_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { paidByOrganiser, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { organiserPaysForNewJoiner } from "@/lib/group-late-joiner";
@@ -276,7 +276,12 @@ function paymentEvidenceProblem(
 function deriveGroupChildCover(snapshot: BookingCashSnapshot): BookingCashCover {
   const { booking, payment, group } = snapshot;
   if (!group) return unknown("organiser-share-unproven");
-  if (organiserPaysForNewJoiner(group)) return { kind: "organiser_pays" };
+  // A fully refunded settlement may already have paid this child. Prove its
+  // share before deciding whether anything remains, rather than treating it as
+  // a new joiner whose organiser has never paid.
+  if ((!payment || !isCapturedPaymentStatus(payment.status)) && organiserPaysForNewJoiner(group)) {
+    return { kind: "organiser_pays" };
+  }
   const child = { ...booking, payment };
   if (!payment || !group.settlement || !paidByOrganiser(child)) return unknown("organiser-share-unproven");
   const plan = planGroupChildLines({

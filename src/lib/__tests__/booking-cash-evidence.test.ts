@@ -452,7 +452,7 @@ describe("deriveBookingCashCover: group children", () => {
 
   it("stays covered when the whole share went back and the booking is worth nothing", () => {
     const refunded = childMirror({ status: "REFUNDED", refundedAmountCents: 4_500 });
-    expect(deriveBookingCashCover(child({ booking: { finalPriceCents: 0 }, payment: refunded }))).toEqual({ kind: "covered" });
+    expect(deriveBookingCashCover(child({ booking: { finalPriceCents: 0 }, payment: refunded, group: group({ settlement: settlement("REFUNDED") }) }))).toEqual({ kind: "covered" });
   });
 
   it("says the organiser pays while the organiser has not, never asking the member", () => {

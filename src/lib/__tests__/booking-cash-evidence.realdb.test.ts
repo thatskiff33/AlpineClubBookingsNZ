@@ -114,8 +114,8 @@ let recovery: typeof import("@/lib/payment-recovery");
 let ledger: typeof import("@/lib/payment-transactions");
 let recoveryAlert: typeof import("@/lib/payment-recovery-alert");
 let harnessRole: SuiteEnvironmentRoleDeclaration | undefined;
-let priorModules: { xeroIntegration: boolean; internetBankingPayments: boolean } | null = null;
-let priorBankSettings: { holdBedSlots: boolean } | null = null;
+let priorModules: { xeroIntegration: boolean; internetBankingPayments: boolean } | null | undefined;
+let priorBankSettings: { holdBedSlots: boolean } | null | undefined;
 
 /** THE answer, read as a caller must: one read-only snapshot. */
 async function cover(bookingId: string): Promise<BookingCashCover | null> {
@@ -315,9 +315,9 @@ function pauseAtClose(operationId: string, probe: () => Promise<void>): MockInst
       await cleanup();
       // Put back the settings this suite changed, as it found them.
       if (priorModules) await prisma.clubModuleSettings.update({ where: { id: "default" }, data: priorModules, select: { id: true } });
-      else await prisma.clubModuleSettings.deleteMany({ where: { id: "default" } });
+      else if (priorModules === null) await prisma.clubModuleSettings.deleteMany({ where: { id: "default" } });
       if (priorBankSettings) await prisma.internetBankingPaymentSettings.update({ where: { id: "default" }, data: priorBankSettings, select: { id: true } });
-      else await prisma.internetBankingPaymentSettings.deleteMany({ where: { id: "default" } });
+      else if (priorBankSettings === null) await prisma.internetBankingPaymentSettings.deleteMany({ where: { id: "default" } });
     } finally {
       harnessRole?.restore();
     }
@@ -466,6 +466,36 @@ function pauseAtClose(operationId: string, probe: () => Promise<void>): MockInst
       await settleGroupHistory(G);
       expect(await cover(child1)).toEqual(COVERED);
       expect(await cover(child2)).toEqual(COVERED);
+    });
+
+    it("a zero-priced child stays covered after the whole combined settlement is refunded", async () => {
+      const g = groupHistory(PREFIX, "group-full-refund", "STRIPE", 1);
+      const childId = g.children[0]!;
+      await createGroupHistory(prisma, names, g);
+      await settleGroupHistory(g);
+      // Reprice the first night through the real edit writer; the existing
+      // refund helper reprices the second and reserves the full share back.
+      await postHistoryEdit(prisma, names, childId, `${childId}-first-night`, {
+        reprice: { guestId: `${childId}-g1`, stayDate: new Date("2027-10-01T00:00:00.000Z"), priceCents: 0 },
+        changeFeeCents: 0,
+      });
+      const debt = await reserveGroupChildReduction(prisma, names, g, childId, GROUP_NIGHT_CENTS);
+      // The first edit also reduced worth; reserve the remaining obligation
+      // through the same production reservation writer.
+      const { reserveOrganiserChildModificationRefund } = await import("@/lib/organiser-child-refund");
+      const firstDebt = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+        const payment = await tx.payment.findUniqueOrThrow({ where: { bookingId: childId } });
+        return reserveOrganiserChildModificationRefund(tx, {
+          plan: { settlement: { id: g.settlement, stripePaymentIntentId: g.pi!, amountCents: GROUP_CHILD_CENTS }, amountCents: GROUP_NIGHT_CENTS },
+          bookingId: childId, payment, bookingModificationId: `${childId}-first-night`,
+        });
+      });
+      await runGroupChildRefund(prisma, debt.id, stripe);
+      await runGroupChildRefund(prisma, firstDebt!.id, stripe);
+      expect(await prisma.groupBookingSettlement.findUniqueOrThrow({ where: { id: g.settlement }, select: { status: true } })).toEqual({ status: "REFUNDED" });
+      expect(await prisma.booking.findUniqueOrThrow({ where: { id: childId }, select: { finalPriceCents: true } })).toEqual({ finalPriceCents: 0 });
+      expect(await cover(childId)).toEqual(COVERED);
     });
 
     it("a child refund attributed out of the combined settlement is still covered at the lower price", async () => {

@@ -116,7 +116,9 @@ switched to paying for itself is an ordinary booking.
 
 - **Organiser has not paid** (`organiserPaysForNewJoiner` on the child's
   group): `organiser_pays`. This proves who pays, not that money arrived, so
-  it needs no frozen share — before the settle there is none.
+  it needs no frozen share — before the settle there is none. This applies
+  only without a captured child mirror. A fully refunded settlement can
+  already have paid a child; that child still goes through the share proof.
 - **Organiser paid** (`paidByOrganiser`, a paid settlement): the share is
   proved by `planGroupChildLines`, the planner the ledger back-post and census
   share. A proved share does not prove the child's rows or refunds, so §2.6's
@@ -337,6 +339,9 @@ inventory. No production data or live provider was used.
 | Tests, docs | The reader listed its own "live or finished" statuses, a list `booking-status.ts` already holds | It reads `DUPLICATE_STAY_BOOKING_STATUSES` |
 | Tests, docs | Two snapshot tests pinned the order of reads, not which reads | They compare the sorted reads |
 | Tests, docs | The member guide still said the beds are never held until payment; `INV-EXCEPT-031` did not say the email reports held beds; §2.5 said "no settlement" always gives `unknown`; the inventory's file count read as two † sites against three; two inventory rows were imprecise | Each reworded |
+
+| Independent gate | A fully refunded settlement made a zero-priced child read `organiser_pays` | Captured child mirrors still go through the share proof; pure and real-writer full-refund regressions |
+| Independent gate | Sekreton skipped the cash-cover PostgreSQL suite; failed setup could delete untouched settings | Added the suite to its existing database job; teardown distinguishes unread settings from absent rows |
 
 ### 6.2 Readings taken where the contract was silent
 
