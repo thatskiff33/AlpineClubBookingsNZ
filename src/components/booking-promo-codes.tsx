@@ -15,6 +15,7 @@ import {
 } from "@/components/promo-code-list-client";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatSignedCents } from "@/lib/utils";
+import { workingBeeDiscountLabel } from "@/lib/working-bee-discount-label";
 
 type PartyGuest = {
   firstName?: string;
@@ -145,7 +146,7 @@ export function PromoAdjustmentRows({
       >
         <span>
           {promo.workPartyEvent
-            ? `Working bee discount (${promo.workPartyEvent.name})`
+            ? workingBeeDiscountLabel(promo.workPartyEvent.name)
             : `Promo adjustment (${promo.code})`}
         </span>
         <span>{formatSignedCents(promo.promoAdjustmentCents, format)}</span>

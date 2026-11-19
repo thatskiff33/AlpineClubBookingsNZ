@@ -10,6 +10,7 @@ import { BookingInvoiceControl } from "@/components/download-invoice-button";
 import { BookingInvoiceAccountCard } from "@/components/booking-invoice-account-card";
 import type { BookingInvoiceAccount, BookingInvoiceOffer } from "@/lib/booking-invoice-access";
 import { bookingOwner } from "@/lib/booking-owner";
+import { WORKING_BEE_DISCOUNT_LABEL } from "@/lib/working-bee-discount-label";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { useClubTime } from "@/components/club-time-provider";
@@ -214,7 +215,7 @@ function PromoAdjustmentRow({
     <div className={`flex justify-between ${amountCents > 0 ? "text-warning-11" : "text-success-11"}`}>
       <span>
         {promo?.workPartyEventName
-          ? "Working bee discount"
+          ? WORKING_BEE_DISCOUNT_LABEL
           : "Promo adjustment"}
         {promo?.workPartyEventName ? (
           <span className="ml-1 text-xs">

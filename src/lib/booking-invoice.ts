@@ -44,7 +44,7 @@
  * (`planBookingInvoiceLines`), rather than printing an invented split or a
  * balancing line.
  */
-import { formatAgeTierName } from "@/lib/age-tier-name";
+import { ageTierLabel } from "@/lib/age-tier-name";
 import {
   buildGuestInvoiceLines,
   guestInvoiceLineAmountCents,
@@ -64,6 +64,7 @@ import { calendarDateOfDateOnlyInstant, formatClubLongWeekdayDate, type ClubDate
 import { getStayNights } from "@/lib/policies/pricing";
 import { describeGuestRateMembershipLabel, type RateMembershipLabelResolver } from "@/lib/rate-membership-label";
 import { CHANGE_FEE_LINE_DESCRIPTION } from "@/lib/xero-modification-line-items";
+import { workingBeeDiscountLabel } from "@/lib/working-bee-discount-label";
 import { promoAdjustmentLineDescription } from "@/lib/xero-promo-adjustment-lines";
 
 /** The document's title. "Tax invoice" waits for the club's recorded GST status (#5153). */
@@ -123,7 +124,7 @@ type InvoicePromoCode = NonNullable<BookingInvoicePromoRedemption["promoCode"]>;
  */
 function promoName(promo: InvoicePromoCode): string {
   if (!promo.internal) return promoAdjustmentLineDescription(promo.code);
-  return promo.workPartyEvent?.name ? `Working bee discount (${promo.workPartyEvent.name})` : "Working bee discount";
+  return workingBeeDiscountLabel(promo.workPartyEvent?.name);
 }
 
 /**
@@ -171,7 +172,7 @@ export type BookingInvoiceLine =
 
 export interface BookingInvoiceInput extends BookingInvoiceLineSource {
   bookingId: string;
-  /** The booking's owner as `bookingOwner(...).member` names them: the organisation, else the member. */
+  /** `bookingOwnerName`: the organisation, else the member. */
   billToName: string;
   supplier: ClubInvoiceSupplier;
   /** The lodge, named as the place of stay (owner decision 4). */
@@ -217,7 +218,7 @@ function guestCategory(
   guest: BookingInvoiceGuest,
   input: Pick<BookingInvoiceInput, "ageTierLabels" | "rateMembershipLabelResolver">,
 ): string {
-  const tier = input.ageTierLabels.get(guest.ageTier) ?? formatAgeTierName(guest.ageTier);
+  const tier = ageTierLabel(guest.ageTier, (key) => input.ageTierLabels.get(key));
   return `${tier} · ${describeGuestRateMembershipLabel(input.rateMembershipLabelResolver, guest)}`;
 }
 

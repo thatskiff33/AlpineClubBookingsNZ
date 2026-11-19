@@ -5,7 +5,7 @@ import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
 import { buildBookingInvoiceData, type BookingInvoiceData } from "@/lib/booking-invoice";
 import { renderBookingInvoicePdf } from "@/lib/booking-invoice-pdf";
 import { bookingInvoiceSummary } from "@/lib/booking-invoice-summary";
-import { bookingOwner } from "@/lib/booking-owner";
+import { bookingOwnerName } from "@/lib/booking-owner-name";
 import { getClubFormat } from "@/lib/club-format-settings";
 import { getClubInvoiceSupplier } from "@/lib/club-invoice-supplier";
 import { formatClubDate } from "@/lib/club-time";
@@ -46,7 +46,6 @@ export async function renderGeneratedBookingInvoice(
     dependencies.rateMembershipLabelResolver(),
     dependencies.amountOwed(booking),
   ]);
-  const owner = bookingOwner(booking).member;
   const summary = bookingInvoiceSummary(booking, amountOwed);
   const data = buildBookingInvoiceData({
     bookingId: booking.id,
@@ -56,7 +55,7 @@ export async function renderGeneratedBookingInvoice(
     promoAdjustmentCents: booking.promoAdjustmentCents,
     guests: booking.guests,
     promoRedemptions: booking.promoRedemptions,
-    billToName: `${owner?.firstName ?? ""} ${owner?.lastName ?? ""}`.trim(),
+    billToName: bookingOwnerName(booking),
     supplier,
     lodgeName: booking.lodge.name,
     summary,
