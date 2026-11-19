@@ -85,7 +85,8 @@ export async function recordPrimaryInvoicePaymentReceipt(input: {
 /**
  * The Stripe payment the raising run stored on its operation
  * (`responsePayload.payment`), for a replay to read before it completes the
- * operation over it. Null where it stored none, and on a read failure. The
+ * operation. Null where it stored none; undefined on a read failure so the
+ * completion can preserve evidence it could not read. The
  * invoice's other payment links (a PARTIAL repair's, which records its own, or
  * the inbound sync's bank payments) are not this payment.
  */
@@ -95,7 +96,7 @@ export async function readStoredPrimaryInvoicePayment(syncOperationId: string): 
     return asRecord(operation?.responsePayload)?.payment ?? null;
   } catch (error) {
     logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice payment");
-    return null;
+    return undefined;
   }
 }
 

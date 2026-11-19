@@ -275,7 +275,7 @@ export async function createXeroInvoiceForBooking(
         booking.payment.xeroInvoiceId,
       );
     }
-    const storedPayment = options?.syncOperation ? await readStoredPrimaryInvoicePayment(options.syncOperation.id) : null; // #4525 (M13): that run's Stripe payment, read before the completion below replaces it
+    const storedPayment = options?.syncOperation ? await readStoredPrimaryInvoicePayment(options.syncOperation.id) : null; // #4525 (M13): that run's Stripe payment, preserved through completion for later receipt retries
     // #3955 review X4 (round 3), #3980: a prior run that persisted the link but
     // died before or inside its gap check re-runs it here, from what the invoice
     // billed and the booking's worth as recorded with the link. Idempotent.
@@ -298,7 +298,8 @@ export async function createXeroInvoiceForBooking(
     if (options?.syncOperation) {
       await completeXeroSyncOperation(options.syncOperation, {
         status: "SUCCEEDED",
-        responsePayload: {
+        responsePayload: storedPayment === undefined ? undefined : {
+          payment: storedPayment,
           skipped: true,
           reason: "Invoice already exists for this payment; link re-asserted.",
         },

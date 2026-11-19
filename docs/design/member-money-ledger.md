@@ -648,7 +648,8 @@ a replay re-reaches the stored payment id, which the supplementary sender and a
 closed repair never do. A PARTIAL repair records a recovered
 payment only when its outbound operation or the original invoice response proves
 which payment was sent; an inbound bank payment may close the repair but adds no
-capture coverage.
+capture coverage. Primary invoice replays preserve the stored payment through
+completion so a later replay can retry a failed manifest write.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |

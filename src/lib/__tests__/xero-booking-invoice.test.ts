@@ -1101,6 +1101,21 @@ describe("createXeroInvoiceForBooking", () => {
         expect(captureReceipts.record).not.toHaveBeenCalled();
       });
 
+      it("preserves the stored response when a replay cannot read its payment evidence", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking({ xeroInvoiceId: "inv_9", xeroInvoiceNumber: "INV-9" }));
+        mocks.prisma.xeroSyncOperation.findUnique.mockImplementation(async (args: { select?: Record<string, boolean> }) => {
+          if (args?.select?.responsePayload) throw new Error("payment evidence unavailable");
+          return { invoiceEmailDelivery: null };
+        });
+        try {
+          await expect(createXeroInvoiceForBooking("booking_1", { syncOperation: xeroClaim("op_1") })).resolves.toBe("inv_9");
+        } finally {
+          mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue({ invoiceEmailDelivery: null });
+        }
+        expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ responsePayload: undefined }));
+        expect(captureReceipts.record).not.toHaveBeenCalled();
+      });
+
       it("on a replay, records the payment the raising run stored, from its operation's response, and sends nothing", async () => {
         mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking({ xeroInvoiceId: "inv_9", xeroInvoiceNumber: "INV-9" }));
         const storedPayment = { paymentID: "xpay_9", amount: 70, reference: "Stripe pi_1", account: { code: "606" } };
@@ -1115,6 +1130,9 @@ describe("createXeroInvoiceForBooking", () => {
         // The completion replaces the stored response, so the payment is read before it.
         const storedRead = mocks.prisma.xeroSyncOperation.findUnique.mock.calls.findIndex(([args]) => (args as { select?: Record<string, boolean> })?.select?.responsePayload);
         expect(mocks.prisma.xeroSyncOperation.findUnique.mock.invocationCallOrder[storedRead]).toBeLessThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder.at(-1)!);
+        expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+          responsePayload: expect.objectContaining({ payment: storedPayment }),
+        }));
         expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
         expect(captureReceipts.record).toHaveBeenCalledWith(expect.objectContaining({
           paymentIntentId: "pi_1", amountCents: 7000, providerPaymentId: "xpay_9", invoiceId: "inv_9", reference: "Stripe pi_1", bankCode: "606",
