@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   warn: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => {
   const client = {
     booking: { findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a) },

@@ -1,5 +1,7 @@
 import type { MemberMoneySide, Prisma } from "@prisma/client";
 import { bookingOwnerProviderMetadata } from "../../booking-owner";
+import { readBookingTaxAnchorInstant } from "../../booking-tax-anchor";
+import { clubCalendarDateOf, type CalendarDate, type ClubTimeZone } from "../../club-time";
 import { BINDING_CHARGE_SOURCE_VERSION, type BookingChargeAccount } from "./booking-charges";
 import { componentKey, liveComponentGross, type PostedRevenueLeg } from "./components";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
@@ -81,6 +83,21 @@ export async function readBookingLiveComponents(
 /** The booking's live charge: the sum C2 caps collection by, for the receipts, the engine and the census alike. */
 export async function readBookingLiveChargeCents(db: Pick<Prisma.TransactionClient, "memberMoneyLine">, bookingId: string): Promise<number> {
   return (await readBookingLiveComponents(db, bookingId)).reduce((sum, component) => sum + component.liveGrossCents, 0);
+}
+
+/**
+ * A booking's tax anchor (#4632, owner decision A): the club date of
+ * `readBookingTaxAnchorInstant`, on which every fresh split of its charges
+ * takes the treatment in force, so a booking keeps that treatment for its whole
+ * life. The one definition its Xero documents also read (`xero-tax-anchors.ts`):
+ * a group place takes its organiser's booking, as the combined invoice does.
+ */
+export async function readBookingTaxAnchorDate(
+  db: Pick<Prisma.TransactionClient, "booking">,
+  bookingId: string,
+  zone: ClubTimeZone,
+): Promise<CalendarDate> {
+  return clubCalendarDateOf(await readBookingTaxAnchorInstant(db, bookingId), zone);
 }
 
 /** Whether an event key is in the journal: a replay check, never a lock. */
