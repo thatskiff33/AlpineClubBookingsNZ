@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BASELINE_XERO_TAX_RENDERING } from "@/lib/xero-tax-rendering";
 
 /**
  * #3642 (`INV-SSOT-002`): the combined group invoice is built from exactly the
@@ -71,7 +72,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
       child({ id: "full-price", finalPriceCents: 5000 }),
     ]);
 
-    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1");
+    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1", BASELINE_XERO_TAX_RENDERING);
 
     expect(lines.childrenCents).toBe(9500);
     expect(lines.lineCents).toBe(9500);
@@ -88,7 +89,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
       child({ id: "no-fee", finalPriceCents: 5000, payment: null }),
     ]);
 
-    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1");
+    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1", BASELINE_XERO_TAX_RENDERING);
 
     expect(lines.childrenCents).toBe(11250);
     expect(lines.lineCents).toBe(11250);
@@ -126,7 +127,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
       }),
     ]);
 
-    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1");
+    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1", BASELINE_XERO_TAX_RENDERING);
 
     const promotion = lines.lineItems.filter((line) =>
       line.description?.startsWith("Promo adjustment"),
@@ -175,7 +176,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
       }),
     ]);
 
-    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1");
+    const lines = await buildGroupSettlementInvoiceLines("organiser-booking-1", BASELINE_XERO_TAX_RENDERING);
 
     expect(
       lines.lineItems.filter((line) => line.description?.startsWith("Promo adjustment")),
@@ -195,7 +196,7 @@ describe("buildGroupSettlementInvoiceLines (#3642)", () => {
   it("reads only the CONFIRMED children the settlement committed", async () => {
     mocks.bookingFindMany.mockResolvedValue([]);
 
-    await buildGroupSettlementInvoiceLines("organiser-booking-1");
+    await buildGroupSettlementInvoiceLines("organiser-booking-1", BASELINE_XERO_TAX_RENDERING);
 
     expect(mocks.bookingFindMany).toHaveBeenCalledWith(
       expect.objectContaining({

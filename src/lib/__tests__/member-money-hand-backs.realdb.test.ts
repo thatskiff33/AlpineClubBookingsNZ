@@ -9,7 +9,7 @@ import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sy
 import { JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures, settleHistoryByCard } from "./support/booking-ledger-history";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { memberMoneyTestContext, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 import { raceSession } from "./support/race-session-double";
 
@@ -57,7 +57,7 @@ async function cancelledBankBooking() {
     obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId: names.memberId }, faceCents: 10_000, evidence: {} }],
     legs: [
       { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: 10_000, booking: where, debtor: { kind: "MEMBER", memberId: names.memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
-      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 10_000, booking: where, chargeIdentity: `booking:${id}:test`, evidence: {} },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 10_000, booking: where, chargeIdentity: `booking:${id}:test`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
     ] }));
   const row = await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "INTERNET_BANKING", kind: "PRIMARY", status: "SUCCEEDED", amountCents: 10_000 } });
   await db.$transaction(async (tx) => {
@@ -72,7 +72,7 @@ async function cancelledBankBooking() {
       source: { kind: "BOOKING", id, version: "cancel" }, reason: "Synthetic R04",
       legs: [
         { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: 10_000, booking: where, chargeIdentity: `booking:${id}:test`, evidence: {} },
-        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 2_000, booking: where, chargeIdentity: `booking:${id}:test`, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 2_000, booking: where, chargeIdentity: `booking:${id}:test`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 8_000, booking: where, debtor: { kind: "MEMBER", memberId: names.memberId }, evidence: {} },
       ] });
   });
@@ -120,7 +120,7 @@ async function chargedBooking(charges: ReadonlyArray<["STRIPE" | "INTERNET_BANKI
     obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId: names.memberId }, faceCents: total, evidence: {} }],
     legs: [
       { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: total, booking: where, debtor: { kind: "MEMBER", memberId: names.memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
-      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: total, booking: where, chargeIdentity: `booking:${id}:test`, evidence: {} },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: total, booking: where, chargeIdentity: `booking:${id}:test`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
     ] }));
   const rows: { id: string }[] = [];
   for (const [source, cents] of charges) {
