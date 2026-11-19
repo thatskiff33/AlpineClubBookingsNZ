@@ -352,7 +352,24 @@ describe("deriveBookingCashCover: unknown, never a guess", () => {
       "stored-figure-bank-receipt",
     ],
     ["a SUCCEEDED mirror with no rows", snapshot({ payment: payment({ status: "SUCCEEDED", amountCents: 50_000, _count: { transactions: 0 } }) }), "rows-disagree-with-payment"],
-    ["rows that do not sum to the mirror", snapshot({ payment: payment({ transactions: [captured(40_000)], amountCents: 50_000 }) }), "rows-disagree-with-payment"],
+    // A refunded status on a payment that is not a card's, with no captured row:
+    // a credit note folded into a never-paid bank payment, or cash from before
+    // the ledger. The records cannot say which, so it is never "owes the lot".
+    ...(["PARTIALLY_REFUNDED", "REFUNDED"] as const).map((status): [string, BookingCashSnapshot, string] => [
+      `a ${status} bank mirror no captured row backs`,
+      snapshot({
+        booking: { status: "CONFIRMED" },
+        payment: payment({
+          source: "INTERNET_BANKING",
+          status,
+          amountCents: 50_000,
+          refundedAmountCents: status === "REFUNDED" ? 50_000 : 10_000,
+          transactions: [captured(50_000, { source: "INTERNET_BANKING", status: "PENDING", reason: "internet_banking_switch_at_pay" })],
+        }),
+      }),
+      "rows-disagree-with-payment",
+    ]),
+    ["rows that do not sum to the mirror",snapshot({ payment: payment({ transactions: [captured(40_000)], amountCents: 50_000 }) }), "rows-disagree-with-payment"],
     [
       "a refund written to the mirror alone",
       snapshot({ payment: payment({ status: "PARTIALLY_REFUNDED", transactions: [captured(50_000)], refundedAmountCents: 10_000 }) }),

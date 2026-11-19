@@ -254,7 +254,13 @@ function paymentEvidenceProblem(
   const captured = rows.filter((row) => isCapturedTransactionStatus(row.status));
   const capturedCents = grossCapturedCents(rows);
   const tookMoney = netCollectedPaymentTookMoney({ ...payment, booking });
-  if (!tookMoney && capturedCents === 0) return null;
+  if (!tookMoney && capturedCents === 0) {
+    // A refunded status no captured row backs is not proof that nothing was
+    // paid: the inbound reconcile's credit-note fold on a never-paid bank
+    // payment and cash taken before the ledger leave the same mirror
+    // (`stripeRefundMirrorShowsCapture`). Never "owes its whole worth".
+    return isCapturedPaymentStatus(payment.status) && payment.amountCents > 0 ? "rows-disagree-with-payment" : null;
+  }
   const rowRefundedCents = captured.reduce((sum, row) => sum + row.refundedAmountCents, 0);
   return tookMoney && capturedCents === payment.amountCents && rowRefundedCents === payment.refundedAmountCents
     ? null

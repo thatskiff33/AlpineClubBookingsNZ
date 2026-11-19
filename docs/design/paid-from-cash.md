@@ -149,6 +149,11 @@ switched to paying for itself is an ordinary booking.
 - The payment took money by its mirror, but its captured rows do not sum to
   `Payment.amountCents` (none at all included), or their refunds do not sum to
   `Payment.refundedAmountCents` (a Xero note written to the column alone).
+- A refunded `Payment.status` on a payment that is not a card's, with an
+  amount and no captured row. A credit note folded into a never-paid bank
+  transfer and cash taken before the ledger leave the same mirror
+  (`stripeRefundMirrorShowsCapture`), so it never reads as owing its whole
+  worth.
 - A row's refunds exceed its capture, or a `REFUNDED` row records less than it
   took (`captureRefundState`).
 - An open or lost dispute holds any of its captures
@@ -327,6 +332,7 @@ inventory. No production data or live provider was used.
 | Money | A superseded capture counted as cover between its capture and its refund row | The reader subtracts cancel-owned money not already in an open card refund (§2.3); real hand-off cases in the PostgreSQL suite |
 | Money | A dispute on the organiser's combined capture was not read | Read in the same snapshot; `unknown` while it is open or lost |
 | Money | An organiser-paid child with a proved share skipped the row and refund checks, so refunds above its share read `covered` | Row and refund rules now run for every payment (§2.5); pure and PostgreSQL regressions, including a valid child with no rows staying `covered` |
+| Money | A refunded status on a payment that is not a card's, with no captured row, read `owes` its whole worth | It reads `unknown` (§2.6); a pure regression seen to fail without the fix |
 | Money | The parity test only re-ran Net Collected | It now calls `deriveBookingCashCover` and explains the one expected difference |
 | Concurrency | No reader case on a real database | `booking-cash-evidence.realdb.test.ts` runs the real capture, refund, credit and group writers |
 | Concurrency | The email's between-read cases left out a refund and a group settlement | Both added; each asserts the amount and the held-bed sentence together |
