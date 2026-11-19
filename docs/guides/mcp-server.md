@@ -135,7 +135,8 @@ and what the club allows now.
 - **Officer:** **Admin → Help & system → AI app connections → Connections**
   lists every connected app in the club (member, app, where it returns to,
   level, connected and last-used dates), each with **Disconnect** (support
-  edit).
+  edit). The total and page controls let officers reach older connections.
+  The destination shown is the one approved, not another address the app registered.
 - **The app itself:** an app may give up its connection through the
   revocation endpoint (`/api/mcp/oauth/revoke`).
 

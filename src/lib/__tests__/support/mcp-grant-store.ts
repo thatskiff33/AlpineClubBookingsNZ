@@ -93,8 +93,16 @@ export function createMcpGrantStore(seed: {
 
   const db = {
     mcpGrant: {
-      findMany: vi.fn(async ({ where }: { where?: WhereInput }) =>
-        state.grants.filter((grant) => grantMatches(grant, where)).map((grant) => ({ ...grant })),
+      count: vi.fn(async ({ where }: { where?: WhereInput }) =>
+        state.grants.filter((grant) => grantMatches(grant, where)).length,
+      ),
+      findMany: vi.fn(async ({ where, skip = 0, take }: { where?: WhereInput; skip?: number; take?: number }) =>
+        state.grants.filter((grant) => grantMatches(grant, where))
+          .slice(skip, take === undefined ? undefined : skip + take)
+          .map((grant) => ({
+            ...grant,
+            authCodes: state.codes.filter((code) => code.grantId === grant.id),
+          })),
       ),
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
         const grant = state.grants.find((candidate) => candidate.id === where.id);

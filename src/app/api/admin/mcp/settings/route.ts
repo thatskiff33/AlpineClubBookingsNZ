@@ -74,14 +74,20 @@ export async function PUT(request: Request) {
     allowedRedirectHosts: hosts.hosts,
   };
 
-  // Previous values, the write and the audit row in one transaction, so two
-  // officers saving at once each record what they actually replaced.
+  // Claim the singleton row before reading its previous values. A transaction
+  // alone does not serialize the read before two concurrent upserts.
   const saved = await prisma.$transaction(async (tx) => {
-    const previous =
-      (await tx.mcpSettings.findUnique({
-        where: { id: MCP_SETTINGS_ID },
-        select: MCP_SETTINGS_SELECT,
-      })) ?? DEFAULT_MCP_SETTINGS;
+    const previous = await tx.mcpSettings.upsert({
+      where: { id: MCP_SETTINGS_ID },
+      create: {
+        id: MCP_SETTINGS_ID,
+        ...DEFAULT_MCP_SETTINGS,
+        allowedRedirectHosts: [...DEFAULT_MCP_SETTINGS.allowedRedirectHosts],
+      },
+      // An actual no-op UPDATE holds the row until the audited write commits.
+      update: { id: MCP_SETTINGS_ID },
+      select: MCP_SETTINGS_SELECT,
+    });
     const updated = await tx.mcpSettings.upsert({
       where: { id: MCP_SETTINGS_ID },
       create: { id: MCP_SETTINGS_ID, ...next, updatedByMemberId: actorMemberId },

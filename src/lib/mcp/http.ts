@@ -9,10 +9,15 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
+import { readBoundedWebhookText } from "@/lib/webhook-body";
+
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 import type { McpOAuthFailure } from "./oauth";
 import { MCP_PRINCIPAL_HEADER } from "./principal";
+
+/** Registration permits five redirect URIs; 64 KiB also allows JSON escaping. */
+export const MCP_OAUTH_BODY_MAX_BYTES = 64 * 1024;
 
 const NO_STORE = { "Cache-Control": "no-store", Pragma: "no-cache" } as const;
 
@@ -38,7 +43,7 @@ export async function readOAuthForm(request: Request): Promise<URLSearchParams |
     return null;
   }
   try {
-    return new URLSearchParams(await request.text());
+    return new URLSearchParams(await readBoundedWebhookText(request, MCP_OAUTH_BODY_MAX_BYTES));
   } catch {
     return null;
   }

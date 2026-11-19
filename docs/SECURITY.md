@@ -692,6 +692,8 @@ rules are `INV-MCP-001` … `INV-MCP-008`
   step comes first. A connection can never approve, list or end connections,
   or read or save the policy: those routes refuse the internal principal header
   with 403.
+- **Bounded OAuth bodies:** registration JSON and token/revocation forms are
+  limited to 64 KiB before parsing, including requests without Content-Length.
 - **OAuth 2.1, public clients only** (`INV-MCP-003`): authorisation code with
   PKCE S256; redirects only to an exact approved host or to loopback, checked at
   registration and again at approval; five-minute single-use codes; one-hour

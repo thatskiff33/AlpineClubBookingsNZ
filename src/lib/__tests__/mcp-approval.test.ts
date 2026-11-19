@@ -104,6 +104,7 @@ beforeEach(() => {
           : null,
       ),
     },
+    $executeRaw: vi.fn(async () => 1),
     $transaction: vi.fn(async (work: (tx: unknown) => unknown) => work(db)),
   });
 
@@ -343,6 +344,26 @@ describe("POST /api/member/mcp-grants", () => {
     expect(store.state.grants[0]?.scope).toBe(recorded);
   });
 
+  it("waits for the member lifecycle fence before reading grants to replace", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const lock = vi.fn((..._args: unknown[]) => held);
+    db.$executeRaw = lock;
+    const pending = POST(decisionRequest(approve()));
+    await vi.waitFor(() => expect(lock).toHaveBeenCalled());
+    expect(lock.mock.calls[0]?.[1]).toBe("member-lifecycle:member-1");
+    expect(store.db.mcpGrant.findMany).not.toHaveBeenCalled();
+    expect(store.state.grants).toEqual([]);
+    // A competing approval committed while this transaction waited.
+    store.state.grants.push(mcpGrant({ id: "racing-grant", scope: "READ_WRITE" }));
+    release();
+    expect((await pending).status).toBe(200);
+    expect(store.state.grants.filter((grant) => grant.status === "ACTIVE")).toMatchObject([
+      { scope: "READ" },
+    ]);
+    expect(store.state.grants.find((grant) => grant.id === "racing-grant")?.status).toBe("REVOKED");
+  });
+
   it("replaces the member's earlier connection to the same app", async () => {
     store.state.grants.push(mcpGrant({ id: "grant-old" }));
     store.state.tokens.push({ id: "token-old", grantId: "grant-old", kind: "ACCESS" });
@@ -422,6 +443,10 @@ describe("POST /api/member/mcp-grants", () => {
 // ---------------------------------------------------------------------------
 
 function seedConnections() {
+  store.state.codes.push({
+    id: "code-mine", grantId: "mine", redirectUri,
+    expiresAt: new Date("2026-06-20T00:05:00.000Z"),
+  });
   store.state.grants.push(
     mcpGrant({ id: "mine", memberId: "member-1" }),
     mcpGrant({ id: "mine-uncollected", memberId: "member-1" }),
@@ -456,6 +481,24 @@ describe("GET /api/member/mcp-grants", () => {
     const { connections } = (await response.json()) as { connections: { id: string }[] };
     expect(connections.map((row) => row.id)).toEqual(["mine"]);
     expect(connections[0]).toMatchObject({ appName: "Example Assistant", appHost: "claude.ai" });
+  });
+
+  it("shows the approved destination rather than the first registered alternative", async () => {
+    seedConnections();
+    store.state.codes[0]!.redirectUri = "http://localhost:54321/callback";
+    const response = await GET(getRequest());
+    expect(await response.json()).toMatchObject({
+      connections: [{ id: "mine", appHost: "localhost" }],
+    });
+  });
+
+  it("does not substitute a registered host when the approval record is absent", async () => {
+    seedConnections();
+    store.state.codes.length = 0;
+    const response = await GET(getRequest());
+    expect(await response.json()).toMatchObject({
+      connections: [{ id: "mine", appHost: "" }],
+    });
   });
 
   it("refuses a request arriving through an AI app connection", async () => {

@@ -1150,7 +1150,7 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   "src/lib/member-lifecycle-actions.ts": 2,
   // #2593: one canonical helper mints member-lifecycle:{memberId}; it
   // de-duplicates and sorts ids before acquisition. Deletion, bulk update,
-  // member-detail and seasonal-assignment writers all call this helper instead
+  // member-detail, seasonal-assignment and MCP approval writers call this helper instead
   // of reconstructing the scoped key at their individual call sites.
   "src/lib/member-lifecycle-lock.ts": 1,
   // #2363: every minimum-stay policy writer takes the one global policy-set

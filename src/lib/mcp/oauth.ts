@@ -16,6 +16,7 @@
  * only issues and renews credentials for a connection that is still ACTIVE
  * and still allowed (`resolveMcpGrantUse`).
  */
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import "server-only";
 
 import { createHash, timingSafeEqual } from "crypto";
@@ -372,6 +373,9 @@ export async function approveMcpConnection(input: {
   const now = new Date();
 
   const grantId = await prisma.$transaction(async (tx) => {
+    // Serialize approvals before reading the grants to replace. This is the
+    // existing member tier, also used by merge and deletion (INV-LOCK-001/002).
+    await acquireMemberLifecycleLocks(tx, [memberId]);
     await endMcpGrants(
       { memberId, clientId: request.clientId },
       MCP_GRANT_END_REASONS.replaced,

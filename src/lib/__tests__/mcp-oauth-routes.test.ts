@@ -21,6 +21,7 @@ import { GET as authorizationMetadata } from "@/app/.well-known/oauth-authorizat
 import { GET as resourceMetadata } from "@/app/.well-known/oauth-protected-resource/route";
 import { POST as registration } from "@/app/api/mcp/oauth/register/route";
 import { POST as revocation } from "@/app/api/mcp/oauth/revoke/route";
+import { MCP_OAUTH_BODY_MAX_BYTES } from "@/lib/mcp/http";
 import { POST as token } from "@/app/api/mcp/oauth/token/route";
 
 function form(values: Record<string, string>) {
@@ -104,6 +105,24 @@ describe("MCP token HTTP contract", () => {
     expect(response.status).toBe(200);
     expect(refresh).toHaveBeenCalledWith({ clientId: "client-1", refreshToken: "refresh", resource: undefined });
     expect(exchange).not.toHaveBeenCalled();
+  });
+
+  it.each([token, registration, revocation])("bounds both declared and streamed OAuth request bodies", async (route) => {
+    for (const declared of [false, true]) {
+      const request = new Request("https://club.example.test/api/mcp/oauth/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": route === registration ? "application/json" : "application/x-www-form-urlencoded",
+          ...(declared ? { "Content-Length": String(MCP_OAUTH_BODY_MAX_BYTES + 1) } : {}),
+        },
+        body: "x".repeat(MCP_OAUTH_BODY_MAX_BYTES + 1),
+      });
+      expect((await route(request)).status).toBe(400);
+      expect(exchange).not.toHaveBeenCalled();
+      expect(refresh).not.toHaveBeenCalled();
+      expect(register).not.toHaveBeenCalled();
+      expect(revoke).not.toHaveBeenCalled();
+    }
   });
 
   it.each([token, registration, revocation])("applies the rate limit before processing credentials", async (route) => {

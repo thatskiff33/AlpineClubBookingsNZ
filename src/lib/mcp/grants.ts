@@ -95,7 +95,10 @@ const MCP_GRANT_LIST_SELECT = {
   scope: true,
   createdAt: true,
   lastUsedAt: true,
-  client: { select: { name: true, redirectUris: true } },
+  client: { select: { name: true } },
+  // Each approval creates its own grant and code; the code stays until the
+  // grant ends. Registered alternatives do not identify the approved app.
+  authCodes: { select: { redirectUri: true }, take: 1 },
 } as const;
 
 /**
@@ -118,11 +121,10 @@ export interface McpConnectionListItem {
   readonly lastUsedAt: string | null;
 }
 
-function hostOf(redirectUris: readonly string[]): string {
-  const first = redirectUris[0];
-  if (!first) return "";
+function hostOf(redirectUri: string | undefined): string {
+  if (!redirectUri) return "";
   try {
-    return new URL(first).hostname;
+    return new URL(redirectUri).hostname;
   } catch {
     return "";
   }
@@ -133,12 +135,13 @@ function toListItem(grant: {
   scope: "READ" | "READ_WRITE";
   createdAt: Date;
   lastUsedAt: Date | null;
-  client: { name: string; redirectUris: string[] };
+  client: { name: string };
+  authCodes: { redirectUri: string }[];
 }): McpConnectionListItem {
   return {
     id: grant.id,
     appName: grant.client.name,
-    appHost: hostOf(grant.client.redirectUris),
+    appHost: hostOf(grant.authCodes[0]?.redirectUri),
     scope: grant.scope,
     connectedAt: grant.createdAt.toISOString(),
     lastUsedAt: grant.lastUsedAt?.toISOString() ?? null,
@@ -162,7 +165,11 @@ export interface McpAdminConnectionListItem extends McpConnectionListItem {
 }
 
 /** Every live connection in the club, newest first, for the officers' screen. */
-export async function listMcpConnectionsForAdmin(): Promise<McpAdminConnectionListItem[]> {
+export async function listMcpConnectionsForAdmin({ page, pageSize }: {
+  page: number;
+  pageSize: number;
+}): Promise<{ connections: McpAdminConnectionListItem[]; total: number }> {
+  const total = await prisma.mcpGrant.count({ where: CONNECTED_WHERE });
   const grants = await prisma.mcpGrant.findMany({
     where: CONNECTED_WHERE,
     select: {
@@ -170,14 +177,15 @@ export async function listMcpConnectionsForAdmin(): Promise<McpAdminConnectionLi
       memberId: true,
       member: { select: { firstName: true, lastName: true } },
     },
-    orderBy: { createdAt: "desc" },
-    take: 500,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    skip: (page - 1) * pageSize,
+    take: pageSize,
   });
-  return grants.map((grant) => ({
+  return { total, connections: grants.map((grant) => ({
     ...toListItem(grant),
     memberId: grant.memberId,
     memberName: `${grant.member.firstName} ${grant.member.lastName}`,
-  }));
+  })) };
 }
 
 /** How stale "last used" may be. One write per connection per window, not per call. */

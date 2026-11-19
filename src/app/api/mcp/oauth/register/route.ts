@@ -1,4 +1,5 @@
-import { mcpModuleOffResponse, oauthError, oauthJson } from "@/lib/mcp/http";
+import { MCP_OAUTH_BODY_MAX_BYTES, mcpModuleOffResponse, oauthError, oauthJson } from "@/lib/mcp/http";
+import { readBoundedWebhookText } from "@/lib/webhook-body";
 import { registerMcpClient } from "@/lib/mcp/oauth";
 import { loadMcpSettings } from "@/lib/mcp/settings";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -20,12 +21,12 @@ export async function POST(request: Request) {
 
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(await readBoundedWebhookText(request, MCP_OAUTH_BODY_MAX_BYTES));
   } catch {
     return oauthError({
       ok: false,
       error: "invalid_client_metadata",
-      description: "The request body must be JSON.",
+      description: "The request body must be JSON no larger than 64 KiB.",
     });
   }
 

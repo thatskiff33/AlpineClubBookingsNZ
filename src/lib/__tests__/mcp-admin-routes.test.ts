@@ -140,6 +140,25 @@ describe("PUT /api/admin/mcp/settings", () => {
     );
   });
 
+  it("claims the settings row before recording the previous values", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const concurrent = { ...DEFAULT_MCP_SETTINGS, membersMayConnect: false };
+    upsert.mockImplementationOnce(async () => {
+      await held;
+      savedRow = concurrent;
+      return concurrent;
+    });
+    const pending = putSettings(settingsRequest("PUT", update));
+    await vi.waitFor(() => expect(upsert).toHaveBeenCalled());
+    expect(upsert.mock.calls[0]?.[0].update).toEqual({ id: MCP_SETTINGS_ID });
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(audit).not.toHaveBeenCalled();
+    release();
+    expect((await pending).status).toBe(200);
+    expect(audit.mock.calls[0]?.[0].metadata.previous).toEqual(concurrent);
+  });
+
   it("records the saved values, not the defaults, as what a second save replaced", async () => {
     await putSettings(settingsRequest("PUT", update));
     audit.mockClear();
