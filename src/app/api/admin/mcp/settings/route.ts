@@ -11,13 +11,15 @@ import {
 } from "@/lib/mcp/settings";
 import { mcpSettingsUpdateSchema, normaliseMcpAllowedHosts } from "@/lib/mcp/settings-update";
 import { prisma } from "@/lib/prisma";
+import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { requireAdmin } from "@/lib/session-guards";
 
 /**
  * GET /api/admin/mcp/settings (ALP-653)
  *
  * Who may connect an AI app, the most a connection may do, and the approved
- * apps. Support view reads them; support edit changes them.
+ * apps. Support view reads them; support edit changes them, after a fresh
+ * proof of who they are.
  */
 export async function GET(request: Request) {
   const off = await mcpModuleOffResponse();
@@ -39,6 +41,10 @@ export async function PUT(request: Request) {
 
   const guard = await requireAdmin({ permission: { area: "support", level: "edit" } });
   if (!guard.ok) return guard.response;
+  // Widening who may hand their account to an AI app is a security setting:
+  // the officer proves it is them again first (INV-AUTH-010).
+  const recent = await requireRecentAuth();
+  if (!recent.ok) return recent.response;
   const actorMemberId = guard.session.user.id;
 
   let body: unknown;

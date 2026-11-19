@@ -37,6 +37,22 @@ export const mcpApprovalDecisionSchema = z.object({
   ),
 });
 
+/**
+ * The authorisation request as the approval page's query string carries it.
+ * A parameter given twice is dropped, as OAuth requires (RFC 6749 §3.1), so
+ * the screen never shows one value while the app meant another.
+ */
+export function mcpAuthorizeParamsFromQuery(
+  query: Record<string, string | string[] | undefined>,
+): McpAuthorizeParams {
+  return Object.fromEntries(
+    MCP_AUTHORIZE_PARAM_NAMES.flatMap((name) => {
+      const value = query[name];
+      return typeof value === "string" ? [[name, value]] : [];
+    }),
+  );
+}
+
 /** The sign-in facts a connection carries, read off the approving session. */
 export interface McpApprovingSignIn {
   readonly sessionIssuedAt: Date;

@@ -24,6 +24,7 @@ import { DeleteAccountButton } from "./delete-account-button";
 import { MembershipCancellationPanel } from "./membership-cancellation-panel";
 import { TwoFactorSecurityCard } from "./two-factor-security-card";
 import { GoogleAccountCard } from "./google-account-card";
+import { ConnectedAppsCard } from "./connected-apps-card";
 import { loadProfilePendingRequests } from "./pending-requests";
 import { googleCredentialsConfigured } from "@/lib/google-oauth";
 import { memberHoldsRetiredRecoveryCodes } from "@/lib/two-factor";
@@ -52,7 +53,11 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { requireInstant } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
+import { listMcpConnectionsForMember } from "@/lib/mcp/grants";
+import { mcpResourceUrl } from "@/lib/mcp/oauth";
+import { loadMcpSettings, mayHoldMcpConnection } from "@/lib/mcp/settings";
 import { officerTwoFactorCardProps } from "@/lib/officer-two-factor-grace";
 import { formatDateOnly } from "@/lib/date-only";
 import {
@@ -288,6 +293,26 @@ export default async function ProfilePage({
     showGoogleAccountCard && modules.googleLogin
       ? await googleCredentialsConfigured()
       : false;
+  // ALP-653: the AI apps this member has connected, only while the club runs
+  // the module. The address to connect a new one is offered only to an account
+  // the club lets connect (INV-MCP-002).
+  const connectedApps = modules.mcpServer
+    ? {
+        rows: (await listMcpConnectionsForMember(member.id)).map((connection) => ({
+          id: connection.id,
+          appName: connection.appName,
+          appHost: connection.appHost,
+          scope: connection.scope,
+          connectedLabel: club.instantDate(requireInstant(connection.connectedAt)),
+          lastUsedLabel: connection.lastUsedAt
+            ? club.instantDate(requireInstant(connection.lastUsedAt))
+            : null,
+        })),
+        connectAddress: mayHoldMcpConnection(await loadMcpSettings(), session.user)
+          ? mcpResourceUrl()
+          : null,
+      }
+    : null;
   const profileFormMember = {
     id: member.id,
     firstName: member.firstName,
@@ -495,6 +520,13 @@ export default async function ProfilePage({
             ) : null}
           </CardContent>
         </Card>
+
+        {connectedApps ? (
+          <ConnectedAppsCard
+            initialConnections={connectedApps.rows}
+            connectAddress={connectedApps.connectAddress}
+          />
+        ) : null}
 
         {/* Subscription History */}
         <ProfileSectionCard
