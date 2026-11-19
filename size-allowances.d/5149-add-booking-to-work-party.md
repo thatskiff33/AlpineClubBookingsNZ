@@ -26,7 +26,7 @@ reason: `getAllowedGuestMemberIds` is the one definition of a member's family
   member-guest boundary from the set it is built on.
 
 function: src/lib/booking-batch-modification-service.ts#modifyBookingBatch
-lines: 1841
+lines: 1842
 reason: the argument's one-line declaration (its explanation lives on the
   `OfficerWorkPartyCorrection` type), the guard call at the top, the promo
   admission handed to `applyPromoCodeChanges`, the no-fee and full-reduction
