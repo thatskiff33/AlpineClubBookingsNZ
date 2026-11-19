@@ -1,7 +1,8 @@
-import { LineAmountTypes, type LineItem } from "xero-node";
+import type { LineItem } from "xero-node";
 import type { MemberMoneyExportConflictReason } from "@prisma/client";
 import { modificationChangeFeeKey } from "../../booking-ledger-posting-keys";
 import { invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
+import type { XeroTaxRendering } from "../../xero-tax-rendering";
 import { bookingChargeIdentity } from "./booking-charges";
 import { componentKey, liveComponentGross, liveComponentSplit, type PostedRevenueLeg } from "./components";
 import { frozenLineCodes, primaryInvoicePayloadHash, splitStayAndFeeCents, type PrimaryInvoiceCoverage } from "./primary-invoice-plan";
@@ -36,6 +37,13 @@ import { frozenLineCodes, primaryInvoicePayloadHash, splitStayAndFeeCents, type 
  * review closure (R21), not by the edit's event, so each closure is a slice of
  * its own, keyed by its event: the stay lines equal the sum of the slices, and
  * a closure moves no fee.
+ *
+ * TAX (#4632). The frozen mapping records the line-amount basis and tax type
+ * the sender rendered the invoice with: the booking's own treatment, resolved
+ * from its tax anchor (`resolveXeroTaxRendering({ kind: "booking" })`), so an
+ * edit to a booking made before a change of treatment records the treatment in
+ * force when the booking was made, as its lines carry it. The Xero tax type and
+ * the journal's tax codes stay separate namespaces, as on the primary invoice.
  */
 
 /** The event an invoice's slice is cut from, as the store reads it. */
@@ -58,6 +66,8 @@ export interface SupplementaryInvoicePlanInput {
   legacyKey: string;
   /** The lines the sender sent. */
   lines: LineItem[];
+  /** The booking's tax rendering the sender built and sent the lines with (#4632). */
+  taxRendering: XeroTaxRendering;
   /** How the lines were built (`priceLines` on the sync operation), frozen beside them. */
   priceLines: unknown;
   /**
@@ -106,8 +116,9 @@ export function planSupplementaryBookingInvoice(input: SupplementaryInvoicePlanI
       anchor,
       priceLines: input.priceLines ?? null,
       lineCodes: frozenLineCodes(lines),
-      taxType: "OUTPUT2",
-      lineAmountTypes: LineAmountTypes.Inclusive,
+      // #4632: the treatment the invoice was sent with, from the booking's tax anchor.
+      taxType: input.taxRendering.taxType ?? null,
+      lineAmountTypes: input.taxRendering.lineAmountTypes,
       componentTaxCodes: coverage.map(({ account, chargeIdentity, sliceKey, taxCode }) =>
         ({ account, chargeIdentity, sliceKey: sliceKey ?? null, taxCode })),
     },
