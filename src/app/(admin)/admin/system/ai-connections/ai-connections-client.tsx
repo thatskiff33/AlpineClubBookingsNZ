@@ -39,6 +39,7 @@ import type { McpSettingsValues } from "@/lib/mcp/settings";
 
 const SETTINGS_URL = "/api/admin/mcp/settings";
 const GRANTS_URL = "/api/admin/mcp/grants";
+const LOAD_FAILED = "The AI app settings could not be read.";
 const SAVE_FAILED = "The AI app settings could not be saved.";
 
 export function AiConnectionsClient({ connectAddress }: { connectAddress: string }) {
@@ -100,11 +101,10 @@ function SettingsSection({
   const section = useSectionEditState<SettingsDraft>({
     load: async (signal) => {
       const response = await fetch(SETTINGS_URL, { signal, cache: "no-store" });
-      if (!response.ok) {
-        throw new Error("The AI app settings could not be read.");
-      }
+      if (!response.ok) throw new Error(LOAD_FAILED);
       return toDraft((await response.json()) as McpSettingsValues);
     },
+    loadErrorFallback: LOAD_FAILED,
     save: async (draft) => {
       let response: Response;
       try {

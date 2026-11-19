@@ -50,10 +50,11 @@ function parseDefault(token: string): unknown {
   return token;
 }
 
-const member = { accessRoles: [] };
-const fullAdmin = { accessRoles: ["ADMIN" as const] };
+const member = { accessRoles: [], canLogin: true };
+const fullAdmin = { accessRoles: ["ADMIN" as const], canLogin: true };
 /** Anyone the admin area admits at all is an officer, however narrow their role. */
 const narrowOfficer = {
+  canLogin: true,
   adminPermissionMatrix: Object.fromEntries(
     ADMIN_PERMISSION_AREAS.map((area) => [area.key, area.key === "bookings" ? "view" : "none"]),
   ),

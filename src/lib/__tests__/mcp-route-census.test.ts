@@ -31,7 +31,12 @@ const HTTP_METHODS: ReadonlySet<string> = new Set(STEP_UP_HTTP_METHODS);
 function exportedMethods(file: string): string[] {
   const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
   const found = new Set<string>();
-  const addName = (name: ts.BindingName) => {
+  const addName = (name: ts.BindingName | ts.ModuleExportName) => {
+    // `export { handler as "GET" }` names its export with a string literal.
+    if (ts.isStringLiteral(name)) {
+      if (HTTP_METHODS.has(name.text)) found.add(name.text);
+      return;
+    }
     if (ts.isIdentifier(name)) {
       if (HTTP_METHODS.has(name.text)) found.add(name.text);
       return;

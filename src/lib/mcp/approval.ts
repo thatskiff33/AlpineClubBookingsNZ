@@ -10,7 +10,6 @@
 import "server-only";
 
 import type { McpGrantScope } from "@prisma/client";
-import type { Session } from "next-auth";
 import { z } from "zod";
 
 import { MCP_CONNECTION_REFUSAL_MESSAGES, mcpConnectionRefusal } from "./connection-gate";
@@ -74,7 +73,21 @@ export type McpApproval =
       readonly mayChange: boolean;
     };
 
-export function mcpApprovingSignIn(user: Session["user"]): McpApprovingSignIn | null {
+/**
+ * What an approval reads from the signed-in member's session. Named field by
+ * field so both callers can supply it: the approval screen holds the whole
+ * session, the decision route the user its session guard returns.
+ */
+export interface McpApprovingUser {
+  readonly id: string;
+  readonly email?: string | null;
+  readonly name?: string | null;
+  readonly sessionIssuedAt?: number;
+  readonly twoFactorRequired?: boolean;
+  readonly twoFactorVerified?: boolean;
+}
+
+export function mcpApprovingSignIn(user: McpApprovingUser): McpApprovingSignIn | null {
   if (typeof user.sessionIssuedAt !== "number") return null;
   return {
     sessionIssuedAt: new Date(user.sessionIssuedAt),
@@ -84,7 +97,7 @@ export function mcpApprovingSignIn(user: Session["user"]): McpApprovingSignIn | 
 
 export async function resolveMcpApproval(
   params: McpAuthorizeParams,
-  user: Session["user"],
+  user: McpApprovingUser,
 ): Promise<McpApproval> {
   const settings = await loadMcpSettings();
   const check = await checkMcpAuthorizeRequest(params, settings);
@@ -110,7 +123,8 @@ export async function resolveMcpApproval(
     sessionIssuedAt: signIn.sessionIssuedAt,
     twoFactorVerified: signIn.twoFactorVerified,
     client: { id: check.request.clientId, name: check.request.clientName },
-    member: { email: user.email, firstName: user.name, lastName: "" },
+    // Display values only; the refresh reads everything it decides on from the row.
+    member: { email: user.email ?? "", firstName: user.name ?? "", lastName: "" },
   });
   if (!preview.ok) {
     return { kind: "refuse", message: "Sign out, sign in again, and then connect the app." };

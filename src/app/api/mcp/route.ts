@@ -32,7 +32,7 @@ function unauthorised(description: string): NextResponse {
 
 function bearerToken(request: Request): string | null {
   const match = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "");
-  return match ? match[1] : null;
+  return match?.[1] ?? null;
 }
 
 /**
