@@ -4,6 +4,7 @@ import { invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
 import { sanitizeForJson } from "../../xero-sync";
 import { stableDigest } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
+import { frozenLineCodes } from "./primary-invoice-plan";
 
 /**
  * A REFUND NOTE AND ITS PAYMENT, AS EXPORT PLANS
@@ -108,11 +109,7 @@ export function planRefundNote(input: RefundNotePlanInput): RefundExportPlan {
       frozenMapping: {
         source: input.source,
         lineAmountTypes: input.lineAmountTypes,
-        lineCodes: input.lines.map((line) => ({
-          accountCode: line.accountCode ?? null,
-          itemCode: line.itemCode ?? null,
-          taxType: line.taxType ?? null,
-        })),
+        lineCodes: frozenLineCodes(input.lines),
       },
       lineTotalCents: invoiceLineItemsTotalCents(input.lines),
     },
