@@ -5,10 +5,10 @@ import {
   SameOwnerCoverageWouldBreakError,
   buildSameOwnerCoverageOverrideRequiredBody,
   buildSameOwnerCoverageRefusalBody,
-  hostingCoverageOverrideSchema,
 } from "@/lib/adult-member-hosting-same-owner";
 import { auth } from "@/lib/auth";
 import { cancelBooking } from "@/lib/booking-cancel";
+import { cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -22,19 +22,6 @@ import { clubFormatValues } from "@/lib/club-format-server";
 
 const cancelBookingParamsSchema = z.object({
   id: z.string().min(1),
-});
-
-const cancelBookingMutationSchema = z.object({
-  refundMethod: z.enum(["card", "credit"]),
-  // Issue #1705: per-action member-email choice for admin cancellations, same
-  // semantics as the modify routes (#1696): booking-management ADMIN only,
-  // absent means notify.
-  notifyMember: z.boolean().optional(),
-  // #2576 §7: the officer's explicit confirmation and mandatory reason for
-  // overriding a same-owner coverage refusal. Optional in the shape because the
-  // first submission never carries it — the officer is asked only when the cancel
-  // would actually strand another booking on the account.
-  hostingCoverageOverride: hostingCoverageOverrideSchema.optional(),
 });
 
 export async function POST(
