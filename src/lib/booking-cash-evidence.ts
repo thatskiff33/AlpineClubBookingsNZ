@@ -14,7 +14,10 @@
  *   (`getNetCollectedCashParts`): what it took, less recorded refunds, open
  *   hand-backs, card refunds not yet paid (failed, owed or superseded) and late
  *   captures awaiting the treasurer, each counted once. Refunds owed count as
- *   gone (owner decision 2, 16 Oct 2026);
+ *   gone (owner decision 2, 16 Oct 2026). A superseded intent that captured
+ *   anyway is never cover either, from the moment its capture commits: until
+ *   its refund row exists its cancel row owns it (`supersededCancelOwnedCents`,
+ *   `INV-PAY-150`);
  * - evidence: that payment mirror counts only when its captured
  *   `PaymentTransaction` rows agree with it, so a pending face amount never
  *   counts. Where the records cannot prove the figure the answer is `unknown`
@@ -61,7 +64,15 @@ import {
   isCapturedTransactionStatus,
   LEGACY_BACKFILL_REASONS,
 } from "@/lib/payment-transaction-status";
-import { paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
+import {
+  cardRefundSlicesByOperation,
+  CARD_REFUND_RECOVERY_OPERATION_TYPES,
+  isOpenCardRefundOperationStatus,
+  unsentSliceCents,
+} from "@/lib/open-card-refund-owed";
+import { disputedCaptureCents, paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
+import { supersededCaptureHeldBack, type SupersededCaptureOwnership } from "@/lib/superseded-capture-hold-back";
+import { readSupersededCaptureOwnership } from "@/lib/superseded-intent-ownership";
 import { isStoredFigureBankReceipt } from "@/lib/xero-inbound/ib-receipt-reasons";
 
 /** Why the records cannot prove what a booking holds. */
@@ -94,6 +105,8 @@ export type BookingCashCover =
 
 /** A `PaymentTransaction` row, as the evidence check reads it. */
 export type CashEvidenceTransactionRow = {
+  id: string;
+  stripePaymentIntentId: string | null;
   kind: PaymentTransactionKind;
   source: PaymentSource;
   status: PaymentStatus;
@@ -131,8 +144,14 @@ export type BookingCashSnapshot = {
   payment: CashEvidencePayment | null;
   /** `deriveBookingAppliedCreditCents`: the ledger's applied credit, read once. */
   appliedCreditCents: number;
-  /** `paymentDisputedCaptureCents`: what open or lost disputes hold. */
+  /**
+   * What open or lost disputes hold on the booking's own captures
+   * (`paymentDisputedCaptureCents`) and, for an organiser-settled child, on the
+   * organiser's combined settlement capture, which has no child rows.
+   */
   disputedCaptureCents: number;
+  /** `readSupersededCaptureOwnership` on the booking's payment: the superseded captures the machinery still owns. */
+  supersededOwnership: SupersededCaptureOwnership;
   /** The child's group, for an organiser-settled child only; null when it has none. */
   group: GroupChildCashEvidence | null;
 };
@@ -141,10 +160,45 @@ const COVERS_STATUSES: readonly string[] = [...ACTIVE_BOOKING_STATUSES, BookingS
 
 const unknown = (reason: BookingCashUnknownReason): BookingCashCover => ({ kind: "unknown", reason });
 
+/**
+ * What a superseded intent's cancel row still in flight owns of its captured
+ * charge that no card refund row promises back yet (`INV-PAY-150`). The
+ * hand-off commits the capture under that cancel row and writes its refund row
+ * afterwards (`handoffSucceededSupersededIntentToRefund`); between the two,
+ * Net Collected's card-refund operand reads refund rows only and still counts
+ * the capture. Who owns a charge, and how much, is the Xero reading's one rule
+ * (`supersededCaptureHeldBack`). What an open card refund row already takes
+ * off the same charge (`cardRefundSlicesByOperation`) is not taken twice, so
+ * the refund row arriving changes nothing.
+ */
+function supersededCancelOwnedCents({ payment, supersededOwnership }: BookingCashSnapshot): number {
+  if (!payment) return 0;
+  const cancels = supersededOwnership.owning.filter(
+    (row) => !(CARD_REFUND_RECOVERY_OPERATION_TYPES as readonly string[]).includes(row.type),
+  );
+  if (cancels.length === 0) return 0;
+  const owned = supersededCaptureHeldBack(
+    { owning: cancels, owedAgainByIntent: new Map() },
+    payment.transactions.map((row) => ({ ...row, paymentId: payment.id })),
+  ).byTransaction;
+  const promised = new Map<string, number>();
+  for (const { operation, slices } of cardRefundSlicesByOperation(payment)) {
+    if (!isOpenCardRefundOperationStatus(operation.status)) continue;
+    for (const slice of slices) {
+      promised.set(slice.paymentTransactionId, (promised.get(slice.paymentTransactionId) ?? 0) + unsentSliceCents(slice));
+    }
+  }
+  let cents = 0;
+  for (const [transactionId, ownedCents] of owned) cents += Math.max(0, ownedCents - (promised.get(transactionId) ?? 0));
+  return cents;
+}
+
 /** What a live booking still owes once the cash its payment holds is taken off. */
 function owedNetOfHeldCash(snapshot: BookingCashSnapshot): number {
   const { booking, payment } = snapshot;
-  const heldCashCents = payment ? getNetCollectedCashParts({ ...payment, booking }).heldCashCents : 0;
+  const netCollectedHeldCents = payment ? getNetCollectedCashParts({ ...payment, booking }).heldCashCents : 0;
+  // Taken off last and capped at what is left, as each Net Collected operand is.
+  const heldCashCents = Math.max(0, netCollectedHeldCents - supersededCancelOwnedCents(snapshot));
   return (
     bookingAmountOwedCents({
       finalPriceCents: booking.finalPriceCents,
@@ -239,7 +293,16 @@ const cashEvidencePaymentSelect = {
   stripePaymentIntentId: true,
   additionalPaymentIntentId: true,
   transactions: {
-    select: { kind: true, source: true, status: true, amountCents: true, refundedAmountCents: true, reason: true },
+    select: {
+      id: true,
+      stripePaymentIntentId: true,
+      kind: true,
+      source: true,
+      status: true,
+      amountCents: true,
+      refundedAmountCents: true,
+      reason: true,
+    },
   },
 } satisfies Prisma.PaymentSelect;
 
@@ -334,8 +397,21 @@ export async function readBookingCashCover(
   const { payment, parentBooking, ...bookingFields } = booking;
   // One after another: an interactive transaction runs one statement at a time.
   const appliedCreditCents = await deriveBookingAppliedCreditCents(bookingId, tx);
-  const disputedCaptureCents = payment ? (await paymentDisputedCaptureCents(tx, payment)).cents : 0;
+  const ownDisputedCents = payment ? (await paymentDisputedCaptureCents(tx, payment)).cents : 0;
+  const supersededOwnership = payment
+    ? await readSupersededCaptureOwnership(tx, payment.id)
+    : { owning: [], owedAgainByIntent: new Map<string, number>() };
   const group =
     booking.organiserSettled && parentBooking ? await readGroupChildEvidence(tx, booking) : null;
-  return deriveBookingCashCover({ booking: bookingFields, payment, appliedCreditCents, disputedCaptureCents, group });
+  // A dispute on the organiser's combined capture is recorded against that
+  // intent with no child payment (`readDisputesByBookingId`), so it is read here.
+  const settlementDisputedCents = (await disputedCaptureCents(tx, [group?.settlement?.stripePaymentIntentId])).cents;
+  return deriveBookingCashCover({
+    booking: bookingFields,
+    payment,
+    appliedCreditCents,
+    disputedCaptureCents: ownDisputedCents + settlementDisputedCents,
+    supersededOwnership,
+    group,
+  });
 }

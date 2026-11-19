@@ -20,8 +20,10 @@ import { getNetCollectedCashParts } from "@/lib/payment-net-collected";
 
 const T0 = new Date("2026-07-01T00:00:00.000Z");
 
-type Row = CashEvidenceTransactionRow & { id?: string };
+type Row = CashEvidenceTransactionRow;
 const captured = (amountCents: number, over: Partial<Row> = {}): Row => ({
+  id: "tx-1",
+  stripePaymentIntentId: null,
   kind: "PRIMARY",
   source: "STRIPE",
   status: "SUCCEEDED",
@@ -54,6 +56,7 @@ function snapshot(over: {
   payment?: CashEvidencePayment | null;
   appliedCreditCents?: number;
   disputedCaptureCents?: number;
+  supersededOwnership?: BookingCashSnapshot["supersededOwnership"];
   group?: GroupChildCashEvidence | null;
 } = {}): BookingCashSnapshot {
   return {
@@ -72,19 +75,20 @@ function snapshot(over: {
     payment: over.payment === undefined ? null : over.payment,
     appliedCreditCents: over.appliedCreditCents ?? 0,
     disputedCaptureCents: over.disputedCaptureCents ?? 0,
+    supersededOwnership: over.supersededOwnership ?? { owning: [], owedAgainByIntent: new Map() },
     group: over.group ?? null,
   };
 }
 
 // An operation's frozen plan names the capture each slice refunds (#1097).
-const cardRefundOperation = (amountCents: number, status: string, type = "REFUND_BOOKING_MODIFICATION") => ({
+const cardRefundOperation = (amountCents: number, status: string, type = "REFUND_BOOKING_MODIFICATION", paymentTransactionId = "tx-1") => ({
   id: `op-${type}-${status}`,
   type,
   status,
   idempotencyKey: `refund-${type}-${status}`,
   amountCents,
-  allocationPlan: type === "REFUND_SUPERSEDED_PAYMENT" ? null : [{ paymentTransactionId: "tx-1", amountCents }],
-  paymentTransactionId: "tx-1",
+  allocationPlan: type === "REFUND_SUPERSEDED_PAYMENT" ? null : [{ paymentTransactionId, amountCents }],
+  paymentTransactionId,
   createdAt: T0,
   succeededAt: status === "SUCCEEDED" ? T0 : null,
 });
@@ -229,11 +233,111 @@ describe("deriveBookingCashCover: one refund comes off exactly once", () => {
     expect(deriveBookingCashCover(closedTask)).toEqual({ kind: "owes", cents: 25_000 });
   });
 
-  it("holds the same cash as Net Collected's cash half for the payment (parity)", () => {
+  it("takes off exactly what Net Collected's cash half takes off for the payment, in every state", () => {
     for (const row of [open, recorded, recordedOperationOpen]) {
-      const s = snapshot({ booking: { status: "PAID", finalPriceCents: 0 }, payment: row });
-      expect(getNetCollectedCashParts({ ...row, booking: s.booking }).heldCashCents).toBe(25_000);
+      const s = snapshot({ booking: { status: "PAID" }, payment: row });
+      const heldCents = getNetCollectedCashParts({ ...row, booking: s.booking }).heldCashCents;
+      expect(deriveBookingCashCover(s)).toEqual({ kind: "owes", cents: s.booking.finalPriceCents - heldCents });
     }
+  });
+});
+
+describe("deriveBookingCashCover: a superseded capture is never cover (blueprint section 6.6)", () => {
+  // Worth 50,000. One ordinary 25,000 capture (tx-1) and a superseded intent
+  // that captured 25,000 anyway (tx-2), which goes back to the member whole.
+  const AFTER = new Date("2026-07-01T00:05:00.000Z");
+  const ordinary = captured(25_000, { id: "tx-1", stripePaymentIntentId: "pi_ordinary" });
+  const superseded = (over: Partial<Row> = {}) =>
+    captured(25_000, { id: "tx-2", kind: "ADDITIONAL", stripePaymentIntentId: "pi_superseded", ...over });
+  const cancelRow = { type: "CANCEL_PAYMENT_INTENT" as const, paymentId: "pay-1", paymentTransactionId: "tx-2", amountCents: 25_000, allocationPlan: null };
+  const refundRow = (status: string) => cardRefundOperation(25_000, status, "REFUND_SUPERSEDED_PAYMENT", "tx-2");
+  const owningRefundRow = { ...cancelRow, type: "REFUND_SUPERSEDED_PAYMENT" as const };
+  const refundRecorded = { stripeRefundId: "re_superseded", paymentTransactionId: "tx-2", amountCents: 25_000, status: "succeeded", createdAt: AFTER };
+  const refundedCapture = superseded({ status: "REFUNDED", refundedAmountCents: 25_000 });
+  const noOwnership = { owning: [], owedAgainByIntent: new Map<string, number>() };
+  const paid = (input: NonNullable<Parameters<typeof snapshot>[0]>) => deriveBookingCashCover(snapshot({ ...input, booking: { status: "PAID", ...input.booking } }));
+
+  it("its cancel row still in flight, the refund row not yet written: owes 25,000", () => {
+    // The hand-off's committed gap: the capture stands under the cancel row alone.
+    expect(
+      paid({ payment: payment({ transactions: [ordinary, superseded()] }), supersededOwnership: { owning: [cancelRow], owedAgainByIntent: new Map() } }),
+    ).toEqual({ kind: "owes", cents: 25_000 });
+  });
+
+  it("the refund row written beside the cancel row: the same 25,000, once", () => {
+    expect(
+      paid({
+        payment: payment({ transactions: [ordinary, superseded()], recoveryOperations: [refundRow("PENDING")] }),
+        supersededOwnership: { owning: [cancelRow, owningRefundRow], owedAgainByIntent: new Map() },
+      }),
+    ).toEqual({ kind: "owes", cents: 25_000 });
+  });
+
+  it.each([
+    ["recorded, its row not yet closed", "PROCESSING", { owning: [owningRefundRow], owedAgainByIntent: new Map<string, number>() }],
+    ["recorded, its row closed", "SUCCEEDED", noOwnership],
+  ])("the refund %s: the same 25,000, once", (_label, status, supersededOwnership) => {
+    expect(
+      paid({
+        payment: payment({ status: "PARTIALLY_REFUNDED", transactions: [ordinary, refundedCapture], recoveryOperations: [refundRow(status)], refunds: [refundRecorded] }),
+        supersededOwnership,
+      }),
+    ).toEqual({ kind: "owes", cents: 25_000 });
+  });
+
+  it("the refund failed later and is owed again by its own row: the same 25,000, once", () => {
+    const owedAgain = { ...refundRow("PENDING"), id: "op-owed-again", idempotencyKey: "card_refund_failed_later_re_superseded", createdAt: AFTER };
+    expect(
+      paid({
+        payment: payment({
+          transactions: [ordinary, superseded()],
+          recoveryOperations: [refundRow("SUCCEEDED"), owedAgain],
+          refunds: [{ ...refundRecorded, status: "failed" }],
+        }),
+        supersededOwnership: { owning: [], owedAgainByIntent: new Map([["pi_superseded", 25_000]]) },
+      }),
+    ).toEqual({ kind: "owes", cents: 25_000 });
+  });
+
+  it("a separate 10,000 refund owed on the ordinary capture adds to it: owes 35,000", () => {
+    expect(
+      paid({
+        payment: payment({ transactions: [ordinary, superseded()], recoveryOperations: [cardRefundOperation(10_000, "PENDING")] }),
+        supersededOwnership: { owning: [cancelRow], owedAgainByIntent: new Map() },
+      }),
+    ).toEqual({ kind: "owes", cents: 35_000 });
+  });
+
+  it("owns only what the capture still holds: a part already refunded is not taken off twice", () => {
+    const partRefunded = superseded({ status: "PARTIALLY_REFUNDED", refundedAmountCents: 10_000 });
+    expect(
+      paid({
+        payment: payment({ status: "PARTIALLY_REFUNDED", transactions: [ordinary, partRefunded] }),
+        supersededOwnership: { owning: [cancelRow], owedAgainByIntent: new Map() },
+      }),
+    ).toEqual({ kind: "owes", cents: 25_000 });
+  });
+
+  it("a cancel row in flight whose intent never captured owns nothing", () => {
+    expect(
+      paid({
+        booking: { finalPriceCents: 25_000 },
+        payment: payment({ transactions: [ordinary, superseded({ status: "PENDING" })] }),
+        supersededOwnership: { owning: [cancelRow], owedAgainByIntent: new Map() },
+      }),
+    ).toEqual({ kind: "covered" });
+  });
+
+  it("never takes off more than the payment holds", () => {
+    // A hand-back for all the ordinary capture and the cancel-owned capture: nothing is left, and nothing below nothing.
+    const tasks = [{ status: "OPEN", kind: "CANCELLED_BOOKING_HAND_BACK", amountCents: 40_000, partPaymentReviewPaymentId: null, occurrenceKey: "edit-refund-hand-back:m-1", reason: "edit refund" }];
+    expect(
+      paid({
+        booking: { manualRefundTasks: tasks },
+        payment: payment({ transactions: [ordinary, superseded()] }),
+        supersededOwnership: { owning: [cancelRow], owedAgainByIntent: new Map() },
+      }),
+    ).toEqual({ kind: "owes", cents: 50_000 });
   });
 });
 
@@ -261,6 +365,7 @@ describe("deriveBookingCashCover: unknown, never a guess", () => {
       "refunds-unproven",
     ],
     ["a disputed capture", snapshot({ payment: payment({ transactions: [captured(50_000)] }), disputedCaptureCents: 50_000 }), "disputed"],
+    ["a dispute for less than the capture", snapshot({ payment: payment({ transactions: [captured(50_000)] }), disputedCaptureCents: 1 }), "disputed"],
   ];
   it.each(cases)("%s", (_label, input, reason) => {
     expect(deriveBookingCashCover(input)).toEqual({ kind: "unknown", reason });
@@ -322,6 +427,11 @@ describe("deriveBookingCashCover: group children", () => {
       kind: "unknown",
       reason: "organiser-share-unproven",
     });
+  });
+
+  it("is unknown while the organiser's combined capture is disputed, whatever the share proves", () => {
+    // The reader adds the settlement intent's dispute to the snapshot's figure: a child has no capture rows of its own.
+    expect(deriveBookingCashCover({ ...child(), disputedCaptureCents: 9_000 })).toEqual({ kind: "unknown", reason: "disputed" });
   });
 
   it("is unknown with no group to prove the share from", () => {
