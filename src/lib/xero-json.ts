@@ -41,15 +41,24 @@ export function asArray(value: unknown): unknown[] {
 /**
  * #4525 (Ledger M13, `INV-SSOT`): the lines an ACCREC invoice operation sent,
  * read from its stored request (`requestPayload.invoices[0].lineItems`) as
- * stored, or null where the row stores none. The one reader of that shape for
- * every export-manifest replay (the primary booking invoice and the
- * failed-later refund reversal); an empty stored array is returned as stored,
- * so its manifest records the mismatch rather than skipping it.
+ * stored, or null where the row stores none, beside the line-amount basis that
+ * stored invoice was raised under (#4632: `invoices[0].lineAmountTypes`, or null
+ * where it holds none). The one reader of that shape for every export-manifest
+ * replay (the primary booking invoice and the failed-later refund reversal); an
+ * empty stored array is returned as stored, so its manifest records the
+ * mismatch rather than skipping it.
  */
-export function storedInvoiceRequestLines(requestPayload: unknown): LineItem[] | null {
+export function storedInvoiceRequestLines(
+  requestPayload: unknown,
+): { storedLines: LineItem[] | null; storedLineAmountTypes: string | null } {
   const invoices = asRecord(requestPayload)?.invoices;
-  const lines = Array.isArray(invoices) ? asRecord(invoices[0])?.lineItems : undefined;
-  return Array.isArray(lines) ? (lines as LineItem[]) : null;
+  const invoice = Array.isArray(invoices) ? asRecord(invoices[0]) : undefined;
+  const lines = invoice?.lineItems;
+  const basis = invoice?.lineAmountTypes;
+  return {
+    storedLines: Array.isArray(lines) ? (lines as LineItem[]) : null,
+    storedLineAmountTypes: typeof basis === "string" ? basis : null,
+  };
 }
 
 /**

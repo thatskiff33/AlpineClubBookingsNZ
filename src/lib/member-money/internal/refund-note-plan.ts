@@ -1,9 +1,10 @@
-import { LineAmountTypes, type LineItem } from "xero-node";
+import type { LineAmountTypes, LineItem } from "xero-node";
 import type { MemberMoneyAccount, MemberMoneyExportConflictReason } from "@prisma/client";
 import { invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
 import { sanitizeForJson } from "../../xero-sync";
 import { stableDigest } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
+import { frozenLineCodes } from "./primary-invoice-plan";
 
 /**
  * A REFUND NOTE, ITS PAYMENT AND A FAILED-LATER REFUND'S REVERSAL, AS EXPORT PLANS
@@ -90,24 +91,31 @@ export interface RefundNotePlanInput {
   /** `creditNoteIdempotencyKey`, or a replay's recorded key. */
   legacyKey: string;
   source: "BUILT" | "STORED_REQUEST";
+  /**
+   * The line-amount basis the note was sent with (#4632): the booking's tax
+   * rendering for a note this run built, the stored request's own for a
+   * replay (null when the request holds none). Frozen, never translated.
+   */
+  lineAmountTypes: LineAmountTypes | string | null;
   /** The live REFUND_PAYABLE obligation: its key and face, or why none could be named. */
   obligation: RefundExportComponent | RefundExportProblem;
 }
 
-/** A document's lines as a rendering: their hash, codes and inclusive total, under the key they were sent with. */
-function linesRendering(lines: LineItem[], legacyKey: string, source: "BUILT" | "STORED_REQUEST"): RefundExportRendering {
+/**
+ * A document's lines as a rendering: their hash, codes and total, under the key
+ * and the line-amount basis they were sent with (#4632: frozen, never
+ * translated; line codes through `frozenLineCodes`, as every planner does).
+ */
+function linesRendering(
+  lines: LineItem[],
+  legacyKey: string,
+  source: "BUILT" | "STORED_REQUEST",
+  lineAmountTypes: LineAmountTypes | string | null,
+): RefundExportRendering {
   return {
     legacyKey,
     payloadHash: refundExportPayloadHash(lines),
-    frozenMapping: {
-      source,
-      lineAmountTypes: LineAmountTypes.Inclusive,
-      lineCodes: lines.map((line) => ({
-        accountCode: line.accountCode ?? null,
-        itemCode: line.itemCode ?? null,
-        taxType: line.taxType ?? null,
-      })),
-    },
+    frozenMapping: { source, lineAmountTypes, lineCodes: frozenLineCodes(lines) },
     lineTotalCents: invoiceLineItemsTotalCents(lines),
   };
 }
@@ -115,7 +123,7 @@ function linesRendering(lines: LineItem[], legacyKey: string, source: "BUILT" | 
 /** Plan the refund credit note: its lines cover the whole live refund debt, or a conflict. */
 export function planRefundNote(input: RefundNotePlanInput): RefundExportPlan {
   return coverRefundExportComponent({
-    rendering: linesRendering(input.lines, input.legacyKey, input.source),
+    rendering: linesRendering(input.lines, input.legacyKey, input.source, input.lineAmountTypes),
     component: input.obligation,
     allowedAccounts: ["REFUND_PAYABLE"],
   });
@@ -128,6 +136,12 @@ export interface FailedLaterRefundReversalPlanInput {
   /** `cardRefundReversalInvoiceKey(paymentId, closeTaskId)`. */
   legacyKey: string;
   source: "BUILT" | "STORED_REQUEST";
+  /**
+   * The line-amount basis the invoice was sent with (#4632): the booking's tax
+   * rendering the sender built it under, or a replay's stored request's own
+   * (null when the request holds none). Frozen, never translated.
+   */
+  lineAmountTypes: LineAmountTypes | string | null;
   /** The R13 that reversed the failed refund's R12 (`reversal:<journalId>`, Dr STRIPE_CLEARING), or why none could be named. */
   reversal: RefundExportComponent | RefundExportProblem;
 }
@@ -140,7 +154,7 @@ export interface FailedLaterRefundReversalPlanInput {
  */
 export function planFailedLaterRefundReversal(input: FailedLaterRefundReversalPlanInput): RefundExportPlan {
   return coverRefundExportComponent({
-    rendering: linesRendering(input.lines, input.legacyKey, input.source),
+    rendering: linesRendering(input.lines, input.legacyKey, input.source, input.lineAmountTypes),
     component: input.reversal,
     allowedAccounts: ["STRIPE_CLEARING"],
   });

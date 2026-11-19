@@ -30,6 +30,7 @@
  * allocations and the adjustment rows in the same query as the invoice.
  */
 import type { LineItem } from "xero-node";
+import { xeroLineTax, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
 
 import {
   bookingPromoCodeLabel,
@@ -181,6 +182,8 @@ export function isPromoAdjustmentLineDescription(description: string | null | un
 export function promoAdjustmentLineItems(
   plan: PromoAdjustmentLinePlan,
   coding: Omit<Parameters<typeof resolvePromoLineCodes>[0], "promo">,
+  /** The booking's tax treatment (#4632), as the document's other lines carry it. */
+  taxRendering: XeroTaxRendering,
 ): LineItem[] {
   const line = (
     description: string,
@@ -192,7 +195,7 @@ export function promoAdjustmentLineItems(
         description,
         quantity: 1,
         unitAmount: amountCents / 100,
-        taxType: "OUTPUT2",
+        ...xeroLineTax(taxRendering),
       },
       resolvePromoLineCodes({ ...coding, promo }),
     );
