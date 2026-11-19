@@ -138,6 +138,19 @@ describe("preview grants (LTV-036, ADR-003 §5)", () => {
     expect(decodePreviewGrant("")).toBeNull();
   });
 
+  it("rejects a signed grant whose window start is not a real calendar day", async () => {
+    const { encodePreviewGrant, decodePreviewGrant } = await import(
+      "@/lib/lodge-display-auth"
+    );
+    const token = encodePreviewGrant({
+      templateId: "tpl-1",
+      lodgeId: "lodge-b",
+      windowStart: "2026-02-30",
+      exp: Math.floor(Date.now() / 1000) + 300,
+    });
+    expect(decodePreviewGrant(token)).toBeNull();
+  });
+
   it("rejects an expired grant even with a valid signature", async () => {
     const { encodePreviewGrant, decodePreviewGrant } = await import(
       "@/lib/lodge-display-auth"

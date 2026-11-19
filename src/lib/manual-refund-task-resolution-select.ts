@@ -28,6 +28,7 @@ export const MANUAL_REFUND_TASK_RESOLUTION_SELECT = Prisma.validator<Prisma.Manu
   occurrenceKey: true,
   reason: true,
   status: true,
+  createdAt: true, // #4516 (owner decision, 18 Nov 2026): lost cents go to a payment's oldest refunds first
   // #3032: the settlement route needs three more facts, all read inside
   // the same transaction as the claim. `reviewContext` carries the
   // `BookingModification` anchor a confirmed amount settles against

@@ -2,7 +2,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { tokensForContext } from "../token-catalogue";
-import { starterPageContent } from "../../../prisma/starter-page-content";
+import { PRIVACY_RECIPIENTS } from "../privacy-recipient-classification";
+import { STARTER_PRIVACY_BODY_4915 } from "../config-transfer/starter-privacy-cleaned-bodies";
+import {
+  STARTER_PRIVACY_AVAILABILITY_NOTES,
+  STARTER_PRIVACY_RECIPIENT_ITEMS,
+  starterPageContent,
+} from "../../../prisma/starter-page-content";
 
 // Production deploys run Prisma migrations but not the seed, so the starter
 // PageContent rows are backfilled by a data migration. These tests keep that
@@ -113,13 +119,35 @@ const GENERICISE_LODGE_COPY_MIGRATION_PATH = join(
 
 // Issue #4031: guarded update that corrects section 7's audit-log retention
 // schedule. It superseded #1945 as the writer of the privacy seed text, until
-// #4914's 20261214010000 migration took over as the current privacy writer;
-// #1945 still writes the current Terms.
+// #4914's 20261214010000 migration took over; #1945 still writes the current
+// Terms.
 const PRIVACY_AUDIT_RETENTION_MIGRATION_PATH = join(
   process.cwd(),
   "prisma",
   "migrations",
   "20261119010000_correct_starter_privacy_audit_retention",
+  "migration.sql",
+);
+
+// #4914: guarded update that corrected email-log retention and made hosting
+// host-neutral. It superseded #4031 as the privacy writer, until #5007's
+// 20261222030000 migration took over.
+const PRIVACY_RETENTION_HOSTING_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20261214010000_correct_starter_privacy_retention_and_hosting",
+  "migration.sql",
+);
+
+// #5007 (release 2 of #4918): guarded update that lists every member-facing
+// register recipient in section 5 and names the host through {{data-hosting}}.
+// It is the current writer of the privacy seed text.
+const PRIVACY_RECIPIENTS_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20261222030000_rewrite_starter_privacy_recipients",
   "migration.sql",
 );
 
@@ -132,6 +160,16 @@ const FAQ_PERSONAL_DATA_MIGRATION_PATH = join(
   "prisma",
   "migrations",
   "20261218070000_summarise_starter_faq_personal_data",
+  "migration.sql",
+);
+
+// Issue #4915: guarded update that makes section 8 say what the data download
+// includes. It supersedes #4914 as the writer of the current privacy seed text.
+const PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH = join(
+  process.cwd(),
+  "prisma",
+  "migrations",
+  "20261220010000_correct_starter_privacy_subject_access",
   "migration.sql",
 );
 
@@ -234,6 +272,12 @@ const SUPERSEDED_HOME_HEADER_TEXT = homeHeaderTextWrittenBy(
   readFileSync(HOME_UPDATE_MIGRATION_PATH, "utf8"),
 );
 
+/** The starter privacy header with its "Last updated" date set to `date`. */
+function privacyHeaderOn(date: string) {
+  const header = starterPageContent.find((p) => p.slug === "privacy")!.headerText;
+  return header.replace(/Last updated [^<]+/, `Last updated ${date}`);
+}
+
 function sqlQuote(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
 }
@@ -308,14 +352,19 @@ describe("starter page content backfill migration", () => {
     FAQ_PERSONAL_DATA_MIGRATION_PATH,
     "utf8",
   );
+  const privacySubjectAccessSql = readFileSync(
+    PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH,
+    "utf8",
+  );
   // Comments stripped: #2431's header quotes the new hero in prose, and this
   // suite's job is to prove a STATEMENT writes each current seed value.
   const homeGuestCopySql = statementsOnly(
     readFileSync(HOME_GUEST_COPY_MIGRATION_PATH, "utf8"),
   );
   const allInsertSql = `${insertSql}\n${backfill404Sql}\n${policyPagesSql}\n${bookingRequestsSql}\n${schoolBookingsSql}`;
-  const privacyRetentionSql = readFileSync(join(process.cwd(), "prisma/migrations/20261214010000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
-  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${faqPersonalDataSql}\n${homeGuestCopySql}\n${privacyRetentionSql}`;
+  const privacyRetentionSql = readFileSync(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH, "utf8");
+  const privacyRecipientsSql = readFileSync(PRIVACY_RECIPIENTS_MIGRATION_PATH, "utf8");
+  const combinedSql = `${allInsertSql}\n${updateSql}\n${faqUpdateSql}\n${privacyUpdateSql}\n${nonMemberHoldCopyUpdateSql}\n${genericiseLodgeCopySql}\n${privacyAuditRetentionSql}\n${faqPersonalDataSql}\n${homeGuestCopySql}\n${privacyRetentionSql}\n${privacySubjectAccessSql}\n${privacyRecipientsSql}`;
 
   it("inserts exactly the starter pages defined for the seed", () => {
     const insertedIds = [
@@ -724,12 +773,11 @@ describe("starter privacy audit-retention update migration (#4031)", () => {
   it("bumps the header's Last updated date only where the header is still the starter one", () => {
     // 17 Oct 2026 decision: the starter header (written once, by the policy
     // backfill) moves to the seed's header; any other header is kept.
-    const page = starterPageContent.find((p) => p.slug === "privacy");
     const policyPagesSql = readFileSync(POLICY_PAGES_MIGRATION_PATH, "utf8");
-    const previousHeader = page!.headerText.replace("Last updated 12 November 2026", "Last updated 1 April 2026");
+    const previousHeader = privacyHeaderOn("1 April 2026");
     expect(policyPagesSql).toContain(sqlQuote(previousHeader));
     expect(statementsOnly(sql)).toContain(`WHEN "headerText" = ${sqlQuote(previousHeader)}`);
-    expect(statementsOnly(sql)).toContain(`THEN ${sqlQuote(page!.headerText.replace("Last updated 12 November 2026", "Last updated 17 October 2026"))}`);
+    expect(statementsOnly(sql)).toContain(`THEN ${sqlQuote(privacyHeaderOn("17 October 2026"))}`);
     expect(statementsOnly(sql)).toContain(`ELSE "headerText"`);
   });
 });
@@ -854,27 +902,214 @@ describe("starter privacy retention census (#4914)", () => {
 
 
 describe("starter privacy retention and hosting migration (#4914)", () => {
-  const sql = readFileSync(join(process.cwd(), "prisma/migrations/20261214010000_correct_starter_privacy_retention_and_hosting/migration.sql"), "utf8");
+  const sql = readFileSync(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH, "utf8");
   const previousSql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
-  const page = starterPageContent.find((p) => p.slug === "privacy")!;
-  it("writes the seed body and guards on the exact #4031 body", () => {
-    expect(nthCmsBlock(sql, 1)).toBe(page.contentHtml);
+  const written = nthCmsBlock(sql, 1);
+  it("guards on the exact #4031 body", () => {
     expect(sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]).toBe(nthCmsBlock(previousSql, 1));
     expect(sql).toContain('AND "contentHtml" = $previous$');
     expect(sql).toContain('WHERE "slug" = \'privacy\'');
   });
   it("preserves a custom header and uses the UTC statement clock", () => {
-    expect(sql).toContain(`WHEN "headerText" = ${sqlQuote(page.headerText.replace("12 November 2026", "17 October 2026"))}`);
-    expect(sql).toContain(`THEN ${sqlQuote(page.headerText)}`);
+    expect(sql).toContain(`WHEN "headerText" = ${sqlQuote(privacyHeaderOn("17 October 2026"))}`);
+    expect(sql).toContain(`THEN ${sqlQuote(privacyHeaderOn("12 November 2026"))}`);
     expect(sql).toContain('ELSE "headerText"');
     expect(sql).toContain("statement_timestamp() AT TIME ZONE 'UTC'");
   });
-  it("uses host-neutral text and visible deployment review notes", () => {
-    expect(page.contentHtml).not.toMatch(/Lightsail|Sydney|encrypted and stored in AWS S3/);
+  it("wrote host-neutral text with visible deployment review notes", () => {
+    expect(written).not.toMatch(/Lightsail|Sydney|encrypted and stored in AWS S3/);
     for (const section of [5, 6]) {
-      const text = page.contentHtml.split(`<div><h2>${section}.`)[1]?.split('</div>')[0];
+      const text = written.split(`<div><h2>${section}.`)[1]?.split('</div>')[0];
       expect(text).toContain("Admin note:");
       expect(text).toMatch(/hosting provider, region, backup store/);
     }
+  });
+});
+
+
+describe("starter privacy subject-access correction (#4915)", () => {
+  const sql = readFileSync(PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH, "utf8");
+  // #5007 later rewrote sections 5 and 6 and moved the date on, so the seed is
+  // no longer what this migration wrote. Its output is frozen at #4915's copy,
+  // which #5007's migration guards as `$previous$` (chained below).
+  it("updates only the exact #4914 starter content and preserves edited headers", () => {
+    const previousSql = readFileSync(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH, "utf8");
+    expect(sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]).toBe(nthCmsBlock(previousSql, 1));
+    expect(nthCmsBlock(sql, 1)).toBe(STARTER_PRIVACY_BODY_4915);
+    expect(sql).toContain('WHERE "slug" = \'privacy\'');
+    expect(sql).toContain('AND "contentHtml" = $previous$');
+    expect(sql).toContain(`WHEN "headerText" = ${sqlQuote(privacyHeaderOn("12 November 2026"))}`);
+    expect(sql).toContain(`THEN ${sqlQuote(privacyHeaderOn("14 November 2026"))}`);
+    expect(sql).toContain('ELSE "headerText" END');
+    expect(sql).toContain("timezone('UTC', statement_timestamp())");
+  });
+});
+
+describe("starter privacy recipients and hosting migration (#5007)", () => {
+  const sql = readFileSync(PRIVACY_RECIPIENTS_MIGRATION_PATH, "utf8");
+  const statements = statementsOnly(sql);
+  const page = starterPageContent.find((p) => p.slug === "privacy")!;
+  const subjectAccessSql = readFileSync(PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH, "utf8");
+  const retentionHostingSql = readFileSync(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH, "utf8");
+  const auditRetentionSql = readFileSync(PRIVACY_AUDIT_RETENTION_MIGRATION_PATH, "utf8");
+  const genericiseSql = readFileSync(GENERICISE_LODGE_COPY_MIGRATION_PATH, "utf8");
+
+  it("only updates the privacy row, and never inserts or deletes", () => {
+    expect(statements.match(/UPDATE\s+"PageContent"/g)).toHaveLength(1);
+    expect(sql).not.toMatch(/\bDELETE\b/i);
+    expect(sql).not.toMatch(/\bINSERT\b/i);
+    expect(statements).toContain(`WHERE "slug" = ${sqlQuote("privacy")}`);
+  });
+
+  it("guards on exactly the bodies #4915, #4914, #4031 and #1945 wrote, so edited rows are untouched", () => {
+    expect(statements).toContain(`AND "contentHtml" IN ($previous$`);
+    // #4915's body is what the chain leaves on an unedited page. #4914's,
+    // #4031's and #1945's are what a stale editor save or an old bundle can
+    // restore.
+    expect(sql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]).toBe(nthCmsBlock(subjectAccessSql, 1));
+    expect(sql.match(/\$older\$([\s\S]*?)\$older\$/)?.[1]).toBe(nthCmsBlock(retentionHostingSql, 1));
+    expect(sql.match(/\$oldest\$([\s\S]*?)\$oldest\$/)?.[1]).toBe(nthCmsBlock(auditRetentionSql, 1));
+    const earliest = sql.match(/\$earliest\$([\s\S]*?)\$earliest\$/)?.[1];
+    expect(earliest).toBe(nthCmsBlock(genericiseSql, 1));
+    // The body #4031's migration guarded, that is, the one it replaced on every
+    // install that ran it.
+    expect(earliest).toBe(auditRetentionSql.match(/\$previous\$([\s\S]*?)\$previous\$/)?.[1]);
+    // Four alternatives in this order, and no fifth.
+    expect(sql.match(/\$(previous|older|oldest|earliest)\$(?=[\s\S]*?\$\1\$)/g)).toHaveLength(4);
+  });
+
+  it("writes the current privacy seed copy", () => {
+    expect(nthCmsBlock(sql, 1)).toBe(page.contentHtml);
+  });
+
+  it("moves each starter header to the seed's header and keeps any other", () => {
+    expect(statements).toContain(
+      `WHEN "headerText" IN (${sqlQuote(privacyHeaderOn("14 November 2026"))}, ${sqlQuote(privacyHeaderOn("12 November 2026"))}, ${sqlQuote(privacyHeaderOn("17 October 2026"))}, ${sqlQuote(privacyHeaderOn("1 April 2026"))})`,
+    );
+    // The seed date and the migration's THEN value are the same string.
+    expect(statements).toContain(`THEN ${sqlQuote(page.headerText)}`);
+    expect(page.headerText).toContain("Last updated 18 November 2026");
+    expect(statements).toContain(`ELSE "headerText"`);
+    // The four starter headers are the ones the earlier migrations wrote, and
+    // the one the policy backfill planted with the #1945 body.
+    expect(subjectAccessSql).toContain(`THEN ${sqlQuote(privacyHeaderOn("14 November 2026"))}`);
+    expect(retentionHostingSql).toContain(`THEN ${sqlQuote(privacyHeaderOn("12 November 2026"))}`);
+    expect(auditRetentionSql).toContain(`THEN ${sqlQuote(privacyHeaderOn("17 October 2026"))}`);
+    expect(auditRetentionSql).toContain(`WHEN "headerText" = ${sqlQuote(privacyHeaderOn("1 April 2026"))}`);
+  });
+
+  it("names the seed's Last updated date in the upgrade step", () => {
+    // The date is the merge date and lives in five places that must move
+    // together: the seed, the migration's header CASE, the fixture, this test
+    // and the upgrade step. The first two are held equal above, the fixture by
+    // the real-database suite; this holds the step to the seed.
+    const seedDate = /Last updated (\d{1,2} [A-Za-z]+ \d{4})/.exec(page.headerText)?.[1];
+    expect(seedDate).toBeDefined();
+    const guide = readFileSync(join(process.cwd(), "docs", "UPGRADING.md"), "utf8");
+    const step = guide
+      .split("### Starter privacy policy lists its recipients and names your host (#5007)")[1]
+      ?.split(/\n#{2,3} /)[0];
+    expect(step, "the #5007 upgrade step must exist").toBeDefined();
+    expect(step).toContain(`"Last updated" date moves to ${seedDate},`);
+  });
+
+  it("uses the UTC statement clock, never the session clock", () => {
+    expect(statements).toContain(`"updatedAt" = timezone('UTC', statement_timestamp())`);
+    expect(statements).not.toMatch(/CURRENT_TIMESTAMP|\bnow\(\)|LOCALTIMESTAMP/i);
+  });
+
+  it("sorts after the #1945, #4031, #4914 and #4915 migrations it follows", () => {
+    const stamp = (path: string) => path.split(/[\\/]/).at(-2)!;
+    expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > stamp(GENERICISE_LODGE_COPY_MIGRATION_PATH)).toBe(true);
+    expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > stamp(PRIVACY_SUBJECT_ACCESS_MIGRATION_PATH)).toBe(true);
+    expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > stamp(PRIVACY_RETENTION_HOSTING_MIGRATION_PATH)).toBe(true);
+    expect(stamp(PRIVACY_RECIPIENTS_MIGRATION_PATH) > "20261119010000").toBe(true);
+  });
+
+  it("writes text that names the host through {{data-hosting}} and drops the old hosting claims", () => {
+    const written = nthCmsBlock(sql, 1);
+    expect(written).toContain("{{data-hosting}}");
+    expect(written).not.toMatch(/Lightsail|Sydney|backups are encrypted|encrypted and stored/i);
+  });
+});
+
+describe("starter privacy policy versus the recipient register (#5007)", () => {
+  const page = starterPageContent.find((p) => p.slug === "privacy")!;
+  const section = (n: number) =>
+    page.contentHtml.split(`<div><h2>${n}.`)[1]?.split(`<div><h2>${n + 1}.`)[0] ?? "";
+  const memberFacing = Object.entries(PRIVACY_RECIPIENTS).filter(([, r]) => r.memberFacing);
+
+  it("lists every member-facing register entry in section 5, and nothing else", () => {
+    expect(Object.keys(STARTER_PRIVACY_RECIPIENT_ITEMS).sort()).toEqual(memberFacing.map(([id]) => id).sort());
+    const listed = section(5).match(/<li>.*?<\/li>/g) ?? [];
+    expect(listed).toEqual(Object.values(STARTER_PRIVACY_RECIPIENT_ITEMS));
+  });
+
+  it("marks each service from the register's availability, once, and no other way", () => {
+    const notes = Object.values(STARTER_PRIVACY_AVAILABILITY_NOTES).filter((note) => note !== "");
+    for (const [id, item] of Object.entries(STARTER_PRIVACY_RECIPIENT_ITEMS)) {
+      const derived = STARTER_PRIVACY_AVAILABILITY_NOTES[PRIVACY_RECIPIENTS[id as keyof typeof PRIVACY_RECIPIENTS].availability];
+      for (const note of notes) {
+        // Exactly the derived note appears, and exactly once: a note typed into
+        // the service's own text would make a second copy that could drift.
+        expect(item.split(note).length - 1, `${id} and "${note}"`).toBe(note === derived ? 1 : 0);
+      }
+    }
+    // The opening sentence quotes the same marking, so it is covered too: the
+    // phrase appears once there and once per item the register says the club
+    // turns on, and nowhere else in section 5.
+    const turnsOn = STARTER_PRIVACY_AVAILABILITY_NOTES["club-turns-on"].replace(/\.$/, "");
+    const opening = section(5).match(/<p>(.*?)<\/p>/)?.[1] ?? "";
+    expect(opening).toContain(`&ldquo;${turnsOn}&rdquo;`);
+    const turnsOnItems = Object.values(PRIVACY_RECIPIENTS).filter((r) => r.availability === "club-turns-on").length;
+    expect(section(5).split(turnsOn).length - 1).toBe(1 + turnsOnItems);
+  });
+
+  it("ties the register's availability to the module defaults the schema ships", () => {
+    const schema = readFileSync(join(process.cwd(), "prisma", "schema.prisma"), "utf8");
+    const modules = schema.match(/^model ClubModuleSettings \{[\s\S]*?\n\}/m)?.[0] ?? "";
+    expect(modules).not.toBe("");
+    // Recipients that only receive data once a club turns a module on: each of
+    // their modules ships off, so the starter policy marks them "only if".
+    const offByDefault: Record<string, string[]> = {
+      xero: ["xeroIntegration"],
+      google: ["analytics", "googleLogin"],
+      anthropic: ["aiAssistant", "aiDiagnostics"],
+      addy: ["addressAutocomplete"],
+      servernz: ["alpineCentralServer"],
+    };
+    for (const [id, fields] of Object.entries(offByDefault)) {
+      expect(PRIVACY_RECIPIENTS[id as keyof typeof PRIVACY_RECIPIENTS].availability, id).toBe("club-turns-on");
+      for (const field of fields) {
+        expect(modules, `${field} must ship off`).toMatch(new RegExp(`\\b${field}\\s+Boolean\\s+@default\\(false\\)`));
+      }
+    }
+    // The breached-password check ships on, so it is marked "unless".
+    expect(PRIVACY_RECIPIENTS["breached-passwords"].availability).toBe("club-turns-off");
+    expect(schema).toMatch(/\bbreachedPasswordCheck\s+Boolean\s+@default\(true\)/);
+    // Stripe has no module switch and setup requires it, so it is not marked.
+    expect(PRIVACY_RECIPIENTS.stripe.availability).toBe("always");
+  });
+
+  it("links each provider to the privacy notice the register records", () => {
+    const registerUrls = new Set<string>(memberFacing.map(([, r]) => r.privacyUrl));
+    for (const [id, item] of Object.entries(STARTER_PRIVACY_RECIPIENT_ITEMS)) {
+      for (const [, href] of item.matchAll(/href="([^"]+)"/g)) {
+        expect(registerUrls.has(href!), `${id} links ${href}, which no register entry records`).toBe(true);
+      }
+    }
+  });
+
+  it("names the host only through the club's settings, never as a fact for every club", () => {
+    expect(STARTER_PRIVACY_RECIPIENT_ITEMS.hosting).toContain("{{data-hosting}}");
+    expect(section(5) + section(6)).not.toMatch(/Lightsail|Sydney|Asia Pacific|region\b.*\(|encrypted and stored|backups are encrypted/i);
+    expect(section(6)).toContain("hosting company described in section 5");
+  });
+
+  it("uses only tokens in the page-body catalogue", () => {
+    const catalogue = new Set(tokensForContext("page-content-body").map((t) => t.token));
+    const used = [...page.contentHtml.matchAll(/\{\{\s*([^}:\s]+)[^}]*\}\}/g)].map((m) => m[1]!);
+    expect(used).toContain("data-hosting");
+    for (const token of used) expect(catalogue.has(token), `{{${token}}} is not in the catalogue`).toBe(true);
   });
 });

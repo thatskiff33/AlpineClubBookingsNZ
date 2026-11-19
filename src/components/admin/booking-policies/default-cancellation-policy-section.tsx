@@ -11,26 +11,34 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { LateCaptureRefundSetting } from "@/components/admin/booking-policies/late-capture-refund-setting"
+import { LinkedMoveFeesSetting } from "@/components/admin/booking-policies/linked-move-fees-setting"
+import {
+  bookingTimingsDiffer,
+  BookingTimingsSetting,
+} from "@/components/admin/booking-policies/booking-timings-setting"
+import { bookingTimingsFrom, type BookingTimings } from "@/lib/booking-timings"
 import { Label } from "@/components/ui/label"
 import { CancellationRulesEditor } from "./cancellation-rules-editor"
 import { PolicyPreview } from "./policy-preview"
 import { PolicyFeedback } from "./policy-feedback"
 import {
   isPolicyScopeReady,
+  POLICY_SCOPE_NOT_READY_REASON,
   PolicyScopeSelect,
   usePolicyScopeOptions,
 } from "./policy-scope-select"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import {
-  ForbiddenSaveError,
-  useSectionEditState,
-} from "@/hooks/use-section-edit-state"
+import { ForbiddenSaveError, useSectionEditState } from "@/hooks/use-section-edit-state"
+import { ApiRefusalError, apiRefusalFromResponse } from "@/lib/api-error-message"
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import type { PolicyRule } from "./types"
+
+const LOAD_FALLBACK = "Failed to fetch policy"
+const SAVE_FALLBACK = "Failed to save"
 
 type WaitlistCrossLodgeOrder = "OWN_LODGE_FIRST" | "MERGED"
 
@@ -69,7 +77,7 @@ function endpointFor(lodgeId: string | null) {
  * config object per SCOPE, so a single `useSectionEditState` instance owns it
  * and the scope switch drives `reload`.
  */
-interface CancellationDraft {
+interface CancellationDraft extends BookingTimings {
   rules: PolicyRule[]
   holdEnabled: boolean
   holdDays: number
@@ -125,10 +133,11 @@ const CANCELLATION_DEFAULTS: CancellationDraft = {
   // Charging both is the club's default answer; waiving is the exception.
   linkedMoveBothFees: true,
   lateCaptureNeedsApproval: DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
+  ...bookingTimingsFrom({}),
 }
 
 function toDraft(
-  data: {
+  data: Partial<BookingTimings> & {
     rules?: PolicyRule[]
     linkedMoveChargesBothChangeFees?: boolean
     lateCaptureRefundNeedsApproval?: boolean
@@ -159,6 +168,7 @@ function toDraft(
       DEFAULT_BOOKING_DEFAULTS.lateCaptureRefundNeedsApproval,
     waitlistOrder:
       data.waitlistCrossLodgeOrder === "MERGED" ? "MERGED" : "OWN_LODGE_FIRST",
+    ...bookingTimingsFrom(data), // #4932: club-wide like the hold above
     configured: fetchedRules.length > 0,
     scope: lodgeId,
   }
@@ -207,7 +217,7 @@ export function DefaultCancellationPolicySection() {
       // every commit, so this closure always carries the CURRENT scope.
       const scope = scopeLodgeId
       const res = await fetch(endpointFor(scope), { signal })
-      if (!res.ok) throw new Error("Failed to fetch policy")
+      if (!res.ok) throw new Error(LOAD_FALLBACK)
       const data = await res.json()
       // A scope switch during the fetch makes this response the wrong
       // partition's. `reload` cannot abort the in-flight request the way the
@@ -220,7 +230,7 @@ export function DefaultCancellationPolicySection() {
     },
     save: async (draft, savedSnapshot) => {
       if (!policyScopeReady) {
-        throw new Error("Choose an available policy scope before saving")
+        throw new ApiRefusalError(POLICY_SCOPE_NOT_READY_REASON)
       }
       const lodgeId = scopeLodgeId
       // Captured at SUBMIT time — see `savedScopeNameRef`.
@@ -239,6 +249,7 @@ export function DefaultCancellationPolicySection() {
                 nonMemberHoldDays: draft.holdDays,
                 waitlistCrossLodgeOrder: draft.waitlistOrder,
                 linkedMoveChargesBothChangeFees: draft.linkedMoveBothFees,
+                ...bookingTimingsFrom(draft),
                 // #3639 delta D3: only from someone who may change it, with the loaded value.
                 ...(canEditFinance === true ? {
                   lateCaptureRefundNeedsApproval: draft.lateCaptureNeedsApproval,
@@ -249,8 +260,7 @@ export function DefaultCancellationPolicySection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const data = await res.json()
-        throw new Error(data.error || "Failed to save")
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK)
       }
       // The PUT echoes the stored partition back, so re-seed from THAT — the
       // route sorts and normalises the rules it persists.
@@ -263,6 +273,8 @@ export function DefaultCancellationPolicySection() {
       savedDraft.scope
         ? `Override saved for ${savedScopeNameRef.current ?? "lodge"}`
         : "Default policy saved",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
     // logs `cancellation-policy.update` and revalidates the public pages
     // unconditionally — so a no-op save left an audit entry asserting a policy
@@ -286,6 +298,7 @@ export function DefaultCancellationPolicySection() {
         draft.waitlistOrder !== saved.waitlistOrder ||
         draft.linkedMoveBothFees !== saved.linkedMoveBothFees ||
         draft.lateCaptureNeedsApproval !== saved.lateCaptureNeedsApproval ||
+        bookingTimingsDiffer(draft, saved) ||
         !cancellationRuleSetsEqual(draft.rules, saved.rules)
       )
     },
@@ -339,7 +352,7 @@ export function DefaultCancellationPolicySection() {
       // Seed the editor from the club-wide rules so the override starts as
       // a copy the admin adjusts, not a blank slate.
       const res = await fetch(ENDPOINT)
-      if (!res.ok) throw new Error("Failed to fetch policy")
+      if (!res.ok) throw new Error(LOAD_FALLBACK)
       const clubWide = toDraft(await res.json(), null)
       if (scopeRef.current !== scopeAtClick) return
       section.setDraft({
@@ -385,7 +398,7 @@ export function DefaultCancellationPolicySection() {
           return
         }
         const data = await res.json()
-        throw new Error(data.error || "Failed to save")
+        throw new Error(data.error || SAVE_FALLBACK)
       }
       setCreatingOverride(false)
       await reload()
@@ -572,44 +585,21 @@ export function DefaultCancellationPolicySection() {
                         : "The threshold is retained but inactive while First Paid, First In is selected."}
                     </p>
                   </div>
-                  {/*
-                    #3232 D2. Club-wide, beside the other club-wide booking
-                    defaults, because whether a second change fee is fair when the
-                    club's own supervision rule compelled the move is a question
-                    about how the club treats its members — not about one lodge's
-                    cancellation risk, which is what the fee TIERS below price.
-                  */}
-                  <div className="flex items-start gap-3 rounded-md border p-3">
-                    <Checkbox
-                      id="linkedMoveBothFees"
-                      checked={draft.linkedMoveBothFees}
-                      disabled={!editing}
-                      onCheckedChange={(v) =>
-                        section.setDraft({ linkedMoveBothFees: v === true })
-                      }
-                    />
-                    <div className="space-y-1">
-                      <Label htmlFor="linkedMoveBothFees">
-                        Charge the change fee on both bookings when a member moves
-                        two together
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        When a member changes the dates of a booking that another of
-                        their own bookings relies on for adult supervision, they are
-                        offered the chance to move both together. Both bookings
-                        really move, so by default both attract the change fee, shown
-                        as one combined figure. Turn this off to charge only the
-                        booking the member was editing — some clubs think the second
-                        fee is unfair when it was the club&apos;s own supervision rule
-                        that made the second move necessary.
-                      </p>
-                    </div>
-                  </div>
+                  <LinkedMoveFeesSetting
+                    chargeBoth={draft.linkedMoveBothFees}
+                    editing={editing}
+                    onChange={(v) => section.setDraft({ linkedMoveBothFees: v })}
+                  />
                   <LateCaptureRefundSetting
                     needsApproval={draft.lateCaptureNeedsApproval}
                     editing={editing}
                     canChange={canEditFinance}
                     onChange={(v) => section.setDraft({ lateCaptureNeedsApproval: v })}
+                  />
+                  <BookingTimingsSetting
+                    timings={draft}
+                    editing={editing}
+                    onChange={(patch) => section.setDraft(patch)}
                   />
                 </div>
               ) : null}

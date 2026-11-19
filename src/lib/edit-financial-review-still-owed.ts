@@ -89,6 +89,7 @@ export async function previewEditReviewStillOwed({
           direction: ManualRefundTaskDirection.REFUND_TO_MEMBER,
           club: { zone: clubZone, format },
           store: tx,
+          readOnlyPreview: true, // #5171 review: no Payment row or member lock in this rolled-back read
         });
         if (route?.kind === "stripe-refund" || route?.kind === "local-allocation") {
           const kind = route.kind === "stripe-refund" ? "card" : "hand-back";

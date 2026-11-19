@@ -20,7 +20,7 @@ The cards are:
 | **Site Content** | `/admin/site-content` | Shared site chrome such as the footer columns. See [Site Content](site-content.md). |
 | **Page Content** | `/admin/page-content` | The database-backed public pages, menus, tokens, and publishing state. See [Page Content](page-content.md). |
 | **Site Banners** | `/admin/site-banners` | Dated notice banners for public visitors and members. See [Site Banners](site-banners.md). |
-| **Mountain Conditions** | `/admin/mountain-conditions` | The Whakapapa Snow.nz condition widget content. See [Mountain Conditions](mountain-conditions.md). |
+| **Mountain Conditions** | `/admin/mountain-conditions` | The cached Whakapapa (Mt Ruapehu) conditions report; shown only when the Whakapapa conditions report module is on. See [Mountain Conditions](mountain-conditions.md). |
 | **Image Manager** | `/admin/image-manager` | Upload and organise images used by the content editors. See [Image Manager](image-manager.md). |
 
 Everything here is edited under the **content** permission area: you need
@@ -70,19 +70,7 @@ change these pages.
    use — the same values the [Email Messages](email-messages.md) templates
    reference; a multi-lodge club sets them per lodge under **Setup → Lodges**
    ([Lodges](../multi-lodge/README.md)) instead.
-4. Also under **Lodge details**, and all optional, are the details the booking
-   invoice prints: a **Postal address** (beside **Address**; the invoice uses it
-   instead of the address when set), then, under **Door code**, **Bank details
-   for bookings** (an **Account name** and an **Account number** in four parts,
-   `BB-bbbb-AAAAAAA-SSS`, the suffix 2 or 3 digits) and a **GST
-   number**. They are
-   saved by the same **Save lodge details** button and appear only on the
-   invoice a booker or officer downloads from a booking that has no Xero
-   invoice — never on the public site or in emails. A multi-lodge club sets them
-   per lodge in the **Edit** form under **Setup → Lodges**
-   ([Lodges](lodges.md#edit-a-lodges-identity)); both screens edit the same
-   lodge record.
-5. Under **Where members' data is held**, click **Edit** and enter the
+4. Under **Where members' data is held**, click **Edit** and enter the
    **Hosting provider** (the company that runs your server and database) and
    **Where your data is held** (the country or region; name both if your
    database and backups are held in different places). Each is one line of
@@ -111,15 +99,12 @@ change these pages.
 | Address | Public lodge address (`{{lodge-address}}` token) | Blank | Appears on the contact page; while it is blank the contact page shows no address block and the token renders nothing |
 | Travel note | Extra travel/access note for visitors | Blank | Optional |
 | Door code | The lodge door/access code | Blank | Shared **only** in confirmation emails, never public |
-| Postal address | The issuer address on the booking invoice | Blank | Up to 300 characters; when blank the invoice uses the address |
-| Bank details for bookings | Account name and New Zealand account number in the invoice's payment box | Blank | Name up to 200 characters; the number is `BB-bbbb-AAAAAAA-SSS` (15 or 16 digits) or blank, and a part-filled number will not save; the box appears only when one is set |
-| GST number | "GST Number" on the booking invoice | Blank | Up to 40 characters; printed only when set |
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| A card is missing from the hub | The feature is gated off (e.g. Mountain Conditions needs the `skifieldConditions` module) | Enable the module at **Admin → Modules** |
+| A card is missing from the hub | The feature is gated off (e.g. Mountain Conditions needs the `skifieldWhakapapa` module) | Enable the module at **Admin → Modules** |
 | Everything is read-only | Your admin role can view but not edit under the content area | Ask a full admin for content edit access |
 | A changed name still shows the old value | The DB-first identity cache updates within a few seconds; a stale tab may hold the old value | Reload the page |
 | A field went back to the old default | You cleared it — blank falls back to the file configuration | Re-enter the value and save |

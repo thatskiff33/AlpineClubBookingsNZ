@@ -195,13 +195,21 @@ export interface SanitizePageContentHtmlOptions {
    * test) — do not flip this default.
    */
   restrictImgSrc?: boolean;
+  /**
+   * The HTML is rendered inside a page that already owns its level-1 heading
+   * (a notice under its title, #4951, `INV-PUB-006`): an `<h1>` an author puts
+   * in the body comes out as `<h2>`, so the page keeps exactly one. Omit it
+   * where the HTML IS the page, as public website content is. Only the tag name
+   * changes; the allow-lists are the ones above.
+   */
+  underPageHeading?: boolean;
 }
 
 export function sanitizePageContentHtml(
   contentHtml: string,
   options: SanitizePageContentHtmlOptions = {},
 ): string {
-  const sanitizeOptions: sanitizeHtml.IOptions = options.restrictImgSrc
+  const base: sanitizeHtml.IOptions = options.restrictImgSrc
     ? {
         ...SANITIZE_OPTIONS,
         // Replaces (not extends) SANITIZE_OPTIONS.allowedSchemesByTag — img is
@@ -213,6 +221,9 @@ export function sanitizePageContentHtml(
         allowedSchemesByTag: { img: ["data"] },
       }
     : SANITIZE_OPTIONS;
+  const sanitizeOptions: sanitizeHtml.IOptions = options.underPageHeading
+    ? { ...base, transformTags: { ...base.transformTags, h1: "h2" } }
+    : base;
   return sanitizeHtml(contentHtml, sanitizeOptions).trim();
 }
 

@@ -17,6 +17,7 @@ import type {
   PolicyExceptionViolation,
 } from "@/lib/booking-policy-exceptions";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * Atomic approve-and-execute for booking-policy exception requests (#2525) — the
@@ -827,7 +828,7 @@ export async function approveAndExecutePolicyExceptionRequest(params: {
       canonicalDeferred = executed.deferredPostCommit;
       approvedRequest = request;
       return { outcome: "executed", requestId };
-    },
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET,
     );
   } catch (error) {
     // The HOLD post-release recheck (8b) rolled the whole approval back because
@@ -1010,7 +1011,7 @@ export async function resolvePolicyExceptionRequestTerminal(params: {
 
     const released = await store.releaseReservation(tx, requestId);
     return { claimed: true, released };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 // ---------------------------------------------------------------------------

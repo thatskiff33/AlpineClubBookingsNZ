@@ -1,3 +1,4 @@
+import { releaseSavedCardChargeClaim, runSavedCardClaimRelease } from "@/lib/saved-card-charge-claim";
 import { receiptCaptureTime } from "@/lib/stripe-capture-date";
 import { NextRequest, NextResponse } from "next/server";
 import { handOffSupersededCaptureAfterRefusal } from "@/lib/superseded-paid-intent";
@@ -5,9 +6,12 @@ import { SUPERSEDED_CHARGE_NOT_SETTLED_BODY } from "@/lib/payment-recovery-contr
 import { bookingOwner } from "@/lib/booking-owner";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
-import { z } from "zod";
 
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 import { prisma } from "@/lib/prisma";
 import { stripeReferenceId } from "@/lib/stripe-references";
 import { readStripeErrorFields } from "@/lib/stripe-errors";
@@ -32,15 +36,13 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueOwnHostingCoverageReevaluation } from "@/lib/adult-member-hosting-review";
 import {
   reconcileBedAllocationsForBooking,
-  reconcileBedAllocationsForBookingWithGlobalLockHeld,
   reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
 import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
-  type NightAvailability,
 } from "@/lib/capacity";
-import { overCapacityNights, wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
+import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -59,19 +61,12 @@ import {
 import { clubFormatValues } from "@/lib/club-format-server";
 import { chargeCurrencyRefusal, UNSUPPORTED_CHARGE_CURRENCY_ADMIN_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
-
-const confirmPendingGuestsSchema = z.object({
-  allowOverbook: z.boolean().optional(),
-  // #1769b (#1705 semantics): per-action member-email choice. This route is
-  // requireAdmin()-only, so no actor gate is needed. Absent = notify (default);
-  // false suppresses the confirmation email (only sent on the zero-amount and
-  // charged-card outcomes). A non-boolean value is rejected with 400.
-  notifyMember: z.boolean().optional(),
-});
-
-/** This 409 carries dates alone; the ONE definition supplies them (#2930). */
-const getOverbookedNightDates = (nightDetails: NightAvailability[]): string[] =>
-  overCapacityNights({ nightDetails }).map((night) => night.date);
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import {
+  confirmPendingGuestsSchema,
+  getOverbookedNightDates,
+  lockedClaimRefusalBody,
+} from "@/lib/admin-confirm-pending-guests-shapes";
 
 /**
  * Admin override: "Confirm pending guests now".
@@ -322,22 +317,10 @@ export async function POST(
         await postStoredBookingConfirmationLedgerLines(tx, bookingId, journal);
 
         return { ok: true as const };
-      });
+      }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
       if ("error" in zeroResult) {
-        return NextResponse.json(
-          {
-            error: zeroResult.error,
-            ...("code" in zeroResult ? { code: zeroResult.code } : {}),
-            ...("overbookDates" in zeroResult
-              ? { overbookDates: zeroResult.overbookDates }
-              : {}),
-            ...("blockedNights" in zeroResult
-              ? { blockedNights: zeroResult.blockedNights }
-              : {}),
-          },
-          { status: zeroResult.status }
-        );
+        return NextResponse.json(lockedClaimRefusalBody(zeroResult), { status: zeroResult.status });
       }
 
       await settleHostingCoverageAfterCommit({ bookingId });
@@ -377,7 +360,18 @@ export async function POST(
           { status: 409 }
         );
       }
-      await reconcileBedAllocationsForBooking({ bookingId, previousRange });
+      try {
+        await reconcileBedAllocationsForBooking({ bookingId, previousRange });
+      } catch (err) {
+        // `INV-LOCK-006`: the move to PAYMENT_PENDING has already committed.
+        const contended = transactionContendedResponse(
+          err,
+          "Admin confirm-pending-guests bed reconcile contended for the lock(1) budget",
+          { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { bookingId } },
+        );
+        if (contended) return contended;
+        throw err;
+      }
       await audit("payment_owed", false);
       return NextResponse.json({
         success: true,
@@ -470,7 +464,7 @@ export async function POST(
       const claimed = await tx.booking.updateMany({
         where: { id: bookingId, status: BookingStatus.PENDING },
         data: {
-          status: BookingStatus.CONFIRMED,
+          status: BookingStatus.CONFIRMED, savedCardClaimAt: new Date(),
           nonMemberHoldUntil: null,
           // Persisted capacity override (#1771): an admin "confirm now" that
           // claims a priced booking CONFIRMED over the ceiling (allowOverbook
@@ -543,7 +537,7 @@ export async function POST(
         card: lockedCard,
         amountCents: chargeCents,
       };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
     let claim: Awaited<ReturnType<typeof runClaim>>;
     try {
@@ -588,19 +582,7 @@ export async function POST(
     }
 
     if ("error" in claim) {
-      return NextResponse.json(
-        {
-          error: claim.error,
-          ...("code" in claim ? { code: claim.code } : {}),
-          ...("overbookDates" in claim
-            ? { overbookDates: claim.overbookDates }
-            : {}),
-          ...("blockedNights" in claim
-            ? { blockedNights: claim.blockedNights }
-            : {}),
-        },
-        { status: claim.status }
-      );
+      return NextResponse.json(lockedClaimRefusalBody(claim), { status: claim.status });
     }
 
     // #2576 §9: drain what the claim recorded, now that it has committed.
@@ -622,10 +604,8 @@ export async function POST(
     const releaseChargeClaim = async (answer?: {
       attemptRowId: string;
       paymentIntent: SavedCardChargeAnswer;
-    }) =>
-      prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-        await acquireLodgeCapacityLock(tx, booking.lodgeId);
+    }) => {
+      const outcome = await runSavedCardClaimRelease(async (tx) => {
         if (answer) {
           await settleSavedCardChargeAttempt({ journal: receiptJournal,
             ...answer,
@@ -660,22 +640,14 @@ export async function POST(
           }
           return { released: false };
         }
-        const released = await tx.booking.updateMany({
-          where: { id: bookingId, status: BookingStatus.CONFIRMED },
-          data: {
-            status: BookingStatus.PENDING,
-            nonMemberHoldUntil: booking.nonMemberHoldUntil,
-          },
+        return releaseSavedCardChargeClaim(tx, {
+          bookingId,
+          restoreHoldUntil: booking.nonMemberHoldUntil,
+          previousRange,
         });
-        if (released.count > 0) {
-          await reconcileBedAllocationsForBookingWithGlobalLockHeld({
-            bookingId,
-            db: tx,
-            previousRange,
-          });
-        }
-        return { released: released.count > 0 };
-      });
+      }, { bookingId, lodgeId: booking.lodgeId });
+      return outcome.ok ? outcome.value : { released: false };
+    };
 
     // Charge the saved payment method through the one attempt contract every
     // path uses (#3267, `INV-PAY-055`): earlier attempts the claim ended (a
@@ -946,6 +918,14 @@ export async function POST(
     }
     return NextResponse.json({ success: true, status: "PAID", charged: true });
   } catch (err) {
+    // The $0 confirm or the charge claim rolled back before any charge; a
+    // failure after a capture answers in its own branch above.
+    const contended = transactionContendedResponse(
+      err,
+      "Admin confirm-pending-guests contended for the lock(1) budget",
+      { context: { bookingId } },
+    );
+    if (contended) return contended;
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     logger.error({ err, bookingId }, "Failed to confirm pending guests");

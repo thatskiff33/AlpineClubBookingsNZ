@@ -147,7 +147,7 @@ export const CAPACITY_RACE_XERO_SENTENCE: Record<CapacityRaceXero, string> = {
  * there, so it says what to do with money the treasurer pays anyway.
  */
 export const CAPACITY_RACE_SHORTFALL_NOTHING_TO_ALLOCATE_MESSAGE =
-  "The payment's records show too little of this card charge left to refund, so the app cannot record this as paid back - it may already have gone back. Check Stripe and the bank. If the member has had it, dismiss this task with a note saying how. If it is really owed, refund it by bank transfer and dismiss this task with a note saying when and how much.";
+  "The payment's records show too little of this card charge left to refund, so the app cannot record this as paid back - it may already have gone back. Check Stripe and the bank. Once you have confirmed the card refund reached the member, dismiss this task with a note saying how. If it is really owed, take it to the treasurer before paying anything: the app cannot record it.";
 
 export function capacityRaceNothingToAllocateMessage(xero: CapacityRaceXero): string {
   return `${CAPACITY_RACE_SHORTFALL_NOTHING_TO_ALLOCATE_MESSAGE} ${CAPACITY_RACE_XERO_SENTENCE[xero]}`;
@@ -167,10 +167,10 @@ export type CapacityRaceStripeRefunded = { readable: true; refundedCents: number
 
 /** #4159 review round 2 (F3): Stripe may stay unreadable (a charge it no longer returns), so the refusal names the way out. */
 export const CAPACITY_RACE_STRIPE_UNREADABLE_MESSAGE =
-  "The app could not read this card charge's refunds from Stripe, so it cannot record this yet. Try again in a few minutes, and do not pay it until the app accepts. If it keeps refusing, check the charge in Stripe: if the member is owed, refund it by bank transfer and dismiss this task with a note saying when and how much.";
+  "The app could not read this card charge's refunds from Stripe, so it cannot record this yet. Try again in a few minutes, and do not pay it until the app accepts. If it keeps refusing, check the charge in Stripe: if the member is owed, take it to the treasurer before paying anything: the app cannot record it.";
 
 export function capacityRaceStripeAheadMessage(stripeCents: number, recordedCents: number, format: ClubFormat): string {
-  return `Stripe shows ${formatCents(stripeCents, format)} of this card charge refunded, but the app has recorded only ${formatCents(recordedCents, format)}: a refund made in Stripe may not have reached the app yet. Try again in a few minutes, and do not pay it until the app accepts. If the member was refunded in Stripe, dismiss this task with a note saying how.`;
+  return `Stripe shows ${formatCents(stripeCents, format)} of this card charge refunded, but the app has recorded only ${formatCents(recordedCents, format)}: a refund made in Stripe may not have reached the app yet. Try again in a few minutes, and do not pay it until the app accepts. Once you have confirmed in Stripe that the refund reached the member, dismiss this task with a note saying how.`;
 }
 
 /**

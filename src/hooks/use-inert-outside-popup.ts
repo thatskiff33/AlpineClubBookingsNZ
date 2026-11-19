@@ -5,7 +5,11 @@ import * as React from "react";
 /** The marker the `aria-hidden` package (Radix's `hideOthers`) stamps on what it hides. */
 const MARKER = "data-aria-hidden";
 const HIDDEN_BY_OPEN_POPUP = `[${MARKER}="true"]`;
-const DIALOG = '[role="dialog"], [role="alertdialog"]';
+/**
+ * What counts as a dialog, for this hook and for `use-editor-focus-return`'s
+ * dialog-hosted Edit: one definition, so a role added here reaches both (#5183).
+ */
+export const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';
 
 /**
  * Make what an open Radix popup hides `inert` as well as `aria-hidden` (#4466).
@@ -66,7 +70,12 @@ export function useInertOutsidePopup<T extends HTMLElement>(
       });
       for (const element of document.querySelectorAll(HIDDEN_BY_OPEN_POPUP)) {
         if (element.hasAttribute("inert") || element.contains(content)) continue;
-        if (element.closest(DIALOG) || element.querySelector(DIALOG)) continue;
+        if (
+          element.closest(DIALOG_SELECTOR) ||
+          element.querySelector(DIALOG_SELECTOR)
+        ) {
+          continue;
+        }
         element.setAttribute("inert", "");
         madeInert.current.push(element);
       }

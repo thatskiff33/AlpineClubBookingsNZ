@@ -3,6 +3,7 @@ import {
   ADMIN_PAGE_MODULE_GATES,
   withAdminHubTwins,
 } from "@/lib/admin-hubs/security-map";
+import { getAdminPage } from "@/lib/admin-hubs";
 
 interface FeatureRouteRule {
   flag: FeatureFlagKey;
@@ -174,11 +175,12 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   },
   {
     flag: "skifieldConditions",
-    prefixes: [
-      "/api/admin/mountain-conditions",
-      "/api/skifield-whakapapa",
-      "/api/skifield-conditions",
-    ],
+    prefixes: ["/api/skifield-conditions"],
+  },
+  {
+    // The Whakapapa-specific report and its admin cache (#4932).
+    flag: "skifieldWhakapapa",
+    prefixes: ["/api/admin/mountain-conditions", "/api/skifield-whakapapa"],
   },
   {
     // Deliberately OUTSIDE /lodge and /api/lodge: those prefixes are gated by
@@ -192,7 +194,7 @@ const HAND_WRITTEN_FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // guidance plus controls that call routes which remain gated (the display
     // API still 404s until the module is on), and the admin layout still applies
     // its `lodge` area gate.
-    exemptPaths: ["/admin/display/setup"],
+    exemptPaths: [getAdminPage("display-setup").oldPath],
   },
   {
     // AI assistant admin surfaces (usage panel + spend-cap settings) hard-gate

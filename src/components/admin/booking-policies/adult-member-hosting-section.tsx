@@ -13,7 +13,7 @@ import {
 import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Label } from "@/components/ui/label"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message"
+import { apiErrorMessageFromResponse, ApiRefusalError } from "@/lib/api-error-message"
 import {
   ForbiddenSaveError,
   useSectionEditState,
@@ -25,6 +25,7 @@ import {
 import { PolicyFeedback } from "./policy-feedback"
 import {
   isPolicyScopeReady,
+  POLICY_SCOPE_NOT_READY_REASON,
   PolicyScopeSelect,
   usePolicyScopeOptions,
 } from "./policy-scope-select"
@@ -33,6 +34,9 @@ import type {
   AdultMemberHostingPolicy,
   AdultMemberHostScopeSetValue,
 } from "./types"
+
+const LOAD_FALLBACK = "Failed to load the adult-member hosting policy"
+const SAVE_FALLBACK = "Failed to save"
 
 const ENDPOINT = "/api/admin/booking-policies/adult-member-hosting"
 
@@ -252,12 +256,12 @@ export function AdultMemberHostingSection() {
       )
       if (!res.ok) {
         setLoadedScope(UNLOADED_SCOPE)
-        throw new Error("Failed to load the adult-member hosting policy")
+        throw new Error(LOAD_FALLBACK)
       }
       const policy = parsePolicy(await res.json().catch(() => null))
       if (!policy) {
         setLoadedScope(UNLOADED_SCOPE)
-        throw new Error("Failed to read the adult-member hosting policy")
+        throw new ApiRefusalError("Failed to read the adult-member hosting policy")
       }
       setLoadedScope(scope)
       setEffective(policy.effective)
@@ -266,7 +270,7 @@ export function AdultMemberHostingSection() {
     },
     save: async (draft) => {
       if (!policyScopeReady) {
-        throw new Error("Choose an available policy scope before saving")
+        throw new ApiRefusalError(POLICY_SCOPE_NOT_READY_REASON)
       }
       const scope = scopeRef.current
       const res = await fetch(ENDPOINT, {
@@ -287,7 +291,7 @@ export function AdultMemberHostingSection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const message = await apiErrorMessageFromResponse(res, "Failed to save")
+        const message = await apiErrorMessageFromResponse(res, SAVE_FALLBACK)
         if (res.status === 409) {
           // Somebody else moved the row. Drop this scope back to UNKNOWN so no
           // further write can be sent from a stale token, then pull the current
@@ -295,15 +299,17 @@ export function AdultMemberHostingSection() {
           setLoadedScope(UNLOADED_SCOPE)
           await reloadRef.current()
         }
-        throw new Error(message)
+        throw new ApiRefusalError(message)
       }
       const policy = parsePolicy(await res.json().catch(() => null))
-      if (!policy) throw new Error("Saved, but the response could not be read")
+      if (!policy) throw new ApiRefusalError("Saved, but the response could not be read")
       setEffective(policy.effective)
       setCustomScopeSeed(customScopeStartingPoint(policy))
       return toDraft(policy)
     },
     successMessage: "Adult-member hosting policy saved",
+    loadErrorFallback: LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     // First save exception (#2142): until a row is persisted there is nothing
     // for the draft to be unchanged FROM — the GET synthesised it — so a first
     // save can store the club's choice even when it matches the built-in
@@ -604,9 +610,9 @@ export function AdultMemberHostingSection() {
                   requirement is off today — it is what the club will fall back
                   on the moment it is turned on. A hold is not open-ended: it
                   lasts until the request is decided or its deadline passes —
-                  7 days after it is raised, never past the start of the first
-                  night held, and never less than 24 hours — after which the beds
-                  return to the pool and the request is marked Expired.
+                  the club&apos;s hold length (Cancellation policy page) after it
+                  is raised, never past the first night held, never under 24
+                  hours — after which the beds return to the pool, marked Expired.
                 </FieldHint>
               </div>
 

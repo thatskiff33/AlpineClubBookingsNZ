@@ -10,6 +10,7 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export const BED_ALLOCATION_REMOVAL_DIGEST_VERSION = "v1" as const;
 export const MAX_BED_ALLOCATION_REMOVAL_WINDOW_NIGHTS = 31;
@@ -788,5 +789,5 @@ export async function applyBedAllocationRemoval(input: {
       affectedBookingCount: authoritative.preview.affectedBookingCount,
       affectedNights: authoritative.preview.affectedNights,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }

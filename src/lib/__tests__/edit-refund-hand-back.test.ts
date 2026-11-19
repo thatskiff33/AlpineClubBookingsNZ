@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  editRefundBankTransferPayee,
   editRefundGoesBackByHand,
   raiseEditRefundHandBackIfOwed,
   raiseRefundRequestHandBack,
@@ -19,6 +20,7 @@ import {
   NOT_NON_CANCELLATION_HAND_BACK_WHERE,
 } from "@/lib/manual-refund-task-settlement-rules";
 import { bookingModifiedRefundSentence } from "@/lib/booking-modified-email-copy";
+import { disputedEditRefundHandBackReason, DISPUTED_HAND_BACK_LOSS_ON_ANOTHER_REFUND, DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE } from "@/lib/manual-refund-task-copy";
 
 function tx() {
   return { manualRefundTask: { createMany: vi.fn(async () => ({ count: 1 })), findUniqueOrThrow: vi.fn(async () => ({ id: "handback" })) }, xeroSyncOperation: { findMany: vi.fn(async () => []) } };
@@ -26,9 +28,9 @@ function tx() {
 
 describe("which edit refunds go back by hand (D-3813-6)", () => {
   it("a refund not captured through Stripe does; a card refund, credit, or nothing does not", () => {
-    expect(editRefundGoesBackByHand({ refundAmountCents: 6000, hasSucceededPayment: false })).toBe(true);
-    expect(editRefundGoesBackByHand({ refundAmountCents: 6000, hasSucceededPayment: true })).toBe(false);
-    expect(editRefundGoesBackByHand({ refundAmountCents: 0, hasSucceededPayment: false })).toBe(false);
+    expect(editRefundGoesBackByHand({ refundAmountCents: 6000, hasSucceededPayment: false, refundHeldForDispute: false })).toBe(true);
+    expect(editRefundGoesBackByHand({ refundAmountCents: 6000, hasSucceededPayment: true, refundHeldForDispute: false })).toBe(false);
+    expect(editRefundGoesBackByHand({ refundAmountCents: 0, hasSucceededPayment: false, refundHeldForDispute: false })).toBe(false);
   });
 });
 
@@ -39,7 +41,7 @@ describe("raising the edit's refund hand-back", () => {
       bookingId: "booking-1",
       paymentId: "pay-1",
       bookingModificationId: "mod-1",
-      adjusted: { refundAmountCents: 6000, hasSucceededPayment: false },
+      adjusted: { refundAmountCents: 6000, hasSucceededPayment: false, refundHeldForDispute: false },
       editLabel: "date change",
       booking: { organiserSettled: false, parentBookingId: null, payment: null },
     });
@@ -66,9 +68,9 @@ describe("raising the edit's refund hand-back", () => {
 
   it("raises nothing for a card refund, a zero refund or a booking with no payment row", async () => {
     for (const [adjusted, paymentId] of [
-      [{ refundAmountCents: 6000, hasSucceededPayment: true }, "pay-1"],
-      [{ refundAmountCents: 0, hasSucceededPayment: false }, "pay-1"],
-      [{ refundAmountCents: 6000, hasSucceededPayment: false }, null],
+      [{ refundAmountCents: 6000, hasSucceededPayment: true, refundHeldForDispute: false }, "pay-1"],
+      [{ refundAmountCents: 0, hasSucceededPayment: false, refundHeldForDispute: false }, "pay-1"],
+      [{ refundAmountCents: 6000, hasSucceededPayment: false, refundHeldForDispute: false }, null],
     ] as const) {
       const store = tx();
       const raised = await raiseEditRefundHandBackIfOwed(store as never, {
@@ -85,6 +87,58 @@ describe("raising the edit's refund hand-back", () => {
   });
 });
 
+/*
+  #5061 follow-up (`INV-PAY-154`): a card-paid reduction whose capture an OPEN
+  or LOST Stripe dispute holds goes back by hand to the member, never to a
+  group organiser, and the task's reason names the holding dispute read under
+  the edit's locks. The whole door is proved on PostgreSQL in
+  `stripe-dispute-edit.realdb.test.ts`; this pins the raise itself.
+*/
+describe("#5061 follow-up: a disputed card refund is handed back by hand", () => {
+  const DISPUTED = { refundAmountCents: 6000, hasSucceededPayment: true, refundHeldForDispute: true };
+  function disputeTx() {
+    return {
+      ...tx(),
+      payment: {
+        findUniqueOrThrow: vi.fn(async () => ({ id: "pay-1", stripePaymentIntentId: "pi_1", additionalPaymentIntentId: null })),
+      },
+      paymentTransaction: { findMany: vi.fn(async () => []) },
+      stripeDispute: {
+        findMany: vi.fn(async () => [
+          { stripeDisputeId: "dp_1", stripePaymentIntentId: "pi_1", status: "LOST", amountCents: 6000 },
+        ]),
+      },
+    };
+  }
+
+  it("goes back by hand although captured through Stripe, and the payee is always the member", () => {
+    expect(editRefundGoesBackByHand(DISPUTED)).toBe(true);
+    expect(editRefundBankTransferPayee(DISPUTED, { organiserSettled: true, parentBookingId: "organiser-1", payment: { source: "INTERNET_BANKING" } } as never)).toBe("member");
+    expect(editRefundBankTransferPayee({ ...DISPUTED, refundHeldForDispute: false }, { organiserSettled: false, parentBookingId: null, payment: null } as never)).toBeNull();
+  });
+
+  it("raises one hand-back whose reason names the holding dispute and the edit", async () => {
+    const store = disputeTx();
+    const raised = await raiseEditRefundHandBackIfOwed(store as never, {
+      bookingId: "booking-1",
+      paymentId: "pay-1",
+      bookingModificationId: "mod-1",
+      adjusted: DISPUTED,
+      editLabel: "date change",
+      booking: { organiserSettled: false, parentBookingId: null, payment: null },
+    });
+    expect(raised).toBe(true);
+    expect(store.stripeDispute.findMany).toHaveBeenCalledTimes(1);
+    const [{ data }] = store.manualRefundTask.createMany.mock.calls[0] as unknown as [{ data: Array<Record<string, unknown>> }];
+    expect(data).toEqual([expect.objectContaining({ amountCents: 6000, occurrenceKey: "edit-refund-hand-back:mod-1" })]);
+    expect(String(data[0]!.reason)).toBe(
+      disputedEditRefundHandBackReason({ bookingId: "booking-1", editLabel: "date change", disputes: [{ stripeDisputeId: "dp_1", status: "LOST" as never }] }),
+    );
+    expect(String(data[0]!.reason)).toContain("dp_1");
+    expect(String(data[0]!.reason)).toContain("date change");
+  });
+});
+
 describe("#3949 review round 4: no refund to the organiser is raised while the group cancel is part-way through", () => {
   const ORGANISER_PAID = { organiserSettled: true, parentBookingId: "organiser-1", payment: { source: "INTERNET_BANKING" } };
   function groupTx(childStatus: string, groupStatus: string) {
@@ -97,7 +151,7 @@ describe("#3949 review round 4: no refund to the organiser is raised while the g
   const editRaise = (store: ReturnType<typeof groupTx>) =>
     raiseEditRefundHandBackIfOwed(store as never, {
       bookingId: "child-1", paymentId: "pay-1", bookingModificationId: "mod-1",
-      adjusted: { refundAmountCents: 10_000, hasSucceededPayment: false }, editLabel: "date change", booking: ORGANISER_PAID,
+      adjusted: { refundAmountCents: 10_000, hasSucceededPayment: false, refundHeldForDispute: false }, editLabel: "date change", booking: ORGANISER_PAID,
     });
   const appealRaise = (store: ReturnType<typeof groupTx>) =>
     raiseRefundRequestHandBack(store as never, { bookingId: "child-1", paymentId: "pay-1", refundRequestId: "rr-1", amountCents: 10_000, booking: ORGANISER_PAID });
@@ -193,6 +247,18 @@ describe("the queue payload marks an edit refund hand-back for the card", () => 
       },
     };
     expect(toOpenManualRefundTaskPayload(row, null, []).editRefundHandBack).toBe(true);
+    // #4516 (owner decision, 18 Nov 2026): a dispute-held edit's hand-back in the queue, by the server's own rule.
+    const held = { ...row, paymentId: "payment-1" };
+    const lostDispute = { stripeDisputeId: "dp_1", status: "LOST" as const, amountCents: 6000, paymentId: "payment-1" };
+    expect(toOpenManualRefundTaskPayload(held, null, [], { disputes: [lostDispute], paymentTasks: [] }))
+      .toMatchObject({ journalHandBackDismissRefusal: null, disputedHandBackLost: true, markPaidRefusal: DISPUTED_HAND_BACK_LOST_NOT_PAYABLE });
+    // An older open refund on the same payment takes the loss first: this one stays payable and says why it is not dismissible.
+    const older = { ...held, id: "task-0", status: "OPEN", createdAt: new Date("2026-06-01T00:00:00.000Z") };
+    expect(toOpenManualRefundTaskPayload(held, null, [], { disputes: [lostDispute], paymentTasks: [older] }))
+      .toMatchObject({ journalHandBackDismissRefusal: DISPUTED_HAND_BACK_LOSS_ON_ANOTHER_REFUND, markPaidRefusal: null, disputeReduction: null });
+    // Lost on one charge while another is still open: the row says to wait, and offers no Mark paid.
+    expect(toOpenManualRefundTaskPayload(held, null, [], { disputes: [{ ...lostDispute, amountCents: 1000 }, { ...lostDispute, stripeDisputeId: "dp_2", status: "OPEN" as const }], paymentTasks: [] }))
+      .toMatchObject({ journalHandBackDismissRefusal: DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE, markPaidRefusal: DISPUTED_HAND_BACK_WAIT_FOR_OPEN_DISPUTE });
     expect(toOpenManualRefundTaskPayload({ ...row, occurrenceKey: null }, null, []).editRefundHandBack).toBe(false);
     // #3949: on a joiner the organiser paid for by internet banking, it goes back to the organiser.
     expect(toOpenManualRefundTaskPayload(row, null, []).paidToGroupOrganiser).toBe(false);

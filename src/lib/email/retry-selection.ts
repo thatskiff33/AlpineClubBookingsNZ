@@ -1,6 +1,23 @@
 import type { Prisma } from "@prisma/client";
 
 /**
+ * The email retry ceiling: the cron replays a `FAILED` row only while
+ * `attempts` is below it, and at it the row enters the operator's
+ * email-failure review queue. The environment gate writes a body-less blocked
+ * row straight to it, a waitlist offer's email reads as exhausted at it, and the
+ * waitlist page's "retrying (n/max)" label shows it to the officer, and the
+operator's "Try again" (`requeueExhaustedEmailFailure`) hands a row back one
+below it.
+ *
+ * One number for all of them, so a row cannot leave the retry query without
+ * entering the review queue (#3035). It lives here, beside the retry selection
+ * and free of runtime imports (a type-only Prisma import is erased), so the
+ * mailer and a client component can import it without depending on the cron
+ * that depends on the mailer.
+ */
+export const EMAIL_RETRY_MAX_ATTEMPTS = 3;
+
+/**
  * The email retry cron replays a `FAILED` row only while it holds a body in one
  * of these columns (`retryFailedEmails`'s selection), and nothing it writes once
  * it has claimed a row drops that body.
@@ -14,3 +31,11 @@ import type { Prisma } from "@prisma/client";
 export const RETAINS_REPLAYABLE_EMAIL_BODY = {
   OR: [{ htmlBody: { not: null } }, { bookingRetryHtmlBody: { not: null } }],
 } satisfies Prisma.EmailLogWhereInput;
+
+/**
+ * How long the email retry cron waits after a row's last attempt before it
+ * selects the row again. The operator's "Try again" on an exhausted failure
+ * (`requeueExhaustedEmailFailure`) dates the row back past it, so the next run
+ * admits the row; both read this one value so they cannot drift apart.
+ */
+export const EMAIL_RETRY_BACKOFF_MS = 15 * 60 * 1000;

@@ -5,25 +5,19 @@ import { useActionAttention } from "@/hooks/use-scroll-to-feedback";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BadgeCheck,
-  Bell,
-  BookOpenCheck,
   CheckCircle2,
   CircleAlert,
   CircleDashed,
   ExternalLink,
-  Landmark,
-  ListChecks,
   Loader2,
   PlayCircle,
-  Plug,
   RefreshCw,
   RotateCcw,
   SkipForward,
-  UserX,
-  type LucideIcon,
 } from "lucide-react";
-import { adminAnchorHref, adminHref, adminTabHref, adminLink } from "@/lib/admin-hubs";
+import { getAdminPage } from "@/lib/admin-hubs";
+import type { AdminHubSection } from "@/components/admin-hub-page";
+import { setupHubCards } from "./hub-cards";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +27,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import {
+  AdminViewOnlySectionBanner,
+  ViewOnlyActionButton,
+} from "@/components/admin/view-only-action";
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
 import { isFeatureHrefVisible } from "@/config/feature-routes";
 import type { FeatureFlags } from "@/config/schema";
@@ -40,7 +39,7 @@ import {
   canOpenAdminPathWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
-import { apiErrorMessageFromBody } from "@/lib/api-error-message";
+import { ApiRefusalError, apiErrorMessageFromBody, readApiErrorBody, refusalMessageOr, readApiObjectOrEmpty } from "@/lib/api-error-message";
 import type {
   ProgressStatus,
   Provider,
@@ -50,67 +49,6 @@ import type {
   SetupResponse,
   SetupStatus,
 } from "./setup-types";
-
-interface SetupHubCard {
-  href: string;
-  title: string;
-  description: string;
-  icon: LucideIcon;
-}
-
-const setupHubCards: SetupHubCard[] = [
-  {
-    href: "/admin/setup/foundations",
-    title: "Initial Setup",
-    description:
-      "Start with the installation checklist, club identity, modules, lodge records, and system health.",
-    icon: ListChecks,
-  },
-  {
-    href: "/admin/setup/finance",
-    title: "Finance",
-    description:
-      "Open finance reporting, Xero setup, sync tools, and the collapsed report-mapping editor.",
-    icon: Landmark,
-  },
-  // S1 (#4796): the next three cards open the pages the setup drill-downs
-  // they replaced were merged into.
-  {
-    href: adminHref("bookings-setup"),
-    title: "Bookings Setup",
-    description:
-      "Review booking policy, seasons, age groups, promo codes, inventory, and booking copy.",
-    icon: BookOpenCheck,
-  },
-  {
-    href: adminAnchorHref("health", "integration-readiness"),
-    title: "Integration Readiness",
-    description:
-      "Check external-provider readiness, Xero connection, modules, and delivery health.",
-    icon: Plug,
-  },
-  {
-    href: adminLink("membership-setup").href,
-    title: adminLink("membership-setup").label,
-    description:
-      "Configure membership types, member fields, and subscription lockout policy.",
-    icon: BadgeCheck,
-  },
-  {
-    href: adminTabHref("membership-cancellations", "settings"),
-    title: "Membership Cancellations",
-    description:
-      "Review cancellation settings and the cancellation request queue.",
-    icon: UserX,
-  },
-  {
-    href: adminHref("notifications"),
-    title: "Email Messages / Notifications",
-    description:
-      "Manage delivery rules, recipients, email templates, and member-facing message text.",
-    icon: Bell,
-  },
-];
 
 const SETUP_COMPLETE_MESSAGE = "Setup has been marked complete.";
 const SETUP_COMPLETE_BANNER_CLASS =
@@ -152,7 +90,7 @@ function canFollowCheckHref(permissionMatrix: AdminPermissionMatrix, href: strin
 }
 
 function getVisibleSetupHubCards(
-  cards: SetupHubCard[],
+  cards: AdminHubSection[],
   features: FeatureFlags,
   permissionMatrix: AdminPermissionMatrix,
 ) {
@@ -214,6 +152,7 @@ export function SetupPageClient({
   permissionMatrix: AdminPermissionMatrix;
   features: FeatureFlags;
 }) {
+  const canEdit = useAdminAreaEditAccess("support");
   const [readiness, setReadiness] = useState<SetupReadiness | null>(null);
   const [progress, setProgress] = useState<SetupProgressState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -246,9 +185,9 @@ export function SetupPageClient({
       const response = await fetch("/api/admin/setup", {
         credentials: "same-origin",
       });
-      const body = (await response.json()) as SetupResponse | { error?: string };
+      const body = (await readApiObjectOrEmpty(response)) as SetupResponse | { error?: string };
       if (!response.ok || !("readiness" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to load setup readiness"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to load setup readiness"));
       }
       setReadiness(body.readiness);
       setProgress(body.progress);
@@ -256,11 +195,7 @@ export function SetupPageClient({
       if (!body.progress.completedAt) setFinishMessage("");
       return body;
     } catch (loadFailure) {
-      setLoadError(
-        loadFailure instanceof Error
-          ? loadFailure.message
-          : "Failed to load setup readiness",
-      );
+      setLoadError(refusalMessageOr(loadFailure, "Failed to load setup readiness"));
     } finally {
       setLoading(false);
     }
@@ -309,17 +244,13 @@ export function SetupPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, stepId }),
       });
-      const body = await response.json().catch(() => null);
+      const body = await readApiErrorBody(response);
       if (!response.ok) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to update setup progress"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to update setup progress"));
       }
       await loadSetup();
     } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Failed to update setup progress",
-      );
+      setError(refusalMessageOr(saveError, "Failed to update setup progress"));
     } finally {
       setSavingStep(null);
     }
@@ -336,18 +267,16 @@ export function SetupPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "finish" }),
       });
-      const body = await response.json().catch(() => null);
+      const body = await readApiErrorBody(response);
       if (!response.ok) {
-        throw new Error(apiErrorMessageFromBody(body, "Failed to finish setup"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Failed to finish setup"));
       }
       const updated = await loadSetup();
       if (updated?.progress.completedAt) {
         setFinishMessage(SETUP_COMPLETE_MESSAGE);
       }
     } catch (finishError) {
-      setError(
-        finishError instanceof Error ? finishError.message : "Failed to finish setup",
-      );
+      setError(refusalMessageOr(finishError, "Failed to finish setup"));
     } finally {
       setFinishing(false);
     }
@@ -363,9 +292,9 @@ export function SetupPageClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider }),
       });
-      const body = (await response.json()) as ProviderTestResult | { error?: string };
+      const body = (await readApiObjectOrEmpty(response)) as ProviderTestResult | { error?: string };
       if (!response.ok || !("ok" in body)) {
-        throw new Error(apiErrorMessageFromBody(body, "Provider test failed"));
+        throw new ApiRefusalError(apiErrorMessageFromBody(body, "Provider test failed"));
       }
       setProviderResults((current) => ({
         ...current,
@@ -374,7 +303,7 @@ export function SetupPageClient({
       await loadSetup();
       if (!body.ok) setError(body.message);
     } catch (providerError) {
-      const message = providerError instanceof Error ? providerError.message : "Provider test failed";
+      const message = refusalMessageOr(providerError, "Provider test failed");
       setError(message);
       setProviderResults((current) => ({
         ...current,
@@ -394,18 +323,25 @@ export function SetupPageClient({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Setup Wizard</h1>
+          <h1 className="text-3xl font-bold text-foreground">
+            {getAdminPage("setup").label}
+          </h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Finish first-install readiness for club configuration, booking rules,
             provider connections, and finance mappings.
           </p>
+          {/* The empty wrapper an editor gets costs no layout; the spacing
+              lives on the inner box. */}
+          <AdminViewOnlySectionBanner canEdit={canEdit} className="mt-3 max-w-3xl" />
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={refreshSetup} disabled={loading}>
             <RefreshCw className="h-4 w-4" />
             Refresh
           </Button>
-          <Button
+          <ViewOnlyActionButton
+            canEdit={canEdit}
+            describeReason={false}
             onClick={finishSetup}
             disabled={
               finishing || setupCompleted || requiredBlockers.length > 0 || !readiness
@@ -417,7 +353,7 @@ export function SetupPageClient({
               <CheckCircle2 className="h-4 w-4" />
             )}
             {setupCompleted ? "Setup Complete" : "Mark Setup Complete"}
-          </Button>
+          </ViewOnlyActionButton>
         </div>
       </div>
 
@@ -434,6 +370,7 @@ export function SetupPageClient({
         <div className={SETUP_COMPLETE_BANNER_CLASS}>{SETUP_COMPLETE_MESSAGE}</div>
       ) : null}
       <div
+        id="setup-success"
         ref={successRef}
         role="status"
         aria-atomic="true"
@@ -585,7 +522,9 @@ export function SetupPageClient({
                               </Button>
                             ) : null}
                             {check.action ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -598,10 +537,12 @@ export function SetupPageClient({
                                   <PlayCircle className="h-4 w-4" />
                                 )}
                                 {check.action.label}
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                             {check.progress !== "completed" ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -614,10 +555,12 @@ export function SetupPageClient({
                                   <CheckCircle2 className="h-4 w-4" />
                                 )}
                                 Acknowledge
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                             {check.progress !== "skipped" ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="outline"
                                 size="sm"
@@ -626,10 +569,12 @@ export function SetupPageClient({
                               >
                                 <SkipForward className="h-4 w-4" />
                                 Skip
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                             {check.progress !== "open" ? (
-                              <Button
+                              <ViewOnlyActionButton
+                                canEdit={canEdit}
+                                describeReason={false}
                                 type="button"
                                 variant="ghost"
                                 size="sm"
@@ -638,7 +583,7 @@ export function SetupPageClient({
                               >
                                 <RotateCcw className="h-4 w-4" />
                                 Reopen
-                              </Button>
+                              </ViewOnlyActionButton>
                             ) : null}
                           </div>
                         </CardContent>

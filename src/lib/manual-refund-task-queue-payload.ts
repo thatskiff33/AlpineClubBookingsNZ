@@ -14,6 +14,7 @@ import {
 } from "@/lib/manual-refund-task-settlement-rules";
 import { isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import { isGroupOrganiserHandBackTask } from "@/lib/group-organiser-hand-back-rules";
+import { journalHandBackDismissal, NO_HAND_BACK_DISPUTES, type HandBackDisputeContext } from "@/lib/manual-refund-task-hand-back-journal";
 import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isGroupSettlementMirrorHandBackKind, reviewRefundGoesToGroupOrganiser } from "@/lib/group-settlement-mirror-kinds";
 import { readBankRefundVoidFollowUpContext } from "@/lib/bank-refund-void-follow-up-copy";
@@ -200,6 +201,21 @@ export type OpenManualRefundTaskPayload = {
    */
   groupOrganiserHandBack: boolean;
   /**
+   * #4516 (owner decisions, 14 and 15 Nov 2026): why the server refuses this journal hand-back's dismissal, in its
+   * own words, or null. A part to check keeps Dismiss; a disputed card payment's hand-back keeps it once its dispute
+   * is lost (`journalHandBackDismissal`, the server's rule).
+   */
+  journalHandBackDismissRefusal: string | null;
+  /** That disputed card payment's hand-back, now dismissible because its dispute is lost: its dialog says so. */
+  disputedHandBackLost: boolean;
+  /**
+   * #4516 (owner decision, 15 Nov 2026, comment 6893252570): its disputes lost for part of what is still owed: the
+   * reduction the officer may make (the server's own rule), or null.
+   */
+  disputeReduction: { reducedByCents: number; stillOwedCents: number } | null;
+  /** #4516 (owner decision, 18 Nov 2026): the server's refusal of Mark paid (a lost dispute it may take), or null. Set, the row offers no Mark paid. */
+  markPaidRefusal: string | null;
+  /**
    * #4097 (`INV-PAY-129`): a card cancellation whose card refund carried less
    * than the refund due. `cardShortfallHandBack`: the part the payment's
    * non-card charges hold, refunded by bank transfer. `cardShortfallCheck`: the
@@ -298,11 +314,27 @@ function memberName(booking: QueueBookingSummary): string {
  *   live database read and this module is a pure projection — and because the
  *   route reads them for the whole page in one query.
  */
+/**
+ * Every open task's payload, in the queue's order: each with its own unpriced nights (#3191, keyed by task) and its
+ * booking's card disputes (#4516, keyed by booking, for the dismissal rule).
+ */
+export function toOpenManualRefundTaskPayloads(
+  tasks: readonly OpenManualRefundTaskRow[],
+  viewerMemberId: string | null | undefined,
+  unpricedNights: ReadonlyMap<string, readonly QueueRepairableStrand[]>,
+  disputes: ReadonlyMap<string, HandBackDisputeContext>,
+): OpenManualRefundTaskPayload[] {
+  return tasks.map((task) => toOpenManualRefundTaskPayload(task, viewerMemberId, unpricedNights.get(task.id) ?? [], disputes.get(task.bookingId) ?? NO_HAND_BACK_DISPUTES));
+}
+
 export function toOpenManualRefundTaskPayload(
   task: OpenManualRefundTaskRow,
   viewerMemberId: string | null | undefined,
   unpricedNights: readonly QueueRepairableStrand[],
+  /** #4516: the card disputes on the task's booking and the tasks on their payments (`readOpenTaskDisputes`), for the dismissal rule. */
+  disputes: HandBackDisputeContext = NO_HAND_BACK_DISPUTES,
 ): OpenManualRefundTaskPayload {
+  const dismissal = journalHandBackDismissal({ ...task, status: "OPEN" }, disputes);
   // #4042: a group organiser's hand-back keeps its joiners' shares there, not review evidence.
   const groupHandBack = isGroupOrganiserHandBackTask(task);
   // #4162: a re-confirmed bank refund keeps its void's facts there, not review evidence.
@@ -325,6 +357,12 @@ export function toOpenManualRefundTaskPayload(
         ? reviewRefundGoesToGroupOrganiser(task) // review round 3: the chooser's own test
         : isGroupSettlementMirrorHandBackKind(task) && paidByOrganiserInternetBanking(task.booking),
     groupOrganiserHandBack: groupHandBack,
+    // Waiting on an open dispute with a loss already taken: that sentence says both what to wait for and why not to pay.
+    journalHandBackDismissRefusal: dismissal.refusal && dismissal.markPaidRefusal && dismissal.unappliedLostCents > 0 && !dismissal.reduction ? dismissal.markPaidRefusal : dismissal.refusal,
+    markPaidRefusal: dismissal.markPaidRefusal,
+    disputedHandBackLost: dismissal.disputeLost,
+    disputeReduction: dismissal.reduction && task.amountCents !== null
+      ? { reducedByCents: dismissal.reduction.cents, stillOwedCents: task.amountCents - dismissal.reduction.cents } : null,
     cardShortfallHandBack: cancelCardShortfallPart(task) === "bank",
     cardShortfallCheck: cancelCardShortfallPart(task) === "check",
     bankRefundVoidFollowUp: followUp

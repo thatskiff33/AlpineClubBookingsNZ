@@ -50,9 +50,7 @@ export default function ClubIdentityAdminPage() {
         <CardHeader>
           <CardTitle>Lodge details</CardTitle>
           <CardDescription>
-            Name, address, travel note and door code for your lodge, plus the
-            optional postal address, bank details and GST number used on
-            booking invoices.
+            Name, address, travel note, and door code for your lodge.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -75,7 +73,7 @@ export default function ClubIdentityAdminPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{PRIVACY_HOSTING_TITLE}</CardTitle>
+          <CardTitle headingLevel={2}>{PRIVACY_HOSTING_TITLE}</CardTitle>
           <CardDescription>
             The company that hosts your club&apos;s system and where members&apos;
             information is held, for your privacy policy.

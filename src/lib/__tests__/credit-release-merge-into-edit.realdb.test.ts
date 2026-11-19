@@ -310,8 +310,9 @@ let previousDatabaseUrl: string | undefined;
         door: "guestAdd",
         failureMessage: "race-4491: the mint failed",
         result: {
+          ownCardRefund: null,
           pendingRefundAmountCents: 0,
-          organiserChildRefund: null,
+          organiserChildRefund: null, refundHeldForDispute: false,
           paymentId: PAYMENT_ID,
           additionalAsk: sizeAdditionalAsk({ priceDiffCents: E_CENTS, changeFeeCents: 0, payment: mirror }),
           retiredAdditionalAsks: [],
