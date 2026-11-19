@@ -120,7 +120,9 @@ only the rules.
 - **A connection signs in through `auth()` as the member, not as a second kind
   of account.** `/api/mcp` calls the site with the internal principal header
   `x-mcp-principal`: an HMAC-SHA-256 value under a key derived from the auth
-  secret with its own label, naming the connection, valid for 30 seconds.
+  secret with its own label, naming the connection, valid for 30 seconds and
+  only while the call it was issued for is in flight in the issuing process
+  (`issueMcpPrincipal`), so a copied value cannot be replayed.
   `auth()` checks it first; a value that does not verify, or names a
   connection that is not ACTIVE, reads as signed out and never falls back to a
   cookie.

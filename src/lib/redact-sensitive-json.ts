@@ -129,6 +129,9 @@ const SENSITIVE_JSON_KEYS = new Set([
   "authorization",
   "cookie",
   "setcookie",
+  // The AI app connection's internal sign-in header, `x-mcp-principal`
+  // (ALP-653). It stands in for the cookie on a loopback call.
+  "xmcpprincipal",
   "accesstoken",
   "refreshtoken",
   "idtoken",

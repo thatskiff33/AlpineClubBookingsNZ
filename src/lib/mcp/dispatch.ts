@@ -31,7 +31,7 @@ import {
 } from "./catalogue";
 import { MCP_PERMANENT_EXCLUSION_REASONS, mcpPermanentExclusion } from "./exclusions";
 import { sendMcpLoopbackRequest } from "./loopback";
-import { MCP_PRINCIPAL_HEADER, signMcpPrincipal } from "./principal";
+import { issueMcpPrincipal, MCP_PRINCIPAL_HEADER } from "./principal";
 import { MCP_SCOPE_LABELS } from "./scope-labels";
 
 /**
@@ -173,6 +173,7 @@ export async function runMcpAction(
     return refusal(`The \`${unsafe[0]}\` argument is not a record id, so nothing was done.`);
   }
   const publicUrl = new URL(origin);
+  const principal = issueMcpPrincipal(caller.grantId, Date.now());
 
   let response;
   try {
@@ -185,7 +186,7 @@ export async function runMcpAction(
         "x-forwarded-for": caller.clientIp,
         accept: "application/json",
         "user-agent": caller.userAgent ?? "ai-app-connection",
-        [MCP_PRINCIPAL_HEADER]: signMcpPrincipal(caller.grantId, Date.now()),
+        [MCP_PRINCIPAL_HEADER]: principal.value,
         ...(body === null ? {} : { "content-type": "application/json" }),
       },
       body: body === null ? null : JSON.stringify(body),
@@ -200,6 +201,8 @@ export async function runMcpAction(
         ? "The club website did not answer. Try again in a moment."
         : "The club website did not answer, so it is not known whether this was done. Check before trying again.",
     );
+  } finally {
+    principal.release();
   }
 
   await recordCall(action, caller, response.status);

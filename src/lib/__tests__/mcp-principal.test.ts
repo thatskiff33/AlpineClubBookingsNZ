@@ -86,7 +86,7 @@ import { auth } from "@/lib/auth";
 import {
   MCP_PRINCIPAL_HEADER,
   MCP_PRINCIPAL_TTL_SECONDS,
-  signMcpPrincipal,
+  issueMcpPrincipal,
   verifyMcpPrincipal,
 } from "@/lib/mcp/principal";
 
@@ -143,7 +143,7 @@ beforeEach(() => {
 describe("the principal header value", () => {
   it("names the connection it was signed for until it expires", () => {
     const now = Date.now();
-    const value = signMcpPrincipal("grant-1", now);
+    const { value } = issueMcpPrincipal("grant-1", now);
 
     expect(verifyMcpPrincipal(value, now)).toBe("grant-1");
     expect(verifyMcpPrincipal(value, now + (MCP_PRINCIPAL_TTL_SECONDS - 1) * 1000)).toBe("grant-1");
@@ -152,12 +152,25 @@ describe("the principal header value", () => {
 
   it("refuses a value whose payload was swapped for another connection", () => {
     const now = Date.now();
-    const [, signature] = signMcpPrincipal("grant-1", now).split(".");
+    const [, signature] = issueMcpPrincipal("grant-1", now).value.split(".");
     const forgedPayload = Buffer.from(
       JSON.stringify({ g: "grant-2", exp: Math.floor(now / 1000) + 30 }),
     ).toString("base64url");
 
     expect(verifyMcpPrincipal(`${forgedPayload}.${signature}`, now)).toBeNull();
+  });
+
+  it("refuses a copied value once the call it was issued for has ended", () => {
+    const now = Date.now();
+    const first = issueMcpPrincipal("grant-1", now);
+    const second = issueMcpPrincipal("grant-1", now);
+    expect(first.value).not.toBe(second.value);
+
+    first.release();
+
+    expect(verifyMcpPrincipal(first.value, now)).toBeNull();
+    // Another call for the same connection, still in flight, is untouched.
+    expect(verifyMcpPrincipal(second.value, now)).toBe("grant-1");
   });
 
   it.each(["", "abc", "a.b.c", ".", "e30."])("refuses the malformed value %j", (value) => {
@@ -170,7 +183,7 @@ describe("auth() for a request carrying the principal header", () => {
     mockMemberFindUnique.mockResolvedValue(
       memberRow({ accessRoles: [{ role: "USER" }, { role: "ADMIN" }] }),
     );
-    presentPrincipal(signMcpPrincipal("grant-1", Date.now()));
+    presentPrincipal(issueMcpPrincipal("grant-1", Date.now()).value);
 
     const session = await auth();
 
@@ -187,7 +200,7 @@ describe("auth() for a request carrying the principal header", () => {
   });
 
   it("never carries a fresh sign-in proof", async () => {
-    presentPrincipal(signMcpPrincipal("grant-1", Date.now()));
+    presentPrincipal(issueMcpPrincipal("grant-1", Date.now()).value);
 
     const session = await auth();
 
@@ -202,7 +215,7 @@ describe("auth() for a request carrying the principal header", () => {
     );
 
     mockGrantFindUnique.mockResolvedValue(grantRow({ twoFactorVerified: false }));
-    presentPrincipal(signMcpPrincipal("grant-1", Date.now()));
+    presentPrincipal(issueMcpPrincipal("grant-1", Date.now()).value);
     expect((await auth())?.user.twoFactorVerified).toBe(false);
 
     mockGrantFindUnique.mockResolvedValue(grantRow({ twoFactorVerified: true }));
@@ -211,21 +224,21 @@ describe("auth() for a request carrying the principal header", () => {
 
   it.each(["REVOKED", "EXPIRED"])("is signed out once the connection is %s", async (status) => {
     mockGrantFindUnique.mockResolvedValue(grantRow({ status }));
-    presentPrincipal(signMcpPrincipal("grant-1", Date.now()));
+    presentPrincipal(issueMcpPrincipal("grant-1", Date.now()).value);
 
     expect(await auth()).toBeNull();
   });
 
   it("is signed out when the connection no longer exists", async () => {
     mockGrantFindUnique.mockResolvedValue(null);
-    presentPrincipal(signMcpPrincipal("grant-1", Date.now()));
+    presentPrincipal(issueMcpPrincipal("grant-1", Date.now()).value);
 
     expect(await auth()).toBeNull();
   });
 
   it("is signed out once the approving sign-in reaches the club's maximum session age", async () => {
     mockSettingsFindUnique.mockResolvedValue({ sessionMaxAgeHours: 8 });
-    presentPrincipal(signMcpPrincipal("grant-1", Date.now()));
+    presentPrincipal(issueMcpPrincipal("grant-1", Date.now()).value);
 
     mockGrantFindUnique.mockResolvedValue(
       grantRow({ sessionIssuedAt: new Date(Date.now() - 8 * HOUR_MS + 1000) }),
@@ -240,7 +253,7 @@ describe("auth() for a request carrying the principal header", () => {
 
   it("is signed out when the member's login is switched off", async () => {
     mockMemberFindUnique.mockResolvedValue(memberRow({ canLogin: false }));
-    presentPrincipal(signMcpPrincipal("grant-1", Date.now()));
+    presentPrincipal(issueMcpPrincipal("grant-1", Date.now()).value);
 
     expect(await auth()).toBeNull();
   });
@@ -249,14 +262,14 @@ describe("auth() for a request carrying the principal header", () => {
     mockMemberFindUnique.mockResolvedValue(
       memberRow({ passwordChangedAt: new Date(Date.now() - 60_000) }),
     );
-    presentPrincipal(signMcpPrincipal("grant-1", Date.now()));
+    presentPrincipal(issueMcpPrincipal("grant-1", Date.now()).value);
 
     expect(await auth()).toBeNull();
   });
 
   it("is signed out when the member row is gone", async () => {
     mockMemberFindUnique.mockResolvedValue(null);
-    presentPrincipal(signMcpPrincipal("grant-1", Date.now()));
+    presentPrincipal(issueMcpPrincipal("grant-1", Date.now()).value);
 
     expect(await auth()).toBeNull();
   });

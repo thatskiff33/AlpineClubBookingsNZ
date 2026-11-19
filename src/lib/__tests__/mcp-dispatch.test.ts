@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send, audit } = vi.hoisted(() => ({ send: vi.fn(), audit: vi.fn() }));
+const { send, audit, release } = vi.hoisted(() => ({ send: vi.fn(), audit: vi.fn(), release: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/mcp/loopback", () => ({ sendMcpLoopbackRequest: send }));
 vi.mock("@/lib/mcp/audit", () => ({ recordMcpAudit: audit }));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn() } }));
 vi.mock("@/lib/mcp/principal", () => ({
   MCP_PRINCIPAL_HEADER: "x-mcp-principal",
-  signMcpPrincipal: (grantId: string) => `signed:${grantId}`,
+  issueMcpPrincipal: (grantId: string) => ({ value: `signed:${grantId}`, release }),
 }));
 
 import { findMcpAction, findMcpWebsiteOnlyAction, type McpAction } from "@/lib/mcp/catalogue";
@@ -245,6 +245,15 @@ describe("runMcpAction: what it returns and records", () => {
     expect(outcome.isError).toBe(true);
     expect(outcome.text).toContain("not known whether");
     expect(audit).toHaveBeenCalledTimes(1);
+  });
+
+  it("ends the internal sign-in value when the call answers and when it fails", async () => {
+    await runMcpAction(action("get_my_booking"), { id: "booking-1" }, caller);
+    expect(release).toHaveBeenCalledTimes(1);
+
+    send.mockRejectedValue(new Error("socket hang up"));
+    await runMcpAction(action("get_my_booking"), { id: "booking-1" }, caller);
+    expect(release).toHaveBeenCalledTimes(2);
   });
 
   it("still answers when the audit write fails", async () => {

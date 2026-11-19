@@ -705,7 +705,9 @@ rules are `INV-MCP-001` … `INV-MCP-008`
   approving sign-in's time and two-factor result. The maximum session age,
   password changes, disabled logins and role changes therefore end or narrow
   a connection by the same code. A header that does not verify reads as
-  signed out and never falls back to a cookie. `lastAuthenticatedAt` is never
+  signed out and never falls back to a cookie. A value is honoured only while
+  the loopback call it was issued for is in flight in the issuing process, and
+  log redaction blanks the header, so a copied value cannot be replayed. `lastAuthenticatedAt` is never
   set.
 - **Every action meets the route's own guards** (`INV-MCP-007`): it is sent to
   the site over loopback, never by calling a handler. Fresh-proof, sign-in,
