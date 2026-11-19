@@ -53,6 +53,9 @@ Reconciliation totals before and after the upgrade must match to the cent
 
 ## 1. Pre-flight
 
+Complete every item below **before** touching the deploy. None of these steps
+writes to production; the SQL is read-only.
+
 ### Saved-card boundary and incident checks (#5270)
 
 For an upgrade from v0.13.2 or earlier, **stop every old web copy, cron leader
@@ -64,6 +67,22 @@ unresolved saved-card charge under another key and charge twice. This overrides
 the ordinary deployment and rollback sequences, independently of migrations.
 See the [release boundary](UPGRADING.md#saved-card-upgrade-and-rollback-boundary-5270).
 
+Before running `scripts/run-production-blue-green-deploy.sh`, use the
+[§2.4 stopped-runtime sequence](#24-windowed-migration-deploy-sequence):
+remove public traffic, drain in-flight requests, stop every old `app_blue` and
+`app_green` replica, the `app` cron leader and external workers, and prevent
+automatic restarts. Disconnect their database clients and verify no old
+connections remain. Only then export `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`
+in the deploy shell and run the deploy, with §2.4's migration acknowledgements
+where required. The flag acknowledges the shutdown; it does not stop anything.
+Keep this window even when no migration is pending: the script warms the new
+colour and recreates `app` before switching traffic.
+
+**If cutover fails after v0.14.0 has started, do not restart the old colour,
+cron leader or workers below v0.14.0.** Failure handling can point Caddy back at
+the old colour; keep public traffic removed and that colour stopped. Recover
+on v0.14.0 or later, rather than following the ordinary old-colour restart.
+
 If overlap or rollback below that floor occurred, stop incompatible copies and
 pause saved-card charging while the operator reconciles the affected period:
 
@@ -73,6 +92,10 @@ pause saved-card charging while the operator reconciles the affected period:
    `pending_charge_<bookingId>_<rowId>`, with `_v2` appended for the new shape.
    Different references near the incident identify attempts under different
    keys; legitimate later retries can also produce multiple rows.
+   A v0.13.2 charge row has no `reference`: its shared key
+   `pending_charge_<bookingId>` was never stored. Find that key in Stripe
+   request logs and compare it with the newer attempt keys; missing local
+   references do not rule out an earlier charge.
 2. Check waiting `_v2` attempts with this read-only query. An empty result does
    **not** authorise rollback or rule out completed duplicate charges:
 
@@ -98,9 +121,6 @@ pause saved-card charging while the operator reconciles the affected period:
    through the normal authorised payment/refund process before resuming charges
    on v0.14.0 or later. Do not delete attempts, rewrite their keys or restore a
    backup as a way to undo Stripe charges.
-
-Complete every item below **before** touching the deploy. None of these steps
-writes to production; the SQL is read-only.
 
 ### 1.1 Verified, restore-tested database backup (with S3 durability confirmed)
 

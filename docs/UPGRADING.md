@@ -226,7 +226,14 @@ after any bundle import.
 
 ## v0.13.2 → v0.14.0
 
-### Saved-card upgrade and rollback boundary (#5270)
+### Upgrade checklist for this release
+
+The order to work in, from the release you run now to this one. Every step
+points at the section that explains it; none of them repeats it. The
+production runbook ([`PRODUCTION_UPGRADE_RUNBOOK.md`](PRODUCTION_UPGRADE_RUNBOOK.md)) is the procedure these steps
+fit into.
+
+#### Saved-card upgrade and rollback boundary (#5270)
 
 **Stop every old copy before starting v0.14.0.** This includes web copies,
 cron leaders and workers, with in-flight requests drained and automatic restarts
@@ -235,6 +242,13 @@ all old copies already run a release that reads `_v2` saved-card charge keys.
 **v0.14.0 is the first public release that reads them**, and also the first
 that mints them; v0.13.2 and earlier cannot read them. This rule applies even
 if your database migrations have already run.
+
+Before running `scripts/run-production-blue-green-deploy.sh`, follow the
+[runbook’s stopped-runtime procedure](PRODUCTION_UPGRADE_RUNBOOK.md#saved-card-boundary-and-incident-checks-5270),
+including stopping the old colour, its `app` cron leader and external workers.
+The script starts new processes before switching traffic; its normal overlap
+is unsafe here. After a failed cutover, keep the old colour stopped even if
+Caddy points back to it; recover on v0.14.0 or later.
 
 **Once v0.14.0 has run, do not roll back below v0.14.0.** An older copy can
 mistake an unresolved charge for an attempt that never happened, retry under
@@ -254,14 +268,11 @@ accepts that release as shipped, superseding the earlier plan to defer minting
 in #4682. The released changelog's #4646 promise of a later switch is therefore
 outdated: the #4682 entry in that same release describes the shipped behaviour.
 
-### Upgrade checklist for this release
-
-The order to work in, from the release you run now to this one. Every step
-points at the section that explains it; none of them repeats it. The
-production runbook ([`PRODUCTION_UPGRADE_RUNBOOK.md`](PRODUCTION_UPGRADE_RUNBOOK.md)) is the procedure these steps
-fit into.
-
 #### Before the deploy
+
+- Plan the stopped-runtime window and rollback floor in the
+  [saved-card boundary](#saved-card-upgrade-and-rollback-boundary-5270) before
+  running the deploy script.
 
 1. Rehearse the upgrade on staging first. The minimum is
    `pnpm run db:rehearse-epic --database-url <throwaway> --base <from-tag>`,
