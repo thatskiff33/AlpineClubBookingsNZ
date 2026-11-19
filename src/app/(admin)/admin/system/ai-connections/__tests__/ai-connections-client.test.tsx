@@ -55,14 +55,21 @@ const CONNECTIONS = [
 
 let fetchMock: ReturnType<typeof vi.fn>;
 let deleteStatus: number;
+let remainingConnections: typeof CONNECTIONS;
 
 beforeEach(() => {
   hook.canEdit = true;
   deleteStatus = 200;
+  remainingConnections = [...CONNECTIONS];
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/api/admin/mcp/settings") return Response.json(SETTINGS);
-    if (url === "/api/admin/mcp/grants") return Response.json({ connections: CONNECTIONS });
+    if (url.startsWith("/api/admin/mcp/grants?")) {
+      return Response.json({ connections: remainingConnections, page: 1, pageSize: 25, total: remainingConnections.length });
+    }
     if (url.startsWith("/api/admin/mcp/grants/") && init?.method === "DELETE") {
+      if (deleteStatus === 200 || deleteStatus === 404) {
+        remainingConnections = remainingConnections.filter((row) => !url.endsWith(`/${row.id}`));
+      }
       return deleteStatus === 200
         ? Response.json({ ok: true })
         : Response.json({ error: "Forbidden by the server" }, { status: deleteStatus });
@@ -175,6 +182,46 @@ describe("AiConnectionsClient: the club's connections", () => {
     expect(screen.getByText("Ben Hale")).toBeTruthy();
     expect(screen.getByText(/Example Assistant · claude\.ai · Connected .* · Not used yet/)).toBeTruthy();
     expect(screen.getByText(/Desk Helper · chatgpt\.com · Connected .* · Last used /)).toBeTruthy();
+  });
+
+  it("reaches connections beyond the first page and shows the total", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === "/api/admin/mcp/settings") return Response.json(SETTINGS);
+      const page = new URL(url, "https://club.example.test").searchParams.get("page");
+      return Response.json({
+        connections: page === "2" ? [CONNECTIONS[1]] : [CONNECTIONS[0]],
+        page: Number(page), pageSize: 1, total: 2,
+      });
+    });
+    await renderPage();
+    expect(screen.getByText("Showing 1–1 of 2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByText("Ben Hale");
+    expect(screen.queryByText("Ana Reid")).toBeNull();
+    expect(screen.getByText("Showing 2–2 of 2")).toBeTruthy();
+  });
+
+  it("steps back when disconnecting the only connection on the last page", async () => {
+    let removed = false;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/admin/mcp/settings") return Response.json(SETTINGS);
+      if (init?.method === "DELETE") {
+        removed = true;
+        return Response.json({ ok: true });
+      }
+      const page = new URL(url, "https://club.example.test").searchParams.get("page");
+      return Response.json({
+        connections: page === "2" ? (removed ? [] : [CONNECTIONS[1]]) : [CONNECTIONS[0]],
+        page: Number(page), pageSize: 1, total: removed ? 1 : 2,
+      });
+    });
+    await renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await screen.findByText("Ben Hale");
+    fireEvent.click(disconnect("Desk Helper for Ben Hale"));
+    await screen.findByText("Ana Reid");
+    expect(screen.queryByText("Ben Hale")).toBeNull();
+    expect(screen.getByText("Showing 1–1 of 1")).toBeTruthy();
   });
 
   it("disconnects one connection and removes only that row", async () => {

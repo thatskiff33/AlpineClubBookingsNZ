@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
+
+import { adminListPage, adminListPageQueryFields } from "@/lib/admin-list-page";
 
 import { listMcpConnectionsForAdmin } from "@/lib/mcp/grants";
 import { mcpConnectionMayNotManage, mcpModuleOffResponse } from "@/lib/mcp/http";
@@ -19,5 +22,13 @@ export async function GET(request: Request) {
   const guard = await requireAdmin({ permission: { area: "support", level: "view" } });
   if (!guard.ok) return guard.response;
 
-  return NextResponse.json({ connections: await listMcpConnectionsForAdmin() });
+  const parsed = z.object({ ...adminListPageQueryFields }).safeParse(
+    Object.fromEntries(new URL(request.url).searchParams),
+  );
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid pagination" }, { status: 400 });
+  }
+  const { page, pageSize } = parsed.data;
+  const { connections, total } = await listMcpConnectionsForAdmin({ page, pageSize });
+  return NextResponse.json({ connections, ...adminListPage({ page, pageSize, total }) });
 }

@@ -6,6 +6,8 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { Pagination } from "@/components/admin/admin-pagination";
+import { useAdminQueuePage } from "@/components/admin/use-admin-queue-page";
 import { useClubTime } from "@/components/club-time-provider";
 import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import { FocusedActionError } from "@/components/focused-action-error";
@@ -309,28 +311,35 @@ function ConnectionsSection({ canEdit }: { canEdit: boolean | undefined }) {
   const [endingId, setEndingId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const failure = useActionFailure();
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const queuePage = useAdminQueuePage({ filterKey: "connections" });
+  const { page, receive, beginLoad } = queuePage;
 
   const load = useCallback(async (signal?: AbortSignal) => {
+    const isCurrent = beginLoad();
     try {
-      const response = await fetch(GRANTS_URL, { signal, cache: "no-store" });
+      const response = await fetch(`${GRANTS_URL}?page=${page}`, { signal, cache: "no-store" });
+      if (!isCurrent() || signal?.aborted) return;
       if (!response.ok) {
         setLoadError("The connections could not be read. Reload the page to try again.");
         return;
       }
       const body = (await response.json()) as { connections: McpAdminConnectionListItem[] };
+      if (!isCurrent() || signal?.aborted) return;
+      if (!receive(body, body.connections.length)) return;
       setConnections(body.connections);
       setLoadError("");
     } catch {
-      if (signal?.aborted) return;
+      if (!isCurrent() || signal?.aborted) return;
       setLoadError("The connections could not be read. Reload the page to try again.");
     }
-  }, []);
+  }, [beginLoad, page, receive]);
 
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
     return () => controller.abort();
-  }, [load]);
+  }, [load, refreshVersion]);
 
   async function disconnect(row: McpAdminConnectionListItem) {
     const who = `${row.appName} for ${row.memberName}`;
@@ -345,7 +354,7 @@ function ConnectionsSection({ canEdit }: { canEdit: boolean | undefined }) {
       if (!response.ok && response.status !== 404) {
         throw await apiRefusalFromResponse(response, `${who} could not be disconnected.`);
       }
-      setConnections((current) => current?.filter((item) => item.id !== row.id) ?? current);
+      setRefreshVersion((version) => version + 1);
       setNotice(`Disconnected ${who}.`);
     } catch (err) {
       failure.fail(refusalMessageOr(err, `${who} could not be disconnected. Please try again.`));
@@ -376,6 +385,9 @@ function ConnectionsSection({ canEdit }: { canEdit: boolean | undefined }) {
           error={failure.error}
           attentionKey={failure.attentionKey}
         />
+        {queuePage.pagination ? (
+          <Pagination {...queuePage.pagination} aria-label="AI app connection pages" />
+        ) : null}
         {connections === null ? (
           loadError ? null : (
             <p className="text-muted-foreground">Reading the connections...</p>
