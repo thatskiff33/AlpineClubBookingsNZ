@@ -132,6 +132,47 @@ booking's History shows a line saying so ("Saved account credit was not
 applied"). The club is told at the same time, so if you would rather have the
 difference back than keep the credit for next time, just ask.
 
+## Download your invoice
+
+When your club uses Xero for its accounts, your booking page has a **Download
+invoice** button beside **Edit Booking** once the club has raised the invoice.
+It saves Xero's own PDF of that invoice, so it is the same invoice the club's
+accounts hold, with the same invoice number. The file name starts with the
+club's short name.
+
+Under the booking's **Payment** card, an **Invoice and credits** card shows:
+
+- a short summary from the booking itself: the booking total (the same as
+  the Payment card's Total), any change fee, any account credit applied, what
+  you have paid less refunds and credits returned, anything kept under the
+  booking's change terms when a change was refunded only in part, and what is
+  still to pay (or what will be due once the booking is reviewed or
+  confirmed);
+- each Xero credit note raised against the booking (for example when a change
+  lowered the price, a refund, or account credit used on it), each with its
+  own **Download credit note** button;
+- a line in plain words when the club's accounts do not show your latest
+  change yet: the invoice could not be changed, or a credit for the change
+  has not been made yet. The summary is then the booking's own figures.
+
+Some things to know:
+
+- If Xero can't be reached just then, you'll see a message; try again later.
+  If the page says the invoice or credit note is no longer available, refresh
+  it.
+- If the booking may have more than one invoice (for example a change that
+  added to the price), the page says so and asks you to contact the club for
+  copies instead.
+- A cancelled booking has no invoice to download, and a place your group
+  organiser paid for by internet banking is on the organiser's invoice.
+- A guest on someone else's booking does not see the button or the card.
+- Downloads are limited to 10 an hour per person (and 20 an hour per booking),
+  because each one reads the club's accounts.
+
+Clubs that don't use Xero don't show the button yet. A single statement PDF
+for the booking (invoice, credits, payments and balance in one document) is
+planned for a later release.
+
 ## Split charges for non-member guests
 
 When a **Members First** hold splits a mixed party (your members are booked now,

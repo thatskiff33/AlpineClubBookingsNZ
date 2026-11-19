@@ -23,7 +23,7 @@ import { CreditNote, LineAmountTypes } from "xero-node";
 import { CreditType, Prisma } from "@prisma/client";
 import { appliedCreditSettledByCancel, unallocatedAppliedCents } from "./xero-applied-credit-ledger-state";
 import { prisma } from "./prisma";
-import { APPLIED_CREDIT_ALLOCATION_ROLE } from "./xero-applied-credit-link-roles";
+import { APPLIED_CREDIT_ALLOCATION_ROLE, APPLIED_CREDIT_REMAINDER_NOTE_ROLE } from "./xero-applied-credit-link-roles";
 import { sliceHeldInXero } from "./xero-applied-credit-slice-lookup";
 import { loadFreeCreditLots } from "./xero-applied-credit-lots";
 import { lockMemberCreditLedger } from "./member-credit";
@@ -59,7 +59,6 @@ import {
 } from "./xero-applied-credit-operation-serialization";
 
 // XeroObjectLink roles for this engine's artefacts.
-const APPLIED_CREDIT_REMAINDER_NOTE_ROLE = "APPLIED_CREDIT_REMAINDER_NOTE";
 const APPLIED_CREDIT_REMAINDER_ALLOCATION_ROLE =
   "APPLIED_CREDIT_REMAINDER_ALLOCATION";
 
