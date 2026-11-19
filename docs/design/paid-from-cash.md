@@ -1,9 +1,10 @@
 # Paid From Cash — Blueprint
 
 **Status:** Blocked at the approved Step 2 stop gate after three source reviews
-of `4b473559bab60fa052c85ec8f5133c121cf414b2` on 19 November 2026. The inherited
+of `9a4105658b80efb2174638b276cd9d3e211706ee` on 19 November 2026. The inherited
 Stage 1 implementation bypasses required evidence checks for organiser-paid
-children; §6 records the failure and recommended correction. The earlier
+children; §6 records the failure and recommended correction. The unpaid-child
+contract also needs the payer-versus-share decision in §6.6. The earlier
 superseded-capture and organiser-dispute fixes are now present, but their
 presence is not execution evidence. The inventory remains incomplete. This
 blueprint belongs to #4069 (programme #4898), coordinated with M11 (#4523)
@@ -329,7 +330,7 @@ and reverts alone.
   where a race is claimed; boundaries (held exactly equal to worth, a refund
   equal to its capture, credit-only, a pending capture); a parity check that
   invokes `deriveBookingCashCover` and agrees with Net Collected only when no
-  extra superseded ownership applies (otherwise §6.6 is the expected difference); a mutation probe for each
+  extra superseded ownership applies (otherwise §2.3 explains the expected difference); a mutation probe for each
   input (pending face amount, status-only paid, omitted refund, omitted
   credit, organiser money counted twice); every copy variant rendered, the
   unknown one with no amount and no "paid"; reads proven to go through the
@@ -340,7 +341,7 @@ and reverts alone.
 ## 6. Stop-gate review and remaining work
 
 The branch is not ready to ship. Three independent read-only lenses reviewed
-`4b473559bab60fa052c85ec8f5133c121cf414b2` on 19 November 2026:
+`9a4105658b80efb2174638b276cd9d3e211706ee` on 19 November 2026:
 money/attribution; concurrency/snapshot; and tests/UX/docs/`INV-SSOT`. Each
 checked current source rather than adopting the inherited reports. No tests
 were run by those reviewers. No production data or live provider was used.
@@ -428,7 +429,11 @@ The realdb suite checks cash-cover answers across actual capture, refund,
 credit and group writes. The approval harness runs the real approval engine,
 bank-switch route, exclusive-hold route, reader and sender over a simulated
 transaction. It asserts the paired amount and held-bed copy, but it does not
-execute the complete email path against PostgreSQL. Preserve that distinction
+execute the complete email path against PostgreSQL. Its between-read cases
+cover capture, credit and bank switch, but omit refund and group settlement.
+Add those two cases in `booking-exception-approved-interleaving.test.ts`,
+asserting the delivered amount and held-bed copy together; the realdb reader
+cases alone cannot prove the paired email contract. Preserve that distinction
 when reporting validation; source presence alone proves neither suite passed.
 
 The inherited capacity implementation intentionally uses
@@ -448,6 +453,9 @@ planned gated work or M15 cohorts. Do not claim an exact programme PR count.
 
 After the stop gate is resolved, Stage 1 still needs:
 
+- The owner decision in §6.6, reflected in the contract and unpaid-child tests.
+- Refund and group-settlement interleavings through the approval email, as
+  described in §6.3.
 - The §6.1 reader correction and its pure and realdb regressions, followed by
   money review of the correction.
 - Actual sender/template evidence for all five payment-note variants. The
@@ -489,3 +497,58 @@ and post it before readiness. The requested #4523 coordination text is:
 
 > M11 (#4523) extends `readBookingCashCover` in
 > `src/lib/booking-cash-evidence.ts`; it never adds a second paid/balance reader.
+
+### 6.6 Decision needed: unpaid organiser child without a frozen share
+
+The approved contract requires both an unsettled organiser-pays child to return
+`organiser_pays` and an unprovable frozen share to return `unknown`, never
+`organiser_pays`. It does not settle which takes precedence before settlement,
+when there may be no frozen cash share yet.
+
+Current source makes the payer test win: `deriveGroupChildCover` returns
+`organiser_pays` immediately when `organiserPaysForNewJoiner(group)` is true,
+before checking the settlement or calling `planGroupChildLines`. The pure
+suite explicitly expects that result with a null settlement and null payment.
+This is separate from the invalid-refund bypass in §6.1: simply moving the
+ordinary evidence checks cannot decide what this unpaid child should be told.
+
+**Recommended owner decision:** distinguish payer evidence from cash evidence.
+For an unsettled child with a proved current organiser-pays assignment, allow
+`organiser_pays` without a captured share. Require the frozen-share proof for
+`covered`; use `unknown` when the payer assignment itself cannot be proved.
+This preserves the unpaid-child message without claiming money arrived.
+
+**Alternative:** let the unknown-share rule take precedence in every case.
+An unpaid child without a provable frozen share gets the neutral line, still
+never a personal demand. This narrows when `organiser_pays` can be returned
+and needs corresponding changes to the approved unpaid-child acceptance.
+
+Neither option is recorded as decided. The owner must settle this contract
+before implementation resumes. Update §2.5, `INV-PAY-159`,
+`booking-cash-evidence.ts`, its pure and realdb suites, and the approval email
+sender cases together. No writer, schema, provider or history change is
+proposed. The missing decision independently triggers approved Step 2.
+
+### 6.7 This review's evidence and delivery limits
+
+Three fresh independent lenses checked the head named above. Money confirmed
+the excessive-refund and legacy-row bypass; concurrency confirmed the common
+snapshot client and identified the missing paired email interleavings;
+tests/UX/docs checked the unpaid-child branch and incomplete inventory.
+These are source findings, not executable test results or a complete inventory
+review. No product code changed in this review.
+
+The issue reader was attempted directly with
+`node scripts/issue-thread.mjs 4069` (the package script's entry point) and
+failed because GitHub CLI is unauthenticated. The runtime reports Node 26,
+while the repository pins Node 24, and `pnpm` is absent. Product tests and a
+narrowed typecheck were not run. The dependency-free documentation link and
+index checkers ran successfully under the available Node runtime. No full
+suite, database, live provider or production data was used.
+
+The tool session exposes neither `revise_plan` nor `attach_file`. This committed
+record preserves the deviation and coordination text; it does not fulfil the
+requested attachments or issue posting. The inventory, final stage count and
+attachments remain unfinished, alongside the Stage 1 work in §6.4. Keep this
+branch out of release. Later stages remain separate PRs; the provisional
+programme count is 17 display-surface PRs including Stage 1, plus gated cohorts.
