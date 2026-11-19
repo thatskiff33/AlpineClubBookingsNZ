@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "./helpers/accessibility";
+import { getAdminPage } from "@/lib/admin-hubs";
 import { adminHref, adminUrlPattern } from "./helpers/admin-url";
 import { loginPersona } from "./helpers/auth";
 import { relDateOnly, ROLE_PERSONAS } from "./helpers/fixtures";
@@ -47,7 +48,7 @@ test("read-only admin views every area but cannot write", async ({
   await expectSettled(page, membersTable(page));
   await page.goto(adminHref("bookings"));
   await expect(page).toHaveURL(adminUrlPattern(adminHref("bookings")));
-  await expectSettled(page, heading(page, "All Bookings"));
+  await expectSettled(page, heading(page, getAdminPage("bookings").label));
 
   // Since the editable access-roles change (#1184), ADMIN_READONLY carries
   // finance: view, so the /finance workspace renders read-only rather than
@@ -81,7 +82,7 @@ test("booking officer manages bookings but is blocked from content", async ({
   // In-area: bookings = edit.
   await page.goto(adminHref("bookings"));
   await expect(page).toHaveURL(adminUrlPattern(adminHref("bookings")));
-  await expectSettled(page, heading(page, "All Bookings"));
+  await expectSettled(page, heading(page, getAdminPage("bookings").label));
 
   // Out-of-area: content = none → redirected to the overview dashboard.
   await page.goto(adminHref("page-content"));
