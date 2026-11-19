@@ -1,0 +1,123 @@
+/**
+ * What the approval screen shows and what its two buttons do (ALP-653,
+ * `INV-MCP-002`, `INV-MCP-003`).
+ *
+ * The page and the route that records the decision both come through
+ * `resolveMcpApproval`, so the member cannot be shown one request and approve
+ * another: the route checks the same query again, against the member's
+ * session as it is at that moment.
+ */
+import "server-only";
+
+import type { McpGrantScope } from "@prisma/client";
+import type { Session } from "next-auth";
+import { z } from "zod";
+
+import { MCP_CONNECTION_REFUSAL_MESSAGES, mcpConnectionRefusal } from "./connection-gate";
+import { buildMcpGrantSession } from "./grant-session";
+import {
+  checkMcpAuthorizeRequest,
+  MCP_AUTHORIZE_PARAM_NAMES,
+  type McpAuthorizeParams,
+  type McpAuthorizeRequest,
+} from "./oauth";
+import { loadMcpSettings, type McpSettingsValues } from "./settings";
+
+const authorizeParam = z.string().max(2048).optional();
+
+export const mcpApprovalDecisionSchema = z.object({
+  decision: z.enum(["approve", "deny"]),
+  /** What the member chose. The club's limit is applied when it is recorded. */
+  scope: z.enum(["READ", "READ_WRITE"]),
+  params: z.object(
+    Object.fromEntries(MCP_AUTHORIZE_PARAM_NAMES.map((name) => [name, authorizeParam])) as Record<
+      (typeof MCP_AUTHORIZE_PARAM_NAMES)[number],
+      typeof authorizeParam
+    >,
+  ),
+});
+
+/** The sign-in facts a connection carries, read off the approving session. */
+export interface McpApprovingSignIn {
+  readonly sessionIssuedAt: Date;
+  /** True only when this sign-in passed a second-factor challenge. */
+  readonly twoFactorVerified: boolean;
+}
+
+export type McpApproval =
+  /** Nothing about the request can be trusted, or this member may not connect. */
+  | { readonly kind: "refuse"; readonly message: string }
+  /** The app and its address check out, but the request is wrong: tell the app. */
+  | { readonly kind: "redirect"; readonly location: string }
+  | {
+      readonly kind: "ask";
+      readonly request: McpAuthorizeRequest;
+      readonly settings: McpSettingsValues;
+      readonly signIn: McpApprovingSignIn;
+      /** Whether "view and change" is offered: the app asked and the club allows it. */
+      readonly mayChange: boolean;
+    };
+
+export function mcpApprovingSignIn(user: Session["user"]): McpApprovingSignIn | null {
+  if (typeof user.sessionIssuedAt !== "number") return null;
+  return {
+    sessionIssuedAt: new Date(user.sessionIssuedAt),
+    twoFactorVerified: user.twoFactorRequired === true && user.twoFactorVerified === true,
+  };
+}
+
+export async function resolveMcpApproval(
+  params: McpAuthorizeParams,
+  user: Session["user"],
+): Promise<McpApproval> {
+  const settings = await loadMcpSettings();
+  const check = await checkMcpAuthorizeRequest(params, settings);
+  if (!check.ok) {
+    return check.kind === "refuse"
+      ? { kind: "refuse", message: check.message }
+      : { kind: "redirect", location: check.location };
+  }
+
+  const signIn = mcpApprovingSignIn(user);
+  if (!signIn) {
+    return { kind: "refuse", message: "Sign out, sign in again, and then connect the app." };
+  }
+
+  // The connection is tried on before it exists: built from the member's row
+  // by the code every later use runs, so nobody approves a connection that
+  // would be refused the first time the app used it.
+  const preview = await buildMcpGrantSession({
+    id: "",
+    memberId: user.id,
+    scope: "READ",
+    status: "ACTIVE",
+    sessionIssuedAt: signIn.sessionIssuedAt,
+    twoFactorVerified: signIn.twoFactorVerified,
+    client: { id: check.request.clientId, name: check.request.clientName },
+    member: { email: user.email, firstName: user.name, lastName: "" },
+  });
+  if (!preview.ok) {
+    return { kind: "refuse", message: "Sign out, sign in again, and then connect the app." };
+  }
+  const refusal = mcpConnectionRefusal({
+    user: preview.session.user,
+    kioskAccount: preview.kioskAccount,
+    settings,
+  });
+  if (refusal) {
+    return { kind: "refuse", message: MCP_CONNECTION_REFUSAL_MESSAGES[refusal] };
+  }
+
+  return {
+    kind: "ask",
+    request: check.request,
+    settings,
+    signIn,
+    mayChange: check.request.wantsWrite && settings.maxScope === "READ_WRITE",
+  };
+}
+
+/** The scope recorded for a decision: never more than the screen offered. */
+export function approvedMcpScope(chosen: McpGrantScope, approval: { mayChange: boolean }): McpGrantScope {
+  return chosen === "READ_WRITE" && approval.mayChange ? "READ_WRITE" : "READ";
+}

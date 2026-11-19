@@ -12,6 +12,7 @@ import { NextResponse } from "next/server";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 
 import type { McpOAuthFailure } from "./oauth";
+import { MCP_PRINCIPAL_HEADER } from "./principal";
 
 const NO_STORE = { "Cache-Control": "no-store", Pragma: "no-cache" } as const;
 
@@ -41,4 +42,18 @@ export async function readOAuthForm(request: Request): Promise<URLSearchParams |
   } catch {
     return null;
   }
+}
+
+/**
+ * Refuses a request that arrives as an AI app connection. The screens that
+ * approve, list and end connections, and the club's settings for them, are
+ * for a person signed in to the website: a connection must never be able to
+ * approve another, or widen what connections may do (`INV-MCP-002`).
+ */
+export function mcpConnectionMayNotManage(request: Request): NextResponse | null {
+  if (!request.headers.has(MCP_PRINCIPAL_HEADER)) return null;
+  return NextResponse.json(
+    { error: "AI app connections are managed on the club website." },
+    { status: 403 },
+  );
 }

@@ -19,9 +19,9 @@ import "server-only";
 import type { McpGrantScope } from "@prisma/client";
 
 import { getAppBaseUrl } from "@/lib/app-url";
-import { createStructuredAuditLog } from "@/lib/audit";
 import logger from "@/lib/logger";
 
+import { recordMcpAudit } from "./audit";
 import {
   mcpActionInputSchema,
   mcpActionRouteFile,
@@ -111,14 +111,13 @@ async function recordCall(action: McpAction, caller: McpCaller, status: number |
   if (action.kind === "read") return;
   const succeeded = status !== null && status >= 200 && status < 300;
   try {
-    await createStructuredAuditLog({
+    await recordMcpAudit({
       action: "MCP_ACTION_CALLED",
-      actor: { memberId: caller.memberId },
-      subject: { memberId: caller.memberId },
-      entity: { type: "McpGrant", id: caller.grantId },
-      category: "security",
+      actorMemberId: caller.memberId,
+      subjectMemberId: caller.memberId,
+      grantId: caller.grantId,
       severity: action.kind === "destructive" ? "important" : "info",
-      outcome: succeeded ? "success" : "failure",
+      succeeded,
       summary: `AI app "${caller.clientName}" ran ${action.id}`,
       metadata: { actionId: action.id, clientName: caller.clientName, status },
       request: { ipAddress: caller.clientIp, userAgent: caller.userAgent },

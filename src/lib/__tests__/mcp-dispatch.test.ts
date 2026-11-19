@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { send, audit } = vi.hoisted(() => ({ send: vi.fn(), audit: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/mcp/loopback", () => ({ sendMcpLoopbackRequest: send }));
-vi.mock("@/lib/audit", () => ({ createStructuredAuditLog: audit }));
+vi.mock("@/lib/mcp/audit", () => ({ recordMcpAudit: audit }));
 vi.mock("@/lib/logger", () => ({ default: { error: vi.fn(), warn: vi.fn() } }));
 vi.mock("@/lib/mcp/principal", () => ({
   MCP_PRINCIPAL_HEADER: "x-mcp-principal",
@@ -129,7 +129,7 @@ describe("runMcpAction: what it refuses", () => {
     expect(outcome.text).toContain("view-only");
     expect(send).not.toHaveBeenCalled();
     expect(audit).toHaveBeenCalledTimes(1);
-    expect(audit.mock.calls[0][0]).toMatchObject({ outcome: "failure", category: "security" });
+    expect(audit.mock.calls[0][0]).toMatchObject({ succeeded: false, action: "MCP_ACTION_CALLED" });
   });
 
   it("still runs a read through a view-only connection", async () => {
@@ -182,10 +182,9 @@ describe("runMcpAction: what it returns and records", () => {
     const event = audit.mock.calls[0][0];
     expect(event).toMatchObject({
       action: "MCP_ACTION_CALLED",
-      category: "security",
-      outcome: "success",
-      actor: { memberId: "member-1" },
-      entity: { type: "McpGrant", id: "grant-1" },
+      succeeded: true,
+      actorMemberId: "member-1",
+      grantId: "grant-1",
       metadata: { actionId: "cancel_my_booking", clientName: "Example Assistant", status: 200 },
     });
     const written = JSON.stringify(event);
@@ -204,7 +203,7 @@ describe("runMcpAction: what it returns and records", () => {
     expect(outcome.isError).toBe(true);
     expect(outcome.text).toContain("HTTP 403");
     expect(outcome.text).toContain("Not your booking");
-    expect(audit.mock.calls[0][0]).toMatchObject({ outcome: "failure", metadata: { status: 403 } });
+    expect(audit.mock.calls[0][0]).toMatchObject({ succeeded: false, metadata: { status: 403 } });
   });
 
   it("says a long result was cut", async () => {
