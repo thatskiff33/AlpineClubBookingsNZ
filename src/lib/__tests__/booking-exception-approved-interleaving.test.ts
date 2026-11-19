@@ -115,7 +115,7 @@ import { approveAndExecutePolicyExceptionRequest, newBookingExceptionRequestStor
 import { computeProposalHash, freezePolicyExceptionEvidence, type NewBookingProposalSnapshot } from "@/lib/booking-exception-requests";
 import { POST as switchToBank } from "@/app/api/payments/switch-to-internet-banking/route";
 import { POST as exclusiveHold } from "@/app/api/admin/bookings/[id]/exclusive-hold/route";
-import { bookingPolicyExceptionApprovedPaymentNote } from "@/lib/email/booking";
+import { bookingPolicyExceptionApprovedPaymentNote } from "@/lib/booking-exception-approved-email-copy";
 
 const BOOKING_ID = "abcd1234-exception";
 const snapshot: NewBookingProposalSnapshot = {

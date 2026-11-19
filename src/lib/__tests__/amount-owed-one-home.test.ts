@@ -531,8 +531,10 @@ describe("the cash-cover reader keeps its boundaries (#4069)", () => {
 
   it("is what the exception-approved email reads, with no status shortcut beside it", () => {
     const text = read(CASH_COVER_EMAIL);
-    expect(text).toMatch(/\breadBookingCashCover\(tx,/);
-    expect(text).toMatch(/\bwithReadOnlySnapshot\(/);
+    expect(text).toMatch(/\breadApprovedBookingSnapshot\(bookingId\)/);
+    const snapshot = read("src/lib/booking-exception-approved-snapshot.ts");
+    expect(snapshot).toMatch(/\breadBookingCashCover\(tx,/);
+    expect(snapshot).toMatch(/\bwithReadOnlySnapshot\(/);
     expect(text, "the email takes a cash cover, never an amount it composed").not.toMatch(
       /\b(?:amountDueCents|readBookingAmountOwed|bookingAmountOwedCents|deriveBookingAppliedCreditCents)\b/,
     );
