@@ -119,6 +119,14 @@ Journey: Use the section rail to open personal details, sign-in security, notifi
 
 [Guide](user-guide/your-account.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
+### Connect an AI app
+
+Screen: `/connect/authorize`, and the Connected AI apps card on `/profile`, while the `mcpServer` module is on.
+
+Journey: Copy the connector address from Connected AI apps into the AI app. The app sends the member here; they check where the approval goes, choose View only or View and change where offered, then Allow or Don't allow and return to the app. Disconnect an app from the same card.
+
+[Guide](guides/mcp-server.md)
+
 ### Family and household
 
 Screen: Family Group and Partner sections of `/profile`.
@@ -806,6 +814,18 @@ Shows: Assistant configuration, usage and spending controls.
 Journey: Read usage and the spend cap before changing the assistant settings.
 
 [Guide](guides/ai-help.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### AI app connections — ai-connections
+
+Screen: `/admin/ai-connections`.
+
+Served at `/admin/system/ai-connections`, under Help & system, while the `mcpServer` module is on.
+
+Shows: Who may connect an AI app, the most a connection may do, the approved apps, and every connected app.
+
+Journey: Change the settings and save, or disconnect a member's app from the Connections list.
+
+[Guide](guides/mcp-server.md)
 
 ### Audit Log — audit-log
 
