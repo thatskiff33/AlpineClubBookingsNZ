@@ -22,12 +22,10 @@ import { ADMIN_WRITE_VISIBLE_POLL } from "./helpers/public-cache";
   is no longer read and its value is not imported), so the admin has to save one
   through Admin -> Integrations before anything can load at all.
 
-  A fake measurement id is used deliberately: the assertions are about WHETHER a
-  request is made and WHAT URL it carries, never about a response. Google no
-  longer answers a 404 for an unknown id, though (#5155): it serves the full
-  library, which runs and sends the app's sanitised `page_view` hits for a
-  property that belongs to nobody. No real property is touched, but those hits
-  do leave, and the soft-navigation test waits for them rather than assume none come.
+  A fake measurement id is used deliberately. The soft-navigation test serves a
+  fixed local gtag stub and fulfils collection requests: it tests the app's event
+  calls and kill switch without depending on Google's loader or sending hits.
+  Other tests still observe requests to Google with the fake id.
 */
 
 test.describe.configure({ mode: "serial" });
@@ -55,14 +53,10 @@ interface GoogleRequestLog {
   settled: number;
   /** The `dl` (page location) of each `page_view` event sent. */
   readonly pageViews: string[];
-  /** The gtag loader's HTTP status, or "failed" when it never answered. */
-  loaderStatus?: number | "failed";
 }
 
 const isGoogleAnalyticsUrl = (url: string) =>
   GOOGLE_ANALYTICS_HOSTS.some((host) => url.includes(host));
-const isGtagLoaderUrl = (url: string) =>
-  url.includes("googletagmanager.com/gtag/js");
 
 /**
  * Every request the page made to a Google Analytics host, in order.
@@ -93,31 +87,54 @@ function recordGoogleRequests(page: Page): GoogleRequestLog {
       if (event === "page_view") log.pageViews.push(params.get("dl") ?? "");
     }
   });
-  const settle = (failed: boolean) => (request: { url(): string }) => {
+  const settle = (request: { url(): string }) => {
     const url = request.url();
     if (!isGoogleAnalyticsUrl(url)) return;
     log.settled += 1;
-    if (failed && isGtagLoaderUrl(url)) log.loaderStatus = "failed";
   };
-  page.on("requestfinished", settle(false));
-  page.on("requestfailed", settle(true));
-  page.on("response", (response) => {
-    if (isGtagLoaderUrl(response.url())) log.loaderStatus = response.status();
-  });
+  page.on("requestfinished", settle);
+  page.on("requestfailed", settle);
   return log;
 }
 
-/**
- * Whether the first page's own Google traffic is over: its `page_view` hit was
- * sent (or the loader answered an error, so the library cannot run and none
- * will be), and every request recorded so far has finished or failed.
- */
+/** A local tag: replay queued events and process later pushes, respecting opt-out. */
+async function stubGoogleTag(page: Page): Promise<void> {
+  await page.route((url) => GOOGLE_ANALYTICS_HOSTS.some(
+    (host) => url.hostname === host || url.hostname.endsWith(`.${host}`),
+  ), async (route) => {
+    const url = new URL(route.request().url());
+    if (url.hostname === "www.googletagmanager.com" && url.pathname === "/gtag/js") {
+      await route.fulfill({
+        contentType: "application/javascript",
+        body: `(() => {
+          const id = ${JSON.stringify(FAKE_MEASUREMENT_ID)};
+          const queue = window.dataLayer = window.dataLayer || [];
+          const send = (args) => {
+            if (args[0] !== 'event' || window['ga-disable-' + id]) return;
+            const params = new URLSearchParams({
+              tid: id, en: args[1], dl: args[2]?.page_location || location.href,
+            });
+            fetch('https://www.google-analytics.com/g/collect?' + params,
+              { mode: 'no-cors' }).catch(() => {});
+          };
+          const pending = queue.slice();
+          queue.push = (...items) => {
+            const length = Array.prototype.push.apply(queue, items);
+            items.forEach(send);
+            return length;
+          };
+          pending.forEach(send);
+        })();`,
+      });
+    } else {
+      await route.fulfill({ status: 204 });
+    }
+  });
+}
+
+/** The stub's first page_view began and all recorded requests settled. */
 function firstPageTrafficSettled(log: GoogleRequestLog, pageLocation: string): boolean {
-  const libraryCannotRun =
-    log.loaderStatus === "failed" ||
-    (log.loaderStatus !== undefined && (log.loaderStatus < 200 || log.loaderStatus > 299));
-  const pageViewSent = log.pageViews.includes(pageLocation);
-  return (pageViewSent || libraryCannotRun) && log.settled === log.urls.length;
+  return log.pageViews.includes(pageLocation) && log.settled === log.urls.length;
 }
 
 /** A recorded request, as a failure message names it. */
@@ -368,9 +385,9 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       What is asserted is the state Google's own library reads: `ga-disable-<id>`
       must be true once the runtime has gone. Next may retain the already-injected
       `next/script` node for the life of this document, so DOM-node removal is not
-      the boundary and is deliberately not asserted. The library does run for the
-      fake id and sends the first page's own `page_view`, a moment after the
-      loader arrives (#5155). So the snapshot waits until that traffic is over,
+      the boundary and is deliberately not asserted. The local stub replays queued
+      events and observes future gtag calls, respecting the same kill switch. The snapshot
+      waits for its first `page_view` and completed local requests,
       and any request that BEGINS after it, through the navigation, fails the count
       at the end.
     */
@@ -380,6 +397,7 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
       bannerMessage: BANNER_MESSAGE,
     });
 
+    await stubGoogleTag(page);
     const google = recordGoogleRequests(page);
     const googleRequests = google.urls;
     await page.goto("/");
@@ -408,7 +426,7 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
         () =>
           firstPageTrafficSettled(google, homeLocation)
             ? "settled"
-            : `still waiting (loader ${google.loaderStatus ?? "pending"}, ${google.settled}/${googleRequests.length} settled): ${googleRequests
+            : `still waiting (${google.settled}/${googleRequests.length} settled): ${googleRequests
                 .map(describeGoogleRequest)
                 .join(", ")}`,
         {

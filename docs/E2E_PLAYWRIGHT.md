@@ -1106,6 +1106,15 @@ heading or table only the loaded page has), and a non-empty title with
 visits. A title check alone is not enough, because the title from the first
 load can satisfy it just before a soft navigation removes it.
 
+The analytics soft-navigation test also needs a deterministic boundary before
+its request-count snapshot. It serves a local gtag loader stub that replays
+queued events and handles later events, sending one collect request per event
+unless `ga-disable-<id>` is true. Collection requests are fulfilled locally.
+Wait for the stub's home-page `page_view` and all recorded requests to settle;
+record URLs when requests begin. A live Google loader returning 200 does not
+guarantee a hit will arrive (run 44464520408). Neither a quiet-period timeout
+nor the live service is a reliable readiness signal.
+
 ### What is deliberately NOT the fix
 
 Bumping `retries`, widening a `toBeVisible` timeout, `page.waitForTimeout`, or

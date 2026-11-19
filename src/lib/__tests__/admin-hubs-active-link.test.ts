@@ -288,6 +288,10 @@ describe("no admin active-state check compares raw hrefs", () => {
       why: string;
     }
   > = {
+    "src/app/(admin)/admin/membership/members/_hooks/use-members-query-state.ts": {
+      kind: "path-agnostic",
+      why: "exact canonical-URL comparison avoids a no-op router.replace; not active-link state, so the current URL must remain unnormalised",
+    },
     "src/components/admin-sidebar.tsx": {
       kind: "sidebar",
       why: "the active link: activeAdminHref compares in canonical form (the test above)",
