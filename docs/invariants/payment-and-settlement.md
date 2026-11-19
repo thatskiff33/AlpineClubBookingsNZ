@@ -4423,8 +4423,8 @@ edit's card refund debt).
   payment names no Stripe intent, on itself or on a captured charge, the
   reduction goes back as an Internet Banking payment's does. The edit raises
   `INV-PAY-117`'s officer refund task and the member is told the club will
-  refund them by bank transfer. No card refund is promised: no refund payable
-  (R05) is posted to the member-money journal, no recovery row is written and
+  refund them by bank transfer. No card refund is promised: the journal's only
+  refund payable (R05) is the task's own, no recovery row is written and
   Stripe is not asked. Xero records a refund not made through Stripe.
 - **One read decides it.** `readRefundableCardIntentId`
   (`src/lib/refundable-card-intent.ts`) answers the settlement
@@ -4440,6 +4440,9 @@ edit's card refund debt).
   reduction taken as account credit is still credit. A price increase is not
   read.
 - Entries posted before this rule are not rewritten.
+- **Limit.** Marking that task paid is refused where the payment has no
+  captured ledger row or the journal holds the booking: neither can yet record
+  card money going back with no Stripe capture.
 - No new lock, key or order (`INV-LOCK-001` through `INV-LOCK-003`).
 - Proven by `edit-refund-no-stripe-record.test.ts`,
   `organiser-child-refund-edit.test.ts`,

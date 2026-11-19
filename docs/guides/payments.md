@@ -249,6 +249,9 @@ One kind of card payment is treated like a bank payment here (#5212): a booking
 recorded as paid by card that Stripe holds no record of, so there is nothing
 for a card refund to be made against. A change that lowers its price raises the
 same task and sends the same email, and no card refund is promised or tried.
+For now, **Mark paid back** is refused on most of these tasks, because the
+payment has no card charge on record for the refund to be recorded against.
+Pay the member, leave the task open, and tell your club administrator.
 
 While such a task is open, its amount counts as already promised back. A later
 change or a cancellation of the same booking refunds only what is left of the
