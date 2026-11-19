@@ -20,6 +20,13 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useActionFailure } from "@/hooks/use-action-failure";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -219,18 +226,21 @@ function SettingsSection({
 
           <div className="max-w-md space-y-1">
             <Label htmlFor={scopeId}>The most a connection may do</Label>
-            <select
-              id={scopeId}
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-muted disabled:text-muted-foreground"
+            <Select
               value={draft.maxScope}
               disabled={!editing}
-              onChange={(event) =>
-                section.setDraft({ maxScope: event.target.value as SettingsDraft["maxScope"] })
+              onValueChange={(value) =>
+                section.setDraft({ maxScope: value as SettingsDraft["maxScope"] })
               }
             >
-              <option value="READ">{MCP_SCOPE_LABELS.READ}</option>
-              <option value="READ_WRITE">{MCP_SCOPE_LABELS.READ_WRITE}</option>
-            </select>
+              <SelectTrigger id={scopeId} className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="READ">{MCP_SCOPE_LABELS.READ}</SelectItem>
+                <SelectItem value="READ_WRITE">{MCP_SCOPE_LABELS.READ_WRITE}</SelectItem>
+              </SelectContent>
+            </Select>
             <p className="text-xs text-muted-foreground">
               With view and change, a member can let an app start or cancel a
               booking for them. Each member still chooses view only or view and
