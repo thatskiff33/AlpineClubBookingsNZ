@@ -92,7 +92,6 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroAppliedCreditAllocationOperation: async () => ({ queueOperationId: null }),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
 }));
-vi.mock("@/lib/xero", () => ({ isXeroConnected: async () => false }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn(), getAuditRequestContext: () => ({}) }));
 vi.mock("@/lib/family-booking-add-notifications", () => ({ sendFamilyMemberBookingAddNotifications: vi.fn() }));
 vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => ({
