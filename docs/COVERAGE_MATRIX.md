@@ -18,7 +18,7 @@ The area list is each registered admin page's top-level URL directory, taken
 from the [hub registry](../src/lib/admin-hubs/index.ts), whose own census ties
 every entry to its page on disk, so it is exhaustive and will not silently miss a
 surface. A hub's directory under `src/app/(admin)/admin/` (such as `website/`,
-`finance/`, `rules/`, `system/`, `messages/`, `booking-desk/` or `membership/`) is not an area: it holds areas. An area keeps
+`finance/`, `rules/`, `system/`, `messages/`, `booking-desk/`, `membership/` or `lodge-ops/`) is not an area: it holds areas. An area keeps
 its row, and its URL, when its pages move under a hub (epic #4468): the Website
 hub's areas live in `website/` (C4 #4801), the Finance hub's areas
 (`internet-banking`, `payments`, `refund-requests`, `reports`,
@@ -37,7 +37,8 @@ Bookings hub's areas (`bed-allocation`, `book`, `booking-approvals`,
 `deletion-requests`, `family-groups`, `induction`, `member-applications`,
 `member-fields`, `members`, `membership-cancellations`, `membership-setup`,
 `membership-types`, `subscription-categories`, `subscription-lockout`) in
-`membership/` (C9 #4806). Member
+`membership/` (C9 #4806), and the Lodge hub's `display` and `lodges` areas in
+`lodge-ops/` (C11 part 1 #4808; its other areas move in part 2). Member
 detail, member merge, induction print and induction settings are not areas; they
 live under `members/` and `induction/`. The
 count that used to stand here said 70 and was measured once; it had already

@@ -333,7 +333,7 @@ export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, strin
   "booking-request-declined": ["reason"],
   // #2526: the raw values behind the two pre-composed lines, so an override may
   // reference either form. `paymentNote` follows the booking's cash cover (#4069,
-  // `INV-PAY-157`): nothing once the booking is covered, and a line with no
+  // `INV-PAY-159`): nothing once the booking is covered, and a line with no
   // amount when its organiser pays or the records cannot prove what is owed -
   // `amount` is empty then. `adminNotesLine` renders nothing when the officer
   // left no note.

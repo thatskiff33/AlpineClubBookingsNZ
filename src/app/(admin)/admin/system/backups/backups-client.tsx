@@ -30,15 +30,18 @@ import {
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant, type BoundClubTime } from "@/lib/club-time";
 import { LocalBackupCard } from "@/app/(admin)/admin/system/backups/local-backup-card";
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
+import { apiErrorMessageFromResponse, apiRefusalFromResponse } from "@/lib/api-error-message";
 import { adminHref } from "@/lib/admin-hubs";
 import {
   CONFIG_URL,
   RUN_URL,
+  STATUS_LOAD_FALLBACK,
   STATUS_URL,
   type BackupRunSummary,
   type BackupStatus,
 } from "@/app/(admin)/admin/system/backups/backup-status";
+
+const SAVE_FALLBACK = "Could not save configuration.";
 
 interface ConfigDraft {
   enabled: boolean;
@@ -413,7 +416,7 @@ function S3BackupCard({
     },
     load: async () => {
       const res = await fetch(STATUS_URL, { cache: "no-store" });
-      if (!res.ok) throw new Error(await apiErrorMessageFromResponse(res, "Could not load config."));
+      if (!res.ok) throw await apiRefusalFromResponse(res, STATUS_LOAD_FALLBACK);
       const data = (await res.json()) as BackupStatus;
       return {
         enabled: data.enabled,
@@ -438,7 +441,7 @@ function S3BackupCard({
       });
       if (res.status === 403) throw new ForbiddenSaveError();
       if (!res.ok) {
-        throw new Error(await apiErrorMessageFromResponse(res, "Could not save configuration."));
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       await onSaved();
       // Re-seed from the freshly persisted values.
@@ -450,6 +453,8 @@ function S3BackupCard({
       };
     },
     successMessage: "Backup configuration saved.",
+    loadErrorFallback: STATUS_LOAD_FALLBACK,
+    saveErrorFallback: SAVE_FALLBACK,
     isValid: (draft) =>
       draft.retentionDays >= 1 &&
       draft.retentionDays <= 3650 &&

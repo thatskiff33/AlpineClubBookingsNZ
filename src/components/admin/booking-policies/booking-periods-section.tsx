@@ -5,6 +5,7 @@ import { useEditorFocusReturn } from "@/hooks/use-editor-focus-return"
 import { useRowActionFocusReturn } from "@/hooks/use-row-action-focus-return"
 import { rowKey, toggleKey, useRowHeadings } from "./list-row-focus"
 import { normalizeCancellationRule } from "@/lib/cancellation-rules"
+import { getAdminPage } from "@/lib/admin-hubs"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -17,6 +18,7 @@ import { PolicyPreview } from "./policy-preview"
 import { PolicyFeedback } from "./policy-feedback"
 import {
   isPolicyScopeReady,
+  POLICY_SCOPE_NOT_READY_REASON,
   PolicyScopeSelect,
   usePolicyScopeOptions,
 } from "./policy-scope-select"
@@ -25,6 +27,7 @@ import {
   ForbiddenSaveError,
   useSectionEditState,
 } from "@/hooks/use-section-edit-state"
+import { ApiRefusalError, apiRefusalFromResponse } from "@/lib/api-error-message"
 import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
@@ -39,6 +42,8 @@ import {
 import { formatStayDateOrNull } from "@/lib/club-time"
 import { useClubFormat } from "@/components/club-format-provider"
 import type { BookingPeriod, PolicyRule } from "./types"
+
+const SAVE_PERIOD_FALLBACK = "Failed to save period"
 
 function PeriodForm({
   periodId,
@@ -65,6 +70,7 @@ function PeriodForm({
     // The section renders its own `PolicyFeedback` above the list, so the
     // success copy is set by the parent when the form closes.
     successMessage: "",
+    saveErrorFallback: SAVE_PERIOD_FALLBACK,
     // #2143: an Edit -> Save that changed nothing must not reach the PUT, which
     // writes a `booking-period.update` audit entry with a `before`/`after` pair
     // unconditionally — identical halves and all — and busts the public-page
@@ -342,7 +348,7 @@ export function BookingPeriodsSection() {
   const submitPeriod = useCallback(
     async (draft: PeriodDraft): Promise<PeriodDraft> => {
       if (!policyScopeReady) {
-        throw new Error("Choose an available policy scope before saving")
+        throw new ApiRefusalError(POLICY_SCOPE_NOT_READY_REASON)
       }
       setError("")
       setSuccess("")
@@ -367,8 +373,7 @@ export function BookingPeriodsSection() {
       })
       if (!res.ok) {
         if (res.status === 403) throw new ForbiddenSaveError()
-        const data = await res.json()
-        throw new Error(data.error || "Failed to save period")
+        throw await apiRefusalFromResponse(res, SAVE_PERIOD_FALLBACK)
       }
       const wasEditing = editingPeriodId !== null
       // Parse the SERVER row into the re-seed value BEFORE closing the form, so
@@ -392,7 +397,7 @@ export function BookingPeriodsSection() {
         // we swallow the parse failure, fall back to the submitted draft, and
         // close the form — the list refresh below shows what was really stored.
         if (wasEditing) {
-          throw new Error(
+          throw new ApiRefusalError(
             "The period was saved, but the server's reply could not be read. Reload the page to see what is stored.",
           )
         }
@@ -573,8 +578,8 @@ export function BookingPeriodsSection() {
                 <div>
                   <CardTitle {...editorFocus.titleProps}>
                     {scopeLodgeName
-                      ? `Date-Specific Periods — ${scopeLodgeName}`
-                      : "Date-Specific Periods"}
+                      ? `${getAdminPage("booking-policies-periods").label} — ${scopeLodgeName}`
+                      : getAdminPage("booking-policies-periods").label}
                   </CardTitle>
                   <CardDescription>
                     Override the default policy for specific date ranges (e.g. school holidays).

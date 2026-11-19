@@ -1384,7 +1384,7 @@ describe("buildOverrideReason", () => {
   });
 });
 
-// #4069 (`INV-PAY-157`): the approved-exception email takes what is owed from the
+// #4069 (`INV-PAY-159`): the approved-exception email takes what is owed from the
 // cash-cover reader and the held-bed answer from `bookingHoldsCapacity`, both
 // read in ONE read-only snapshot - never from the booking's status.
 describe("notifyApproved reads the cash cover and the held beds in one snapshot (#4069)", () => {

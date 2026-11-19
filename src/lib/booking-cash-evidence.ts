@@ -1,6 +1,6 @@
 /**
  * IS THIS BOOKING COVERED BY MONEY THE CLUB ACTUALLY HOLDS? One home (#4069,
- * `INV-PAY-157`; owner decisions of 15 and 16 Oct 2026; blueprint
+ * `INV-PAY-159`; owner decisions of 15 and 16 Oct 2026; blueprint
  * `docs/design/paid-from-cash.md`).
  *
  * A booking's status is its lifecycle, never proof of payment: CONFIRMED can
@@ -62,7 +62,7 @@ import {
   LEGACY_BACKFILL_REASONS,
 } from "@/lib/payment-transaction-status";
 import { paymentDisputedCaptureCents } from "@/lib/stripe-dispute-hold";
-import { isStoredFigureBankReceipt } from "@/lib/xero-inbound/settle-from-cash";
+import { isStoredFigureBankReceipt } from "@/lib/xero-inbound/ib-receipt-reasons";
 
 /** Why the records cannot prove what a booking holds. */
 export type BookingCashUnknownReason =
@@ -82,7 +82,7 @@ export type BookingCashUnknownReason =
   | "organiser-share-unproven";
 
 /**
- * The one answer (`INV-PAY-157`). `owes.cents` is above zero. `organiser_pays`
+ * The one answer (`INV-PAY-159`). `owes.cents` is above zero. `organiser_pays`
  * is a group child whose organiser pays: the member is never asked. `unknown`
  * never becomes paid, unpaid, zero due or a personal demand.
  */
@@ -215,7 +215,7 @@ function deriveGroupChildCover(snapshot: BookingCashSnapshot): BookingCashCover 
   return paidByOrganiserInternetBanking(child) ? { kind: "organiser_pays" } : unknown("organiser-share-unproven");
 }
 
-/** THE answer, from one snapshot (`INV-PAY-157`). Pure. */
+/** THE answer, from one snapshot (`INV-PAY-159`). Pure. */
 export function deriveBookingCashCover(snapshot: BookingCashSnapshot): BookingCashCover {
   const { booking, payment } = snapshot;
   if (booking.deletedAt !== null || !COVERS_STATUSES.includes(booking.status)) return unknown("booking-not-live");
@@ -321,7 +321,7 @@ async function readGroupChildEvidence(
 }
 
 /**
- * Load the snapshot and answer (`INV-PAY-157`). Every read goes through `tx`,
+ * Load the snapshot and answer (`INV-PAY-159`). Every read goes through `tx`,
  * so a caller's `withReadOnlySnapshot` makes the answer, and whatever it reads
  * beside it, one moment's. Null when no such booking exists.
  */

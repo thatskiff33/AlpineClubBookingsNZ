@@ -1,5 +1,5 @@
 /**
- * #4069 (`INV-PAY-157`): the one cash-cover answer (`readBookingCashCover`)
+ * #4069 (`INV-PAY-159`): the one cash-cover answer (`readBookingCashCover`)
  * over rows the REAL writers leave, against real PostgreSQL. The branch-by-branch
  * pure cases are `booking-cash-evidence.test.ts`; this file proves the reader
  * composes with what production actually writes (`docs/design/paid-from-cash.md`

@@ -32,8 +32,13 @@
  * the two agree exactly when the journal kept what the record says. A close-out
  * whose record is gone, or says otherwise, disagrees. A kept rest the journal
  * never closed out is the refund census's (`KEPT_REST_WITHOUT_CLOSE_OUT`).
+ *
+ * #4516 (M4d): a late capture the treasurer keeps, and no invoice already bills,
+ * is the other journal charge with no legacy line (`kept-capture:<intent>`).
+ * It counts on the ledger side as the gross the journal still carries, so the
+ * two agree. A keep an invoice already bills adds no component.
  */
-import { isJournalEraBooking, journalComponentOfLegacyLine, MemberMoneyPlanError, refundCloseOutRecordOfIdentity } from "@/lib/member-money";
+import { isJournalEraBooking, journalComponentOfLegacyLine, keptCapturePaymentIntentOfIdentity, MemberMoneyPlanError, refundCloseOutRecordOfIdentity } from "@/lib/member-money";
 import { paidAnotherWayUnpaidCents } from "@/lib/manual-refund-task-settlement-rules";
 import type { BookingLedgerEvaluation, BookingLedgerIdentityResult, BookingLedgerIntegrityFinding } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
@@ -123,6 +128,7 @@ export function journalChargeComparison(row: BookingLedgerCensusRow): {
   for (const component of row.journal.components) {
     const recordId = refundCloseOutRecordOfIdentity(component.chargeIdentity);
     if (recordId !== null) ledgerCents += keptByRecord.get(recordId) ?? 0;
+    else if (keptCapturePaymentIntentOfIdentity(component.chargeIdentity) !== null) ledgerCents += component.liveGrossCents;
   }
 
   const columnCents = row.journal.components.reduce((sum, component) => sum + component.liveGrossCents, 0);

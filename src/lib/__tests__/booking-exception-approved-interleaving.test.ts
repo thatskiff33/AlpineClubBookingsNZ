@@ -7,7 +7,7 @@ import { bookingGuestDietarySeeding } from "@/lib/member-dietary-booking-writes"
 import type { MinimumStayPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import type { BatchModificationPreTransaction } from "@/lib/booking-batch-modification-service";
 
-// #4069 (`INV-PAY-157`): the approval email's race, composed offline. The real
+// #4069 (`INV-PAY-159`): the approval email's race, composed offline. The real
 // approval engine, the real approval hooks, the real bank-switch and
 // exclusive-hold routes, the real cash-cover reader and the real sender run
 // over one in-memory booking. Canonical creation supplies that row and a

@@ -18,7 +18,7 @@ import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
  * the member dashboard's Payment Owed card (`member-dashboard.ts`, #4944). So
  * a page, the email a member opens it from and the charge cannot disagree.
  *
- * NOT "IS IT PAID?" (#4069, `INV-PAY-157`). This sizes what an UNPAID booking's
+ * NOT "IS IT PAID?" (#4069, `INV-PAY-159`). This sizes what an UNPAID booking's
  * pay step asks; it takes off credit, never cash already received. Whether a
  * booking's cash covers it is `readBookingCashCover` (`booking-cash-evidence.ts`),
  * which the exception-approved email reads; it builds on the same

@@ -163,6 +163,7 @@ import { generateSchoolGuests } from "@/lib/school-booking-constants";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { isPendingSchoolAdultsWriteEnabled } from "@/lib/pending-school-adults-gate";
 import { lodgeGuestLimitMessage } from "@/lib/lodge-booking-readiness";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * The states a request may be corrected in: every state where it is live, in
@@ -452,9 +453,8 @@ export async function correctBookingRequest(
     // before any read whose answer the claim depends on.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-    // Re-asked UNDER the lock, so what the officer confirmed is what the write
-    // is about: with approvals excluded, no record can appear between this read
-    // and the claim below.
+    // Re-asked UNDER the lock so what the officer confirmed is what the write is
+    // about: with approvals excluded, nothing can appear before the claim below.
     const preview = schoolName
       ? await previewSchoolRecordForName(tx, schoolName)
       : null;
@@ -528,7 +528,7 @@ export async function correctBookingRequest(
       preview,
       supersededQuoteCount: superseded.count,
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   if (!claim.claimed) {
     throw new BookingRequestError(

@@ -580,7 +580,7 @@ export async function sendBookingPendingEmail(
 }
 
 /**
- * #4069 (`INV-PAY-157`): the approval email's payment line, one per cash-cover
+ * #4069 (`INV-PAY-159`): the approval email's payment line, one per cash-cover
  * answer. Composed by the sender, never conditionally in the body: the render
  * path has no conditional syntax, so a token that is sometimes empty must
  * arrive as a whole line or as nothing (see composeOptionalEmailLine).
@@ -645,7 +645,7 @@ export function bookingPolicyExceptionApprovedPaymentNote(
  * booking is announced by the canonical `booking-modified` email the modification
  * service already sends, so the two never double up.
  *
- * #4069 (`INV-PAY-157`): the payment line follows the booking's cash cover,
+ * #4069 (`INV-PAY-159`): the payment line follows the booking's cash cover,
  * never its status (`bookingPolicyExceptionApprovedPaymentNote`).
  */
 export async function sendBookingPolicyExceptionApprovedEmail(

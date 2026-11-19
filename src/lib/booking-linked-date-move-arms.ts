@@ -6,9 +6,9 @@ import {
 } from "@/lib/booking-batch-modification-service";
 import {
   modifyBookingDates,
-  type DateModificationResponse,
   type ModifyBookingDatesInput,
 } from "@/lib/booking-date-modification-service";
+import type { DateModificationResponse } from "@/lib/booking-date-modification-transaction-result";
 import {
   applyLinkedDateMove,
   offerLinkedDateMove,

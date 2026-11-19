@@ -40,7 +40,7 @@ import { bookingAmountOwedCents, bookingWorthCents, savedCardChargeCents } from 
  * `dueCents`; the booking page's figures themselves are pinned by
  * `booking-detail-history-amount-owed.test.ts`.
  *
- * #4069 (`INV-PAY-157`): the exception-approved email left this census. It no
+ * #4069 (`INV-PAY-159`): the exception-approved email left this census. It no
  * longer quotes an unpaid figure from the booking's status; it reads whether
  * the booking's CASH covers it through `readBookingCashCover`
  * (`booking-cash-evidence.ts`), which builds its owed side on the same
@@ -113,7 +113,7 @@ const KNOWN_COMPOSERS = [
   "src/lib/edit-financial-review-account-credit.ts",
   "src/lib/policies/booking-route-decisions.ts",
 ];
-// #4069 (`INV-PAY-157`): the cash-cover reader. It composes the owed side from
+// #4069 (`INV-PAY-159`): the cash-cover reader. It composes the owed side from
 // `bookingAmountOwedCents` inside its own snapshot, by design, and is not one of
 // the composers `booking-amount-owed.ts` still has to absorb.
 const CASH_COVER_HOME = "src/lib/booking-cash-evidence.ts";
@@ -498,7 +498,7 @@ describe("the amount an unpaid booking owes has one home (#3750)", () => {
   });
 });
 
-// #4069 (`INV-PAY-157`): "is this booking covered?" has one home too, and it
+// #4069 (`INV-PAY-159`): "is this booking covered?" has one home too, and it
 // stays apart from the two readers it must not become.
 describe("the cash-cover reader keeps its boundaries (#4069)", () => {
   const importsOf = (file: string) =>

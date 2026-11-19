@@ -429,7 +429,7 @@ The remaining work is concrete and stays within the approved Stage 1 scope:
   cash; status-only paid; omitted refund; omitted credit; organiser money
   counted twice. No execution evidence was available in this review.
 - Define and index the intended cash-cover invariant. The inherited code
-  cites a proposed PAY-157 entry that is not yet defined. Update `INV-PAY-119`
+  cites a proposed PAY-159 entry that is not yet defined. Update `INV-PAY-119`
   to describe the approval reader move while preserving the owed reader's
   pay-step contract; it still names the old approval-email caller today.
 - Complete the planned state-machine, email and booking-request documentation,

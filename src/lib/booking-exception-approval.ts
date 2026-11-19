@@ -668,7 +668,7 @@ export function buildPolicyExceptionApprovalHooks(
      * canonical "your booking was changed" email itself, and a second notice
      * would compete with it.
      *
-     * #4069 (`INV-PAY-157`): what is owed comes from the cash records, never the
+     * #4069 (`INV-PAY-159`): what is owed comes from the cash records, never the
      * booking's status. The member may have switched to a bed-holding bank
      * transfer while the deferred work ran (CONFIRMED, a pending bank payment),
      * and an officer may have set the exclusive hold. So the amount
