@@ -6,7 +6,7 @@ what a sender stored live in `src/lib/capture-receipt-senders.ts`; what is left
 in each sender is the call itself, which belongs beside the payment it records.
 
 function: src/lib/xero-operation-retry.ts#retryXeroSyncOperation
-lines: 758
+lines: 756
 reason: the PARTIAL invoice repair records its payment's capture receipt on both of its paths (sent now, or already linked), beside the payment each stores.
 
 function: src/lib/additional-capture-xero-receipt.ts#recordAdditionalCaptureReceipt
@@ -14,5 +14,5 @@ lines: 415
 reason: the receipt's reference and per-leg payment key are handed to the completion that records each leg's capture receipt.
 
 function: src/lib/xero-supplementary-invoices.ts#createXeroSupplementaryInvoice
-lines: 569
+lines: 583
 reason: the supplementary payment's id, key, reference and bank code are kept once Xero returns it, and its capture receipt is recorded after the row completes.

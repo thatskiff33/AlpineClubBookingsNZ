@@ -11,6 +11,7 @@ import logger from "@/lib/logger";
 import { recordCaptureReceiptManifest } from "@/lib/member-money/doors";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { asRecord, readString } from "@/lib/xero-json";
+import { primaryInvoiceStripePaymentReference } from "@/lib/xero-primary-invoice-fee-gap";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 
 /** The primary invoice's Stripe payment key: one per Payment, whichever run sends it. */
@@ -66,6 +67,14 @@ export async function readStoredPrimaryInvoicePayment(syncOperationId: string): 
     logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice payment");
     return null;
   }
+}
+
+/** The replay's receipt, from the payment `readStoredPrimaryInvoicePayment` read; no stored payment, no receipt. */
+export async function recordStoredPrimaryInvoicePaymentReceipt(sent: unknown, payment: PrimaryPayment, bookingId: string, invoiceId: string): Promise<void> {
+  await recordPrimaryInvoicePaymentReceipt({
+    bookingId, payment, invoiceId, sent, sentCents: null,
+    reference: primaryInvoiceStripePaymentReference(payment.stripePaymentIntentId), bankCode: null,
+  });
 }
 
 /**

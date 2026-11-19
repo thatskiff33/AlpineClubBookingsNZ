@@ -102,7 +102,7 @@ import {
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
 import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest, recordPrimaryInvoiceUpdateManifest } from "@/lib/member-money/doors";
-import { primaryInvoicePaymentKey, recordPrimaryInvoicePaymentReceipt, readStoredPrimaryInvoicePayment } from "@/lib/capture-receipt-senders";
+import { primaryInvoicePaymentKey, readStoredPrimaryInvoicePayment, recordPrimaryInvoicePaymentReceipt, recordStoredPrimaryInvoicePaymentReceipt } from "@/lib/capture-receipt-senders";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -275,8 +275,7 @@ export async function createXeroInvoiceForBooking(
         booking.payment.xeroInvoiceId,
       );
     }
-    // #4525 (Ledger M13): the Stripe payment that run stored, read before this replay completes the operation over it.
-    const storedPayment = options?.syncOperation ? await readStoredPrimaryInvoicePayment(options.syncOperation.id) : null;
+    const storedPayment = options?.syncOperation ? await readStoredPrimaryInvoicePayment(options.syncOperation.id) : null; // #4525 (M13): that run's Stripe payment, read before the completion below replaces it
     // #3955 review X4 (round 3), #3980: a prior run that persisted the link but
     // died before or inside its gap check re-runs it here, from what the invoice
     // billed and the booking's worth as recorded with the link. Idempotent.
@@ -309,12 +308,7 @@ export async function createXeroInvoiceForBooking(
         xeroObjectUrl: buildXeroInvoiceUrl(booking.payment.xeroInvoiceId),
       });
     }
-    // Its capture receipt, once the operation is closed; no stored payment, no receipt.
-    await recordPrimaryInvoicePaymentReceipt({
-      bookingId, payment: booking.payment, invoiceId: booking.payment.xeroInvoiceId,
-      sent: storedPayment, sentCents: null,
-      reference: primaryInvoiceStripePaymentReference(booking.payment.stripePaymentIntentId), bankCode: null,
-    });
+    await recordStoredPrimaryInvoicePaymentReceipt(storedPayment, booking.payment, bookingId, booking.payment.xeroInvoiceId); // its capture receipt, once the operation is closed
     return booking.payment.xeroInvoiceId;
   }
 
