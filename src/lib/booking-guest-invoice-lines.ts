@@ -1,13 +1,12 @@
 /**
- * THE ONE per-guest invoice line builder (fork #115, lifted out of
- * `buildInvoiceLineItems` in `xero-booking-invoices.ts`).
+ * THE ONE per-guest invoice run builder (#5066, lifted out of
+ * `buildInvoiceLineItems`, now in `xero-booking-invoice-lines.ts`).
  *
  * Pure and provider-neutral: a booking's guests and stay range in, one line per
  * price-homogeneous run of each guest's nights out, all in integer cents. The
- * Xero invoice maps these lines to its own `LineItem` shape; the generated
- * booking invoice PDF prints them. Both therefore cut a guest's stay into the
- * same runs and bill the same cents (`INV-SSOT`). Output for the Xero path is
- * byte-identical to the builder's own before the move.
+ * Xero invoice words and codes these runs as its own `LineItem`s; the app's
+ * generated booking invoice (Xero off) prints them. Both therefore cut a
+ * guest's stay into the same runs and bill the same cents (`INV-SSOT`).
  */
 import {
   evenlySplitCents,
