@@ -599,10 +599,9 @@ export const SINGLETONS: SingletonSpec[] = [
   {
     // DB-first club identity (E3 #1929). Singleton row id="default"; all fields
     // nullable and served through the runtime fallback chain, so exporting/
-    // importing them moves only the admin-set overrides.
+    // importing them moves only the admin-set overrides (legalName/postalAddress: #5066's invoice supplier).
     entity: "club-identity-settings",
     delegate: "clubIdentitySettings",
-    // legalName / postalAddress (#5066): the generated booking invoice's supplier.
     fields: ["name", "shortName", "hutLeaderLabel", "facebookUrl", "legalName", "postalAddress"],
     // No override saved = every column null, which is what the admin GET
     // synthesises. See DEFAULTS_INTENTIONALLY_PARTIAL.
