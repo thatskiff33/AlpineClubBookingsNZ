@@ -4309,12 +4309,20 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
       amountCents: 4567, invoiceId: "inv_123", reference: `${CLUB_NAME} invoice payment pay_123`,
     };
 
-    it("records the payment it sent for the booking payment's capture, before the row closes", async () => {
+    beforeEach(() => {
+      mocks.findFirstOperation.mockResolvedValue({ id: "outbound-payment-operation" });
+    });
+
+    it("records the payment it sent for the booking payment's capture, after the row closes", async () => {
       mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
       mocks.findUniquePayment.mockResolvedValue({ id: "pay_123", source: "STRIPE", bookingId: "book_123", stripePaymentIntentId: "pi_123" });
       await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({ message: "Repaired Xero booking invoice payment recording." });
       expect(captureReceipts.record).toHaveBeenCalledWith({ ...receipt, providerPaymentId: "xpay_1" });
-      expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.createXeroPaymentForInvoice.mock.invocationCallOrder[0]!);
+      expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]!);
+      expect(mocks.findFirstOperation).toHaveBeenCalledWith({
+        where: { direction: "OUTBOUND", entityType: "PAYMENT", idempotencyKey: receipt.applicationKey, xeroObjectId: "xpay_1" },
+        select: { id: true },
+      });
     });
 
     it("records the payment an earlier run linked, and sends none", async () => {
@@ -4324,6 +4332,35 @@ describe("PARTIAL repairs claim the original before they write or call Xero (#42
       await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
       expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
       expect(captureReceipts.record).toHaveBeenCalledWith({ ...receipt, providerPaymentId: "xpay_earlier" });
+    });
+
+    it("closes on an inbound bank payment without attributing it to a Stripe capture", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
+      mocks.findUniquePayment.mockResolvedValue({ id: "pay_123", source: "STRIPE", bookingId: "book_123", stripePaymentIntentId: "pi_123" });
+      mocks.findManyXeroObjectLink.mockResolvedValue([paymentLink({ invoiceId: "inv_123", amountCents: 4567 })]);
+      mocks.findFirstOperation.mockResolvedValue(null);
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+      expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
+      expect(captureReceipts.record).not.toHaveBeenCalled();
+    });
+
+    it("recognises the original invoice sender's stored payment without a separate payment operation", async () => {
+      mocks.findUniqueOperation.mockResolvedValue({ ...partialInvoice(45.67, { payment: { paymentID: "xpay_earlier", amount: 45.67 } }) });
+      mocks.findUniquePayment.mockResolvedValue({ id: "pay_123", source: "STRIPE", bookingId: "book_123", stripePaymentIntentId: "pi_123" });
+      mocks.findManyXeroObjectLink.mockResolvedValue([paymentLink({ invoiceId: "inv_123", amountCents: 4567 })]);
+      mocks.findFirstOperation.mockResolvedValue(null);
+      await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+      expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+      expect(captureReceipts.record).toHaveBeenCalledWith({ ...receipt, providerPaymentId: "xpay_earlier" });
+    });
+
+    it("keeps a successful repair closed when receipt provenance cannot be read", async () => {
+      mocks.findUniqueOperation.mockResolvedValue(partialInvoice(45.67));
+      mocks.findFirstOperation.mockRejectedValue(new Error("receipt provenance unavailable"));
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({ message: "Repaired Xero booking invoice payment recording." });
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalled();
+      expect(captureReceipts.record).not.toHaveBeenCalled();
     });
 
     it("records nothing, and still closes the row, when no capture can be named", async () => {

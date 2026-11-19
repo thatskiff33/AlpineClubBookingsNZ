@@ -584,7 +584,10 @@ is `CAPTURE_NOT_JOURNALLED`; either covers nothing. Only cents a stored payment
 sent are coverage, never the unsent rest of a capture. Bank, cash,
 credit-release and refund-note payments are not this role. The recorder holds
 the capture's `PaymentTransaction` row in its own short transaction, and a
-failure is logged without changing the send.
+failure is logged without changing the send. A PARTIAL repair records a recovered
+payment only when its outbound operation or the original invoice response proves
+which payment was sent; an inbound bank payment may close the repair but adds no
+capture coverage. Primary invoice replays preserve that response for later retries.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |

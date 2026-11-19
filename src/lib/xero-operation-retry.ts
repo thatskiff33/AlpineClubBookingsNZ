@@ -1494,12 +1494,13 @@ export async function retryXeroSyncOperation(
             repair,
           );
           if (recorded) {
-            await recordRepairCaptureReceipt(operation, repair, recorded.paymentId);
-            return close(
+            const result = await close(
               { payment: { paymentID: recorded.paymentId, amount: recorded.amountCents / 100 } },
               "The payment was already recorded in Xero; closed the operation without paying again.",
               "The payment is already recorded in Xero; retry once to close this operation.",
             );
+            await recordRepairCaptureReceipt(operation, repair, recorded.paymentId);
+            return result;
           }
           const gapSkip = await (await import("@/lib/credit-release-xero-payment")).skipPartialGapRepairPayment(operation, claim);
           if (gapSkip) return close(gapSkip.paymentOutcome, gapSkip.message); // #4494: overlaps the credit-release sweep's share.
@@ -1514,13 +1515,14 @@ export async function retryXeroSyncOperation(
             createdByMemberId,
             metadata: { invoiceId: repair.invoiceId, amountCents: repair.amountCents },
           });
-          await recordRepairCaptureReceipt(operation, repair, paymentId);
-          return close(
+          const result = await close(
             { payment: { paymentID: paymentId, amount: repair.amountCents / 100 } },
             repair.linkRole === "INVOICE_PAYMENT"
               ? "Repaired Xero booking invoice payment recording."
               : "Repaired Xero supplementary invoice payment recording.",
           );
+          await recordRepairCaptureReceipt(operation, repair, paymentId);
+          return result;
         },
         { from: "PARTIAL" },
       );

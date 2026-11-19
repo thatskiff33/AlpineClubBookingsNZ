@@ -6,7 +6,7 @@ what a sender stored live in `src/lib/capture-receipt-senders.ts`; what is left
 in each sender is the call itself, which belongs beside the payment it records.
 
 function: src/lib/xero-operation-retry.ts#retryXeroSyncOperation
-lines: 754
+lines: 758
 reason: the PARTIAL invoice repair records its payment's capture receipt on both of its paths (sent now, or already linked), beside the payment each stores.
 
 function: src/lib/additional-capture-xero-receipt.ts#recordAdditionalCaptureReceipt

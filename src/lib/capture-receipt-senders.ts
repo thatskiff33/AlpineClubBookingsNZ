@@ -12,7 +12,6 @@ import { recordCaptureReceiptManifest } from "@/lib/member-money/doors";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 import { asRecord, readString } from "@/lib/xero-json";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
-import { primaryInvoiceStripePaymentReference } from "@/lib/xero-primary-invoice-fee-gap";
 
 /** The primary invoice's Stripe payment key: one per Payment, whichever run sends it. */
 export function primaryInvoicePaymentKey(paymentId: string): string {
@@ -52,30 +51,15 @@ export async function recordPrimaryInvoicePaymentReceipt(input: {
   });
 }
 
-/**
- * The replay's receipt: the payment the raising run stored on its operation
- * (`responsePayload.payment`), read before the replay completes the operation
- * over it. The invoice's other payment links (a PARTIAL repair's, which records
- * its own, or the inbound sync's bank payments) are not this payment.
- */
-export async function recordStoredPrimaryInvoicePaymentReceipt(
-  syncOperationId: string,
-  payment: PrimaryPayment,
-  bookingId: string,
-  invoiceId: string,
-): Promise<void> {
-  let sent: unknown;
+/** Read replay evidence before completing the invoice operation; undefined leaves its stored response untouched on a read failure. */
+export async function readStoredPrimaryInvoiceResponse(syncOperationId: string): Promise<unknown> {
   try {
     const operation = await prisma.xeroSyncOperation.findUnique({ where: { id: syncOperationId }, select: { responsePayload: true } });
-    sent = asRecord(operation?.responsePayload)?.payment;
+    return operation?.responsePayload;
   } catch (error) {
     logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice payment");
-    return;
+    return undefined;
   }
-  await recordPrimaryInvoicePaymentReceipt({
-    bookingId, payment, invoiceId, sent, sentCents: null,
-    reference: primaryInvoiceStripePaymentReference(payment.stripePaymentIntentId), bankCode: null,
-  });
 }
 
 /**
@@ -86,12 +70,22 @@ export async function recordStoredPrimaryInvoicePaymentReceipt(
  * the payment operation the repair stored.
  */
 export async function recordRepairCaptureReceipt(
-  operation: { localModel: string | null; localId: string | null; requestPayload: unknown },
+  operation: { localModel: string | null; localId: string | null; requestPayload: unknown; responsePayload?: unknown },
   repair: { invoiceId: string; amountCents: number; idempotencyKey: string; reference: string },
   providerPaymentId: string,
 ): Promise<void> {
   let capture: { bookingId: string; paymentIntentId: string } | null = null;
   try {
+    // Inbound bank payments can close a repair too. Only the payment this
+    // outbound operation sent is evidence of a card capture receipt.
+    const originalPaymentId = readString(asRecord(asRecord(operation.responsePayload)?.payment)?.paymentID);
+    if (originalPaymentId !== providerPaymentId) {
+      const sentPayment = await prisma.xeroSyncOperation.findFirst({
+        where: { direction: "OUTBOUND", entityType: "PAYMENT", idempotencyKey: repair.idempotencyKey, xeroObjectId: providerPaymentId },
+        select: { id: true },
+      });
+      if (!sentPayment) return;
+    }
     capture = await partialRepairCapture(operation);
   } catch (error) {
     logger.error({ err: error, localModel: operation.localModel, localId: operation.localId }, "Could not name the capture a repaired invoice payment records");

@@ -1068,6 +1068,10 @@ describe("createXeroInvoiceForBooking", () => {
         } finally {
           mocks.prisma.xeroSyncOperation.findUnique.mockResolvedValue({ invoiceEmailDelivery: null });
         }
+        expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+          responsePayload: expect.objectContaining({ payment: storedPayment }),
+        }));
+        expect(captureReceipts.record.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder.at(-1)!);
         expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
         expect(captureReceipts.record).toHaveBeenCalledWith(expect.objectContaining({
           paymentIntentId: "pi_1", amountCents: 7000, providerPaymentId: "xpay_9", invoiceId: "inv_9", reference: "Stripe pi_1", bankCode: "606",
