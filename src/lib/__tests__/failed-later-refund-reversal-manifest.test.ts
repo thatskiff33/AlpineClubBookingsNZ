@@ -7,6 +7,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
+import { LineAmountTypes } from "xero-node";
 
 const mocks = vi.hoisted(() => ({
   writeExportManifest: vi.fn(),
@@ -239,7 +240,7 @@ describe("recordFailedLaterRefundReversalManifest", () => {
 
   it("#4632: a replay keeps its stored request's own basis and line tax type after a scheduled change, never the schedule's", async () => {
     // The schedule now says unregistered; the invoice was raised under the baseline and stored so.
-    vi.mocked(resolveXeroTaxRendering).mockResolvedValue({ lineAmountTypes: "NoTax" } as XeroTaxRendering);
+    vi.mocked(resolveXeroTaxRendering).mockResolvedValue({ lineAmountTypes: LineAmountTypes.NoTax });
     mocks.syncOperationFindUnique.mockResolvedValue({ requestPayload: { invoices: [{ lineAmountTypes: "Inclusive", lineItems: [line(8_000)] }] } });
     await replay();
     expect(written()).toMatchObject({
