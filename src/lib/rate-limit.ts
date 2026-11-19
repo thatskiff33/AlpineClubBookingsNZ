@@ -694,6 +694,33 @@ export const rateLimiters = {
   // a decoded bitmap in memory while sharp works, so THIS limit rather than the
   // byte cap is what stops one member exhausting the container.
   clubPostImageUpload: { id: "club-post-image-upload", limit: 30, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /**
+   * AI app registration (ALP-653): 20 per hour per address. Anonymous by
+   * design (an app registers before any member signs in), and each call can
+   * write a row, so the budget is what bounds the table.
+   */
+  mcpClientRegister: { id: "mcp-client-register", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /**
+   * AI app token exchange, renewal and revocation (ALP-653): 60 per 10
+   * minutes per address. Not `authSensitive`: the codes and tokens are
+   * 256-bit, so this bounds cost rather than guessing, and it is generous
+   * because one AI provider's servers present many members' apps from few
+   * addresses.
+   */
+  mcpToken: { id: "mcp-token", limit: 60, windowSeconds: 10 * 60 } as RateLimitConfig,
+  /**
+   * AI app requests without a valid token (ALP-653): 60 per minute per
+   * address. A valid token is limited per connection instead (`mcpCall`).
+   */
+  mcpUnauthenticated: { id: "mcp-unauthenticated", limit: 60, windowSeconds: 60 } as RateLimitConfig,
+  /**
+   * AI app requests (ALP-653): 120 per minute per CONNECTION, not per
+   * address: every member using one AI provider arrives from that provider's
+   * addresses, so an address key would have them spend each other's budget.
+   */
+  mcpCall: { id: "mcp-call", limit: 120, windowSeconds: 60 } as RateLimitConfig,
+  /** Approving an AI app connection (ALP-653): 20 per hour per member */
+  mcpApprove: { id: "mcp-approve", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
 } as const;
 
 // Test seam: exported for testing
