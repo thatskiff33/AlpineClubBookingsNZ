@@ -155,7 +155,6 @@ const downloadDependencies = {
     });
     return Buffer.from(result.body);
   },
-  writeAudit: createAuditLog,
 };
 
 export async function prepareBookingInvoiceDownload(
@@ -198,7 +197,7 @@ export async function prepareBookingInvoiceDownload(
 
   const owner = bookingOwner(booking);
   try {
-    await dependencies.writeAudit({
+    await createAuditLog({
       action: creditNote ? "booking.credit_note.downloaded" : "booking.invoice.downloaded",
       memberId: session.user.id,
       actorMemberId: session.user.id,
