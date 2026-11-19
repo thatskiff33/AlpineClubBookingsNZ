@@ -1,6 +1,6 @@
 # Paid From Cash — Blueprint
 
-**Status:** Blocked at the approved blueprint stop gate, reviewed 18 November
+**Status:** Blocked at the approved blueprint stop gate, revalidated against source on 19 November
 2026. The inherited branch contains an incomplete Stage 1 implementation; it
 is not ready to ship. The review found that the proposed treatment of a
 superseded capture contradicts the approved refund rule. See §6 for evidence,
@@ -69,9 +69,12 @@ the change fee recorded on the payment) less applied credit, read once
 
 ### 2.3 Paid side
 
-Held cash is Net Collected's cash half for the booking's one payment,
-`getNetCollectedCashParts(payment).heldCashCents`, not a second derivation of
-it. In its order, each step capped at what the one before left:
+The inherited implementation uses Net Collected's cash half for the booking's
+one payment, `getNetCollectedCashParts(payment).heldCashCents`. **That is not a
+sufficient contract:** it omits the live cancel that owns a superseded capture
+before its refund row exists. The proposed correction in §6.6 must be reviewed
+before implementation resumes. Preserve the following deduction order, with
+the additional ownership evidence counted once as specified there:
 
 1. what the payment took (`netCollectedPaymentTookMoney`) less its recorded
    refunds — card refunds, credit to account and completed hand-backs alike;
@@ -88,6 +91,8 @@ the mirror cash: the payment's captured `PaymentTransaction` rows
 `PROCESSING` face amount is never captured, so it never counts.
 
 `owes = bookingAmountOwedCents − held`; at or below zero is `covered`.
+This is notification evidence only. It must not size a payment instrument,
+change settlement eligibility, or collect a historical residual (`INV-PAY-047`).
 
 ### 2.4 Counted once
 
@@ -157,9 +162,12 @@ money and needs no rows; it reads `covered` through §2.2.
 Every place in the app that decides "paid" or "settled" from a booking's
 status, sorted by what kind of decision it is and when it moves.
 
-A semantic sweep of production code on `main` (d44721e3b), from the lexical
-counts in #4069 §5 (255 occurrences in 128 files). Each row is one decision
-site, or one function's group of lines. "Stage" names the PR that moves it
+The inherited inventory was based on `main` at `d44721e3b` and the lexical
+counts in #4069 §5 (255 occurrences in 128 files). It is **not yet the required
+complete semantic inventory**: grouped rows and false-positive counts still
+need expansion. The 19 November review checked the inherited branch at
+`658f94c13fdcd7642dd28ea3c38f73963d695a9e`, whose local `main` is
+`da2c858ec`. Verified additions below do not certify unexamined sites. "Stage" names the PR that moves it
 (§4); "own plan" needs its own plan in #4069 before code; "M15" moves with
 #4527's refund, cancel and ask cohort; "no move" is a lifecycle decision that
 reads the status correctly.
@@ -314,7 +322,8 @@ and reverts alone.
 - **Validation:** composed real-writer cases on PostgreSQL; the real routes
   where a race is claimed; boundaries (held exactly equal to worth, a refund
   equal to its capture, credit-only, a pending capture); a parity check that
-  held cash is Net Collected's for the same payment; a mutation probe for each
+  invokes `deriveBookingCashCover` and agrees with Net Collected only when no
+  extra superseded ownership applies (otherwise §6.6 is the expected difference); a mutation probe for each
   input (pending face amount, status-only paid, omitted refund, omitted
   credit, organiser money counted twice); every copy variant rendered, the
   unknown one with no amount and no "paid"; reads proven to go through the
@@ -405,8 +414,8 @@ The remaining work is concrete and stays within the approved Stage 1 scope:
 
 - Expand §3 to one row per semantic decision and false positive. Grouped
   descriptions such as “about 130 sites” and wildcard helper rows are not the
-  required complete inventory. The 17 stages in §4 currently propose 16
-  subsequent display PRs; that count remains provisional until the inventory
+  required complete inventory. The stages in §4 propose subsequent single-surface
+  display PRs; that count remains provisional until the inventory
   is complete. Gated stages still need their own plans or M15, never both.
 - Add all approved real-writer cases in
   `booking-cash-evidence.realdb.test.ts`, including organiser share attribution,
@@ -433,7 +442,7 @@ The remaining work is concrete and stays within the approved Stage 1 scope:
 
 ### 6.5 Handoff and plan status
 
-This run changes documentation only and stops under approved Step 2. The
+The 18 November run changed documentation only and stopped under approved Step 2. The
 inherited implementation remains on the branch, with the defects above; it
 must not be treated as merge-ready. No first-commit history was rewritten.
 The whole issue remains incomplete: Step 1's exhaustive inventory and final
@@ -449,3 +458,75 @@ the requested attachment. The coordination note for #4523 remains:
 
 > M11 (#4523) extends `readBookingCashCover` in
 > `src/lib/booking-cash-evidence.ts`; it never adds a second paid/balance reader.
+
+
+### 6.6 Proposed correction, checked against source on 19 November
+
+The money/attribution and concurrency/snapshot reviews independently reproduced
+§6.1 by tracing the current writers and reader, rather than accepting the prior
+review as evidence. `handoffSucceededSupersededIntentToRefund` commits the
+capture with a `PROCESSING` cancel, then enqueues the refund. The cash reader's
+`CARD_REFUND_OPERATION_WHERE` omits that cancel. This is a reachable committed
+state, not a torn read. The approved Step 2 stop remains in force; no product
+code was changed in this review.
+
+**Recommended contract amendment:** include
+`readSupersededCaptureOwnership` in the caller's snapshot and use
+`supersededCaptureHeldBack` for ownership per captured transaction. These
+existing helpers explicitly accept snapshot reads. Keep them as the sole
+ownership definition; do not copy their status lists or allocation rules.
+
+Count the union of obligations attributable to each captured transaction,
+capped at its remaining cash after recorded refunds. A live cancel owning the
+whole remaining capture subsumes a refund obligation on that same money. A
+refund operation or failed-later refund already counted by the card-refund
+operands contributes no second deduction. An independent obligation against a
+different capture still adds. Preserve the hand-back, card-refund and
+late-capture ordering, and prove overlap using transaction, operation, refund
+and allocation-slice identities. Do not subtract total superseded ownership
+from Net Collected, or take a payment-level maximum of the two totals: neither
+proves which money they share. If attribution cannot establish the union,
+return `unknown` with an explicit reason and neutral copy.
+
+The following regression fixture uses a booking worth 50,000 cents, no credit,
+one ordinary 25,000-cent capture and one superseded 25,000-cent capture:
+
+| Superseded capture state | Recorded refund | Open obligation on that capture | Total held for booking | Answer |
+| --- | ---: | ---: | ---: | --- |
+| Capture committed, live cancel, refund not enqueued | 0 | 25,000 | 25,000 | owes 25,000 |
+| Live cancel and its refund operation both exist | 0 | 25,000, once | 25,000 | owes 25,000 |
+| Refund recorded, operation not yet closed | 25,000 | 0 after netting | 25,000 | owes 25,000 |
+| Refund recorded and operation closed | 25,000 | 0 | 25,000 | owes 25,000 |
+| Stripe later refuses refund; recorded refund reversed, replacement owed | 0 | 25,000, once | 25,000 | owes 25,000 |
+| Live cancel plus independent 10,000 refund owed on ordinary capture | 0 | 25,000 plus 10,000 | 15,000 | owes 35,000 |
+| Evidence cannot attribute an overlapping obligation | unproven | unproven | unproven | unknown |
+
+The real-writer test must pause the superseded hand-off after capture commit
+and before refund enqueue, read through `withReadOnlySnapshot`, and repeat
+after enqueue and refund recording. Also prove the recorded-refund-before-close
+interval; an operation's terminal status alone does not establish what it
+refunded. Assertions must call the cash-cover reader, not just its operands.
+The existing pure hold-back tests are useful adjacent coverage, not a substitute
+for this composition.
+
+For organiser children, read the combined settlement intent's disputes through
+`disputedCaptureCents` in the same snapshot, in addition to the child's own
+payment evidence. A holding dispute gives `unknown("disputed")`; do not invent
+a per-child dispute allocation. Exercise the actual group-settlement and
+dispute writers. This changes no settlement or dispute writer.
+
+Ordinary bank hand-back completion already calls `applyLocalRefundAllocation`,
+which updates captured transaction refunds and reconciles the payment mirror.
+Organiser-settled bank children deliberately update only their mirror through
+`group-settlement-mirror-hand-back.ts`; their group share proof remains separate.
+Neither case justifies a history repair. Unverifiable legacy mirrors stay
+`unknown`.
+
+These corrections require no new business policy, writer, schema, provider or
+history change. They do require the corrected blueprint review before Stage 1
+resumes under the explicit stop gate. The current branch still contains the
+inherited unsafe implementation; this documentation does not approve shipping
+it. The saved issue harness and current issue decisions could not be fetched:
+the repository issue reader reports that GitHub CLI is unauthenticated. No
+credentials were sought. The approved plan supplied in this session remains
+the task authority.
