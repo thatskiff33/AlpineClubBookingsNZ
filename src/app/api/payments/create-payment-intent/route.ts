@@ -64,43 +64,17 @@ import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { BELOW_STRIPE_MINIMUM_MEMBER_BODY, BelowStripeMinimumError, chargeCurrencyRefusal, isLocalChargeRefusal, localChargeRefusal, stripeChargeCurrency, UNSUPPORTED_CHARGE_CURRENCY_MEMBER_MESSAGE as CURRENCY_REFUSED } from "@/lib/stripe-charge-currency";
 import { intentCurrencyDiffers } from "@/lib/additional-intent-currency";
 import { staleIntentAction } from "@/lib/stale-intent-action";
-
-class PaymentIntentCapacityError extends Error {
-  constructor() {
-    super("Not enough beds available for your dates. Please choose different dates.");
-    this.name = "PaymentIntentCapacityError";
-  }
-}
-
-/**
- * The booking moved out of the status this request read before the pay
- * transaction could claim it — a concurrent cancel, admin action or a second
- * pay attempt. Nothing was written (the transaction rolls back), so this is a
- * plain conflict, not a failure.
- */
-class PaymentIntentConflictError extends Error {
-  constructor() {
-    super("This booking is no longer payable. Reload the booking and try again.");
-    this.name = "PaymentIntentConflictError";
-  }
-}
-
-/** #3864: another tab attached an intent beside the one retired; nothing spent. */
-class CreditElectionIntentConflictError extends Error {}
-
-/**
- * Defence in depth (#2266): a DRAFT carrying an unresolved admin review must
- * not become payable here. The writers park review-flagged drafts to
- * AWAITING_REVIEW (booking-create and the modify path alike), so this state
- * should not exist — but the no-adult review rule is a child-safety gate, so
- * the pay door checks it too rather than trusting every writer forever.
- */
-class PaymentIntentReviewPendingError extends Error {
-  constructor() {
-    super("This booking needs admin review before it can be paid.");
-    this.name = "PaymentIntentReviewPendingError";
-  }
-}
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
+import {
+  CreditElectionIntentConflictError,
+  PaymentIntentCapacityError,
+  PaymentIntentConflictError,
+  PaymentIntentReviewPendingError,
+} from "@/lib/payment-intent-route-errors";
 
 /**
  * #3638: the one refusal for a card payment on a booking being paid by
@@ -467,7 +441,7 @@ export async function POST(request: NextRequest) {
               // pre-transaction snapshot.
               finalPriceCents: freshBooking.finalPriceCents,
             };
-          })
+          }, LOCK1_HOLDER_TRANSACTION_BUDGET)
         : null;
 
     // The admin alert for review-flagged bookings is sent once at
@@ -885,6 +859,15 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+    // After the captured-payment answers above. The pay step commits its draft
+    // transition, queues stale-intent cancellations and mints an intent before
+    // the lock(1) attach, so an earlier step may have landed (INV-LOCK-006).
+    const contended = transactionContendedResponse(
+      error,
+      "Payment intent creation contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE },
+    );
+    if (contended) return contended;
     // The pay transaction's capacity refusal and its status-conflict bail both
     // carry an intentionally user-facing message; keep them (and their 409).
     // Every other unexpected error gets the fixed generic message so internal

@@ -146,6 +146,12 @@ describe("adult-member hosting participant retry responses (#2597)", () => {
         "deletionCleanupRecovery({",
         'cancellationFact.state === "PENDING" ? booking.id : null',
         'cancellationFact.state === "STATUS_UNCONFIRMED"',
+      ],
+      // #4933 moved the route's recovery body, unchanged, into its own module
+      // to keep the route under its size ceiling: the route is pinned to the
+      // call above, and the flags are pinned where the body now lives.
+      "src/lib/deletion-cleanup-recovery.ts": [
+        "export function deletionCleanupRecovery(",
         "remainingCleanupPending: true",
         "memberAnonymised: false",
         "memberDataAnonymised: false",

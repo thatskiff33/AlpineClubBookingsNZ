@@ -9,6 +9,7 @@ import { isDateOnlyString, parseDateOnly } from "@/lib/date-only"
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges"
 import { prisma } from "@/lib/prisma"
 import { requireAdmin } from "@/lib/session-guards"
+import { transactionContendedResponse } from "@/lib/transaction-contended-response"
 import logger from "@/lib/logger"
 
 const paramsSchema = z.object({
@@ -136,6 +137,11 @@ export async function GET(
   })
   return NextResponse.json(result.body, result.init)
   } catch (error) {
+    const contended = transactionContendedResponse(
+      error,
+      "Admin roster load contended for the lock(1) budget",
+    )
+    if (contended) return contended
     logger.error({ error }, "Failed to load admin roster")
     return NextResponse.json(
       { code: "ROSTER_LOAD_FAILED", error: "Roster could not be loaded because the service is unavailable. Try again." },
@@ -203,6 +209,11 @@ export async function PUT(
   })
   return NextResponse.json(result.body, result.init)
   } catch (error) {
+    const contended = transactionContendedResponse(
+      error,
+      "Admin roster update contended for the lock(1) budget",
+    )
+    if (contended) return contended
     logger.error({ error }, "Failed to update admin roster")
     const saveFailed = parsedAction === "save"
     return NextResponse.json(

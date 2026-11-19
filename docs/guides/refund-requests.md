@@ -67,9 +67,10 @@ payment not yet made (being retried, or stopped and listed on [Stuck States](stu
    while telling the member money is coming. The booking's cancellation
    already raised a **manual refund task** in the queue on **Admin → Finance →
    Payments** (`/admin/payments`) for what the cancellation policy returns;
-   complete the task there once the club has actually paid the member back (or
-   dismiss it, with a note, if the member declined or it was settled another
-   way). Settle any further refund with the treasurer.
+   complete the task there once the club has actually paid the member back. For
+   now it cannot be dismissed (#4516, owner decision 14 Nov 2026): if the
+   member declined or it was settled another way, leave it open. Settle any
+   further refund with the treasurer.
 
    **Internet banking bookings get a bank-transfer task (#3827).** When the
    booking was paid by internet banking (reconciled in Xero), there is no card
