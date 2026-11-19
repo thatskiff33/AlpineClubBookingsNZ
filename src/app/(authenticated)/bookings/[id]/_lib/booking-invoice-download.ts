@@ -16,7 +16,7 @@ import {
 import { bookingHasAnySupplementaryInvoiceEvidence } from "@/lib/booking-supplementary-invoice-identities";
 import { clubDownloadFilename } from "@/lib/club-download-filename";
 import { getClubIdentity } from "@/lib/club-identity-settings";
-import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { loadEffectiveModuleFlagsStrict } from "@/lib/module-settings";
 import type { RateLimitResult } from "@/lib/rate-limit";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { isXeroConnected } from "@/lib/xero-token-store";
@@ -81,7 +81,9 @@ export type BookingInvoiceDownload =
   | { kind: "RATE_LIMITED"; limit: RateLimitResult }
   | { kind: "XERO_NOT_CONNECTED" }
   | { kind: "XERO_UNAVAILABLE" }
-  | { kind: "AUDIT_FAILED" };
+  | { kind: "AUDIT_FAILED" }
+  /** The club's module settings could not be read, so which document is the invoice is unknown. */
+  | { kind: "SETTINGS_UNAVAILABLE" };
 
 /** Which of the booking's Xero documents a download asks for. */
 export type BookingInvoiceDocument = { kind: "INVOICE" } | { kind: "CREDIT_NOTE"; creditNoteId: string };
@@ -151,7 +153,10 @@ const XERO_PDF_READ = {
 
 const downloadDependencies = {
   loadBooking: loadBookingDetail,
-  modules: loadEffectiveModuleFlags,
+  // STRICT (#5066 review): the forgiving loader answers a failed read with every
+  // optional module off, which here would mean "Xero off" and hand a Xero club a
+  // generated document. A failed read refuses the download instead.
+  modules: () => loadEffectiveModuleFlagsStrict(),
   offer: resolveBookingInvoiceOffer,
   xeroConnected: isXeroConnected,
   clubShortName: async () => (await getClubIdentity()).shortName,
@@ -268,7 +273,12 @@ export async function prepareBookingInvoiceDownload(
   const booking = await dependencies.loadBooking(bookingId);
   if (!booking) return { kind: "NOT_FOUND" };
   const viewer = resolveBookingDetailViewer({ session, booking });
-  const modules = await dependencies.modules();
+  let modules: Awaited<ReturnType<typeof dependencies.modules>>;
+  try {
+    modules = await dependencies.modules();
+  } catch {
+    return { kind: "SETTINGS_UNAVAILABLE" };
+  }
   const offer = await dependencies.offer({ booking, viewer, modules });
   const served = servedDocument(offer, booking, document);
   if (!served) return { kind: "NOT_FOUND" };

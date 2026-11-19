@@ -107,6 +107,7 @@ describe("GET /api/bookings/[id]/invoice", () => {
     ["XERO_NOT_CONNECTED", 503],
     ["XERO_UNAVAILABLE", 502],
     ["AUDIT_FAILED", 503],
+    ["SETTINGS_UNAVAILABLE", 503],
   ])("answers %s with %i", async (kind, status) => {
     mocks.prepare.mockResolvedValue({ kind });
     expect((await call()).status).toBe(status);

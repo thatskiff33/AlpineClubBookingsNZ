@@ -13,7 +13,7 @@ vi.mock("@/lib/booking-supplementary-invoice-identities", () => ({
   bookingHasAnySupplementaryInvoiceEvidence: vi.fn(),
 }));
 vi.mock("../_lib/load-booking-detail", () => ({ loadBookingDetail: vi.fn() }));
-vi.mock("@/lib/module-settings", () => ({ loadEffectiveModuleFlags: vi.fn() }));
+vi.mock("@/lib/module-settings", () => ({ loadEffectiveModuleFlagsStrict: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn() }));
 vi.mock("@/lib/booking-credit-notes", () => ({ readBookingCreditNotes: vi.fn() }));
 vi.mock("@/lib/club-identity-settings", () => ({ getClubIdentity: vi.fn() }));
@@ -29,7 +29,7 @@ import { createAuditLog } from "@/lib/audit";
 import { readBookingCreditNotes } from "@/lib/booking-credit-notes";
 import { getClubIdentity } from "@/lib/club-identity-settings";
 import { bookingHasAnySupplementaryInvoiceEvidence } from "@/lib/booking-supplementary-invoice-identities";
-import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { loadEffectiveModuleFlagsStrict } from "@/lib/module-settings";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { loadBookingDetail } from "../_lib/load-booking-detail";
@@ -411,6 +411,15 @@ describe("prepareBookingInvoiceDownload", () => {
       expect(createAuditLog).not.toHaveBeenCalled();
     });
 
+    it("refuses when the module settings cannot be read, rather than treating Xero as off (#5066 review)", async () => {
+      const d = deps({ modules: vi.fn(async () => { throw new Error("database is down"); }) });
+      expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), INVOICE, request, d)).toEqual({ kind: "SETTINGS_UNAVAILABLE" });
+      expect(d.renderGenerated).not.toHaveBeenCalled();
+      expect(d.fetchXeroInvoicePdf).not.toHaveBeenCalled();
+      expect(chargeBookingLimit).not.toHaveBeenCalled();
+      expect(createAuditLog).not.toHaveBeenCalled();
+    });
+
     it("serves no credit note while Xero is off", async () => {
       const d = off();
       expect(await prepareBookingInvoiceDownload("ckbooking1234567", session(OWNER_ID, "USER"), creditNote("xero-cn-1"), request, d)).toEqual({ kind: "NOT_FOUND" });
@@ -446,7 +455,7 @@ describe("prepareBookingInvoiceDownload with its real dependencies", () => {
   it("reads Xero's PDF once through the metered client: no retries, no breaker arming", async () => {
     const getInvoiceAsPdf = vi.fn(async () => ({ body: Buffer.from("%PDF-1.4") }));
     vi.mocked(loadBookingDetail).mockResolvedValue(booking());
-    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({ xeroIntegration: true } as never);
+    vi.mocked(loadEffectiveModuleFlagsStrict).mockResolvedValue({ xeroIntegration: true } as never);
     vi.mocked(bookingHasAnySupplementaryInvoiceEvidence).mockResolvedValue(false);
     vi.mocked(isXeroConnected).mockResolvedValue(true);
     vi.mocked(getAuthenticatedXeroClient).mockResolvedValue({ xero: { accountingApi: { getInvoiceAsPdf } }, tenantId: "tenant-1" } as never);
@@ -474,7 +483,7 @@ describe("prepareBookingInvoiceDownload with its real dependencies", () => {
   it("reads a credit note's PDF through the CreditNotes endpoint, the same metered way", async () => {
     const getCreditNoteAsPdf = vi.fn(async () => ({ body: Buffer.from("%PDF-1.4") }));
     vi.mocked(loadBookingDetail).mockResolvedValue(booking());
-    vi.mocked(loadEffectiveModuleFlags).mockResolvedValue({ xeroIntegration: true } as never);
+    vi.mocked(loadEffectiveModuleFlagsStrict).mockResolvedValue({ xeroIntegration: true } as never);
     vi.mocked(bookingHasAnySupplementaryInvoiceEvidence).mockResolvedValue(false);
     vi.mocked(readBookingCreditNotes).mockResolvedValue([CREDIT_NOTE]);
     vi.mocked(isXeroConnected).mockResolvedValue(true);
