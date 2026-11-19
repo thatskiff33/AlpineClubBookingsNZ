@@ -22,3 +22,8 @@ export const cancelBookingMutationSchema = z.object({
   // would actually strand another booking on the account.
   hostingCoverageOverride: hostingCoverageOverrideSchema.optional(),
 });
+
+/** The route's `[id]` segment, shared with the catalogue for the same reason. */
+export const cancelBookingParamsSchema = z.object({
+  id: z.string().min(1),
+});

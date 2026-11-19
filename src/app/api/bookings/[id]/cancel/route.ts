@@ -8,21 +8,16 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { auth } from "@/lib/auth";
 import { cancelBooking } from "@/lib/booking-cancel";
-import { cancelBookingMutationSchema } from "@/lib/booking-cancel-schema";
+import { cancelBookingMutationSchema, cancelBookingParamsSchema } from "@/lib/booking-cancel-schema";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { z } from "zod";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import {
   bookingManagementAuthorizationRole,
   hasAdminAreaAccess,
 } from "@/lib/admin-permissions";
 import { clubFormatValues } from "@/lib/club-format-server";
-
-const cancelBookingParamsSchema = z.object({
-  id: z.string().min(1),
-});
 
 export async function POST(
   request: NextRequest,
