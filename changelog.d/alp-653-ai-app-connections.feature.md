@@ -12,5 +12,5 @@
   with) and which AI apps are approved, at **Admin → Help & system → AI app
   connections**, where they can also disconnect any member's app. Whatever a
   member asks about is sent to their AI app's provider, so cover this in the
-  club's privacy notice before turning it on. See the
-  [AI app connections guide](docs/guides/mcp-server.md).
+  club's privacy notice before turning it on. The AI app connections guide
+  (`docs/guides/mcp-server.md`) explains the settings and the risks.
