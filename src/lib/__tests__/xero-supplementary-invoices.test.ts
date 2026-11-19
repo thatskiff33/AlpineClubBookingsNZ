@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   recordSupplementaryInvoiceManifest: vi.fn(),
 }));
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 // #4525 (M13): the payment's capture receipt; the recorder has its own suite.
 const captureReceipts = vi.hoisted(() => ({ record: vi.fn() }));
 vi.mock("@/lib/member-money/doors", () => ({
@@ -150,6 +151,9 @@ import type { Prisma } from "@prisma/client";
 import { lineTotalCents } from "@/lib/__tests__/helpers";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
+import type { XeroTaxRendering } from "@/lib/xero-tax-rendering";
+import { LineAmountTypes } from "xero-node";
 
 describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L2)", () => {
   beforeEach(() => {
@@ -426,6 +430,35 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     // Identity is still amount-derived: lines enter no key (INV-PAY-070).
     expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:8000:1000:v1");
   });
+
+  it.each([
+    ["a registered period with another code", { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "OUTPUT3" }],
+    ["an unregistered period", { lineAmountTypes: LineAmountTypes.NoTax }],
+  ] as Array<[string, XeroTaxRendering]>)(
+    "#4632: renders under the booking's own treatment (%s) and records that treatment on its manifest",
+    async (_label, rendering) => {
+      itemisedFixtures();
+      vi.mocked(resolveXeroTaxRendering).mockResolvedValueOnce(rendering);
+
+      await createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
+        bookingId: "bk1",
+        priceDiffCents: 8000,
+        changeFeeCents: 1000,
+        bookingModificationId: "mod_lines",
+      });
+
+      // The booking's anchor (when it was made), never today's treatment.
+      expect(resolveXeroTaxRendering).toHaveBeenCalledWith({ kind: "booking", bookingId: "bk1" });
+      const invoice = mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload.invoices[0];
+      expect(invoice.lineAmountTypes).toBe(rendering.lineAmountTypes);
+      expect(invoice.lineItems.map((line: { taxType?: string }) => line.taxType)).toEqual([rendering.taxType, rendering.taxType]);
+      expect(mocks.recordSupplementaryInvoiceManifest).toHaveBeenCalledWith(expect.objectContaining({
+        lines: invoice.lineItems,
+        taxRendering: rendering,
+      }));
+    },
+  );
 
   it("retrying renders identical lines: the row is the anchor and is re-read, immutable (#3530 acceptance)", async () => {
     itemisedFixtures();

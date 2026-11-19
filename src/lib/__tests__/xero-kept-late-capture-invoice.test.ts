@@ -58,6 +58,7 @@ const db = vi.hoisted(() => {
   return db;
 });
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
 // #4525 (M13): the payment's capture receipt; the recorder has its own suite.
 const captureReceipts = vi.hoisted(() => ({ record: vi.fn() }));

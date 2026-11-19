@@ -6,7 +6,7 @@ what a sender stored live in `src/lib/capture-receipt-senders.ts`; what is left
 in each sender is the call itself, which belongs beside the payment it records.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1554
+lines: 1569
 reason: primary replay must read its stored payment before completion, preserve
   it in the completion payload, then record its capture receipt. The reader and
   recorder already live in capture-receipt-senders.ts; extracting the remaining
@@ -21,5 +21,5 @@ lines: 415
 reason: the receipt's reference and per-leg payment key are handed to the completion that records each leg's capture receipt.
 
 function: src/lib/xero-supplementary-invoices.ts#createXeroSupplementaryInvoice
-lines: 583
+lines: 588
 reason: the supplementary payment's id, key, reference and bank code are kept once Xero returns it, and its capture receipt is recorded after the row completes.
