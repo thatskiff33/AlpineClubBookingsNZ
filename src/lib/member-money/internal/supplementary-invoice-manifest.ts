@@ -8,6 +8,7 @@ import { CHARGE_LEG_SELECT, chargeLegsOf, readBookingChargeLegs } from "./bookin
 import { memberMoneyEventKeys, reviewCloseKeyPrefix } from "./keys";
 import { planSupplementaryBookingInvoice, type SliceEvent, type SupplementaryAnchor } from "./supplementary-invoice-plan";
 import { writeExportManifest } from "./store";
+import type { XeroTaxRendering } from "../../xero-tax-rendering";
 
 /**
  * THE SUPPLEMENTARY INVOICE'S EXPORT MANIFEST, FOR THE SENDER (#4525, Ledger
@@ -90,6 +91,8 @@ export async function recordSupplementaryInvoiceManifest(input: {
   anchor: SupplementaryAnchor;
   legacyKey: string;
   lines: LineItem[];
+  /** The booking's tax rendering the invoice was sent with (#4632), frozen beside its lines. */
+  taxRendering: XeroTaxRendering;
   priceLines: unknown;
   /** The tasks whose settled shares the sent lines itemise; empty for the single line. */
   itemisedShareTaskIds: readonly string[];

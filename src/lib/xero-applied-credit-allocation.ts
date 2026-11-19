@@ -19,7 +19,7 @@
  * (remaining = lot.amountCents − Σ its allocation rows). Provider calls run in the
  * outbox worker, outside the ledger transactions.
  */
-import { CreditNote, LineAmountTypes } from "xero-node";
+import { CreditNote } from "xero-node";
 import { CreditType, Prisma } from "@prisma/client";
 import { appliedCreditSettledByCancel, unallocatedAppliedCents } from "./xero-applied-credit-ledger-state";
 import { prisma } from "./prisma";
@@ -49,6 +49,7 @@ import {
 } from "./xero-contacts";
 import { bookingOwner } from "@/lib/booking-owner";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import logger from "@/lib/logger";
 import { getClubFormat } from "@/lib/club-format-settings";
@@ -181,9 +182,12 @@ async function mintAppliedCreditRemainderNote(params: {
     const mapping = await getResolvedAccountMappingWithFallback(group.mappingKey);
     codings.push(codeMintLine(mapping, group.amountCents));
   }
+  // #4632: the note settles the booking's invoice, so it carries the booking's treatment.
+  const taxRendering = await resolveXeroTaxRendering({ kind: "booking", bookingId });
   const lineItems = mintLineItems(
     codings,
     `Account credit applied to booking ${bookingId.slice(0, 8)}`,
+    taxRendering,
   );
 
   // Club calendar day: the note's date decides its GST period, and the UTC day
@@ -195,7 +199,7 @@ async function mintAppliedCreditRemainderNote(params: {
     type: CreditNote.TypeEnum.ACCRECCREDIT,
     contact: { contactID: resolvedContactId },
     date: remainderNoteDate,
-    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineAmountTypes: taxRendering.lineAmountTypes,
     lineItems,
     reference: `Applied credit - Booking ${bookingId.slice(0, 8)}`,
     status: CreditNote.StatusEnum.AUTHORISED,
