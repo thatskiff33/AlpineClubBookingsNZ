@@ -17,6 +17,7 @@ import {
   websiteOnlyAnswer,
   type McpCaller,
 } from "@/lib/mcp/dispatch";
+import { MCP_SCOPE_LABELS } from "@/lib/mcp/scope-labels";
 
 const caller: McpCaller = {
   grantId: "grant-1",
@@ -78,9 +79,23 @@ describe("runMcpAction: the request it sends", () => {
     expect(audit).not.toHaveBeenCalled();
   });
 
-  it("encodes a path argument so it cannot reach another route", async () => {
-    await runMcpAction(action("get_my_booking"), { id: "../admin/members?x=1" }, caller);
-    expect(send.mock.calls[0][0].path).toBe("/api/bookings/..%2Fadmin%2Fmembers%3Fx%3D1");
+  it.each(["..", ".", "../admin/members?x=1", "a/b", "booking 1", ""])(
+    "refuses the path argument %j, which could reach another route",
+    async (id) => {
+      // `..` survives URL encoding, and `/api/bookings/../cancel` is `/api/cancel`.
+      for (const name of ["get_my_booking", "preview_cancel_booking"]) {
+        const outcome = await runMcpAction(action(name), { id }, caller);
+        expect(outcome.isError, name).toBe(true);
+      }
+      const cancel = await runMcpAction(action("cancel_my_booking"), { id, refundMethod: "credit" }, caller);
+      expect(cancel.isError).toBe(true);
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
+  it("sends a record id as the one path segment it is", async () => {
+    await runMcpAction(action("get_my_booking"), { id: "cm0booking_1-a" }, caller);
+    expect(send.mock.calls[0][0].path).toBe("/api/bookings/cm0booking_1-a");
   });
 
   it("forwards the app's own values and always sets the fixed body fields", async () => {
@@ -126,7 +141,7 @@ describe("runMcpAction: what it refuses", () => {
       viewOnly,
     );
     expect(outcome.isError).toBe(true);
-    expect(outcome.text).toContain("view-only");
+    expect(outcome.text).toContain(`"${MCP_SCOPE_LABELS.READ}"`);
     expect(send).not.toHaveBeenCalled();
     expect(audit).toHaveBeenCalledTimes(1);
     expect(audit.mock.calls[0][0]).toMatchObject({ succeeded: false, action: "MCP_ACTION_CALLED" });

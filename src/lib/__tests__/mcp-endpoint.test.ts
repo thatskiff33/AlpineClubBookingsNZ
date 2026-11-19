@@ -202,7 +202,7 @@ describe("POST /api/mcp: the tools", () => {
       await POST(rpc("tools/call", { name: "who_am_i", arguments: {} })),
     )) as unknown as { content: Array<{ text: string }> };
     expect(JSON.parse(body.content[0].text)).toMatchObject({
-      name: "Ana Reid", connectedApp: "Example Assistant", access: "view and change",
+      name: "Ana Reid", connectedApp: "Example Assistant", access: "View and change",
       clubWebsite: "https://club.example.test", officer: false,
     });
   });
@@ -215,6 +215,31 @@ describe("POST /api/mcp: the tools", () => {
     expect(described.kind).toBe("write");
     expect(described.arguments.properties.checkIn.type).toBe("string");
     expect(described.arguments.properties).not.toHaveProperty("draft");
+  });
+
+  it("refuses a batch of messages, so one request is never more than one action", async () => {
+    const call = { jsonrpc: "2.0", method: "tools/call", params: { name: "who_am_i", arguments: {} } };
+    const request = rpc("tools/list", {});
+    const response = await POST(
+      new Request(request.url, {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify([{ ...call, id: 1 }, { ...call, id: 2 }]),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: -32600 } });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body that is not JSON, or is longer than any action needs", async () => {
+    const request = rpc("tools/list", {});
+    const send = (body: string) =>
+      POST(new Request(request.url, { method: "POST", headers: request.headers, body }));
+
+    expect((await send("{not json")).status).toBe(400);
+    expect((await send(JSON.stringify({ padding: "x".repeat(300_000) }))).status).toBe(413);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("refuses an action that does not exist", async () => {

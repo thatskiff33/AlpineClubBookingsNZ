@@ -32,6 +32,14 @@ import {
 import { MCP_PERMANENT_EXCLUSION_REASONS, mcpPermanentExclusion } from "./exclusions";
 import { sendMcpLoopbackRequest } from "./loopback";
 import { MCP_PRINCIPAL_HEADER, signMcpPrincipal } from "./principal";
+import { MCP_SCOPE_LABELS } from "./scope-labels";
+
+/**
+ * What an argument that becomes part of an address must look like: one record
+ * id. Encoding alone leaves `.` and `..` intact, and those would move the call
+ * to a route other than the one the catalogue names.
+ */
+const ADDRESS_ARGUMENT = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** The longest an app waits on one action before it is told to try again. */
 const MCP_ACTION_TIMEOUT_MS = 25_000;
@@ -65,7 +73,7 @@ export function websiteOnlyAnswer(
 ): McpActionOutcome {
   const origin = getAppBaseUrl();
   const id = typeof args.id === "string" ? args.id : "";
-  if (action.needsId && !/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+  if (action.needsId && !ADDRESS_ARGUMENT.test(id)) {
     return refusal(`${action.title} needs the \`id\` of the booking.`);
   }
   const page = action.page.replace("{id}", encodeURIComponent(id));
@@ -146,7 +154,7 @@ export async function runMcpAction(
   if (action.kind !== "read" && caller.scope !== "READ_WRITE") {
     await recordCall(action, caller, null);
     return refusal(
-      `This connection is view-only, so "${action.title}" was not run. To let the app make changes, the member connects it again from ${origin}/profile and chooses view and change, if the club allows it.`,
+      `This connection is "${MCP_SCOPE_LABELS.READ}", so "${action.title}" was not run. To let the app make changes, the member connects it again from ${origin}/profile and chooses "${MCP_SCOPE_LABELS.READ_WRITE}", if the club allows it.`,
     );
   }
 
@@ -158,6 +166,12 @@ export async function runMcpAction(
   // The app's own values are forwarded, not the parsed ones: the route parses
   // them again, and a parsed date is no longer the string the route expects.
   const { params, query, body } = splitMcpActionArguments(action, args);
+  const unsafe = Object.entries(params).find(
+    ([, value]) => typeof value !== "string" || !ADDRESS_ARGUMENT.test(value),
+  );
+  if (unsafe) {
+    return refusal(`The \`${unsafe[0]}\` argument is not a record id, so nothing was done.`);
+  }
   const publicUrl = new URL(origin);
 
   let response;

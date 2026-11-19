@@ -27,6 +27,7 @@ import {
   type McpAction,
 } from "./catalogue";
 import { runMcpAction, websiteOnlyAnswer, type McpActionOutcome, type McpCaller } from "./dispatch";
+import { MCP_SCOPE_LABELS } from "./scope-labels";
 
 export interface McpServerContext {
   readonly caller: McpCaller;
@@ -166,10 +167,10 @@ function whoAmI(context: McpServerContext): McpActionOutcome {
     officer: hasAdminPortalAccess(user),
     clubWebsite: getAppBaseUrl(),
     connectedApp: context.caller.clientName,
-    access: canChange ? "view and change" : "view only",
+    access: MCP_SCOPE_LABELS[context.caller.scope],
     note: canChange
       ? "Card payments, password changes and anything an officer must confirm again are done on the club website."
-      : "This connection cannot change anything. The member can connect again from their profile page and choose view and change, if the club allows it.",
+      : `This connection cannot change anything. The member can connect again from their profile page and choose "${MCP_SCOPE_LABELS.READ_WRITE}", if the club allows it.`,
   });
 }
 
@@ -187,7 +188,7 @@ function findActions(context: McpServerContext, query: string): McpActionOutcome
       title: action.title,
       summary: action.summary,
       kind: action.kind,
-      ...(action.kind !== "read" && !canChange ? { needs: "a view-and-change connection" } : {}),
+      ...(action.kind !== "read" && !canChange ? { needs: `a "${MCP_SCOPE_LABELS.READ_WRITE}" connection` } : {}),
     })),
     websiteOnly: MCP_WEBSITE_ONLY_ACTIONS.filter((action) =>
       matches(`${action.id} ${action.title} ${action.summary}`),
