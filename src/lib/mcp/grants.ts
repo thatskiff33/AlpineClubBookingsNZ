@@ -179,3 +179,21 @@ export async function listMcpConnectionsForAdmin(): Promise<McpAdminConnectionLi
     memberName: `${grant.member.firstName} ${grant.member.lastName}`,
   }));
 }
+
+/** How stale "last used" may be. One write per connection per window, not per call. */
+const MCP_LAST_USED_RESOLUTION_MS = 5 * 60 * 1000;
+
+/** Records that a connection was used, at most once per five minutes. */
+export async function touchMcpGrantLastUsed(grantId: string, now: Date): Promise<void> {
+  await prisma.mcpGrant.updateMany({
+    where: {
+      id: grantId,
+      status: "ACTIVE",
+      OR: [
+        { lastUsedAt: null },
+        { lastUsedAt: { lt: new Date(now.getTime() - MCP_LAST_USED_RESOLUTION_MS) } },
+      ],
+    },
+    data: { lastUsedAt: now },
+  });
+}
