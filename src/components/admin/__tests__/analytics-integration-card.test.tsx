@@ -161,11 +161,18 @@ describe("Edit inside the dialog (#4115)", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    // The shared reveal would have focused the aria-hidden card; it stands
-    // aside and the dialog's own focus scope keeps focus inside the dialog.
+    // The shared reveal would have focused the aria-hidden card, so it acts in
+    // the dialog that holds Edit instead. The dialog's own focus scope does not
+    // do it: Edit is not removed, React reuses it as the disabled Save, and a
+    // browser then drops focus to the page behind the modal (#5183; jsdom 30
+    // kept focus on that disabled button, so this test once passed by accident).
     expect(document.activeElement).not.toBe(card);
     expect(card.contains(document.activeElement)).toBe(false);
     expect(dialog.contains(document.activeElement)).toBe(true);
+    // And it is the first control Edit made editable, as everywhere else (#4115).
+    expect(document.activeElement).toBe(
+      screen.getByLabelText("GA4 measurement ID"),
+    );
   });
 });
 

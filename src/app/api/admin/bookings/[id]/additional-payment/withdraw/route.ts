@@ -3,6 +3,10 @@ import { withdrawAdditionalPaymentAsk } from "@/lib/additional-payment-withdraw"
 import { getAuditRequestContext } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import {
+  TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE,
+  transactionContendedResponse,
+} from "@/lib/transaction-contended-response";
 
 /**
  * POST /api/admin/bookings/[id]/additional-payment/withdraw — withdraw an
@@ -53,6 +57,14 @@ export async function POST(
       retired: result.retired,
     });
   } catch (err) {
+    // `INV-LOCK-006`: the card request was already cancelled at the provider
+    // before the ledger transaction rolled back, so the officer checks.
+    const contended = transactionContendedResponse(
+      err,
+      "Additional-payment withdrawal contended for the lock(1) budget",
+      { message: TRANSACTION_CONTENDED_STATUS_CHECK_MESSAGE, context: { bookingId } },
+    );
+    if (contended) return contended;
     logger.error(
       { err, bookingId },
       "Failed to withdraw the additional payment request",

@@ -68,6 +68,7 @@ import {
   coveredNightsByDate,
 } from "./_components/leader-calendar-overlay";
 import type { HutLeaderOnNight } from "@/lib/hut-leader-handover";
+import { notifyAdminQueueChanged } from "@/lib/admin-queue-events";
 import {
   apiErrorMessageFromBody,
   apiErrorMessageFromResponse,
@@ -606,6 +607,8 @@ export default function HutLeadersPage() {
       setOverCapacity(null);
       setHoldAmendment(null);
       fetchAssignments();
+      // The Needs Attention hut-leader badge counts these nights (#4962).
+      notifyAdminQueueChanged();
       fetchUnassignedDates();
       refreshOverlay(visibleMonthKey);
     } catch {
@@ -720,6 +723,7 @@ export default function HutLeadersPage() {
       // A held bed is presence (#3818, INV-DATE-031), so setting or releasing
       // one changes which nights are covered: the amber list must move with
       // the calendar, as it does after a create or a delete.
+      notifyAdminQueueChanged();
       fetchUnassignedDates();
       refreshOverlay(visibleMonthKey);
     } finally {
@@ -738,6 +742,7 @@ export default function HutLeadersPage() {
     if (res.ok) {
       setError(null);
       fetchAssignments();
+      notifyAdminQueueChanged();
       fetchUnassignedDates();
       refreshOverlay(visibleMonthKey);
       return;

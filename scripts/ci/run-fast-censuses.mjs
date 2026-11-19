@@ -90,6 +90,10 @@ export const FAST_CENSUS_SUITES = [
     why: "the registered advisory-lock site inventory (INV-LOCK-003)",
   },
   {
+    path: "src/lib/__tests__/lock1-transaction-budget-census.test.ts",
+    why: "every lock(1) site's transaction runs on the shared budget (INV-LOCK-006); a site main adds is judged here",
+  },
+  {
     path: "src/lib/__tests__/club-time-escape-hatch-census.test.ts",
     why: "the counted club-time escape hatches",
   },

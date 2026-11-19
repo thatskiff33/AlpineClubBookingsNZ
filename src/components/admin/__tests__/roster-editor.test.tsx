@@ -268,10 +268,12 @@ describe("RosterEditor staged whole-roster editing", () => {
    * before it writes — so "Roster not saved" stands. What it is not is a
    * connection problem, and the fallback used to say it was, sending the
    * operator to check their network after the server had just answered them.
+   * An empty or blank `error` says nothing either, so it is the same refusal and
+   * not a blank alert (#4976).
    */
-  it("names a reason-less refusal as a refusal, not as an unreachable service", async () => {
+  it.each(["{}", '{"error":""}', '{"error":"   "}'])("names a reason-less refusal as a refusal, not as an unreachable service (reply %s)", async (replyBody) => {
     const network = "Roster not saved because the service could not be reached. Your draft is still here; try Save again."
-    const fetchMock = vi.fn<typeof fetch>(async () => new Response("{}", { status: 400 }))
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(replyBody, { status: 400 }))
     vi.stubGlobal("fetch", fetchMock)
     renderEditor()
     fireEvent.click(screen.getByRole("button", { name: "Edit roster" }))

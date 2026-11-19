@@ -10,11 +10,12 @@ import {
   OPEN_TASK_BOOKING_PAYMENT_SELECT, OPEN_TASK_REFUND_PAYMENT_SELECT,
   toAutoRefundedManualRefundTaskPayload,
   toDismissedManualRefundTaskPayload,
-  toOpenManualRefundTaskPayload,
+  toOpenManualRefundTaskPayloads,
 } from "@/lib/manual-refund-task-queue-payload";
 import { unpricedNightsSummariesForQueue } from "@/lib/stored-night-price-repair-queue";
 import {
   readDismissedManualRefundTasks,
+  readOpenTaskDisputes,
   readOrDegrade,
 } from "@/lib/manual-refund-task-queue-reads";
 
@@ -215,6 +216,7 @@ export async function GET() {
     tasks,
     store: prisma,
   });
+  const disputes = await readOpenTaskDisputes(prisma, tasks); // #4516: the dismissal rule's disputes, failing closed
 
   return NextResponse.json({
     // #3033: whether the "open the booking's payment and rate history" link is
@@ -226,13 +228,7 @@ export async function GET() {
       redaction lives: the stored review context is parsed there and the raw
       column never crosses the wire.
     */
-    tasks: tasks.map((task) =>
-      toOpenManualRefundTaskPayload(
-        task,
-        guard.session.user.id,
-        unpricedNights.get(task.id) ?? [],
-      ),
-    ),
+    tasks: toOpenManualRefundTaskPayloads(tasks, guard.session.user.id, unpricedNights, disputes),
     // True only when the notices read itself failed. The surface says so in a
     // line of its own rather than showing an empty card, because "no automatic
     // refunds in the last 30 days" is a claim about money and a failed query is

@@ -26,6 +26,7 @@ import { formatCents } from "@/lib/utils";
 import type { ClubFormat } from "@/lib/club-format";
 import { clubFormatValues } from "@/lib/club-format-server";
 import { LEDGER_ROWS_NEWEST_FIRST } from "@/lib/payment-ledger-order";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * WITHDRAW AN UNPAID ADDITIONAL-PAYMENT REQUEST (#3528, `INV-ADDPAY-040`,
@@ -391,13 +392,11 @@ export async function withdrawAdditionalPaymentAsk(params: {
       : { count: 0 };
 
     return { xeroOperations: xeroOperations.count };
-  }, {
-    // The longest-lived holder of the global key in the tree runs on this
-    // budget (`assignBedRange`); queued behind it, the default 5s would turn a
-    // legitimate wait into a 500 after the intent is already dead at Stripe.
-    maxWait: 10_000,
-    timeout: 30_000,
-  }).catch((err) => {
+  },
+  // The shared lock(1) budget (`INV-LOCK-006`): queued behind a long holder of
+  // the global key, the default 5s would turn a legitimate wait into a failure
+  // after the intent is already dead at Stripe.
+  LOCK1_HOLDER_TRANSACTION_BUDGET).catch((err) => {
     if (err instanceof WithdrawalFenceError) return null;
     throw err;
   });

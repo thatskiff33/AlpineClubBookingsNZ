@@ -38,6 +38,13 @@
 // `migration.sql` by `config-transfer-cleaned-literals.test.ts`, so the registry
 // and the migrations can never drift apart silently.
 
+import {
+  STARTER_PRIVACY_BODY_1945,
+  STARTER_PRIVACY_BODY_4031,
+  STARTER_PRIVACY_BODY_4914,
+  STARTER_PRIVACY_BODY_4915,
+} from "./starter-privacy-cleaned-bodies";
+
 /** One planted value that a cleanup migration removed. */
 export interface CleanedLiteral {
   /**
@@ -85,8 +92,9 @@ export interface CleanedLiteral {
  * removes starter/seed content that a config bundle round-trips.
  *
  * TRIGGER (enforced): when a migration's `UPDATE … WHERE` clause pins the byte
- * value of an exportable content column (`PageContent.headerText`,
- * `SiteContent.contentHtml`, or a `Lodge` field once it is in `LODGE_FIELDS`),
+ * value of an exportable content column (`PageContent.headerText` or
+ * `.contentHtml`, `SiteContent.contentHtml`, or a `Lodge` field once it is in
+ * `LODGE_FIELDS`) with `=` or `IN (…)`, under a quote or any dollar-quote tag,
  * add an entry here. `config-transfer-cleaned-literals.test.ts` scans the
  * migrations for exactly that shape and turns CI red on any value-pinned cleanup
  * that neither registers an entry nor sits on its explicit exempt list — so a
@@ -147,6 +155,61 @@ export const CLEANED_LITERALS: readonly CleanedLiteral[] = [
     issue: "#2484",
     describe: "another club's lodge address (Waldvogel Lodge)",
     dormant: true,
+  },
+  {
+    // #5007 — 20261222030000_rewrite_starter_privacy_recipients rewrote an
+    // unedited starter privacy policy so section 5 lists every member-facing
+    // recipient in the register and names the host through {{data-hosting}}.
+    // This is the body #4915 wrote, which the migration guards as `$previous$`:
+    // the text an unedited page holds when the migration runs.
+    entity: "page-content",
+    key: "privacy",
+    field: "contentHtml",
+    literal: STARTER_PRIVACY_BODY_4915,
+    migration: "20261222030000_rewrite_starter_privacy_recipients",
+    issue: "#5007",
+    describe:
+      "the starter privacy policy from before its recipients and hosting were listed",
+  },
+  {
+    // #5007 — the same migration also rewrites the body #4914 wrote (guarded as
+    // `$older$`), which a stale editor save or an old bundle can restore.
+    entity: "page-content",
+    key: "privacy",
+    field: "contentHtml",
+    literal: STARTER_PRIVACY_BODY_4914,
+    migration: "20261222030000_rewrite_starter_privacy_recipients",
+    issue: "#5007",
+    describe:
+      "the starter privacy policy from before its recipients and hosting were listed, as it read before the access download was described",
+  },
+  {
+    // #5007 — the same migration also rewrites the body #4031 wrote (guarded
+    // as `$oldest$`), which still says members' data is held in Sydney and that
+    // backups are encrypted.
+    entity: "page-content",
+    key: "privacy",
+    field: "contentHtml",
+    literal: STARTER_PRIVACY_BODY_4031,
+    migration: "20261222030000_rewrite_starter_privacy_recipients",
+    issue: "#5007",
+    describe:
+      "the starter privacy policy that said members' data is held in Sydney",
+  },
+  {
+    // #5007: the same migration also rewrites the body #1945 wrote (guarded as
+    // `$earliest$`), the text #4031's migration replaced on every install that
+    // ran it. It still says members' data is held in Sydney, that backups are
+    // encrypted and that audit logs are pruned after 90 days, and an old bundle
+    // or a stale editor save can restore it.
+    entity: "page-content",
+    key: "privacy",
+    field: "contentHtml",
+    literal: STARTER_PRIVACY_BODY_1945,
+    migration: "20261222030000_rewrite_starter_privacy_recipients",
+    issue: "#5007",
+    describe:
+      "the starter privacy policy that said members' data is held in Sydney and audit logs are pruned after 90 days",
   },
 ];
 
