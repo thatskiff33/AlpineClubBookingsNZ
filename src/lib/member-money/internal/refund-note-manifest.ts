@@ -370,15 +370,19 @@ async function resolveFailedLaterRefundReversal(db: Db, closeTaskId: string): Pr
 }
 
 export type FailedLaterRefundReversalManifestSource =
-  /** The line this run built and Xero just accepted. */
-  | { kind: "BUILT"; lines: LineItem[] }
+  /** The line this run built and Xero just accepted, and the booking's tax rendering it was sent with (#4632). */
+  | { kind: "BUILT"; lines: LineItem[]; taxRendering: XeroTaxRendering }
   /** An invoice an earlier attempt raised: the operation's stored request is read, never rebuilt. */
   | { kind: "REPLAY"; operationId: string };
 
-/** A replay's stored invoice lines (`storedInvoiceRequestLines`), or null when the row stores none. */
-async function readStoredReversalLines(operationId: string): Promise<LineItem[] | null> {
+/**
+ * A replay's stored invoice lines and the basis that stored invoice was raised
+ * under (`storedInvoiceRequestLines`, #4632), or null when the row stores no lines.
+ */
+async function readStoredReversal(operationId: string): Promise<{ lines: LineItem[]; lineAmountTypes: string | null } | null> {
   const row = await prisma.xeroSyncOperation.findUnique({ where: { id: operationId }, select: { requestPayload: true } });
-  return storedInvoiceRequestLines(row?.requestPayload).storedLines;
+  const { storedLines, storedLineAmountTypes } = storedInvoiceRequestLines(row?.requestPayload);
+  return storedLines ? { lines: storedLines, lineAmountTypes: storedLineAmountTypes } : null;
 }
 
 /**
@@ -396,18 +400,20 @@ export async function recordFailedLaterRefundReversalManifest(input: {
 }): Promise<void> {
   const context = { paymentId: input.paymentId, bookingId: input.bookingId, closeTaskId: input.closeTaskId, invoiceId: input.invoiceId };
   await recordSafely("FAILED_LATER_REFUND_REVERSAL", context, async () => {
-    const lines = input.source.kind === "BUILT" ? input.source.lines : await readStoredReversalLines(input.source.operationId);
-    if (!lines) return;
+    const stored = input.source.kind === "BUILT"
+      ? { lines: input.source.lines, lineAmountTypes: input.source.taxRendering.lineAmountTypes }
+      : await readStoredReversal(input.source.operationId);
+    if (!stored) return;
     const source = input.source.kind === "BUILT" ? "BUILT" : "STORED_REQUEST";
     const written = await prisma.$transaction(async (tx) => writeRefundExportManifest(tx, {
       role: "FAILED_LATER_REFUND_REVERSAL",
       bookingId: input.bookingId,
       providerObjectId: input.invoiceId,
       plan: planFailedLaterRefundReversal({
-        lines,
+        lines: stored.lines,
         legacyKey: input.legacyKey,
         source,
-        lineAmountTypes: null,
+        lineAmountTypes: stored.lineAmountTypes,
         reversal: await resolveFailedLaterRefundReversal(tx, input.closeTaskId),
       }),
     }));

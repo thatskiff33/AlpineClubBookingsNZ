@@ -31,6 +31,7 @@ import logger from "@/lib/logger";
 import { bookingOwner } from "@/lib/booking-owner";
 import { hutFeeRefundLine } from "@/lib/xero-hut-fee-line-codes";
 import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
+import type { XeroTaxRendering } from "@/lib/xero-tax-rendering";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -258,7 +259,8 @@ export async function createXeroCardRefundReversalInvoice(
     let invoiceId = invoiceLink?.xeroObjectId ?? null;
     let invoiceNumber = invoiceLink?.xeroObjectNumber ?? null;
     let invoiceBody: unknown = null;
-    let sentLines: LineItem[] | null = null;
+    // What this run built and sent: its line and the tax rendering it was built under (#4632).
+    let sent: { lines: LineItem[]; taxRendering: XeroTaxRendering } | null = null;
     const storedDate = asRecord(invoiceLink?.metadata)?.documentDate;
     // A real day, not just the shape: this worker writes `documentDate` from a
     // real day, so a stored non-day is corruption and falls back to choosing the
@@ -330,7 +332,7 @@ export async function createXeroCardRefundReversalInvoice(
       invoiceId = created.invoiceID;
       invoiceNumber = created.invoiceNumber ?? null;
       invoiceBody = response.body;
-      sentLines = [line];
+      sent = { lines: [line], taxRendering };
       await prisma.xeroSyncOperation.update({
         where: { id: syncOperation.id },
         data: {
@@ -401,7 +403,7 @@ export async function createXeroCardRefundReversalInvoice(
       closeTaskId,
       invoiceId: invoiceId!,
       legacyKey: cardRefundReversalInvoiceKey(paymentId, closeTaskId),
-      source: sentLines ? { kind: "BUILT", lines: sentLines } : { kind: "REPLAY", operationId: syncOperation.id },
+      source: sent ? { kind: "BUILT", ...sent } : { kind: "REPLAY", operationId: syncOperation.id },
     });
     return invoiceId;
   } catch (error) {

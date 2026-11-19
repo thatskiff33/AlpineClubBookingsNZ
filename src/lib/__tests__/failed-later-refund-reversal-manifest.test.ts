@@ -32,6 +32,8 @@ vi.mock("@/lib/prisma", () => {
   return { prisma };
 });
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
+// #4632: a replay must never consult the schedule; a case moves it to prove that.
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/member-money/internal/store", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/member-money/internal/store")),
   writeExportManifest: mocks.writeExportManifest,
@@ -43,6 +45,8 @@ import { buildCardRefundFailedLaterRecoveryKey } from "@/lib/payment-recovery-ke
 import { buildCardRefundStillOwedRecoveryKey } from "@/lib/card-refund-still-owed-keys";
 import { hutFeeRefundLine } from "@/lib/xero-hut-fee-line-codes";
 import { cardRefundReversalInvoiceKey } from "@/lib/xero-card-refund-reversal-invoice";
+import { BASELINE_XERO_TAX_RENDERING as BASELINE, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 
 const BOOKING_ID = "cmbooking0001xyz";
 const PAYMENT_ID = "cmpayment0001xyz";
@@ -53,7 +57,8 @@ const R12_JOURNAL = "journal_r12";
 const LEGACY_KEY = cardRefundReversalInvoiceKey(PAYMENT_ID, CLOSE_ID);
 const MAPPING = { code: "210", itemCode: null, codeExplicitlyConfigured: true } as never;
 
-const line = (cents: number) => hutFeeRefundLine("Failed card refund's money returned", cents, MAPPING);
+const line = (cents: number, rendering: XeroTaxRendering = BASELINE) =>
+  hutFeeRefundLine("Failed card refund's money returned", cents, MAPPING, rendering);
 
 function closeOf(operationId: string) {
   return { kind: "CANCELLED_BOOKING_HAND_BACK", occurrenceKey: cardRefundPaidAnotherWayOccurrenceKey(operationId, { xeroRefundNote: "now" }) };
@@ -85,10 +90,13 @@ function journal(reversedCents: number | null, options: { r12?: boolean; clearin
 /** The problem the recorder logged with its conflict. */
 const loggedProblem = () => (mocks.logger.warn.mock.calls[0]?.[0] as { problem?: string } | undefined)?.problem;
 
-const record = (lines = [line(8_000)]) => recordFailedLaterRefundReversalManifest({
+const record = (lines = [line(8_000)], taxRendering: XeroTaxRendering = BASELINE) => recordFailedLaterRefundReversalManifest({
   paymentId: PAYMENT_ID, bookingId: BOOKING_ID, closeTaskId: CLOSE_ID, invoiceId: "inv_1", legacyKey: LEGACY_KEY,
-  source: { kind: "BUILT", lines },
+  source: { kind: "BUILT", lines, taxRendering },
 });
+
+const replay = () => recordFailedLaterRefundReversalManifest({ paymentId: PAYMENT_ID, bookingId: BOOKING_ID, closeTaskId: CLOSE_ID,
+  invoiceId: "inv_1", legacyKey: LEGACY_KEY, source: { kind: "REPLAY", operationId: "op_1" } });
 
 const written = () => mocks.writeExportManifest.mock.calls[0]![1];
 
@@ -215,6 +223,38 @@ describe("recordFailedLaterRefundReversalManifest", () => {
     await recordFailedLaterRefundReversalManifest({ paymentId: PAYMENT_ID, bookingId: BOOKING_ID, closeTaskId: CLOSE_ID,
       invoiceId: "inv_1", legacyKey: LEGACY_KEY, source: { kind: "REPLAY", operationId: "op_1" } });
     expect(mocks.writeExportManifest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the baseline (registered, OUTPUT2)", BASELINE],
+    ["a registered period with another code", { lineAmountTypes: "Inclusive", taxType: "OUTPUT3" }],
+    ["an unregistered period", { lineAmountTypes: "NoTax" }],
+  ] as Array<[string, XeroTaxRendering]>)("#4632: a built reversal freezes the rendering it was sent with, under %s", async (_label, rendering) => {
+    await record([line(8_000, rendering)], rendering);
+    expect(written()).toMatchObject({
+      outcome: "COVERED",
+      frozenMapping: { source: "BUILT", lineAmountTypes: rendering.lineAmountTypes, lineCodes: [{ accountCode: "210", taxType: rendering.taxType ?? null }] },
+    });
+  });
+
+  it("#4632: a replay keeps its stored request's own basis and line tax type after a scheduled change, never the schedule's", async () => {
+    // The schedule now says unregistered; the invoice was raised under the baseline and stored so.
+    vi.mocked(resolveXeroTaxRendering).mockResolvedValue({ lineAmountTypes: "NoTax" } as XeroTaxRendering);
+    mocks.syncOperationFindUnique.mockResolvedValue({ requestPayload: { invoices: [{ lineAmountTypes: "Inclusive", lineItems: [line(8_000)] }] } });
+    await replay();
+    expect(written()).toMatchObject({
+      outcome: "COVERED",
+      frozenMapping: { source: "STORED_REQUEST", lineAmountTypes: "Inclusive", lineCodes: [{ taxType: "OUTPUT2" }] },
+    });
+    expect(resolveXeroTaxRendering).not.toHaveBeenCalled();
+
+    // A stored request that holds no basis freezes null, never a guess.
+    vi.clearAllMocks();
+    mocks.writeExportManifest.mockResolvedValue("WRITTEN");
+    mocks.syncOperationFindUnique.mockResolvedValue({ requestPayload: { invoices: [{ lineItems: [line(8_000)] }] } });
+    await replay();
+    expect(written()).toMatchObject({ frozenMapping: { source: "STORED_REQUEST", lineAmountTypes: null } });
+    vi.mocked(resolveXeroTaxRendering).mockReset();
   });
 
   it("swallows and logs a database failure, and a lost unique race", async () => {
