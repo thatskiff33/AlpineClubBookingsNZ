@@ -11,6 +11,7 @@
 import "server-only";
 
 import { cache } from "react";
+import { headers } from "next/headers";
 import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
@@ -37,6 +38,8 @@ import {
 } from "./recent-auth";
 import { consumeSessionReauthChallenge } from "./session-reauth";
 import { applySessionTokenToUser, refreshSessionToken } from "./session-refresh";
+import { resolveMcpPrincipalSession } from "./mcp/grant-session";
+import { MCP_PRINCIPAL_HEADER } from "./mcp/principal";
 import {
   consumeTwoFactorSessionChallenge,
   twoFactorChallengeProofKind,
@@ -722,12 +725,33 @@ export const { handlers, signIn, signOut, unstable_update: updateSession } =
   nextAuth;
 
 /**
+ * The internal principal header, or null. Outside a request there are no
+ * headers to read and so no connection; the cookie path below then behaves as
+ * it always has.
+ */
+async function readMcpPrincipalHeader(): Promise<string | null> {
+  try {
+    return (await headers()).get(MCP_PRINCIPAL_HEADER);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Memoised per server-component render (#4938): every caller in one render
  * shares one refresh, the next request refreshes again (INV-AUTH-007), and
  * outside a render `cache()` memoises nothing. Wrap only here — a second
  * `cache()` is a second memo. docs/SECURITY.md has the detail.
  */
 export const auth = cache(async () => {
+  // ALP-653 (INV-MCP-005): a request carrying the internal principal header is
+  // an AI app connection calling a route over loopback. It is that connection
+  // or nobody: a value that does not verify never falls back to a cookie.
+  const mcpPrincipal = await readMcpPrincipalHeader();
+  if (mcpPrincipal !== null) {
+    return resolveMcpPrincipalSession(mcpPrincipal);
+  }
+
   const session = await nextAuth.auth();
 
   if (session?.user?.sessionInvalidated) {
