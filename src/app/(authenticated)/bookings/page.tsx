@@ -1,4 +1,5 @@
 import { bookingOwner } from "@/lib/booking-owner";
+import { memberVisibleBookingWhere } from "@/lib/member-self-read";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
@@ -94,13 +95,7 @@ export default async function MyBookingsPage() {
 
   const [bookings, activeLodgeCount] = await Promise.all([
     prisma.booking.findMany({
-      where: {
-        deletedAt: null,
-        OR: [
-          { memberId: session.user.id },
-          { guests: { some: { memberId: session.user.id } } },
-        ],
-      },
+      where: memberVisibleBookingWhere(session.user.id),
       include: {
         // #3278: the stored-money classification below is derived from THIS read,
         // so the per-night and adjustment evidence it needs rides along here

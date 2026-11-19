@@ -3,11 +3,12 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { deleteBooking } from "@/lib/booking-delete";
 import logger from "@/lib/logger";
+import { getMemberBookingSummary } from "@/lib/member-self-read";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 
-const deleteBookingParamsSchema = z.object({
+const bookingParamsSchema = z.object({
   id: z.string().min(1),
 });
 
@@ -30,12 +31,42 @@ async function readDeleteBody(request: NextRequest) {
   }
 }
 
+/**
+ * GET /api/bookings/[id]
+ *
+ * One booking the signed-in member made or is a guest on. A booking that is
+ * someone else's answers exactly as one that does not exist.
+ */
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const parsedParams = bookingParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+  }
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
+  }
+
+  const booking = await getMemberBookingSummary(session.user.id, parsedParams.data.id);
+  if (!booking) {
+    return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+  }
+  return NextResponse.json({ booking });
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const parsedParams = deleteBookingParamsSchema.safeParse(await params);
+    const parsedParams = bookingParamsSchema.safeParse(await params);
     if (!parsedParams.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsedParams.error.flatten() },

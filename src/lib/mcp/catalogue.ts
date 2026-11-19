@@ -97,7 +97,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     summary:
       "The signed-in member's bookings, newest stay first: the ones they made and the ones they are a guest on.",
     method: "GET",
-    path: "/api/bookings",
+    path: "/api/bookings/mine",
     kind: "read",
     core: true,
   },
@@ -126,7 +126,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     title: "Read my profile",
     summary: "The signed-in member's own contact details and membership.",
     method: "GET",
-    path: "/api/profile",
+    path: "/api/profile/summary",
     kind: "read",
     core: true,
   },
