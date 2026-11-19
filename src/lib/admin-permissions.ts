@@ -347,6 +347,9 @@ const ROUTE_AREA_PREFIXES: Array<{
       // Admin on the credentials route regardless of area level. (The admin page
       // /admin/ai-assistant takes the same area from its registry entry.)
       "/api/admin/ai-assistant",
+      // AI app connections (ALP-653): support view = the settings and every
+      // connection; support edit = change the settings, disconnect an app.
+      "/api/admin/mcp",
       // AI Diagnostics (AID-2, #2371) — a SEPARATE admin-only paid product.
       // Registered under support so its budget + readiness API never falls back
       // to the overview catch-all: support view = readiness/status, support edit
