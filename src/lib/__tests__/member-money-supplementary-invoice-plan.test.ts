@@ -40,6 +40,7 @@ import {
 import { LineAmountTypes, type LineItem } from "xero-node";
 import { modificationChangeFeeKey } from "@/lib/booking-ledger-posting-keys";
 import { changeFeeLineItem } from "@/lib/xero-modification-line-items";
+import { BASELINE_XERO_TAX_RENDERING as BASELINE, xeroLineTax, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
 import type { PostedRevenueLeg } from "@/lib/member-money/internal/components";
 import { planPrimaryInvoiceUpdate, primaryInvoicePayloadHash } from "@/lib/member-money/internal/primary-invoice-plan";
 import {
@@ -69,7 +70,8 @@ function input(overrides: Partial<SupplementaryInvoicePlanInput> = {}): Suppleme
     bookingId: BOOKING,
     anchor: { kind: "MODIFICATION", modificationId: MOD },
     legacyKey: `xero-supplementary:${MOD}`,
-    lines: [stayLine(4500), changeFeeLineItem(2000, mapping)],
+    lines: [stayLine(4500), changeFeeLineItem(2000, mapping, BASELINE)],
+    taxRendering: BASELINE,
     priceLines: [{ kind: "night" }],
     sliceEvent: { eventKey: EVENT, reversed: false, legs: [leg("BOOKING_REVENUE", STAY, 4500), leg("FEE_REVENUE", FEE, 2000)] },
     postedLegs: [leg("BOOKING_REVENUE", STAY, 14000), leg("BOOKING_REVENUE", STAY, 4500), leg("FEE_REVENUE", FEE, 2000)],
@@ -100,10 +102,47 @@ describe("planSupplementaryBookingInvoice (ALP-436)", () => {
 
   it("covers a fee-only invoice when the edit moved no stay money", () => {
     const plan = planSupplementaryBookingInvoice(input({
-      lines: [changeFeeLineItem(2000, mapping)],
+      lines: [changeFeeLineItem(2000, mapping, BASELINE)],
       sliceEvent: { eventKey: EVENT, reversed: false, legs: [leg("FEE_REVENUE", FEE, 2000)] },
     }));
     expect(plan).toMatchObject({ outcome: "COVERED", coverage: [{ account: "FEE_REVENUE", chargeIdentity: FEE, coveredCents: 2000 }] });
+  });
+
+  // #4632: the three treatments a tax period can hold. The sender renders the
+  // invoice under the booking's own (its tax anchor: when it was made); the
+  // manifest freezes exactly that rendering, and each line's own tax type.
+  const TREATMENTS: ReadonlyArray<[string, XeroTaxRendering]> = [
+    ["the baseline (registered, OUTPUT2)", BASELINE],
+    ["a registered period with another code", { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "OUTPUT3" }],
+    ["an unregistered period", { lineAmountTypes: LineAmountTypes.NoTax }],
+  ];
+
+  it.each(TREATMENTS)("freezes the treatment the invoice was sent with under %s", (_label, taxRendering) => {
+    const lines = [{ ...stayLine(4500), ...xeroLineTax(taxRendering) }, changeFeeLineItem(2000, mapping, taxRendering)];
+    const plan = planSupplementaryBookingInvoice(input({ lines, taxRendering }));
+    expect(plan.outcome).toBe("COVERED");
+    expect(plan.frozenMapping).toMatchObject({
+      source: "BUILT",
+      taxType: taxRendering.taxType ?? null,
+      lineAmountTypes: taxRendering.lineAmountTypes,
+      lineCodes: [
+        { accountCode: "201", itemCode: null, taxType: taxRendering.taxType ?? null },
+        { accountCode: "201", itemCode: "HUT", taxType: taxRendering.taxType ?? null },
+      ],
+    });
+  });
+
+  it("never freezes another treatment than the one it was handed, whatever today's is", () => {
+    // A booking made before a change to unregistered keeps registered OUTPUT2
+    // for its whole life (#4632, decision A): the sender hands the planner the
+    // booking's rendering, and the planner records that, not a default.
+    const unregistered: XeroTaxRendering = { lineAmountTypes: LineAmountTypes.NoTax };
+    const plan = planSupplementaryBookingInvoice(input({
+      lines: [stayLine(4500), changeFeeLineItem(2000, mapping, unregistered)],
+      taxRendering: unregistered,
+    }));
+    expect(plan.frozenMapping).toMatchObject({ taxType: null, lineAmountTypes: LineAmountTypes.NoTax });
+    expect(plan.frozenMapping).not.toMatchObject({ lineAmountTypes: LineAmountTypes.Inclusive });
   });
 
   it("bills a second ask's review closure as a slice, with no fee", () => {
@@ -122,7 +161,7 @@ describe("planSupplementaryBookingInvoice (ALP-436)", () => {
   });
 
   it("records a reduction netted against a fee as a conflict", () => {
-    const plan = planSupplementaryBookingInvoice(input({ lines: [stayLine(-1000), changeFeeLineItem(2000, mapping)] }));
+    const plan = planSupplementaryBookingInvoice(input({ lines: [stayLine(-1000), changeFeeLineItem(2000, mapping, BASELINE)] }));
     expect(plan).toMatchObject({ outcome: "CONFLICT", reason: "REDUCTION_NETTED", lineTotalCents: 1000 });
   });
 
@@ -136,12 +175,12 @@ describe("planSupplementaryBookingInvoice (ALP-436)", () => {
   });
 
   it("refuses stay lines that do not bill the event's movement", () => {
-    expect(planSupplementaryBookingInvoice(input({ lines: [stayLine(4400), changeFeeLineItem(2000, mapping)] })))
+    expect(planSupplementaryBookingInvoice(input({ lines: [stayLine(4400), changeFeeLineItem(2000, mapping, BASELINE)] })))
       .toMatchObject({ outcome: "CONFLICT", reason: "STAY_CENTS" });
   });
 
   it("refuses a fee line that differs from the fee the edit posted", () => {
-    expect(planSupplementaryBookingInvoice(input({ lines: [stayLine(4500), changeFeeLineItem(2500, mapping)] })))
+    expect(planSupplementaryBookingInvoice(input({ lines: [stayLine(4500), changeFeeLineItem(2500, mapping, BASELINE)] })))
       .toMatchObject({ outcome: "CONFLICT", reason: "FEE_CENTS" });
   });
 
@@ -159,7 +198,7 @@ describe("planSupplementaryBookingInvoice (ALP-436)", () => {
     const shareLine = (cents: number): LineItem => ({ description: "Agreed adjustment", quantity: 1, unitAmount: cents / 100, accountCode: "201" });
     const closure = (eventKey: string, ...legs: PostedRevenueLeg[]) => ({ eventKey, reversed: false, legs });
     const withShares = (overrides: Partial<SupplementaryInvoicePlanInput> = {}) => input({
-      lines: [stayLine(4500), shareLine(1500), shareLine(500), changeFeeLineItem(2000, mapping)],
+      lines: [stayLine(4500), shareLine(1500), shareLine(500), changeFeeLineItem(2000, mapping, BASELINE)],
       shareEvents: [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, 1500)), closure(CLOSE_B, leg("BOOKING_REVENUE", STAY, 500))],
       ...overrides,
     });
@@ -179,7 +218,7 @@ describe("planSupplementaryBookingInvoice (ALP-436)", () => {
 
     it("covers a parked edit whose shares alone explain the stay lines", () => {
       expect(planSupplementaryBookingInvoice(withShares({
-        lines: [shareLine(1500), changeFeeLineItem(2000, mapping)],
+        lines: [shareLine(1500), changeFeeLineItem(2000, mapping, BASELINE)],
         sliceEvent: { eventKey: EVENT, reversed: false, legs: [leg("FEE_REVENUE", FEE, 2000)] },
         shareEvents: [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, 1500))],
       }))).toMatchObject({ outcome: "COVERED", coverage: [{ sliceKey: CLOSE_A, coveredCents: 1500 }, { account: "FEE_REVENUE" }] });
@@ -205,7 +244,7 @@ describe("planSupplementaryBookingInvoice (ALP-436)", () => {
 
     it("refuses a give-back share netted against the edit's charge", () => {
       expect(planSupplementaryBookingInvoice(withShares({
-        lines: [stayLine(4500), shareLine(-1500), changeFeeLineItem(2000, mapping)],
+        lines: [stayLine(4500), shareLine(-1500), changeFeeLineItem(2000, mapping, BASELINE)],
         shareEvents: [closure(CLOSE_A, leg("BOOKING_REVENUE", STAY, -1500))],
       }))).toMatchObject({ outcome: "CONFLICT", reason: "REDUCTION_NETTED" });
     });
@@ -244,6 +283,20 @@ describe("planPrimaryInvoiceUpdate (ALP-436)", () => {
     expect(update()).toMatchObject({
       outcome: "COVERED", legacyKey: "update-key", lineTotalCents: 14000, payloadHash: primaryInvoicePayloadHash(lines),
       frozenMapping: { source: "UPDATED_FROM_PROVIDER", primaryManifestId: "manifest-1", lineAmountTypes: LineAmountTypes.Inclusive },
+    });
+  });
+
+  // #4632: the update copies every line of the issued invoice, tax type and
+  // all, and keeps the basis it was issued under; the manifest freezes those.
+  it.each([
+    ["the baseline (registered, OUTPUT2)", LineAmountTypes.Inclusive, "OUTPUT2"],
+    ["a registered period with another code", LineAmountTypes.Inclusive, "OUTPUT3"],
+    ["an unregistered period", LineAmountTypes.NoTax, undefined],
+  ] as const)("freezes the basis and each line's tax type the update was sent with under %s", (_label, lineAmountTypes, taxType) => {
+    const sent = [{ ...stayLine(14000), ...(taxType === undefined ? {} : { taxType }) }];
+    expect(update({ lines: sent, lineAmountTypes })).toMatchObject({
+      outcome: "COVERED",
+      frozenMapping: { lineAmountTypes, lineCodes: [{ accountCode: "201", itemCode: null, taxType: taxType ?? null }] },
     });
   });
 
@@ -328,7 +381,8 @@ describe("recordSupplementaryInvoiceManifest (ALP-436)", () => {
     bookingId: BOOKING,
     anchor: { kind: "MODIFICATION", modificationId: MOD },
     legacyKey: `xero-supplementary:${MOD}`,
-    lines: [stayLine(4500), changeFeeLineItem(2000, mapping)],
+    lines: [stayLine(4500), changeFeeLineItem(2000, mapping, BASELINE)],
+    taxRendering: BASELINE,
     priceLines: { source: "STORED", shareCount: 0 },
     itemisedShareTaskIds: [],
     providerInvoiceId: "inv-1",
@@ -351,7 +405,7 @@ describe("recordSupplementaryInvoiceManifest (ALP-436)", () => {
   });
 
   it("covers an itemised settled share as its own slice", async () => {
-    await record({ lines: [stayLine(4500), shareLine(1500), changeFeeLineItem(2000, mapping)], priceLines: { source: "STORED", shareCount: 1 }, itemisedShareTaskIds: ["task-t"] });
+    await record({ lines: [stayLine(4500), shareLine(1500), changeFeeLineItem(2000, mapping, BASELINE)], priceLines: { source: "STORED", shareCount: 1 }, itemisedShareTaskIds: ["task-t"] });
     expect(written()).toMatchObject({
       documentRole: "SUPPLEMENTARY_BOOKING_INVOICE",
       outcome: "COVERED",
@@ -367,7 +421,7 @@ describe("recordSupplementaryInvoiceManifest (ALP-436)", () => {
     // E's lines total 4500; T settled after the operation was claimed and the
     // figures were withheld, so 4500 + 1500 != 4500 and the sender fell back.
     await record({
-      lines: [singleLine(4500), changeFeeLineItem(2000, mapping)],
+      lines: [singleLine(4500), changeFeeLineItem(2000, mapping, BASELINE)],
       priceLines: { source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", shareCount: 0 },
       itemisedShareTaskIds: [],
     });
@@ -396,6 +450,16 @@ describe("recordSupplementaryInvoiceManifest (ALP-436)", () => {
     });
     expect(written()).toMatchObject({ outcome: "COVERED", coverage: [{ account: "BOOKING_REVENUE", sliceKey: CLOSE_T, coveredCents: 1500 }] });
     expect(editSlices).not.toContain(CLOSE_T);
+  });
+
+  it("records the treatment the sender handed it, for each treatment a period can hold (#4632)", async () => {
+    for (const taxRendering of [BASELINE, { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "OUTPUT3" }, { lineAmountTypes: LineAmountTypes.NoTax }] as XeroTaxRendering[]) {
+      await record({ lines: [{ ...stayLine(4500), ...xeroLineTax(taxRendering) }, changeFeeLineItem(2000, mapping, taxRendering)], taxRendering });
+      expect(written()).toMatchObject({
+        outcome: "COVERED",
+        frozenMapping: { taxType: taxRendering.taxType ?? null, lineAmountTypes: taxRendering.lineAmountTypes },
+      });
+    }
   });
 
   it("warns when a slice is already covered by another manifest, and notes a manifest-key race at info", async () => {

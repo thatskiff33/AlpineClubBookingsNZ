@@ -1,0 +1,14 @@
+{
+  "document line-amount basis": "\"Inclusive\"",
+  "booking invoice, per-night runs and a whole-range guest": "[{\"description\":\"Ana Member - (ADULT, Member) - 2 nights - 2026-08-14 - 2026-08-16\",\"quantity\":2,\"unitAmount\":80,\"taxType\":\"OUTPUT2\",\"itemCode\":\"HUT-MEMBER-ADULT\"},{\"description\":\"Ben Guest - (ADULT, Non-member) - 2 nights - 2026-08-14 - 2026-08-16\",\"quantity\":2,\"unitAmount\":120,\"taxType\":\"OUTPUT2\",\"itemCode\":\"HUT-NONMEMBER-ADULT\"}]",
+  "booking invoice, explicit account and no item code": "[{\"description\":\"Cara Solo - (YOUTH, Non-member) - 3 nights - 2026-09-01 - 2026-09-04\",\"quantity\":3,\"unitAmount\":33.33,\"taxType\":\"OUTPUT2\",\"accountCode\":\"205\"}]",
+  "change-fee line": "{\"description\":\"Late notice booking change fee\",\"quantity\":1,\"unitAmount\":25,\"taxType\":\"OUTPUT2\",\"itemCode\":\"HUT\"}",
+  "change-fee line, explicit account": "{\"description\":\"Late notice booking change fee\",\"quantity\":1,\"unitAmount\":12.34,\"taxType\":\"OUTPUT2\",\"accountCode\":\"210\"}",
+  "entrance-fee invoice line": "{\"quantity\":1,\"unitAmount\":150,\"taxType\":\"OUTPUT2\",\"itemCode\":\"JOIN\"}",
+  "entrance-fee invoice line, narrated": "{\"quantity\":1,\"unitAmount\":300,\"taxType\":\"OUTPUT2\",\"description\":\"Joining fee 2026\",\"accountCode\":\"220\"}",
+  "applied-credit remainder note": "[{\"description\":\"Credit applied to booking\",\"quantity\":1,\"unitAmount\":45,\"taxType\":\"OUTPUT2\",\"accountCode\":\"201\"},{\"description\":\"Credit applied to booking\",\"quantity\":1,\"unitAmount\":15,\"taxType\":\"OUTPUT2\",\"itemCode\":\"GOODWILL\"}]",
+  "booking-edit supplementary invoice with a change fee": "[{\"description\":\"1 x Non-member Adult added - 1 night - 16 Aug 2026 - 17 Aug 2026\",\"quantity\":1,\"unitAmount\":90,\"taxType\":\"OUTPUT2\",\"itemCode\":\"HUT-NONMEMBER-ADULT\"},{\"description\":\"Late notice booking change fee\",\"quantity\":1,\"unitAmount\":25,\"taxType\":\"OUTPUT2\",\"itemCode\":\"HUT\"}]",
+  "booking-edit credit note": "[{\"description\":\"1 x Non-member Adult removed - 1 night - 15 Aug 2026 - 16 Aug 2026\",\"quantity\":1,\"unitAmount\":80,\"taxType\":\"OUTPUT2\",\"accountCode\":\"201\"},{\"description\":\"1 x Non-member Adult removed - 1 night - 16 Aug 2026 - 17 Aug 2026\",\"quantity\":1,\"unitAmount\":90,\"taxType\":\"OUTPUT2\",\"accountCode\":\"201\"}]",
+  "promotion line, one code": "[{\"description\":\"Promo adjustment - SNOW\",\"quantity\":1,\"unitAmount\":-20,\"taxType\":\"OUTPUT2\",\"itemCode\":\"PROMO-SNOW\"}]",
+  "promotion line, no code": "[{\"description\":\"Promo adjustment\",\"quantity\":1,\"unitAmount\":-7.5,\"taxType\":\"OUTPUT2\",\"itemCode\":\"HUT-MEMBER-ADULT\"}]"
+}

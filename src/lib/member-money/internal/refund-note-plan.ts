@@ -1,9 +1,10 @@
-import { LineAmountTypes, type LineItem } from "xero-node";
+import type { LineAmountTypes, LineItem } from "xero-node";
 import type { MemberMoneyAccount, MemberMoneyExportConflictReason } from "@prisma/client";
 import { invoiceLineItemsTotalCents } from "../../xero-modification-line-items";
 import { sanitizeForJson } from "../../xero-sync";
 import { stableDigest } from "../../stable-digest";
 import { formatCentsPlain } from "../../utils";
+import { frozenLineCodes } from "./primary-invoice-plan";
 
 /**
  * A REFUND NOTE AND ITS PAYMENT, AS EXPORT PLANS
@@ -89,6 +90,12 @@ export interface RefundNotePlanInput {
   /** `creditNoteIdempotencyKey`, or a replay's recorded key. */
   legacyKey: string;
   source: "BUILT" | "STORED_REQUEST";
+  /**
+   * The line-amount basis the note was sent with (#4632): the booking's tax
+   * rendering for a note this run built, the stored request's own for a
+   * replay (null when the request holds none). Frozen, never translated.
+   */
+  lineAmountTypes: LineAmountTypes | string | null;
   /** The live REFUND_PAYABLE obligation: its key and face, or why none could be named. */
   obligation: RefundExportComponent | RefundExportProblem;
 }
@@ -101,12 +108,8 @@ export function planRefundNote(input: RefundNotePlanInput): RefundExportPlan {
       payloadHash: refundExportPayloadHash(input.lines),
       frozenMapping: {
         source: input.source,
-        lineAmountTypes: LineAmountTypes.Inclusive,
-        lineCodes: input.lines.map((line) => ({
-          accountCode: line.accountCode ?? null,
-          itemCode: line.itemCode ?? null,
-          taxType: line.taxType ?? null,
-        })),
+        lineAmountTypes: input.lineAmountTypes,
+        lineCodes: frozenLineCodes(input.lines),
       },
       lineTotalCents: invoiceLineItemsTotalCents(input.lines),
     },

@@ -395,6 +395,8 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/card-refund-paid-twice.ts::resolveCardRefundPaidTwice#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.card-refund.paid-twice-resolved"},
   "src/lib/card-refund-reservation-operator.ts::releaseCardRefundReservationByOperator#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.card-refund.reservation-released-by-operator"},
   "src/lib/club-format-write.ts::writeClubFormat#0": {"category":"admin","sink":"auditLog.create","action":"CLUB_FORMAT_UPDATED"},
+  "src/lib/club-tax-settings-write.ts::cancelScheduledClubTaxChange#0": {"category":"admin","sink":"auditLog.create","action":"CLUB_TAX_TREATMENT_SCHEDULE_CANCELLED"},
+  "src/lib/club-tax-settings-write.ts::scheduleClubTaxChange#0": {"category":"admin","sink":"auditLog.create","action":"CLUB_TAX_TREATMENT_SCHEDULED"},
   "src/lib/config-transfer/apply.ts::applyConfigImport#0": {"category":"admin","sink":"createAuditLog","action":"configuration.imported"},
   "src/lib/config-transfer/bootstrap-import.ts::runConfigBootstrapImport.result#0": {"category":"system","sink":"createAuditLog","action":"(dynamic) CONFIG_BOOTSTRAP_AUDIT_ACTION"},
   "src/lib/credit-release-ask-close.ts::closeCreditReleaseAsksPaidInXero.closed#0": {"category":"payment","sink":"createAuditLog","action":"payment.credit_release_ask.closed_paid_in_xero"},
