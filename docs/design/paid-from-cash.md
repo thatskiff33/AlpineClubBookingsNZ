@@ -1,14 +1,11 @@
 # Paid From Cash — Blueprint
 
-**Status:** Blocked at the approved Step 2 stop gate after three source reviews
-of `9a4105658b80efb2174638b276cd9d3e211706ee` on 19 November 2026. The inherited
-Stage 1 implementation bypasses required evidence checks for organiser-paid
-children; §6 records the failure and recommended correction. The unpaid-child
-contract also needs the payer-versus-share decision in §6.6. The earlier
-superseded-capture and organiser-dispute fixes are now present, but their
-presence is not execution evidence. The inventory remains incomplete. This
+**Status:** Stage 1 is built: the reader and the exception-approved email.
+The inventory is complete on `main` at `da2c858ec`
+([inventory](paid-from-cash-inventory.md)). Three review lenses read this
+blueprint and the build; §6 records what they found and what was done. This
 blueprint belongs to #4069 (programme #4898), coordinated with M11 (#4523)
-and M15 (#4527). The intended first PR contains the blueprint and Stage 1 only.
+and M15 (#4527).
 
 **Audience:** developer, agent. Index: [`docs/README.md`](../README.md) ·
 [member money ledger design §9](member-money-ledger.md#9-bug-scenario-acceptance-matrix).
@@ -118,16 +115,21 @@ Only a booking with `organiserSettled` and a parent takes this path; a child
 switched to paying for itself is an ordinary booking.
 
 - **Organiser has not paid** (`organiserPaysForNewJoiner` on the child's
-  group): `organiser_pays`.
+  group): `organiser_pays`. This proves who pays, not that money arrived, so
+  it needs no frozen share — before the settle there is none.
 - **Organiser paid** (`paidByOrganiser`, a paid settlement): the share is
   proved by `planGroupChildLines`, the planner the ledger back-post and census
-  share. Then the child's own mirror is its cash (the settle writes no rows
-  for it), through §2.3. Covered gives `covered`. A shortfall on a child the
-  organiser paid by bank transfer is invoiced to the organiser
+  share. A proved share does not prove the child's rows or refunds, so §2.6's
+  row and refund rules apply next: a legacy row, a stored-figure bank receipt,
+  or refunds above the share give `unknown`. Only row-to-mirror
+  reconciliation is skipped, because the settle writes the child's mirror
+  without capture rows. Then the child's own mirror is its cash, through
+  §2.3. Covered gives `covered`. A shortfall on a child the organiser paid by
+  bank transfer is invoiced to the organiser
   (`organiser-extra-invoice-queue.ts`), so it gives `organiser_pays`; any
   other shortfall gives `unknown`.
-- Shares that do not add up, a payment the settlement did not take, or no
-  settlement give `unknown`.
+- No group, shares that do not add up, a payment the settlement did not
+  take, or no settlement give `unknown`.
 - The parent's cash is never counted for a child, and a child's share never
   for the parent.
 
@@ -156,125 +158,65 @@ money and needs no rows; it reads `covered` through §2.2.
 
 - A superseded capture never covers the booking between its capture commit
   and creation of its refund row. The live cancel owns that money for return
-  (`INV-PAY-043`, `INV-PAY-150`). Current code reads this ownership; the
-  real-writer barrier test still requires recorded execution evidence.
+  (`INV-PAY-043`, `INV-PAY-150`).
 - A group share proof does not prove the child's refund history. The group's
   legitimate absence of child capture rows exempts it only from ordinary
-  row-to-mirror reconciliation, not from the unknown-evidence rules. The
-  current implementation violates this boundary; see §6.1.
+  row-to-mirror reconciliation, not from the unknown-evidence rules (§2.5).
 - A bank receipt recorded from cash is taken at the cash Xero showed.
 
 ## 3. Inventory
 
-Every place in the app that decides "paid" or "settled" from a booking's
-status, sorted by what kind of decision it is and when it moves.
+[`paid-from-cash-inventory.md`](paid-from-cash-inventory.md) lists every place
+in the app that reads a booking's status where "paid" or "settled" could be
+meant: 317 rows over 245 files on `main` at `da2c858ec`, one row per
+decision, with how the list was built and what it cannot see.
 
-The inherited inventory was based on `main` at `d44721e3b` and the lexical
-counts in #4069 §5 (255 occurrences in 128 files). It is **not yet the required
-complete semantic inventory**: grouped rows and false-positive counts still
-need expansion. The 19 November review checked the inherited branch at
-`658f94c13fdcd7642dd28ea3c38f73963d695a9e`, whose local `main` is
-`da2c858ec`. Verified additions below do not certify unexamined sites. "Stage" names the PR that moves it
-(§4); "own plan" needs its own plan in #4069 before code; "M15" moves with
-#4527's refund, cancel and ask cohort; "no move" is a lifecycle decision that
-reads the status correctly.
+| Class | Rows | A display stage | Own plan | M15 | No move |
+| --- | --- | --- | --- | --- | --- |
+| Display, notification, report | 50 | 41 | 1 | 3 | 5 |
+| Eligibility | 58 | 0 | 36 | 10 | 12 |
+| Replay guard or paid assertion | 17 | 0 | 6 | 3 | 8 |
+| Unpaid-amount reader sizing a payment instrument | 17 | 0 | 0 | 3 | 14 |
+| Financial writer | 26 | 0 | 3 | 12 | 11 |
+| Diagnostic or census | 7 | 0 | 3 | 0 | 4 |
+| Lifecycle read: the status used as a status | 43 | — | — | — | 43 |
+| Another domain's status: subscription, roster, consent, refund task, Xero | 99 | — | — | — | 99 |
 
-### 3.1 Display, notification, report
+"Stage" names the PR that moves a row (§4.1). "Own plan" needs its own plan in
+#4069 before code. "M15" moves with #4527's refund, cancel and ask cohort.
+"No move" stays, for the reason its row gives: the status is read as a
+lifecycle fact, the decision already checks captured cash or an issued
+invoice, or the writer commits the status with its money.
 
-| Site | Decides | Stage |
-| --- | --- | --- |
-| `booking-exception-approval.ts` `notifyApproved` | approval email's amount owed | 1 |
-| `booking-narrative.ts` (`PAID`/`COMPLETED` → paid narrative) | booking page and public pay link "money arrived" | 2 |
-| `bookings/[id]/_lib/booking-detail-payment.ts`, `booking-payment-cards.tsx` (`isBookingOwnAmountOwed`) | whether the pay card and breakdown show | 3 |
-| `member-dashboard.ts`, `dashboard/page.tsx` (`PAYMENT_OWED_BOOKING_STATUSES`) | dashboard Payment Owed card | 4 |
-| `booking-fresh-email-copy.ts` (`paymentDue`) | confirmation email's due or processed line | 5 |
-| `payment-status-display.ts` `getPaymentDisplayStatus` | "Paid" label on the booking and payments pages | 6 |
-| `organiser-group-booking-card.tsx` (`settledAlready`, `unsettledJoiners`) | organiser's paid and outstanding figures | 7 |
-| `pre-arrival-reminder-email.ts` | reminder's outstanding extra | 8 |
-| `additional-payment-chase.ts` `isAdditionalPaymentOwed` display callers (panel, reports) | "extra still owed" | 9 |
-| `duplicate-capture-kept-alert-drain.ts` | alert text "closed" by status | 10 |
-| `finance-booking-metrics.ts` (`FINANCE_FORWARD_COMMITTED_BOOKING_STATUSES`) | committed and at-risk revenue | 11 |
-| `unpaid-finished-stays.ts` (status `where`) | officer collection queue and badge | 12 |
-| `group-late-joiner.ts` (join page's who-pays line) | joiner told who pays | 13 |
-| `bookings/[id]/_lib/booking-detail-messages.ts` | whole-lodge unpaid wording | 14 |
-| `book/_hooks/use-booking-wizard.ts` (`isPaymentOwedBookingStatus`) | wizard sends member to pay | 15 |
-| `booking-history.ts` "Payment recorded" fallback | history item | 16 |
-| `admin-reports.ts`, `admin/reports/route.ts`, `report-charts.tsx` | status breakdown counts | no move: a lifecycle census, labelled as such |
-| `status-colors.ts` `bookingStatusLabel` | "Paid" and "Confirmed (Unpaid)" labels say paid or unpaid from status | 17 |
-| `booking-status-banners.tsx` `stayConfirmed` | stay confirmed banner | no move: lifecycle |
+What the full inventory changed from the first grouped draft:
 
-### 3.2 Eligibility
-
-| Site | Decides | Stage |
-| --- | --- | --- |
-| `late-notice-change-fee.ts` `lateNoticeChangeFeeApplies` | a fee applies | own plan (writer input) |
-| `booking-modify-credit-give-back.ts` `isPaid` | give credit back or lower what is owed | M15 |
-| `booking-guest-acceptance-reprice.ts` `priceSettled`; `booking-guest-acceptance-return-route.ts` | a raise is skipped; refund route | M15 |
-| `booking-modify-validation.ts` `isBookingFullyPaidForGuestNameEdits` | name edits allowed | own plan |
-| `manual-booking-payment-state.ts`, `payment-reconciliation.ts` (mark-paid and reverse) | officer may mark paid or reverse | own plan |
-| `admin/xero/force-sync/route.ts`, `admin/bookings/search/route.ts` | only paid bookings sync | own plan |
-| `booking-detail-payment.ts` `isSwitchableToInternetBanking`, `switch-to-internet-banking/route.ts` | bank switch allowed | own plan |
-| `payment-link.ts`, `payment-link-intent.ts`, `payment-link-reissue.ts` | link payable | own plan |
-| `create-payment-intent/route.ts` (payable statuses) | card intent allowed | own plan |
-| `organiser-child-refund.ts`, `group-cancel.ts`, `group-settlement.ts` guards | child refund and settle | M15 |
-| `booking-modify-settlement*.ts`, `booking-payment-state.ts` helpers that AND status with captured cash | — | no move: already cash-gated |
-| `(authenticated)/layout.tsx`, `dashboard/page.tsx` "staying now" (`PAID` only) | who sees door codes in-stay | own plan |
-| `booking-cancel-eligibility.ts`, `booking-edit-policy.ts` | cancel and edit lifecycle | no move: lifecycle |
-
-### 3.3 Replay guard or paid assertion
-
-| Site | Decides | Stage |
-| --- | --- | --- |
-| `xero-inbound/invoice-paid-effects.ts` (`alreadyPaid`, cleared-invoice alert) | skip the paid arm | own plan |
-| `xero-inbound/settlement-conflicts.ts` | second-instrument marker | own plan |
-| `stripe-webhook-service.ts` (`capturedOnSettledBooking`) | skip the owed-amount check | M15 |
-| `payment-reconciliation.ts` (paid-like replay) | treat a capture as a replay | M15 |
-| `confirm-payment/route.ts` | skip to the invoice queue | own plan |
-| `payment-link-context.ts` (burn a used link) | mark the link used | own plan |
-| `duplicate-capture-guard.ts` (`isPaidLikeBookingStatus`) | a second capture is a duplicate | own plan |
-| `cron-confirm-pending.ts`, `charge-saved-method/route.ts`, `confirm-pending-guests/route.ts` fences | claim held or settled | no move: status-guarded claims |
-| `internet-banking-payment-cron.ts` | hold still owed | no move: reads the payment row |
-
-### 3.4 Unpaid-amount readers that size a payment instrument
-
-`readBookingAmountOwed` (`INV-PAY-119`) and its callers are unchanged by this
-programme: they size what the pay step asks, and an unpaid booking has no cash
-to subtract. Their status gates are the display stages above (3 and 4); the
-amount they quote is not. `create-payment-intent` and `payment-link-intent`
-payable lists are eligibility (§3.2). The additional ask (`bookingOutstandingCents`)
-stays with M15.
-
-### 3.5 Financial writers
-
-| Site | Decides | Stage |
-| --- | --- | --- |
-| `booking-modify-settlement.ts`, `booking-date-modification-service.ts` zero-dollar auto-pay | write `PAID` and a $0 payment | M15 |
-| `booking-ledger-back-post.ts` `mustConfirm` | post confirmation lines | after `INV-MONEY-037`, own plan |
-| `xero-booking-repair-classify.ts`, `booking-provider-mismatches.ts` | a primary invoice is expected | own plan |
-| `group-settlement.ts` child flips | settle children | M15 |
-| Status writers (`booking-create.ts`, `force-confirm`, `confirm-draft`, …) | write `PAID` with a payment | no move: writers of status, not readers |
-
-### 3.6 Diagnostics and censuses
-
-`booking-ledger-projection-census*.ts` and `finance-evidence.ts` read status
-as the lifecycle the ledger must agree with. They stay: a census that read this
-reader would be checking the mirror against itself. No move.
-
-### 3.7 Not decisions about booking money
-
-About 130 sites: subscription and membership `PAID`; roster, duty and
-induction `CONFIRMED`/`COMPLETED`; guest consent, partner links and
-nominations `CONFIRMED`; manual-refund and late-capture task `COMPLETED`; Xero
-invoice and note `PAID`/`AUTHORISED`; webhook leases; capacity and stay
-lifecycle lists; and the captured-transaction predicates that already compute
-cash.
+- **One more display surface** (stage 18): an officer's view of a member
+  totals "spend" from the prices of `PAID` and `COMPLETED` bookings.
+- **Who counts as staying** is read from `PAID` and `COMPLETED` alone in 15
+  places — lodge guest lists, the roster, check-in reminders, occupancy,
+  "staying now" tools, and the check that blocks deleting an account with a
+  future stay. A held, unpaid `CONFIRMED` stay is absent from all of them.
+  This is one cohort (G1), not a display stage: it changes who is let in and
+  who is reminded, so it needs its own plan.
+- **`parentSettledWithoutCard`** treats a `CONFIRMED` parent as settled when
+  deciding not to card-chase a guest portion (G7).
+- **Unpaid-amount readers stay.** `readBookingAmountOwed` (`INV-PAY-119`) and
+  its callers size what a pay step asks; an unpaid booking has no cash to
+  subtract. Their status gates are display stages 3 and 4; the amount is not
+  touched.
+- **Censuses stay.** A census that read this reader would check the payment
+  mirror against itself.
 
 ## 4. Stages
 
-Harm first: what a member is told, then what an officer acts on.
+### 4.1 Display stages
 
-1. **Exception-approved email** (this PR): the reader, and the email's amount
-   and held-bed sentence from one snapshot. Beds are held exactly when
+Harm first: what a member is told, then what an officer acts on. One surface
+per PR. Each reads `readBookingCashCover`, keeps its own copy and pins, and
+reverts alone.
+
+1. **Exception-approved email** (PR 1, built): the reader, and the email's
+   amount and held-bed sentence from one snapshot. Beds are held exactly when
    `bookingHoldsCapacity` says so, read with all its inputs (status, the
    converted request, the admin capacity hold); a whole-lodge hold can be set only on a
    booking that already holds (the exclusive-hold route refuses otherwise), so
@@ -291,20 +233,45 @@ Harm first: what a member is told, then what an officer acts on.
 8. Pre-arrival reminder.
 9. Additional-owed display callers.
 10. Duplicate-capture alert text.
-11. Finance forward metrics.
+11. Finance forward metrics and the legacy dashboard export.
 12. Unpaid finished stays queue and badge.
 13. Join page's who-pays line.
 14. Whole-lodge unpaid wording.
 15. Wizard's pay redirect.
 16. Booking history fallback item.
-17. Booking status labels.
+17. Booking status labels ("Paid", "Confirmed (Unpaid)") and the screens that
+    print them.
+18. Member detail spend summary.
 
-Then the gated rows of §3.2, §3.3 and §3.5, each with its own plan in #4069
-before code or as an M15 cohort, never both. Any stage that would read the
-ledger balance waits for the owner's `INV-MONEY-037` evidence.
+That is 18 display PRs: this one and 17 to come.
 
-Each display stage reads `readBookingCashCover`, keeps its own copy and pins,
-and reverts alone.
+### 4.2 Gated cohorts
+
+Eligibility, replay-guard and writer-input rows. Each cohort gets its own
+plan in #4069 before code, or moves with M15 (#4527), never both. The
+inventory tags every such row with its cohort.
+
+| Cohort | What it decides | Route |
+| --- | --- | --- |
+| G1 | Who counts as staying: operational-stay lists, "staying now" tools, the account-deletion block | own plan |
+| G2 | Card, bank-switch and pay-link eligibility, and the guards that treat a paid status as "already paid" there | own plan |
+| G3 | Officer may mark a booking paid, or reverse it | own plan |
+| G4 | Guest-name edits on a fully paid booking | own plan |
+| G5 | A `PAID` booking is expected to have a Xero invoice: sync eligibility, the missing-invoice list, mismatch and repair findings | own plan |
+| G6 | Xero's paid arm: skipped when the booking reads paid, the second-instrument marker, the cash-settlement notice | own plan |
+| G7 | Late-notice change fee; the guest portion that is not card-chased | own plan |
+| G8 | Ledger back-post inputs | own plan, after `INV-MONEY-037` |
+| G9 | The additional ask: owed, payable, resend, withdraw, reduce, remind, and the amount its card door asks | M15 |
+| G10 | Zero-dollar auto-pay: an edit repriced to nothing is written `PAID` | M15 |
+| G11 | Group settlement, late joiners and organiser-cancel child refunds | M15 |
+| G12 | A capture arriving on a booking that reads paid | M15 |
+| G13 | Credit give-back, the reprice after guest acceptance, and the review's invoice reduction | M15 |
+
+Any stage that would read the ledger balance waits for the owner's
+`INV-MONEY-037` evidence. Stop and revise this blueprint if a stage needs a
+financial writer, schema, provider read or historical data changed, if a
+parity difference cannot be explained, or if settlement cannot be attributed
+without guessing (#4069 §8).
 
 ## 5. Contracts every stage keeps
 
@@ -338,217 +305,44 @@ and reverts alone.
   ledger balance and the owed reader.
 - **Rollback:** no schema change; each stage reverts alone.
 
-## 6. Stop-gate review and remaining work
+## 6. Review record
 
-The branch is not ready to ship. Three independent read-only lenses reviewed
-`9a4105658b80efb2174638b276cd9d3e211706ee` on 19 November 2026:
-money/attribution; concurrency/snapshot; and tests/UX/docs/`INV-SSOT`. Each
-checked current source rather than adopting the inherited reports. No tests
-were run by those reviewers. No production data or live provider was used.
+Three independent read-only lenses reviewed this blueprint and the Stage 1
+build: money and attribution; concurrency and snapshot; tests, wording, docs
+and `INV-SSOT`. No production data or live provider was used.
 
-### 6.1 Current blocker: group children skip unknown-evidence checks
+### 6.1 Findings and what was done
 
-A proved group share can still have unprovable refund history. In
-`deriveBookingCashCover`, the organiser-child branch returns
-`deriveGroupChildCover(snapshot)` before `paymentEvidenceProblem` runs.
-`planGroupChildLines` proves that child shares reconcile with the settlement;
-it does not validate every child's refund total or transaction provenance.
-
-A concrete counterexample follows the existing pure test's two-child fixture:
-
-| Input | Value |
-| --- | --- |
-| Booking | live `PAID` child, organiser-settled, non-null parent, price 0 |
-| Child payment | Stripe, `SUCCEEDED`, captured share 4,500 cents, refunded 6,000 cents |
-| Group settlement | Stripe, `SUCCEEDED`, 9,000 cents |
-| Siblings | two captured shares of 4,500 cents, including this child |
-| Credit, disputes, open obligations | none |
-
-The share planner accepts the 9,000-cent sum. Net Collected clamps the child's
-remaining cash to zero. Worth is zero, so `owedNetOfHeldCash` is zero and the
-reader returns `covered`. The approved contract and `INV-PAY-159` require
-`unknown` for unproven refunds. This is an invalid-history input the reader
-must reject, not a claim that a current writer creates it. No historical data
-repair is authorised or needed to reject it.
-
-The same early return skips `LEGACY_BACKFILL_REASONS` checks on any transaction
-rows that a child does have. A reconciled share does not make a backfilled row
-cash evidence. Existing ordinary-booking unknown tests do not exercise these
-inputs through the group branch.
-
-**Recommended correction:** separate provenance and refund-validity checks
-from ordinary transaction-to-payment reconciliation. Apply provenance checks
-to any rows present, and reject refunds exceeding the proved child share,
-before returning group cover. Keep the intentional exemption for a legitimate
-organiser-paid child with no capture rows: the real group settlement writes
-its mirror without them. Reuse `LEGACY_BACKFILL_REASONS`, `captureRefundState`
-and `planGroupChildLines`; do not introduce a second money reader or infer
-parent cash. If the evidence cannot prove a share or refund, answer `unknown`.
-
-The correction belongs in `src/lib/booking-cash-evidence.ts`, with pure cases
-in `src/lib/__tests__/booking-cash-evidence.test.ts` and composed group-writer
-coverage in `src/lib/__tests__/booking-cash-evidence.realdb.test.ts`. Include:
-a valid no-row child remains covered; a legacy row is unknown; a refund above
-its share is unknown even at zero price; and a valid attributed child refund
-remains covered at the reduced price. Invalid-history fixture inputs must be
-labelled as such, not presented as real-writer outputs.
-
-This is the approved Step 2 invariant-conflict stop condition. The review
-identified a reader correction, not a writer, schema, provider or history
-change. Record and review the corrected contract before resuming product
-work. This documentation does not approve the inherited implementation.
-
-### 6.2 Earlier findings: current disposition
-
-The earlier review found real gaps, but several claims in the inherited
-blueprint no longer described the checked head. Source inspection establishes
-the following; it does not certify that the tests pass.
-
-| Earlier finding | Current source | Remaining evidence |
+| Lens | Finding | Done |
 | --- | --- | --- |
-| Superseded capture counted before refund enqueue | `supersededCancelOwnedCents` reads cancel ownership and subtracts only the part not already attributed to open card refunds | Run the real hand-off barrier and overlap cases |
-| Organiser capture dispute omitted | `readBookingCashCover` reads `disputedCaptureCents` for the combined settlement intent in the same transaction | Run the group settlement/dispute regression |
-| Realdb suite absent | `booking-cash-evidence.realdb.test.ts` exists with real-writer cases and capture/refund/credit/group snapshot scenarios | Record CI execution, with no skipped cases |
-| Parity test only rechecks Net Collected | Pure parity case now calls `deriveBookingCashCover` | Run the named file and required mutations |
-| Cash-cover invariant absent | `INV-PAY-159` exists and is indexed; `INV-PAY-119` distinguishes the unchanged pay-step reader | Correct the group evidence violation in §6.1 |
-| State-machine and email docs absent | State machine, email and booking-request docs now describe the cash reader | Recheck them against the final corrected contract |
-| Tracked narrow tsconfig | `tsconfig.narrow.tmp.json` is absent | No further removal needed |
+| Money | A superseded capture counted as cover between its capture and its refund row | The reader subtracts cancel-owned money not already in an open card refund (§2.3); real hand-off cases in the PostgreSQL suite |
+| Money | A dispute on the organiser's combined capture was not read | Read in the same snapshot; `unknown` while it is open or lost |
+| Money | An organiser-paid child with a proved share skipped the row and refund checks, so refunds above its share read `covered` | Row and refund rules now run for every payment (§2.5); pure and PostgreSQL regressions, including a valid child with no rows staying `covered` |
+| Money | The parity test only re-ran Net Collected | It now calls `deriveBookingCashCover` and explains the one expected difference |
+| Concurrency | No reader case on a real database | `booking-cash-evidence.realdb.test.ts` runs the real capture, refund, credit and group writers |
+| Concurrency | The email's between-read cases left out a refund and a group settlement | Both added; each asserts the amount and the held-bed sentence together |
+| Tests, docs | The organiser-pays line reached the sender only through a helper, and the render pin held a placeholder | All five payment lines are pinned as the sender renders them |
+| Tests, docs | No invariant for the reader; state-machine and email guides silent | `INV-PAY-159`, and the guides, describe it |
+| Tests, docs | The inventory grouped helpers and estimated the false positives | Replaced by the row-per-decision inventory (§3) |
 
-Neither money nor concurrency review found another confirmed defect in the
-current per-transaction superseded-cancel overlap calculation. That conclusion
-is bounded source-review evidence, not a substitute for the required tests.
+### 6.2 Readings taken where the contract was silent
 
-### 6.3 Snapshot and capacity evidence
+- **An unpaid organiser child before any frozen share exists.** The approved
+  contract says an unsettled organiser-pays child reads `organiser_pays`, and
+  that a share the frozen plan cannot prove reads `unknown`. Before the
+  organiser pays there is no frozen share to prove. The build separates the
+  two questions: who pays is proved by the group alone; `covered` needs the
+  share proof and clean evidence. The member is never asked for the
+  organiser's money either way.
+- **Held beds** read `bookingHoldsCapacity` without a separate
+  `wholeLodgeHold` term (§4.1, stage 1).
 
-Booking fields, capacity inputs, cash, applied credit, disputes, organiser
-shares and superseded ownership all flow through the same transaction client
-inside `withReadOnlySnapshot`. The email sends after that snapshot closes.
-No transaction-client escape survived the concurrency review.
+### 6.3 Limits
 
-The realdb suite checks cash-cover answers across actual capture, refund,
-credit and group writes. The approval harness runs the real approval engine,
-bank-switch route, exclusive-hold route, reader and sender over a simulated
-transaction. It asserts the paired amount and held-bed copy, but it does not
-execute the complete email path against PostgreSQL. Its between-read cases
-cover capture, credit and bank switch, but omit refund and group settlement.
-Add those two cases in `booking-exception-approved-interleaving.test.ts`,
-asserting the delivered amount and held-bed copy together; the realdb reader
-cases alone cannot prove the paired email contract. Preserve that distinction
-when reporting validation; source presence alone proves neither suite passed.
-
-The inherited capacity implementation intentionally uses
-`bookingHoldsCapacity` without a standalone `|| wholeLodgeHold`: the
-exclusive-hold route requires capacity already held, while the flag can remain
-after an admin capacity hold is released. The stale-flag regression exists in
-`booking-exception-approved-interleaving.test.ts`. This differs from the
-approved literal expression and must be included in final plan reconciliation.
-
-### 6.4 Remaining deliverables
-
-Step 1 is incomplete. Expand §3 to one row per semantic decision and false
-positive on the reviewed base, replacing grouped helpers and the approximate
-130-site description. Until that inventory is complete, §4's 17 stages are a
-provisional count: one first PR and 16 later display-surface PRs, plus separately
-planned gated work or M15 cohorts. Do not claim an exact programme PR count.
-
-After the stop gate is resolved, Stage 1 still needs:
-
-- The owner decision in §6.6, reflected in the contract and unpaid-child tests.
-- Refund and group-settlement interleavings through the approval email, as
-  described in §6.3.
-- The §6.1 reader correction and its pure and realdb regressions, followed by
-  money review of the correction.
-- Actual sender/template evidence for all five payment-note variants. The
-  organiser-pays case currently calls only the note helper, and the render
-  fixture pins a placeholder payment note. Exercise organiser-pays through the
-  sender and pin actual variants in the email render fixtures.
-- Execution of the five mutation probes, each seen to fail and then restored:
-  pending face amount as cash; status-only paid; omitted refund; omitted
-  credit; organiser money counted twice.
-- Named test-file validation and a narrowed typecheck under the pinned
-  runtime; CI owns realdb and full gates. This review did not run product tests.
-- A final self-review and PR body recording each lens finding, its disposition,
-  validation run and not run, and the remaining stated limits. The existing
-  changelog fragment is part of the inherited implementation, not proof of
-  completion.
-
-Later programme work remains every surface in §4 after Stage 1, plus the
-eligibility, replay and writer cohorts in §3. They require their own plans or
-M15, never both. No ledger reader cut-over precedes the owner's
-`INV-MONEY-037` whole-history proof.
-
-### 6.5 Handoff and tool limits
-
-This run changes the blueprint only and stops under approved Step 2. It does
-not rewrite the inherited branch history or remove its product changes. The
-branch therefore still contains incomplete Stage 1 code and must stay out of
-release until the blocker and required evidence are resolved.
-
-The repository's issue-thread reader could not retrieve #4069 because GitHub
-CLI is unauthenticated. No credentials were sought. The approved plan supplied
-in this session is the task authority; source review is not represented as a
-fresh reading of the issue thread or its saved harness comment.
-
-`revise_plan` and `attach_file` are unavailable in this tool session. This
-section records the stop and plan deviation durably, but is neither a posted
-issue comment nor an attachment. The lane must still deliver
-`blueprint-issue-comment.md` with the completed blueprint and final stage list,
-and post it before readiness. The requested #4523 coordination text is:
-
-> M11 (#4523) extends `readBookingCashCover` in
-> `src/lib/booking-cash-evidence.ts`; it never adds a second paid/balance reader.
-
-### 6.6 Decision needed: unpaid organiser child without a frozen share
-
-The approved contract requires both an unsettled organiser-pays child to return
-`organiser_pays` and an unprovable frozen share to return `unknown`, never
-`organiser_pays`. It does not settle which takes precedence before settlement,
-when there may be no frozen cash share yet.
-
-Current source makes the payer test win: `deriveGroupChildCover` returns
-`organiser_pays` immediately when `organiserPaysForNewJoiner(group)` is true,
-before checking the settlement or calling `planGroupChildLines`. The pure
-suite explicitly expects that result with a null settlement and null payment.
-This is separate from the invalid-refund bypass in §6.1: simply moving the
-ordinary evidence checks cannot decide what this unpaid child should be told.
-
-**Recommended owner decision:** distinguish payer evidence from cash evidence.
-For an unsettled child with a proved current organiser-pays assignment, allow
-`organiser_pays` without a captured share. Require the frozen-share proof for
-`covered`; use `unknown` when the payer assignment itself cannot be proved.
-This preserves the unpaid-child message without claiming money arrived.
-
-**Alternative:** let the unknown-share rule take precedence in every case.
-An unpaid child without a provable frozen share gets the neutral line, still
-never a personal demand. This narrows when `organiser_pays` can be returned
-and needs corresponding changes to the approved unpaid-child acceptance.
-
-Neither option is recorded as decided. The owner must settle this contract
-before implementation resumes. Update §2.5, `INV-PAY-159`,
-`booking-cash-evidence.ts`, its pure and realdb suites, and the approval email
-sender cases together. No writer, schema, provider or history change is
-proposed. The missing decision independently triggers approved Step 2.
-
-### 6.7 This review's evidence and delivery limits
-
-Three fresh independent lenses checked the head named above. Money confirmed
-the excessive-refund and legacy-row bypass; concurrency confirmed the common
-snapshot client and identified the missing paired email interleavings;
-tests/UX/docs checked the unpaid-child branch and incomplete inventory.
-These are source findings, not executable test results or a complete inventory
-review. No product code changed in this review.
-
-The issue reader was attempted directly with
-`node scripts/issue-thread.mjs 4069` (the package script's entry point) and
-failed because GitHub CLI is unauthenticated. The runtime reports Node 26,
-while the repository pins Node 24, and `pnpm` is absent. Product tests and a
-narrowed typecheck were not run. The dependency-free documentation link and
-index checkers ran successfully under the available Node runtime. No full
-suite, database, live provider or production data was used.
-
-The tool session exposes neither `revise_plan` nor `attach_file`. This committed
-record preserves the deviation and coordination text; it does not fulfil the
-requested attachments or issue posting. The inventory, final stage count and
-attachments remain unfinished, alongside the Stage 1 work in §6.4. Keep this
-branch out of release. Later stages remain separate PRs; the provisional
-programme count is 17 display-surface PRs including Stage 1, plus gated cohorts.
+- The approval harness runs the real approval engine, bank-switch route,
+  exclusive-hold route, reader and sender over a simulated transaction. Reads
+  against PostgreSQL are proved by the reader's own suite, not by the email
+  path end to end.
+- The inventory's pass cannot see a status held under another name (§2 of
+  the inventory). Three such sites were found by reading callers; there may
+  be others, and each display stage re-reads its own callers before it moves.

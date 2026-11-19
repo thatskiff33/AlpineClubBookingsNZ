@@ -38,7 +38,8 @@ security contracts, and the feature hubs. Its most-used pages:
 [`TESTING.md`](TESTING.md) ·
 [`STYLE_GUIDE.md`](STYLE_GUIDE.md) ·
 [Member money ledger design](design/member-money-ledger.md) ·
-[Paid from cash blueprint](design/paid-from-cash.md) ·
+[Paid from cash blueprint](design/paid-from-cash.md) and
+[inventory](design/paid-from-cash-inventory.md) ·
 [Personal-data retention schedule](PRIVACY_RETENTION.md).
 
 **[Member & Guest Guide](user-guide/README.md)** — plain-English guides for the
