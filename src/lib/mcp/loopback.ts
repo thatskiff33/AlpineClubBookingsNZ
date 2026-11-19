@@ -52,7 +52,6 @@ export function sendMcpLoopbackRequest(input: McpLoopbackRequest): Promise<McpLo
           ...input.headers,
           ...(input.body === null ? {} : { "content-length": String(Buffer.byteLength(input.body)) }),
         },
-        timeout: input.timeoutMs,
       },
       (incoming) => {
         incoming.setEncoding("utf8");
@@ -78,9 +77,12 @@ export function sendMcpLoopbackRequest(input: McpLoopbackRequest): Promise<McpLo
         });
       },
     );
-    outgoing.on("timeout", () => {
+    // A socket timeout measures inactivity: a trickling response could keep
+    // it alive forever. Bound the entire action, including reading its body.
+    const deadline = setTimeout(() => {
       outgoing.destroy(new Error("The club website took too long to answer."));
-    });
+    }, input.timeoutMs);
+    outgoing.once("close", () => clearTimeout(deadline));
     outgoing.on("error", reject);
     if (input.body !== null) outgoing.write(input.body);
     outgoing.end();

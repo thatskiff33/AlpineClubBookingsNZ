@@ -249,8 +249,8 @@ providers are acceptable.
 
 ### Other limits
 
-- One action waits at most 25 seconds, and a result is cut at 100,000
-  characters with a note saying so.
+- One action waits at most 25 seconds in total, including a response that
+  keeps sending data. A result is cut at 100,000 characters with a note saying so.
 - An app may make 120 requests a minute per connection; the rest of the rate
   limits are in [`SECURITY.md`](../SECURITY.md#ai-app-connections-alp-653).
 
@@ -269,6 +269,9 @@ grouped into follow-on tasks, named in `MCP_NOT_YET_TASKS` in
 | ALP-722 | Lodge (officer) |
 | ALP-723 | Content (officer) |
 | ALP-724 | Support and overview (officer) |
+
+After all seven areas ship, **ALP-727** reviews them together and makes the
+route census reject any remaining `not-yet` exclusion.
 
 ## Adding an action (developers)
 
