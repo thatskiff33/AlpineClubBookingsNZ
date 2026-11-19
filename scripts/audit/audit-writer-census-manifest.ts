@@ -786,7 +786,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // 549 -> 550 (#4963): `email.failure.requeued`, an officer's Try again on an exhausted
   // email failure, awaited on the requeue's own transaction (`email-failure-review.ts`),
   // `communication`. RE-MEASURED with `pnpm run audit:census` on the merged tree.
-  writeSites: 550,
+  writeSites: 551, // Measured: MCP adds one security-category structured writer.
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -1027,7 +1027,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // FORM moved, which is what this per-sink pin exists to surface.
     // 9 -> 10 (#2822): the email-inheritance effective-source change event.
     // 10 -> 11 (#3492): the guest promo-code lookup, above.
-    createStructuredAuditLog: { total: 11, uncategorised: 0 },
+    createStructuredAuditLog: { total: 12, uncategorised: 0 },
     // 71 -> 72 (#2352 MC-03D): the page-content deletion, above.
     // 72 -> 70 (#2581 child 2): the two dependants writes, above.
     // 70 -> 69 (#2581 child 2 review): the age-up handoff write, above. No
@@ -1464,7 +1464,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // setting, so `security`, readable with `support:view` alone like the
     // password-policy save: the weakest-gate total moves 141 -> 142, a deliberate
     // widening of one site. The row carries the policy flag and grace days only.
-    security: 26,
+    security: 27,
     // 16 -> 18 (#2595): the two reviewed-move writes. `lodge` is the category
     // every other bed-allocation write already uses, and it is not one of the
     // three (`admin`, `security`, `system`) readable with support:view alone —

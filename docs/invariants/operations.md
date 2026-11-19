@@ -591,14 +591,14 @@ rules first written here. #2765 extended it with the measured-audience half.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
   A GENERAL "did a reclassification ship without a backfill" check is
-  **not available**: the audit-writer census pins only 130 of its 549 write sites
+  **not available**: the audit-writer census pins only 130 of its 551 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
   by `audit-writer-census.test.ts` so this figure and the copy of it in
   `bed-allocation-audit-category-backfill.test.ts` cannot go stale again —
   deliberately, because pinning all of them would make every feature that records
-  something edit a 400-line literal — so for the other 383 there is no baseline
+  something edit a 400-line literal — so for the other 421 there is no baseline
   a check could compare against, and the category distribution alone cannot see a
   reclassification that another one compensates for. The two `verify` gates that
   can read a pull request parse its BODY, not its diff. So outside the pinned

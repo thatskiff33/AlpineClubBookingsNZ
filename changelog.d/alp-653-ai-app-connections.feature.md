@@ -14,3 +14,7 @@
   member asks about is sent to their AI app's provider, so cover this in the
   club's privacy notice before turning it on. The AI app connections guide
   (`docs/guides/mcp-server.md`) explains the settings and the risks.
+
+  Connection events and change actions use a new `security` audit writer,
+  visible to officers with support view permission. No existing audit rows
+  are reclassified; action arguments and results are never recorded.

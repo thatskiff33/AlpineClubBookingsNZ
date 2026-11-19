@@ -12,7 +12,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { bookingOwner } from "@/lib/booking-owner";
-import { formatDateOnly } from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { prisma } from "@/lib/prisma";
 
 /** A booking the member made, or one they are a guest on. Never a deleted one. */
@@ -65,8 +65,8 @@ function toSummary(row: MemberBookingRow, memberId: string): MemberBookingSummar
   return {
     id: row.id,
     status: row.status,
-    checkIn: formatDateOnly(row.checkIn),
-    checkOut: formatDateOnly(row.checkOut),
+    checkIn: calendarDateOfDateOnlyInstant(row.checkIn),
+    checkOut: calendarDateOfDateOnlyInstant(row.checkOut),
     lodge: row.lodge,
     // The price and the organiser's note belong to the member who booked.
     finalPriceCents: madeByMe ? row.finalPriceCents : 0,

@@ -1,0 +1,138 @@
+
+ RUN  v5.1.0 /data/worktrees/alpineclubbookingsnz/alp-653
+
+ ❯ src/lib/__tests__/audit-writer-census.test.ts (37 tests | 5 failed) 3999ms
+   ❯ audit writer census (#2581) (32)
+     × finds exactly the pinned number of production audit write sites 6ms
+     × finds exactly the pinned per-sink split 2ms
+     × counts the pinned population the same way INV-OPS-012 does 1ms
+     × pins how many sites write each category, so a reclassification is visible 1ms
+   ❯ canonical audit taxonomy (#2581) (5)
+     × pins how many write sites sit behind the WEAKEST gate 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/__tests__/audit-writer-census.test.ts > audit writer census (#2581) > finds exactly the pinned number of production audit write sites
+AssertionError: The number of production audit write sites moved. That is fine — it moves whenever a feature records something new — but it is not a silent change: update AUDIT_CENSUS_TOTALS.writeSites, and check the new writer appears with a category rather than in UNCATEGORISED_AUDIT_WRITERS.: expected 551 to be 550 // Object.is equality
+
+- Expected
++ Received
+
+- 550
++ 551
+
+ ❯ src/lib/__tests__/audit-writer-census.test.ts:214:7
+    212|         "update AUDIT_CENSUS_TOTALS.writeSites, and check the new writ…
+    213|         "with a category rather than in UNCATEGORISED_AUDIT_WRITERS.",
+    214|     ).toBe(AUDIT_CENSUS_TOTALS.writeSites);
+       |       ^
+    215|   });
+    216|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  src/lib/__tests__/audit-writer-census.test.ts > audit writer census (#2581) > finds exactly the pinned per-sink split
+AssertionError: expected { 'auditLog.create': { …(2) }, …(3) } to deeply equal { Object (logAudit, createAuditLog, ...) }
+
+- Expected
++ Received
+
+@@ -6,11 +6,11 @@
+    "createAuditLog": {
+      "total": 183,
+      "uncategorised": 0,
+    },
+    "createStructuredAuditLog": {
+-     "total": 11,
++     "total": 12,
+      "uncategorised": 0,
+    },
+    "logAudit": {
+      "total": 275,
+      "uncategorised": 0,
+
+ ❯ src/lib/__tests__/audit-writer-census.test.ts:227:22
+    225|       ]),
+    226|     );
+    227|     expect(measured).toEqual(AUDIT_CENSUS_TOTALS.bySink);
+       |                      ^
+    228|   });
+    229|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  src/lib/__tests__/audit-writer-census.test.ts > audit writer census (#2581) > counts the pinned population the same way INV-OPS-012 does
+AssertionError: The pinned/unpinned split moved. That is expected whenever a map grows or a feature records something new, but INV-OPS-012 quotes these two numbers as the reason a general reclassification gate is not available, and `bed-allocation-audit-category-backfill.test.ts` quotes them again. Update both, in the same pull request as this line (INV-OPS-012).: expected { pinned: 130, unpinned: 421 } to deeply equal { pinned: 130, unpinned: 420 }
+
+- Expected
++ Received
+
+  {
+    "pinned": 130,
+-   "unpinned": 420,
++   "unpinned": 421,
+  }
+
+ ❯ src/lib/__tests__/audit-writer-census.test.ts:1521:7
+    1519|     // 419 -> 420 unpinned (#4963): Try again on an exhausted email fa…
+    1520|     // RE-MEASURED with `pnpm run audit:census` on the merged tree.
+    1521|     ).toEqual({ pinned: 130, unpinned: 420 });
+       |       ^
+    1522|   });
+    1523|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  src/lib/__tests__/audit-writer-census.test.ts > audit writer census (#2581) > pins how many sites write each category, so a reclassification is visible
+AssertionError: The distribution of audit categories across production writers changed. That is a change to WHO CAN READ WHAT — `admin`, `security` and `system` are readable with support:view alone, while `family`, `account`, `communication` and `privacy` need membership:view as well. Update AUDIT_CENSUS_TOTALS.categoryValues and say so in the changelog.: expected { admin: 116, booking: 109, …(9) } to deeply equal { account: 19, booking: 109, …(9) }
+
+- Expected
++ Received
+
+@@ -5,9 +5,9 @@
+    "communication": 23,
+    "family": 35,
+    "lodge": 68,
+    "payment": 73,
+    "privacy": 25,
+-   "security": 26,
++   "security": 27,
+    "system": 4,
+    "xero": 51,
+  }
+
+ ❯ src/lib/__tests__/audit-writer-census.test.ts:1693:7
+    1691|         "`communication` and `privacy` need membership:view as well. U…
+    1692|         "AUDIT_CENSUS_TOTALS.categoryValues and say so in the changelo…
+    1693|     ).toEqual(AUDIT_CENSUS_TOTALS.categoryValues);
+       |       ^
+    1694|   });
+    1695|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  src/lib/__tests__/audit-writer-census.test.ts > canonical audit taxonomy (#2581) > pins how many write sites sit behind the WEAKEST gate
+AssertionError: The number of audit write sites readable with support:view alone changed. That is a widening or a narrowing of who can correlate audit evidence, not a refactor — say which in the changelog and update this pin.: expected 147 to be 146 // Object.is equality
+
+- Expected
++ Received
+
+- 146
++ 147
+
+ ❯ src/lib/__tests__/audit-writer-census.test.ts:1995:7
+    1993|         "That is a widening or a narrowing of who can correlate audit …
+    1994|         "not a refactor — say which in the changelog and update this p…
+    1995|     ).toBe(
+       |       ^
+    1996|       AUDIT_CENSUS_TOTALS.categoryValues.admin +
+    1997|         AUDIT_CENSUS_TOTALS.categoryValues.security +
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 32 passed (37)
+   Start at  10:52:12
+   Duration  4.63s (tests 89%, import 6%, transform 4%, setup 2%)
+
