@@ -55,6 +55,7 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * A refund Stripe already made under this key. Read on every attempt, including
@@ -260,7 +261,7 @@ export async function processOrganiserChildRefundOperation(
       settlement,
       refund,
     });
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   await finishRecordedOrganiserChildRefund({
     operation,
@@ -478,7 +479,7 @@ export async function reconcilePendingOrganiserChildRefunds(
         });
       }
       return entry.reversedCents;
-    }).catch(async (err: unknown) => {
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET).catch(async (err: unknown) => {
       logger.error({ err, stripeRefundId: row.stripeRefundId }, "Could not record an organiser child refund's new status; the next run reads it again");
       await stamp(row);
       return 0;

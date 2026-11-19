@@ -12,8 +12,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useSectionEditState } from "@/hooks/use-section-edit-state";
+import { apiRefusalFromResponse } from "@/lib/api-error-message";
 import { useClubTime } from "@/components/club-time-provider";
 import { RETENTION_CHOICES } from "@/lib/club-post-retention-choices";
+
+const SAVE_FALLBACK = "That setting could not be saved.";
 
 interface RetentionDraft {
   retentionDays: number;
@@ -58,7 +61,7 @@ export function ClubPostRetentionSection({
       saved.retentionDays === 0
         ? "Saved. Posts will be kept indefinitely."
         : `Saved. Posts older than ${saved.retentionDays} days will be deleted.`,
-    saveErrorFallback: "That setting could not be saved.",
+    saveErrorFallback: SAVE_FALLBACK,
     save: async (draft) => {
       const res = await fetch("/api/admin/club-posts/settings", {
         method: "PUT",
@@ -66,10 +69,7 @@ export function ClubPostRetentionSection({
         body: JSON.stringify({ retentionDays: draft.retentionDays }),
       });
       if (!res.ok) {
-        const payload = (await res.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(payload?.error ?? "That setting could not be saved.");
+        throw await apiRefusalFromResponse(res, SAVE_FALLBACK);
       }
       const body = (await res.json()) as {
         settings: { retentionDays: number };

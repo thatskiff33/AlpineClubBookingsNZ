@@ -19,6 +19,7 @@ import {
 } from "./email";
 import { logAudit } from "./audit";
 import logger from "@/lib/logger";
+import { isTransactionContention } from "@/lib/prisma-errors";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
@@ -59,6 +60,7 @@ import {
 } from "@/lib/night-adjustment-write";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
 import type { ClubFormat } from "@/lib/club-format";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 export const WAITLIST_OFFER_HOURS =
   Number(process.env.WAITLIST_OFFER_HOURS) || 48;
@@ -682,7 +684,7 @@ export async function processWaitlistForDates(freedDates: {
 
         break; // Only offer to the top candidate
       }
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
     logger.error({ err }, "Failed to process waitlist for dates");
     return { offeredBookingId: null };
@@ -820,7 +822,7 @@ async function revertSameLodgeOfferToWaitlisted(
         previousRange,
       });
     }
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }
 
 /**
@@ -1226,8 +1228,10 @@ export async function confirmWaitlistOffer(
       await reconcileAdultMemberHostingReviewWithSiblings(bookingId, tx);
 
       return { success: true, newStatus };
-    });
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET);
   } catch (err) {
+    // The claim rolled back (INV-LOCK-006): the route answers its retryable 503.
+    if (isTransactionContention(err)) throw err;
     if (isHostingCoverageParticipantRetry(err)) {
       return {
         success: false,
@@ -1403,7 +1407,7 @@ export async function expireStaleOffers(format: ClubFormat): Promise<{
         ).values()
       ),
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   let reofferedCount = 0;
 
