@@ -23,7 +23,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import { SiteStyleWizard } from "../website/site-style/site-style-wizard";
-import LodgeSetupWizardPage from "../lodges/[id]/setup/page";
+import LodgeSetupWizardPage from "../lodge-ops/lodges/[id]/setup/page";
 import { useLodgeLinkStep } from "../alpine-server/setup/server-connect-step";
 import { DEFAULT_CLUB_THEME_VALUES } from "@/lib/club-theme-schema";
 

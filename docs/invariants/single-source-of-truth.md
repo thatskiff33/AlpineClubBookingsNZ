@@ -413,3 +413,32 @@ the page's registry definition, never as a second heading. #4968.
   each Setup sub-hub returns by `adminLink("setup")`.
   `admin-setup-hubs.test.tsx` checks the card arrays in `setup/hub-cards.ts` and
   the rendered page.
+
+## INV-SSOT-011
+
+An officer work queue is defined once, in `ADMIN_WORK_QUEUES`
+(`src/lib/admin-work-queues.ts`), and counted once, in `getAdminPendingCounts`
+(`src/lib/admin-pending-counts.ts`). The admin dashboard's attention cards and
+the sidebar's Needs Attention section render that list and nothing else. #4962.
+
+- **Why one list.** Each surface used to count and link its queues by hand,
+  and they drifted: the dashboard missed queues the sidebar showed, and the two
+  summed Booking Requests from different terms. An officer could clear the
+  dashboard and still have work waiting.
+- **Visibility comes from the href.** Both surfaces show a queue only when its
+  module is on (`isFeatureHrefVisible`) and the viewer may open its page
+  (`canViewAdminHrefWithMatrix`), so no queue carries a second permission
+  field to fall out of step with its route.
+- **A census keeps it one.** `admin-work-queue-census.test.ts` reads the
+  dashboard page and the sidebar from disk and fails on a queue table counted
+  directly, a counter helper imported, a count read by name, a hand-wired Needs
+  Attention item, or a queue page or deep link built outside the registry. Its
+  allow-list names each other dashboard link to a queue page and why.
+- **Parity is pinned.** `admin-work-queues.test.tsx` renders both surfaces for
+  several viewer roles with every module on and off and expects the same queues
+  with the same numbers.
+- **A failed count is not zero.** Each counter settles on its own; a failure
+  is listed in `unavailable` and both surfaces say so.
+- **One read per page.** When a page already reads a queue's rows, it hands the
+  count to `getAdminPendingCounts` as `supplied` rather than scanning twice. The
+  dashboard does this for uncovered hut-leader nights.

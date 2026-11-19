@@ -14,7 +14,7 @@ export const LODGE_OPS_HUB = defineHub({
       label: "Lodges",
       oldPath: "/admin/lodges",
       area: "lodge",
-      moved: false,
+      moved: true,
     },
     {
       id: "lodge-detail",
@@ -22,7 +22,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/lodges/[id]",
       area: "lodge",
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       id: "lodge-central-lodge",
@@ -30,7 +30,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/lodges/[id]/central-lodge",
       area: "lodge",
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       id: "lodge-display",
@@ -38,7 +38,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/lodges/[id]/display",
       area: "lodge",
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       id: "lodge-roster",
@@ -46,7 +46,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/lodges/[id]/roster",
       area: "lodge",
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       id: "lodge-setup",
@@ -54,7 +54,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/lodges/[id]/setup",
       area: "lodge",
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       // #2937: `lodge` in the route map, because the inventory is lodge-scoped
@@ -153,7 +153,7 @@ export const LODGE_OPS_HUB = defineHub({
       area: "lodge",
       flags: ["lobbyDisplay"],
       keywords: ["signage", "screen", "tv", "devices"],
-      moved: false,
+      moved: true,
     },
     {
       id: "display-builder",
@@ -162,7 +162,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/display/builder",
       area: "lodge",
       flags: ["lobbyDisplay"],
-      moved: false,
+      moved: true,
     },
     {
       id: "display-devices",
@@ -170,7 +170,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/display/devices",
       area: "lodge",
       flags: ["lobbyDisplay"],
-      moved: false,
+      moved: true,
     },
     {
       id: "display-layouts",
@@ -179,7 +179,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/display/layouts",
       area: "lodge",
       flags: ["lobbyDisplay"],
-      moved: false,
+      moved: true,
     },
     {
       // One template's sandboxed preview, opened from its Preview button: it
@@ -191,7 +191,7 @@ export const LODGE_OPS_HUB = defineHub({
       area: "lodge",
       flags: ["lobbyDisplay"],
       kind: "detail",
-      moved: false,
+      moved: true,
     },
     {
       id: "display-reference",
@@ -199,7 +199,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/display/reference",
       area: "lodge",
       flags: ["lobbyDisplay"],
-      moved: false,
+      moved: true,
     },
     {
       // Redirect stub to display/devices.
@@ -209,7 +209,7 @@ export const LODGE_OPS_HUB = defineHub({
       area: "lodge",
       flags: ["lobbyDisplay"],
       kind: "stub",
-      moved: false,
+      moved: true,
     },
     {
       // Exempt from lobbyDisplay (#2249): it is how the module is turned on.
@@ -218,7 +218,7 @@ export const LODGE_OPS_HUB = defineHub({
       keywords: ["lodge display setup"],
       oldPath: "/admin/display/setup",
       area: "lodge",
-      moved: false,
+      moved: true,
     },
     {
       id: "display-templates",
@@ -226,7 +226,7 @@ export const LODGE_OPS_HUB = defineHub({
       oldPath: "/admin/display/templates",
       area: "lodge",
       flags: ["lobbyDisplay"],
-      moved: false,
+      moved: true,
     },
     {
       id: "lockers",

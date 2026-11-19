@@ -116,6 +116,8 @@ const PROVENANCE_SCANNED_FILES = [
   // #3638: the second-instrument alert cites #2774's locking reasoning.
   "src/lib/email/admin-alerts-settlement.ts",
   "src/components/admin/manual-refund-task-queue.tsx",
+  // #4926 split: the automatic-refund card moved out of the queue verbatim, citing #2773/#2774.
+  "src/components/admin/automatic-refund-notices-card.tsx",
   // #3635: the receipt rule cites the #2760/#2773 task row that names the intent.
   "src/lib/late-capture-xero-receipt.ts",
   // #4149: the shared epilogue cites #2761/#2773 for the alert it sends.

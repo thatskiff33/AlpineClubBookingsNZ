@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FocusedActionError } from "@/components/focused-action-error";
+import { apiRefusalFromResponse, refusalMessageOr } from "@/lib/api-error-message";
 import {
   Card,
   CardContent,
@@ -59,6 +60,17 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 
+const LOAD_FALLBACK = "Failed to load mountain conditions";
+const EXPORT_FALLBACK = "Failed to export configuration";
+// Each action names its fallback once: the same sentence covers an HTML error
+// page (thrown at the request) and a dropped connection (shown by the catch).
+const SAVE_FALLBACK = "Failed to save mountain conditions";
+const REFRESH_FALLBACK = "Failed to refresh mountain conditions";
+const VISIBILITY_FALLBACK = "Failed to save section visibility";
+const CONFIG_FALLBACK = "Failed to save source configuration";
+const IMPORT_FALLBACK = "Failed to import selectors";
+const PREVIEW_FALLBACK = "Preview failed";
+
 const VISIBILITY_SECTIONS: {
   key: keyof WhakapapaSectionVisibility;
   label: string;
@@ -83,13 +95,11 @@ type AdminMountainConditionsRecord = {
 type ApiResponse = {
   record: AdminMountainConditionsRecord | null;
   message?: string;
-  error?: string;
 };
 
 type PreviewResponse = {
   preview?: WhakapapaCurlData;
   message?: string;
-  error?: string;
 };
 
 function configToForm(config: WhakapapaSourceConfig | undefined) {
@@ -161,10 +171,10 @@ export function MountainConditionsPanel() {
     setLoadError("");
     try {
       const response = await fetch("/api/admin/mountain-conditions");
-      const body = (await response.json()) as ApiResponse;
       if (!response.ok) {
-        throw new Error(body.error || "Failed to load mountain conditions");
+        throw await apiRefusalFromResponse(response, LOAD_FALLBACK);
       }
+      const body = (await response.json()) as ApiResponse;
 
       const nextRecord = body.record;
       setRecord(nextRecord);
@@ -184,11 +194,7 @@ export function MountainConditionsPanel() {
       const form = configToForm(undefined);
       setSourceUrl(form.sourceUrl);
       setSelectorOverrides(form.overrides);
-      setLoadError(
-        loadFailure instanceof Error
-          ? loadFailure.message
-          : "Failed to load mountain conditions",
-      );
+      setLoadError(refusalMessageOr(loadFailure, LOAD_FALLBACK));
     } finally {
       setLoading(false);
     }
@@ -214,11 +220,11 @@ export function MountainConditionsPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rawJson }),
       });
-      const body = (await response.json()) as ApiResponse;
       if (!response.ok) {
         if (response.status === 403) setForbidden(true);
-        throw new Error(body.error || "Failed to save mountain conditions");
+        throw await apiRefusalFromResponse(response, SAVE_FALLBACK);
       }
+      const body = (await response.json()) as ApiResponse;
 
       setRecord(body.record);
       setRecordSyncedAt(Date.now());
@@ -229,9 +235,7 @@ export function MountainConditionsPanel() {
       toast.success(body.message || "Mountain conditions saved");
     } catch (saveError) {
       actionFailure.fail(
-        saveError instanceof Error
-          ? saveError.message
-          : "Failed to save mountain conditions",
+        refusalMessageOr(saveError, SAVE_FALLBACK),
       );
       toast.error("Mountain conditions save failed");
     } finally {
@@ -247,11 +251,11 @@ export function MountainConditionsPanel() {
       const response = await fetch("/api/admin/mountain-conditions", {
         method: "POST",
       });
-      const body = (await response.json()) as ApiResponse;
       if (!response.ok) {
         if (response.status === 403) setForbidden(true);
-        throw new Error(body.error || "Failed to refresh mountain conditions");
+        throw await apiRefusalFromResponse(response, REFRESH_FALLBACK);
       }
+      const body = (await response.json()) as ApiResponse;
 
       setRecord(body.record);
       setRecordSyncedAt(Date.now());
@@ -262,9 +266,7 @@ export function MountainConditionsPanel() {
       toast.success(body.message || "Mountain conditions refreshed");
     } catch (refreshError) {
       actionFailure.fail(
-        refreshError instanceof Error
-          ? refreshError.message
-          : "Failed to refresh mountain conditions",
+        refusalMessageOr(refreshError, REFRESH_FALLBACK),
       );
       toast.error("Mountain conditions refresh failed");
     } finally {
@@ -282,11 +284,11 @@ export function MountainConditionsPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ visibility }),
       });
-      const body = (await response.json()) as ApiResponse;
       if (!response.ok) {
         if (response.status === 403) setForbidden(true);
-        throw new Error(body.error || "Failed to save section visibility");
+        throw await apiRefusalFromResponse(response, VISIBILITY_FALLBACK);
       }
+      const body = (await response.json()) as ApiResponse;
 
       setRecord(body.record);
       setRecordSyncedAt(Date.now());
@@ -297,9 +299,7 @@ export function MountainConditionsPanel() {
       toast.success(body.message || "Section visibility saved");
     } catch (visibilityError) {
       actionFailure.fail(
-        visibilityError instanceof Error
-          ? visibilityError.message
-          : "Failed to save section visibility",
+        refusalMessageOr(visibilityError, VISIBILITY_FALLBACK),
       );
       toast.error("Section visibility save failed");
     } finally {
@@ -325,12 +325,10 @@ export function MountainConditionsPanel() {
       // Read the current config straight from the database so the export
       // reflects what is stored, not any unsaved edits in the form.
       const response = await fetch("/api/admin/mountain-conditions");
-      const body = (await response.json()) as ApiResponse;
       if (!response.ok) {
-        throw new Error(
-          body.error || "Failed to read the stored configuration",
-        );
+        throw await apiRefusalFromResponse(response, EXPORT_FALLBACK);
       }
+      const body = (await response.json()) as ApiResponse;
 
       const config = body.record?.config ?? emptyWhakapapaSourceConfig();
       // Export the FULL resolved selector set (defaults filled in for any key
@@ -356,9 +354,7 @@ export function MountainConditionsPanel() {
       toast.success("Selector configuration exported from the database.");
     } catch (exportError) {
       actionFailure.fail(
-        exportError instanceof Error
-          ? exportError.message
-          : "Failed to export configuration",
+        refusalMessageOr(exportError, EXPORT_FALLBACK),
       );
       toast.error("Export failed");
     } finally {
@@ -410,9 +406,7 @@ export function MountainConditionsPanel() {
         toast.error("Could not import selectors: the file is not valid JSON.");
       } else {
         actionFailure.fail(
-          importError instanceof Error
-            ? importError.message
-            : "Failed to import selectors",
+          refusalMessageOr(importError, IMPORT_FALLBACK),
         );
         toast.error("Import failed");
       }
@@ -438,11 +432,11 @@ export function MountainConditionsPanel() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ config }),
     });
-    const body = (await response.json()) as ApiResponse;
     if (!response.ok) {
       if (response.status === 403) setForbidden(true);
-      throw new Error(body.error || "Failed to save source configuration");
+      throw await apiRefusalFromResponse(response, CONFIG_FALLBACK);
     }
+    const body = (await response.json()) as ApiResponse;
 
     setRecord(body.record);
     setRecordSyncedAt(Date.now());
@@ -461,9 +455,7 @@ export function MountainConditionsPanel() {
       toast.success(message);
     } catch (configError) {
       actionFailure.fail(
-        configError instanceof Error
-          ? configError.message
-          : "Failed to save source configuration",
+        refusalMessageOr(configError, CONFIG_FALLBACK),
       );
       toast.error("Source configuration save failed");
     } finally {
@@ -482,17 +474,17 @@ export function MountainConditionsPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ preview: true, config: buildConfigPayload() }),
       });
-      const body = (await response.json()) as PreviewResponse;
       if (!response.ok) {
         if (response.status === 403) setForbidden(true);
-        throw new Error(body.error || "Preview failed");
+        throw await apiRefusalFromResponse(response, PREVIEW_FALLBACK);
       }
+      const body = (await response.json()) as PreviewResponse;
 
       setPreviewJson(body.preview ? prettyJson(body.preview) : "");
       toast.success(body.message || "Preview generated");
     } catch (previewError) {
       actionFailure.fail(
-        previewError instanceof Error ? previewError.message : "Preview failed",
+        refusalMessageOr(previewError, PREVIEW_FALLBACK),
       );
       toast.error("Preview failed");
     } finally {

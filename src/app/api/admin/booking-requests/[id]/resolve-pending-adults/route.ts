@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { resolveAcceptedSchoolPendingAdults } from "@/lib/school-pending-adult-resolution";
 import { schoolTeacherSchema } from "@/lib/school-teacher-schema";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 
 const inputSchema = z.object({
   expectedVersion: z.number().int().min(0),
@@ -48,6 +49,13 @@ export async function POST(
       version: resolved.version,
     });
   } catch (err) {
+    // `INV-LOCK-006`: the naming's one transaction rolled back.
+    const contended = transactionContendedResponse(
+      err,
+      "School pending-adult naming contended for the lock(1) budget",
+      { context: { requestId: id } },
+    );
+    if (contended) return contended;
     if (err instanceof BookingRequestError || err instanceof BookingRequestQuoteError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

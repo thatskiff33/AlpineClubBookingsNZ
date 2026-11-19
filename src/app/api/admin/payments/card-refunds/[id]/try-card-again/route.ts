@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import { LEGACY_GROUP_CARD_REFUND_TRY_AGAIN_REFUSAL } from "@/lib/card-refund-group-copy";
 import { tryOrganiserChildCardRefundAgain } from "@/lib/card-refund-group-try-again";
@@ -83,6 +84,12 @@ export async function POST(
     if (error instanceof DeadCardRefundActionError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Card refund try-card-again contended for the lock(1) budget",
+      { context: { operationId: id } },
+    );
+    if (contended) return contended;
     logger.error({ err: error, operationId: id }, "Trying a card refund Stripe gave up on again failed");
     return NextResponse.json({ error: "Could not try the card again." }, { status: 500 });
   }

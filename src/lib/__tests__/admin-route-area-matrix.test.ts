@@ -464,6 +464,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // is gated exactly as closing one is - undoing a money decision is not a
   // lesser act than taking it.
   "/api/admin/payments/manual-refund-tasks/[id]/reopen": "finance",
+  "/api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute": "finance",
   // #3835: what a review share on a cancelled booking still owes, read by the
   // settle dialog before completing - a finance read, gated as the queue is.
   "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",
