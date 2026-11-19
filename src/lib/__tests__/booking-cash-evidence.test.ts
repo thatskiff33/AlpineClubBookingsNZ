@@ -242,7 +242,7 @@ describe("deriveBookingCashCover: one refund comes off exactly once", () => {
   });
 });
 
-describe("deriveBookingCashCover: a superseded capture is never cover (blueprint section 6.6)", () => {
+describe("deriveBookingCashCover: a superseded capture is never cover (blueprint section 2.7)", () => {
   // Worth 50,000. One ordinary 25,000 capture (tx-1) and a superseded intent
   // that captured 25,000 anyway (tx-2), which goes back to the member whole.
   const AFTER = new Date("2026-07-01T00:05:00.000Z");

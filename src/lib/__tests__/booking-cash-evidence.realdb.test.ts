@@ -3,7 +3,7 @@
  * over rows the REAL writers leave, against real PostgreSQL. The branch-by-branch
  * pure cases are `booking-cash-evidence.test.ts`; this file proves the reader
  * composes with what production actually writes (`docs/design/paid-from-cash.md`
- * §2 and §6.6):
+ * §2):
  *
  * - what the cash proves: an unpaid card booking, the Internet Banking
  *   bed-holding switch (CONFIRMED, its PENDING face amount never counted), a
