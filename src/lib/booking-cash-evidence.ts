@@ -85,7 +85,7 @@ export type BookingCashUnknownReason =
   | "stored-figure-bank-receipt"
   /** The payment mirror and its captured rows disagree (or a capture has no rows). */
   | "rows-disagree-with-payment"
-  /** A row's refunds exceed its capture, or a refunded row records less than it took. */
+  /** Refunds exceed a capture or an organiser's share, or a refunded row records less than it took. */
   | "refunds-unproven"
   /** An open or lost dispute holds a capture (`INV-PAY-154`). */
   | "disputed"
@@ -209,6 +209,29 @@ function owedNetOfHeldCash(snapshot: BookingCashSnapshot): number {
 }
 
 /**
+ * Can these ledger rows be read as cash at all? Null when they can. Asked of
+ * whatever rows a payment has, an organiser-settled child's included: a proved
+ * share does not make a backfilled row or an over-refunded one evidence.
+ */
+function rowEvidenceProblem(rows: CashEvidencePayment["transactions"]): BookingCashUnknownReason | null {
+  if (rows.some((row) => row.reason !== null && LEGACY_BACKFILL_REASONS.includes(row.reason))) {
+    return "legacy-history";
+  }
+  if (rows.some(isStoredFigureBankReceipt)) return "stored-figure-bank-receipt";
+  return rows.some((row) => isCapturedTransactionStatus(row.status) && refundsUnproven(row))
+    ? "refunds-unproven"
+    : null;
+}
+
+/** Refunds above what was taken, or a refunded status recording less than it took (`captureRefundState`). */
+function refundsUnproven(taken: { status: PaymentStatus; amountCents: number; refundedAmountCents: number }): boolean {
+  return (
+    taken.refundedAmountCents > taken.amountCents ||
+    captureRefundState(taken).heldCents !== taken.amountCents - taken.refundedAmountCents
+  );
+}
+
+/**
  * Do the payment's ledger rows prove its mirror? Null when they do. The mirror
  * is what Net Collected reads; it counts here only as the cash its captured
  * rows record.
@@ -218,20 +241,9 @@ function paymentEvidenceProblem(
   booking: BookingCashSnapshot["booking"],
 ): BookingCashUnknownReason | null {
   const rows = payment.transactions;
-  if (rows.some((row) => row.reason !== null && LEGACY_BACKFILL_REASONS.includes(row.reason))) {
-    return "legacy-history";
-  }
-  if (rows.some(isStoredFigureBankReceipt)) return "stored-figure-bank-receipt";
+  const rowProblem = rowEvidenceProblem(rows);
+  if (rowProblem) return rowProblem;
   const captured = rows.filter((row) => isCapturedTransactionStatus(row.status));
-  if (
-    captured.some(
-      (row) =>
-        row.refundedAmountCents > row.amountCents ||
-        captureRefundState(row).heldCents !== row.amountCents - row.refundedAmountCents,
-    )
-  ) {
-    return "refunds-unproven";
-  }
   const capturedCents = grossCapturedCents(rows);
   const tookMoney = netCollectedPaymentTookMoney({ ...payment, booking });
   if (!tookMoney && capturedCents === 0) return null;
@@ -245,6 +257,13 @@ function paymentEvidenceProblem(
  * An organiser-settled child (`INV-PAY-109`, `INV-PAY-114`, `INV-PAY-137`). Its
  * money is the organiser's: the parent's cash is never counted for it, and a
  * share is counted only where the frozen settlement proves it.
+ *
+ * Who pays and what is held are two proofs. An organiser who has not paid
+ * (`organiserPaysForNewJoiner`) is proved by the group alone: no share exists
+ * yet, and `organiser_pays` claims no money. `covered` needs the share
+ * (`planGroupChildLines`) and a mirror whose refunds the share can carry. The
+ * settle writes that mirror with no rows of its own, so it is excused the
+ * rows-to-mirror reconciliation and nothing else.
  */
 function deriveGroupChildCover(snapshot: BookingCashSnapshot): BookingCashCover {
   const { booking, payment, group } = snapshot;
@@ -262,6 +281,10 @@ function deriveGroupChildCover(snapshot: BookingCashSnapshot): BookingCashCover 
     appealRefunds: group.appealRefunds,
   });
   if (plan?.kind !== "plan") return unknown("organiser-share-unproven");
+  const rowProblem = rowEvidenceProblem(payment.transactions);
+  if (rowProblem) return unknown(rowProblem);
+  // The share is the mirror's `amountCents`; refunds above it are not this child's money.
+  if (refundsUnproven(payment)) return unknown("refunds-unproven");
   if (owedNetOfHeldCash(snapshot) <= 0) return { kind: "covered" };
   // A rise after the settle on a child paid by bank transfer is invoiced to
   // the organiser (`organiser-extra-invoice-queue.ts`); a card child's rise is

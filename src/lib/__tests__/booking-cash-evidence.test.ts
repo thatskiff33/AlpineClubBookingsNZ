@@ -414,6 +414,47 @@ describe("deriveBookingCashCover: group children", () => {
     expect(deriveBookingCashCover(child({ booking: { finalPriceCents: 3_000 }, payment: refunded }))).toEqual({ kind: "covered" });
   });
 
+  // History no current writer leaves; the reader must still refuse to call it
+  // covered. A share that adds up proves the share, not the child's refunds.
+  describe("a proved share with history it cannot carry (invalid-history inputs)", () => {
+    it("is unknown when the child's refunds exceed its share, even at zero price", () => {
+      const overRefunded = child({ booking: { finalPriceCents: 0 }, payment: childMirror({ refundedAmountCents: 6_000 }) });
+      expect(deriveBookingCashCover(overRefunded)).toEqual({ kind: "unknown", reason: "refunds-unproven" });
+    });
+
+    it("is unknown when a REFUNDED mirror records less back than its share", () => {
+      const refunded = child({ booking: { finalPriceCents: 0 }, payment: childMirror({ status: "REFUNDED", refundedAmountCents: 1_500 }) });
+      expect(deriveBookingCashCover(refunded)).toEqual({ kind: "unknown", reason: "refunds-unproven" });
+    });
+
+    it.each([
+      ["a legacy backfilled row", captured(4_500, { reason: "legacy_primary_backfill" }), "legacy-history"],
+      [
+        "a bank receipt holding its stored figure",
+        captured(4_500, { source: "INTERNET_BANKING", reason: "internet_banking_switch_at_pay" }),
+        "stored-figure-bank-receipt",
+      ],
+      ["a row refunded above its capture", captured(4_500, { refundedAmountCents: 6_000 }), "refunds-unproven"],
+    ])("is unknown when the child carries %s", (_label, row, reason) => {
+      const withRow = child({ payment: childMirror({ transactions: [row], _count: { transactions: 1 } }) });
+      expect(deriveBookingCashCover(withRow)).toEqual({ kind: "unknown", reason });
+    });
+
+    it("still says the organiser pays while unpaid: who pays is proved by the group, not by rows", () => {
+      const unpaid = child({
+        booking: { status: "CONFIRMED" },
+        payment: childMirror({ status: "PENDING", transactions: [captured(4_500, { reason: "legacy_primary_backfill" })] }),
+        group: group({ settlement: settlement("PENDING") }),
+      });
+      expect(deriveBookingCashCover(unpaid)).toEqual({ kind: "organiser_pays" });
+    });
+  });
+
+  it("stays covered when the whole share went back and the booking is worth nothing", () => {
+    const refunded = childMirror({ status: "REFUNDED", refundedAmountCents: 4_500 });
+    expect(deriveBookingCashCover(child({ booking: { finalPriceCents: 0 }, payment: refunded }))).toEqual({ kind: "covered" });
+  });
+
   it("says the organiser pays while the organiser has not, never asking the member", () => {
     for (const status of ["PENDING", "REFUNDED"] as const) {
       const unpaid = child({ booking: { status: "CONFIRMED" }, payment: null, group: group({ settlement: settlement(status) }) });

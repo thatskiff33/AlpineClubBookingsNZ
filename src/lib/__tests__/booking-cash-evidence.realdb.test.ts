@@ -12,7 +12,9 @@
  *   unpaid addition;
  * - organiser groups: the organiser has not paid, the real settle, a child
  *   refund out of the combined settlement, a share the frozen settlement cannot
- *   prove, and a dispute on the combined settlement intent;
+ *   prove, and a dispute on the combined settlement intent; then two
+ *   invalid-history inputs written directly onto a really settled child
+ *   (refunds above its share, a backfilled row), which stay unknown;
  * - refunds counted once: an open card refund debt, the same refund recorded
  *   before and after its row closes, one Stripe accepted and failed later, an
  *   open bank hand-back and its completion;
@@ -497,6 +499,42 @@ function pauseAtClose(operationId: string, probe: () => Promise<void>): MockInst
         .toEqual({ status: "OPEN", stripePaymentIntentId: G.pi, bookingId: G.organiser });
 
       expect(await cover(child1)).toEqual({ kind: "unknown", reason: "disputed" });
+    });
+  });
+
+  // INVALID-HISTORY INPUTS. The group is settled by the real settle, then the
+  // child's mirror is written to directly, to a state no current writer leaves.
+  // The reader must refuse it all the same: shares that add up prove the share,
+  // not the child's refunds or its rows.
+  describe("organiser groups: a proved share with history it cannot carry (invalid-history inputs)", () => {
+    const G = groupHistory(PREFIX, "group-unproven", "STRIPE", 2);
+    const [child1, child2] = G.children as [string, string];
+
+    it("the real settle's own child, no rows of its own, is covered", async () => {
+      await createGroupHistory(prisma, names, G);
+      await settleGroupHistory(G);
+      expect(await prisma.paymentTransaction.count({ where: { payment: { bookingId: { in: [child1, child2] } } } })).toBe(0);
+      expect(await cover(child1)).toEqual(COVERED);
+      expect(await cover(child2)).toEqual(COVERED);
+    });
+
+    it("refunds above the child's share are unknown, even on a booking worth nothing", async () => {
+      // Direct write: no writer refunds a child more than the settlement paid for it.
+      await prisma.payment.update({ where: { bookingId: child1 }, data: { refundedAmountCents: GROUP_CHILD_CENTS + 1_500 } });
+      await prisma.booking.update({ where: { id: child1 }, data: { finalPriceCents: 0 } });
+      expect(await cover(child1)).toEqual({ kind: "unknown", reason: "refunds-unproven" });
+      // The sibling's share still adds up, and its own history is clean.
+      expect(await cover(child2)).toEqual(COVERED);
+    });
+
+    it("a backfilled row on the child is unknown, whatever the share proves", async () => {
+      // Direct write: the settle writes a child's mirror with no rows, so nothing backfills one.
+      const { LEGACY_PRIMARY_BACKFILL_REASON } = await import("@/lib/payment-transaction-status");
+      const mirror = await prisma.payment.findUniqueOrThrow({ where: { bookingId: child2 }, select: { id: true } });
+      await prisma.paymentTransaction.create({
+        data: { paymentId: mirror.id, kind: "PRIMARY", source: "STRIPE", status: "SUCCEEDED", amountCents: GROUP_CHILD_CENTS, reason: LEGACY_PRIMARY_BACKFILL_REASON },
+      });
+      expect(await cover(child2)).toEqual({ kind: "unknown", reason: "legacy-history" });
     });
   });
 
