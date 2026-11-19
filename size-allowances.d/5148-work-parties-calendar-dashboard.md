@@ -15,7 +15,7 @@ rule moved out to `stay-work-parties.ts`, which leaves the wizard one line
 shorter than on `main` with the Join wiring in it. It needs no allowance.
 
 file: src/app/(admin)/admin/work-parties/page.tsx
-lines: 685
+lines: 607
 reason: the work party card gains an "On calendar" badge, an "Add to calendar"
   button and its click handler, and a status region (with its focus outcome)
   for the calendar result. They sit beside the card's existing Edit, Activate
@@ -43,7 +43,7 @@ reason: one import line: the open-work-party test now comes from its one home,
   import path.
 
 function: src/app/(admin)/admin/work-parties/page.tsx#AdminWorkPartiesPage
-lines: 519
+lines: 523
 reason: the Add to calendar handler, the On calendar badge and the calendar
   status region sit in the work party card's existing row of buttons and
   handlers, which this page component keeps inline; the calendar sync itself
