@@ -62,8 +62,9 @@ type BookingInvoiceSession = NonNullable<Awaited<ReturnType<typeof auth>>>;
  * cannot fetch an arbitrary credit note.
  *
  * Read-only apart from the audit row: the generated document makes no provider
- * call at all; the one Xero call runs outside any transaction, through the metered `callXeroApi` with no retries, and never arms
- * the process-wide outage breaker (#2394's rule for a read behind a person's
+ * call at all; the one Xero call runs outside any transaction, through the
+ * metered `callXeroApi` with no retries, and never arms the process-wide outage
+ * breaker (#2394's rule for a read behind a person's
  * button). Each successful download writes one audit row AFTER the PDF exists
  * (Xero's, or the generated one with its `source: "GENERATED"`); if that row
  * cannot be written the PDF is not handed over (owner decision 5 on
@@ -231,8 +232,8 @@ async function fetchServedDocument(
         },
       };
     } catch (error) {
-      // The offer was read from the same row a moment ago; a booking changed
-      // in between is "no longer available", the button's stale-page answer.
+      // Defensive: the offer ran the same line check on this same record, so
+      // this means the two have drifted; answer as the button's stale page.
       if (error instanceof BookingInvoiceNotAvailableError) return { kind: "NOT_FOUND" };
       throw error;
     }
