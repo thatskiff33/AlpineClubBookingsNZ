@@ -38,4 +38,3 @@ export const COMMON_EXCLUDED_COLUMNS: Record<string, string> = {
 export function excludedColumnsFor(spec: SingletonSpec): Record<string, string> {
   return { ...COMMON_EXCLUDED_COLUMNS, ...spec.excluded };
 }
-

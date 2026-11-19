@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { McpGrantScope } from "@prisma/client";
 import { Loader2 } from "lucide-react";
 
 import { FocusedActionError } from "@/components/focused-action-error";
@@ -16,7 +17,7 @@ export interface ConnectedAppRow {
   readonly id: string;
   readonly appName: string;
   readonly appHost: string;
-  readonly scope: "READ" | "READ_WRITE";
+  readonly scope: McpGrantScope;
   readonly connectedLabel: string;
   /** Null when the app has connected but not yet asked for anything. */
   readonly lastUsedLabel: string | null;

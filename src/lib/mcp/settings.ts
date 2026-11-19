@@ -15,6 +15,8 @@ import {
 } from "@/lib/admin-permissions";
 import { prisma } from "@/lib/prisma";
 
+import type { McpActionKind } from "./catalogue";
+
 export const MCP_SETTINGS_ID = "default";
 
 export interface McpSettingsValues {
@@ -76,4 +78,14 @@ export function effectiveMcpScope(
   return SCOPE_RANK[grantScope] <= SCOPE_RANK[settings.maxScope]
     ? grantScope
     : settings.maxScope;
+}
+
+/**
+ * Whether a connection with this scope may run an action of this kind: a
+ * view-only connection runs reads and nothing else. The tool list and the
+ * dispatcher both ask here, so an action is never offered and then refused
+ * (`INV-SSOT-002`).
+ */
+export function mcpScopeAllows(scope: McpGrantScope, kind: McpActionKind): boolean {
+  return kind === "read" || scope === "READ_WRITE";
 }

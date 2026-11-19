@@ -9,7 +9,7 @@
  */
 import "server-only";
 
-import type { McpGrantScope } from "@prisma/client";
+import { McpGrantScope } from "@prisma/client";
 import { z } from "zod";
 
 import { MCP_CONNECTION_REFUSAL_MESSAGES, mcpConnectionRefusal } from "./connection-gate";
@@ -27,7 +27,7 @@ const authorizeParam = z.string().max(2048).optional();
 export const mcpApprovalDecisionSchema = z.object({
   decision: z.enum(["approve", "deny"]),
   /** What the member chose. The club's limit is applied when it is recorded. */
-  scope: z.enum(["READ", "READ_WRITE"]),
+  scope: z.enum(McpGrantScope),
   params: z.object(
     Object.fromEntries(MCP_AUTHORIZE_PARAM_NAMES.map((name) => [name, authorizeParam])) as Record<
       (typeof MCP_AUTHORIZE_PARAM_NAMES)[number],

@@ -58,4 +58,3 @@ export function stripLegacyMemberLabelParams(search: string): string {
   const remaining = params.toString();
   return remaining ? `?${remaining}` : "";
 }
-

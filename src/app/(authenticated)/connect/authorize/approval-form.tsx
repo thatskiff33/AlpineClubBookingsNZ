@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { McpGrantScope } from "@prisma/client";
 import { Eye, Loader2, Pencil } from "lucide-react";
 
 import { FocusedActionError } from "@/components/focused-action-error";
@@ -12,7 +13,6 @@ import { apiErrorMessageFromBody, readApiObjectOrEmpty } from "@/lib/api-error-m
 import type { McpAuthorizeParams } from "@/lib/mcp/oauth";
 import { MCP_SCOPE_LABELS } from "@/lib/mcp/scope-labels";
 
-type Scope = "READ" | "READ_WRITE";
 type Decision = "approve" | "deny";
 
 const FAILURE_FALLBACK =
@@ -45,7 +45,7 @@ export function ApprovalForm({
   /** The request exactly as it arrived, sent back so the route re-checks it. */
   params: McpAuthorizeParams;
 }) {
-  const [scope, setScope] = useState<Scope>("READ");
+  const [scope, setScope] = useState<McpGrantScope>("READ");
   const [pending, setPending] = useState<Decision | null>(null);
   const failure = useActionFailure();
 

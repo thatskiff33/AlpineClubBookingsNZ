@@ -33,6 +33,7 @@ import { MCP_PERMANENT_EXCLUSION_REASONS, mcpPermanentExclusion } from "./exclus
 import { sendMcpLoopbackRequest } from "./loopback";
 import { issueMcpPrincipal, MCP_PRINCIPAL_HEADER } from "./principal";
 import { MCP_SCOPE_LABELS } from "./scope-labels";
+import { mcpScopeAllows } from "./settings";
 
 /**
  * What an argument that becomes part of an address must look like: one record
@@ -151,7 +152,7 @@ export async function runMcpAction(
     );
   }
 
-  if (action.kind !== "read" && caller.scope !== "READ_WRITE") {
+  if (!mcpScopeAllows(caller.scope, action.kind)) {
     await recordCall(action, caller, null);
     return refusal(
       `This connection is "${MCP_SCOPE_LABELS.READ}", so "${action.title}" was not run. To let the app make changes, the member connects it again from ${origin}/profile and chooses "${MCP_SCOPE_LABELS.READ_WRITE}", if the club allows it.`,

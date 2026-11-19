@@ -28,6 +28,7 @@ import {
 } from "./catalogue";
 import { runMcpAction, websiteOnlyAnswer, type McpActionOutcome, type McpCaller } from "./dispatch";
 import { MCP_SCOPE_LABELS } from "./scope-labels";
+import { mcpScopeAllows } from "./settings";
 
 export interface McpServerContext {
   readonly caller: McpCaller;
@@ -69,7 +70,7 @@ const WHO_AM_I = readOnlyTool(
 const FIND_ACTIONS = readOnlyTool(
   "find_actions",
   "Find actions",
-  "Lists the actions that are not offered as their own tool, and the ones only the club website can do. Give `query` to narrow the list.",
+  "Lists every action this connection could run, including those a view-only connection is not offered as tools, and the ones only the club website can do. Give `query` to narrow the list.",
   {
     type: "object",
     properties: { query: { type: "string", maxLength: 100 } },
@@ -138,11 +139,10 @@ function actionTool(action: McpAction): ToolDescriptor {
  * `find_actions` still names them, marked as needing view and change.
  */
 export function listMcpTools(context: McpServerContext): ToolDescriptor[] {
-  const canChange = context.caller.scope === "READ_WRITE";
   const core = MCP_ACTIONS.filter(
     (action) =>
       action.core &&
-      (canChange || action.kind === "read") &&
+      mcpScopeAllows(context.caller.scope, action.kind) &&
       mcpCallerMayUse(action, context.session),
   ).map(actionTool);
   return [WHO_AM_I, ...core, FIND_ACTIONS, DESCRIBE_ACTION, RUN_ACTION];
@@ -160,7 +160,7 @@ function json(value: unknown): McpActionOutcome {
 
 function whoAmI(context: McpServerContext): McpActionOutcome {
   const { user } = context.session;
-  const canChange = context.caller.scope === "READ_WRITE";
+  const canChange = mcpScopeAllows(context.caller.scope, "write");
   return json({
     name: user.name,
     email: user.email,
@@ -177,7 +177,6 @@ function whoAmI(context: McpServerContext): McpActionOutcome {
 function findActions(context: McpServerContext, query: string): McpActionOutcome {
   const needle = query.trim().toLowerCase();
   const matches = (text: string) => needle === "" || text.toLowerCase().includes(needle);
-  const canChange = context.caller.scope === "READ_WRITE";
   return json({
     actions: MCP_ACTIONS.filter(
       (action) =>
@@ -188,7 +187,7 @@ function findActions(context: McpServerContext, query: string): McpActionOutcome
       title: action.title,
       summary: action.summary,
       kind: action.kind,
-      ...(action.kind !== "read" && !canChange ? { needs: `a "${MCP_SCOPE_LABELS.READ_WRITE}" connection` } : {}),
+      ...(!mcpScopeAllows(context.caller.scope, action.kind) ? { needs: `a "${MCP_SCOPE_LABELS.READ_WRITE}" connection` } : {}),
     })),
     websiteOnly: MCP_WEBSITE_ONLY_ACTIONS.filter((action) =>
       matches(`${action.id} ${action.title} ${action.summary}`),

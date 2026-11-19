@@ -10,7 +10,7 @@
  *
  * `docs/STATE_MACHINES.md` ("AI app connection lifecycle") lists every reason.
  */
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { McpGrantScope, Prisma, PrismaClient } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
@@ -116,7 +116,7 @@ export interface McpConnectionListItem {
   readonly appName: string;
   /** The host the approval was delivered to: the checkable fact about the app. */
   readonly appHost: string;
-  readonly scope: "READ" | "READ_WRITE";
+  readonly scope: McpGrantScope;
   readonly connectedAt: string;
   readonly lastUsedAt: string | null;
 }
@@ -132,7 +132,7 @@ function hostOf(redirectUri: string | undefined): string {
 
 function toListItem(grant: {
   id: string;
-  scope: "READ" | "READ_WRITE";
+  scope: McpGrantScope;
   createdAt: Date;
   lastUsedAt: Date | null;
   client: { name: string };

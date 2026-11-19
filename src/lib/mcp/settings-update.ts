@@ -2,6 +2,7 @@
  * The club's AI connection settings as an officer saves them (ALP-653,
  * `INV-MCP-002`, `INV-MCP-003`).
  */
+import { McpGrantScope } from "@prisma/client";
 import { z } from "zod";
 
 import { normaliseRedirectHost } from "./redirect-uris";
@@ -13,7 +14,7 @@ export const mcpSettingsUpdateSchema = z
   .object({
     membersMayConnect: z.boolean(),
     officersMayConnect: z.boolean(),
-    maxScope: z.enum(["READ", "READ_WRITE"]),
+    maxScope: z.enum(McpGrantScope),
     allowedRedirectHosts: z.array(z.string().max(300)).max(MCP_ALLOWED_HOSTS_MAX),
   })
   .strict();

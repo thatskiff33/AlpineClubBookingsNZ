@@ -240,4 +240,3 @@ export const ROUTE_AREA_PREFIXES: Array<{
     prefixes: ["/admin", "/api/admin"],
   },
 ];
-
