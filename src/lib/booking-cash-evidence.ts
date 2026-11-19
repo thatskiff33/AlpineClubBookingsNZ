@@ -14,10 +14,12 @@
  *   (`getNetCollectedCashParts`): what it took, less recorded refunds, open
  *   hand-backs, card refunds not yet paid (failed, owed or superseded) and late
  *   captures awaiting the treasurer, each counted once. Refunds owed count as
- *   gone (owner decision 2, 16 Oct 2026). A superseded intent that captured
- *   anyway is never cover either, from the moment its capture commits: until
- *   its refund row exists its cancel row owns it (`supersededCancelOwnedCents`,
- *   `INV-PAY-150`);
+ *   gone (owner decision 2, 16 Oct 2026). A superseded intent's capture the
+ *   machinery is sending back is never cover either, from the moment the
+ *   capture commits: until its refund row exists its in-flight cancel row owns
+ *   it (`supersededCancelOwnedCents`, `INV-PAY-150`). One behind a dead cancel
+ *   with no refund row is handed to nobody, so it is cash the club holds, as
+ *   the Xero reading counts it (`superseded-intent-ownership.ts`);
  * - evidence: that payment mirror counts only when its captured
  *   `PaymentTransaction` rows agree with it, so a pending face amount never
  *   counts. Where the records cannot prove the figure the answer is `unknown`
@@ -32,7 +34,7 @@
  * pins both. Ledger M11 (#4523) extends this reader; it adds no second one.
  */
 import {
-  BookingStatus,
+  type BookingStatus,
   type GroupBookingPaymentMode,
   type PaymentSource,
   type PaymentStatus,
@@ -49,7 +51,7 @@ import {
   type GroupChildSibling,
 } from "@/lib/booking-ledger-group-child-plan";
 import { bookingAmountOwedCents } from "@/lib/booking-payment-state";
-import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
+import { DUPLICATE_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { paidByOrganiser, paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { organiserPaysForNewJoiner } from "@/lib/group-late-joiner";
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
@@ -156,7 +158,13 @@ export type BookingCashSnapshot = {
   group: GroupChildCashEvidence | null;
 };
 
-const COVERS_STATUSES: readonly string[] = [...ACTIVE_BOOKING_STATUSES, BookingStatus.COMPLETED];
+/**
+ * The statuses whose money this reader answers for: a real stay, live or
+ * finished - not cancelled, bumped or a waitlist placeholder. That rule has a
+ * home already (ADR-004's `DUPLICATE_STAY_BOOKING_STATUSES`), so it is read
+ * there rather than listed again (`INV-SSOT`).
+ */
+const COVERS_STATUSES: readonly string[] = DUPLICATE_STAY_BOOKING_STATUSES;
 
 const unknown = (reason: BookingCashUnknownReason): BookingCashCover => ({ kind: "unknown", reason });
 

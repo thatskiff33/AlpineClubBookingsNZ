@@ -283,7 +283,7 @@ describe("the approved-exception notice's payment line, rendered", () => {
     [
       "owes, beds held",
       { cover: { kind: "owes", cents: 12_000 }, bedsHeld: true },
-      "There is $120.00 to pay on this booking. Your beds are held for now; open it from your account to pay, or check the bank-transfer details and deadline there.",
+      "There is $120.00 to pay on this booking. Your beds are held for now; open it from your account to pay or to see the payment details.",
     ],
     ["the organiser pays", { cover: { kind: "organiser_pays" }, bedsHeld: true }, "Your group organiser pays for this stay."],
     [

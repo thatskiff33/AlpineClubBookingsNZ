@@ -45,6 +45,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, t
 import { raceSession } from "@/lib/__tests__/support/race-session-double";
 import { ENVIRONMENT_ROLE_ENV_VAR } from "@/lib/environment-role-declaration";
 import type { BookingCashCover } from "@/lib/booking-cash-evidence";
+import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import {
   createGroupHistory,
   GROUP_CHILD_CENTS,
@@ -81,7 +82,7 @@ const PREFIX = "race-4069-";
 const names = historyNames(PREFIX);
 /** Two guests, two nights each, at 50.00: what `createHistoryBooking` makes by default. */
 const PRICE = 20_000;
-/** The superseded-capture fixture (§6.6): worth 50,000, one ordinary and one superseded 25,000 capture. */
+/** The superseded-capture fixture (§2.7): worth 50,000, one ordinary and one superseded 25,000 capture. */
 const HALF = 25_000;
 /** The history support's nights. */
 const D2 = new Date("2027-08-02T00:00:00.000Z");
@@ -651,7 +652,7 @@ function pauseAtClose(operationId: string, probe: () => Promise<void>): MockInst
     });
   });
 
-  describe("a superseded capture awaiting its refund is never cover (§6.6)", () => {
+  describe("a superseded capture awaiting its refund is never cover (§2.7)", () => {
     const bookingId = id("superseded");
     const SUPERSEDED_INTENT = `pi_race_4069_superseded`;
     let supersededTxn = "";
@@ -756,6 +757,48 @@ function pauseAtClose(operationId: string, probe: () => Promise<void>): MockInst
       expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: supersededTxn }, select: { refundedAmountCents: true } })).toEqual({ refundedAmountCents: 0 });
       expect(await prisma.paymentRecoveryOperation.count({ where: { bookingId, idempotencyKey: { startsWith: "card_refund_failed_later_" } } })).toBe(1);
       expect(await cover(bookingId)).toEqual(OWES(HALF));
+    });
+  });
+
+  describe("a superseded capture behind a dead cancel is cash the club holds (§2.7)", () => {
+    it("the hand-off commits the capture, its refund row is never written and the cancel dies: owed while in flight, then covered", async () => {
+      const bookingId = id("superseded-dead");
+      const intent = "pi_race_4069_superseded_dead";
+      await paidCardBooking(bookingId, 6_250);
+      await postHistoryEdit(prisma, names, bookingId, `${bookingId}-rise`, { reprice: { guestId: `${bookingId}-g1`, stayDate: D2, priceCents: 6_250 + HALF }, changeFeeCents: 0 });
+      await ledger.upsertPaymentIntentTransaction({
+        paymentId: paymentOf(bookingId), kind: "ADDITIONAL", paymentIntentId: intent, amountCents: HALF,
+        carriedAskCents: 0, status: "PENDING", bookingModificationId: `${bookingId}-rise`,
+      });
+      const txn = await prisma.paymentTransaction.findFirstOrThrow({ where: { stripePaymentIntentId: intent }, select: { id: true } });
+      await recovery.enqueuePaymentIntentCancellationRecovery({
+        bookingId, paymentId: paymentOf(bookingId), paymentTransactionId: txn.id, paymentIntentId: intent, amountCents: HALF,
+      });
+      // The real hand-off commits the capture; its refund row's write fails.
+      const delegate = prisma.paymentRecoveryOperation;
+      const upsert = delegate.upsert.bind(delegate);
+      const enqueue = vi.spyOn(delegate, "upsert").mockImplementation(((args: Parameters<typeof upsert>[0]) => {
+        if ((args.create as { type?: unknown }).type === "REFUND_SUPERSEDED_PAYMENT") throw new Error("refund row not written");
+        return upsert(args);
+      }) as unknown as typeof upsert);
+      try {
+        await recovery.queueSupersededPaymentIntentRefundRecovery({ id: intent, amount: HALF, payment_method: null, created: STRIPE_CREATED }).catch(() => undefined);
+      } finally {
+        enqueue.mockRestore();
+      }
+      const rows = () => prisma.paymentRecoveryOperation.findMany({ where: { bookingId }, select: { type: true, status: true } });
+      expect(await prisma.paymentTransaction.findUniqueOrThrow({ where: { id: txn.id }, select: { status: true } })).toEqual({ status: "SUCCEEDED" });
+      expect((await rows()).map((row) => row.type)).toEqual(["CANCEL_PAYMENT_INTENT"]);
+      // Its cancel row is still in flight: the machinery owns the charge.
+      expect(await cover(bookingId)).toEqual(OWES(HALF));
+
+      // The runner gives up on the cancel (fixture write: attempts spent, no retry). It now hands the money to
+      // nobody, so the club holds both captures - the Xero reading's rule, which would otherwise hide a double payment.
+      await prisma.paymentRecoveryOperation.updateMany({
+        where: { bookingId, type: "CANCEL_PAYMENT_INTENT" },
+        data: { status: "FAILED", nextRetryAt: null, attempts: MAX_PAYMENT_RECOVERY_ATTEMPTS },
+      });
+      expect(await cover(bookingId)).toEqual(COVERED);
     });
   });
 

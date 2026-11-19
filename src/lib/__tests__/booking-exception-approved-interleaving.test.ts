@@ -143,6 +143,8 @@ const live: Rows = { booking: null, appliedCreditCents: 0 };
 const order: string[] = [];
 /** Every read, as `<client>:<model>`, so a read that left the snapshot shows. */
 const reads: string[] = [];
+/** What the email read and through which client, sorted: which reads, never their order. */
+const emailReads = () => reads.filter((read) => !read.startsWith("tx:")).sort();
 const snapshots: Array<{ options: unknown; statements: string[] }> = [];
 /** A writer to run once, after the snapshot's first read and before its next. */
 let betweenSnapshotReads: (() => void) | null = null;
@@ -346,7 +348,7 @@ describe("exception approval post-commit notification", () => {
     const [message] = sent();
     expect(message.templateData).toMatchObject({
       amount: "$50.00",
-      paymentNote: "There is $50.00 to pay on this booking. Your beds are held for now; open it from your account to pay, or check the bank-transfer details and deadline there.",
+      paymentNote: "There is $50.00 to pay on this booking. Your beds are held for now; open it from your account to pay or to see the payment details.",
     });
     expect(message.html).toContain("There is $50.00 to pay on this booking. Your beds are held for now;");
     expect(message.html).not.toContain("beds are not held");
@@ -369,6 +371,8 @@ describe("exception approval post-commit notification", () => {
     expect(await approve()).toMatchObject({ outcome: "executed" });
     expect(sent()[0].html).toContain("There is $50.00 to pay on this booking. Your beds are held for now;");
     expect(sent()[0].html).not.toContain("beds are not held");
+    // A card booking: the held line never sends the member to bank-transfer details.
+    expect(sent()[0].templateData.paymentNote).not.toMatch(/bank/i);
   });
 
   it("does not call the beds held for a whole-lodge flag left on a booking that holds no capacity", async () => {
@@ -412,21 +416,20 @@ describe("exception approval post-commit notification", () => {
       options: { isolationLevel: "RepeatableRead", maxWait: 10_000, timeout: 10_000 },
       statements: ["SET TRANSACTION READ ONLY"],
     }]);
-    const emailReads = reads.filter((read) => !read.startsWith("tx:"));
-    expect(emailReads).toEqual(["snapshot:booking", "snapshot:booking", "snapshot:memberCredit"]);
+    expect(emailReads()).toEqual(["snapshot:booking", "snapshot:booking", "snapshot:memberCredit"]);
   });
 
   it("reads a paid booking's captures, disputes and superseded-capture ownership inside that snapshot too", async () => {
     createsBooking({ ...payableBooking(), status: "PAID", payment: capturedCardPayment(5000) });
     expect(await approve()).toMatchObject({ outcome: "executed" });
-    expect(reads.filter((read) => !read.startsWith("tx:"))).toEqual([
+    expect(emailReads()).toEqual([
       "snapshot:booking", "snapshot:booking", "snapshot:memberCredit",
-      "snapshot:paymentTransaction", "snapshot:stripeDispute", "snapshot:paymentRecoveryOperation",
+      "snapshot:paymentRecoveryOperation", "snapshot:paymentTransaction", "snapshot:stripeDispute",
     ]);
   });
 
   const UNPAID_UNHELD = "There is $50.00 to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid.";
-  const OWES_25_HELD = "There is $25.00 to pay on this booking. Your beds are held for now; open it from your account to pay, or check the bank-transfer details and deadline there.";
+  const OWES_25_HELD = "There is $25.00 to pay on this booking. Your beds are held for now; open it from your account to pay or to see the payment details.";
   it.each([
     // A capture: the booking is paid and settled a moment after the snapshot.
     { name: "a capture", start: payableBooking, amount: "$50.00", paymentNote: UNPAID_UNHELD,
@@ -473,8 +476,8 @@ describe("exception approval post-commit notification", () => {
     expect(sent()[0].html).not.toMatch(/\$\d/);
     expect(sent()[0].html).not.toContain("to pay on this booking");
     // The group's share is read inside the snapshot too.
-    expect(reads.filter((read) => !read.startsWith("tx:"))).toEqual([
-      "snapshot:booking", "snapshot:booking", "snapshot:memberCredit", "snapshot:booking.siblings", "snapshot:stripeDispute",
+    expect(emailReads()).toEqual([
+      "snapshot:booking", "snapshot:booking", "snapshot:booking.siblings", "snapshot:memberCredit", "snapshot:stripeDispute",
     ]);
   });
 
@@ -510,7 +513,7 @@ describe("the approval email's payment line, one per cash-cover answer", () => {
   it("names the amount owed, with the held-bed sentence that is true", () => {
     expect(note({ kind: "owes", cents: 123_456 }, true)).toEqual({
       amount: "$1,234.56",
-      paymentNote: "There is $1,234.56 to pay on this booking. Your beds are held for now; open it from your account to pay, or check the bank-transfer details and deadline there.",
+      paymentNote: "There is $1,234.56 to pay on this booking. Your beds are held for now; open it from your account to pay or to see the payment details.",
     });
     expect(note({ kind: "owes", cents: 5 }, false)).toEqual({
       amount: "$0.05",

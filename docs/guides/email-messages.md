@@ -148,7 +148,7 @@ never from the booking's status (#4069). It is one of five lines:
 
 | What the records show | The line |
 | --- | --- |
-| Money is still owed and the booking holds its beds | "There is $X to pay on this booking. Your beds are held for now; open it from your account to pay, or check the bank-transfer details and deadline there." |
+| Money is still owed and the booking holds its beds | "There is $X to pay on this booking. Your beds are held for now; open it from your account to pay or to see the payment details." |
 | Money is still owed and the beds are not held yet | "There is $X to pay on this booking. Open it from your account to pay now — the beds are not held until it is paid." |
 | The booking is covered (by a payment, account credit, or both) | Nothing: the line is left out |
 | A group organiser pays for this stay | "Your group organiser pays for this stay." |

@@ -529,6 +529,17 @@ describe("the cash-cover reader keeps its boundaries (#4069)", () => {
     expect(text).not.toMatch(/\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\(|\$executeRaw|\$queryRaw/);
   });
 
+  it("hands that client to every helper it awaits", () => {
+    // Its credit and dispute helpers default to the module client when given
+    // none (`db = prisma`), so a dropped argument would read outside the
+    // caller's snapshot with nothing else failing.
+    const awaited = [...read(CASH_COVER_HOME).matchAll(/\bawait\s+([\w.]+)\(([^\n]*)/g)];
+    expect(awaited.length, "the census read the reader's awaited calls").toBeGreaterThanOrEqual(8);
+    for (const [call, callee, args] of awaited) {
+      expect(callee.startsWith("tx.") || /(?:^|,\s*)tx\s*[,)]/.test(args), call).toBe(true);
+    }
+  });
+
   it("is what the exception-approved email reads, with no status shortcut beside it", () => {
     const text = read(CASH_COVER_EMAIL);
     expect(text).toMatch(/\breadApprovedBookingSnapshot\(bookingId\)/);

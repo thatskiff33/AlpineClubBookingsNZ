@@ -478,8 +478,10 @@ invariants hold in addition to every #2365/#2524/#2525 invariant above:
   booking be reaped, with the member none the wiser that they had one. The
   new-booking executor therefore sends a dedicated approval email after commit
   (`sendBookingPolicyExceptionApprovedEmail`) naming the stay, what its cash
-  records show is still to pay (`INV-PAY-159`), and the officer's note. The two never double up — only the new-booking flavour uses
-  it.
+  records show is still to pay (`INV-PAY-159`), whether its beds are held as
+  it stands (a booking switched to a bed-holding bank transfer, or held by an
+  officer, holds them while it owes), and the officer's note. The two never
+  double up — only the new-booking flavour uses it.
 
 ### INV-EXCEPT-032
 

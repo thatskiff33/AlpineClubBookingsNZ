@@ -4426,9 +4426,9 @@ window), **`INV-LOCK-001`** to **`INV-LOCK-003`**.
   Collected's cash half (`getNetCollectedCashParts`): captured cash less
   recorded refunds, open hand-backs, card refunds not yet paid and late
   captures, each capped. A refund owed leaves the open operand in the snapshot
-  its paid form lands, so it comes off once. A superseded intent's capture is
-  never cover: until its refund row exists its cancel row owns it
-  (`supersededCaptureHeldBack`).
+  its paid form lands, so it comes off once. A superseded capture being sent
+  back is never cover: until its refund row exists its in-flight cancel row
+  owns it (`supersededCaptureHeldBack`).
 - **Evidence.** The payment counts only where its captured
   `PaymentTransaction` rows agree with it; a PENDING or PROCESSING face amount
   never counts. Back-filled history, a bank receipt holding a stored figure,
@@ -4441,10 +4441,9 @@ window), **`INV-LOCK-001`** to **`INV-LOCK-003`**.
   the organiser pays for, and a bank-paid child's later rise, are
   `organiser_pays`: the member is never asked.
 - It writes nothing, takes no lock, calls no provider and reads through the
-  caller's client, in one `withReadOnlySnapshot` with whatever it is shown
-  beside. It never reads the ledger balance or `readBookingAmountOwed`, whose
-  contract is unchanged. Ledger M11 (#4523) extends this reader; nothing adds
-  a second.
+  caller's client, in one `withReadOnlySnapshot` with what it is shown
+  beside. It never reads the ledger balance or `readBookingAmountOwed`
+  (unchanged). Ledger M11 (#4523) extends this reader; nothing adds a second.
 - First caller: `INV-EXCEPT-031`'s email. Surfaces still deciding from status:
   [`paid-from-cash.md`](../design/paid-from-cash.md).
 - Proven by `booking-cash-evidence.test.ts`, its `.realdb` twin,

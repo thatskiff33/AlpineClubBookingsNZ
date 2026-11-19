@@ -76,8 +76,9 @@ several.
 
 ## 3. Summary
 
-317 rows over 245 files: the 243 the pass found and 2 found by reading
-callers.
+317 rows over 245 files: the 243 the pass found and 2 it did not. The three
+† sites sit in three files, one of which the pass had already found for
+another row.
 
 | Class | Rows | A display stage | Own plan | M15 | No move |
 | --- | --- | --- | --- | --- | --- |
@@ -179,7 +180,7 @@ stage: each changes what a person or a job may do.
 | `lib/booking-status.ts` — `IMMEDIATE_PAYMENT_BOOKING_STATUSES` | card payment allowed | own plan · G2 |
 | `lib/booking-status.ts` — `OPERATIONAL_STAY_BOOKING_STATUSES`, `isOperationalStayBookingStatus` | who is treated as staying: `PAID` and `COMPLETED` only | own plan · G1 |
 | `lib/cron-checkin-reminders.ts` — `sendCheckinReminders` | check-in reminders go to operational stays | own plan · G1 |
-| `lib/cron-confirm-pending.ts` — `parentSettledWithoutCard` | a guest portion is not card-chased when its parent reads `CONFIRMED`, `PAID` or `COMPLETED` | own plan · G7 |
+| `lib/cron-confirm-pending.ts` — `parentSettledWithoutCard` | a guest portion is not card-chased when its parent is on Internet Banking or reads `CONFIRMED`, `PAID` or `COMPLETED` | own plan · G7 |
 | `lib/hut-leader-stayed-nights.ts` — `hutLeaderStayStatusWhere` | hut-leader duty counts operational stays | own plan · G1 |
 | `lib/late-notice-change-fee.ts` — `lateNoticeChangeFeeApplies` | a late-notice fee applies (input to a money writer) | own plan · G7 |
 | `lib/lodge-date-scoping.ts` — `LODGE_VISIBLE_BOOKING_STATUSES` | kiosk arrive and depart lookups see operational stays | own plan · G1 |
@@ -275,7 +276,7 @@ the same transaction as the money that justifies it.
 | --- | --- | --- |
 | `lib/booking-ledger-back-post.ts` — `mustConfirm` | confirmation lines are back-posted (after `INV-MONEY-037`) | own plan · G8 |
 | `lib/booking-ledger-group-settlement-sync.ts` — `groupSettledChildCancellationKeptCents` | ledger lines for a cancelled group child (after `INV-MONEY-037`) | own plan · G8 |
-| `lib/xero-booking-repair-classify.ts` — `classifyBookingContext` `PAID` branch | a `PAID` booking is expected to have an invoice; the finding can queue one | own plan · G5 |
+| `lib/xero-booking-repair-classify.ts` — `classifyBookingContext` `PAID` branch | a `PAID` booking is expected to have an invoice. The classifier only reads; its finding lets the repair path queue one, so it is listed with the writers | own plan · G5 |
 | `lib/booking-batch-modification-service.ts` — zero-dollar auto-pay follow-up | a whole-lodge booking repriced to nothing is written `PAID` | M15 · G10 |
 | `lib/booking-date-modification-service.ts` — `modifyBookingDates` zero-dollar auto-pay, `effectivePriceCents` | a date change repriced to nothing is written `PAID` | M15 · G10 |
 | `lib/booking-guest-acceptance-reprice.ts` — zero-dollar auto-pay follow-up | a reprice to nothing is written `PAID` | M15 · G10 |

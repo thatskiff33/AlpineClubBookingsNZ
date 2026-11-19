@@ -129,14 +129,16 @@ switched to paying for itself is an ordinary booking.
   (`organiser-extra-invoice-queue.ts`), so it gives `organiser_pays`; any
   other shortfall gives `unknown`.
 - No group, shares that do not add up, a payment the settlement did not
-  take, or no settlement give `unknown`.
+  take, or no settlement where the organiser is not still to pay (a group
+  that is not organiser-pays included) give `unknown`.
 - The parent's cash is never counted for a child, and a child's share never
   for the parent.
 
 ### 2.6 Unknown
 
-- The booking is not live (not in `ACTIVE_BOOKING_STATUSES` or `COMPLETED`,
-  or deleted): a cancelled booking's money is the cancellation's question.
+- The booking is not a real stay, live or finished (not in
+  `DUPLICATE_STAY_BOOKING_STATUSES`, the one home of that rule, or deleted): a
+  cancelled booking's money is the cancellation's question.
 - A row's `reason` is in `LEGACY_BACKFILL_REASONS`: seeded from columns, not
   from a capture.
 - A captured bank-transfer receipt holds the figure the payment was born with,
@@ -159,6 +161,10 @@ money and needs no rows; it reads `covered` through §2.2.
 - A superseded capture never covers the booking between its capture commit
   and creation of its refund row. The live cancel owns that money for return
   (`INV-PAY-043`, `INV-PAY-150`).
+- A superseded capture behind a dead cancel with no refund row is handed to
+  nobody: the club holds it, so it counts as cash, as the Xero reading counts
+  it (`superseded-intent-ownership.ts`). Skipping it would hide a booking
+  paid twice.
 - A group share proof does not prove the child's refund history. The group's
   legitimate absence of child capture rows exempts it only from ordinary
   row-to-mirror reconciliation, not from the unknown-evidence rules (§2.5).
@@ -309,7 +315,8 @@ without guessing (#4069 §8).
 
 Three independent read-only lenses reviewed this blueprint and the Stage 1
 build: money and attribution; concurrency and snapshot; tests, wording, docs
-and `INV-SSOT`. No production data or live provider was used.
+and `INV-SSOT`. They ran in rounds; the last read the finished build and the
+inventory. No production data or live provider was used.
 
 ### 6.1 Findings and what was done
 
@@ -324,6 +331,12 @@ and `INV-SSOT`. No production data or live provider was used.
 | Tests, docs | The organiser-pays line reached the sender only through a helper, and the render pin held a placeholder | All five payment lines are pinned as the sender renders them |
 | Tests, docs | No invariant for the reader; state-machine and email guides silent | `INV-PAY-159`, and the guides, describe it |
 | Tests, docs | The inventory grouped helpers and estimated the false positives | Replaced by the row-per-decision inventory (§3) |
+| Concurrency; tests, docs | The held-bed line sent every member to "bank-transfer details and deadline", though an officer-held card booking also holds its beds | One held line that is true for any payment method: "open it from your account to pay or to see the payment details"; a card case pins that it never mentions a bank |
+| Money | "A superseded capture is never cover" was stated without its limit: one behind a dead cancel with no refund row counts | Stated in §2.7, the reader's header and `INV-PAY-159`; a PostgreSQL case runs the real hand-off, fails its refund row and reads owed while the cancel runs, covered once it is dead |
+| Concurrency | The "no default client" guard read only the reader's imports; two helpers it calls fall back to the module client when handed none | A guard that every awaited call in the reader passes `tx`; seen to fail with the argument dropped |
+| Tests, docs | The reader listed its own "live or finished" statuses, a list `booking-status.ts` already holds | It reads `DUPLICATE_STAY_BOOKING_STATUSES` |
+| Tests, docs | Two snapshot tests pinned the order of reads, not which reads | They compare the sorted reads |
+| Tests, docs | The member guide still said the beds are never held until payment; `INV-EXCEPT-031` did not say the email reports held beds; §2.5 said "no settlement" always gives `unknown`; the inventory's file count read as two † sites against three; two inventory rows were imprecise | Each reworded |
 
 ### 6.2 Readings taken where the contract was silent
 
@@ -336,13 +349,28 @@ and `INV-SSOT`. No production data or live provider was used.
   organiser's money either way.
 - **Held beds** read `bookingHoldsCapacity` without a separate
   `wholeLodgeHold` term (§4.1, stage 1).
+- **A saved-card charge in progress.** The confirm-pending job can claim a
+  booking for a card charge while the approval email is being composed. The
+  snapshot then truthfully reads money owed and beds held, and the email says
+  so seconds before the charge lands. A lens suggested answering `unknown`
+  while a claim is open. Not taken: the reader answers what cash is held, and
+  nothing is held yet; the line is true at its moment and sends the member to
+  the booking, which shows the charge once it lands. Whether a claimed
+  booking's pay doors should refuse a second payment is those doors' question
+  (cohort G2, §4.2).
+- **A dead cancel.** The reader follows the Xero reading's rule rather than
+  adding one: a capture nobody is sending back is money the club holds.
 
 ### 6.3 Limits
 
 - The approval harness runs the real approval engine, bank-switch route,
   exclusive-hold route, reader and sender over a simulated transaction. Reads
   against PostgreSQL are proved by the reader's own suite, not by the email
-  path end to end.
+  path end to end. In the harness the dispute and recovery-operation lookups
+  return nothing, so those inputs reach the email only through the reader's
+  suite.
+- The dead-cancel case reaches its state through the real hand-off, then
+  marks the cancel row's attempts spent with a fixture write.
 - The inventory's pass cannot see a status held under another name (§2 of
   the inventory). Three such sites were found by reading callers; there may
   be others, and each display stage re-reads its own callers before it moves.
