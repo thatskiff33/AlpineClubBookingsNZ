@@ -1,12 +1,13 @@
 # Paid From Cash — Blueprint
 
-**Status:** Blocked at the approved blueprint stop gate, revalidated against source on 19 November
-2026. The inherited branch contains an incomplete Stage 1 implementation; it
-is not ready to ship. The review found that the proposed treatment of a
-superseded capture contradicts the approved refund rule. See §6 for evidence,
-the recommended correction and the work still required. This blueprint belongs
-to programme #4069 (part of #4898), coordinated with ledger M11 (#4523) and
-M15 (#4527). The intended first PR contains the blueprint and Stage 1 only.
+**Status:** Blocked at the approved Step 2 stop gate after three source reviews
+of `4b473559bab60fa052c85ec8f5133c121cf414b2` on 19 November 2026. The inherited
+Stage 1 implementation bypasses required evidence checks for organiser-paid
+children; §6 records the failure and recommended correction. The earlier
+superseded-capture and organiser-dispute fixes are now present, but their
+presence is not execution evidence. The inventory remains incomplete. This
+blueprint belongs to #4069 (programme #4898), coordinated with M11 (#4523)
+and M15 (#4527). The intended first PR contains the blueprint and Stage 1 only.
 
 **Audience:** developer, agent. Index: [`docs/README.md`](../README.md) ·
 [member money ledger design §9](member-money-ledger.md#9-bug-scenario-acceptance-matrix).
@@ -69,12 +70,14 @@ the change fee recorded on the payment) less applied credit, read once
 
 ### 2.3 Paid side
 
-The inherited implementation uses Net Collected's cash half for the booking's
-one payment, `getNetCollectedCashParts(payment).heldCashCents`. **That is not a
-sufficient contract:** it omits the live cancel that owns a superseded capture
-before its refund row exists. The proposed correction in §6.6 must be reviewed
-before implementation resumes. Preserve the following deduction order, with
-the additional ownership evidence counted once as specified there:
+The reader uses Net Collected's cash half for the booking's one payment,
+`getNetCollectedCashParts(payment).heldCashCents`, and additionally accounts for
+live superseded-cancel ownership before the refund row exists. The current
+implementation reads that ownership through `readSupersededCaptureOwnership`
+and sizes it through `supersededCaptureHeldBack`. It subtracts only the portion
+not already attributed to open card-refund slices by
+`cardRefundSlicesByOperation` / `unsentSliceCents`. Preserve these canonical
+helpers and count each obligation once. The deduction order is:
 
 1. what the payment took (`netCollectedPaymentTookMoney`) less its recorded
    refunds — card refunds, credit to account and completed hand-backs alike;
@@ -150,11 +153,14 @@ money and needs no rows; it reads `covered` through §2.2.
 
 ### 2.7 Limits
 
-- **Rejected by the stop-gate review:** counting a superseded capture between
-  its capture commit and creation of its refund row. The live cancel already
-  owns that money for return (`INV-PAY-043`, `INV-PAY-150`). The reader must
-  account for that ownership, even if the process stops in the gap. Reusing
-  Net Collected alone is insufficient; §6 describes the required correction.
+- A superseded capture never covers the booking between its capture commit
+  and creation of its refund row. The live cancel owns that money for return
+  (`INV-PAY-043`, `INV-PAY-150`). Current code reads this ownership; the
+  real-writer barrier test still requires recorded execution evidence.
+- A group share proof does not prove the child's refund history. The group's
+  legitimate absence of child capture rows exempts it only from ordinary
+  row-to-mirror reconciliation, not from the unknown-evidence rules. The
+  current implementation violates this boundary; see §6.1.
 - A bank receipt recorded from cash is taken at the cash Xero showed.
 
 ## 3. Inventory
@@ -333,200 +339,153 @@ and reverts alone.
 
 ## 6. Stop-gate review and remaining work
 
-Three independent read-only reviews examined commit
-`55ab4af60cb8341c5fb6d9bd0e23d67cacc87861` on 18 November 2026:
-money/attribution; concurrency/snapshot; and tests/UX/docs/`INV-SSOT`.
-They reviewed the inherited blueprint and implementation, not a completed
-release. No production data or live provider was used. These findings have
-not been fixed in product code. The approved Step 2 requires stopping when a
-lens finds an invariant conflict; this revision records that stop rather than
-accepting the former §2.7 exception.
+The branch is not ready to ship. Three independent read-only lenses reviewed
+`4b473559bab60fa052c85ec8f5133c121cf414b2` on 19 November 2026:
+money/attribution; concurrency/snapshot; and tests/UX/docs/`INV-SSOT`. Each
+checked current source rather than adopting the inherited reports. No tests
+were run by those reviewers. No production data or live provider was used.
 
-### 6.1 Blocking conflict: superseded cash is not booking cover
+### 6.1 Current blocker: group children skip unknown-evidence checks
 
-A live booking worth 50,000 cents can have only a superseded capture of 50,000
-cents. `handoffSucceededSupersededIntentToRefund` in
-`src/lib/payment-recovery.ts` commits `markSupersededTransactionSucceeded`
-and the payment aggregate before it calls
-`enqueueSupersededPaymentRefundRecovery`. In between, the cancel operation
-remains in flight. A process failure can leave this interval open.
+A proved group share can still have unprovable refund history. In
+`deriveBookingCashCover`, the organiser-child branch returns
+`deriveGroupChildCover(snapshot)` before `paymentEvidenceProblem` runs.
+`planGroupChildLines` proves that child shares reconcile with the settlement;
+it does not validate every child's refund total or transaction provenance.
 
-`paymentEvidenceProblem` accepts the matching capture and payment aggregate.
-`owedNetOfHeldCash` then reads `getNetCollectedCashParts`, whose
-`netCollectedCardRefundSelect` selects only `CARD_REFUND_OPERATION_WHERE`.
-That excludes `CANCEL_PAYMENT_INTENT`. With no refund row yet, the inherited
-reader returns `covered` and the approval email omits the amount owed.
-RepeatableRead cannot repair this: the database snapshot itself contains the
-capture and its live cancel, but the reader ignores the cancel.
+A concrete counterexample follows the existing pure test's two-child fixture:
 
-This conflicts with the approved rule that superseded captures awaiting refund
-never cover a booking. `INV-PAY-043` states that money owned by the superseded
-machinery is never settlement; `INV-PAY-150` describes the ownership during
-this exact hand-off. Its existing
-`readSupersededCaptureOwnership` / `supersededCaptureHeldBack` helpers provide
-read-only evidence. No writer, schema, provider or history change has been
-shown necessary.
+| Input | Value |
+| --- | --- |
+| Booking | live `PAID` child, organiser-settled, non-null parent, price 0 |
+| Child payment | Stripe, `SUCCEEDED`, captured share 4,500 cents, refunded 6,000 cents |
+| Group settlement | Stripe, `SUCCEEDED`, 9,000 cents |
+| Siblings | two captured shares of 4,500 cents, including this child |
+| Credit, disputes, open obligations | none |
 
-**Recommended correction:** include that ownership in the same snapshot and
-count the union of committed refund obligations once per capture. Do not
-subtract the full superseded hold-back on top of Net Collected: both already
-include refund operations and failed-later refund obligations. Prove the
-additional, previously uncounted obligation; where attribution cannot be
-proved, return `unknown`, never `covered`. The revised contract needs examples
-for live cancel alone, cancel plus refund row, completed refund, and failed-later
-refund. The same 25,000-cent obligation must come off exactly once in each
-applicable state. Preserve the existing helpers as the sole ownership rules
-(`INV-SSOT-001`). Review this correction before resuming Stage 1.
+The share planner accepts the 9,000-cent sum. Net Collected clamps the child's
+remaining cash to zero. Worth is zero, so `owedNetOfHeldCash` is zero and the
+reader returns `covered`. The approved contract and `INV-PAY-159` require
+`unknown` for unproven refunds. This is an invalid-history input the reader
+must reject, not a claim that a current writer creates it. No historical data
+repair is authorised or needed to reject it.
 
-### 6.2 Money lens: organiser dispute evidence is missing
+The same early return skips `LEGACY_BACKFILL_REASONS` checks on any transaction
+rows that a child does have. A reconciled share does not make a backfilled row
+cash evidence. Existing ordinary-booking unknown tests do not exercise these
+inputs through the group branch.
 
-`group-settlement.ts` writes paid children's payment shares without the
-organiser's combined PaymentIntent or child transaction rows. `matchCapture`
-in `stripe-dispute.ts` associates a dispute on the combined intent with the
-organiser booking. `readBookingCashCover` checks disputes using only the child
-payment, although it also loads the settlement's PaymentIntent. A disputed
-combined capture can therefore leave every child's answer `covered`.
+**Recommended correction:** separate provenance and refund-validity checks
+from ordinary transaction-to-payment reconciliation. Apply provenance checks
+to any rows present, and reject refunds exceeding the proved child share,
+before returning group cover. Keep the intentional exemption for a legitimate
+organiser-paid child with no capture rows: the real group settlement writes
+its mirror without them. Reuse `LEGACY_BACKFILL_REASONS`, `captureRefundState`
+and `planGroupChildLines`; do not introduce a second money reader or infer
+parent cash. If the evidence cannot prove a share or refund, answer `unknown`.
 
-Recommended correction: read `disputedCaptureCents` for the settlement intent
-through the same snapshot and answer `unknown("disputed")` for a holding
-dispute. Do not guess each child's disputed share. Add a real group-settlement
-and dispute-writer regression. This is a defect in the proposed reader, not a
-request to change the existing settlement writer.
+The correction belongs in `src/lib/booking-cash-evidence.ts`, with pure cases
+in `src/lib/__tests__/booking-cash-evidence.test.ts` and composed group-writer
+coverage in `src/lib/__tests__/booking-cash-evidence.realdb.test.ts`. Include:
+a valid no-row child remains covered; a legacy row is unknown; a refund above
+its share is unknown even at zero price; and a valid attributed child refund
+remains covered at the reduced price. Invalid-history fixture inputs must be
+labelled as such, not presented as real-writer outputs.
 
-### 6.3 Concurrency lens: correct client flow, incomplete proof
+This is the approved Step 2 invariant-conflict stop condition. The review
+identified a reader correction, not a writer, schema, provider or history
+change. Record and review the corrected contract before resuming product
+work. This documentation does not approve the inherited implementation.
 
-The inspected booking, credit, payment, dispute and group reads use the
-transaction client; email delivery is after the snapshot closes. Those are
-useful structural checks, not PostgreSQL evidence.
+### 6.2 Earlier findings: current disposition
 
-`booking-exception-approved-interleaving.test.ts` constructs its own snapshot
-with `structuredClone`; its capture and credit changes use in-memory
-assignments. It does not establish actual database isolation or real-writer
-composition. The promised `booking-cash-evidence.realdb.test.ts` does not
-exist at the reviewed commit. Capture, refund, credit application and group
-settlement must each be exercised between actual reads, using the real writers.
-The superseded hand-off also needs a barrier after its capture commit and
-before its refund enqueue, proving the amount remains owed throughout.
+The earlier review found real gaps, but several claims in the inherited
+blueprint no longer described the checked head. Source inspection establishes
+the following; it does not certify that the tests pass.
 
-### 6.4 Tests, UX, docs and single-source lens
+| Earlier finding | Current source | Remaining evidence |
+| --- | --- | --- |
+| Superseded capture counted before refund enqueue | `supersededCancelOwnedCents` reads cancel ownership and subtracts only the part not already attributed to open card refunds | Run the real hand-off barrier and overlap cases |
+| Organiser capture dispute omitted | `readBookingCashCover` reads `disputedCaptureCents` for the combined settlement intent in the same transaction | Run the group settlement/dispute regression |
+| Realdb suite absent | `booking-cash-evidence.realdb.test.ts` exists with real-writer cases and capture/refund/credit/group snapshot scenarios | Record CI execution, with no skipped cases |
+| Parity test only rechecks Net Collected | Pure parity case now calls `deriveBookingCashCover` | Run the named file and required mutations |
+| Cash-cover invariant absent | `INV-PAY-159` exists and is indexed; `INV-PAY-119` distinguishes the unchanged pay-step reader | Correct the group evidence violation in §6.1 |
+| State-machine and email docs absent | State machine, email and booking-request docs now describe the cash reader | Recheck them against the final corrected contract |
+| Tracked narrow tsconfig | `tsconfig.narrow.tmp.json` is absent | No further removal needed |
 
-The remaining work is concrete and stays within the approved Stage 1 scope:
+Neither money nor concurrency review found another confirmed defect in the
+current per-transaction superseded-cancel overlap calculation. That conclusion
+is bounded source-review evidence, not a substitute for the required tests.
 
-- Expand §3 to one row per semantic decision and false positive. Grouped
-  descriptions such as “about 130 sites” and wildcard helper rows are not the
-  required complete inventory. The stages in §4 propose subsequent single-surface
-  display PRs; that count remains provisional until the inventory
-  is complete. Gated stages still need their own plans or M15, never both.
-- Add all approved real-writer cases in
-  `booking-cash-evidence.realdb.test.ts`, including organiser share attribution,
-  paid then reduced and refunded, pending additions, legacy evidence, and
-  refund obligation/recorded-refund de-duplication. Fix the existing test
-  headers that presently imply this file exists.
-- Replace the cash parity test that only rechecks Net Collected with a test
-  that actually invokes `deriveBookingCashCover`. Exercise all five email
-  variants through the sender and render contract, not only the note helper.
-- Run and restore the five required mutation probes: pending face amount as
-  cash; status-only paid; omitted refund; omitted credit; organiser money
-  counted twice. No execution evidence was available in this review.
-- Define and index the intended cash-cover invariant. The inherited code
-  cites a proposed PAY-159 entry that is not yet defined. Update `INV-PAY-119`
-  to describe the approval reader move while preserving the owed reader's
-  pay-step contract; it still names the old approval-email caller today.
-- Complete the planned state-machine, email and booking-request documentation,
-  template contract and render pin, changelog, and PR body with findings and
-  verified fixes. Review the held-bed predicate deviation against the approved
-  `bookingHoldsCapacity(...) || wholeLodgeHold` contract before accepting it.
-- Remove the inherited tracked `tsconfig.narrow.tmp.json` throwaway once its
-  validation role is finished. Run only the sandbox-permitted narrow checks;
-  realdb and full gates belong to CI.
+### 6.3 Snapshot and capacity evidence
 
-### 6.5 Handoff and plan status
+Booking fields, capacity inputs, cash, applied credit, disputes, organiser
+shares and superseded ownership all flow through the same transaction client
+inside `withReadOnlySnapshot`. The email sends after that snapshot closes.
+No transaction-client escape survived the concurrency review.
 
-The 18 November run changed documentation only and stopped under approved Step 2. The
-inherited implementation remains on the branch, with the defects above; it
-must not be treated as merge-ready. No first-commit history was rewritten.
-The whole issue remains incomplete: Step 1's exhaustive inventory and final
-review, Steps 3–4's completed implementation and validation, and the later
-surface/gated PRs are still required. The intended scope remains one first PR
-for blueprint plus Stage 1, then the separate stages in §4.
+The realdb suite checks cash-cover answers across actual capture, refund,
+credit and group writes. The approval harness runs the real approval engine,
+bank-switch route, exclusive-hold route, reader and sender over a simulated
+transaction. It asserts the paired amount and held-bed copy, but it does not
+execute the complete email path against PostgreSQL. Preserve that distinction
+when reporting validation; source presence alone proves neither suite passed.
 
-The task's `revise_plan` and `attach_file` tools were unavailable in this run.
-This section records the stop and deviation durably instead; it is not an
-owner approval or a posted issue comment. Before readiness, the lane still
-needs to post the reviewed blueprint and final stage list to #4069 and deliver
-the requested attachment. The coordination note for #4523 remains:
+The inherited capacity implementation intentionally uses
+`bookingHoldsCapacity` without a standalone `|| wholeLodgeHold`: the
+exclusive-hold route requires capacity already held, while the flag can remain
+after an admin capacity hold is released. The stale-flag regression exists in
+`booking-exception-approved-interleaving.test.ts`. This differs from the
+approved literal expression and must be included in final plan reconciliation.
+
+### 6.4 Remaining deliverables
+
+Step 1 is incomplete. Expand §3 to one row per semantic decision and false
+positive on the reviewed base, replacing grouped helpers and the approximate
+130-site description. Until that inventory is complete, §4's 17 stages are a
+provisional count: one first PR and 16 later display-surface PRs, plus separately
+planned gated work or M15 cohorts. Do not claim an exact programme PR count.
+
+After the stop gate is resolved, Stage 1 still needs:
+
+- The §6.1 reader correction and its pure and realdb regressions, followed by
+  money review of the correction.
+- Actual sender/template evidence for all five payment-note variants. The
+  organiser-pays case currently calls only the note helper, and the render
+  fixture pins a placeholder payment note. Exercise organiser-pays through the
+  sender and pin actual variants in the email render fixtures.
+- Execution of the five mutation probes, each seen to fail and then restored:
+  pending face amount as cash; status-only paid; omitted refund; omitted
+  credit; organiser money counted twice.
+- Named test-file validation and a narrowed typecheck under the pinned
+  runtime; CI owns realdb and full gates. This review did not run product tests.
+- A final self-review and PR body recording each lens finding, its disposition,
+  validation run and not run, and the remaining stated limits. The existing
+  changelog fragment is part of the inherited implementation, not proof of
+  completion.
+
+Later programme work remains every surface in §4 after Stage 1, plus the
+eligibility, replay and writer cohorts in §3. They require their own plans or
+M15, never both. No ledger reader cut-over precedes the owner's
+`INV-MONEY-037` whole-history proof.
+
+### 6.5 Handoff and tool limits
+
+This run changes the blueprint only and stops under approved Step 2. It does
+not rewrite the inherited branch history or remove its product changes. The
+branch therefore still contains incomplete Stage 1 code and must stay out of
+release until the blocker and required evidence are resolved.
+
+The repository's issue-thread reader could not retrieve #4069 because GitHub
+CLI is unauthenticated. No credentials were sought. The approved plan supplied
+in this session is the task authority; source review is not represented as a
+fresh reading of the issue thread or its saved harness comment.
+
+`revise_plan` and `attach_file` are unavailable in this tool session. This
+section records the stop and plan deviation durably, but is neither a posted
+issue comment nor an attachment. The lane must still deliver
+`blueprint-issue-comment.md` with the completed blueprint and final stage list,
+and post it before readiness. The requested #4523 coordination text is:
 
 > M11 (#4523) extends `readBookingCashCover` in
 > `src/lib/booking-cash-evidence.ts`; it never adds a second paid/balance reader.
-
-
-### 6.6 Proposed correction, checked against source on 19 November
-
-The money/attribution and concurrency/snapshot reviews independently reproduced
-§6.1 by tracing the current writers and reader, rather than accepting the prior
-review as evidence. `handoffSucceededSupersededIntentToRefund` commits the
-capture with a `PROCESSING` cancel, then enqueues the refund. The cash reader's
-`CARD_REFUND_OPERATION_WHERE` omits that cancel. This is a reachable committed
-state, not a torn read. The approved Step 2 stop remains in force; no product
-code was changed in this review.
-
-**Recommended contract amendment:** include
-`readSupersededCaptureOwnership` in the caller's snapshot and use
-`supersededCaptureHeldBack` for ownership per captured transaction. These
-existing helpers explicitly accept snapshot reads. Keep them as the sole
-ownership definition; do not copy their status lists or allocation rules.
-
-Count the union of obligations attributable to each captured transaction,
-capped at its remaining cash after recorded refunds. A live cancel owning the
-whole remaining capture subsumes a refund obligation on that same money. A
-refund operation or failed-later refund already counted by the card-refund
-operands contributes no second deduction. An independent obligation against a
-different capture still adds. Preserve the hand-back, card-refund and
-late-capture ordering, and prove overlap using transaction, operation, refund
-and allocation-slice identities. Do not subtract total superseded ownership
-from Net Collected, or take a payment-level maximum of the two totals: neither
-proves which money they share. If attribution cannot establish the union,
-return `unknown` with an explicit reason and neutral copy.
-
-The following regression fixture uses a booking worth 50,000 cents, no credit,
-one ordinary 25,000-cent capture and one superseded 25,000-cent capture:
-
-| Superseded capture state | Recorded refund | Open obligation on that capture | Total held for booking | Answer |
-| --- | ---: | ---: | ---: | --- |
-| Capture committed, live cancel, refund not enqueued | 0 | 25,000 | 25,000 | owes 25,000 |
-| Live cancel and its refund operation both exist | 0 | 25,000, once | 25,000 | owes 25,000 |
-| Refund recorded, operation not yet closed | 25,000 | 0 after netting | 25,000 | owes 25,000 |
-| Refund recorded and operation closed | 25,000 | 0 | 25,000 | owes 25,000 |
-| Stripe later refuses refund; recorded refund reversed, replacement owed | 0 | 25,000, once | 25,000 | owes 25,000 |
-| Live cancel plus independent 10,000 refund owed on ordinary capture | 0 | 25,000 plus 10,000 | 15,000 | owes 35,000 |
-| Evidence cannot attribute an overlapping obligation | unproven | unproven | unproven | unknown |
-
-The real-writer test must pause the superseded hand-off after capture commit
-and before refund enqueue, read through `withReadOnlySnapshot`, and repeat
-after enqueue and refund recording. Also prove the recorded-refund-before-close
-interval; an operation's terminal status alone does not establish what it
-refunded. Assertions must call the cash-cover reader, not just its operands.
-The existing pure hold-back tests are useful adjacent coverage, not a substitute
-for this composition.
-
-For organiser children, read the combined settlement intent's disputes through
-`disputedCaptureCents` in the same snapshot, in addition to the child's own
-payment evidence. A holding dispute gives `unknown("disputed")`; do not invent
-a per-child dispute allocation. Exercise the actual group-settlement and
-dispute writers. This changes no settlement or dispute writer.
-
-Ordinary bank hand-back completion already calls `applyLocalRefundAllocation`,
-which updates captured transaction refunds and reconciles the payment mirror.
-Organiser-settled bank children deliberately update only their mirror through
-`group-settlement-mirror-hand-back.ts`; their group share proof remains separate.
-Neither case justifies a history repair. Unverifiable legacy mirrors stay
-`unknown`.
-
-These corrections require no new business policy, writer, schema, provider or
-history change. They do require the corrected blueprint review before Stage 1
-resumes under the explicit stop gate. The current branch still contains the
-inherited unsafe implementation; this documentation does not approve shipping
-it. The saved issue harness and current issue decisions could not be fetched:
-the repository issue reader reports that GitHub CLI is unauthenticated. No
-credentials were sought. The approved plan supplied in this session remains
-the task authority.
