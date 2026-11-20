@@ -12,7 +12,7 @@ import {
 } from "./booking-charges";
 import { lockBookingRowForOwnerRead } from "../../booking-row-lock";
 import { memberMergeSnapshotSources } from "./booking-receipts";
-import { bookingOwnerDebtor, eventPosted, readBookingLiveComponents, receivableBalances } from "./booking-journal-read";
+import { bookingOwnerDebtor, eventPosted, readBookingLiveComponents, readBookingTaxAnchorDate, receivableBalances } from "./booking-journal-read";
 import {
   planPendingBookingCharge,
   standingComponentTargets,
@@ -141,6 +141,7 @@ export async function postBookingLedgerJournal(
     debtor,
     lines,
     liveComponents: await readBookingLiveComponents(tx, input.bookingId),
+    taxAnchorDate: await readBookingTaxAnchorDate(tx, input.bookingId, context.zone),
   });
   return plan ? postMemberMoneyEvent(tx, context, plan) : null;
 }
@@ -162,6 +163,7 @@ async function postCatchUp(
     debtor,
     lines: pending,
     liveComponents: await readBookingLiveComponents(tx, input.bookingId),
+    taxAnchorDate: await readBookingTaxAnchorDate(tx, input.bookingId, context.zone),
   });
   if (plan) await postMemberMoneyEvent(tx, context, plan);
 }
@@ -204,6 +206,7 @@ export async function postPendingBookingJournal(
     debtor,
     standing,
     liveComponents: await readBookingLiveComponents(tx, input.bookingId),
+    taxAnchorDate: await readBookingTaxAnchorDate(tx, input.bookingId, context.zone),
   });
   return plan ? postMemberMoneyEvent(tx, context, plan) : null;
 }
@@ -250,7 +253,8 @@ async function bridgeBindingCharge(tx: Db, context: MemberMoneyPostingContext, b
     || live.some((component) => component.liveGrossCents !== 0 && !targets.has(bookingComponentKey(component)));
   if (moved) {
     const debtor = await lockedBookingDebtor(tx, bookingId);
-    const plan = planPendingBookingCharge({ bookingId, lodgeId, event: { kind: "restatement" }, debtor, standing: lines, liveComponents: live });
+    const plan = planPendingBookingCharge({ bookingId, lodgeId, event: { kind: "restatement" }, debtor, standing: lines, liveComponents: live,
+      taxAnchorDate: await readBookingTaxAnchorDate(tx, bookingId, context.zone) });
     if (plan) await postMemberMoneyEvent(tx, context, plan);
     logger.warn(
       { bookingId, journal: live, lines: [...targets.values()] },

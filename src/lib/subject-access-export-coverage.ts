@@ -154,6 +154,7 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   PrivacyHostingSettings: CLUB_CONFIG,
   ClubTimeSettings: CLUB_CONFIG,
   ClubFormatSettings: CLUB_CONFIG,
+  ClubTaxSettings: CLUB_CONFIG,
   LoginSecuritySetting: CLUB_CONFIG,
   AnalyticsSettings: CLUB_CONFIG,
   EmailTemplateOverride: CLUB_CONFIG,

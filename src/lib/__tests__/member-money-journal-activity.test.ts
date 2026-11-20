@@ -25,7 +25,7 @@ import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 const untouchable = new Proxy({}, {
   get(_target, property) { throw new Error(`the journal reached the database (${String(property)})`); },
 }) as Prisma.TransactionClient;
-const taxRow = { clubTaxSettings: { findUnique: async () => null } } as never;
+const taxRow = { clubTaxSettings: { findMany: async () => [] } } as never;
 
 describe("an inactive journal for a club whose currency no card can be charged in (#4627)", () => {
   beforeEach(() => {
