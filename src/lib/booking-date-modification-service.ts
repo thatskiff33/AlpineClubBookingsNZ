@@ -805,11 +805,9 @@ export async function modifyBookingDates({
     const appliedBeforeClamp = isRepriceablePrePayment
       ? await deriveBookingAppliedCreditCents(bookingId, tx)
       : 0;
-    // A change fee already recorded on the payment is owed with the price, so
-    // credit is kept up to the booking's worth. The payment snapshot predates
-    // this edit's own fee write (#5039), so that fee is added here, as the
-    // batch door hands it to `applyLifecycleTransitions`. A new ordinary edit
-    // of an unpaid booking records none (owner decision, 10 Nov 2026).
+    // A fee on the payment, this edit's own included (#5039: the snapshot predates
+    // its write), is owed with the price, so credit is kept up to the worth. An
+    // unpaid booking's edit records none (owner decision, 10 Nov 2026).
     const recordedChangeFeeCents = feeOnPayment(booking.payment) + payments.feeRecordedHereCents;
     // #4661 review F1: what a card intent must now be for, as the batch lifecycle compares.
     let owedCents = bookingWorthCents({ finalPriceCents: newFinalPriceCents, changeFeeCents: recordedChangeFeeCents });
