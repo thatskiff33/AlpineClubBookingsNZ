@@ -5002,68 +5002,15 @@ trusted from the browser, so a screen minutes old cannot price a night the
 booking no longer holds. `INV-MOD-036` carries the rest of the rule (legacy:
 it settles tasks raised before #4317, which made every edit price itself).
 
-**#3214 ADDS A SECOND CALLER OF THAT SAME WRITER, ON THE SAME BASIS, AND STILL NO
-KEY.** An officer may now record what a guest strand's nights sold for from the
-booking's own page, outside any review, when the strand's stored rows cannot be
-read back. It writes the same two tables through the same function, and it takes
-no advisory tier for a reason the section above cannot claim: **its total write
-is provably a no-op**. The officer is asked for every night the strand holds and
-the shared checker forces those to sum to `BookingGuest.priceCents` as stored, so
-the writer re-bases that column to the number already in it. It moves no
-settlement money, makes no provider call, composes no lifecycle transition and
-joins no capacity claim.
-
-Three things differ from the settle path and each matters:
-
-- **it has no status claim, so the compare-and-set is the WHOLE of its
-  single-flight guarantee.** The settle path has a task to claim; this has
-  nothing. Two officers recording at once: the first commits, the second's fenced
-  `updateMany` matches zero rows and raises the 409;
-- **the night fence is the value the row was READ holding, not a literal
-  `priceCents: null`.** It has to be, because this act may rewrite a night that
-  already carries a figure — bounded to strands that do not reconcile, with the
-  total fenced. The settle path still passes `null` and reaches the database with
-  a byte-identical `where`;
-- **it can CREATE a row**, for a night the strand holds through its stay envelope
-  with no row behind it. The `(bookingGuestId, stayDate)` unique constraint is
-  the fence on that arm, and its `P2002` becomes the same race refusal rather
-  than a 500. The created dates are exactly `getGuestBedNightKeys`, so no
-  capacity count moves (`INV-CAP-032`).
-
-**"PROVABLY A NO-OP" IS A CLAIM ABOUT THE MEMBER'S TOTAL, AND NOT ABOUT
-EVERYTHING.** That is the claim the "no key" decision above rests on, and it
-holds: `BookingGuest.priceCents` is written back as the number already in it, no
-settlement is created, no credit is written and no provider is called. Two
-readers elsewhere read the night ROWS rather than that total, and both see a
-different answer afterwards. Neither takes a lock, because neither is a writer —
-they are readers that will now see truer rows — but both were analysed, and the
-same care the capacity bullet above got is owed to them:
-
-- **`countMemberStayNights`** (`src/lib/member-stay-nights.ts`) counts
-  `BookingGuestNight` rows, and feeds the membership-nomination gate's
-  `minimumNights`. A member strand with no rows contributes zero nights today and
-  contributes the whole stay once the create arm has run, so a member can become
-  able to nominate from this act. The higher figure is the truer one for the same
-  reason the bullet above gives (`INV-CAP-032`), so this is a correction rather
-  than a defect — but it is invisible from the officer's screen, which is why it
-  is written down here rather than left to be discovered;
-- **`loadBookingHutFees`** (`src/lib/finance-revenue-reconciliation.ts`) sums
-  night prices inside a DATE WINDOW. Filling or creating rows adds revenue into a
-  window, which closes the positive Xero variance that report exists to raise. But
-  re-apportioning a `STORED_TOTAL_MISMATCH` strand moves income ACROSS a month
-  end while the booking's total is unchanged, so a period figure already reported
-  can stop reproducing. It is recoverable — the audit entry carries
-  `previousNightPrices` — and the officer is warned about the month end on
-  screen. The one home for the full statement is
-  `stored-night-price-strand-reconcile.ts`'s module docblock.
-
-Against a concurrent booking edit — which holds `pg_advisory_xact_lock(1)` and
-`acquireLodgeCapacityLock`, and deletes and recreates these very rows in
-`applyGuestChanges` — the fences turn a race into a 409 and a rollback, never a
-lost update. The reverse order is the intended outcome: the reconcile commits,
-and the edit then reads exact evidence and prices normally. It also refuses
-outright while an `EDIT_FINANCIAL_REVIEW` is open on the booking, so the two
-callers cannot be writing the same strand against two different targets.
+**#3214's second caller is retired (#4344, wave C1 of #4302; owner decision D6).**
+It let an officer record what a guest strand's nights sold for from the
+booking's Admin tools card, outside any review, through the same writer and with
+no key, because its total write was a no-op. The control, its route and its
+plan were deleted with the officer review, so that writer's only caller is the
+settle path above until wave C3 removes it. The writer keeps its create arm and
+read-value fence for now; no lock site is added or removed, since the retired
+caller took no advisory lock. The rate-derived backfill's own compare-and-set
+(#3531) moved out to `rate-derived-night-price-store.ts` and is unchanged.
 
 #### The booking's money columns and the promo row lock (#3219)
 
@@ -7415,8 +7362,11 @@ Stripe call:
   (`lockPaymentForRefundedTotal`) after its `lock(1)` and booking row, and reads
   the hold-back before it plans. The member key comes first because the
   completion's credit give-back and re-price take it after the claim; it is
-  re-entrant, so they take it again at no cost. The still-owed preview, which
-  holds no `lock(1)`, takes neither and reads in its rolled-back snapshot. A
+  re-entrant, so they take it again at no cost. The still-owed preview
+  (`previewEditReviewStillOwed`) has had no route since #4344 retired the
+  officer review screens; its module stays only for the realdb tests' money
+  cross-checks until wave C3 removes the completion machinery. It holds no
+  `lock(1)`, takes neither and reads in its rolled-back snapshot. A
   "Paid another way" close reads it under the Payment row it already holds,
   after its claim. No new advisory key and no new lock order.
   After commit the edit sends that plan, closes the row on that plan once

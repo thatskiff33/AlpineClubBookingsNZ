@@ -547,7 +547,6 @@ export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntr
   "src/lib/servernz-sync-response.ts::auditSyncFailure#0": {"category":"lodge","sink":"createAuditLog","action":"(dynamic) `alpine_server.other_lodges.${direction}`"},
   "src/lib/servernz-sync-response.ts::auditUpload#0": {"category":"lodge","sink":"createAuditLog","action":"alpine_server.other_lodges.upload"},
   "src/lib/stored-night-price-repair-store.ts::recordReviewClosurePricing#0": {"category":"payment","sink":"createAuditLog","action":"(dynamic) repaired.length > 0 ? \"booking-payment.stored-night-price.record\" : \"booking-payment.review-closure.reprice\""},
-  "src/lib/stored-night-price-strand-reconcile.ts::recordStrandNightPriceReconcile#0": {"category":"payment","sink":"createAuditLog","action":"booking-payment.stored-night-price.reconcile"},
   "src/lib/stripe-webhook-service.ts::handlePaymentIntentCanceled#0": {"category":"payment","sink":"logAudit","action":"(dynamic) isAdditionalPayment ? \"booking.modification.payment.canceled\" : \"booking.payment.canceled\"","reviewed":["2581-applied"]},
   "src/lib/stripe-webhook-service.ts::handlePaymentIntentFailed#0": {"category":"payment","sink":"logAudit","action":"(dynamic) isAdditionalPayment ? \"booking.modification.payment.failed\" : \"booking.payment.failed\"","reviewed":["2581-applied"]},
   "src/lib/stripe-webhook-service.ts::refundSupersededGroupSettlementIntent#0": {"category":"payment","sink":"logAudit","action":"group.settlement.superseded_intent_refunded","reviewed":["2581-applied"]},

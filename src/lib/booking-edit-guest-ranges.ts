@@ -286,7 +286,7 @@ function minDate(a: Date, b: Date): Date {
  * against come from `getExplicitGuestBedNightKeys`, whose `BookingGuestNight`
  * rows were never projected, so behind Greenwich a night's price never matched
  * the night it was the price OF and that night silently repriced at today's rate
- * - the failure `storedNightPricesByKey` warns about under INV-DATE-020.
+ * - the failure `storedNightPriceDetailsByKey` warns about under INV-DATE-020.
  *
  * A second copy of `booking-guest-stay-ranges.ts`'s own derivation, kept only
  * because that one is module-private behind bodies its contract test freezes
