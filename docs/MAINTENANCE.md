@@ -3528,9 +3528,12 @@ are set — see [`DEPLOYMENT.md`](../DEPLOYMENT.md#the-deploy-refuses-a-commit-t
      reusable operator templates. If it has been re-scoped to one release,
      re-scope it to the new tag, templates included.
      It may record example rehearsal transcripts, including their dates and
-     results. Never record secrets, credentials, production data, personal data
-     or anything identifying a club's production environment. Operators fill
-     in their own §7 and §8 records offline; examples do not attest their upgrade.
+     results. Never record secrets, credentials, production data, personal data,
+     hostnames or addresses of any deployment, or anything else identifying a
+     club's production environment
+     ([writing in the open](agents/ISSUE_WORKFLOW.md#writing-in-the-open)).
+     Operators fill in their own §7 and §8 records offline; an example does not
+     attest any operator's upgrade.
    - **Every windowed migration is reached.** A census
      (`src/lib/__tests__/upgrade-docs-scope.test.ts`) fails a pull request when
      a windowed ledger row is not named in the runbook's
