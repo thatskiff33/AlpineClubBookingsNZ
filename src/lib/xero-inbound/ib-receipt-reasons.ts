@@ -54,8 +54,21 @@ export function isInternetBankingPrimary(row: { kind: PaymentTransactionKind; so
 export function receiptCountsInvoiceCorrections(
   rows: ReadonlyArray<{ kind: PaymentTransactionKind; source: PaymentSource; status: PaymentStatus; reason: string | null }>,
 ): boolean {
-  const receipts = rows.filter((row) => isInternetBankingPrimary(row) && isCapturedTransactionStatus(row.status));
+  const receipts = rows.filter(isCapturedInternetBankingPrimary);
   return receipts.length > 0 && receipts.every((row) => STORED_FIGURE_RECEIPT_REASONS.has(row.reason));
+}
+
+/**
+ * A captured bank-transfer PRIMARY receipt: the one row filter both
+ * `receiptCountsInvoiceCorrections` and `isStoredFigureBankReceipt` apply
+ * before asking about the stored figure, so it is written once.
+ */
+function isCapturedInternetBankingPrimary(row: {
+  kind: PaymentTransactionKind;
+  source: PaymentSource;
+  status: PaymentStatus;
+}): boolean {
+  return isInternetBankingPrimary(row) && isCapturedTransactionStatus(row.status);
 }
 
 /**
@@ -70,5 +83,5 @@ export function isStoredFigureBankReceipt(row: {
   status: PaymentStatus;
   reason: string | null;
 }): boolean {
-  return isInternetBankingPrimary(row) && isCapturedTransactionStatus(row.status) && STORED_FIGURE_RECEIPT_REASONS.has(row.reason);
+  return isCapturedInternetBankingPrimary(row) && STORED_FIGURE_RECEIPT_REASONS.has(row.reason);
 }

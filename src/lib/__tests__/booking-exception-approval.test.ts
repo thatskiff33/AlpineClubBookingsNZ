@@ -1492,6 +1492,17 @@ describe("notifyApproved reads the cash cover and the held beds in one snapshot 
     expect(args).toMatchObject({ cover: null, bedsHeld: false });
   });
 
+  it("sends nothing, and reads nothing outside the snapshot, when the snapshot finds no booking", async () => {
+    // Only a snapshot that throws falls back to a read outside it; one that
+    // read fine and found no booking has answered.
+    snapshotBookingFindUnique.mockResolvedValue(null);
+    bookingFindUnique.mockResolvedValue(approvedBooking({ status: "CONFIRMED" }));
+    await hooksFor("bk-new").notifyApproved?.({} as never);
+    expect(snapshotTransaction).toHaveBeenCalledTimes(1);
+    expect(bookingFindUnique).not.toHaveBeenCalled();
+    expect(sendBookingPolicyExceptionApprovedEmail).not.toHaveBeenCalled();
+  });
+
   it("sends nothing for an approved change to an existing booking", async () => {
     // A MODIFICATION sets no created booking: `modifyBookingBatch` sends the
     // canonical change notice itself, and a second notice would compete with it.

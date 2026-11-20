@@ -679,14 +679,19 @@ export function buildPolicyExceptionApprovalHooks(
       const bookingId = outcome.createdBookingId;
       if (!bookingId) return;
       let read: Awaited<ReturnType<typeof readApprovedBookingSnapshot>> | undefined;
+      let snapshotFailed = false;
       try {
         read = await readApprovedBookingSnapshot(bookingId);
       } catch (err) {
+        snapshotFailed = true;
         logger.error(
           { err, bookingId },
           "Could not read the approved booking's cash cover; the approval email will say so neutrally",
         );
       }
+      // A snapshot that read fine and found no booking is an answer, not a
+      // failure: there is nobody to write to, so no second read outside it.
+      if (!read && !snapshotFailed) return;
       const booking = read
         ? read.booking
         : await readApprovedBookingEmailDetails(prisma, bookingId);
