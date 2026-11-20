@@ -276,6 +276,8 @@ export async function createXeroInvoiceForBooking(
       );
     }
     const storedPayment = options?.syncOperation ? await readStoredPrimaryInvoicePayment(options.syncOperation.id) : null; // #4525 (M13): that run's Stripe payment, preserved through completion for later receipt retries
+    // #4525 review: its capture receipt now, before anything below can throw and have a failure write replace the stored payment.
+    await recordStoredPrimaryInvoicePaymentReceipt(storedPayment, booking.payment, bookingId, booking.payment.xeroInvoiceId);
     // #3955 review X4 (round 3), #3980: a prior run that persisted the link but
     // died before or inside its gap check re-runs it here, from what the invoice
     // billed and the booking's worth as recorded with the link. Idempotent.
@@ -309,7 +311,6 @@ export async function createXeroInvoiceForBooking(
         xeroObjectUrl: buildXeroInvoiceUrl(booking.payment.xeroInvoiceId),
       });
     }
-    await recordStoredPrimaryInvoicePaymentReceipt(storedPayment, booking.payment, bookingId, booking.payment.xeroInvoiceId); // its capture receipt, once the operation is closed
     return booking.payment.xeroInvoiceId;
   }
 
@@ -613,8 +614,12 @@ export async function createXeroInvoiceForBooking(
   }
 
   // #4525 review: outside the try, so a run that fails after Xero took the
-  // payment keeps it on the FAILED row for the replay's capture receipt.
+  // payment records its capture receipt in the catch (`paymentReceipt`, set once
+  // the link is stored) and also writes the payment on its FAILED row. The
+  // outbox's own failure write replaces that row with the error alone, so the
+  // catch's record, not the row, is what a queued run relies on.
   let paymentResponseBody: XeroPayment | null = null;
+  let paymentReceipt: Parameters<typeof recordPrimaryInvoicePaymentReceipt>[0] | null = null;
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: bookingOwner(booking).memberId,
@@ -1047,6 +1052,10 @@ export async function createXeroInvoiceForBooking(
       primaryInvoiceCashCents,
       primaryInvoiceAttemptedCashCents: shouldRecordStripeInvoicePayment ? invoicePaymentCents : 0,
     });
+    // #4525 (M13): the Stripe payment's capture receipt, recordable once the link names its capture. One input, so
+    // the end of this run and its catch record it under the same key (an earlier run's payment found on the invoice too).
+    paymentReceipt = { bookingId, payment: booking.payment, invoiceId: createdInvoice.invoiceID, sent: paymentResponseBody,
+      sentCents: shouldRecordStripeInvoicePayment ? invoicePaymentCents : null, reference: stripePaymentReference, bankCode: existingStripePayment ? null : bankCode };
     // #4525 (Ledger M13): the manifest, in its own transaction after the link. Never throws.
     // A replayed create returns the ORIGINAL invoice, so the plan is held to the lines it bills.
     await recordPrimaryInvoiceManifest(
@@ -1178,12 +1187,13 @@ export async function createXeroInvoiceForBooking(
           : []),
       ],
     });
-    // #4525 (Ledger M13): the Stripe payment's capture receipt, once its link is stored (an earlier run's found on the invoice too).
-    await recordPrimaryInvoicePaymentReceipt({ bookingId, payment: booking.payment, invoiceId: createdInvoice.invoiceID, sent: paymentResponseBody,
-      sentCents: shouldRecordStripeInvoicePayment ? invoicePaymentCents : null, reference: stripePaymentReference, bankCode: existingStripePayment ? null : bankCode });
+    await recordPrimaryInvoicePaymentReceipt(paymentReceipt); // its capture receipt, once the operation is closed
 
     return createdInvoice.invoiceID;
   } catch (error) {
+    // #4525 (M13): a run failing after the link records the receipt now, outside any transaction, as the end of
+    // the run would have: the replay that follows a queued run cannot read the payment back. Never throws.
+    if (paymentReceipt) await recordPrimaryInvoicePaymentReceipt(paymentReceipt);
     await failXeroSyncOperation(operationClaim!, error, paymentResponseBody?.paymentID ? { error, payment: paymentResponseBody } : undefined);
     throw error;
   }

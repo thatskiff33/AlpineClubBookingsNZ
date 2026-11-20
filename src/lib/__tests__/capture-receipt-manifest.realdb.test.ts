@@ -103,6 +103,27 @@ async function recorded(bookingId: string) {
     expect((left?.lineTotalCents ?? 0) + (right?.lineTotalCents ?? 0)).toBe(12_000);
   });
 
+  it("#4525 review: a primary payment recorded by a failed run, then by its replay, is one manifest covering its cents once", async () => {
+    const capture = await capturedBooking();
+    const senders = await import("@/lib/capture-receipt-senders");
+    const payment = { id: `${capture.bookingId}-payment`, stripePaymentIntentId: capture.paymentIntentId };
+    const invoiceId = `xero-invoice-${capture.bookingId}`;
+    const sent = { paymentID: `xero-payment-${capture.bookingId}`, amount: 123.45 };
+    // The failure path's call (the raising run's own input), then a replay's from the stored payment, twice.
+    await senders.recordPrimaryInvoicePaymentReceipt({ bookingId: capture.bookingId, payment, invoiceId, sent, sentCents: 12_345, reference: `Stripe ${capture.paymentIntentId}`, bankCode: "606" });
+    await senders.recordStoredPrimaryInvoicePaymentReceipt(sent, payment, capture.bookingId, invoiceId);
+    await senders.recordStoredPrimaryInvoicePaymentReceipt(sent, payment, capture.bookingId, invoiceId);
+
+    const manifests = await prisma.memberMoneyExportManifest.findMany({
+      where: { bookingId: capture.bookingId, documentRole: "CAPTURE_RECEIPT" },
+      select: { outcome: true, lineTotalCents: true, providerInvoiceId: true, coverage: { select: { chargeIdentity: true, coveredCents: true, sliceKey: true } } },
+    });
+    expect(manifests).toEqual([{
+      outcome: "COVERED", lineTotalCents: 12_345, providerInvoiceId: sent.paymentID,
+      coverage: [{ chargeIdentity: `capture:${capture.paymentIntentId}`, coveredCents: 12_345, sliceKey: senders.primaryInvoicePaymentKey(payment.id) }],
+    }]);
+  });
+
   it("records a conflict for a capture the journal does not hold, and for a payment naming no capture", async () => {
     const capture = await capturedBooking();
     await record({ bookingId: capture.bookingId, paymentIntentId: `${capture.paymentIntentId}_unjournalled` }, "unknown", 5_000);

@@ -6,9 +6,9 @@ what a sender stored live in `src/lib/capture-receipt-senders.ts`; what is left
 in each sender is the call itself, which belongs beside the payment it records.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1563
-reason: primary replay must read its stored payment before completion, preserve
-  it in the completion payload, then record its capture receipt. The reader and
+lines: 1573
+reason: primary replay must read its stored payment before completion, record
+  its capture receipt at once, then preserve it in the completion payload. The reader and
   recorder already live in capture-receipt-senders.ts; extracting the remaining
   sequencing would separate completion from the evidence it must preserve.
 
@@ -32,8 +32,9 @@ reason: the inline retry of a FAILED supplementary invoice passes its queued
   change, and lifting it apart is a refactor of its own.
 
 function: src/lib/xero-booking-invoices.ts#createXeroInvoiceForBooking
-lines: 953
-reason: the Stripe payment Xero returned is held outside the try, so a run
-  failing after the payment keeps it on the FAILED row for the replay's capture
-  receipt (#4525 review); the function was already over its limit before this
+lines: 963
+reason: the Stripe payment Xero returned, and its capture receipt's input, are
+  held outside the try, so a run failing after the payment and its link records
+  the receipt before failing the row, and also keeps the payment on the FAILED
+  row for an inline retry (#4525 review); the function was already over its limit before this
   change, and lifting it apart is a refactor of its own.
