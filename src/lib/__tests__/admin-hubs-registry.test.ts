@@ -881,7 +881,7 @@ describe("the entries' shape", () => {
       ),
     ).toEqual([]);
     // Lodge is part-moved (C11 part 1 #4808): Lobby Display and Lodges have
-    // moved; these eleven wait for part 2.
+    // moved; these twelve wait for part 2.
     expect(
       ADMIN_PAGES.filter((page) => page.hub === "lodge-ops" && !page.moved).map((page) => page.id),
     ).toEqual([
@@ -894,6 +894,7 @@ describe("the entries' shape", () => {
       "work-parties",
       "lodge-instructions",
       "maintenance-reports",
+      "food-orders",
       "lockers",
       "calendar",
     ]);

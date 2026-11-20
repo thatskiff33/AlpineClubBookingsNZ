@@ -815,6 +815,34 @@ let webhookClient: PrismaClient;
       expect((await payment()).refundedAmountCents).toBe(0);
     });
 
+    it.each(["card", "credit"] as const)(
+      "#5039: %s-paid: a fee-bearing reduction set against the unpaid ask records its fee on the payment exactly once",
+      async (shape) => {
+        await grownBooking(shape, 2_500);
+        const [{ readReductionAgainstUnpaidAsk }, { calculateModificationSettlementOptions, applyPaymentAdjustments }] = await Promise.all([
+          import("@/lib/additional-ask-reduction"),
+          import("@/lib/booking-modify-settlement"),
+        ]);
+
+        const result = await prisma.$transaction(async (tx) => {
+          const booking = await tx.booking.findUniqueOrThrow({ where: { id: BOOKING_ID }, include: { payment: true, guests: true } });
+          // A $20 cut with a $5 fee: $15 off the $50 ask, nothing refunded.
+          const reduction = await readReductionAgainstUnpaidAsk(tx, booking, -1_500);
+          const settlementOptions = await calculateModificationSettlementOptions({
+            booking: booking as never, netChargeCents: -1_500, reduction, db: tx, todayAtClub: "2026-07-01" as never,
+          });
+          return applyPaymentAdjustments(tx, {
+            booking: booking as never, priceDiffCents: -2_000, changeFeeCents: 500, reduction, settlementOptions,
+            todayAtClub: "2026-07-01" as never, format: CLUB_FORMAT_TEST,
+          });
+        }, { maxWait: 10_000, timeout: 20_000 });
+
+        expect(result.unpaidAskOffsetCents).toBe(1_500);
+        expect(result.additionalAsk.amountCents).toBe(3_500);
+        expect((await payment()).changeFeeCents).toBe(500);
+      },
+    );
+
     it("ROUND 4 (item 2): a stalled retry that wrote its own row is netted against that row and closed, and cannot write again", async () => {
       await grownBooking("card", 1_000, 100, "awaiting-retry");
       const STALLED_AT = new Date("2026-06-30T23:50:00.000Z");
