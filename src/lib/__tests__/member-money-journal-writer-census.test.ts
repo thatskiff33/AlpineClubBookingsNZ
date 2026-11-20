@@ -129,6 +129,7 @@ const DOORS: Record<string, string> = {
   "src/lib/xero-supplementary-invoices.ts": "M13: the supplementary invoice's export manifest, after its operation completes",
   "src/lib/xero-credit-notes.ts": "M13: a refund note's export manifest, after it is recorded",
   "src/lib/xero-refund-note-settlement.ts": "M13: a refund note payment's export manifest, after it is sent",
+  "src/lib/xero-card-refund-reversal-invoice.ts": "M13: a failed-later refund reversal invoice's export manifest, after its operation completes",
 };
 /**
  * M3b (#4627): the doors' callers, which resolve the posting context BEFORE
@@ -184,8 +185,8 @@ const BOUNDARY = "src/lib/member-money/";
 const WRITER = "src/lib/member-money/internal/store.ts";
 /** The command's entry points: nothing outside the boundary calls them; M3b's doors go through `./doors`. */
 const POSTING_COMMAND = /\b(postMemberMoneyEvent|reverseMemberMoneyJournal|writeMemberMoneyBatch)\b/;
-/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice and refund-note manifests (#4525). */
-const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest)\b/;
+/** M3b's door entry points (#4627), M3c's pending charge (#4628), M4's hand-back and kept capture (#4516), and M13's invoice, refund-note and failed-later reversal manifests (#4525). */
+const DOOR_COMMAND = /\b(postBookingLedgerJournal|postMemberMergeTransfer|postPendingBookingJournal|postBookingReceipts|postRefundObligation|withdrawRefundObligation|reserveCardRefundSlice|postCardRefundCash|postPaidAnotherWayClose|reconcileMadeRefundReservations|releaseReservationByOperator|closeKeptCaptureReturn|postHandBackObligation|postHandBackPayment|postKeptCapture|reverseKeptCapture|planPrimaryInvoiceManifest|recordPrimaryInvoiceManifest|recordPrimaryInvoiceUpdateManifest|recordSupplementaryInvoiceManifest|recordRefundNoteManifest|recordRefundNotePaymentManifest|recordFailedLaterRefundReversalManifest)\b/;
 const DELEGATE_WRITE = /\.memberMoney\w*\s*\.\s*(create|update|upsert|delete)/;
 /**
  * Every name that reaches a journal row through Prisma: each relation's
