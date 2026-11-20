@@ -223,6 +223,7 @@ function unexplainedCapturedStatusCopies(files: readonly SourceFile[]): string[]
  */
 const AGGREGATE_CAPTURED_STATUS_AUTHORITY_READERS = new Map([
   ["src/lib/additional-payment-ask.ts", "census SQL over payment.status"],
+  ["src/lib/booking-cash-evidence.ts", "payment.status, never a transaction row's: an organiser child's settle mirror, and a refunded status no captured row backs (#4069)"],
   ["src/lib/booking-delete.ts", "payment.status in hasCapturedOrCreditedPayment"],
   ["src/lib/booking-fresh-email-copy.ts", "payment.status: a fresh confirmation of a CONFIRMED booking with nothing captured says what is owing (#2263)"],
   ["src/lib/booking-ledger-group-child-plan.ts", "a group child's payment.status: which children a settlement paid (#3854)"],

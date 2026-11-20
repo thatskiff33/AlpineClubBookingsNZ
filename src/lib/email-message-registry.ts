@@ -131,9 +131,9 @@ export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, strin
   "admin-refund-request": ["requestedAmount"],
   "admin-booking-change-request": ["reason"],
   "booking-request-declined": ["reason"],
-  // #2526: the raw values behind the two pre-composed lines, so an override may
-  // reference either form. `paymentNote` renders nothing for a booking that owes
-  // nothing; `adminNotesLine` renders nothing when the officer left no note.
+  // Raw values behind the composed lines (#2526, INV-PAY-159). Cash cover
+  // determines paymentNote; amount is empty for organiser-pays or unknown.
+  // adminNotesLine is empty when the officer left no note.
   "booking-policy-exception-approved": ["amount", "adminNotes"],
   // #2562 review: the raw officer explanation behind the composed {{reasonLine}},
   // so an override may reference either form. A refusal always carries one — the
