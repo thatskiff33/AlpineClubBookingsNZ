@@ -37,3 +37,5 @@ export { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest, recordPrimary
 export { recordSupplementaryInvoiceManifest } from "./internal/supplementary-invoice-manifest";
 // #4525 (M13): a refund credit note's and its payment's export manifests, recorded after each send.
 export { recordRefundNoteManifest, recordRefundNotePaymentManifest, type RefundNoteDoor } from "./internal/refund-note-manifest";
+// #4525 (M13): a failed-later refund's reversal invoice's export manifest, recorded after its operation completes.
+export { recordFailedLaterRefundReversalManifest } from "./internal/refund-note-manifest";

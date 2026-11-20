@@ -3101,6 +3101,45 @@ describe("retryXeroSyncOperation", () => {
     ).toBe(false);
   });
 
+  // #4369, #4525 (M13): a failed card refund's reversal goes back to the outbox
+  // from its queued payload, keeping the invoice it sent so a replay's export
+  // manifest reads those lines rather than rebuilding them.
+  it("returns a partial failed-card-refund reversal to the outbox, keeping the invoice it sent", async () => {
+    const queued = {
+      queueType: "CARD_REFUND_REVERSAL_INVOICE",
+      bookingId: "booking_1",
+      paymentId: "payment_1",
+      closeTaskId: "close_1",
+      amountCents: 5000,
+      closedOn: "2026-06-10",
+    };
+    const invoices = [{ type: "ACCREC", lineItems: [{ description: "Returned", lineAmount: 50 }] }];
+    for (const [stored, expected] of [
+      [{ ...queued, invoices }, { ...queued, invoices }],
+      [queued, queued],
+    ] as const) {
+      mocks.updateManyOperation.mockReset();
+      const operation = makeOperation({
+        status: "PARTIAL",
+        localModel: "Payment",
+        localId: "payment_1",
+        queueType: "CARD_REFUND_REVERSAL_INVOICE",
+        requestPayload: stored,
+      });
+      expect(getXeroOperationRetryMeta(operation)).toEqual({ supported: true, reason: null });
+      mocks.findUniqueOperation.mockResolvedValue(operation);
+      mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+      await expect(retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST)).resolves.toEqual({
+        message: "Queued the failed-card-refund reversal invoice for retry.",
+      });
+      expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+        where: { id: "op_123", status: { in: ["FAILED", "PARTIAL"] }, manuallyResolvedAt: null },
+        data: expect.objectContaining({ status: "PENDING", requestPayload: expected }),
+      });
+    }
+  });
+
   // #3924 round 9 (`INV-PAY-122`): a late card charge's change invoice that
   // FAILED goes back to the outbox on its own row, so its worker - not an
   // inline replay minting a row that does not name the charge - records the
