@@ -40,10 +40,7 @@ import {
   type ChangeRequestPromoChange,
   type PromoChangeStamp,
 } from "@/lib/booking-change-request-promo";
-import {
-  checkOwnDependantIdentityForParty,
-  claimedMemberPathIds,
-} from "@/lib/booking-dependant-identity";
+import { checkOwnDependantIdentityForParty, claimedMemberPathIds } from "@/lib/booking-dependant-identity";
 import { sameNightKeys } from "@/lib/booking-guest-stay-ranges";
 import {
   addedGuestNightsRefusal,
@@ -53,6 +50,7 @@ import {
   withOfficerEnteredGuests,
   type OfficerEnteredGuest,
 } from "@/lib/booking-change-request-guests";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 
 /**
  * Approve-and-execute for a LOCKED_PERIOD change request on a FINISHED stay
@@ -676,7 +674,7 @@ export async function approveAndExecuteLockedPeriodChangeRequest(params: {
         notifyMember,
         memberEmailed: notifyMember && !booking.noEmails,
       };
-    },
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET,
   ).catch((error: unknown) => {
     if (error instanceof FinishedStayDryRun) {
       return { outcome: "quoted" as const, ...error.figures };

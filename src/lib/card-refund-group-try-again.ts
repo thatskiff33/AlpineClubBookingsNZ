@@ -16,6 +16,7 @@ import {
 } from "@/lib/card-refund-dead-row";
 import { deadRowClaimWhere, lockDeadCardRefundRow, type DeadCardRefundRowRefusals } from "@/lib/card-refund-dead-row-lock";
 import { getClubFormat } from "@/lib/club-format-settings";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import logger from "@/lib/logger";
 import { isGroupSettlementRefundRecoveryKey, isOrganiserChildRefundKey } from "@/lib/payment-recovery-keys";
 import { rearmedPaymentRecoveryOperationData } from "@/lib/payment-recovery-constants";
@@ -148,5 +149,5 @@ export async function tryOrganiserChildCardRefundAgain(
       owedCents: operation.amountCents,
       nextRetryAt: nextRetryAt.toISOString(),
     };
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 }

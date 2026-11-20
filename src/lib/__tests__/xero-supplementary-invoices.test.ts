@@ -32,7 +32,12 @@ const mocks = vi.hoisted(() => ({
   xeroSyncOperationUpdateMany: vi.fn(),
   // #4494: the gap invoice's send-time check (resets to undefined: no overlap).
   unpaidGapPayloadIfOverlapping: vi.fn(),
+  // ALP-436: the export manifest recorded once the operation completes.
+  recordSupplementaryInvoiceManifest: vi.fn(),
 }));
+
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
+vi.mock("@/lib/member-money/doors", () => ({ recordSupplementaryInvoiceManifest: mocks.recordSupplementaryInvoiceManifest }));
 
 vi.mock("@/lib/credit-release-xero-payment", () => ({
   unpaidGapPayloadIfOverlapping: async (...a: unknown[]) => (await mocks.unpaidGapPayloadIfOverlapping(...a)) ?? null,
@@ -141,6 +146,9 @@ import type { Prisma } from "@prisma/client";
 import { lineTotalCents } from "@/lib/__tests__/helpers";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
+import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
+import type { XeroTaxRendering } from "@/lib/xero-tax-rendering";
+import { LineAmountTypes } from "xero-node";
 
 describe("createXeroSupplementaryInvoice idempotency-key discriminator (#1234, L2)", () => {
   beforeEach(() => {
@@ -384,6 +392,35 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:8000:1000:v1");
   });
 
+  it.each([
+    ["a registered period with another code", { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "OUTPUT3" }],
+    ["an unregistered period", { lineAmountTypes: LineAmountTypes.NoTax }],
+  ] as Array<[string, XeroTaxRendering]>)(
+    "#4632: renders under the booking's own treatment (%s) and records that treatment on its manifest",
+    async (_label, rendering) => {
+      itemisedFixtures();
+      vi.mocked(resolveXeroTaxRendering).mockResolvedValueOnce(rendering);
+
+      await createXeroSupplementaryInvoice({
+        format: CLUB_FORMAT_TEST,
+        bookingId: "bk1",
+        priceDiffCents: 8000,
+        changeFeeCents: 1000,
+        bookingModificationId: "mod_lines",
+      });
+
+      // The booking's anchor (when it was made), never today's treatment.
+      expect(resolveXeroTaxRendering).toHaveBeenCalledWith({ kind: "booking", bookingId: "bk1" });
+      const invoice = mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload.invoices[0];
+      expect(invoice.lineAmountTypes).toBe(rendering.lineAmountTypes);
+      expect(invoice.lineItems.map((line: { taxType?: string }) => line.taxType)).toEqual([rendering.taxType, rendering.taxType]);
+      expect(mocks.recordSupplementaryInvoiceManifest).toHaveBeenCalledWith(expect.objectContaining({
+        lines: invoice.lineItems,
+        taxRendering: rendering,
+      }));
+    },
+  );
+
   it("retrying renders identical lines: the row is the anchor and is re-read, immutable (#3530 acceptance)", async () => {
     itemisedFixtures();
     const run = async () => {
@@ -452,6 +489,11 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
       source: "STORED", reason: null, storedSumCents: null, sharesSumCents: 3275, billedCents: 3275, lineCount: 2, shareCount: 2,
     });
     expect(enqueued.idempotencyKey).toBe("booking-mod:mod_lines:supplementary-invoice:3275:0:v1");
+    // #4525 (ALP-436): the manifest covers exactly the shares these lines itemise.
+    expect(mocks.recordSupplementaryInvoiceManifest).toHaveBeenCalledWith(expect.objectContaining({
+      anchor: { kind: "MODIFICATION", modificationId: "mod_lines" },
+      itemisedShareTaskIds: ["t1", "t2"],
+    }));
   });
 
   it("a share settled between a failed send and its retry never renders a line the retry does not bill: it falls back, same total", async () => {
@@ -480,14 +522,17 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     const first = { id: "t1", amountCents: 2275, settlementDirection: "CHARGE_TO_MEMBER", note: "owing", completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext };
     const run = async () => {
       mocks.startXeroSyncOperation.mockClear();
+      mocks.recordSupplementaryInvoiceManifest.mockClear();
       await createXeroSupplementaryInvoice({ format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: 2275, changeFeeCents: 0, bookingModificationId: "mod_lines" });
       const payload = mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload;
-      return { lines: payload.invoices[0].lineItems, record: payload.priceLines };
+      const recorded = mocks.recordSupplementaryInvoiceManifest.mock.calls[0]?.[0];
+      return { lines: payload.invoices[0].lineItems, record: payload.priceLines, itemisedShareTaskIds: recorded?.itemisedShareTaskIds };
     };
 
     mocks.manualRefundTaskFindMany.mockResolvedValue([first]);
     const attempt1 = await run();
     expect(attempt1.record).toMatchObject({ source: "STORED", shareCount: 1 });
+    expect(attempt1.itemisedShareTaskIds).toEqual(["t1"]);
 
     // A second share lands on the same anchor; the operation still bills 2275
     // (the restate could not join it, INV-PAY-070).
@@ -496,6 +541,8 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(attempt2.record).toMatchObject({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", sharesSumCents: 3275, billedCents: 2275 });
     expect(attempt2.lines[0].description).toBe("Booking modification - price adjustment (Booking bk1)");
     expect(lineTotalCents(attempt2.lines)).toBe(lineTotalCents(attempt1.lines));
+    // The single line itemises no share, so its manifest claims none (#4525, ALP-436).
+    expect(attempt2.itemisedShareTaskIds).toEqual([]);
   });
 
   it("a restated operation billing a raised figure falls back to the single line, with the reason (INV-PAY-070)", async () => {
@@ -542,6 +589,7 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(mocks.bookingFindUnique).not.toHaveBeenCalled();
     expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
     expect(createPayments).not.toHaveBeenCalled();
+    expect(mocks.recordSupplementaryInvoiceManifest).not.toHaveBeenCalled();
   });
 });
 
@@ -624,6 +672,28 @@ describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
     expect(invoiceLink.localId).toBe("task_2");
   });
 
+  it("ALP-436: records its export manifest against the review task, after the operation completes", async () => {
+    await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST,
+      bookingId: "bk1",
+      priceDiffCents: 3000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_123",
+      shortfallReviewTaskId: "task_2",
+      recordPayment: false,
+    });
+
+    expect(mocks.recordSupplementaryInvoiceManifest).toHaveBeenCalledWith(expect.objectContaining({
+      bookingId: "bk1",
+      anchor: { kind: "SECOND_ASK", modificationId: "mod_123", taskId: "task_2" },
+      legacyKey: "review-task:task_2:supplementary-shortfall-invoice:3000:0:v1",
+      providerInvoiceId: "inv_second",
+      lines: mocks.startXeroSyncOperation.mock.calls[0][0].requestPayload.invoices[0].lineItems,
+    }));
+    expect(mocks.recordSupplementaryInvoiceManifest.mock.invocationCallOrder[0])
+      .toBeGreaterThan(mocks.completeXeroSyncOperation.mock.invocationCallOrder[0]!);
+  });
+
   it("tells the member why a second invoice has arrived", async () => {
     await createXeroSupplementaryInvoice({
       format: CLUB_FORMAT_TEST,
@@ -678,6 +748,11 @@ describe("createXeroSupplementaryInvoice: the second ask (#3193)", () => {
       (link: { role: string }) => link.role === "SUPPLEMENTARY_INVOICE",
     );
     expect(invoiceLink.localModel).toBe("BookingModification");
+    expect(mocks.recordSupplementaryInvoiceManifest).toHaveBeenCalledWith(expect.objectContaining({
+      anchor: { kind: "MODIFICATION", modificationId: "mod_123" },
+      legacyKey: "booking-mod:mod_123:supplementary-invoice:3000:0:v1",
+      providerInvoiceId: "inv_second",
+    }));
   });
 });
 

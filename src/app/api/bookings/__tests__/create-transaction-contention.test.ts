@@ -138,7 +138,11 @@ vi.mock("@/lib/lodges", () => ({
   // The member self-book minimum-stay check filters policy rows per lodge.
   resolvePolicyRowsForLodge: () => [],
 }));
-vi.mock("@/lib/lodge-capacity", () => ({
+// Partial on purpose: the route's module graph reaches `@/config/club-identity`
+// (through the refund-note manifest recorder, #4525), which reads
+// FALLBACK_LODGE_CAPACITY at import time.
+vi.mock("@/lib/lodge-capacity", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/lodge-capacity")),
   getLodgeCapacity: vi.fn().mockResolvedValue(30),
 }));
 vi.mock("@/lib/membership-type-policy", () => ({

@@ -368,7 +368,12 @@ async function runGroupInvoiceEmailFence(params: {
     outcome.accepted = true;
     outcome.responseBody = emailResponse.body;
     return { ...notSent, responseBody: emailResponse.body };
-  }, XERO_EMAIL_FENCE_TRANSACTION_OPTIONS);
+  },
+    // INV-LOCK-006 exception: a provider call runs inside this lock(1) fence, so
+    // its timeout is sized to the Xero email deadline (`xero-invoice-email.ts`)
+    // and a hold past it defers the email (#4919); maxWait matches the budget.
+    XERO_EMAIL_FENCE_TRANSACTION_OPTIONS,
+  );
 }
 
 /**

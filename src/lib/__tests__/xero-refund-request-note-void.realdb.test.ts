@@ -18,6 +18,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
+import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -60,6 +61,8 @@ let prisma: (typeof import("@/lib/prisma"))["prisma"];
   { timeout: 60_000 },
   () => {
     async function deleteFixtures() {
+      // #4525 (M13): the refund note this suite raises leaves an export manifest naming the booking.
+      await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
       await prisma.xeroSyncOperation.deleteMany({ where: { localModel: "Payment", localId: PAYMENT_ID } });
       await prisma.xeroObjectLink.deleteMany({ where: { localId: PAYMENT_ID } });
       await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });

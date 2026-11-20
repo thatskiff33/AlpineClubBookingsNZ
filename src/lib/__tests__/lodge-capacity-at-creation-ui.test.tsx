@@ -41,8 +41,8 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
     "Your admin role can view this area but cannot make changes.",
 }));
 
-import AdminLodgesPage from "@/app/(admin)/admin/lodges/page";
-import LodgeSetupWizardPage from "@/app/(admin)/admin/lodges/[id]/setup/page";
+import AdminLodgesPage from "@/app/(admin)/admin/lodge-ops/lodges/page";
+import LodgeSetupWizardPage from "@/app/(admin)/admin/lodge-ops/lodges/[id]/setup/page";
 import { NEW_LODGE_CAPACITY_REQUIRED_MESSAGE } from "@/lib/lodge-effective-capacity";
 
 afterEach(() => {

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clubTime } from "@/lib/club-time/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
-import { z } from "zod";
 
 import { ApiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit";
@@ -9,6 +8,8 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireAdmin } from "@/lib/session-guards";
+import { transactionContendedResponse } from "@/lib/transaction-contended-response";
+import { decisionSchema } from "@/lib/booking-exception-decision-request";
 import {
   approveAndExecutePolicyExceptionRequest,
   modificationExceptionRequestStore,
@@ -34,7 +35,6 @@ import {
 } from "@/lib/booking-guests";
 import {
   buildSameOwnerCoverageOverrideRequiredBody,
-  hostingCoverageOverrideSchema,
   SameOwnerCoverageOverrideRequiredError,
 } from "@/lib/adult-member-hosting-same-owner";
 import { clubFormatValues } from "@/lib/club-format-server";
@@ -55,48 +55,6 @@ import { requireRecentAuth } from "@/lib/require-recent-auth";
  * this route reports that honestly — in particular a capacity conflict answers
  * "still pending", never "approved".
  */
-
-const decisionSchema = z
-  .object({
-    action: z.enum(["approve", "reject"]),
-    source: z.enum(["MODIFICATION", "NEW_BOOKING"]),
-    /**
-     * The `version` the officer's screen was showing. A decision made against a
-     * stale screen loses the guarded CAS instead of deciding a request that
-     * changed underneath it.
-     */
-    expectedVersion: z.coerce.number().int().min(1),
-    /**
-     * The MEMBER-FACING decision explanation (#2562). The member reads this on
-     * their own request list, and on an approval it is interpolated into the
-     * approval email — so the officer screen says so beside the field, and this
-     * field name is deliberately unchanged from #2526 rather than renamed, which
-     * would have silently repointed every existing decision.
-     */
-    adminNotes: z.string().trim().max(2000).optional(),
-    /**
-     * The officer's PRIVATE note (#2562). Stored on its own column and read only
-     * by admin-guarded surfaces. It is never a substitute for the member-facing
-     * explanation: a refusal still requires `adminNotes`, so an officer cannot
-     * refuse a request with an internal note and nothing for the member.
-     */
-    internalNotes: z.string().trim().max(2000).optional(),
-    /**
-     * Explicit confirmation that the officer means to apply the reviewed
-     * override. Required on approve — an approval creates or rewrites a real
-     * booking, so it is never a single mis-click.
-     */
-    confirm: z.boolean().optional(),
-    /** How a refund arising from an approved modification is settled. */
-    settlementMethod: z.enum(["card", "credit"]).optional(),
-    /**
-     * Second-step confirmation for a modification that would strand another
-     * same-owner booking. The first attempt deliberately omits it so the
-     * canonical service can identify the exact affected bookings and nights.
-     */
-    hostingCoverageOverride: hostingCoverageOverrideSchema.optional(),
-  })
-  .strict();
 
 function storeFor(source: "MODIFICATION" | "NEW_BOOKING"): PolicyExceptionRequestStore {
   return source === "NEW_BOOKING"
@@ -420,15 +378,27 @@ export async function PATCH(
         { status: 400 },
       );
     }
-    const result = await resolvePolicyExceptionRequestTerminal({
-      requestId: id,
-      expectedVersion,
-      to: "REJECTED",
-      actorMemberId: session.user.id,
-      adminNotes,
-      internalNotes,
-      store,
-    });
+    let result;
+    try {
+      result = await resolvePolicyExceptionRequestTerminal({
+        requestId: id,
+        expectedVersion,
+        to: "REJECTED",
+        actorMemberId: session.user.id,
+        adminNotes,
+        internalNotes,
+        store,
+      });
+    } catch (error) {
+      // `INV-LOCK-006`: the refusal's one transaction rolled back.
+      const contended = transactionContendedResponse(
+        error,
+        "Booking-policy exception refusal contended for the lock(1) budget",
+        { context: { requestId: id, source } },
+      );
+      if (contended) return contended;
+      throw error;
+    }
     if (!result.claimed) {
       return NextResponse.json(
         {
@@ -677,6 +647,12 @@ export async function PATCH(
         { status: error.status },
       );
     }
+    const contended = transactionContendedResponse(
+      error,
+      "Booking-policy exception approval contended for the lock(1) budget",
+      { context: { requestId: id, source } },
+    );
+    if (contended) return contended;
     logger.error(
       { err: error, requestId: id, source },
       "Booking-policy exception approval failed",

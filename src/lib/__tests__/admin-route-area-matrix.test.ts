@@ -244,6 +244,12 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // `admin-route-authorization-proof.test.ts`.
   "/api/admin/club-format": "support",
   "/api/admin/club-identity": "content",
+  // #4632: the club's GST / tax treatment schedule. `finance`, beside the Xero
+  // routes whose documents render from it: the read is `finance:view`, but the
+  // writes pass `requireAdmin({ permission: false })`, Full Admin, stricter
+  // than `finance:edit`; both divergences are pinned in
+  // `admin-route-authorization-proof.test.ts`.
+  "/api/admin/club-tax": "finance",
   // CT-1 (#2989): the club-timezone maintenance API. `support` is the area — it
   // is installation configuration, alongside /api/admin/modules and
   // /api/admin/config-transfer — but the AREA is not the gate here. Both verbs
@@ -463,6 +469,7 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // is gated exactly as closing one is - undoing a money decision is not a
   // lesser act than taking it.
   "/api/admin/payments/manual-refund-tasks/[id]/reopen": "finance",
+  "/api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute": "finance",
   // #3835: what a review share on a cancelled booking still owes, read by the
   // settle dialog before completing - a finance read, gated as the queue is.
   "/api/admin/payments/manual-refund-tasks/[id]/still-owed": "finance",

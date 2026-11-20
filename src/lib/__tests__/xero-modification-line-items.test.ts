@@ -5,6 +5,7 @@
  * prints the rendered `LineItem[]` for the owner's eye.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BASELINE_XERO_TAX_RENDERING } from "@/lib/xero-tax-rendering";
 
 const mocks = vi.hoisted(() => ({
   bookingFindUniqueOrThrow: vi.fn(),
@@ -79,6 +80,7 @@ function context(overrides: Partial<ModificationDocumentCodingContext> = {}): Mo
     seasonType: "WINTER",
     promo: null,
     firstGuest: { ageTier: "ADULT", isMember: false, rateMembershipTypeId: NON_MEMBER },
+    taxRendering: BASELINE_XERO_TAX_RENDERING,
     ...overrides,
   };
 }
@@ -288,6 +290,7 @@ describe("resolveModificationDocumentLineItems", () => {
 
   it("renders the stored lines and records STORED with the figures compared", async () => {
     const result = await resolveModificationDocumentLineItems({
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
       bookingId: "bk1",
       row: { priceLines: stored, priceDiffCents: 8000, changeFeeCents: 0 },
       document: "SUPPLEMENTARY_INVOICE",
@@ -317,6 +320,7 @@ describe("resolveModificationDocumentLineItems", () => {
       { v: 1, kind: "PROMO_DELTA", sign: 1, promoCode: "RELEASED", amountCents: 1500 },
     ];
     const result = await resolveModificationDocumentLineItems({
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
       bookingId: "bk1",
       row: { priceLines, priceDiffCents: 500, changeFeeCents: 0 },
       document: "SUPPLEMENTARY_INVOICE",
@@ -351,6 +355,7 @@ describe("resolveModificationDocumentLineItems", () => {
         { v: 1, kind: "PROMO_DELTA", sign: line.amountCents > 0 ? 1 : -1, ...line },
       ];
       const result = await resolveModificationDocumentLineItems({
+        taxRendering: BASELINE_XERO_TAX_RENDERING,
         bookingId: "bk1",
         row: { priceLines, priceDiffCents: line.amountCents, changeFeeCents: 0 },
         document: "SUPPLEMENTARY_INVOICE",
@@ -414,6 +419,7 @@ describe("resolveModificationDocumentLineItems", () => {
 
   it("falls back with the reason and reads nothing else when the lines do not explain the document", async () => {
     const result = await resolveModificationDocumentLineItems({
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
       bookingId: "bk1",
       row: { priceLines: stored, priceDiffCents: 8000, changeFeeCents: 0 },
       document: "SUPPLEMENTARY_INVOICE",
@@ -422,6 +428,7 @@ describe("resolveModificationDocumentLineItems", () => {
     }, CLUB_FORMAT_TEST);
     expect(result.lineItems).toBeNull();
     expect(result.record).toEqual({ source: "FALLBACK_SINGLE_LINE", reason: "STORED_LINES_DO_NOT_SUM", storedSumCents: 8000, sharesSumCents: null, billedCents: 9000, lineCount: 0, shareCount: 0 });
+    expect(result.itemisedShareTaskIds).toEqual([]);
     expect(mocks.bookingFindUniqueOrThrow).not.toHaveBeenCalled();
     expect(mocks.getHutFeeItemCodeMap).not.toHaveBeenCalled();
   });
@@ -434,6 +441,7 @@ describe("resolveModificationDocumentLineItems", () => {
     );
     mocks.bookingModificationFindUnique.mockResolvedValue({ priceLines: removedLines, priceDiffCents: -16000, changeFeeCents: 0 });
     const result = await resolveModificationDocumentLineItems({
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
       bookingId: "bk1",
       bookingModificationId: "mod_1",
       document: "MODIFICATION_CREDIT_NOTE",
@@ -450,6 +458,7 @@ describe("resolveModificationDocumentLineItems", () => {
   it("narration never fails a document: a failed read sends the single line, logged and recorded", async () => {
     mocks.getHutFeeItemCodeMap.mockRejectedValueOnce(new Error("connection reset"));
     const result = await resolveModificationDocumentLineItems({
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
       bookingId: "bk1",
       row: { priceLines: stored, priceDiffCents: 8000, changeFeeCents: 0 },
       document: "SUPPLEMENTARY_INVOICE",
@@ -458,12 +467,14 @@ describe("resolveModificationDocumentLineItems", () => {
     }, CLUB_FORMAT_TEST);
     expect(result).toEqual({
       lineItems: null,
+      itemisedShareTaskIds: [],
       record: { source: "FALLBACK_SINGLE_LINE", reason: "NARRATION_UNAVAILABLE", storedSumCents: null, sharesSumCents: null, billedCents: 8000, lineCount: 0, shareCount: 0 },
     });
     expect(mocks.loggerError).toHaveBeenCalledTimes(1);
 
     mocks.bookingModificationFindUnique.mockRejectedValueOnce(new Error("connection reset"));
     const rowRead = await resolveModificationDocumentLineItems({
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
       bookingId: "bk1",
       bookingModificationId: "mod_1",
       document: "MODIFICATION_CREDIT_NOTE",
@@ -479,6 +490,7 @@ describe("resolveModificationDocumentLineItems", () => {
       -16000,
     );
     const result = await resolveModificationDocumentLineItems({
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
       bookingId: "bk1",
       row: { priceLines: removedLines, priceDiffCents: -16000, changeFeeCents: 0 },
       document: "MODIFICATION_CREDIT_NOTE",
@@ -599,6 +611,7 @@ describe("review share lines (2c)", () => {
       { id: "t1", amountCents: 2275, settlementDirection: ManualRefundTaskDirection.CHARGE_TO_MEMBER, note: "owing", completedAt: new Date("2026-06-01T00:00:00Z"), reviewContext: reviewContext("mod_1") },
     ]);
     const result = await resolveModificationDocumentLineItems({
+      taxRendering: BASELINE_XERO_TAX_RENDERING,
       bookingId: "bk1",
       row: { priceLines: null, priceDiffCents: 0, changeFeeCents: 0 },
       bookingModificationId: "mod_1",
@@ -610,5 +623,7 @@ describe("review share lines (2c)", () => {
     expect(result.record).toEqual({
       source: "STORED", reason: null, storedSumCents: null, sharesSumCents: 2275, billedCents: 2275, lineCount: 1, shareCount: 1,
     });
+    // The rendered shares' tasks, for the export manifest (#4525, ALP-436).
+    expect(result.itemisedShareTaskIds).toEqual(["t1"]);
   });
 });
