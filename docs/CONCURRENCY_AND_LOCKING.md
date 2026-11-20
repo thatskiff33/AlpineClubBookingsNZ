@@ -7362,8 +7362,11 @@ Stripe call:
   (`lockPaymentForRefundedTotal`) after its `lock(1)` and booking row, and reads
   the hold-back before it plans. The member key comes first because the
   completion's credit give-back and re-price take it after the claim; it is
-  re-entrant, so they take it again at no cost. The still-owed preview, which
-  holds no `lock(1)`, takes neither and reads in its rolled-back snapshot. A
+  re-entrant, so they take it again at no cost. The still-owed preview
+  (`previewEditReviewStillOwed`) has had no route since #4344 retired the
+  officer review screens; its module stays only for the realdb tests' money
+  cross-checks until wave C3 removes the completion machinery. It holds no
+  `lock(1)`, takes neither and reads in its rolled-back snapshot. A
   "Paid another way" close reads it under the Payment row it already holds,
   after its claim. No new advisory key and no new lock order.
   After commit the edit sends that plan, closes the row on that plan once

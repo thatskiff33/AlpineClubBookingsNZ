@@ -256,7 +256,8 @@ export function completionSummary(shape: CompletionSettlementShape): string {
  * review. The review is retired - every edit is priced automatically, and wave
  * B closed every open one - so nothing settles or dismisses one any more. Said
  * in words a stale settle screen's officer can act on: there is nothing left to
- * do, and the record is still there.
+ * do, and the record is still there. The finance queue's card for a retired
+ * review shows this same sentence, so the card and the route cannot drift.
  */
 export const RETIRED_EDIT_REVIEW_REFUSAL =
   "Officer edit reviews were retired, so this review stays as it is and cannot be settled or closed here. What was recorded for it is still on the booking's history. Reload the page.";

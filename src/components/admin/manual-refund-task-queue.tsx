@@ -25,7 +25,7 @@ import type { ManualRefundTaskKind } from "@prisma/client";
 import { useClubTime } from "@/components/club-time-provider";
 import { formatStayDate } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
-import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION } from "@/lib/manual-refund-task-copy";
+import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, RETIRED_EDIT_REVIEW_REFUSAL } from "@/lib/manual-refund-task-copy";
 import { ManualRefundTaskDisputeReduction } from "@/components/admin/manual-refund-task-dispute-reduction";
 // #3213: whether a row may be closed as money that moved is decided ONCE, in a
 // client-safe home, and the completion door throws on the same answer
@@ -933,15 +933,15 @@ export function ManualRefundTaskQueue() {
                         on. The route stopped listing them, so this is only an
                         older route's answer during a deploy; the resolve route
                         refuses the kind, so the row offers no control at all.
+                        It says what the route's refusal says, in the same
+                        words (RETIRED_EDIT_REVIEW_REFUSAL, INV-SSOT).
                       */}
                       {isRetiredReview(task) ? (
                         <p
                           className="text-xs text-muted-foreground"
                           data-testid="manual-refund-task-retired-review"
                         >
-                          Officer edit reviews were retired, so this one cannot
-                          be settled or dismissed here. What was recorded for it
-                          stays on the booking&apos;s history. Reload the page.
+                          {RETIRED_EDIT_REVIEW_REFUSAL}
                         </p>
                       ) : null}
                     </div>

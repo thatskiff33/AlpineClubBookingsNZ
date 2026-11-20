@@ -19,7 +19,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { ManualRefundTaskQueue } from "@/components/admin/manual-refund-task-queue";
-import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL } from "@/lib/manual-refund-task-copy";
+import { DISPUTED_HAND_BACK_LOST_DISMISS_DESCRIPTION, DISPUTED_HAND_BACK_LOST_NOT_PAYABLE, DISPUTED_HAND_BACK_PARTLY_LOST_REFUSAL, DISPUTED_HAND_BACK_REDUCE_BEFORE_PAYING, disputedHandBackDismissRefusal, JOURNAL_HAND_BACK_DISMISS_REFUSAL, RETIRED_EDIT_REVIEW_REFUSAL } from "@/lib/manual-refund-task-copy";
 
 /**
  * The finance queue's "Money to settle" card: what it says about each kind of
@@ -373,7 +373,7 @@ describe("a retired officer edit review is shown, never acted on (#4344)", () =>
     expect(within(row as HTMLElement).queryAllByRole("button")).toHaveLength(0);
     expect(
       within(row as HTMLElement).getByTestId("manual-refund-task-retired-review"),
-    ).toHaveTextContent(/retired/);
+    ).toHaveTextContent(RETIRED_EDIT_REVIEW_REFUSAL);
     // Its booking is still one click away, which is where its history lives.
     expect(within(row as HTMLElement).getByRole("link")).toHaveAttribute(
       "href",

@@ -40,6 +40,7 @@ const RETIRED_MODULES = [
   "@/components/admin/unpriced-night-price-fields",
   "@/components/admin/manual-refund-task-still-owed-notice",
   "@/components/admin/hand-back-method-choice",
+  "@/components/admin/manual-refund-settlement-direction",
 ];
 
 /** `@/lib/x` as the repo path it names, without its extension: `src/lib/x`. */
