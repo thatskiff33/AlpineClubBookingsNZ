@@ -58,6 +58,10 @@ writes to production; the SQL is read-only.
 
 ### Saved-card boundary and incident checks (#5270)
 
+Read this section now and plan the window around it. The stops it describes
+happen in the deploy window ([§2](#2-migrate)), not during pre-flight. The
+only SQL in it is read-only.
+
 For an upgrade from v0.13.2 or earlier, **stop every old web copy, cron leader
 and worker before starting v0.14.0**, drain in-flight requests and prevent old
 copies restarting. No rolling or blue/green overlap across this boundary unless
@@ -76,7 +80,10 @@ connections remain. Only then export `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`
 in the deploy shell and run the deploy, with §2.4's migration acknowledgements
 where required. The flag acknowledges the shutdown; it does not stop anything.
 Keep this window even when no migration is pending: the script warms the new
-colour and recreates `app` before switching traffic.
+colour and recreates `app` before switching traffic. The script verifies the
+stop only while a windowed migration is pending; with none pending it prints
+"No pending Prisma migrations detected." and checks nothing, so the stop and
+the disconnect check are then entirely yours.
 
 **If cutover fails after v0.14.0 has started, do not restart the old colour,
 cron leader or workers below v0.14.0.** Failure handling can point Caddy back at

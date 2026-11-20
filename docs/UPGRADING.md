@@ -244,7 +244,7 @@ that mints them; v0.13.2 and earlier cannot read them. This rule applies even
 if your database migrations have already run.
 
 Before running `scripts/run-production-blue-green-deploy.sh`, follow the
-[runbook’s stopped-runtime procedure](PRODUCTION_UPGRADE_RUNBOOK.md#saved-card-boundary-and-incident-checks-5270),
+[runbook's stopped-runtime procedure](PRODUCTION_UPGRADE_RUNBOOK.md#saved-card-boundary-and-incident-checks-5270),
 including stopping the old colour, its `app` cron leader and external workers.
 The script starts new processes before switching traffic; its normal overlap
 is unsafe here. After a failed cutover, keep the old colour stopped even if
