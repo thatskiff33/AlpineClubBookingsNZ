@@ -1288,8 +1288,9 @@ a payment already captured. An edit of a booking that has not been paid still
 reprices, and records no late-notice fee on the quote, the history, the
 payment, the amount owed, the invoice, or either ledger. #4661 and #4735, which
 added that fee to an unpaid booking, are withdrawn for every new edit. A fee
-already stored that way is left as it is. A finished stay's removal retention
-is not this fee (`INV-PAY-119`).
+already stored that way is left as it is. A paid edit's fee is recorded on the
+payment once, by `applyPaymentAdjustments`, whatever was captured (#5039). A
+finished stay's removal retention is not this fee (`INV-PAY-119`).
 
 **A promotion change asked for in the same request is applied.** A parked edit
 used to drop a `promoCode`, `promoCodes` or `removePromoCode` and say so in one
