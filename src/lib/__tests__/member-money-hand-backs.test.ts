@@ -10,7 +10,10 @@ import { memberMoneyEventKeys as keys, postMemberMoneyEvent, type MemberMoneyDeb
 import { postBookingReceipts, postHandBackObligation, postHandBackPayment, postKeptCapture, reverseKeptCapture, withdrawRefundObligation } from "@/lib/member-money/doors";
 import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@/lib/member-money/internal/application-state";
 import { MemberMoneyMemoryDb } from "./support/member-money-memory-db";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { memberMoneyTestContext, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
+import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
+import { CLUB_TAX_SETTINGS_DEFAULTS } from "@/lib/club-tax-settings";
+import { requireCalendarDate } from "@/lib/club-time";
 
 const context = memberMoneyTestContext();
 const INACTIVE = { inactive: "unusable-currency", detail: "test club's currency cannot be charged" } as const;
@@ -25,13 +28,13 @@ async function setup() {
   const id = "booking";
   const owner: MemberMoneyDebtor = { kind: "MEMBER", memberId: A };
   const at = { bookingId: id, lodgeId: LODGE };
-  db.seed("booking", { id, lodgeId: LODGE, memberId: A, organisationId: null });
+  db.seed("booking", { id, lodgeId: LODGE, createdAt: new Date(FROZEN_TEST_CLOCK_BASE_ISO), memberId: A, organisationId: null });
   db.seed("payment", { id: `${id}-payment`, bookingId: id });
   await postMemberMoneyEvent(db.tx, context, { kind: "CHARGE", eventKey: keys.bookingCharge(id), origin: "APP", source: { kind: "BOOKING", id, version: "1" }, reason: "Synthetic R01",
     obligations: [{ key: keys.bookingCharge(id), kind: "CHARGE", debtor: owner, faceCents: 10_000, evidence: {} }],
     legs: [
       { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: 10_000, booking: at, debtor: owner, obligationKey: keys.bookingCharge(id), evidence: {} },
-      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 10_000, booking: at, chargeIdentity: `booking:${id}:nights`, evidence: {} },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: 10_000, booking: at, chargeIdentity: `booking:${id}:nights`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
     ] });
   let sequence = 0;
   const capture = async (cents: number, collect = true) => {
@@ -48,7 +51,7 @@ async function setup() {
     await postMemberMoneyEvent(db.tx, context, { kind: "ADJUSTMENT", eventKey: keys.cancellation(id, 0), origin: "APP", source: { kind: "BOOKING", id, version: "cancel" }, reason: "Synthetic R04",
       legs: [
         { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: 10_000, booking: at, chargeIdentity: `booking:${id}:nights`, evidence: {} },
-        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: kept, booking: at, chargeIdentity: `booking:${id}:nights`, evidence: {} },
+        { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: kept, booking: at, chargeIdentity: `booking:${id}:nights`, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: 10_000 - kept, booking: at, debtor: owner, evidence: {} },
       ] });
   };
@@ -204,6 +207,24 @@ describe("a late capture the treasurer keeps", () => {
     expect(await reverseKeptCapture(t.db.tx, context, { bookingId: t.id, paymentIntentId: late.stripePaymentIntentId, actorMemberId: OFFICER })).toBe(true);
     expect(t.db.rows("memberMoneyJournal", { reversesJournalId: t.journalOf(kept)!.id })).toHaveLength(1);
     expect(t.caps()).toEqual([]);
+  });
+
+  it("splits the retained component under the treatment in force when the booking was made, not on the day it is kept (#4632)", async () => {
+    // Registered at 15% until 2026-08-01, then not registered. The booking was
+    // made on the frozen clock's day (2026-07-01) and its late capture is kept
+    // on 2026-08-15: decision A keeps the booking's own treatment for its whole life.
+    const changed = memberMoneyTestContext({
+      effectiveAt: "2026-08-15T00:00:00.000Z",
+      taxSchedule: [CLUB_TAX_SETTINGS_DEFAULTS,
+        { gstRegistered: false, taxRateBasisPoints: 0, xeroTaxType: null, effectiveFrom: requireCalendarDate("2026-08-01") }],
+    });
+    const t = await setup();
+    await t.capture(10_000);
+    const late = await t.capture(3_000, false);
+    expect(await keep(t, late.stripePaymentIntentId, 0, changed)).toBe(true);
+    // round(3000 x 0.15 / 1.15) = 391 GST; 2609 net revenue.
+    expect(t.linesOf(keys.keptCapture(late.stripePaymentIntentId)))
+      .toEqual(expect.arrayContaining(["CREDIT BOOKING_REVENUE 2609", "CREDIT GST_PAYABLE 391"]));
   });
 
   it("collects against the booking, posting no revenue, where an invoice already bills it", async () => {

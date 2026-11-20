@@ -22,7 +22,7 @@ import {
 import { buildMemberMoneyBatch } from "@/lib/member-money/internal/plan";
 import { FROZEN_TEST_CLOCK_BASE_ISO } from "./helpers/clock";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { MEMBER_MONEY_TEST_TAX_ANCHOR, memberMoneyTestContext } from "./support/member-money-fixtures";
 
 const BOOKING = "b1";
 const LODGE = "l1";
@@ -53,7 +53,7 @@ const live = (entries: Array<["BOOKING_REVENUE" | "FEE_REVENUE", string, number]
   entries.map(([account, chargeIdentity, liveGrossCents]) => ({ account, chargeIdentity, liveGrossCents }));
 
 function plan(event: BookingChargeEvent, lines: LegacyChargeLine[], liveComponents = live([])) {
-  return planBookingChargeEvent({ bookingId: BOOKING, lodgeId: LODGE, event, debtor: MEMBER, lines, liveComponents });
+  return planBookingChargeEvent({ bookingId: BOOKING, lodgeId: LODGE, event, debtor: MEMBER, lines, liveComponents, taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR });
 }
 
 type Legs = Extract<MemberMoneyPlan, { legs: unknown }>;
@@ -122,7 +122,7 @@ describe("R01: a confirmation's lines (#4627)", () => {
     const organisation = { kind: "ORGANISATION", organisationId: "org1" } as const;
     const built = planBookingChargeEvent({
       bookingId: BOOKING, lodgeId: LODGE, event: { kind: "confirmation" }, debtor: organisation,
-      lines: [line({ kind: "GUEST_NIGHT", amountCents: 7000 })], liveComponents: [],
+      lines: [line({ kind: "GUEST_NIGHT", amountCents: 7000 })], liveComponents: [], taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR,
     }) as Legs;
     expect(built.legs[0]).toMatchObject({ account: "MEMBER_RECEIVABLE", debtor: organisation });
     expect(built.obligations?.[0]?.debtor).toEqual(organisation);
@@ -293,7 +293,7 @@ describe("D4: a member merge's transfer (#4627)", () => {
 describe("a tax setting the door could not read (#4627)", () => {
   const unreadable = resolveMemberMoneyPostingContext({
     effectiveAt: requireInstant(FROZEN_TEST_CLOCK_BASE_ISO), zone: requireClubTimeZone("Pacific/Auckland"), format: CLUB_FORMAT_TEST,
-    policyVersion: "p", codingVersion: "c", taxSettings: { unreadable: "connection refused" },
+    policyVersion: "p", codingVersion: "c", taxSchedule: { unreadable: "connection refused" },
   });
 
   it("refuses a batch needing a fresh split, never guessing one", () => {

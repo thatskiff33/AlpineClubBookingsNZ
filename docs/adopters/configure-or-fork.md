@@ -50,7 +50,7 @@ point of use.
 A **setting** is a stored value an admin edits in the app. Cancellation refund
 tiers, minimum stay, group discount, the subscription lockout policy, booking
 request rules, reminder and hold timings, member-guest consent policy, hut-leader label, notification
-recipients, email wording, public page content, colours and fonts are all
+recipients, email wording, public page content, the club's GST/tax treatment, colours and fonts are all
 settings.
 
 - **Where:** the relevant admin area, and the setup hub at `/admin/setup`.
