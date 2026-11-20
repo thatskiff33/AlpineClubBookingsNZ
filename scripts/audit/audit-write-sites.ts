@@ -12,6 +12,7 @@
 import type { AuditWriteSiteLedgerEntry } from "./audit-writer-census";
 
 export const AUDIT_WRITE_SITES: Readonly<Record<string, AuditWriteSiteLedgerEntry>> = {
+  "src/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download.ts::prepareBookingInvoiceDownload#0": {"category":"booking","sink":"createAuditLog","action":"(dynamic) creditNote ? \"booking.credit_note.downloaded\" : \"booking.invoice.downloaded\""},
   "src/app/api/admin/access-roles/[id]/route.ts::DELETE#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_DELETED"},
   "src/app/api/admin/access-roles/[id]/route.ts::PATCH.updated#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_UPDATED"},
   "src/app/api/admin/access-roles/route.ts::POST.created#0": {"category":"admin","sink":"auditLog.create","action":"ACCESS_ROLE_DEFINITION_CREATED"},

@@ -3577,6 +3577,48 @@ Payment routes retain their final guards. No settlement, reconciliation, new loc
 key, schema change, historical operation or ledger reader cutover is introduced
 (`INV-INT-003`, `INV-LOCK-001`, `INV-LOCK-002`, `INV-LOCK-003`).
 
+## Booking-page invoice and credit-note downloads (#5066)
+
+With the Xero module on, the booking page offers Xero's own PDF of the
+booking's primary invoice and of each credit note raised against it
+(`booking-invoice-download.ts`; owner decisions on #5066, 15 Nov 2026, and on
+PR #5201, 17 Nov 2026). One offer (`resolveBookingInvoiceOffer`) drives the
+page and both routes, so neither can serve what the page does not offer.
+
+- **Which credit notes** (`readBookingCreditNotes`): only notes whose Xero id
+  the app holds — active CREDIT_NOTE links on the booking, its payment or its
+  modifications in a role that credits the booking (modification, refund,
+  refund-request, account-credit and applied-credit remainder notes), the
+  refund-note columns on `Payment` and `PaymentRefund`, and the owner's own
+  credit lots allocated to the booking (`MemberCreditNoteAllocation`). A note
+  any link records as voided or deleted is left out, as is one whose every
+  link is inactive. A note an applied-credit slice names is "credit used",
+  whatever an older link calls it, and a remainder note is listed only while a
+  slice for the booking names it. Organiser-extra notes credit another invoice
+  and are not listed. The credit-note route serves only an id in this list.
+- **The Xero read**: one `getInvoiceAsPdf` or `getCreditNoteAsPdf` through
+  `callXeroApi`, outside any transaction, no retries, no breaker arming, and
+  no writes to Xero.
+- **The summary** (`bookingInvoiceSummary`) is the page's own figures, not a
+  ledger statement: the price (the Payment card's Total), the recorded change
+  fee, the ledger's applied credit, what the payment still holds after refunds
+  and returned credit (Net Collected's cash rule), and the amount due (now, or
+  once a review or pending booking is confirmed). When a reduction was
+  refunded only in part, a "kept" row is the one sum that makes the rows
+  reconcile: paid = total + fee - credit - due + kept.
+- **Not showing the latest change** (`readPrimaryInvoiceUpdateState`): the page
+  says so when the latest primary-invoice update failed unresolved, or when a
+  credit note for the booking (modification, account-credit or refund note)
+  failed unresolved; and that the documents may lag while either is queued or
+  running. When the latest update was skipped (`isSkippedPrimaryInvoiceUpdate`:
+  by the edit's policy, or by the worker on a paid, credited, voided or
+  deleted invoice), no update is queued for that change, and neither of those
+  applies, the page says instead that the invoice stays as it was issued. A
+  failed credit note outranks a queued one, and both outrank this state.
+- **Later work.** A single statement PDF for the booking (invoice, credits,
+  payments and balance in one document) belongs to #5066's generated-document
+  slice, which waits on the club GST status work (#5153).
+
 ## OAuth and token lifecycle (supporting flow)
 
 1. Admin hits `/api/admin/xero/connect` → consent URL with a signed state
