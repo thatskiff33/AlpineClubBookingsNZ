@@ -91,7 +91,14 @@ the old colour; keep public traffic removed and that colour stopped. Recover
 on v0.14.0 or later, rather than following the ordinary old-colour restart.
 
 If overlap or rollback below that floor occurred, stop incompatible copies and
-pause saved-card charging while the operator reconciles the affected period:
+stop saved-card charges while the operator reconciles the affected period. The
+app has no saved-card-only switch. A saved card is charged by the
+confirm-pending cron sweep (the cron leader's scheduler, or a `POST /api/cron`
+with the cron secret), by the admin **Confirm pending guests** action, and by
+the charge-saved-method route (cron secret or admin session). So keep public
+traffic removed from every web copy, keep the cron leader stopped (or run it
+with `CRON_ENABLED=false`, which stops its scheduler only) and tell admins not
+to confirm pending guests, until the checks below are done:
 
 1. Inspect `PaymentTransaction` rows for the same `paymentId` (linked through
    `Payment.bookingId`). Compare `id`, `reference`, `createdAt`, `status`,

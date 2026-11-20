@@ -254,11 +254,15 @@ Caddy points back to it; recover on v0.14.0 or later.
 mistake an unresolved charge for an attempt that never happened, retry under
 a different key and charge the member twice. A database backup cannot undo a
 charge at Stripe. The ordinary blue/green rollback instructions do not override
-this floor.
+this floor, and neither do the rollback notes in the entries below: where one
+describes rolling the code back to an earlier release, the floor wins once
+v0.14.0 has run, and the note only says what an older copy would do. A change
+that stays on v0.14.0 or later, such as unsetting a variable, does not cross it.
 
 If incompatible copies overlapped, or a rollback crossed this floor, stop the
-incompatible copies and pause saved-card charging before retrying anything.
-Have the operator reconcile the affected period using the
+incompatible copies and stop saved-card charges before retrying anything. There
+is no saved-card-only switch, so the runbook says what to keep stopped. Have the
+operator reconcile the affected period using the
 [runbook's saved-card checks](PRODUCTION_UPGRADE_RUNBOOK.md#saved-card-boundary-and-incident-checks-5270).
 
 The reader landed in PR #4681 (`71f6247ac`); the mint in PR #5001 (`e642097a`).
