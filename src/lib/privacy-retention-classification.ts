@@ -145,7 +145,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   PrivacyHostingSettings: "personal",
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
-  ClubTaxSettings: "non-personal",
+  ClubTaxSettings: "personal", // #4632: each period records the Full Admin who scheduled it (updatedByMemberId).
   LoginSecuritySetting: "personal",
   AnalyticsSettings: "personal",
   EmailTemplateOverride: "personal",

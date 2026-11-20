@@ -11,6 +11,7 @@ import { stableDigest } from "@/lib/stable-digest";
 import { sanitizeForJson } from "@/lib/xero-sync";
 import type { PostedRevenueLeg } from "@/lib/member-money/internal/components";
 import { buildPrimaryInvoiceLines } from "@/lib/xero-primary-invoice-lines";
+import { BASELINE_XERO_TAX_RENDERING, type XeroTaxRendering } from "@/lib/xero-tax-rendering";
 import {
   confirmBilledPrimaryInvoice,
   planPrimaryBookingInvoice,
@@ -49,6 +50,7 @@ function input(overrides: Partial<PrimaryInvoicePlanInput> = {}): PrimaryInvoice
     seasonType: "WINTER",
     promo: { aggregateCents: -1000, redemptions: [{ id: "r1", priceAdjustmentCents: -1000, promoCode: { code: "SAVE10" } }], adjustmentRows: [], firstGuest: null },
     changeFeeCents: 0,
+    taxRendering: BASELINE_XERO_TAX_RENDERING,
     postedLegs: [leg("BOOKING_REVENUE", STAY, 14000)],
     ...overrides,
   };
@@ -57,10 +59,10 @@ function input(overrides: Partial<PrimaryInvoicePlanInput> = {}): PrimaryInvoice
 /** The lines the sender builds from the same input, by calling the builders itself. */
 function senderLines(i: PrimaryInvoicePlanInput) {
   const lines = buildInvoiceLineItems(i.guests, i.checkIn, i.checkOut, i.nights, i.hutFeeMapping.code ?? "200",
-    i.hutFeeMapping.itemCode, i.hutFeeMapping.codeExplicitlyConfigured, i.hutFeeItemCodeMap, i.seasonType);
+    i.hutFeeMapping.itemCode, i.hutFeeMapping.codeExplicitlyConfigured, i.hutFeeItemCodeMap, i.seasonType, i.taxRendering);
   const plan = planPromoAdjustmentLines({ aggregateCents: i.promo.aggregateCents, redemptions: i.promo.redemptions, adjustmentRows: i.promo.adjustmentRows });
-  lines.push(...promoAdjustmentLineItems(plan, { firstGuest: i.promo.firstGuest, itemCodeResolver: i.hutFeeItemCodeMap, seasonType: i.seasonType, hutFeeMapping: i.hutFeeMapping }));
-  if (i.changeFeeCents > 0) lines.push(changeFeeLineItem(i.changeFeeCents, i.hutFeeMapping));
+  lines.push(...promoAdjustmentLineItems(plan, { firstGuest: i.promo.firstGuest, itemCodeResolver: i.hutFeeItemCodeMap, seasonType: i.seasonType, hutFeeMapping: i.hutFeeMapping }, i.taxRendering));
+  if (i.changeFeeCents > 0) lines.push(changeFeeLineItem(i.changeFeeCents, i.hutFeeMapping, i.taxRendering));
   return lines;
 }
 
@@ -93,6 +95,19 @@ describe("planPrimaryBookingInvoice (#4525)", () => {
       lineAmountTypes: LineAmountTypes.Inclusive,
       componentTaxCodes: [{ account: "BOOKING_REVENUE", chargeIdentity: STAY, taxCode: TAX }],
     });
+  });
+
+  it("freezes the booking's own tax treatment, not a hard-coded one (#4632)", () => {
+    const notRegistered: XeroTaxRendering = { lineAmountTypes: LineAmountTypes.NoTax };
+    const plan = planPrimaryBookingInvoice(input({ changeFeeCents: 2500, taxRendering: notRegistered,
+      postedLegs: [leg("BOOKING_REVENUE", STAY, 14000), leg("FEE_REVENUE", "fee:a", 2500)] }));
+    expect(plan.lines).toEqual(senderLines(input({ changeFeeCents: 2500, taxRendering: notRegistered })));
+    expect(plan.lines.every((line) => line.taxType === undefined)).toBe(true);
+    expect(plan.frozenMapping).toMatchObject({ source: "BUILT", taxType: null, lineAmountTypes: LineAmountTypes.NoTax });
+
+    const otherCode = planPrimaryBookingInvoice(input({ taxRendering: { lineAmountTypes: LineAmountTypes.Inclusive, taxType: "OUTPUT3" } }));
+    expect(otherCode.lines.every((line) => line.taxType === "OUTPUT3")).toBe(true);
+    expect(otherCode.frozenMapping).toMatchObject({ taxType: "OUTPUT3", lineAmountTypes: LineAmountTypes.Inclusive });
   });
 
   it("matches the builders on a night of unknown price and on a zero-night stay", () => {
@@ -170,9 +185,21 @@ describe("planReplayedPrimaryBookingInvoice (#4525)", () => {
     const built = planPrimaryBookingInvoice(input({ changeFeeCents: 2500, postedLegs: [leg("BOOKING_REVENUE", STAY, 14000), leg("FEE_REVENUE", "fee:a", 2500)] }));
     const stored = sanitizeForJson({ invoices: [{ lineItems: built.lines }] }) as { invoices: [{ lineItems: never[] }] };
     const replayed = planReplayedPrimaryBookingInvoice({ bookingId: BOOKING, storedLines: stored.invoices[0].lineItems,
+      storedLineAmountTypes: "Inclusive",
       postedLegs: [leg("BOOKING_REVENUE", STAY, 14000), leg("FEE_REVENUE", "fee:a", 2500)] });
     expect(replayed.payloadHash).toBe(built.payloadHash);
     expect(replayed).toMatchObject({ outcome: "COVERED", lineTotalCents: 16500, frozenMapping: { source: "STORED_REQUEST" } });
+  });
+
+  it("freezes the basis and line tax types the stored request carries (#4632)", () => {
+    const built = planPrimaryBookingInvoice(input({ taxRendering: { lineAmountTypes: LineAmountTypes.NoTax } }));
+    const stored = sanitizeForJson({ invoices: [{ lineItems: built.lines }] }) as { invoices: [{ lineItems: never[] }] };
+    const replayed = planReplayedPrimaryBookingInvoice({ bookingId: BOOKING, storedLines: stored.invoices[0].lineItems,
+      storedLineAmountTypes: "NoTax", postedLegs: [leg("BOOKING_REVENUE", STAY, 14000)] });
+    expect(replayed.frozenMapping).toMatchObject({ source: "STORED_REQUEST", lineAmountTypes: "NoTax" });
+    expect((replayed.frozenMapping.lineCodes as Array<{ taxType: string | null }>).map((line) => line.taxType))
+      .toEqual(built.lines.map(() => null));
+    expect(replayed.frozenMapping).not.toHaveProperty("taxType");
   });
 });
 
@@ -192,7 +219,7 @@ describe("confirmBilledPrimaryInvoice (#4525 review)", () => {
 
   it("turns a replayed create's ORIGINAL invoice, billing other stay lines, into a conflict that covers nothing", () => {
     const plan = covered();
-    const original = [{ description: "Ana One - earlier stay", quantity: 1, unitAmount: 120 }, changeFeeLineItem(2500, mapping)];
+    const original = [{ description: "Ana One - earlier stay", quantity: 1, unitAmount: 120 }, changeFeeLineItem(2500, mapping, BASELINE_XERO_TAX_RENDERING)];
     const confirmed = confirmBilledPrimaryInvoice(plan, original);
     expect(confirmed).toMatchObject({ outcome: "CONFLICT", reason: "STAY_CENTS", payloadHash: plan.payloadHash, lineTotalCents: 16500 });
     expect(confirmed).not.toHaveProperty("coverage");
@@ -201,8 +228,8 @@ describe("confirmBilledPrimaryInvoice (#4525 review)", () => {
 
   it("names the fee when only the change-fee line differs", () => {
     const plan = covered();
-    const stay = plan.lines.filter((line) => line.description !== changeFeeLineItem(2500, mapping).description);
-    expect(confirmBilledPrimaryInvoice(plan, [...stay, changeFeeLineItem(2000, mapping)])).toMatchObject({ outcome: "CONFLICT", reason: "FEE_CENTS" });
+    const stay = plan.lines.filter((line) => line.description !== changeFeeLineItem(2500, mapping, BASELINE_XERO_TAX_RENDERING).description);
+    expect(confirmBilledPrimaryInvoice(plan, [...stay, changeFeeLineItem(2000, mapping, BASELINE_XERO_TAX_RENDERING)])).toMatchObject({ outcome: "CONFLICT", reason: "FEE_CENTS" });
   });
 
   it("leaves a conflict as it was", () => {

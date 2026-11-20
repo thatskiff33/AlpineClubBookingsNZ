@@ -29,7 +29,7 @@ import { refundRequestStripeMetadata } from "@/lib/refund-slice-evidence";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { resetStripeRaceHooks, stripeRaceHooks } from "./support/stripe-race-double";
 import { cleanHistories, createHistoryBooking, historyNames, seedHistoryFixtures } from "./support/booking-ledger-history";
-import { memberMoneyTestContext } from "./support/member-money-fixtures";
+import { memberMoneyTestContext, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
 import { assertSafeRaceDbUrl } from "./support/race-db-url";
 
 /**
@@ -69,7 +69,7 @@ async function booking(cents = 10_000, memberId = names.memberId) {
     obligations: [{ key: memberMoneyEventKeys.bookingCharge(id), kind: "CHARGE", debtor: { kind: "MEMBER", memberId }, faceCents: cents, evidence: {} }],
     legs: [
       { type: "amount", account: "MEMBER_RECEIVABLE", side: "DEBIT", amountCents: cents, booking: where, debtor: { kind: "MEMBER", memberId }, obligationKey: memberMoneyEventKeys.bookingCharge(id), evidence: {} },
-      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: cents, booking: where, chargeIdentity: charge(id), evidence: {} },
+      { type: "revenue", account: "BOOKING_REVENUE", side: "CREDIT", grossCents: cents, booking: where, chargeIdentity: charge(id), taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} },
     ] }));
   return id;
 }
@@ -92,7 +92,7 @@ async function cancelKeeping(id: string, chargedCents: number, keptCents: number
       source: { kind: "BOOKING", id, version: "cancel" }, reason: "Synthetic R04",
       legs: [
         { type: "revenue", account: "BOOKING_REVENUE", side: "DEBIT", grossCents: chargedCents, booking: where, chargeIdentity: charge(id), evidence: {} },
-        ...(keptCents > 0 ? [{ type: "revenue" as const, account: "BOOKING_REVENUE" as const, side: "CREDIT" as const, grossCents: keptCents, booking: where, chargeIdentity: charge(id), evidence: {} }] : []),
+        ...(keptCents > 0 ? [{ type: "revenue" as const, account: "BOOKING_REVENUE" as const, side: "CREDIT" as const, grossCents: keptCents, booking: where, chargeIdentity: charge(id), taxAnchorDate: MEMBER_MONEY_TEST_TAX_ANCHOR, evidence: {} }] : []),
         { type: "amount", account: "MEMBER_RECEIVABLE", side: "CREDIT", amountCents: chargedCents - keptCents, booking: where, debtor: { kind: "MEMBER", memberId }, evidence: {} },
       ] });
   });

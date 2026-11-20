@@ -85,6 +85,7 @@ const h = vi.hoisted(() => {
   return { state, mappingRows, prismaStub };
 });
 
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/prisma", () => ({ prisma: h.prismaStub }));
 vi.mock("@/lib/member-credit", () => ({ lockMemberCreditLedger: vi.fn() }));
 vi.mock("@/lib/xero-credit-notes", () => ({
