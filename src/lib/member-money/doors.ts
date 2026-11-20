@@ -39,3 +39,5 @@ export { recordSupplementaryInvoiceManifest } from "./internal/supplementary-inv
 export { recordRefundNoteManifest, recordRefundNotePaymentManifest, type RefundNoteDoor } from "./internal/refund-note-manifest";
 // #4525 (M13): a capture receipt's export manifest, recorded by each capture sender after it stores a Xero payment id.
 export { recordCaptureReceiptManifest, type CaptureReceiptManifestInput } from "./internal/capture-receipt-manifest";
+// #4525 (M13): a failed-later refund's reversal invoice's export manifest, recorded after its operation completes.
+export { recordFailedLaterRefundReversalManifest } from "./internal/refund-note-manifest";

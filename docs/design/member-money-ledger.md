@@ -625,9 +625,26 @@ covers is `ALREADY_COVERED`. A bank note's R14 is read from what is posted:
 review closed by hand), each at its live chain tip, so a reversed R14 is never
 covered. A hand-back paid "In cash" posts its R14 on CASH while its Xero
 payment settles to the bank code: a known `COMPONENT_UNUSABLE` conflict. A payment left unsettled, part-settled or found
-already settled records nothing. The role `FAILED_LATER_REFUND_REVERSAL` is
-reserved: #4369's `createXeroCardRefundReversalInvoice` sends that reversal
-today, and recording its manifest is a later step.
+already settled records nothing.
+
+`FAILED_LATER_REFUND_REVERSAL` records the invoice #4369's
+`createXeroCardRefundReversalInvoice` already sends at a paid-another-way close
+(`INV-PAY-151`), after completing its row, under its key
+(`cardRefundReversalInvoiceKey`) with the Xero invoice as the provider object;
+a replay hashes the stored request's lines, which a retry keeps. The close's record names the card
+refund row it closed (a still-owed rest, the row it was first owed on), that row
+the one refund Stripe failed later, and that refund's R12 its R13: the
+`reversal:<journalId>` batch's Stripe-clearing debit, covered whole. An invoice
+for less than that R13, because the close paid back part or the card note's
+excess was smaller, is `CENTS` and covers nothing; never a part cover. A row
+owed for no failed refund or several, an R12 missing or not yet reversed, or an
+R13 itself reversed, is `COMPONENT_UNUSABLE`; an R13 an earlier reversal covers
+is `ALREADY_COVERED`. Both replays (this and the primary booking invoice) read
+the stored lines and their basis through one reader, `storedInvoiceRequestLines`.
+As on every other manifest since #4632, the frozen mapping records the
+line-amount basis and line tax types the invoice was sent with: the rendering
+the sender resolved for the booking and built it under, or a replay's stored
+request's own, never the schedule's current treatment.
 
 The capture-receipt cohort (ALP-605) adds `CAPTURE_RECEIPT`, which records the
 cents each existing capture sender stores, and those senders still send exactly
@@ -672,7 +689,7 @@ the outbox run would have.
 | Account-credit note and allocation | Original R09/R11 grant/restore lot and R10 applications, subject to the existing restore/noteless policy. This patch queues the note on today's credit row when a manual grant is approved. The ledger render replaces that queue, adopts `xeroCreditNoteId` and the `ADMIN_GRANT_CREDIT_NOTE` link, and does not raise another note. An already-exported grant cannot become a second expense at spend. |
 | Refund note and its payment | Charge reversal/entitlement plus R12/R14 cash slice, linked separately so a composite note cannot double-count the price reduction. Never one invoice-applied edit credit plus another full credit for that same reduction. A note can remain outstanding before hand-back; only the cash slice creates its payment. |
 | Capture receipt, including late/change capture | R06 applications across the invoices actually billing those obligations. A capture of 8000 with only 5000 room on one invoice is fully recorded through valid remaining targets; unexplained room is a task/unapplied receipt, never silently clipped. No invented second revenue charge to fit the cash. |
-| Failed-later refund reversal | R13, rendered using #4361: full reversal invoice coded like its credit note, paid into Stripe, never emailed/allocated. Date is the failure day or first open day after Xero's lock; reference retains the actual failure day. Its void raises one task and never automatically recreates it. |
+| Failed-later refund reversal | R13, rendered by #4369's sender: a reversal invoice for the cents a card note covers at a paid-another-way close, coded like its credit note, paid into Stripe, never emailed/allocated. Dated the close day or first open day after Xero's lock; the reference keeps the close day. A voided one is never raised again. Covers its R13 whole, or records a conflict. |
 | Stripe fee/payout | R16/R17 provider balance facts; no second fee where Xero's connected feed already covers the exact transaction. Missing external identity is a conflict to resolve, not amount-based adoption. |
 
 A component may be covered partly by more than one provider document, but the

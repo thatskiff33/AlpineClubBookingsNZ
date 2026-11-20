@@ -27,12 +27,18 @@ function unsharedMoneyInputs(file: string, source: string): string[] {
       const isExchangeRate =
         file === "src/components/admin/ai-spend-currency-card.tsx" &&
         literalText("data-testid") === "spend-currency-input";
+      // A food-order quantity (fork #121) is a decimal count of grams, loaves
+      // or packets, not money: it has its own parser in food-order-rules.ts.
+      const isFoodOrderQuantity =
+        file === "src/components/food-orders/food-order-form.tsx" &&
+        literalText("data-testid") === "food-item-quantity-input";
       const isSharedImplementation = file === "src/components/ui/money-input.tsx";
       if (
         node.tagName.getText(parsed) !== "MoneyInput" &&
         literalText("inputMode") === "decimal" &&
         !isSharedImplementation &&
-        !isExchangeRate
+        !isExchangeRate &&
+        !isFoodOrderQuantity
       ) {
         const line = parsed.getLineAndCharacterOfPosition(node.getStart(parsed)).line + 1;
         hits.push(`${file}:${line} raw decimal input; use MoneyInput (INV-SSOT-001)`);
@@ -99,5 +105,14 @@ describe("one shared money box (INV-SSOT-001, #3414)", () => {
         '<Input type="text" inputMode="decimal" data-testid="spend-currency-input" />',
       ),
     ).toEqual([]);
+    expect(
+      unsharedMoneyInputs(
+        "src/components/food-orders/food-order-form.tsx",
+        '<Input inputMode="decimal" data-testid="food-item-quantity-input" />',
+      ),
+    ).toEqual([]);
+    expect(
+      unsharedMoneyInputs("elsewhere.tsx", '<Input inputMode="decimal" data-testid="food-item-quantity-input" />'),
+    ).toEqual(["elsewhere.tsx:1 raw decimal input; use MoneyInput (INV-SSOT-001)"]);
   });
 });

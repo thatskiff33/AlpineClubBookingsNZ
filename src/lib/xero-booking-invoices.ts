@@ -84,7 +84,7 @@ import {
   selectLoadedBookingMoneyBuildUp,
 } from "@/lib/booking-money-build-up";
 import { reconcileBookingMoney } from "@/lib/booking-money-reconciliation";
-import { asRecord } from "@/lib/xero-json";
+import { asRecord, storedInvoiceRequestLines } from "@/lib/xero-json";
 import { bookingWorthCents, isCapturedPaymentStatus, recordedChangeFeeCents } from "@/lib/booking-payment-state";
 import { CHANGE_FEE_LINE_DESCRIPTION, invoiceLineItemsTotalCents } from "@/lib/xero-modification-line-items";
 import {
@@ -228,15 +228,7 @@ async function readStoredPrimaryInvoiceLines(
       where: { id: syncOperationId },
       select: { requestPayload: true },
     });
-    const invoices = asRecord(operation?.requestPayload)?.invoices;
-    const invoice = Array.isArray(invoices) ? asRecord(invoices[0]) : undefined;
-    const lines = invoice?.lineItems;
-    // #4632: the basis the stored invoice was raised under, frozen beside its lines.
-    const basis = invoice?.lineAmountTypes;
-    return {
-      storedLines: Array.isArray(lines) ? (lines as LineItem[]) : null,
-      storedLineAmountTypes: typeof basis === "string" ? basis : null,
-    };
+    return storedInvoiceRequestLines(operation?.requestPayload);
   } catch (error) {
     logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice lines");
     return { storedLines: null, storedLineAmountTypes: null };
