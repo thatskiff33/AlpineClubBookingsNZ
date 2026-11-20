@@ -44,8 +44,8 @@ import {
   canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
+  feeOwedAfterEditCents,
   isSettledBookingStatus,
-  recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
 import { type BookingModificationSettlementMethod, type LoadedBookingForLifecycle, type LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { type GuestPlan } from "@/lib/booking-modify-plan";
@@ -116,6 +116,8 @@ export type PaymentAdjustmentResult = {
    * for a new edit.
    */
   changeFeeAddedToAmountOwedCents: number;
+  /** Fee recorded here, passed to lifecycle calculations using the pre-edit payment snapshot. */
+  feeRecordedHereCents: number;
   /**
    * #4299 (`INV-PAY-148`): the increase invoiced to the group organiser of an
    * internet-banking group place; 0 otherwise. The joiner is asked for none of
@@ -239,7 +241,12 @@ export async function applyPaymentAdjustments(
     zeroDollarCardIncrease;
   // #4299: the one home's answer, or the organiser's combined invoice standing for it.
   const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(booking) || organiserBilling !== null;
-  let feeRecordedHereCents = 0; // written with the payment's claim below (#3980)
+  // #5039 (`INV-MOD-042`): a paid edit's fee is recorded here, on its one
+  // payment write below (#3980), whatever was captured - a card, a bank
+  // transfer, or nothing at all (credit or a promotion paid it). An unpaid
+  // booking never arrives with a fee (`lateNoticeChangeFee`), and a caller that
+  // records the fee on the amount owed itself (#3750) already did.
+  const feeRecordedHereCents = changeFeeCents > 0 && !changeFeeRecordedByCaller ? changeFeeCents : 0;
   // #3827 (`INV-PAY-117`): net of edit refunds already promised back by hand.
   const remainingRefundableCents = await refundableCashForModification(tx, booking.payment, reduction);
 
@@ -300,10 +307,7 @@ export async function applyPaymentAdjustments(
   const { reissuedAsk, ...unpaidAskSettlement } = await settleReductionAgainstUnpaidAsk(tx, {
     booking,
     reduction,
-    changeFeeCents,
-    hasSettledPayment,
     hasIssuedXeroInvoice,
-    changeFeeRecordedByCaller, // a caller that records the fee itself (a finished-stay correction) did so once
   });
   if (reissuedAsk.amountCents > 0) {
     additionalAsk = reissuedAsk;
@@ -311,7 +315,7 @@ export async function applyPaymentAdjustments(
   }
 
   // #3502: the zero-dollar increase joins the settled arm, reaching only its
-  // `netAmountCents > 0` branch (refusal, sizing, the fee recorded, `INV-PAY-047`).
+  // `netAmountCents > 0` branch (refusal, sizing, `INV-PAY-047`).
   if ((hasSettledPayment || zeroDollarCardIncrease) && booking.payment) {
     if (settlementOptions && netAmountCents < 0) {
       if (selectedSettlement.settlementMethod === "credit") {
@@ -382,12 +386,6 @@ export async function applyPaymentAdjustments(
         additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
       }
     }
-
-    // #3954 x #3750: once - a caller that records it on the amount owed did.
-    // A paid booking's fee, including a credit-paid booking's fee-only
-    // increase, is recorded here. An unpaid booking never arrives with a fee:
-    // `lateNoticeChangeFee` returned zero.
-    if (changeFeeCents > 0 && !changeFeeRecordedByCaller) feeRecordedHereCents = changeFeeCents;
   } else if (xeroAdditionalAmountCents > 0) {
     additionalAmountCents = xeroAdditionalAmountCents - billedToOrganiserCents;
   }
@@ -405,6 +403,7 @@ export async function applyPaymentAdjustments(
   const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, {
     payment: booking.payment,
     changeFeeCents: feeRecordedHereCents,
+    bookingId: booking.id,
     refusalMessage: primaryInvoiceRaisedMessage,
     // #4299 N3: the place itself, not its combined invoice's record: a reduction with none on record claims no primary either.
     settledAgainstCombinedInvoice: paidByOrganiserInternetBanking(booking),
@@ -439,6 +438,7 @@ export async function applyPaymentAdjustments(
     foldedWaitingAsks,
     settledAgainstPrimaryInvoice,
     changeFeeAddedToAmountOwedCents: 0,
+    feeRecordedHereCents,
     billedToOrganiserCents,
     ...unpaidAskSettlement,
   };
@@ -480,12 +480,11 @@ export async function applyLifecycleTransitions(
     newCheckIn: Date;
     newFinalPriceCents: number;
     /**
-     * #3750 (#3955 review F1): a change fee THIS edit recorded on the payment
-     * of a booking with nothing captured ("Add fee to amount owed"), already
-     * written by the caller. With the fee already on the payment it is what
-     * the booking is worth (`bookingWorthCents`), so the credit clamp, the $0
-     * decision and the stale-intent comparison below all read worth, never the
-     * bare price. Every other edit door records none and passes 0.
+     * Fee recorded on the payment by this edit, in settlement or by the
+     * finished-stay caller. The booking snapshot predates that write, so add
+     * it to the stored fee for the credit clamp, $0 decision and stale-intent
+     * comparison. Captured payments can incur a fee while still PENDING.
+     * Doors that record no fee pass 0.
      */
     feeRecordedByThisEditCents: number;
     format: ClubFormat;
@@ -593,7 +592,7 @@ export async function applyLifecycleTransitions(
   // the clamp keeps credit up to the booking's WORTH and the $0 decision and
   // stale-intent comparison read what it owes. Read from the one home.
   const feeOwedCents =
-    recordedChangeFeeCents(booking.payment) + feeRecordedByThisEditCents;
+    feeOwedAfterEditCents(booking.payment, feeRecordedByThisEditCents);
   const newWorthCents = bookingWorthCents({
     finalPriceCents: newFinalPriceCents,
     changeFeeCents: feeOwedCents,
