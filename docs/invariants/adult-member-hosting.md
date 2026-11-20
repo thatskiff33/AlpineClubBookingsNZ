@@ -17,7 +17,11 @@ Every heading below whose whole text is an `INV-*` ID defines that invariant. ID
 are permanent: never renumbered, never reused. **The text under each ID is a
 verbatim move from the source document and must not be reworded in place** —
 only the ID heading lines were added, and one relative link path was re-pointed
-(`CONCURRENCY_AND_LOCKING.md` → `../CONCURRENCY_AND_LOCKING.md`).
+(`CONCURRENCY_AND_LOCKING.md` → `../CONCURRENCY_AND_LOCKING.md`). Entries
+compacted under #4990 are the exception: each keeps the rule, the code that
+enforces it and a link, and the passages removed from it are archived as
+comments on the deciding issue it cites. Do not restore that text;
+[`WORD_BUDGETS.md`](WORD_BUDGETS.md) holds each entry to its length.
 
 ## Adult-member hosting (#2364, epic decisions D-R3 / D-R4)
 
@@ -491,9 +495,9 @@ compliant indefinitely.
   pre-deletion profile to Xero nor regains a link. Manual Link commits the
   Member pointer and FK-less canonical CONTACT ledger row together; deletion
   deactivates that ledger in the anonymisation transaction that clears the
-  pointer. A canonical link commit also claims, in the same transaction and
-  status-guarded, a `FAILED` member CONTACT create proving Xero made the
-  now-linked contact as `SUCCEEDED`, touching nothing else: no `RUNNING`
+  pointer. A canonical link commit also moves to `SUCCEEDED` a `FAILED` member
+  CONTACT create proving Xero made the now-linked contact, in the same
+  transaction and status-guarded, touching nothing else: no `RUNNING`
   reservation, no create that made a *different* contact. Merge, deletion and
   member detail read the blocker (whose predicates never consult
   `Member.xeroContactId`) through one predicate, so a refused member never
