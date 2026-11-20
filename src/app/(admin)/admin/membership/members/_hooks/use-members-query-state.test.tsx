@@ -2,11 +2,11 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { adminHref } from "@/lib/admin-hubs"
+import { adminHref, getAdminPage } from "@/lib/admin-hubs"
 import { useMembersQueryState } from "./use-members-query-state"
 
 const navigation = vi.hoisted(() => ({
-  currentPathname: "/admin/members",
+  currentPathname: "",
   currentSearch: "",
   replace: vi.fn(),
 }))
@@ -35,13 +35,14 @@ function Harness() {
   )
 }
 
-describe("useMembersQueryState Reset", () => {
-  beforeEach(() => {
-    navigation.replace.mockReset()
-    navigation.currentPathname = adminHref("members")
-    navigation.currentSearch = ""
-  })
+// Every test starts on the canonical Members page with no query.
+beforeEach(() => {
+  navigation.replace.mockReset()
+  navigation.currentPathname = adminHref("members")
+  navigation.currentSearch = ""
+})
 
+describe("useMembersQueryState Reset", () => {
   it("resets search, filters, sort, and page while preserving unknown URL keys", async () => {
     navigation.currentSearch =
       "futureContext=keep&q=Aroha&role=ADMIN&contactability=unreachable&sortBy=email&sortDir=desc&page=3"
@@ -80,16 +81,9 @@ describe("useMembersQueryState Reset", () => {
   })
 })
 
-// A replace to the URL the page is already on is a soft navigation that drops
-// the <title> until the server streams it back; the E2E axe audit caught the
-// gap as document-title (#5155).
+// A replace to the URL the page is already on is still a soft navigation, which
+// the E2E axe audit intermittently caught as document-title (#5155).
 describe("useMembersQueryState URL sync on mount", () => {
-  beforeEach(() => {
-    navigation.replace.mockReset()
-    navigation.currentPathname = adminHref("members")
-    navigation.currentSearch = ""
-  })
-
   it.each([
     ["no query", ""],
     ["a canonical filtered query", "q=Aroha&sortBy=email&sortDir=desc&role=ADMIN"],
@@ -113,6 +107,21 @@ describe("useMembersQueryState URL sync on mount", () => {
       `${adminHref("members")}?futureContext=keep&q=Aroha&role=ADMIN`,
       { scroll: false },
     )
+  })
+
+  // Either address of the page is the page: with the admin hubs switch off the
+  // browser holds the old address, once on the hub address, and a render that
+  // reads the other form must not trigger a replace to the URL already shown.
+  it.each([
+    ["the old address", getAdminPage("members").oldPath],
+    ["the hub address", getAdminPage("members").hubPath],
+  ])("does not navigate when the path is %s", async (_label, pathname) => {
+    navigation.currentPathname = pathname
+
+    render(<Harness />)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    expect(navigation.replace).not.toHaveBeenCalled()
   })
 
   it("navigates to the members URL from any other path", async () => {

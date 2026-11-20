@@ -55,6 +55,11 @@ interface GoogleRequestLog {
   readonly pageViews: string[];
 }
 
+/**
+ * The one rule for "this request is to a Google Analytics host". The recorder,
+ * the settle counter and the local stub all use it, so nothing that is recorded
+ * can reach the live network in a test that serves the stub.
+ */
 const isGoogleAnalyticsUrl = (url: string) =>
   GOOGLE_ANALYTICS_HOSTS.some((host) => url.includes(host));
 
@@ -99,9 +104,7 @@ function recordGoogleRequests(page: Page): GoogleRequestLog {
 
 /** A local tag: replay queued events and process later pushes, respecting opt-out. */
 async function stubGoogleTag(page: Page): Promise<void> {
-  await page.route((url) => GOOGLE_ANALYTICS_HOSTS.some(
-    (host) => url.hostname === host || url.hostname.endsWith(`.${host}`),
-  ), async (route) => {
+  await page.route((url) => isGoogleAnalyticsUrl(url.href), async (route) => {
     const url = new URL(route.request().url());
     if (url.hostname === "www.googletagmanager.com" && url.pathname === "/gtag/js") {
       await route.fulfill({
@@ -303,10 +306,11 @@ test.describe("Google Analytics consent (anonymous visitor)", () => {
 
     /*
       A CONDITIONAL check on the URL sanitisation, and its limit is stated
-      rather than hidden. Google now serves the library for the fake id, so a
-      `collect` request usually follows the loader, but this loop checks only
-      the requests made by the time it runs, and whether Google answers is not
-      this spec's to control. It must not be mistaken for the proof.
+      rather than hidden. Google may serve its library for the fake id, and a
+      `collect` request may or may not follow the loader (CI run 44464520408:
+      loader 200, no hit), so this loop checks only the requests made by the
+      time it runs. Whether Google answers is not this spec's to control, and
+      the loop must not be mistaken for the proof.
 
       What proves the sanitisation is `analytics-route-policy.test.ts` (only
       origin + pathname is ever built, for an eligible route) and
