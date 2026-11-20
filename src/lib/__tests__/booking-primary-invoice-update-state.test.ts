@@ -65,6 +65,11 @@ describe("classifyPrimaryInvoiceUpdates", () => {
     expect(classifyPrimaryInvoiceUpdates([row({ status: "FAILED", manuallyResolvedAt: at(5) })], "inv-1")).toBe("CURRENT");
   });
 
+  it("lets the latest ended row decide between a skip and a failure", () => {
+    expect(classifyPrimaryInvoiceUpdates([row({ status: "FAILED", createdAt: at(1) }), skipped(2)], "inv-1")).toBe("INVOICE_AS_ISSUED");
+    expect(classifyPrimaryInvoiceUpdates([skipped(1), row({ status: "FAILED", createdAt: at(2) })], "inv-1")).toBe("NOT_UPDATED");
+  });
+
   it("is updating while any update is queued or running (N3), whatever ended before it", () => {
     expect(classifyPrimaryInvoiceUpdates([row({ status: "PENDING" })], "inv-1")).toBe("UPDATING");
     expect(classifyPrimaryInvoiceUpdates([skipped(1), row({ status: "RUNNING", createdAt: at(2) })], "inv-1")).toBe("UPDATING");

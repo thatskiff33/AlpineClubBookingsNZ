@@ -24,7 +24,7 @@ import { isSkippedPrimaryInvoiceUpdate } from "@/lib/xero-primary-invoice-update
  *   otherwise the latest ended row decides: skipped
  *   (`isSkippedPrimaryInvoiceUpdate`: by the edit's policy, or by the worker on
  *   a paid, credited, voided or deleted invoice) is `INVOICE_AS_ISSUED`, which
- *   is final: no later update or credit is coming for it, so its notice must
+ *   is final for that row: no update is queued for it, so its notice must
  *   not say "yet" (re-review of 20 Nov 2026); failed and not marked resolved
  *   in Xero is `NOT_UPDATED`; a success or a resolved row is `CURRENT`. Rows
  *   naming a different invoice id are ignored.
