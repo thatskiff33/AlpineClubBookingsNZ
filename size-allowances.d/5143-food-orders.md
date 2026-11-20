@@ -18,7 +18,7 @@ reason: the Food Orders entry in the Lodge Operations section; the sidebar's
   items are one list and an entry cannot live elsewhere.
 
 file: src/lib/admin-permissions.ts
-lines: 954
+lines: 957
 reason: the `/api/admin/food-orders` prefix in the lodge area's route map, which
   is the one place an admin API prefix gets its permission area.
 
