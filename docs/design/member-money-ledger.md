@@ -657,7 +657,13 @@ closed repair never do. A PARTIAL repair records a recovered
 payment only when its outbound operation or the original invoice response proves
 which payment was sent; an inbound bank payment may close the repair but adds no
 capture coverage. Primary invoice replays preserve the stored payment through
-completion so a later replay can retry a failed manifest write.
+completion so a later replay can retry a failed manifest write, and a primary
+run that fails after Xero took its payment keeps that payment beside the error
+on the FAILED row, so the replay that finds the stored link still records it.
+A supplementary invoice names the capture its queued payload names; an
+officer's inline retry of a FAILED one passes that payload's
+`paymentIntentId` to the sender, so the retry's receipt names the same capture
+the outbox run would have.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |

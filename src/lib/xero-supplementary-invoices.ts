@@ -104,6 +104,14 @@ export async function createXeroSupplementaryInvoice(params: {
   repairExistingLink?: boolean;
   syncOperation?: XeroOperationClaim;
   /**
+   * #4525 review: the card capture the payment records, for a call with no
+   * outbox row to read it from (an officer's inline retry of a FAILED row
+   * passes its queued payload's `paymentIntentId`). It names the capture
+   * receipt's capture only; the queued payload's own intent wins, and the
+   * late-capture note step below still reads the queued payload alone.
+   */
+  captureIntentId?: string;
+  /**
    * The club's format (#3565), for any amount a line description renders (a
    * promotion delta reads "reduced by $20.00" on the Xero line). Resolved once
    * by the job or request that raised this invoice, never here.
@@ -636,8 +644,8 @@ export async function createXeroSupplementaryInvoice(params: {
   // Read off this row's queued payload, so only the outbox path runs it - an
   // officer's retry of a FAILED one goes back through the outbox (round 9).
   const releasedForIntent = queuedRequestPayload?.paymentIntentId;
-  // #4525 (Ledger M13): the payment's capture receipt, after the row stored its link; a capture the queued payload does not name is a conflict.
-  if (sentPayment) await recordCaptureReceiptManifest({ bookingId, paymentIntentId: typeof releasedForIntent === "string" && releasedForIntent ? releasedForIntent : null,
+  // #4525 (Ledger M13): the payment's capture receipt, after the row stored its link; a capture neither the queued payload nor the caller names is a conflict.
+  if (sentPayment) await recordCaptureReceiptManifest({ bookingId, paymentIntentId: (typeof releasedForIntent === "string" && releasedForIntent) || params.captureIntentId || null,
     paymentKey: sentPayment.key, amountCents: netAmountCents, providerPaymentId: sentPayment.paymentId, invoiceId: createdInvoiceId, reference: sentPayment.reference, bankCode: sentPayment.bankCode });
   if (typeof releasedForIntent === "string" && releasedForIntent) {
     await queueWaitingPaidAnotherWayNote(releasedForIntent).catch((error: unknown) =>

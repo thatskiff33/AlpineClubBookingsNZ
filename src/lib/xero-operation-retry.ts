@@ -1748,6 +1748,7 @@ export async function retryXeroSyncOperation(
         createdByMemberId,
         recordPayment: replay?.recordPayment ?? false,
         repairExistingLink: true,
+        captureIntentId: queuedSupplementaryPayload?.paymentIntentId, // #4525 review: the receipt names the capture this row queued
         format,
       });
       if (replay?.raisedUnpaid) return { message: "Retried Xero supplementary invoice creation, raised unpaid: the card payment it would record is recorded by its own receipt, or overlaps a credit-release payment." };

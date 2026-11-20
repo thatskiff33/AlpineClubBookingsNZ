@@ -1088,6 +1088,28 @@ describe("createXeroInvoiceForBooking", () => {
         expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
       });
 
+      // #4525 review: a run that fails after Xero took the payment keeps it on
+      // the FAILED row, which the replay above reads to record the receipt.
+      it("MUTATION #4525: a run failing after Xero took the payment keeps that payment on the failed operation", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
+        mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({ body: { payments: [{ paymentID: "xpay_1", amount: 70 }] } });
+        const failure = new Error("could not store the outcome");
+        mocks.completeXeroSyncOperation.mockRejectedValueOnce(failure);
+        await expect(createXeroInvoiceForBooking("booking_1")).rejects.toBe(failure);
+        expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(expect.anything(), failure, {
+          error: failure, payment: expect.objectContaining({ paymentID: "xpay_1" }),
+        });
+        expect(captureReceipts.record).not.toHaveBeenCalled();
+      });
+
+      it("fails a run that sent no payment with the error alone, as before", async () => {
+        mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking({ source: "INTERNET_BANKING" }));
+        const failure = new Error("could not store the outcome");
+        mocks.completeXeroSyncOperation.mockRejectedValueOnce(failure);
+        await expect(createXeroInvoiceForBooking("booking_1")).rejects.toBe(failure);
+        expect(mocks.failXeroSyncOperation).toHaveBeenCalledWith(expect.anything(), failure, undefined);
+      });
+
       it("records nothing when Xero refuses the payment, and the invoice still stands", async () => {
         mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
         mocks.xeroClientInstance.accountingApi.createPayment.mockRejectedValue(new Error("Xero rejected the payment"));

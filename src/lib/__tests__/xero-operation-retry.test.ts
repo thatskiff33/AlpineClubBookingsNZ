@@ -3403,6 +3403,34 @@ describe("retryXeroSyncOperation", () => {
     );
   });
 
+  // #4525 review: that inline replay hands the queued capture to the sender,
+  // so the payment's capture receipt names it rather than freezing a conflict.
+  it("MUTATION #4525: the inline replay of an ordinary card edit's FAILED invoice names its queued capture for the receipt", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "FAILED",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "book_123",
+          priceDiffCents: 3000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_123",
+          recordPayment: true,
+          paymentIntentId: "pi_card_edit",
+        },
+      }),
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({ bookingId: "book_123", priceDiffCents: 3000, changeFeeCents: 0 });
+    await retryXeroSyncOperation("op_123", CLUB_FORMAT_TEST);
+    expect(mocks.createXeroSupplementaryInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingModificationId: "mod_123", captureIntentId: "pi_card_edit" }),
+    );
+  });
+
   it("replays a change invoice that names no late charge inline, as before", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({

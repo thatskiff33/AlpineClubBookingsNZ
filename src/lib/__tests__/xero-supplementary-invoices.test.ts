@@ -392,6 +392,26 @@ describe("createXeroSupplementaryInvoice mixed-sign components (#1356)", () => {
     expect(captureReceipts.record).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentId: "pi_change", amountCents: 3000, providerPaymentId: "pay_1" }));
   });
 
+  it("#4525 review: an inline call names the capture its caller passes, and the queued payload's own capture wins over it", async () => {
+    await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: -500, changeFeeCents: 1000, bookingModificationId: "mod_mixed",
+      captureIntentId: "pi_from_retry",
+    });
+    expect(captureReceipts.record).toHaveBeenLastCalledWith(expect.objectContaining({ paymentIntentId: "pi_from_retry", amountCents: 500 }));
+
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(null);
+    mocks.unpaidGapPayloadIfOverlapping.mockResolvedValue(null);
+    mocks.xeroSyncOperationFindUnique.mockResolvedValue({ requestPayload: {
+      queueType: "SUPPLEMENTARY_INVOICE", bookingId: "bk1", priceDiffCents: 3000, changeFeeCents: 0,
+      bookingModificationId: "mod_123", recordPayment: true, paymentIntentId: "pi_change",
+    } });
+    await createXeroSupplementaryInvoice({
+      format: CLUB_FORMAT_TEST, bookingId: "bk1", priceDiffCents: 3000, changeFeeCents: 0, bookingModificationId: "mod_123",
+      recordPayment: true, syncOperation: xeroClaim("op_q"), captureIntentId: "pi_other",
+    });
+    expect(captureReceipts.record).toHaveBeenLastCalledWith(expect.objectContaining({ paymentIntentId: "pi_change", amountCents: 3000 }));
+  });
+
   it("#4525 (M13): records no capture receipt when Xero refuses the payment", async () => {
     createPayments.mockRejectedValue(new Error("Xero refused the payment"));
     await expect(createXeroSupplementaryInvoice({

@@ -620,6 +620,9 @@ export async function createXeroInvoiceForBooking(
     return null;
   }
 
+  // #4525 review: outside the try, so a run that fails after Xero took the
+  // payment keeps it on the FAILED row for the replay's capture receipt.
+  let paymentResponseBody: XeroPayment | null = null;
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: bookingOwner(booking).memberId,
@@ -690,7 +693,6 @@ export async function createXeroInvoiceForBooking(
     // note, never against this invoice. Capped at the invoice's amount due —
     // Xero hard-rejects an overpayment (e.g. a legacy full-price capture on a
     // since-repriced booking).
-    let paymentResponseBody: XeroPayment | null = null;
     let paymentWriteError: unknown = null;
     const paymentSource = booking.payment.source ?? PaymentSource.STRIPE;
     const paymentCaptured = isCapturedPaymentStatus(booking.payment.status);
@@ -1190,7 +1192,7 @@ export async function createXeroInvoiceForBooking(
 
     return createdInvoice.invoiceID;
   } catch (error) {
-    await failXeroSyncOperation(operationClaim!, error);
+    await failXeroSyncOperation(operationClaim!, error, paymentResponseBody?.paymentID ? { error, payment: paymentResponseBody } : undefined);
     throw error;
   }
 }
