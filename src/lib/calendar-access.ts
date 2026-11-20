@@ -3,10 +3,7 @@ import {
   hasAdminAreaAccess,
   type AdminPermissionInput,
 } from "@/lib/admin-permissions";
-import {
-  isOrganisationMember,
-  resolveAccessRoleTokens,
-} from "@/lib/access-roles";
+import { isOrganisationAccount } from "@/lib/organisation-account";
 
 /**
  * Write access to the club events calendar (#calendar).
@@ -62,10 +59,7 @@ import {
  * unit test) is simply not an organisation.
  */
 export function canViewCalendarEvents(input: AdminPermissionInput): boolean {
-  return !isOrganisationMember({
-    accessRoleTokens: resolveAccessRoleTokens(input),
-    legacyRole: typeof input.role === "string" ? input.role : null,
-  });
+  return !isOrganisationAccount(input);
 }
 
 export async function isActiveCommitteeMember(
