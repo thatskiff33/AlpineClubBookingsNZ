@@ -3607,11 +3607,13 @@ page and both routes, so neither can serve what the page does not offer.
   refunded only in part, a "kept" row is the one sum that makes the rows
   reconcile: paid = total + fee - credit - due + kept.
 - **Not yet in Xero** (`readPrimaryInvoiceUpdateState`): the page says so when
-  the latest primary-invoice update was skipped (`isSkippedPrimaryInvoiceUpdate`:
+  the latest primary-invoice update failed unresolved, or when a credit note
+  for the booking (modification, account-credit or refund note) failed
+  unresolved; and that the documents may lag while either is queued or
+  running. When the latest update was skipped (`isSkippedPrimaryInvoiceUpdate`:
   by the edit's policy, or by the worker on a paid, credited, voided or
-  deleted invoice) or failed unresolved, or when a credit note for the booking
-  (modification, account-credit or refund note) failed unresolved; and that
-  the documents may lag while either is queued or running.
+  deleted invoice) nothing further is coming, so the page says instead that
+  the invoice stays as it was issued and does not show the later change.
 - **Later work.** A single statement PDF for the booking (invoice, credits,
   payments and balance in one document) belongs to #5066's generated-document
   slice, which waits on the club GST status work (#5153).

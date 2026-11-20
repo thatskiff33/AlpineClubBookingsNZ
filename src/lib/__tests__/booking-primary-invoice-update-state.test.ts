@@ -47,16 +47,16 @@ describe("classifyPrimaryInvoiceUpdates", () => {
     expect(classifyPrimaryInvoiceUpdates([skipped(1), row({ createdAt: at(2) })], "inv-1")).toBe("CURRENT");
   });
 
-  it("is not updated when an edit's update was skipped (recordSkippedXeroBookingInvoiceUpdateOperation)", () => {
-    expect(classifyPrimaryInvoiceUpdates([row({ createdAt: at(1) }), skipped(2)], "inv-1")).toBe("NOT_UPDATED");
+  it("keeps the invoice as issued when an edit's update was skipped (recordSkippedXeroBookingInvoiceUpdateOperation)", () => {
+    expect(classifyPrimaryInvoiceUpdates([row({ createdAt: at(1) }), skipped(2)], "inv-1")).toBe("INVOICE_AS_ISSUED");
   });
 
-  it("F1: is not updated when the worker completed the update SUCCEEDED but skipped it on the live invoice", () => {
+  it("F1: keeps the invoice as issued when the worker completed the update SUCCEEDED but skipped it on the live invoice", () => {
     const workerSkip = row({
       createdAt: at(2),
       responsePayload: { skipped: true, reason: "Skipped primary Xero invoice update because the invoice has credit applied." },
     });
-    expect(classifyPrimaryInvoiceUpdates([row({ createdAt: at(1) }), workerSkip], "inv-1")).toBe("NOT_UPDATED");
+    expect(classifyPrimaryInvoiceUpdates([row({ createdAt: at(1) }), workerSkip], "inv-1")).toBe("INVOICE_AS_ISSUED");
   });
 
   it("is not updated when the latest update failed, unless an officer marked it resolved in Xero", () => {
@@ -113,6 +113,14 @@ describe("primaryInvoiceUpdateNotice", () => {
     );
     expect(primaryInvoiceUpdateNotice("NOT_UPDATED")).not.toMatch(/Xero/);
   });
+
+  it("does not promise a later update or credit when a skipped update left the invoice as issued", () => {
+    const notice = primaryInvoiceUpdateNotice("INVOICE_AS_ISSUED");
+    expect(notice).toBe(
+      "A later change to this booking is not shown on the invoice, which stays as it was issued. The summary here is from the booking itself.",
+    );
+    expect(notice).not.toMatch(/yet|credit|Xero/);
+  });
 });
 
 describe("readPrimaryInvoiceUpdateState", () => {
@@ -125,7 +133,7 @@ describe("readPrimaryInvoiceUpdateState", () => {
 
   it("reads the primary invoice's updates on the payment and the booking's modifications", async () => {
     const { db, findMany } = store([skipped(3)], []);
-    expect(await readPrimaryInvoiceUpdateState(booking, db)).toBe("NOT_UPDATED");
+    expect(await readPrimaryInvoiceUpdateState(booking, db)).toBe("INVOICE_AS_ISSUED");
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -162,6 +170,13 @@ describe("readPrimaryInvoiceUpdateState", () => {
     expect(await readPrimaryInvoiceUpdateState(booking, store([row({ status: "PENDING" })], failedNote).db)).toBe("NOT_UPDATED");
     expect(await readPrimaryInvoiceUpdateState(booking, store([row()], [{ status: "RUNNING", manuallyResolvedAt: null }]).db)).toBe("UPDATING");
     expect(await readPrimaryInvoiceUpdateState(booking, store([row()], [{ status: "SUCCEEDED", manuallyResolvedAt: null }]).db)).toBe("CURRENT");
+  });
+
+  it("ranks an invoice kept as issued below a credit note that failed or is still on its way", async () => {
+    const note = (status: string) => [{ status, manuallyResolvedAt: null }];
+    expect(await readPrimaryInvoiceUpdateState(booking, store([skipped(3)], note("FAILED")).db)).toBe("NOT_UPDATED");
+    expect(await readPrimaryInvoiceUpdateState(booking, store([skipped(3)], note("RUNNING")).db)).toBe("UPDATING");
+    expect(await readPrimaryInvoiceUpdateState(booking, store([skipped(3)], note("SUCCEEDED")).db)).toBe("INVOICE_AS_ISSUED");
   });
 
   it("reads only the payment's rows when the booking has no modifications", async () => {
