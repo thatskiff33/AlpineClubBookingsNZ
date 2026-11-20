@@ -56,6 +56,86 @@ Reconciliation totals before and after the upgrade must match to the cent
 Complete every item below **before** touching the deploy. None of these steps
 writes to production; the SQL is read-only.
 
+### Saved-card boundary and incident checks (#5270)
+
+Read this section now and plan the window around it. The stops it describes
+happen in the deploy window ([§2](#2-migrate)), not during pre-flight. The
+only SQL in it is read-only.
+
+For an upgrade from v0.13.2 or earlier, **stop every old web copy, cron leader
+and worker before starting v0.14.0**, drain in-flight requests and prevent old
+copies restarting. No rolling or blue/green overlap across this boundary unless
+every old copy already reads `_v2` keys. **v0.14.0 is the first public reading
+release and the rollback floor once it has run.** Older copies may retry an
+unresolved saved-card charge under another key and charge twice. This overrides
+the ordinary deployment and rollback sequences, independently of migrations.
+See the [release boundary](UPGRADING.md#saved-card-upgrade-and-rollback-boundary-5270).
+
+Before running `scripts/run-production-blue-green-deploy.sh`, use the
+[§2.4 stopped-runtime sequence](#24-windowed-migration-deploy-sequence):
+remove public traffic, drain in-flight requests, stop every old `app_blue` and
+`app_green` replica, the `app` cron leader and external workers, and prevent
+automatic restarts. Disconnect their database clients and verify no old
+connections remain. Only then export `BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1`
+in the deploy shell and run the deploy, with §2.4's migration acknowledgements
+where required. The flag acknowledges the shutdown; it does not stop anything.
+Keep this window even when no migration is pending: the script warms the new
+colour and recreates `app` before switching traffic. The script verifies the
+stop only while a windowed migration is pending; with none pending it prints
+"No pending Prisma migrations detected." and checks nothing, so the stop and
+the disconnect check are then entirely yours.
+
+**If cutover fails after v0.14.0 has started, do not restart the old colour,
+cron leader or workers below v0.14.0.** Failure handling can point Caddy back at
+the old colour; keep public traffic removed and that colour stopped. Recover
+on v0.14.0 or later, rather than following the ordinary old-colour restart.
+
+If overlap or rollback below that floor occurred, stop incompatible copies and
+stop saved-card charges while the operator reconciles the affected period. The
+app has no saved-card-only switch. A saved card is charged by the
+confirm-pending cron sweep (the cron leader's scheduler, or a `POST /api/cron`
+with the cron secret), by the admin **Confirm pending guests** action, and by
+the charge-saved-method route (cron secret or admin session). So keep public
+traffic removed from every web copy, keep the cron leader stopped (or run it
+with `CRON_ENABLED=false`, which stops its scheduler only) and tell admins not
+to confirm pending guests, until the checks below are done:
+
+1. Inspect `PaymentTransaction` rows for the same `paymentId` (linked through
+   `Payment.bookingId`). Compare `id`, `reference`, `createdAt`, `status`,
+   `amountCents`, `reason` and `stripePaymentIntentId`. Saved-card references are
+   `pending_charge_<bookingId>_<rowId>`, with `_v2` appended for the new shape.
+   Different references near the incident identify attempts under different
+   keys; legitimate later retries can also produce multiple rows.
+   A v0.13.2 charge row has no `reference`: its shared key
+   `pending_charge_<bookingId>` was never stored. Find that key in Stripe
+   request logs and compare it with the newer attempt keys; missing local
+   references do not rule out an earlier charge.
+2. Check waiting `_v2` attempts with this read-only query. An empty result does
+   **not** authorise rollback or rule out completed duplicate charges:
+
+   ```sql
+   SELECT "id", "paymentId", "reference", "createdAt", "amountCents",
+          "status", "stripePaymentIntentId"
+   FROM "PaymentTransaction"
+   WHERE "source" = 'STRIPE' AND "kind" = 'PRIMARY'
+     AND starts_with("reference", 'pending_charge_')
+     AND right("reference", 3) = '_v2'
+     AND "status" = 'PENDING' AND "stripePaymentIntentId" IS NULL
+   ORDER BY "createdAt", "id";
+   ```
+
+3. Compare Stripe request logs' idempotency keys and PaymentIntents for that
+   booking (`metadata.bookingId`; `_v2` also carries `metadata.savedCardAttemptId`).
+   Check each intent's charge/capture and refund state. A lost response can
+   leave the local intent id empty even though Stripe took money. Also inspect
+   `UnrecognisedStripePayment` records and unmatched-app-payment alerts. Two
+   local rows alone are not proof of two charges; Stripe's captured payments
+   establish whether money moved twice.
+4. Keep the evidence private and resolve any duplicate or unmatched payment
+   through the normal authorised payment/refund process before resuming charges
+   on v0.14.0 or later. Do not delete attempts, rewrite their keys or restore a
+   backup as a way to undo Stripe charges.
+
 ### 1.1 Verified, restore-tested database backup (with S3 durability confirmed)
 
 A backup you have never restored is a hope, not a backup.
@@ -214,6 +294,9 @@ needs nothing.
 ---
 
 ## 2. Migrate
+
+Before starting any new process, apply the
+[saved-card stop-before-start rule](#saved-card-boundary-and-incident-checks-5270).
 
 Migrate via the supported blue/green deploy path. Run from the production host:
 
@@ -1868,6 +1951,11 @@ deployment.
 ---
 
 ## 4. Rollback plan
+
+**Once v0.14.0 has run, never roll back below v0.14.0**, the first public
+release that reads `_v2` saved-card keys. This floor overrides the ordinary
+colour-switch instructions below; if crossed, use the
+[incident checks](#saved-card-boundary-and-incident-checks-5270) before retrying charges.
 
 Rollback follows `docs/BLUE_GREEN_MIGRATION_POLICY.md`. The policy's whole point
 is that migrations preserve old-code/new-schema compatibility until the previous

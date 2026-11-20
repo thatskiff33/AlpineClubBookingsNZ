@@ -47,7 +47,8 @@ It complements the two documents next to it and does not repeat them:
    Migration/deployment notes block. `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` is
    the per-migration safety ledger. Together they tell you which migrations
    need a low-traffic window, which are destructive, and which change behaviour.
-4. **Deployments are blue/green.** Migrations run before the new app color
+4. **Deployments are normally blue/green.** Follow release-specific stop-before-start
+   rules first, including the [v0.14.0 saved-card boundary](#saved-card-upgrade-and-rollback-boundary-5270). Migrations run before the new app color
    receives traffic while the **old** color can still be serving requests
    against the shared database (see `docs/BLUE_GREEN_MIGRATION_POLICY.md`). Most
    migrations are written to stay old-code-compatible so the old color keeps
@@ -232,7 +233,50 @@ points at the section that explains it; none of them repeats it. The
 production runbook ([`PRODUCTION_UPGRADE_RUNBOOK.md`](PRODUCTION_UPGRADE_RUNBOOK.md)) is the procedure these steps
 fit into.
 
+#### Saved-card upgrade and rollback boundary (#5270)
+
+**Stop every old copy before starting v0.14.0.** This includes web copies,
+cron leaders and workers, with in-flight requests drained and automatic restarts
+paused. No rolling or blue/green overlap is safe across this boundary unless
+all old copies already run a release that reads `_v2` saved-card charge keys.
+**v0.14.0 is the first public release that reads them**, and also the first
+that mints them; v0.13.2 and earlier cannot read them. This rule applies even
+if your database migrations have already run.
+
+Before running `scripts/run-production-blue-green-deploy.sh`, follow the
+[runbook's stopped-runtime procedure](PRODUCTION_UPGRADE_RUNBOOK.md#saved-card-boundary-and-incident-checks-5270),
+including stopping the old colour, its `app` cron leader and external workers.
+The script starts new processes before switching traffic; its normal overlap
+is unsafe here. After a failed cutover, keep the old colour stopped even if
+Caddy points back to it; recover on v0.14.0 or later.
+
+**Once v0.14.0 has run, do not roll back below v0.14.0.** An older copy can
+mistake an unresolved charge for an attempt that never happened, retry under
+a different key and charge the member twice. A database backup cannot undo a
+charge at Stripe. The ordinary blue/green rollback instructions do not override
+this floor, and neither do the rollback notes in the entries below: where one
+describes rolling the code back to an earlier release, the floor wins once
+v0.14.0 has run, and the note only says what an older copy would do. A change
+that stays on v0.14.0 or later, such as unsetting a variable, does not cross it.
+
+If incompatible copies overlapped, or a rollback crossed this floor, stop the
+incompatible copies and stop saved-card charges before retrying anything. There
+is no saved-card-only switch, so the runbook says what to keep stopped. Have the
+operator reconcile the affected period using the
+[runbook's saved-card checks](PRODUCTION_UPGRADE_RUNBOOK.md#saved-card-boundary-and-incident-checks-5270).
+
+The reader landed in PR #4681 (`71f6247ac`); the mint in PR #5001 (`e642097a`).
+Both are included in v0.14.0. The
+[18 November decision](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/5270#issuecomment-6974536939)
+accepts that release as shipped, superseding the earlier plan to defer minting
+in #4682. The released changelog's #4646 promise of a later switch is therefore
+outdated: the #4682 entry in that same release describes the shipped behaviour.
+
 #### Before the deploy
+
+- Plan the stopped-runtime window and rollback floor in the
+  [saved-card boundary](#saved-card-upgrade-and-rollback-boundary-5270) before
+  running the deploy script.
 
 1. Rehearse the upgrade on staging first. The minimum is
    `pnpm run db:rehearse-epic --database-url <throwaway> --base <from-tag>`,
