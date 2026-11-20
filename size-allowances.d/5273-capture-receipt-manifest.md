@@ -6,7 +6,7 @@ what a sender stored live in `src/lib/capture-receipt-senders.ts`; what is left
 in each sender is the call itself, which belongs beside the payment it records.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1571
+lines: 1563
 reason: primary replay must read its stored payment before completion, preserve
   it in the completion payload, then record its capture receipt. The reader and
   recorder already live in capture-receipt-senders.ts; extracting the remaining
