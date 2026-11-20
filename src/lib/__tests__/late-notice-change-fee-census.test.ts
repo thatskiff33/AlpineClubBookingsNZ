@@ -54,3 +54,20 @@ describe("the payment's change fee has one writer per kind of edit", () => {
     ]);
   });
 });
+
+/**
+ * #5039 review (`INV-SSOT`): both fee-charging edit doors clamp credit against
+ * the same fee - the payment's before the edit plus this edit's own. The two
+ * copies of that sum drifted once (the date door left this edit's fee out), so
+ * each door must read the one home rather than add the figures itself.
+ */
+describe("both edit doors clamp credit against one fee figure", () => {
+  it.each([
+    "src/lib/booking-modify-settlement.ts",
+    "src/lib/booking-date-modification-service.ts",
+  ])("%s reads feeOwedAfterEditCents", (file) => {
+    const source = stripComments(readFileSync(join(process.cwd(), file), "utf8"));
+    expect(source).toMatch(/feeOwedAfterEditCents\(booking\.payment,/);
+    expect(source).not.toMatch(/recordedChangeFeeCents\([^)]*\)\s*\+/);
+  });
+});

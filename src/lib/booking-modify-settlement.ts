@@ -44,8 +44,8 @@ import {
   canAskCardForIncrease,
   hasCapturedPayment,
   hasIssuedPrimaryXeroInvoice,
+  feeOwedAfterEditCents,
   isSettledBookingStatus,
-  recordedChangeFeeCents,
 } from "@/lib/booking-payment-state";
 import { type BookingModificationSettlementMethod, type LoadedBookingForLifecycle, type LoadedBookingForModify } from "@/lib/booking-modify-validation";
 import { type GuestPlan } from "@/lib/booking-modify-plan";
@@ -592,7 +592,7 @@ export async function applyLifecycleTransitions(
   // the clamp keeps credit up to the booking's WORTH and the $0 decision and
   // stale-intent comparison read what it owes. Read from the one home.
   const feeOwedCents =
-    recordedChangeFeeCents(booking.payment) + feeRecordedByThisEditCents;
+    feeOwedAfterEditCents(booking.payment, feeRecordedByThisEditCents);
   const newWorthCents = bookingWorthCents({
     finalPriceCents: newFinalPriceCents,
     changeFeeCents: feeOwedCents,

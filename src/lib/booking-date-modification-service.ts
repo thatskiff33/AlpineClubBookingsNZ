@@ -5,7 +5,7 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext } from "@/lib/member-money/doors";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
-import { bookingAmountOwedCents, bookingWorthCents, recordedChangeFeeCents as feeOnPayment } from "@/lib/booking-payment-state";
+import { bookingAmountOwedCents, bookingWorthCents, feeOwedAfterEditCents } from "@/lib/booking-payment-state";
 import { type AgeTier, PaymentStatus, type Role } from "@prisma/client";
 
 import { bookingPromoCodeLabel, bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
@@ -808,7 +808,7 @@ export async function modifyBookingDates({
     // A fee on the payment, this edit's own included (#5039: the snapshot predates
     // its write), is owed with the price, so credit is kept up to the worth. An
     // unpaid booking's edit records none (owner decision, 10 Nov 2026).
-    const recordedChangeFeeCents = feeOnPayment(booking.payment) + payments.feeRecordedHereCents;
+    const recordedChangeFeeCents = feeOwedAfterEditCents(booking.payment, payments.feeRecordedHereCents);
     // #4661 review F1: what a card intent must now be for, as the batch lifecycle compares.
     let owedCents = bookingWorthCents({ finalPriceCents: newFinalPriceCents, changeFeeCents: recordedChangeFeeCents });
     if (appliedBeforeClamp > 0) {
