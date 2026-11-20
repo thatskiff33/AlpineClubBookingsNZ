@@ -76,7 +76,7 @@ const FIGURE_PUBLISHERS = [
 /**
  * THE OTHER FIGURE, AND WHY IT IS NOT IN THAT LIST.
  *
- * Four documents state how bad things were BEFORE #2723 — ten of eighteen
+ * Several documents state how bad things were BEFORE #2723 — ten of eighteen
  * production call sites storing no attribution. The first draft of this file
  * listed them as publishers of "the figure" and told a future editor to
  * re-measure by running the census. That instruction cannot work, and following
