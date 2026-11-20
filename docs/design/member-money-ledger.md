@@ -646,6 +646,46 @@ line-amount basis and line tax types the invoice was sent with: the rendering
 the sender resolved for the booking and built it under, or a replay's stored
 request's own, never the schedule's current treatment.
 
+The capture-receipt cohort (ALP-605) adds `CAPTURE_RECEIPT`, which records the
+cents each existing capture sender stores, and those senders still send exactly
+what they sent before: the primary invoice's Stripe payment, a change capture's
+receipt legs, a supplementary invoice's payment, a kept late capture's payment
+and a PARTIAL invoice repair. Once a sender has stored a Xero payment id it calls
+`recordCaptureReceiptManifest` with the payment's own idempotency key, which is
+both the manifest's legacy key and its coverage row's `sliceKey`. The pure
+`planCaptureReceipt` covers those cents against the capture's live R06
+`STRIPE_CLEARING` debit (`memberMoneyEventKeys.capture`) less what other
+receipts already cover, so several receipts may name one capture while the
+primary invoice still bills each component once. More cents than are left is
+`CAPTURE_CENTS`; a payment naming no one capture, or a capture with no live
+receipt, is `CAPTURE_NOT_JOURNALLED`; either covers nothing. The primary
+invoice's payment names the one capture the split saved with its link says its
+cash came from (`intentsRecordedByPrimaryCash`). This cohort does not split one
+payment across captures: a primary payment whose cash came from several, and a
+primary-invoice gap invoice's payment (its queued payload names several
+captures and no `paymentIntentId`), name no one capture and record that
+conflict from the sender, and nothing from a PARTIAL repair. Only cents a stored
+payment sent are coverage, never the unsent rest of a capture. Bank, cash,
+credit-release and refund-note payments are not this role. The recorder holds
+the capture's `PaymentTransaction` row in its own short transaction, and a
+failure is logged without changing the send; the row is then written only where
+a replay re-reaches the stored payment id, which the supplementary sender and a
+closed repair never do. A PARTIAL repair records a recovered
+payment only when its outbound operation or the original invoice response proves
+which payment was sent; an inbound bank payment may close the repair but adds no
+capture coverage. Primary invoice replays preserve the stored payment through
+completion so a later replay can retry a failed manifest write, and record it
+as soon as they read it, before anything else in the replay can fail. A primary
+run that fails after Xero took its payment and after its link was stored
+records the receipt in its failure path, before failing the row. It also writes
+the payment beside the error on the FAILED row, but that copy survives only an
+officer's inline retry: the outbox fails the same row again with the error
+alone, so a queued run relies on the failure-path record.
+A supplementary invoice names the capture its queued payload names; an
+officer's inline retry of a FAILED one passes that payload's
+`paymentIntentId` to the sender, so the retry's receipt names the same capture
+the outbox run would have.
+
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |
 | Primary, supplementary or combined group invoice | Exact issued charge components, including fee coverage assigned once. Combined invoices consume child charge coverage; individual child invoices cannot consume it again. Pending bank-transfer obligations already have R01 postings. |

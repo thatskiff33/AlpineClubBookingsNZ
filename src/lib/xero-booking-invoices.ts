@@ -102,6 +102,7 @@ import {
 import { PRIMARY_INVOICE_NOTHING_LEFT_DUE_REASON } from "@/lib/xero-primary-invoice-fee-at-link";
 import { readBookingForPrimaryInvoice } from "@/lib/xero-primary-invoice-read";
 import { planPrimaryInvoiceManifest, recordPrimaryInvoiceManifest, recordPrimaryInvoiceUpdateManifest } from "@/lib/member-money/doors";
+import { primaryInvoicePaymentKey, readStoredPrimaryInvoicePayment, recordPrimaryInvoicePaymentReceipt, recordStoredPrimaryInvoicePaymentReceipt } from "@/lib/capture-receipt-senders";
 import type { XeroOperationClaim } from "@/lib/xero-operation-outcome-guard";
 
 export interface CreateXeroBookingInvoiceOptions
@@ -274,6 +275,9 @@ export async function createXeroInvoiceForBooking(
         booking.payment.xeroInvoiceId,
       );
     }
+    const storedPayment = options?.syncOperation ? await readStoredPrimaryInvoicePayment(options.syncOperation.id) : null; // #4525 (M13): that run's Stripe payment, preserved through completion for later receipt retries
+    // #4525 review: its capture receipt now, before anything below can throw and have a failure write replace the stored payment.
+    await recordStoredPrimaryInvoicePaymentReceipt(storedPayment, booking.payment, bookingId, booking.payment.xeroInvoiceId);
     // #3955 review X4 (round 3), #3980: a prior run that persisted the link but
     // died before or inside its gap check re-runs it here, from what the invoice
     // billed and the booking's worth as recorded with the link. Idempotent.
@@ -296,7 +300,8 @@ export async function createXeroInvoiceForBooking(
     if (options?.syncOperation) {
       await completeXeroSyncOperation(options.syncOperation, {
         status: "SUCCEEDED",
-        responsePayload: {
+        responsePayload: storedPayment === undefined ? undefined : {
+          payment: storedPayment,
           skipped: true,
           reason: "Invoice already exists for this payment; link re-asserted.",
         },
@@ -608,6 +613,13 @@ export async function createXeroInvoiceForBooking(
     return null;
   }
 
+  // #4525 review: outside the try, so a run that fails after Xero took the
+  // payment records its capture receipt in the catch (`paymentReceipt`, set once
+  // the link is stored) and also writes the payment on its FAILED row. The
+  // outbox's own failure write replaces that row with the error alone, so the
+  // catch's record, not the row, is what a queued run relies on.
+  let paymentResponseBody: XeroPayment | null = null;
+  let paymentReceipt: Parameters<typeof recordPrimaryInvoicePaymentReceipt>[0] | null = null;
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: bookingOwner(booking).memberId,
@@ -678,7 +690,6 @@ export async function createXeroInvoiceForBooking(
     // note, never against this invoice. Capped at the invoice's amount due —
     // Xero hard-rejects an overpayment (e.g. a legacy full-price capture on a
     // since-repriced booking).
-    let paymentResponseBody: XeroPayment | null = null;
     let paymentWriteError: unknown = null;
     const paymentSource = booking.payment.source ?? PaymentSource.STRIPE;
     const paymentCaptured = isCapturedPaymentStatus(booking.payment.status);
@@ -757,13 +768,7 @@ export async function createXeroInvoiceForBooking(
         date: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
         reference: stripePaymentReference,
       };
-      const paymentIdempotencyKey = buildXeroIdempotencyKey(
-        "payment",
-        booking.payment.id,
-        "invoice-payment",
-        "v1"
-      );
-
+      const paymentIdempotencyKey = primaryInvoicePaymentKey(booking.payment.id);
       try {
         const paymentResponse = await callXeroApi(
           () =>
@@ -1047,6 +1052,10 @@ export async function createXeroInvoiceForBooking(
       primaryInvoiceCashCents,
       primaryInvoiceAttemptedCashCents: shouldRecordStripeInvoicePayment ? invoicePaymentCents : 0,
     });
+    // #4525 (M13): the Stripe payment's capture receipt, recordable once the link names its capture. One input, so
+    // the end of this run and its catch record it under the same key (an earlier run's payment found on the invoice too).
+    paymentReceipt = { bookingId, payment: booking.payment, invoiceId: createdInvoice.invoiceID, sent: paymentResponseBody,
+      sentCents: shouldRecordStripeInvoicePayment ? invoicePaymentCents : null, reference: stripePaymentReference, bankCode: existingStripePayment ? null : bankCode };
     // #4525 (Ledger M13): the manifest, in its own transaction after the link. Never throws.
     // A replayed create returns the ORIGINAL invoice, so the plan is held to the lines it bills.
     await recordPrimaryInvoiceManifest(
@@ -1178,10 +1187,14 @@ export async function createXeroInvoiceForBooking(
           : []),
       ],
     });
+    await recordPrimaryInvoicePaymentReceipt(paymentReceipt); // its capture receipt, once the operation is closed
 
     return createdInvoice.invoiceID;
   } catch (error) {
-    await failXeroSyncOperation(operationClaim!, error);
+    // #4525 (M13): a run failing after the link records the receipt now, outside any transaction, as the end of
+    // the run would have: the replay that follows a queued run cannot read the payment back. Never throws.
+    if (paymentReceipt) await recordPrimaryInvoicePaymentReceipt(paymentReceipt);
+    await failXeroSyncOperation(operationClaim!, error, paymentResponseBody?.paymentID ? { error, payment: paymentResponseBody } : undefined);
     throw error;
   }
 }

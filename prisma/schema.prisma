@@ -9590,6 +9590,8 @@ enum MemberMoneyExportDocumentRole {
   REFUND_NOTE_PAYMENT
   /// #4525 (ALP-439): reserved for the failed-later refund reversal invoice; nothing writes it yet.
   FAILED_LATER_REFUND_REVERSAL
+  /// #4525 (ALP-605): a stored Xero payment's cents of one card capture, under its own idempotency key.
+  CAPTURE_RECEIPT
 }
 
 enum MemberMoneyExportOutcome {
@@ -9610,6 +9612,10 @@ enum MemberMoneyExportConflictReason {
   CENTS
   /// The component is already covered by an earlier document of the same role.
   ALREADY_COVERED
+  /// A receipt's cents exceed what is left of its capture's live cash debit.
+  CAPTURE_CENTS
+  /// The receipt names no capture, or the journal holds no live receipt for it.
+  CAPTURE_NOT_JOURNALLED
 }
 
 /// M13 (#4525): what one sent provider document covers, written once under its
@@ -9635,10 +9641,11 @@ model MemberMoneyExportManifest {
   @@index([bookingId])
 }
 
-/// One journal component a manifest's document bills: whole (sliceKey ''), or the
-/// slice one journal event moved (sliceKey: that event's key, supplementary only).
-/// A component is billed whole by at most one document of each role, and each
-/// slice by at most one.
+/// One journal component a manifest's document covers: whole (sliceKey ''), the
+/// slice one journal event moved (sliceKey: that event's key, supplementary only),
+/// or the cents of one card capture a Xero payment applied (sliceKey: that
+/// payment's idempotency key, capture receipts only). A component is covered
+/// whole by at most one document of each role, and each slice by at most one.
 model MemberMoneyExportCoverage {
   id String @id @default(cuid())
   manifestId String
