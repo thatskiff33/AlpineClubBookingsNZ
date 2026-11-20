@@ -246,9 +246,9 @@ it("organiser refunds never queue a generic note against the joiner's absent pri
 
 
 it("reports an unrecorded fee when the payment row is missing without aborting the edit", async () => {
-  await writeEditOnPayment(tx, { payment: null, changeFeeCents: 5000 });
+  await writeEditOnPayment(tx, { payment: null, changeFeeCents: 5000, bookingId: "booking_1" });
   expect(logger.error).toHaveBeenCalledWith(
-    { changeFeeCents: 5000 },
+    { bookingId: "booking_1", changeFeeCents: 5000 },
     "Cannot record edit change fee: payment row is missing",
   );
   expect(payment.update).not.toHaveBeenCalled();

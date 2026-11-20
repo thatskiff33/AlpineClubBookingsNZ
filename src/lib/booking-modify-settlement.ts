@@ -403,6 +403,7 @@ export async function applyPaymentAdjustments(
   const settledAgainstPrimaryInvoice = await writeEditOnPayment(tx, {
     payment: booking.payment,
     changeFeeCents: feeRecordedHereCents,
+    bookingId: booking.id,
     refusalMessage: primaryInvoiceRaisedMessage,
     // #4299 N3: the place itself, not its combined invoice's record: a reduction with none on record claims no primary either.
     settledAgainstCombinedInvoice: paidByOrganiserInternetBanking(booking),

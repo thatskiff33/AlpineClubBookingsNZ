@@ -160,6 +160,8 @@ export async function writeEditOnPayment(
   input: {
     payment: { id: string; xeroInvoiceId: string | null } | null | undefined;
     changeFeeCents: number;
+    /** Named in the error log when a fee has no payment row to land on. */
+    bookingId?: string;
     refusalMessage?: string;
     /** Organiser-paid children have a combined invoice, never a primary of their own. */
     settledAgainstCombinedInvoice?: boolean;
@@ -169,7 +171,7 @@ export async function writeEditOnPayment(
   if (!input.payment) {
     if (input.changeFeeCents > 0) {
       logger.error(
-        { changeFeeCents: input.changeFeeCents },
+        { bookingId: input.bookingId, changeFeeCents: input.changeFeeCents },
         "Cannot record edit change fee: payment row is missing",
       );
     }

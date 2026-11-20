@@ -588,4 +588,55 @@ async function theEdit() {
     expect((await theEdit()).changeFeeCents).toBe(0);
     expect(await paymentFeeCents()).toBe(0);
   }, 60_000);
+
+  /**
+   * #5039: a PENDING booking with a captured card part-payment and account
+   * credit for the rest is charged the fee, and the edit's own fee write lands
+   * after the door read the payment. Both doors keep the credit that pays that
+   * fee: the clamp sizes credit to the price plus every recorded fee, this
+   * edit's included, so no credit is handed back and the card part still
+   * covers the rest exactly.
+   */
+  it.each(["batch", "dates"] as const)(
+    "#5039: a PENDING part-captured, credit-paid booking keeps the credit that pays this edit's fee (%s door)",
+    async (door) => {
+      const capturedCents = 2_000;
+      const creditCents = PRICE_CENTS - capturedCents;
+      await prisma.booking.update({ where: { id: BOOKING_ID }, data: { status: "PENDING" } });
+      await prisma.payment.update({
+        where: { id: PAYMENT_ID },
+        data: { status: "SUCCEEDED", amountCents: capturedCents, source: "STRIPE", creditAppliedCents: creditCents, reference: null, internetBankingHoldSlots: false },
+      });
+      await prisma.paymentTransaction.update({
+        where: { id: PRIMARY_ID },
+        data: { status: "SUCCEEDED", amountCents: capturedCents, source: "STRIPE", reference: null, reason: null, stripePaymentIntentId: "pi_race4661" },
+      });
+      await prisma.memberCredit.create({
+        data: { memberId: OWNER_ID, amountCents: -creditCents, type: "BOOKING_APPLIED", appliedToBookingId: BOOKING_ID, description: "Applied at booking" },
+      });
+
+      if (door === "batch") {
+        await moveStay(MOVED_SHORTER);
+      } else {
+        await dateService.modifyBookingDates({
+          bookingId: BOOKING_ID,
+          actor: { id: OFFICER_ID, role: Role.ADMIN },
+          input: MOVED_SHORTER as never,
+          ipAddress: "127.0.0.1",
+        });
+      }
+
+      // The new price (one night) plus the fee equals the old price, so the
+      // credit applied still pays exactly its share.
+      expect(await finalPriceCents()).toBe(NIGHT_CENTS);
+      expect((await theEdit()).changeFeeCents).toBe(FEE_CENTS);
+      expect(await paymentFeeCents()).toBe(FEE_CENTS);
+      const credit = await prisma.memberCredit.aggregate({
+        where: { memberId: OWNER_ID, appliedToBookingId: BOOKING_ID },
+        _sum: { amountCents: true },
+      });
+      expect(credit._sum.amountCents).toBe(-creditCents);
+    },
+    60_000,
+  );
 });
