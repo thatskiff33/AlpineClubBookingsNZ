@@ -124,6 +124,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     alpineCentralServer: false,
     commsPortal: false,
     memberLodgeRoster: false,
+    foodOrders: false,
     multiPromoCodes: false,
   },
   ageTierSettingCount: 4,
