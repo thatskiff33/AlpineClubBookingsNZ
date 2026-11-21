@@ -1,6 +1,10 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CLUB_THEME_VALUES } from "@/lib/club-theme-schema";
+import { pngDataUrl } from "@/lib/__tests__/helpers/png-fixture";
+import { IMAGE_NOT_CLEAN_MESSAGE } from "@/lib/image-metadata";
+
+
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -137,7 +141,7 @@ describe("site style admin API", () => {
     // The regression this guards: the wizard round-trips the WHOLE theme, so a
     // stateless 64KB rule would reject the club's own existing logo on every
     // save and block it from editing its colours at all.
-    const legacyLogo = `data:image/png;base64,${Buffer.alloc(860_000, 0x61).toString("base64")}`;
+    const legacyLogo = pngDataUrl({ totalBytes: 860_000 });
     mocks.clubThemeFindUnique.mockResolvedValue({
       completedAt: null,
       logoDataUrl: legacyLogo,
@@ -225,7 +229,7 @@ describe("site style admin API", () => {
   it("keeps an inlined logo when no served-image URL is set (#2322)", async () => {
     // The back-compat path: deployments that have not re-uploaded must keep
     // their stored data URI.
-    const dataUrl = "data:image/png;base64,AAAA";
+    const dataUrl = pngDataUrl();
     const response = await PUT(
       request({
         ...DEFAULT_CLUB_THEME_VALUES,
@@ -238,6 +242,20 @@ describe("site style admin API", () => {
     const written = mocks.clubThemeUpsert.mock.calls[0][0].data;
     expect(written.logoUrl).toBeNull();
     expect(written.logoDataUrl).toBe(dataUrl);
+  });
+
+  it("refuses, with the plain message, an inlined logo it cannot confirm clean (#5244)", async () => {
+    const response = await PUT(
+      request({
+        ...DEFAULT_CLUB_THEME_VALUES,
+        logoUrl: null,
+        logoDataUrl: "data:image/png;base64,AAAA",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toBe(IMAGE_NOT_CLEAN_MESSAGE);
+    expect(mocks.clubThemeUpsert).not.toHaveBeenCalled();
   });
 
   it("strips EXIF/GPS from an inlined logo before storing it (#2242)", async () => {

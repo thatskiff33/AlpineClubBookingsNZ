@@ -16,8 +16,9 @@ import {
 } from "@/lib/image-derivatives";
 import { readCappedMultipartFormData } from "@/lib/capped-multipart";
 import {
+  IMAGE_NOT_CLEAN_MESSAGE,
+  cleanImageForStorage,
   detectImageContentType,
-  storableImageBytes,
 } from "@/lib/media-image";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
@@ -162,26 +163,27 @@ export async function POST(request: NextRequest) {
 
     try {
       const buffer = Buffer.from(await file.arrayBuffer());
-      // Strip EXIF/XMP/comment metadata (camera GPS coordinates live in JPEG
+      // Remove EXIF/XMP/comment metadata (camera GPS coordinates live in JPEG
       // APP1) before the bytes hit disk. This is the WIDEST of the image-storing
       // paths — 10 MB per file, 25 files per batch — and everything under
       // IMAGES_ROOT (`public/images`) is served ANONYMOUSLY and effectively
       // forever, so a straight-from-phone lodge photo dragged into the image
       // manager would otherwise publish its location.
       //
-      // FAIL-OPEN through the shared helper, exactly like the image-library and
-      // config-transfer paths (and deliberately unlike the fail-CLOSED
-      // member-photo route): an unconfirmed strip stores the ORIGINAL bytes and
-      // logs, and never turns into a per-file rejection. The content type is
-      // sniffed from the bytes rather than reusing the declared MIME above, so
-      // the strip matches the real format; bytes that sniff as nothing
-      // recognised are stored unchanged with the same warning rather than being
-      // rejected, preserving this route's accept/reject behaviour exactly.
-      const storable = storableImageBytes(
-        buffer,
-        detectImageContentType(buffer),
-        { source: "image-manager upload", filename: safeName },
-      );
+      // The content type is sniffed from the bytes rather than trusting the
+      // declared MIME above, so the clean matches the real format. Bytes that
+      // sniff as nothing, or as a type this directory does not serve (an SVG
+      // named `.png`), and an image that cannot be confirmed clean are refused
+      // per file (#5244); the rest of the batch carries on.
+      const sniffed = detectImageContentType(buffer);
+      const cleaned = sniffed && ALLOWED_IMAGE_MIME.has(sniffed)
+        ? cleanImageForStorage(buffer, sniffed)
+        : { ok: false as const, message: IMAGE_NOT_CLEAN_MESSAGE };
+      if (!cleaned.ok) {
+        results.push({ filename: file.name, ok: false, error: cleaned.message });
+        continue;
+      }
+      const storable = cleaned.bytes;
       // Write-then-rename (#4935): replacing `lodge.jpg` swaps the file
       // atomically, so a visitor mid-download keeps the old bytes and the
       // streamed length still matches the Content-Length the serving route

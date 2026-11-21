@@ -61,6 +61,8 @@ vi.mock("@/lib/image-derivatives", () => ({
 }));
 
 import { POST } from "@/app/api/admin/image-manager/upload/route";
+import { pngBytes } from "@/lib/__tests__/helpers/png-fixture";
+import { IMAGE_NOT_CLEAN_MESSAGE } from "@/lib/image-metadata";
 import { IMAGES_ROOT } from "@/lib/image-storage";
 
 const adminSession = {
@@ -75,11 +77,14 @@ const MAX_UPLOAD_FILES = 25;
 const MAX_UPLOAD_REQUEST_BYTES = 80 * 1024 * 1024;
 const BOUNDARY = "----imageManagerTestBoundary";
 
-function pngFile(name: string, size = 8): File {
-  // The route trusts the declared type + extension (it does not sniff magic
-  // bytes), so a small buffer with an image/png type and .png name is a valid
-  // upload for its purposes.
-  return new File([Buffer.alloc(size, 0x61)], name, { type: "image/png" });
+// A structurally complete PNG, so the metadata strip can confirm it clean
+// (#5244: an unconfirmed image is refused per file).
+const PNG_BYTES = pngBytes();
+
+/** A PNG upload of at least `size` bytes (padding after IEND is not stored). */
+function pngFile(name: string, size = PNG_BYTES.length): File {
+  const padding = Buffer.alloc(Math.max(0, size - PNG_BYTES.length), 0x61);
+  return new File([Buffer.concat([PNG_BYTES, padding])], name, { type: "image/png" });
 }
 
 // The GPS payload carried in the EXIF fixtures below, so a test can assert it is
@@ -89,7 +94,7 @@ const GPS_MARKER = Buffer.from("GPS:-41.29,174.78", "latin1");
 /**
  * A JPEG carrying an APP1 EXIF/GPS segment. `withEoi` decides whether it ends
  * with a primary EOI (FF D9): with one the strip is CONFIRMED, without one it is
- * unconfirmed and this route's fail-open policy writes the original.
+ * unconfirmed and the file is refused (#5244).
  */
 function exifJpeg(withEoi: boolean): Buffer {
   const soi = Buffer.from([0xff, 0xd8]);
@@ -279,33 +284,37 @@ describe("POST /api/admin/image-manager/upload", () => {
     expect(written.length).toBeLessThan(EXIF_JPEG_WITH_EOI.length);
   });
 
-  it("FAILS OPEN: writes the original bytes when the strip cannot be confirmed", async () => {
-    // A per-file rejection here would change this route's accept/reject
-    // behaviour, so an unconfirmed strip stores the original and logs instead.
+  it("refuses, per file, an image whose strip cannot be confirmed (#5244)", async () => {
+    // The rest of the batch carries on; the refused file is never written.
     const file = new File([new Uint8Array(EXIF_JPEG_NO_EOI)], "holiday.jpg", {
       type: "image/jpeg",
     });
-    const response = await POST(uploadRequest([file]));
+    const response = await POST(uploadRequest([file, pngFile("ok.png")]));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.results[0].ok).toBe(true);
-    const written = Buffer.from(mocks.writeFile.mock.calls[0][1] as Buffer);
-    expect(written.equals(EXIF_JPEG_NO_EOI)).toBe(true);
+    expect(body.results[0]).toEqual({
+      filename: "holiday.jpg",
+      ok: false,
+      error: IMAGE_NOT_CLEAN_MESSAGE,
+    });
+    expect(body.results[1].ok).toBe(true);
+    expect(mocks.writeFile).toHaveBeenCalledTimes(1);
   });
 
-  it("still accepts a buffer it cannot sniff, writing it unchanged", async () => {
-    // The route trusts the declared MIME + extension and must never start
-    // rejecting files just because the bytes do not sniff as a known format.
-    const unsniffable = Buffer.from("not-an-image-at-all");
-    const file = new File([unsniffable], "a.png", { type: "image/png" });
+  it.each([
+    ["bytes that sniff as no image", Buffer.from("not-an-image-at-all")],
+    ["an SVG named .png (a type this folder does not serve)", Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>',
+    )],
+  ])("refuses %s", async (_label, bytes) => {
+    const file = new File([new Uint8Array(bytes)], "a.png", { type: "image/png" });
     const response = await POST(uploadRequest([file]));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.results[0].ok).toBe(true);
-    const written = Buffer.from(mocks.writeFile.mock.calls[0][1] as Buffer);
-    expect(written.equals(unsniffable)).toBe(true);
+    expect(body.results[0]).toMatchObject({ ok: false, error: IMAGE_NOT_CLEAN_MESSAGE });
+    expect(mocks.writeFile).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
