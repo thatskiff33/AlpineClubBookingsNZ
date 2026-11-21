@@ -32,6 +32,11 @@ import {
   workPartyCreditBackCents,
 } from "@/lib/edit-money-back";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
+import { apiErrorCodeFromBody, apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE,
+  WORK_PARTY_FIGURES_CHANGED_CODE,
+} from "@/lib/work-party-figures-changed";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { BookingWorkPartyRemoveControls } from "@/components/admin/booking-work-party-remove-controls";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify-validation";
@@ -118,7 +123,7 @@ function BookingWorkPartyAddControls({
       const res = await fetch(`/api/admin/bookings/${bookingId}/work-party`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "Could not load the work parties for this booking.");
+        setError(apiErrorMessageFromBody(data, "Could not load the work parties for this booking."));
         return;
       }
       setOptions(data.workParties ?? []);
@@ -164,17 +169,17 @@ function BookingWorkPartyAddControls({
         ),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 409 && data.code === "FIGURES_CHANGED") {
+      if (res.status === 409 && apiErrorCodeFromBody(data) === WORK_PARTY_FIGURES_CHANGED_CODE) {
         // The choice may have changed with the figures (#5149 review M1).
         setFigures(data.figures);
         setSettlementOptions(data.settlementOptions ?? null);
-        setError(data.error);
+        setError(apiErrorMessageFromBody(data, WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE));
         return;
       }
       if (!res.ok) {
         // A refusal leaves nothing the officer saw valid to confirm: drop the old figures.
         setFigures(null);
-        setError(data.error || "The booking could not be added to the work party.");
+        setError(apiErrorMessageFromBody(data, "The booking could not be added to the work party."));
         return;
       }
       if (mode === "preview") {

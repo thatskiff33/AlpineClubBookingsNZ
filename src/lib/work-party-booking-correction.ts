@@ -65,6 +65,10 @@ import { EditPriceChangedError } from "@/lib/edit-quoted-figures";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";
 import {
+  WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE,
+  WORK_PARTY_FIGURES_CHANGED_CODE,
+} from "@/lib/work-party-figures-changed";
+import {
   modifyBookingBatch,
   type BatchModificationPreTransaction,
 } from "@/lib/booking-batch-modification-service";
@@ -282,11 +286,8 @@ export interface WorkPartyCorrectionFigures {
   settlementMethod: BookingModificationSettlementMethod | null;
 }
 
-export const WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE =
-  "The booking changed since the figures were shown. Check the new figures and confirm again.";
-
 export class WorkPartyCorrectionFiguresChangedError extends Error {
-  readonly code = "FIGURES_CHANGED";
+  readonly code = WORK_PARTY_FIGURES_CHANGED_CODE;
   /** The fresh figures, and what may now be chosen for them (#5149 review M1). */
   constructor(
     readonly actual: WorkPartyCorrectionFigures,

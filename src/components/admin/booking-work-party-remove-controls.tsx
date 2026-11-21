@@ -19,6 +19,11 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
+import { apiErrorCodeFromBody, apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE,
+  WORK_PARTY_FIGURES_CHANGED_CODE,
+} from "@/lib/work-party-figures-changed";
 import type { WorkPartyCorrectionFigures } from "@/lib/work-party-booking-correction";
 
 /**
@@ -74,13 +79,13 @@ export function BookingWorkPartyRemoveControls({
         ),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 409 && data.code === "FIGURES_CHANGED") {
+      if (res.status === 409 && apiErrorCodeFromBody(data) === WORK_PARTY_FIGURES_CHANGED_CODE) {
         setFigures(data.figures);
-        setError(data.error);
+        setError(apiErrorMessageFromBody(data, WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE));
         return;
       }
       if (!res.ok) {
-        setError(data.error || "The booking could not be removed from the work party.");
+        setError(apiErrorMessageFromBody(data, "The booking could not be removed from the work party."));
         return;
       }
       if (mode === "preview") {
@@ -121,7 +126,7 @@ export function BookingWorkPartyRemoveControls({
       const res = await fetch(`/api/admin/bookings/${bookingId}/work-party`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "Could not load this booking's work party.");
+        setError(apiErrorMessageFromBody(data, "Could not load this booking's work party."));
         return;
       }
       if (data.removal && !data.removal.eligible) {

@@ -12,6 +12,7 @@ vi.mock("@/hooks/use-admin-area-edit-access", async (importOriginal) => ({
 }));
 
 import { BookingWorkPartyControls } from "@/components/admin/booking-work-party-controls";
+import { WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE } from "@/lib/work-party-figures-changed";
 
 /**
  * Fork #129: the settlement part of the "Add to work party" dialog. The
@@ -253,6 +254,59 @@ describe("BookingWorkPartyControls after a refused apply", () => {
     expect(screen.getByRole("button", { name: "Show the new total" })).toBeInTheDocument();
   });
 
+  it("reads a refusal with the shared helpers: a blank or non-text error falls back to the dialog's own sentence (#5149 re-review)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string }) => {
+        if (init?.method !== "POST") return new Response(JSON.stringify(workParties), { status: 200 });
+        return new Response(JSON.stringify({ error: "   " }), { status: 409 });
+      }),
+    );
+    render(<BookingWorkPartyControls bookingId="booking-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Add to work party" }));
+    const show = await screen.findByRole("button", { name: "Show the new total" });
+    await waitFor(() => expect(show).toBeEnabled());
+    fireEvent.click(show);
+    expect(await screen.findByText("The booking could not be added to the work party.")).toBeInTheDocument();
+
+    cleanup();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { code: 7 } }), { status: 500 })));
+    render(<BookingWorkPartyControls bookingId="booking-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Add to work party" }));
+    expect(await screen.findByText("Could not load the work parties for this booking.")).toBeInTheDocument();
+    expect(screen.queryByText("[object Object]")).toBeNull();
+  });
+
+  it("takes the fresh figures on FIGURES_CHANGED by its code, with the shared sentence when the reply carries none", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string; body?: string }) => {
+        if (init?.method !== "POST") return new Response(JSON.stringify(workParties), { status: 200 });
+        const body = JSON.parse(init.body ?? "{}");
+        if (body.mode === "apply") {
+          return new Response(
+            JSON.stringify({
+              code: "FIGURES_CHANGED",
+              figures: figures({ newFinalPriceCents: 16_000, priceDiffCents: -4_000, accountCreditAmountCents: 4_000 }),
+              settlementOptions: { methods: ["credit"], paidByOrganiser: false, refundTo: null },
+            }),
+            { status: 409 },
+          );
+        }
+        return new Response(
+          JSON.stringify({ outcome: "quoted", figures: figures(), settlementOptions: { methods: ["credit"], paidByOrganiser: false, refundTo: null } }),
+          { status: 200 },
+        );
+      }),
+    );
+    await openAndPreview();
+    fireEvent.click(screen.getByRole("button", { name: "Add and email member" }));
+    expect(await screen.findByText(WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE)).toBeInTheDocument();
+    // The fresh figures stand, ready to confirm.
+    expect(screen.getByTestId("work-party-figures")).toHaveTextContent("$160.00");
+    expect(screen.getByRole("button", { name: "Add and email member" })).toBeInTheDocument();
+  });
+
   it("disables the work-party picker while a request is in flight", async () => {
     let release: (r: Response) => void = () => {};
     vi.stubGlobal(
@@ -330,6 +384,35 @@ describe("Remove from work party (fork #130)", () => {
     const shown = await screen.findByTestId("work-party-remove-figures");
     expect(shown).toHaveTextContent("Invoiced to the group organiser: $50.00");
     expect(shown).not.toHaveTextContent("Asked of the member now");
+  });
+
+  it("takes the fresh figures on FIGURES_CHANGED, and falls back to its own sentence on a reply with no usable error (#5149 re-review)", async () => {
+    const fresh = { ...removal, newFinalPriceCents: 21_000, priceDiffCents: 6_000, additionalAmountCents: 6_000 };
+    serve((body) =>
+      body.mode === "apply" ? { outcome: "applied", figures: removal } : { outcome: "quoted", figures: removal },
+    );
+    const quotedFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+        if (init?.method === "POST" && JSON.parse(init.body ?? "{}").mode === "apply") {
+          return new Response(JSON.stringify({ code: "FIGURES_CHANGED", figures: fresh }), { status: 409 });
+        }
+        return quotedFetch(url, init);
+      }),
+    );
+    render(<BookingWorkPartyControls bookingId="booking-1" currentWorkParty={{ id: "wp-1", name: "Spring Bee" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove from work party" }));
+    await screen.findByTestId("work-party-remove-figures");
+    fireEvent.click(screen.getByRole("button", { name: "Remove without emailing" }));
+    expect(await screen.findByText(WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByTestId("work-party-remove-figures")).toHaveTextContent("$210.00");
+
+    cleanup();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>bad gateway</html>", { status: 502 })));
+    render(<BookingWorkPartyControls bookingId="booking-1" currentWorkParty={{ id: "wp-1", name: "Spring Bee" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove from work party" }));
+    expect(await screen.findByText("Could not load this booking's work party.")).toBeInTheDocument();
   });
 
   it("applies with the figures it showed, and no settlement method", async () => {
