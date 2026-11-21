@@ -84,6 +84,8 @@ const INVOICE_ID = "race-4324-xero-invoice";
 const ZONE = "Pacific/Auckland";
 const LOCK_POLL_TIMEOUT_MS = 5_000;
 const REFUND_OPERATION_ID = "race-4324-approval-refund";
+/** #5220: the outbox label of another ask's invoice queued on the same change. */
+const OTHER_ASK_LABEL = "race-4324-other-ask";
 
 let prisma: PrismaClient;
 let observerClient: PrismaClient;
@@ -1131,8 +1133,8 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
             localModel: retired.localModel,
             localId: retired.localId,
             status: "WAITING_PAYMENT",
-            correlationKey: "race-4324-other-ask",
-            idempotencyKey: "race-4324-other-ask",
+            correlationKey: OTHER_ASK_LABEL,
+            idempotencyKey: OTHER_ASK_LABEL,
             requestPayload: { ...(retired.requestPayload as Record<string, unknown>), paymentIntentId: "pi_race_4324_other_ask", priceDiffCents: 9_000 },
           },
         });
