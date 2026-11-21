@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 
+import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 import { detectImageContentType, stripImageMetadata } from "@/lib/image-metadata";
 
 // #5244: an SVG is rebuilt from drawing elements and attributes; editor
@@ -95,6 +96,13 @@ describe("SVG hidden-data removal", () => {
     ["an external url() in an attribute", svgWith('<rect fill="url(https://example.test/p)"/>')],
     ["a CSS escape", svgWith("<style>.a{background:u\\72l(x)}</style>")],
     ["an unterminated CSS comment", svgWith("<style>.a{fill:red} /* Jane</style>")],
+    ["an @import split by a character reference", svgWith("<style>@imp&#111;rt u&#114;l(https://example.test/x.css);</style>")],
+    ["an @import split by XML comments", svgWith("<style>@imp<!-- x -->ort url(#a);</style>")],
+    ["an external url() split across CDATA sections", svgWith(
+      "<style><![CDATA[.a{fill:u]]><![CDATA[rl(https://example.test/t.png)}]]></style>",
+    )],
+    ["image-set() in CSS", svgWith("<style>.a{fill:image-set('file:///C:/Users/jane/a.png' 1x)}</style>")],
+    ["an element nested inside a style element", svgWith("<style>.a{fill:red}<rect/></style>")],
     ["an embedded SVG image", svgWith('<image href="data:image/svg+xml;base64,PHN2Zy8+"/>')],
     ["an embedded image that is not an image", svgWith('<image href="data:image/png;base64,bm90IGFuIGltYWdl"/>')],
     ["no svg root", "<html><body>not a drawing</body></html>"],
@@ -104,6 +112,22 @@ describe("SVG hidden-data removal", () => {
     const result = stripImageMetadata(bytes, "image/svg+xml");
     expect(result.ok).toBe(false);
     expect(result.bytes.equals(bytes)).toBe(true);
+  });
+
+  it("removes a CSS comment split by XML comments, checking the style text whole", () => {
+    const once = strip(svgWith("<style>.a{fill:red} /<!---->* Jane *<!---->/</style>"));
+    expect(once).not.toBeNull();
+    expect(once).not.toContain("Jane");
+    expect(strip(once!)).toBe(once);
+  });
+
+  it("refuses a long run of unclosed url( in linear time", () => {
+    // A backtracking pattern took minutes on a 2 MB upload, stalling the
+    // server for everyone.
+    const svg = svgWith(`<rect style="fill:${"url(".repeat(200_000)}"/>`);
+    const start = process.hrtime.bigint();
+    expect(stripImageMetadata(Buffer.from(svg), "image/svg+xml").ok).toBe(false);
+    expect(realElapsedMs(start)).toBeLessThan(1_000);
   });
 
   it("escapes markup smuggled into a style element instead of emitting it", () => {

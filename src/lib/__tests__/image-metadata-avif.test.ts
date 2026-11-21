@@ -67,6 +67,17 @@ describe("AVIF hidden-data removal", () => {
     expect(cleaned.toString("latin1", cleaned.length - 16, cleaned.length - 12)).toBe("free");
   });
 
+  it("replaces an unknown file-type brand, which could be any four letters", async () => {
+    const source = Buffer.from(await avifWithMetadata());
+    const lastBrand = source.readUInt32BE(0) - 4; // ftyp is first; its last brand
+    source.write("Jane", lastBrand, "latin1");
+
+    const cleaned = strip(source);
+
+    expect(cleaned.toString("latin1", lastBrand, lastBrand + 4)).toBe("mif1");
+    expect(strip(cleaned).equals(cleaned)).toBe(true);
+  });
+
   it.each([
     ["truncated", (avif: Buffer) => avif.subarray(0, avif.length - 50)],
     ["cut inside its first box", (avif: Buffer) => avif.subarray(0, 40)],

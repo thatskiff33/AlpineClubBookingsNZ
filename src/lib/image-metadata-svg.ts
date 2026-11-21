@@ -100,34 +100,41 @@ const NAMESPACE_VALUES: Record<string, string> = {
 };
 
 const LOCAL_REFERENCE = /^#[^\s()'"\\]+$/;
-const URL_FUNCTION = /url\s*\(\s*(['"]?)(.*?)\1\s*\)/gi;
-const EMBEDDED_IMAGE = /^data:image\/(?:png|jpeg|webp|gif);base64,([A-Za-z0-9+/=\s]+)$/i;
+// Any image type: the caller's cleaner decides which it accepts.
+const EMBEDDED_IMAGE = /^data:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/=\s]+)$/i;
 
 class UnconfirmedSvg extends Error {}
+
+/**
+ * Throws when a CSS or attribute value can reach outside the drawing: an
+ * escape (which can spell the rest in a form these checks miss), `@import`,
+ * `image-set()`, or a `url()` that is not an `#id`. A linear scan, so a long
+ * run of unclosed `url(` cannot stall the server.
+ */
+function assertNoOutsideReach(value: string): void {
+  if (value.includes("\\")) throw new UnconfirmedSvg("CSS escape");
+  if (/@import|image-set\s*\(/i.test(value)) throw new UnconfirmedSvg("CSS import");
+  const opener = /url\s*\(/gi;
+  for (let match = opener.exec(value); match; match = opener.exec(value)) {
+    const close = value.indexOf(")", opener.lastIndex);
+    if (close === -1) throw new UnconfirmedSvg("unterminated url()");
+    const target = value.slice(opener.lastIndex, close).trim().replace(/^(['"])(.*)\1$/, "$2");
+    if (!LOCAL_REFERENCE.test(target.trim())) throw new UnconfirmedSvg("external url()");
+    opener.lastIndex = close + 1;
+  }
+}
 
 /** CSS with comments removed, or a throw when it reaches outside the drawing. */
 function cleanCss(css: string): string {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
   if (withoutComments.includes("/*")) throw new UnconfirmedSvg("unterminated CSS comment");
-  // An escape can spell `url(` or `@import` in a form the checks below miss.
-  if (withoutComments.includes("\\")) throw new UnconfirmedSvg("CSS escape");
-  if (/@import/i.test(withoutComments)) throw new UnconfirmedSvg("CSS @import");
-  assertLocalUrls(withoutComments);
+  assertNoOutsideReach(withoutComments);
   return withoutComments;
-}
-
-function assertLocalUrls(value: string): void {
-  if (!/url\s*\(/i.test(value)) return;
-  const remainder = value.replace(URL_FUNCTION, (_match, _quote, target: string) => {
-    if (!LOCAL_REFERENCE.test(target.trim())) throw new UnconfirmedSvg("external url()");
-    return "";
-  });
-  if (/url\s*\(/i.test(remainder)) throw new UnconfirmedSvg("unparsed url()");
 }
 
 function cleanEmbeddedImage(value: string, cleanImage: EmbeddedImageCleaner): string {
   const match = EMBEDDED_IMAGE.exec(value.trim());
-  if (!match?.[1]) throw new UnconfirmedSvg("embedded image is not a raster data URI");
+  if (!match?.[1]) throw new UnconfirmedSvg("embedded image is not a base64 data URI");
   const cleaned = cleanImage(Buffer.from(match[1].replace(/\s+/g, ""), "base64"));
   if (!cleaned) throw new UnconfirmedSvg("embedded image could not be cleaned");
   return `data:${cleaned.contentType};base64,${cleaned.bytes.toString("base64")}`;
@@ -152,7 +159,7 @@ function cleanAttributes(
     } else if (name === "style") {
       cleaned[name] = cleanCss(value);
     } else {
-      assertLocalUrls(value);
+      assertNoOutsideReach(value);
       cleaned[name] = value;
     }
   }
@@ -203,21 +210,38 @@ function rebuildSvg(bytes: Buffer, cleanImage: EmbeddedImageCleaner): Buffer {
       }),
     },
     textFilter: (text, tagName) => {
-      if (tagName === "style" || tagName === STYLE_PLACEHOLDER) {
-        return guard("", () => cleanCss(text));
-      }
+      // Style text arrives in pieces (split at entities, comments and CDATA),
+      // so it is checked whole, per element, once the rebuild is done.
+      if (tagName === "style" || tagName === STYLE_PLACEHOLDER) return text;
       if (TEXT_ELEMENTS.has(tagName)) return text;
       return text.trim() === "" ? text : "";
     },
   });
 
   if (doubt) throw doubt;
-  const output = rebuilt
-    .replaceAll(`<${STYLE_PLACEHOLDER}`, "<style")
-    .replaceAll(`</${STYLE_PLACEHOLDER}>`, "</style>")
-    .trim();
+  const output = cleanStyleElements(rebuilt).trim();
   if (!/^<svg[\s>]/.test(output)) throw new UnconfirmedSvg("no <svg> root");
   return Buffer.from(output, "utf8");
+}
+
+/**
+ * Every `<style>` element's whole text run through `cleanCss`, and the
+ * placeholder renamed back. Text and attribute values are escaped, so a
+ * style element's body holds no `<` unless an element was nested inside it —
+ * which is refused rather than left unchecked.
+ */
+function cleanStyleElements(rebuilt: string): string {
+  const opened = rebuilt.split(`<${STYLE_PLACEHOLDER}`).length - 1;
+  let checked = 0;
+  const cleaned = rebuilt.replace(
+    new RegExp(`<${STYLE_PLACEHOLDER}([^>]*)>([^<]*)</${STYLE_PLACEHOLDER}>`, "g"),
+    (_element, attributes: string, css: string) => {
+      checked += 1;
+      return `<style${attributes}>${cleanCss(css)}</style>`;
+    },
+  );
+  if (checked !== opened) throw new UnconfirmedSvg("markup inside a style element");
+  return cleaned;
 }
 
 /**
@@ -229,7 +253,11 @@ export function stripSvgMetadata(
   cleanImage: EmbeddedImageCleaner,
 ): Buffer | null {
   try {
-    return rebuildSvg(bytes, cleanImage);
+    const cleaned = rebuildSvg(bytes, cleanImage);
+    // A clean drawing rebuilds to itself. Anything else means some input
+    // reshaped on the way through, so what was checked is not what is stored.
+    if (!rebuildSvg(cleaned, cleanImage).equals(cleaned)) return null;
+    return cleaned;
   } catch (error) {
     if (error instanceof UnconfirmedSvg) return null;
     throw error;

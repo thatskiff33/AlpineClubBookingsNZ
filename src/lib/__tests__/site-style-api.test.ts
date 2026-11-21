@@ -258,6 +258,25 @@ describe("site style admin API", () => {
     expect(mocks.clubThemeUpsert).not.toHaveBeenCalled();
   });
 
+  it("saves a colour change around a stored logo it would refuse, leaving the logo alone (#5244)", async () => {
+    // The wizard sends the whole theme back. A logo stored before cleaning
+    // existed is not cleaned again, so it neither blocks the save nor changes.
+    const legacy = "data:image/png;base64,AAAA";
+    mocks.clubThemeFindUnique.mockResolvedValue({ completedAt: null, logoDataUrl: legacy });
+
+    const response = await PUT(
+      request({
+        ...DEFAULT_CLUB_THEME_VALUES,
+        brandGold: "#123456",
+        logoUrl: null,
+        logoDataUrl: legacy,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.clubThemeUpsert.mock.calls[0][0].data.logoDataUrl).toBe(legacy);
+  });
+
   it("strips EXIF/GPS from an inlined logo before storing it (#2242)", async () => {
     // The inline column is the small hand-crafted/legacy escape hatch (new logos
     // go through POST /api/admin/site-style/logo, which re-encodes through sharp

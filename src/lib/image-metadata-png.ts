@@ -9,14 +9,27 @@ import { orientationOnlyExif, readExifOrientation } from "@/lib/image-metadata-e
  * be walked with confidence, and the caller refuses the upload.
  */
 
-const PNG_METADATA_CHUNKS = new Set(["tEXt", "zTXt", "iTXt", "eXIf", "tIME"]);
+/**
+ * The chunks that draw the picture: the four critical chunks, transparency,
+ * colour and pixel-size information, and animation (APNG). Everything else —
+ * text, EXIF, timestamps, Content Credentials (`caBX`), vendor chunks — is
+ * dropped, so a new metadata chunk is removed without being named here.
+ */
+const PNG_DRAWING_CHUNKS = new Set([
+  "IHDR", "PLTE", "IDAT", "IEND",
+  "tRNS", "gAMA", "cHRM", "sRGB", "iCCP", "sBIT", "bKGD", "pHYs",
+  "cICP", "mDCv", "cLLi",
+  "acTL", "fcTL", "fdAT",
+]);
+
+/** A chunk name starting upper-case is critical: a decoder cannot skip it. */
+const isCritical = (type: string) => /^[A-Z]/.test(type);
 
 /**
- * Remove text/EXIF/timestamp ancillary chunks from a PNG (eXIf can carry GPS),
- * keeping all critical and colour chunks; the first eXIf is replaced by one
- * holding only its Orientation. Fail-CLOSED: bytes come back only if
- * the chunk walk actually reaches an IEND chunk; a truncated chunk or a walk
- * that ends without IEND returns `null`.
+ * Keep only the chunks that draw a PNG, replacing the first eXIf with one
+ * holding only its Orientation. Fail-CLOSED: bytes come back only if the chunk
+ * walk reaches an IEND chunk; a truncated chunk, an unknown critical chunk or a
+ * walk that ends without IEND returns `null`.
  */
 export function stripPngMetadata(bytes: Buffer): Buffer | null {
   const SIG = 8;
@@ -29,8 +42,10 @@ export function stripPngMetadata(bytes: Buffer): Buffer | null {
     const type = bytes.toString("ascii", offset + 4, offset + 8);
     const chunkEnd = offset + 12 + len; // len(4) + type(4) + data(len) + crc(4)
     if (chunkEnd > bytes.length) return null; // truncated
-    if (!PNG_METADATA_CHUNKS.has(type)) {
+    if (PNG_DRAWING_CHUNKS.has(type)) {
       kept.push(bytes.subarray(offset, chunkEnd));
+    } else if (isCritical(type)) {
+      return null; // a chunk the picture needs but this does not know
     } else if (type === "eXIf" && !orientationWritten) {
       // Replaced in place by a chunk holding only the Orientation.
       orientationWritten = true;

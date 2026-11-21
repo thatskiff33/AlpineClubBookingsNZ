@@ -367,8 +367,8 @@ function confirmed(original: Buffer, cleaned: Buffer | null): StripImageResult {
  * Strip privacy-sensitive metadata (EXIF/GPS, XMP, comments, embedded text) from
  * an uploaded image before it is stored and potentially served publicly. Every
  * allowed type has a cleaner, so the switch is exhaustive (#5244):
- *  - JPEG, PNG and WebP drop their metadata segments and chunks, keeping only
- *    an EXIF Orientation (`@/lib/image-metadata-exif`);
+ *  - JPEG, PNG and WebP keep only the segments and chunks that draw the
+ *    picture, plus an EXIF Orientation (`@/lib/image-metadata-exif`);
  *  - GIF keeps only picture, frame-timing and looping blocks
  *    (`@/lib/image-metadata-gif`);
  *  - AVIF blanks every non-picture item, property and box in place

@@ -127,10 +127,10 @@ the Image Manager, member photos, the club logo and a configuration restore
 
 | Type | Removed | Kept |
 | --- | --- | --- |
-| JPEG, PNG, WebP | EXIF (GPS, camera, owner, dates), XMP, IPTC, comments and text chunks, extra pictures appended after the main one | The picture, its colour profile, and the EXIF rotation alone so portraits stay upright |
+| JPEG, PNG, WebP | Everything not needed to draw the picture: EXIF (GPS, camera, owner, dates), XMP, IPTC, Content Credentials, comments, text chunks, embedded thumbnails, extra pictures appended after the main one | The picture, its colour profile, any animation, and the EXIF rotation alone so portraits stay upright |
 | GIF | Comments, plain-text blocks, XMP and every other application block, anything after the end of the file | The frames, their timing and transparency, and the looping setting |
-| AVIF (still) | EXIF and XMP items, every non-picture property and box, the handler name | The picture, blanked in place so its bytes are unchanged |
-| SVG | Metadata, comments, `title` and `desc`, editor attributes and file paths, scripts, event handlers, outside links, text that is not part of the drawing | The drawing: shapes, gradients, clips, masks, patterns, filters, styles, drawn text, and embedded photos cleaned the same way |
+| AVIF (still) | EXIF and XMP items, every non-picture property and box, the handler name, data-reference paths, unknown brand names | The picture, blanked in place so its bytes are unchanged |
+| SVG | Metadata, comments, `title` and `desc`, editor attributes and file paths, scripts, event handlers, outside links, any text outside the drawing's text elements | The drawing: shapes, gradients, clips, masks, patterns, filters, styles, drawn text, and embedded photos cleaned the same way |
 
 An upload is **refused**, with a plain message asking for a fresh copy from an
 image editor, when the app cannot confirm it is clean: a damaged or truncated

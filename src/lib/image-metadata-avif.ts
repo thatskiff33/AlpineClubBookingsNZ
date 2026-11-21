@@ -17,7 +17,9 @@
  *    item entry (its name, MIME type, encoding) is zeroed;
  *  - every byte of `mdat` and `idat` that no picture item points at is zeroed,
  *    which is where the EXIF and XMP payloads themselves lived;
- *  - the handler's name string is zeroed.
+ *  - the handler's name string, any data-reference location (a file path) and
+ *    the file type's minor version are zeroed, and an unknown brand is
+ *    replaced by `mif1`.
  *
  * Lossless, and a second pass returns identical bytes.
  *
@@ -38,6 +40,11 @@ const PROPERTIES_KEPT = new Set([
   "a1op", "a1lx", "lsel", "clli", "mdcv", "cclv", "amve",
 ]);
 const ANIMATION_BOXES = new Set(["moov", "moof"]);
+// File-type brands an AVIF declares; any other four letters could be text.
+const KNOWN_BRANDS = new Set([
+  "avif", "avis", "avio", "mif1", "mif2", "mif3", "miaf", "MA1A", "MA1B",
+  "msf1", "iso8", "heic", "heix", "tmap",
+]);
 
 export type AvifStripOutcome =
   | { ok: true; bytes: Buffer }
@@ -92,6 +99,36 @@ function zeroOutside(bytes: Buffer, start: number, end: number, kept: Range[]): 
     cursor = Math.max(cursor, to);
   }
   if (cursor < end) bytes.fill(0, cursor, end);
+}
+
+/** The file-type box with its minor version zeroed and unknown brands replaced. */
+function scrubFileType(bytes: Buffer, ftyp: Box): void {
+  const length = ftyp.end - ftyp.body;
+  if (length < 8 || length % 4 !== 0) throw new MalformedAvif("file type size");
+  bytes.writeUInt32BE(0, ftyp.body + 4); // minor version
+  for (let at = ftyp.body + 8; at < ftyp.end; at += 4) {
+    if (!KNOWN_BRANDS.has(bytes.toString("latin1", at, at + 4))) bytes.write("mif1", at, "latin1");
+  }
+}
+
+/**
+ * The data-reference box with every location string zeroed and each entry
+ * marked "in this file". Item extents must use reference 0 (this file), so no
+ * entry is ever followed; what is zeroed is only text, such as a file path.
+ */
+function scrubDataInformation(bytes: Buffer, dinf: Box): void {
+  for (const child of childBoxes(bytes, dinf.body, dinf.end)) {
+    if (child.type !== "dref") {
+      blank(bytes, child);
+      continue;
+    }
+    for (const entry of childBoxes(bytes, child.body + 8, child.end)) {
+      if (entry.type !== "url " && entry.type !== "urn ") throw new MalformedAvif("data entry type");
+      if (entry.body + 4 > entry.end) throw new MalformedAvif("truncated data entry");
+      bytes[entry.body + 3] = byteAt(bytes, entry.body + 3, entry.end) | 0x01;
+      bytes.fill(0, entry.body + 4, entry.end);
+    }
+  }
 }
 
 /** Item ids mapped to whether the item is a picture; non-picture items blanked. */
@@ -165,8 +202,10 @@ function pictureExtents(
 function scrubAvif(source: Buffer): Buffer {
   const bytes = Buffer.from(source);
   const top = childBoxes(bytes, 0, bytes.length);
-  if (top[0]?.type !== "ftyp") throw new MalformedAvif("no ftyp");
+  const ftyp = top[0];
+  if (ftyp?.type !== "ftyp") throw new MalformedAvif("no ftyp");
   if (top.some((box) => ANIMATION_BOXES.has(box.type))) throw new AnimatedAvif("animated");
+  scrubFileType(bytes, ftyp);
   const metas = top.filter((box) => box.type === "meta");
   const meta = metas[0];
   if (!meta || metas.length !== 1) throw new MalformedAvif("meta count");
@@ -183,6 +222,8 @@ function scrubAvif(source: Buffer): Buffer {
         throw new MalformedAvif("handler");
       }
       bytes.fill(0, child.body + 24, child.end); // handler name
+    } else if (child.type === "dinf") {
+      scrubDataInformation(bytes, child);
     } else if (child.type === "iinf") {
       if (pictures) throw new MalformedAvif("second item list");
       pictures = scrubItemInfo(bytes, child);

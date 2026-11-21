@@ -16,7 +16,6 @@ import {
 } from "@/lib/image-derivatives";
 import { readCappedMultipartFormData } from "@/lib/capped-multipart";
 import {
-  IMAGE_NOT_CLEAN_MESSAGE,
   cleanImageForStorage,
   detectImageContentType,
 } from "@/lib/media-image";
@@ -176,9 +175,10 @@ export async function POST(request: NextRequest) {
       // named `.png`), and an image that cannot be confirmed clean are refused
       // per file (#5244); the rest of the batch carries on.
       const sniffed = detectImageContentType(buffer);
-      const cleaned = sniffed && ALLOWED_IMAGE_MIME.has(sniffed)
-        ? cleanImageForStorage(buffer, sniffed)
-        : { ok: false as const, message: IMAGE_NOT_CLEAN_MESSAGE };
+      const cleaned = cleanImageForStorage(
+        buffer,
+        sniffed && ALLOWED_IMAGE_MIME.has(sniffed) ? sniffed : null,
+      );
       if (!cleaned.ok) {
         results.push({ filename: file.name, ok: false, error: cleaned.message });
         continue;

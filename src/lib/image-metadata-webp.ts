@@ -12,14 +12,72 @@ import {
  * be walked with confidence, and the caller refuses the upload.
  */
 
+/** Top-level chunks that draw the picture; `ANMF` frames are rebuilt below. */
+const WEBP_DRAWING_CHUNKS = new Set(["VP8 ", "VP8L", "VP8X", "ALPH", "ANIM", "ICCP"]);
+/** What an animation frame (`ANMF`) may hold after its 16-byte header. */
+const WEBP_FRAME_CHUNKS = new Set(["ALPH", "VP8 ", "VP8L"]);
+const ANMF_HEADER_BYTES = 16;
+
+type Chunk = { fourCC: string; start: number; data: number; size: number; end: number };
+
 /**
- * Remove XMP chunks from a WebP RIFF container, replace the first EXIF chunk by
- * one holding only its Orientation (dropping it when there is none), set the
+ * The RIFF chunks in [start, end), or `null` when one overruns. A final
+ * odd-sized chunk may omit its pad byte when it ends exactly at `end`.
+ */
+function riffChunks(bytes: Buffer, start: number, end: number): Chunk[] | null {
+  const chunks: Chunk[] = [];
+  let offset = start;
+  while (offset + 8 <= end) {
+    const size = bytes.readUInt32LE(offset + 4);
+    let chunkEnd = offset + 8 + size + (size % 2);
+    if (chunkEnd > end) {
+      if (offset + 8 + size !== end) return null;
+      chunkEnd = end;
+    }
+    chunks.push({
+      fourCC: bytes.toString("ascii", offset, offset + 4),
+      start: offset,
+      data: offset + 8,
+      size,
+      end: chunkEnd,
+    });
+    offset = chunkEnd;
+  }
+  return chunks;
+}
+
+function riffChunk(fourCC: string, data: Buffer): Buffer {
+  const chunk = Buffer.alloc(8 + data.length + (data.length % 2));
+  chunk.write(fourCC, 0, "ascii");
+  chunk.writeUInt32LE(data.length, 4);
+  data.copy(chunk, 8);
+  return chunk;
+}
+
+/** An animation frame holding only its header and drawing chunks. */
+function cleanFrame(bytes: Buffer, frame: Chunk): Buffer | null {
+  const body = frame.data + ANMF_HEADER_BYTES;
+  const dataEnd = frame.data + frame.size;
+  if (body > dataEnd) return null;
+  const inner = riffChunks(bytes, body, dataEnd);
+  if (!inner) return null;
+  const kept = inner.filter((chunk) => WEBP_FRAME_CHUNKS.has(chunk.fourCC));
+  if (kept.length === inner.length) return bytes.subarray(frame.start, frame.end);
+  return riffChunk("ANMF", Buffer.concat([
+    bytes.subarray(frame.data, body),
+    ...kept.map((chunk) => bytes.subarray(chunk.start, chunk.end)),
+  ]));
+}
+
+/**
+ * Keep only the chunks that draw a WebP — dropping XMP, Content Credentials
+ * and any other metadata chunk without naming it — replace the first EXIF chunk
+ * by one holding only its Orientation (dropping it when there is none), set the
  * matching VP8X metadata flag bits and recompute the RIFF size. Fail-CLOSED:
  * bytes come back when the chunk walk completes cleanly to EOF — including the
  * "nothing to strip" case (the input is returned as is) and the legitimate
- * final-odd-pad case. A malformed
- * non-final-chunk overrun (or a bad RIFF/WEBP header) returns `null`.
+ * final-odd-pad case. A malformed chunk overrun (or a bad RIFF/WEBP header)
+ * returns `null`.
  */
 export function stripWebpMetadata(bytes: Buffer): Buffer | null {
   if (
@@ -29,48 +87,30 @@ export function stripWebpMetadata(bytes: Buffer): Buffer | null {
   ) {
     return null;
   }
+  const chunks = riffChunks(bytes, 12, bytes.length);
+  if (!chunks) return null;
   const kept: Buffer[] = [];
   let vp8xIndex: number | null = null;
   let orientation: number | null = null;
   let exifSeen = false;
-  let offset = 12;
-  while (offset + 8 <= bytes.length) {
-    const fourCC = bytes.toString("ascii", offset, offset + 4);
-    const size = bytes.readUInt32LE(offset + 4);
-    const padded = size + (size % 2);
-    let chunkEnd = offset + 8 + padded;
-    if (chunkEnd > bytes.length) {
-      // A final odd-sized chunk may omit its RIFF pad byte. Accept that exact
-      // case (the unpadded end lands on EOF) so a trailing EXIF/XMP chunk is
-      // still stripped rather than the whole file being left untouched;
-      // anything else is genuinely malformed → reject.
-      if (offset + 8 + size === bytes.length) {
-        chunkEnd = bytes.length;
-      } else {
-        return null;
-      }
-    }
-    if (fourCC === "EXIF") {
+  for (const chunk of chunks) {
+    if (chunk.fourCC === "EXIF") {
       // Replaced in place by a chunk holding only the Orientation. Some
       // writers prefix the TIFF data with JPEG's "Exif\0\0".
-      if (!exifSeen) {
-        exifSeen = true;
-        let tiff = bytes.subarray(offset + 8, offset + 8 + size);
-        if (tiff.toString("latin1", 0, 6) === EXIF_APP1_PREFIX) tiff = tiff.subarray(6);
-        orientation = readExifOrientation(tiff);
-        if (orientation !== null) {
-          const data = orientationOnlyExif(orientation); // even length: no pad
-          const header = Buffer.alloc(8);
-          header.write("EXIF", 0, "ascii");
-          header.writeUInt32LE(data.length, 4);
-          kept.push(header, data);
-        }
-      }
-    } else if (fourCC !== "XMP ") {
-      if (fourCC === "VP8X" && chunkEnd - offset > 8) vp8xIndex = kept.length;
-      kept.push(bytes.subarray(offset, chunkEnd));
+      if (exifSeen) continue;
+      exifSeen = true;
+      let tiff = bytes.subarray(chunk.data, chunk.data + chunk.size);
+      if (tiff.toString("latin1", 0, 6) === EXIF_APP1_PREFIX) tiff = tiff.subarray(6);
+      orientation = readExifOrientation(tiff);
+      if (orientation !== null) kept.push(riffChunk("EXIF", orientationOnlyExif(orientation)));
+    } else if (chunk.fourCC === "ANMF") {
+      const frame = cleanFrame(bytes, chunk);
+      if (!frame) return null;
+      kept.push(frame);
+    } else if (WEBP_DRAWING_CHUNKS.has(chunk.fourCC)) {
+      if (chunk.fourCC === "VP8X" && chunk.end - chunk.start > 8) vp8xIndex = kept.length;
+      kept.push(bytes.subarray(chunk.start, chunk.end));
     }
-    offset = chunkEnd;
   }
   if (vp8xIndex !== null) {
     // The VP8X flags byte says which metadata chunks follow: XMP (0x04) never

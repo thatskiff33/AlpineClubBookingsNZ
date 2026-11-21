@@ -1548,13 +1548,19 @@ types had no cleaner, and four of the five storing paths stored an unconfirmed
 image anyway.
 
 - **Every allowed type now has a cleaner**, each lossless and byte-identical on
-  a second pass: JPEG, PNG and WebP drop every metadata segment or chunk but
-  keep an orientation-only EXIF (dropping it turned phone portraits sideways);
+  a second pass, and each a keep-list rather than a deny-list, so a metadata
+  block nobody has named (Content Credentials, a vendor chunk) is dropped
+  anyway: JPEG keeps only structural segments, a rebuilt JFIF without its
+  thumbnail, Adobe and ICC, and refuses reserved markers; PNG and WebP keep
+  only the chunks that draw the picture (WebP animation frames are walked
+  too) and refuse an unknown critical PNG chunk; all three keep an
+  orientation-only EXIF (dropping it turned phone portraits sideways);
   GIF keeps only image, graphic-control and looping (`NETSCAPE2.0`) blocks,
   rebuilt from their defined fields so nothing rides in extra sub-blocks;
   a still AVIF has every non-picture item (`Exif`, XMP `mime`), property and
   top-level box retyped `free` and zeroed in place, with every `mdat`/`idat`
-  byte outside a picture item's extents zeroed; SVG is rebuilt by
+  byte outside a picture item's extents zeroed, data-reference location
+  strings zeroed and unknown file-type brands replaced; SVG is rebuilt by
   `sanitize-html` from an allow-list of drawing elements and attributes, with
   `script`, `metadata`, `title`, `desc` and `foreignObject` removed with their
   contents, references narrowed to `#id`, and embedded raster images cleaned
@@ -1568,10 +1574,19 @@ image anyway.
   fill-byte false refusal that once justified failing open is fixed. An animated
   AVIF is refused with its own message. The image manager also refuses bytes
   that sniff as no image, or as SVG, whatever the declared type.
-- **SVG fails closed on reach, not just on parse**: CSS `@import`, a CSS escape,
-  an unterminated CSS comment, a `url()` that is not `#id`, an embedded image
-  that cannot be cleaned, bytes that are not UTF-8, or output without an `<svg`
-  root all refuse the file.
+- **SVG fails closed on reach, not just on parse**: CSS `@import`,
+  `image-set()`, a CSS escape, an unterminated CSS comment, a `url()` that is
+  not `#id`, markup nested in a `<style>`, an embedded image that cannot be
+  cleaned, bytes that are not UTF-8, output without an `<svg` root, or output
+  that does not rebuild to itself all refuse the file. Each `<style>` body is
+  checked whole after the rebuild, because the parser hands its text over in
+  pieces split at character references, comments and CDATA; the `url()` scan is
+  linear, so an upload cannot stall the server with unclosed `url(` runs.
+  Text inside the drawing's own `text` elements is kept, even where it is
+  hidden or only referenced from `defs`.
+- **An inline logo already stored is not re-cleaned** on a site-style save that
+  sends it back unchanged, so a legacy logo neither blocks a colour change nor
+  is rewritten.
 - **`/api/images/[id]` adds `sandbox` to its CSP**:
   `default-src 'none'; style-src 'unsafe-inline'; sandbox`, with `nosniff` and
   `Content-Disposition: inline` as before. Opened directly as a document, an SVG

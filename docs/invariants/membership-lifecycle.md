@@ -715,10 +715,12 @@ comments, editor and embedded text — on every path that stores image bytes:
 the member-photo upload, the admin image library, the image manager's batch
 upload into `public/images`, the config-transfer bundle import, and the inline
 club logo on `ClubTheme.logoDataUrl` (the site-style save and the bundle
-import). Every allowed type has a cleaner (#5244): JPEG, PNG and WebP keep only
-an EXIF Orientation; GIF keeps only picture, timing and looping blocks; a still
-AVIF has every non-picture item, property and box blanked in place; SVG is
-rebuilt from an allow-list of drawing elements and attributes.
+import). Every allowed type has a keep-list cleaner (#5244): JPEG, PNG and
+WebP keep only what draws the picture plus an EXIF Orientation; GIF keeps only
+picture, timing and looping blocks; a still AVIF has every non-picture item,
+property and box blanked in place; SVG is rebuilt from an allow-list of drawing
+elements and attributes. An unchanged inline logo resent by a site-style save
+is not re-cleaned.
 
 Every path fails **closed** through `cleanImageForStorage` /
 `storableLogoDataUrl`: an image that cannot be confirmed clean (malformed,

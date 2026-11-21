@@ -707,6 +707,87 @@ describe("stripImageMetadata", () => {
     },
   );
 
+  // Keep-lists, not deny-lists: a metadata chunk nobody has named yet, such as
+  // Content Credentials (C2PA), is removed without being listed.
+  it("drops an unlisted PNG metadata chunk and refuses an unknown critical one", () => {
+    const ihdr = Buffer.from([0, 0, 0, 4, 0, 0, 0, 4, 8, 2, 0, 0, 0]);
+    const png = (extra: Buffer) => Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk("IHDR", ihdr),
+      extra,
+      pngChunk("IDAT", Buffer.from([0x00])),
+      pngChunk("IEND", Buffer.alloc(0)),
+    ]);
+
+    const credentials = stripImageMetadata(png(pngChunk("caBX", Buffer.from(SECRET))), "image/png");
+    expect(credentials.ok).toBe(true);
+    expect(credentials.bytes.includes(Buffer.from(SECRET))).toBe(false);
+    expect(stripImageMetadata(png(pngChunk("ZZZZ", Buffer.from("x"))), "image/png").ok).toBe(false);
+  });
+
+  it("drops an unlisted WebP chunk, at the top level and inside an animation frame", async () => {
+    const frame = (colour: string) =>
+      sharp({ create: { width: 8, height: 8, channels: 3, background: colour } }).raw().toBuffer();
+    const animated = await sharp(Buffer.concat([await frame("red"), await frame("blue")]), {
+      raw: { width: 8, height: 16, channels: 3, pageHeight: 8 },
+    }).webp({ loop: 0, delay: [100, 100] }).toBuffer();
+    // A C2PA chunk at the top level, and an unknown chunk inside the first frame.
+    const anmf = animated.indexOf("ANMF", 12, "ascii");
+    const size = animated.readUInt32LE(anmf + 4);
+    const smuggled = webpChunk("XYZW", Buffer.from(SECRET));
+    const grownFrame = Buffer.concat([
+      Buffer.from("ANMF", "ascii"),
+      Buffer.alloc(4),
+      animated.subarray(anmf + 8, anmf + 8 + size),
+      smuggled,
+    ]);
+    grownFrame.writeUInt32LE(size + smuggled.length, 4);
+    const body = Buffer.concat([
+      animated.subarray(12, anmf),
+      grownFrame,
+      animated.subarray(anmf + 8 + size),
+      webpChunk("C2PA", Buffer.from(`author=${SECRET}`)),
+    ]);
+    const header = Buffer.from("RIFF\0\0\0\0WEBP", "latin1");
+    header.writeUInt32LE(4 + body.length, 4);
+
+    const result = stripImageMetadata(Buffer.concat([header, body]), "image/webp");
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes.includes(Buffer.from(SECRET))).toBe(false);
+    expect(result.bytes.equals(animated)).toBe(true);
+    expect((await sharp(result.bytes, { animated: true }).metadata()).pages).toBe(2);
+  });
+
+  it("rebuilds JFIF without its thumbnail and refuses a reserved marker", () => {
+    const thumbnail = Buffer.concat([
+      Buffer.from("JFIF\0\x01\x01\x00\x00\x01\x00\x01\x02\x01", "latin1"),
+      Buffer.from(SECRET.slice(0, 6), "latin1"), // a 2x1 RGB thumbnail
+    ]);
+    const jpeg = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0xe0, thumbnail),
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+
+    const result = stripImageMetadata(jpeg, "image/jpeg");
+
+    expect(result.ok).toBe(true);
+    expect(result.bytes.includes(Buffer.from(SECRET.slice(0, 6), "latin1"))).toBe(false);
+    expect(result.bytes.subarray(2, 20)).toEqual(Buffer.concat([
+      Buffer.from([0xff, 0xe0, 0x00, 0x10]),
+      Buffer.from("JFIF\0\x01\x01\x00\x00\x01\x00\x01\x00\x00", "latin1"),
+    ]));
+    const reserved = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      jpegAppSegment(0xf7, Buffer.from(SECRET)),
+      JPEG_SOF0,
+      JPEG_SOS_EOI,
+    ]);
+    expect(stripImageMetadata(reserved, "image/jpeg").ok).toBe(false);
+  });
+
   it("covers every allowed content type and refuses garbage for each", () => {
     // A new entry in ALLOWED_MEDIA_IMAGE_CONTENT_TYPES must get a cleaner (the
     // switch is exhaustive); garbage is never reported clean, never thrown.

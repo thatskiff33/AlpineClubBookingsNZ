@@ -353,6 +353,8 @@ export async function POST(
     return NextResponse.json({ error: cleaned.message }, { status: 400 });
   }
   const storedBytes = cleaned.bytes;
+  // Recorded from the bytes actually stored, as `cleanImageForStorage` requires.
+  const storedDimensions = extractImageDimensions(storedBytes, detected);
 
   const now = new Date();
 
@@ -388,8 +390,8 @@ export async function POST(
         contentType: detected,
         byteSize: storedBytes.length,
         data: new Uint8Array(storedBytes),
-        width: dimensions?.width ?? null,
-        height: dimensions?.height ?? null,
+        width: storedDimensions?.width ?? null,
+        height: storedDimensions?.height ?? null,
         uploadedByMemberId: actor.actorId,
         kind: "MEMBER_PHOTO",
       },

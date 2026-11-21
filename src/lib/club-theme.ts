@@ -63,7 +63,7 @@ export class UncleanLogoError extends Error {
 export async function saveClubTheme(input: ClubThemeUpdateInput) {
   const existing = await prisma.clubTheme.findUnique({
     where: { id: CLUB_THEME_ID },
-    select: { completedAt: true },
+    select: { completedAt: true, logoDataUrl: true },
   });
   const completedAt = input.completeSetup
     ? (existing?.completedAt ?? new Date())
@@ -87,10 +87,15 @@ export async function saveClubTheme(input: ClubThemeUpdateInput) {
   // photo carrying GPS. Fail-closed like every image path (#5244): a logo that
   // cannot be confirmed clean is refused and the route shows the message.
   // Stripping only ever shrinks the value, so the route's 64KB write budget and
-  // the schema's 900KB read bound both still hold, and a byte-identical result
-  // is returned verbatim so an untouched logo does not churn on every colour
-  // change.
-  const cleanedLogo = storableLogoDataUrl(logoFields.logoDataUrl);
+  // the schema's 900KB read bound both still hold. The logo already stored is
+  // not cleaned again: the wizard sends the whole theme back on every save, and
+  // stored images are left as they are (#5244), so a legacy logo neither churns
+  // nor blocks a colour change.
+  const logoUnchanged =
+    logoFields.logoDataUrl !== null && logoFields.logoDataUrl === existing?.logoDataUrl;
+  const cleanedLogo = logoUnchanged
+    ? { ok: true as const, value: logoFields.logoDataUrl }
+    : storableLogoDataUrl(logoFields.logoDataUrl);
   if (!cleanedLogo.ok) throw new UncleanLogoError(cleanedLogo.message);
   const storedLogoFields = { ...logoFields, logoDataUrl: cleanedLogo.value };
 
