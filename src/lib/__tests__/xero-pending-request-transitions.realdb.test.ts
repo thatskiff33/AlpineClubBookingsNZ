@@ -120,7 +120,7 @@ let sequence = 0;
         const row = await seed({ queueType: "REFUND_CREDIT_NOTE", status: "FAILED", requestPayload: EXECUTION_REQUEST });
         await pending.returnOutboxRowToPending({ operationId: row.id, where: GUARD, data: CLEARED, request: { keep: true, fallback: QUEUED_NOTE } });
         // The next pass claims the layered request; the handler saves a fresh execution request with new figures, and is refused again.
-        const firstGiveBack = (await claimable(row.id)).requestPayload as Prisma.InputJsonObject;
+        const firstGiveBack = (await claimable(row.id)).requestPayload as Prisma.JsonObject;
         expect(firstGiveBack).toMatchObject({ creditNotes: [{ total: 50 }], allocation: { amount: 50 } });
         const secondAttempt = { creditNotes: [{ total: 30 }], allocation: { invoiceId: "inv-y", amount: 30 } };
         await prisma.xeroSyncOperation.update({ where: { id: row.id }, data: { status: "FAILED", requestPayload: secondAttempt } });
