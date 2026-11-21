@@ -18,7 +18,6 @@ import {
   planCombinedGroupInvoice,
   planReplayedCombinedGroupInvoice,
   type CombinedGroupInvoicePlan,
-  type LiveInvoiceCoverage,
 } from "./combined-group-invoice-plan";
 import { confirmBilledPrimaryInvoice } from "./primary-invoice-plan";
 import { readLiveInvoiceCoverage, releaseExportCoverage, writeExportManifest } from "./store";
@@ -69,7 +68,7 @@ async function readChildren(db: Db, bookingIds: readonly string[]) {
   for (const leg of children.flatMap((child) => child.postedLegs)) {
     if (leg.chargeIdentity !== null) components.set(`${leg.account}\u0000${leg.chargeIdentity}`, { account: leg.account, chargeIdentity: leg.chargeIdentity });
   }
-  const liveCoverage: LiveInvoiceCoverage[] = await readLiveInvoiceCoverage(db, [...components.values()]);
+  const liveCoverage = await readLiveInvoiceCoverage(db, [...components.values()]);
   return { children, liveCoverage };
 }
 
@@ -111,8 +110,14 @@ export async function recordCombinedGroupInvoiceManifest(
       ? source.lines.byChild.map((child) => child.bookingId)
       : (await prisma.booking.findMany({ where: committedGroupChildrenWhere(organiserBookingId), orderBy: { id: "asc" }, select: { id: true } }))
         .map((child) => child.id);
-    const { plan, result } = await prisma.$transaction(async (tx) => {
+    const recorded = await prisma.$transaction(async (tx) => {
       const { children, liveCoverage } = await readChildren(tx, childIds);
+      // An earlier invoice of this same settlement (an abandoned attempt whose
+      // void has not run yet) still covers a child: record nothing now. Its
+      // void's release retries this invoice, so the replacement is never left
+      // a permanent ALREADY_COVERED for a cover that was always going to end.
+      if (liveCoverage.some((live) => live.documentRole === "COMBINED_GROUP_INVOICE" && live.settlementId === settlementId
+        && live.providerInvoiceId !== providerInvoiceId)) return null;
       let planned: CombinedGroupInvoicePlan;
       if (source.kind === "BUILT") {
         const legs = new Map(children.map((child) => [child.bookingId, child.postedLegs]));
@@ -148,6 +153,11 @@ export async function recordCombinedGroupInvoiceManifest(
       });
       return { plan: planned, result: written };
     });
+    if (!recorded) {
+      logger.info(context, "The combined group invoice waits for its settlement's earlier invoice to be voided; that void records it");
+      return;
+    }
+    const { plan, result } = recorded;
     if (plan.outcome === "CONFLICT" && result === "WRITTEN") {
       logger.warn({ ...context, reason: plan.reason, problem: plan.problem }, "The combined group invoice's lines do not match the journal; its manifest records a conflict and the invoice still sent");
     }

@@ -539,21 +539,25 @@ async function nextCoverageGeneration(db: Db, role: MemberMoneyExportDocumentRol
 
 /**
  * The whole components of `components` an invoice-family document still covers
- * (no release on its manifest), by `account` and `chargeIdentity`. What a combined
- * group invoice checks before it claims a child's components (ALP-437).
+ * (no release on its manifest), by `account` and `chargeIdentity`, with the
+ * covering manifest's role, settlement and provider invoice. What a combined group invoice checks
+ * before it claims a child's components (ALP-437).
  */
 export async function readLiveInvoiceCoverage(
   db: Db,
   components: ReadonlyArray<{ account: MemberMoneyAccount; chargeIdentity: string }>,
-): Promise<{ account: MemberMoneyAccount; chargeIdentity: string; documentRole: MemberMoneyExportDocumentRole }[]> {
+): Promise<{
+  account: MemberMoneyAccount; chargeIdentity: string; documentRole: MemberMoneyExportDocumentRole; settlementId: string | null; providerInvoiceId: string;
+}[]> {
   if (components.length === 0) return [];
-  return db.memberMoneyExportCoverage.findMany({
+  const rows = await db.memberMoneyExportCoverage.findMany({
     where: {
       documentRole: { in: [...INVOICE_COVERAGE_ROLES] }, sliceKey: "", manifest: { release: { is: null } },
       OR: components.map((c) => ({ account: c.account, chargeIdentity: c.chargeIdentity })),
     },
-    select: { account: true, chargeIdentity: true, documentRole: true },
+    select: { account: true, chargeIdentity: true, documentRole: true, manifest: { select: { settlementId: true, providerInvoiceId: true } } },
   });
+  return rows.map(({ manifest, ...row }) => ({ ...row, ...manifest }));
 }
 
 /**

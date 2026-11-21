@@ -708,7 +708,10 @@ never both live-cover one component (a partial unique index). Coverage ends
 only by an insert-only `MemberMoneyExportCoverageRelease` row, written when
 Xero holds the invoice void or holds no such invoice, never when it carries
 money; the next document then covers the component at the next coverage
-generation.
+generation. A replacement invoice whose settlement's earlier invoice still
+covers a child records nothing until that earlier invoice's release, which
+records it; one carrying money keeps its cover, and the replacement stays
+unrecorded.
 
 | Rendered object | Ledger slice and coverage rule |
 | --- | --- |

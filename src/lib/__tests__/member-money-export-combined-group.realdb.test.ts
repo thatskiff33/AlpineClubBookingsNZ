@@ -104,7 +104,8 @@ async function generations(chargeIdentity: string) {
     expect(rows).toEqual([{ bookingId: ids.organiser, settlementId: ids.settlementId }]);
     expect(await generations(stayOf(ids.child))).toEqual([{ documentRole: "COMBINED_GROUP_INVOICE", coverageGeneration: 0 }]);
     await expect(appPrisma.$transaction((tx) => readLiveInvoiceCoverage(tx, [{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(ids.child) }])))
-      .resolves.toEqual([{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(ids.child), documentRole: "COMBINED_GROUP_INVOICE" }]);
+      .resolves.toEqual([{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(ids.child), documentRole: "COMBINED_GROUP_INVOICE",
+        settlementId: ids.settlementId, providerInvoiceId: combined(ids, 0).providerInvoiceId }]);
   });
 
   it("names a settlement on a combined manifest and on no other", async () => {
@@ -150,7 +151,8 @@ async function generations(chargeIdentity: string) {
       { documentRole: "PRIMARY_BOOKING_INVOICE", coverageGeneration: 2 },
     ]);
     await expect(appPrisma.$transaction((tx) => readLiveInvoiceCoverage(tx, [{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(ids.child) }])))
-      .resolves.toEqual([{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(ids.child), documentRole: "PRIMARY_BOOKING_INVOICE" }]);
+      .resolves.toEqual([{ account: "BOOKING_REVENUE", chargeIdentity: stayOf(ids.child), documentRole: "PRIMARY_BOOKING_INVOICE",
+        settlementId: null, providerInvoiceId: `INV-${ids.child}` }]);
   });
 
   it("refuses a generation whose predecessor is unreleased or missing, at commit", async () => {

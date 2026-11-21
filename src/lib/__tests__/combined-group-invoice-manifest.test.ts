@@ -122,11 +122,22 @@ describe("recordCombinedGroupInvoiceManifest (#4525, ALP-437)", () => {
 
   it("records ALREADY_COVERED when another invoice still covers a child's stay", async () => {
     mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([
-      { account: "BOOKING_REVENUE", chargeIdentity: "booking:child-a:charge", documentRole: "PRIMARY_BOOKING_INVOICE" },
+      { account: "BOOKING_REVENUE", chargeIdentity: "booking:child-a:charge", documentRole: "PRIMARY_BOOKING_INVOICE",
+        manifest: { settlementId: null, providerInvoiceId: "inv-child-a" } },
     ]);
     await recordCombinedGroupInvoiceManifest(built(), target);
     expect(manifestRow()).toMatchObject({ outcome: "CONFLICT", reason: "ALREADY_COVERED" });
     expect(mocks.tx.memberMoneyExportCoverage.createMany).not.toHaveBeenCalled();
+  });
+
+  it("records nothing while an earlier invoice of the same settlement still covers a child, so its void's release records it", async () => {
+    mocks.tx.memberMoneyExportCoverage.findMany.mockResolvedValue([
+      { account: "BOOKING_REVENUE", chargeIdentity: "booking:child-a:charge", documentRole: "COMBINED_GROUP_INVOICE",
+        manifest: { settlementId: "settle-1", providerInvoiceId: "inv-0" } },
+    ]);
+    await recordCombinedGroupInvoiceManifest(built(), target);
+    expect(mocks.tx.memberMoneyExportManifest.createMany).not.toHaveBeenCalled();
+    expect(mocks.logger.error).not.toHaveBeenCalled();
   });
 
   it("holds the plan to the lines Xero says the invoice bills", async () => {
