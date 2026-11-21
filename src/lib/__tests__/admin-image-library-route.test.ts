@@ -36,19 +36,15 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { GET, POST } from "@/app/api/admin/image-library/route";
+import { pngBytes } from "@/lib/__tests__/helpers/png-fixture";
+import { IMAGE_NOT_CLEAN_MESSAGE } from "@/lib/image-metadata";
 
 const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 const memberSession = { user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } };
 
-const PNG_BYTES = (() => {
-  const buf = Buffer.alloc(33);
-  buf.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-  buf.writeUInt32BE(13, 8);
-  buf.write("IHDR", 12, "ascii");
-  buf.writeUInt32BE(64, 16);
-  buf.writeUInt32BE(32, 20);
-  return buf;
-})();
+// A structurally complete PNG, so the metadata strip can confirm it clean
+// (#5244: an unconfirmed image is refused).
+const PNG_BYTES = pngBytes({ width: 64, height: 32 });
 
 // The GPS payload carried in the EXIF fixtures below, so a test can assert it is
 // present in the raw upload and absent from the bytes actually stored.
@@ -58,7 +54,7 @@ const GPS_MARKER = Buffer.from("GPS:-41.29,174.78", "latin1");
  * A JPEG carrying an APP1 EXIF/GPS segment. `withEoi` decides whether it ends
  * with a primary EOI (FF D9): with one, the fail-closed parser reaches its clean
  * exit and the strip is CONFIRMED; without one, the strip is unconfirmed and
- * this route's fail-open policy stores the original.
+ * the upload is refused (#5244).
  */
 function exifJpeg(withEoi: boolean): Buffer {
   const soi = Buffer.from([0xff, 0xd8]);
@@ -380,30 +376,35 @@ describe("POST /api/admin/image-library", () => {
     expect(data.byteSize).toBe(stored.length);
   });
 
-  it("FAILS OPEN: still stores an image whose strip could not be confirmed", async () => {
-    // Deliberately unlike the fail-CLOSED member-photo route: the image library
-    // is the admin's general content tool and `stripJpegMetadata` rejects some
-    // spec-legal JPEGs, so blocking a legitimate upload is the worse outcome.
+  it("refuses an image whose strip could not be confirmed, saying why (#5244)", async () => {
+    // Every image-storing path fails closed: nothing unconfirmed is stored.
     const file = new File([new Uint8Array(EXIF_JPEG_NO_EOI)], "holiday.jpg", {
       type: "image/jpeg",
     });
     const response = await POST(uploadRequest(file));
 
-    expect(response.status).toBe(201);
-    const data = mocks.mediaImageCreate.mock.calls[0][0].data;
-    const stored = Buffer.from(data.data as Uint8Array);
-    expect(stored.equals(EXIF_JPEG_NO_EOI)).toBe(true);
-    expect(data.byteSize).toBe(EXIF_JPEG_NO_EOI.length);
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toBe(IMAGE_NOT_CLEAN_MESSAGE);
+    expect(mocks.mediaImageCreate).not.toHaveBeenCalled();
   });
 
-  it("still accepts a GIF (no stripper for that type) and stores it unchanged", async () => {
-    const gif = Buffer.from("GIF89a\x01\x00\x01\x00", "latin1");
+  it("stores a GIF with its comment block removed (#5244)", async () => {
+    const gif = Buffer.concat([
+      Buffer.from("GIF89a\x01\x00\x01\x00\x00\x00\x00", "latin1"),
+      Buffer.from([0x21, 0xfe, 0x05]),
+      Buffer.from("Jane!", "latin1"),
+      Buffer.from([0x00]),
+      Buffer.from("\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b", "latin1"),
+    ]);
     const file = new File([gif], "spin.gif", { type: "image/gif" });
     const response = await POST(uploadRequest(file));
 
     expect(response.status).toBe(201);
     const data = mocks.mediaImageCreate.mock.calls[0][0].data;
-    expect(Buffer.from(data.data as Uint8Array).equals(gif)).toBe(true);
+    const stored = Buffer.from(data.data as Uint8Array);
+    expect(stored.includes(Buffer.from("Jane!", "latin1"))).toBe(false);
+    expect(stored.length).toBe(gif.length - 9);
     expect(data.contentType).toBe("image/gif");
+    expect([data.width, data.height]).toEqual([1, 1]);
   });
 });

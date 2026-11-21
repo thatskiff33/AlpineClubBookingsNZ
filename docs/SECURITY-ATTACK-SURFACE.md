@@ -1552,7 +1552,8 @@ the Tokoroa fork's review and fixed in #2242.
   carry metadata — which silenced that warning for exactly the types that are
   never stripped; it now returns `ok: false` with the original bytes.
 
-Notes on the fail-open choice and its cost:
+Notes on the fail-open choice and its cost (the fail-open half is superseded:
+see [Hidden Image Data On Every Type](#hidden-image-data-on-every-type---2026-11-22)):
 
 - The asymmetry is deliberate. `stripJpegMetadata` is known to reject some
   spec-legal JPEG fill-byte sequences (T.81 §B.1.1.2). On a member photo —
@@ -1612,6 +1613,63 @@ Notes on the fail-open choice and its cost:
   not), exactly as it did before this change. What that timing could distinguish
   is committee-publication status, which the public roster already publishes by
   name.
+
+## Hidden Image Data On Every Type - 2026-11-22
+
+Issue #5244 closed the two gaps the 2026-08-01 review above left: three allowed
+types had no cleaner, and four of the five storing paths stored an unconfirmed
+image anyway.
+
+- **Every allowed type now has a cleaner**, each lossless and byte-identical on
+  a second pass, and each a keep-list rather than a deny-list, so a metadata
+  block nobody has named (Content Credentials, a vendor chunk) is dropped
+  anyway: JPEG keeps only structural segments, a rebuilt JFIF without its
+  thumbnail, Adobe and ICC, and refuses reserved markers; PNG and WebP keep
+  only the chunks that draw the picture (WebP animation frames are walked
+  too) and refuse an unknown critical PNG chunk; all three keep an
+  orientation-only EXIF (dropping it turned phone portraits sideways);
+  GIF keeps only image, graphic-control and looping (`NETSCAPE2.0`) blocks,
+  rebuilt from their defined fields so nothing rides in extra sub-blocks;
+  a still AVIF has every non-picture item (`Exif`, XMP `mime`), property
+  (except `colr`, which is kept and can hold an ICC profile) and top-level
+  box retyped `free` and zeroed in place, with every `mdat`/`idat`
+  byte outside a picture item's extents zeroed, data-reference location
+  strings zeroed and unknown file-type brands replaced; SVG is rebuilt by
+  `sanitize-html` from an allow-list of drawing elements and attributes, with
+  `script`, `metadata`, `title`, `desc` and `foreignObject` removed with their
+  contents, references narrowed to `#id`, and embedded raster images cleaned
+  and re-embedded.
+- **Every path fails closed.** `cleanImageForStorage` replaced
+  `storableImageBytes`: an image that cannot be confirmed clean is refused with
+  one plain message (`IMAGE_NOT_CLEAN_MESSAGE`), never stored and logged. The
+  image library answers 400, the image manager refuses that file and keeps the
+  batch, a configuration restore stops at its dry run with an error naming the
+  file, and a site-style save with an unconfirmable inline logo answers 400. The
+  fill-byte false refusal that once justified failing open is fixed. An animated
+  AVIF is refused with its own message. The image manager also refuses bytes
+  that sniff as no image, or as SVG, whatever the declared type.
+- **SVG fails closed on reach, not just on parse**: CSS `@import`,
+  `image-set()`, a CSS escape, an unterminated CSS comment, a `url()` that is
+  not `#id`, markup nested in a `<style>`, an embedded image that cannot be
+  cleaned, bytes that are not UTF-8, output without an `<svg` root in the SVG
+  namespace, or output
+  that does not rebuild to itself all refuse the file. Each `<style>` body is
+  checked whole after the rebuild, because the parser hands its text over in
+  pieces split at character references, comments and CDATA; the `url()` scan is
+  linear, so an upload cannot stall the server with unclosed `url(` runs.
+  Text inside the drawing's own `text` elements is kept, even where it is
+  hidden or only referenced from `defs`.
+- **An inline logo already stored is not re-cleaned** on a site-style save that
+  sends it back unchanged, so a legacy logo neither blocks a colour change nor
+  is rewritten.
+- **`/api/images/[id]` adds `sandbox` to its CSP**:
+  `default-src 'none'; style-src 'unsafe-inline'; sandbox`, with `nosniff` and
+  `Content-Disposition: inline` as before. Opened directly as a document, an SVG
+  gets a unique opaque origin, so markup that slipped past the rebuild can
+  neither run nor reach the site's cookies or storage.
+- **Images stored before #5244 are not altered** (owner decision, 20 Nov 2026):
+  no backfill runs over `MediaImage` rows, `public/images` or stored logos.
+  `docs/guides/image-manager.md` tells an admin how to replace one.
 
 ## Per-Route CSP Relaxation And Soft Navigation - 2026-07-26
 

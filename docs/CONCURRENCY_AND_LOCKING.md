@@ -2957,6 +2957,25 @@ mispricing a booking.
   (#5119, #5131, #5136, #5100, #5054, #5018, #5017, #4900, #5003, #4785), none of
   which adds a lock or transaction to them.
 
+#### Xero cash-credit refresh: the refresh cursor row (#5204)
+
+- **`XeroSyncCursor` row (`XERO_CASH_CREDITS` / `default`)** —
+  `src/lib/xero-cash-credits.ts` (`applyXeroCashCreditSnapshot`): no explicit
+  `FOR UPDATE`. The write transaction first inserts the cursor row if missing
+  (`ON CONFLICT DO NOTHING`), then advances it with one status-guarded
+  `UPDATE … WHERE "cursorDateTime" IS NULL OR "cursorDateTime" < <this read's
+  start>`. That UPDATE's row lock is held to commit, so two refreshes (the daily
+  cron task and an officer's Refresh) write one after the other, and the one whose
+  read began earlier re-checks the condition after waiting, matches nothing and
+  writes nothing. Only then are `XeroCashCredit` rows written, each again guarded
+  on `syncedAt`. Order: cursor row, then `XeroCashCredit` rows. The Xero reads run
+  before the transaction. No advisory key and no `lock(1)` (`INV-LOCK-001`: the
+  snapshot changes no booking status, capacity, credit or settlement money).
+  Counterpart writers: none yet; the later releases that write backed credit read
+  these rows and must take the cursor row before any `XeroCashCredit` row if they
+  write one. `xero-cash-credits-sync.realdb.test.ts` races two refreshes on
+  PostgreSQL.
+
 #### Adding a row lock: update this inventory (#2623)
 
 Do not add or compose a row lock without updating this inventory and documenting
