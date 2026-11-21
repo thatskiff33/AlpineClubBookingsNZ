@@ -14,7 +14,10 @@ const mocks = vi.hoisted(() => ({
   organisation: vi.fn(),
   mappings: vi.fn(),
 }));
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+const openingCreditsRow = vi.hoisted(() => vi.fn());
+// #4988: the health check asks whether the Opening Credits account is mapped.
+vi.mock("@/lib/prisma", () => ({ prisma: { xeroAccountMapping: { findUnique: openingCreditsRow } } }));
+vi.mock("@/lib/xero-tax-anchors", () => import("./support/xero-tax-anchors-baseline"));
 vi.mock("@/lib/club-time-zone-runtime", () => ({ readClubTimeZoneOutsideRequest: async () => "Pacific/Auckland" }));
 vi.mock("@/lib/club-tax-settings", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/club-tax-settings")),
@@ -25,7 +28,10 @@ vi.mock("@/lib/xero-tax-rates", async (importOriginal) => ({
   readXeroTaxRatesOrNull: mocks.rates,
 }));
 vi.mock("@/lib/xero-organisation", () => ({ getXeroConnectedOrganisation: mocks.organisation }));
-vi.mock("@/lib/xero-tax-category-mappings", () => ({ loadXeroTaxCategoryMappings: mocks.mappings }));
+vi.mock("@/lib/xero-tax-category-mappings", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/xero-tax-category-mappings")),
+  loadXeroTaxCategoryMappings: mocks.mappings,
+}));
 
 import { readXeroTaxHealth } from "@/lib/xero-tax-health";
 
@@ -79,6 +85,8 @@ describe("readXeroTaxHealth", () => {
     mocks.rates.mockResolvedValue([rate({})]);
     mocks.organisation.mockResolvedValue({ paysTax: true });
     mocks.mappings.mockResolvedValue({ tenantId: "tenant-connected", rows: [] });
+    openingCreditsRow.mockReset();
+    openingCreditsRow.mockResolvedValue(null);
   });
 
   it("is clean when Xero agrees with the period in force today", async () => {
@@ -142,6 +150,70 @@ describe("readXeroTaxHealth", () => {
       rows: [{ category: "EXEMPT", taxType: "EXEMPTOUTPUT", currentTenant: false }],
     });
     expect((await readXeroTaxHealth()).problems).toEqual([expect.stringMatching(/^Exempt: mapped in a different Xero organisation/)]);
+  });
+
+  describe("Opening Credits mapped while Exempt has no usable rate (#4988, #5375 item 3)", () => {
+    const OPENING_CREDITS_PROBLEM =
+      "Opening Credits is mapped and the club is, or is scheduled to be, GST-registered, but the Exempt tax category has no usable Xero tax rate. Spent opening credits wait in the Xero queue until a Full Admin maps Exempt on the Xero setup screen.";
+    const exemptRate = rate({ taxType: "EXEMPTOUTPUT", name: "Exempt", rateBasisPoints: 0 });
+
+    beforeEach(() => {
+      openingCreditsRow.mockResolvedValue({ code: "2100" });
+      mocks.rates.mockResolvedValue([rate({}), exemptRate]);
+    });
+
+    it("MUTATION: is a health problem for a registered club that has not mapped Exempt", async () => {
+      expect((await readXeroTaxHealth()).problems).toEqual([OPENING_CREDITS_PROBLEM]);
+      expect(openingCreditsRow).toHaveBeenCalledWith({ where: { key: "openingCredits" }, select: { code: true } });
+    });
+
+    it("is a health problem for a club that is only scheduled to register", async () => {
+      // The frozen clock's club today is 2026-07-01: unregistered today, registered from 1 August.
+      mocks.schedule.mockResolvedValue([
+        period(),
+        { ...unregistered, effectiveFrom: requireCalendarDate("2026-06-01") },
+        period({ effectiveFrom: requireCalendarDate("2026-08-01") }),
+      ]);
+      mocks.organisation.mockResolvedValue({ paysTax: false });
+      expect((await readXeroTaxHealth()).problems).toEqual([OPENING_CREDITS_PROBLEM]);
+    });
+
+    it("is reported beside the category's own fault when the mapped rate stopped being usable", async () => {
+      mocks.rates.mockResolvedValue([rate({}), { ...exemptRate, rateBasisPoints: 1500 }]);
+      mocks.mappings.mockResolvedValue({
+        tenantId: "tenant-connected",
+        rows: [{ category: "EXEMPT", taxType: "EXEMPTOUTPUT", currentTenant: true }],
+      });
+      expect((await readXeroTaxHealth()).problems).toEqual([expect.stringMatching(/^Exempt: .* is not 0%/), OPENING_CREDITS_PROBLEM]);
+    });
+
+    it("is clean once Exempt is mapped to a usable rate", async () => {
+      mocks.mappings.mockResolvedValue({
+        tenantId: "tenant-connected",
+        rows: [{ category: "EXEMPT", taxType: "EXEMPTOUTPUT", currentTenant: true }],
+      });
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
+    });
+
+    it("is not a problem while Opening Credits is unmapped, or the club is not registered now or later", async () => {
+      openingCreditsRow.mockResolvedValue({ code: "  " });
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
+      openingCreditsRow.mockResolvedValue({ code: "2100" });
+      mocks.schedule.mockResolvedValue([unregistered]);
+      mocks.organisation.mockResolvedValue({ paysTax: false });
+      await expect(readXeroTaxHealth()).resolves.toEqual({ checked: true, problems: [] });
+    });
+
+    it("says nothing about a mapped rate it could not check, and nothing while Xero is not connected", async () => {
+      mocks.rates.mockResolvedValue(null);
+      mocks.mappings.mockResolvedValue({
+        tenantId: "tenant-connected",
+        rows: [{ category: "EXEMPT", taxType: "EXEMPTOUTPUT", currentTenant: true }],
+      });
+      expect((await readXeroTaxHealth()).problems).toEqual([]);
+      mocks.mappings.mockResolvedValue({ tenantId: null, rows: [] });
+      expect((await readXeroTaxHealth()).problems).toEqual([]);
+    });
   });
 
   it("does not judge mappings while Xero is not connected (#5209)", async () => {

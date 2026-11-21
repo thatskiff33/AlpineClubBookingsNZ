@@ -54,10 +54,17 @@ export function exemptPrerequisiteProblem({
   return xeroTaxCategoryRateProblem(rates, "EXEMPT", exemptTaxType);
 }
 
+/** The Opening Credits account mapping's key (#4988), spelt once for the rules about it. */
+export const OPENING_CREDITS_MAPPING_KEY = "openingCredits" satisfies AccountMappingKey;
+
 /**
- * The account-mapping keys whose effective code is the Opening Credits code
- * (#4988): a row's own code, else the key's application default, compared
+ * The OTHER account-mapping keys whose effective code is the Opening Credits
+ * code (#4988): a row's own code, else the key's application default, compared
  * case- and whitespace-insensitively. Reports only; the caller decides.
+ *
+ * The Opening Credits key is never one of them (#5375 item 2). Its own row
+ * always carries its own code, so once #4988 made it an account-mapping key it
+ * would have reported itself on every save and no club could map it.
  */
 export function openingCreditsAccountConflicts({
   openingCreditsCode,
@@ -69,6 +76,7 @@ export function openingCreditsAccountConflicts({
   const target = normalizeMappingCode(openingCreditsCode)?.toUpperCase();
   if (!target) return [];
   return ACCOUNT_MAPPING_KEYS.filter((key) => {
+    if (key === OPENING_CREDITS_MAPPING_KEY) return false;
     const explicit = normalizeMappingCode(mappings.find((row) => row.key === key)?.code);
     const effective = explicit ?? normalizeMappingCode(ACCOUNT_MAPPING_DEFAULTS[key]);
     return effective?.toUpperCase() === target;

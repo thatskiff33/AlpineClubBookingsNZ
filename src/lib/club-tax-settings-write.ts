@@ -20,6 +20,7 @@ import {
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
+import { registrationRefusalWhileOpeningCreditsMapped } from "@/lib/xero-opening-credits-exempt-guards";
 import { xeroTaxCodeProblem } from "@/lib/xero-tax-rate-options";
 import { readXeroTaxRates } from "@/lib/xero-tax-rates";
 
@@ -44,6 +45,14 @@ import { readXeroTaxRates } from "@/lib/xero-tax-rates";
  * call is never made under a database transaction. When Xero cannot be read the
  * change is refused, never saved on a guess.
  *
+ * A REGISTRATION NEEDS EXEMPT WHERE OPENING CREDITS IS MAPPED (#4988, #5375
+ * item 3). A club that mapped the Opening Credits account while unregistered
+ * needed no Exempt tax category; once registered, each spent opening credit is
+ * an Exempt line. So a registered period is refused while that account is
+ * mapped and Exempt has no usable Xero rate
+ * (`xero-opening-credits-exempt-guards.ts`), read before the transaction with
+ * the same fresh rate list.
+ *
  * SERIALIZABLE, AND NO ADVISORY LOCK (`INV-LOCK-001`): one table plus its audit
  * row, the `writeClubFormat` shape. A write only adds or removes a period that
  * starts after today, so it cannot race a render or a posting about any date up
@@ -63,6 +72,7 @@ export type ClubTaxWriteRefusal =
   | { refused: "not-future"; earliest: CalendarDate }
   | { refused: "xero-code"; message: string }
   | { refused: "xero-unreadable" }
+  | { refused: "exempt-required"; message: string }
   | { refused: "already-scheduled" }
   | { refused: "unchanged" }
   | { refused: "not-found" };
@@ -139,6 +149,9 @@ export async function scheduleClubTaxChange({
     }
     const problem = xeroTaxCodeProblem(rates, period);
     if (problem) return { refused: "xero-code", message: problem };
+    // #4988: a registration is not scheduled while Opening Credits is mapped and Exempt is not usable.
+    const exempt = await registrationRefusalWhileOpeningCreditsMapped({ period, rates });
+    if (exempt) return { refused: "exempt-required", message: exempt };
   }
 
   return prisma.$transaction(

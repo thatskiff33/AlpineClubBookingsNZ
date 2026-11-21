@@ -99,6 +99,9 @@ function refusalResponse(refusal: ClubTaxWriteRefusal) {
         { error: "Xero's tax rates could not be read, so the code cannot be checked. Check the Xero connection and try again." },
         { status: 503 },
       );
+    case "exempt-required":
+      // #4988: Opening Credits is mapped and the Exempt tax category is not usable.
+      return NextResponse.json({ error: refusal.message }, { status: 409 });
     case "already-scheduled":
       return NextResponse.json(
         { error: "A change is already scheduled from that date. Cancel it first, then schedule the new one." },
