@@ -111,6 +111,19 @@ export function xeroTransport(fake: XeroFake) {
     }));
   };
   const allocationWire = (a: Snapshot["allocations"][number]) => ({ AllocationID: a.allocationID, Invoice: { InvoiceID: a.invoiceID }, Amount: a.amountCents / 100 });
+  // #5204: overpayments and prepayments, as Xero lists them.
+  const cashCredits = (kind: "OVERPAYMENT" | "PREPAYMENT") => fake.snapshot().cashCredits.filter(c => c.kind === kind).map(c => ({
+    [kind === "OVERPAYMENT" ? "OverpaymentID" : "PrepaymentID"]: c.cashCreditID,
+    Type: kind === "OVERPAYMENT" ? "RECEIVE-OVERPAYMENT" : "RECEIVE-PREPAYMENT",
+    Contact: { ContactID: c.contactID }, Date: c.date, Status: c.status, CurrencyCode: "NZD",
+    Total: c.totalCents / 100, RemainingCredit: c.remainingCents / 100,
+  }));
+  const statusWhere = (where?: string) => {
+    if (where === undefined) return () => true;
+    const status = /^Status=="([A-Z]+)"$/.exec(where)?.[1];
+    if (status === undefined) throw new Error(`The Xero test transport does not model the where clause ${where}`);
+    return (c: { Status: string }) => c.Status === status;
+  };
   // The stored input goes first so the fake's identity always wins.
   const contacts = () => fake.snapshot().contacts.map(c => ({ ...contactInputs.get(c.contactID), ContactID: c.contactID, Name: c.memberId, ContactStatus: "ACTIVE" }));
   const contactsWhere = (where?: string) => {
@@ -175,6 +188,10 @@ export function xeroTransport(fake: XeroFake) {
       if (!noteInputs.has(note.creditNoteID)) noteInputs.set(note.creditNoteID, ObjectSerializer.serialize(input, "CreditNote"));
       return { CreditNotes: notes().filter(n => n.CreditNoteID === note.creditNoteID) };
     }),
+    getOverpayments: (...[, , where, , page, , pageSize]: Args<"getOverpayments">) =>
+      call("Overpayments", () => ({ Overpayments: paged(cashCredits("OVERPAYMENT").filter(statusWhere(where)), page, pageSize) })),
+    getPrepayments: (...[, , where, , page, , pageSize]: Args<"getPrepayments">) =>
+      call("Prepayments", () => ({ Prepayments: paged(cashCredits("PREPAYMENT").filter(statusWhere(where)), page, pageSize) })),
     getCreditNote: (...[, id]: Args<"getCreditNote">) =>
       call("CreditNotes", () => ({ CreditNotes: notes().filter(n => n.CreditNoteID === id) })),
     createCreditNoteAllocation: (...[, id, body, , idempotencyKey]: Args<"createCreditNoteAllocation">) => call("Allocations", () => {
