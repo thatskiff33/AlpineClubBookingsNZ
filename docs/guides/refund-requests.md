@@ -178,6 +178,14 @@ never to goodwill (`INV-PAY-162`):
 - **Your club never recorded the old credit in Xero:** leave it unset, and
   spent opening credit is coded to the hut-fee refunds account.
 
+While **Opening Credits** is set, the spent credit is its own line on the
+credit note, sent with the Xero tax rate mapped to the **Exempt** tax category
+([Xero](xero.md#map-the-clubs-tax-categories-xero-setup)); every other line, and
+every line while it is unset, is taxed as before. A GST-registered club maps
+Exempt first: the app will not save the account, or send a spent opening
+credit, without it. It also refuses **Opening Credits** on an account another
+mapping already uses.
+
 Confirm which case applies, and the treatment, with your treasurer or
 accountant. The [moving-in guide](moving-in.md#6-credit-post-the-opening-credits)
 has the detail.

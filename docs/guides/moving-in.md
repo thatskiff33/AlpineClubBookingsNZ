@@ -148,10 +148,33 @@ or accountant which of these fits your club:
   account, exactly as it was before this setting existed. The setup checklist
   keeps listing the mapping as unset; for this case that is expected.
 
-The credit-note line carries the same tax rate as the app's other credit-note
-lines, so confirm the treatment with your treasurer or accountant for the
-account you choose. Changing the mapping affects only credit notes raised
-afterwards; notes already in Xero are not changed.
+**The tax rate on the line.** While **Opening Credits** is set, the spent
+opening credit is its own line on the credit note, sent with the Xero tax rate
+you mapped to the **Exempt** tax category on the
+[Tax categories card](xero.md#map-the-clubs-tax-categories-xero-setup). Every
+other line on the note, and every line while **Opening Credits** is unset,
+carries the same tax rate as the app's other credit-note lines, as before. A
+club that is not GST-registered sends no tax rate on any line. Confirm the
+treatment with your treasurer or accountant for the account you choose.
+
+If your club is GST-registered, map the Exempt tax category on the Xero setup screen before you map the Opening Credits account; the app will not save the account, or send a spent opening credit, without it.
+
+Three more things the app does to keep that line sendable:
+
+- It will not save **Opening Credits** on an account another mapping already
+  uses, such as **Hut Fee Refunds**. The message names the other mapping.
+  Choose a liability account nothing else is mapped to.
+- While **Opening Credits** is set and the club is, or is scheduled to be,
+  GST-registered, **Clear** on the Exempt category is refused. Unset **Opening
+  Credits** first.
+- If the Exempt rate stops being usable later (it is archived or changed from
+  0% in Xero, or you connect a different Xero organisation), a spent opening
+  credit is never sent with another rate. Its Xero operation waits, saying
+  which category to map, and is tried again by itself every few minutes once a
+  Full Admin has mapped it.
+
+Changing the mapping affects only credit notes raised afterwards; notes already
+in Xero are not changed.
 
 If a batch was wrong, **Reverse batch** removes every credit in it, with a
 reason. Members see "Opening credit reversed" in their credit history, never
@@ -220,7 +243,8 @@ going on.
       that holds the old credit, or left unset because the old credit was never
       in Xero, as your treasurer decided. Where the old credit is in Xero, no
       open old-system credit note or overpayment still duplicates a posted
-      opening credit.
+      opening credit. If it is set and the club is GST-registered, the
+      **Exempt** tax category is mapped.
 
 ## Settings reference
 
@@ -245,6 +269,10 @@ guide.
 | "This file has already been posted" | The same rows were posted before | If that batch still stands, nothing to do. If it was reversed and you want it again, change the file (such as a description) so it is a new batch |
 | An opening-credit row says the member already has an opening credit | An earlier batch that has not been reversed credited them | Reverse that batch, or leave the member out of this file |
 | **Reverse batch** is refused | A member has used some of their opening credit, or has had any credit deducted since the batch posted | Correct that member with a credit adjustment instead |
+| Saving the account mapping says **Opening Credits** cannot use the same Xero account as another mapping | The account you chose is the one that mapping uses, by choice or by default | Choose a liability account no other mapping uses, or change the other mapping first |
+| Saving the account mapping says to map the **Exempt** tax category first | The club is, or is scheduled to be, GST-registered, and Exempt has no usable Xero rate | A Full Admin maps **Exempt** on the **Tax categories** card; then save again |
+| **Clear** on the Exempt tax category is refused | **Opening Credits** is set, so spent opening credit needs the Exempt rate | Unset **Opening Credits** on the account mapping first |
+| A Xero operation says the Exempt tax category is not mapped, or its rate cannot carry it | The Exempt rate was archived or changed in Xero, a different Xero organisation was connected, or the club registered for GST later | A Full Admin maps **Exempt** again. A waiting operation then runs by itself within a few minutes; if a card booking's invoice operation failed with this message, retry it |
 | **Record manual payment** says there is a Xero invoice | The booking was confirmed on Internet Banking | Settle the invoice in Xero against the old payment; see step 7 |
 
 ## Related links

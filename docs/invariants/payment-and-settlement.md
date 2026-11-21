@@ -4536,31 +4536,32 @@ settlement body), **`INV-PAY-040`** (the manual capacity refusal),
 
 **Related:** **`INV-MONEY-035`** (credit rows are insert-only),
 **`INV-LOCK-002`** (sorted member keys), **`INV-PAY-023`** (a lot with no
-Xero note mints one when spent).
+Xero note mints one when spent), **`INV-CONFIG-008`** (the Exempt line).
 
-- **Opening credit posts once, from one approval** (#4988). A moving-in club
-  brings members' balances in one CSV. Preview writes nothing: it matches each row to one current member, refuses a member named twice
-  or the posting admin (keeping two-person control), totals the cents, and
-  offers a batch key only when no row is in error. A member holding credit
-  from an unreversed batch is a row in error, checked again under the locks,
-  so a corrected file never credits twice.
-- **The key is the claim.** The key hashes what the file posts (member, cents,
-  description, sorted). Confirm re-previews the file and refuses unless key
-  and total still match the preview; the `OpeningCreditBatch` row's unique
-  key then claims it, so a second confirm posts nothing.
+- **Opening credit posts once, from one approval** (#4988): a moving-in
+  club's balances, in one CSV. Preview writes nothing: it matches each row to
+  one current member, refuses a member named twice or the posting admin
+  (two-person control), totals the cents, and offers a batch key only when no
+  row is in error. A member holding credit from an unreversed batch is in
+  error, rechecked under the locks, so a corrected file never credits twice.
+- **The key is the claim.** It hashes what the file posts (member, cents,
+  description, sorted). Confirm re-previews and refuses unless key and total
+  still match; the `OpeningCreditBatch` row's unique key then claims it: a
+  second confirm posts nothing.
 - **One transaction**: the batch row, one `ADMIN_ADJUSTMENT` credit per member
-  under that member's `lockMemberCreditLedger` (sorted ids), and one
-  `payment` audit row with the total. No email, Xero document or Stripe call:
-  the old system accounted for the balance.
-- **When spent in Xero** (owner, 16 Nov 2026), an opening-credit lot's minted
-  line is coded to the optional `openingCredits` liability mapping, else
-  `hutFeeRefunds` verbatim (`INV-INT-021`); never goodwill.
-- **Reversal is whole-batch** and only while every credit is wholly free: its
-  lot untouched, the balance covering it, its members' negative-row count
-  unchanged since posting (counted under the locks, not by timestamp), and no
+  under that member's `lockMemberCreditLedger` (sorted ids), and one `payment`
+  audit row with the total. No email, Xero document or Stripe call.
+- **When spent in Xero** (owner, 16-17 Nov 2026), the minted line is coded to
+  the optional `openingCredits` liability mapping as an Exempt line
+  (`INV-CONFIG-008`), never merged into an income line. Unmapped, it is coded
+  and taxed as `hutFeeRefunds` verbatim (`INV-INT-021`), the note
+  byte-identical; never goodwill.
+- **Reversal is whole-batch**, only while every credit is wholly free: its lot
+  untouched, the balance covering it, its members' negative-row count
+  unchanged since posting (counted under the locks, not timestamps), and no
   Xero-noted credit consumed. It claims the batch with a `reversedAt`-guarded
   `updateMany`, then posts one negative row per credit. One spent credit
-  refuses it and writes nothing. A reversed batch's credits are no longer lots
+  refuses it, writing nothing. A reversed batch's credits are no longer lots
   (`creditLotWhere`).
 - Proven by `opening-credit-csv.test.ts`, `opening-credit-batch.test.ts`,
   `opening-credit-routes.test.ts`, `goodwill-write-off-account.test.ts` and

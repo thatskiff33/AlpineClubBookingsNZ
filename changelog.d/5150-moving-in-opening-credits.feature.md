@@ -9,7 +9,13 @@
   is spent. Opening credits send no email and make no Xero or card call. When a
   member spends one, the Xero credit note is coded to a new optional **Opening
   Credits** account mapping, for example a member credits held account, or to
-  the hut fee refunds account while it is unset; never to goodwill. A
+  the hut fee refunds account while it is unset; never to goodwill. While
+  that mapping is set, the spent credit is its own line, sent with the Xero
+  tax rate mapped to the **Exempt** tax category; a GST-registered club maps
+  Exempt first, and the account mapping refuses the Opening Credits account
+  until it has, or on an account another mapping already uses. Clearing Exempt
+  is refused while the account is mapped. A club that leaves the mapping unset
+  sends exactly the credit note it sent before. A
   new guide, *Moving in from your old system*, sets out the load order, a safe
   way to carry over stays that are already paid, and the totals to check
   against the old records. Importing future bookings is coming separately

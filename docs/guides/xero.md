@@ -421,6 +421,9 @@ Xero organisation provides, so the app never assumes a Xero tax code:
    are active in Xero and suit the category: Exempt and Zero rated must be 0%,
    and Sales tax on expenses must be usable on expenses.
 2. **Clear** removes a mapping. Saving and clearing are both in the audit log.
+   **Exempt** cannot be cleared while the **Opening Credits** account is
+   mapped and the club is, or is scheduled to be, GST-registered: unset that
+   account on the account mapping first.
 3. A mapping belongs to the Xero organisation it was chosen in. If you connect
    a different organisation, the card and the health check say so; map the
    category again.
@@ -431,6 +434,13 @@ whose rate Xero has removed, made inactive or changed so it no longer suits the
 category (an Exempt rate edited to a non-zero percentage, say) — is held back
 with an error, not sent with a guessed code. **If your club is GST-registered and is moving in
 with opening credits, map Exempt before you map the Opening Credits account.**
+The account mapping refuses to save **Opening Credits** until you do, and
+refuses it on an account another mapping already uses, naming that mapping. A
+spent opening credit that cannot be sent waits in the Xero queue with a message
+naming the category, and is tried again by itself every few minutes; where it
+is part of a card booking's invoice operation, that operation fails with the
+same message and is retried by hand once the category is mapped
+([Moving in](moving-in.md#6-credit-post-the-opening-credits)).
 Nothing changes on upgrade: until you map a category, every document is sent
 exactly as before. How it works:
 [`INV-CONFIG-008`](../invariants/product-configuration.md#inv-config-008).

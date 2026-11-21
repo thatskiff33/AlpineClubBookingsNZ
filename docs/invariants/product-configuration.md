@@ -479,3 +479,11 @@ home for that explanation and is not repeated here.
   connected organisation does not carry active and fit for the category.
   `xero-tax-category-one-writer-census.test.ts` holds every other path to
   reads; the Xero health check reports a mapping that stops passing.
+- **The first Exempt line is the spent opening credit** coded to the mapped
+  Opening Credits account (#4988, `INV-PAY-162`). Its tax is resolved before
+  the operation's first provider write; the outbox holds the operation in
+  PENDING on the typed error (`xero-tax-category-hold.ts`). The settings
+  screens refuse what would strand it
+  ([`xero-opening-credits-exempt-guards.ts`](../../src/lib/xero-opening-credits-exempt-guards.ts)):
+  that account shared with another role (owner, 21 Nov 2026) or mapped before
+  Exempt, and Exempt cleared while it is mapped.
