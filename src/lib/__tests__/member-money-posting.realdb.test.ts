@@ -23,6 +23,7 @@ import {
   bookingChargePlan,
   createMemberMoneyScratchDatabase,
   memberMoneyTestContext,
+  MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS,
   type MemberMoneyScratchDatabase, MEMBER_MONEY_TEST_TAX_ANCHOR } from "./support/member-money-fixtures";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
@@ -87,13 +88,13 @@ const untouchable = new Proxy({}, {
     appPrisma = new Prisma({ adapter: createPrismaPgAdapter(scratch.appUrl) });
     app = new Client({ connectionString: scratch.appUrl });
     await app.connect();
-  }, 30_000);
+  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
   afterAll(async () => {
     await appPrisma?.$disconnect();
     await app?.end();
     await scratch?.drop();
-  });
+  }, MEMBER_MONEY_SCRATCH_HOOK_TIMEOUT_MS);
 
   it("commits a taxed CHARGE with a bridged legacy line, and it verifies", async () => {
     const legacy = "legacy-line-4626";
