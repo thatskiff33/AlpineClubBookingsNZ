@@ -25,12 +25,12 @@ import {
 } from "@/lib/booking-guest-stay-ranges";
 import { formatDateOnly } from "@/lib/date-only";
 import {
-  formatClubDate,
   formatClubDayMonth,
   formatClubLongWeekdayDate,
   formatClubMonthYear,
   formatClubShortMonthYear,
   formatClubWeekdayDayMonth,
+  formatStayDate,
   requireCalendarDate,
   type CalendarDate,
   type ClubDateFormat,
@@ -369,7 +369,7 @@ function formatBucketTooltip(
 ): string {
   if (granularity === "daily") return formatClubLongWeekdayDate(periodStart, format);
   if (granularity === "weekly") {
-    return `Week of ${formatClubDate(periodStart, format)} to ${formatClubDate(periodEnd, format)}`;
+    return `Week of ${formatStayDate(periodStart, format)} to ${formatStayDate(periodEnd, format)}`;
   }
   return formatClubMonthYear(periodStart, format);
 }

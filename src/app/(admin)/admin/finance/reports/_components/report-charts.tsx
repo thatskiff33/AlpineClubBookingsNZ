@@ -34,9 +34,9 @@ import { formatCents } from "@/lib/utils";
 import { bookingStatusLabel } from "@/lib/status-colors";
 import { useClubFormat } from "@/components/club-format-provider";
 import {
-  formatClubDate,
   formatClubDayMonth,
   formatClubWeekdayDate,
+  formatStayDateOrNull,
   parseCalendarDate,
   type CalendarDate,
   type ClubDateFormat,
@@ -157,7 +157,9 @@ export function TrendsLineChart({
         />
         <YAxis tick={{ fontSize: 12 }} />
         <Tooltip
-          labelFormatter={(week) => `Week of ${formatDayKey(week, formatClubDate, clubFormat)}`}
+          labelFormatter={(week) =>
+            `Week of ${formatStayDateOrNull(typeof week === "string" ? week : null, clubFormat) ?? String(week)}`
+          }
         />
         <Legend />
         <Line
