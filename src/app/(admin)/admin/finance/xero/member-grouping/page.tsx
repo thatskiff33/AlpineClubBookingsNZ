@@ -75,7 +75,7 @@ type InformationalEntry = {
   memberId: string;
   memberName: string;
   ageTier: AgeTier;
-  unexpectedManagedGroupIds: string[];
+  unexpectedManagedGroups: Array<{ id: string; name: string | null }>;
 };
 
 type Snapshot = {
@@ -676,7 +676,7 @@ export default function XeroMemberGroupingPage() {
                       {snapshot.informational.slice(0, 50).map((m) => (
                         <div key={m.memberId} className="rounded border border-dashed p-2 text-xs text-muted-foreground">
                           <span className="font-medium">{m.memberName}</span> ({formatAgeTierName(m.ageTier)}) — in:{" "}
-                          {m.unexpectedManagedGroupIds.map(groupName).join(", ")}
+                          {m.unexpectedManagedGroups.map((g) => g.name ?? groupName(g.id)).join(", ")}
                         </div>
                       ))}
                     </div>
