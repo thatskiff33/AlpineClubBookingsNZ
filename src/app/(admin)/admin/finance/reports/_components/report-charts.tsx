@@ -3,7 +3,7 @@
 /**
  * Recharts trees for the admin reports page, extracted verbatim (#1147) so the
  * ~139kB gz recharts chunk loads on demand via next/dynamic instead of inside
- * the route's First Load JS. Rendering, formatters, and colours are unchanged.
+ * the route's First Load JS; that move changed no rendering.
  *
  * Every axis and tooltip date below is a CALENDAR DAY — a bucket key, not a
  * moment — so it takes no timezone, and it is written through the club-time
