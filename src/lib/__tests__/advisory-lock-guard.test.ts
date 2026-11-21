@@ -977,10 +977,18 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
 
   // ── Putting a dismissed money task back on the queue ──────────────────
   {
-    site: "reopenManualRefundTask#1",
+    site: "reopenInTransaction#1",
     tier: "GLOBAL",
     reason:
-      "DISMISSED -> OPEN re-arms assertNoPendingEditFinancialReview RETROACTIVELY, against money-affecting edits already in flight - unlike the closure it mirrors, which only relaxes that fence. Unlocked, an edit that read the fence while the task was dismissed can settle a credit under its own modification while the reopen commits, leaving an OPEN task whose context still points at the earlier anchor and whose completion credits the member twice. It makes no provider call, so the bounded exception that keeps resolveManualRefundTask lock-free does not apply. #4124: an approved appeal's task is measured by the appeal's ceiling, which nets the payment's open card refund debts, so for that task it takes the Payment row (lockPaymentForRefundedTotal) after this key and before the ceiling's reads, as the approval does. #4343: an EDIT_FINANCIAL_REVIEW is refused before the claim, so that kind cannot re-arm the fence; every other dismissed kind still can.",
+      "DISMISSED -> OPEN re-arms assertNoPendingEditFinancialReview RETROACTIVELY, against money-affecting edits already in flight - unlike the closure it mirrors, which only relaxes that fence. Unlocked, an edit that read the fence while the task was dismissed can settle a credit under its own modification while the reopen commits, leaving an OPEN task whose context still points at the earlier anchor and whose completion credits the member twice. It makes no provider call, so the bounded exception that keeps resolveManualRefundTask lock-free does not apply. #4124: an approved appeal's task is measured by the appeal's ceiling, which nets the payment's open card refund debts, so for that task it takes the Payment row (lockPaymentForRefundedTotal) after this key and before the ceiling's reads, as the approval does. #4343: an EDIT_FINANCIAL_REVIEW is refused before the claim, so that kind cannot re-arm the fence; every other dismissed kind still can. #5197: the core both reopenManualRefundTask (an officer) and reopenHandBackAfterLateWin (a lost Stripe dispute later won; every lock wait bounded by lock_timeout) run. A dispute-loss hand-back takes its booking row (lockBookingRowForOwnerRead) right after the task read, re-reads the task, then its Payment row: exactly its Dismiss and Reduce order (this key, booking row, Payment row), so the restored R05, which reads its debtor under the booking row, adds no Payment -> booking edge. The late win's (dispute, task) marker is written with the claim. No provider call; no new key.",
+    invariant: "INV-LOCK-001",
+  },
+  // ── A Stripe dispute event reporting a dispute WON (#5197) ──
+  {
+    site: "applyEvent#1",
+    tier: "GLOBAL",
+    reason:
+      "#5197: a WON event takes this key, bounded by lock_timeout (a timeout writes nothing and the webhook answers 500, so Stripe redelivers), before the StripeDispute row lock, so a move from LOST to WON is serialised with every Dismiss (resolveManualRefundTask) and Reduce (reduceDisputedHandBack) of a dispute-loss hand-back, which decide under this key on the disputes as recorded: the officer reads WON and is refused, or commits first and the late win, after this transaction commits, finds the task dismissed or reduced and reopens or names it. Nothing else in the transaction: the dispute row only, no booking, Payment or Member row. Other dispute events take no advisory key.",
     invariant: "INV-LOCK-001",
   },
   // ── Reducing a disputed card payment's hand-back by a dispute lost for part of it ──
@@ -1478,6 +1486,8 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // #4845: that one statement now lives in `booking-row-lock.ts`, outside the journal boundary, so a lock-only
   // caller names no journal module; `doors` re-exports it and `booking-posting.ts` imports it.
   // #4853: a policy-exception approval on an existing booking takes it right after its lodge key, before its claim.
+  // #5197: the reopen of a dispute-loss hand-back (an officer's, or a late win's) takes it right after lock(1) and
+  // the task read, before its Payment row and its restored R05: the order of that hand-back's Dismiss and Reduce.
   "src/lib/booking-row-lock.ts": 1,
   // #4691 (Ledger M4a): an application batch, a refund reservation and a release
   // take the booking's Payment row (`SELECT 1 … FOR NO KEY UPDATE`) before they
