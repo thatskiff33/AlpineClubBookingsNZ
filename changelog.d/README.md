@@ -185,6 +185,12 @@ and fragments for a safe retry; if restoration itself fails, stop and inspect
 the files named by the error. The compiler cannot prove an unfetched remote
 update does not exist, so refresh `origin/main` before running it.
 
+Straight after a release, this directory and `size-allowances.d/` hold only
+their `README.md`. That is their normal state, so a check that reads either
+directory must pass when it is empty: assert that it read the right directory,
+never that it found a fragment. #5214 ran every such check with both
+directories emptied and all of them passed.
+
 A version that already has a section is refused — except with `--append`,
 which adds the fragments (and any direct `## Unreleased` entries) to the end of
 that existing section and keeps its heading and date. It refuses any section
