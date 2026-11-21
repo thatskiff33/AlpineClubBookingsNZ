@@ -35,3 +35,44 @@ export function verifyPassword(plain: string, encodedHash: string): Promise<bool
 export function burnDummyPasswordCompare(plain: string): Promise<boolean> {
   return verifyPassword(plain, DUMMY_PASSWORD_HASH);
 }
+
+// The work factor a bcrypt hash was stored at, or null when it is not a
+// standard bcrypt encoding.
+export function passwordHashCost(encodedHash: string): number | null {
+  const match = /^\$2[aby]\$(\d\d)\$/.exec(encodedHash);
+  return match ? Number(match[1]) : null;
+}
+
+// True only for a readable hash stored below the target cost (#5261).
+export function passwordHashNeedsUpgrade(
+  encodedHash: string,
+  target: number = PASSWORD_BCRYPT_COST,
+): boolean {
+  const cost = passwordHashCost(encodedHash);
+  return cost !== null && cost < target;
+}
+
+// Costs to hash at so a compare at `storedCost` plus these hashes spends the
+// work of one compare at `target`: 2^c + (2^c + … + 2^(target-1)) = 2^target.
+export function passwordCostTopUpLadder(
+  storedCost: number,
+  target: number = PASSWORD_BCRYPT_COST,
+): number[] {
+  const ladder: number[] = [];
+  for (let cost = storedCost; cost < target; cost += 1) ladder.push(cost);
+  return ladder;
+}
+
+// After a refused compare against `encodedHash`, spend the work it fell short
+// of a current-cost compare, so a wrong password for an older account answers
+// as slowly as an unknown email (#5261). Results are discarded.
+export async function burnPasswordCostShortfall(plain: string, encodedHash: string): Promise<void> {
+  const cost = passwordHashCost(encodedHash);
+  if (cost === null) {
+    await burnDummyPasswordCompare(plain);
+    return;
+  }
+  for (const step of passwordCostTopUpLadder(cost)) {
+    await hash(plain, { cost: step });
+  }
+}

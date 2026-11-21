@@ -23,13 +23,23 @@ type PasswordHashingModule = typeof import("@/lib/password-hashing");
 type PasswordHashingOverrides = {
   verifyPassword: (plain: string, encodedHash: string) => unknown;
   hashPassword?: (plain: string) => unknown;
+  burnPasswordCostShortfall?: (plain: string, encodedHash: string) => unknown;
 };
 
 export function passwordHashingModuleMock(actual: unknown, overrides: PasswordHashingOverrides) {
   const real = actual as PasswordHashingModule;
+  const burnDummyPasswordCompare = (plain: string) =>
+    overrides.verifyPassword(plain, real.DUMMY_PASSWORD_HASH);
   return {
     ...real,
     ...overrides,
-    burnDummyPasswordCompare: (plain: string) => overrides.verifyPassword(plain, real.DUMMY_PASSWORD_HASH),
+    burnDummyPasswordCompare,
+    // The real top-up hashes natively (#5261); here it spends nothing, except
+    // that an unreadable hash still falls back to the derived dummy compare.
+    burnPasswordCostShortfall:
+      overrides.burnPasswordCostShortfall ??
+      (async (plain: string, encodedHash: string) => {
+        if (real.passwordHashCost(encodedHash) === null) await burnDummyPasswordCompare(plain);
+      }),
   };
 }
