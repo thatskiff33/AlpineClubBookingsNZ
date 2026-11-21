@@ -45,7 +45,8 @@ Guarded row claims and leases:
 [Xero retry (#2262)](#a-xero-retry-claims-the-original-row-it-writes-2262-h3-3462-4256-4259) ·
 [two callers on one Xero row (#4356)](#two-callers-on-one-xero-operation-row-guarded-outcomes-4356) ·
 [Xero token refresh (#3454)](#the-xero-token-refresh-uses-a-row-lease-3454-3806) ·
-[data-key re-encrypt (#4456)](#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456).
+[data-key re-encrypt (#4456)](#the-data-key-re-encrypt-joins-the-row-claims-and-takes-no-advisory-key-4456) ·
+[password cost upgrade (#5261)](#stored-password-cost-upgrade-5261).
 
 **Writer classes.**
 
@@ -2554,6 +2555,27 @@ mispricing a booking.
   `officer-two-factor.realdb.test.ts` (one grace stamp; a reset closes a
   required officer's grace and leaves an ordinary member's first grace owed;
   reset racing an enrolment).
+
+#### Stored password cost upgrade (#5261)
+
+- **Password cost upgrade** — `src/lib/password-rehash.ts`
+  (`upgradePasswordHashAfterProof`, #5261, `INV-AUTH-013`): after a password
+  is proved at sign-in or step-up, one `member.updateMany` writes the
+  current-cost hash `WHERE id = … AND passwordHash = <the proved hash>`, and
+  only that column. It is a compare-and-swap: no transaction, no row lock taken
+  up front, no advisory key, and the bcrypt hash is computed before the
+  statement, so INV-LOCK-001 and INV-LOCK-002 ordering is not engaged and there
+  is no new lock site or key (`INV-LOCK-003`).
+
+  Racing writers of `Member.passwordHash`: change-password, reset-password,
+  the kiosk password `PUT` in `src/app/api/admin/lodge/route.ts`, account
+  erasure and former-member anonymisation. If one commits first, the upgrade's
+  guard matches nothing (count 0) and it does nothing more. If one holds the row
+  uncommitted, the upgrade's `UPDATE` waits on the row and PostgreSQL re-checks
+  the guard against the committed row, so it again matches nothing. If the
+  upgrade commits first, the other writer replaces the upgraded hash as it
+  would have replaced the old one. Proved on PostgreSQL by
+  `password-rehash.realdb.test.ts` (a forced interleaving behind a held row).
 
 #### Member photo writer (epic #171)
 
@@ -5517,11 +5539,17 @@ per call through `withStoreTransaction`: the `Payment` row locked first
 `PaymentRefund` rows inserted with `ON CONFLICT DO NOTHING` in refund-id order,
 then the transaction row's compare-and-set, then the `Payment` aggregate and its
 booking-ledger lines. No provider call runs inside it. A failed refund's floor
-(#4280, `INV-PAY-141`) reads the payment's "Paid another way" close records on
-that same client, under the `Payment` row: the close takes `lock(1)`, then that
-row, before it writes its record, so the writer sees a close whole or waits for
-it. No key is added. Proved in both orders by
-`card-refund-reversal-bank-cash-floor.realdb.test.ts`.
+(#4280, #4488, `INV-PAY-141`) reads the payment's card refund bank records - its
+"Paid another way" closes and completed card refund shortfalls
+(`readCardRefundBankCashByPayment`) - on that same client, under the `Payment`
+row. The close takes `lock(1)`, then that row, before it writes its record. A
+shortfall's completion takes `lock(1)`, then the booking row, then that row
+while it chooses its route (`cardShortfallSettlement`; a capacity race's again
+in `capacityRaceChargeForHandBack`), all before its claim; it takes no member
+key, since a shortfall gives nothing back as credit. So the writer sees either
+whole or waits for it. No key, order or registry entry is added. Proved in both
+orders by `card-refund-reversal-bank-cash-floor.realdb.test.ts` (closes) and,
+for a cancel's bank part, `card-refund-reversal-shortfall-floor.realdb.test.ts`.
 
 **One order for the refunded total: `Payment` row, then refund rows, then
 transaction rows** — and, in a transaction that also takes the per-member

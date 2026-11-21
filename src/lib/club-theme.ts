@@ -8,6 +8,7 @@ import {
   logoImageIdFromUrl,
   normaliseThemeValues,
   resolveLogoFields,
+  type ClubThemeValues,
 } from "@/lib/club-theme-schema";
 import type { ClubThemeUpdateInput } from "@/lib/club-theme-update-schema";
 import { storableLogoDataUrl } from "@/lib/image-metadata";
@@ -200,15 +201,92 @@ export async function getWebsiteThemeRenderState() {
   const readFailed = theme === READ_FAILED;
   const row = readFailed ? null : (theme as Exclude<typeof theme, symbol>);
   const values = normaliseThemeValues(row ?? DEFAULT_CLUB_THEME_VALUES);
+  // A failed read renders the default palette but is not memoised: it would
+  // evict the club's real stylesheets, which the next good read then rebuilds.
+  const { css, appCss } = readFailed
+    ? buildThemeStylesheets(values)
+    : themeStylesheets(values);
 
   return {
     values,
-    css: buildClubThemeCss(values),
-    appCss: buildClubThemeAppCss(values),
+    css,
+    appCss,
     logoUrl: values.logoUrl,
     logoDataUrl: values.logoDataUrl,
     isComplete: Boolean(row?.completedAt),
     /** True only when the read THREW — never when it returned "no row". */
     readFailed,
   };
+}
+
+/**
+ * The last theme's two stylesheets, reused while the values are unchanged
+ * (#5264). Generating them runs the palette generator twice, which costs
+ * hundreds of milliseconds of CPU, logo or not. The values change only when an
+ * administrator saves a new site style, but every 15-second cache refill of
+ * the theme rebuilt both. That work blocks the server's only thread, so every
+ * request arriving meanwhile waited for it. Both builders are pure functions of
+ * the values, so reusing the last output is exact.
+ */
+let lastThemeStylesheets: {
+  values: ClubThemeValues;
+  css: string;
+  appCss: string;
+} | null = null;
+
+function themeStylesheets(values: ClubThemeValues) {
+  if (
+    lastThemeStylesheets &&
+    sameThemeValues(lastThemeStylesheets.values, values)
+  ) {
+    return lastThemeStylesheets;
+  }
+
+  lastThemeStylesheets = buildThemeStylesheets(values);
+  return lastThemeStylesheets;
+}
+
+function buildThemeStylesheets(values: ClubThemeValues) {
+  return {
+    values,
+    css: buildClubThemeCss(values),
+    appCss: buildClubThemeAppCss(values),
+  };
+}
+
+// test seam
+export function resetThemeStylesheetCache() {
+  lastThemeStylesheets = null;
+}
+
+function sameThemeValues(a: ClubThemeValues, b: ClubThemeValues) {
+  const keys = Object.keys(a) as (keyof ClubThemeValues)[];
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => Object.is(a[key], b[key]))
+  );
+}
+
+/**
+ * Whether setup is complete, from `completedAt` alone (#5264). This is the
+ * proxy's setup gate's read on every refresh, and on a live club it is the only
+ * one: it never loads the logo or builds the theme CSS that
+ * `getWebsiteThemeRenderState()` does. `readFailed` keeps "the database did not
+ * answer" apart from "not complete", for the reason given above that function.
+ */
+export async function readSetupCompletion(): Promise<
+  { readFailed: true } | { readFailed: false; isComplete: boolean }
+> {
+  const row = await prisma.clubTheme
+    .findUnique({
+      where: { id: CLUB_THEME_ID },
+      select: { completedAt: true },
+    })
+    .catch(() => READ_FAILED);
+
+  if (typeof row === "symbol") {
+    return { readFailed: true };
+  }
+
+  return { readFailed: false, isComplete: Boolean(row?.completedAt) };
 }

@@ -100,6 +100,7 @@ let withdraw: typeof import("@/lib/additional-payment-withdraw");
 let paidAnotherWay: typeof import("@/lib/card-refund-paid-another-way");
 let gapCheck: typeof import("@/lib/xero-primary-invoice-fee-gap");
 let invoiceKey: typeof import("@/lib/xero-booking-invoice-key");
+let refundNote: typeof import("@/lib/late-capture-refund-credit-note");
 
 async function clean(): Promise<void> {
   await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: REFUND_OPERATION_ID }, { targetId: BOOKING_ID }] } });
@@ -111,7 +112,10 @@ async function clean(): Promise<void> {
     where: { localId: { in: [CHANGE_TX_ID, PRIMARY_TX_ID, PAYMENT_ID, BOOKING_ID, MODIFICATION_ID, FIRST_ANCHOR_ID, TASK_ID] } },
   });
   await prisma.xeroObjectLink.deleteMany({ where: { localModel: "BookingModification", localId: MODIFICATION_ID } });
+  // #4383: the receipt's payment links, on the capture and the payment.
+  await prisma.xeroObjectLink.deleteMany({ where: { localId: { in: [CHANGE_TX_ID, PAYMENT_ID] } } });
   await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
+  await prisma.paymentRefund.deleteMany({ where: { paymentId: PAYMENT_ID } });
   await prisma.paymentTransaction.deleteMany({ where: { paymentId: PAYMENT_ID } });
   await prisma.bookingModification.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
@@ -322,6 +326,7 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     paidAnotherWay = await import("@/lib/card-refund-paid-another-way");
     gapCheck = await import("@/lib/xero-primary-invoice-fee-gap");
     invoiceKey = await import("@/lib/xero-booking-invoice-key");
+    refundNote = await import("@/lib/late-capture-refund-credit-note");
     const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
       import("@prisma/client"),
       import("@/lib/prisma-adapter"),
@@ -918,6 +923,77 @@ async function holdLock(lock: (tx: Prisma.TransactionClient) => Promise<unknown>
     expect(after).toEqual({ status: "PENDING", updatedAt: revived.updatedAt });
     expect(await supplementaryRows()).toHaveLength(1);
     expect(await receiptRows()).toEqual([]);
+  });
+
+  // #4383 (`INV-PAY-110`, `INV-PAY-139`): the primary has room for $50 of
+  // the $80 kept, so the receipt records $50 and alerts an officer about the
+  // rest. The capture is then refunded in full: its note is for the $50 Xero
+  // received, once, however often the refund's note step runs.
+  it("MUTATION #4383: a receipt capped at $50 of an $80 capture, then a full refund: exactly one $50 note", { timeout: 30_000 }, async () => {
+    await seed("OPEN");
+    await dismiss();
+    const [row] = await receiptRows();
+    const claimed = await claim.claimXeroSyncOperationToRunning(row!.id, {
+      direction: "OUTBOUND",
+      entityType: "PAYMENT",
+      operationType: "CREATE",
+      localModel: { in: ["PaymentTransaction"] },
+    });
+    const paid: Array<{ amountCents?: number }> = [];
+    await worker.recordAdditionalCaptureReceipt(
+      { syncOperation: claimed! },
+      {
+        getAuthenticatedXeroClient: async () =>
+          ({
+            tenantId: "tenant",
+            xero: {
+              accountingApi: {
+                getInvoice: async () => ({
+                  body: { invoices: [{ invoiceID: INVOICE_ID, status: "AUTHORISED", amountDue: 50, payments: [] }] },
+                }),
+              },
+            },
+          }) as never,
+        callXeroApi: ((call: () => Promise<unknown>) => call()) as never,
+        createXeroPaymentForInvoice: async (input) => {
+          paid.push(input as { amountCents?: number });
+          return "race-4383-xero-payment";
+        },
+        readStripeCaptureDocumentDate: async () => "2026-06-20",
+      },
+    );
+    // The receipt and the officer's alert stand as before: $50 recorded, $30 on no invoice.
+    expect(paid).toEqual([expect.objectContaining({ amountCents: 5_000 })]);
+    const [recorded] = await prisma.xeroSyncOperation.findMany({
+      where: { id: row!.id },
+      select: { status: true, responsePayload: true },
+    });
+    expect(recorded).toMatchObject({ status: "SUCCEEDED", responsePayload: expect.objectContaining({ unrecordedCents: 3_000 }) });
+
+    await prisma.paymentRefund.create({
+      data: {
+        paymentId: PAYMENT_ID,
+        paymentTransactionId: CHANGE_TX_ID,
+        stripeRefundId: "re_race_4383_full",
+        stripePaymentIntentId: CHANGE_INTENT,
+        amountCents: 8_000,
+        currency: "nzd",
+        status: "succeeded",
+        stripeCreatedAt: new Date("2026-06-25T00:00:00.000Z"),
+      },
+    });
+    await prisma.paymentTransaction.update({ where: { id: CHANGE_TX_ID }, data: { refundedAmountCents: 8_000 } });
+    await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: 8_000 } });
+
+    await expect(refundNote.noteLateCaptureRefunds({ paymentId: PAYMENT_ID, paymentIntentId: CHANGE_INTENT })).resolves.toBe("queued");
+    await expect(refundNote.noteLateCaptureRefunds({ paymentId: PAYMENT_ID, paymentIntentId: CHANGE_INTENT })).resolves.toBe("nothing-owed");
+    const notes = await prisma.xeroSyncOperation.findMany({
+      where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "REFUND_CREDIT_NOTE", status: { not: "CANCELLED" } },
+      select: { requestPayload: true },
+    });
+    expect(notes).toEqual([
+      { requestPayload: expect.objectContaining({ refundAmountCents: 5_000, paymentIntentId: CHANGE_INTENT }) },
+    ]);
   });
 
   /**
