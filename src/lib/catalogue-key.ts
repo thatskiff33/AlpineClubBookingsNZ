@@ -26,6 +26,16 @@ export function normalizeCatalogueKey(name: string): string {
 }
 
 /**
+ * True when `key` has the shape the admin pages mint: exactly what
+ * {@link normalizeCatalogueKey} leaves unchanged (UPPER_SNAKE, at most 80
+ * characters, no leading or trailing underscore). Config import uses this so a
+ * bundle cannot create a key the admin page could never have created.
+ */
+export function isCatalogueKey(key: string): boolean {
+  return key.length > 0 && normalizeCatalogueKey(key) === key;
+}
+
+/**
  * The first free key for `name`: the normalised key, else `_2`, `_3`… with
  * the base trimmed so the result stays within the length cap.
  */

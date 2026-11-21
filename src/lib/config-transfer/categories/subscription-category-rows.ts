@@ -5,6 +5,7 @@ import {
 import type { ClubFormat } from "@/lib/club-format";
 import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { rawHasValue, type ImportMode, type ReadDb } from "../import-types";
+import { isCatalogueKey } from "@/lib/catalogue-key";
 import { RowValidator, nz, readCsvRows } from "../values";
 import { describeWindow, windowsOverlap } from "./membership-fees";
 
@@ -274,9 +275,16 @@ function effective<T>(mode: ImportMode, raw: Record<string, string>, field: stri
 
 export function validateCategoryRows(parsed: ParsedBundle, state: SubscriptionCategoryState, errors: string[]): void {
   for (const row of parsed.categories) {
-    if (state.categories.get(row.key)?.isBuiltIn) {
+    const existing = state.categories.get(row.key);
+    if (existing?.isBuiltIn) {
       errors.push(
         `${CATEGORIES_FILE}: category "${row.key}" is the target's built-in Individual category, which config transfer never changes — remove the row`,
+      );
+    } else if (!existing && !isCatalogueKey(row.key)) {
+      // A NEW key must have the shape the Subscription Categories page mints
+      // (src/lib/catalogue-key.ts); an existing target key is matched as-is.
+      errors.push(
+        `${CATEGORIES_FILE}: category "${row.key}" is not a valid new category key — use capital letters, digits and single underscores (at most 80 characters), as the Subscription Categories page creates them`,
       );
     }
   }

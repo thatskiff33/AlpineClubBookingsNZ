@@ -139,8 +139,8 @@ function sourceStore() {
   return makeStore({
     categories: [
       BUILT_IN,
-      { id: "src-couple", key: "couple", name: "Couple", description: "Two adults", isActive: true, isBuiltIn: false, sortOrder: 1 },
-      { id: "src-old", key: "old-family", name: "Old Family", description: null, isActive: false, isBuiltIn: false, sortOrder: 2 },
+      { id: "src-couple", key: "COUPLE", name: "Couple", description: "Two adults", isActive: true, isBuiltIn: false, sortOrder: 1 },
+      { id: "src-old", key: "OLD_FAMILY", name: "Old Family", description: null, isActive: false, isBuiltIn: false, sortOrder: 2 },
     ],
     fees: [
       { id: "src-f1", subscriptionCategoryId: "src-couple", effectiveFrom: d("2025-04-01"), effectiveTo: d("2026-03-31"), amountCents: 30000, prorationRule: "NONE" },
@@ -204,11 +204,11 @@ describe("config transfer — subscription categories (#5248)", () => {
     const files = await exportFiles(sourceStore().db);
 
     const categories = strFromU8(files.get(CATEGORIES_FILE)!);
-    expect(categories).toContain("couple,Couple,Two adults,true,1");
-    expect(categories).toContain("old-family,Old Family,,false,2");
+    expect(categories).toContain("COUPLE,Couple,Two adults,true,1");
+    expect(categories).toContain("OLD_FAMILY,Old Family,,false,2");
     expect(categories).not.toContain("individual");
-    expect(strFromU8(files.get(FEES_FILE)!)).toContain("couple,2026-04-01,,32000,REMAINING_MONTHS_INCLUSIVE");
-    expect(strFromU8(files.get(COMPONENTS_FILE)!)).toContain("couple,2026-04-01,Hut levy,4000,false,210,,1");
+    expect(strFromU8(files.get(FEES_FILE)!)).toContain("COUPLE,2026-04-01,,32000,REMAINING_MONTHS_INCLUSIVE");
+    expect(strFromU8(files.get(COMPONENTS_FILE)!)).toContain("COUPLE,2026-04-01,Hut levy,4000,false,210,,1");
   });
 
   it("emits nothing for an install with only the built-in category", async () => {
@@ -248,7 +248,7 @@ describe("config transfer — subscription categories (#5248)", () => {
     const target = makeStore({
       categories: [
         BUILT_IN,
-        { id: "tgt-couple", key: "couple", name: "Couple", description: null, isActive: true, isBuiltIn: false, sortOrder: 1 },
+        { id: "tgt-couple", key: "COUPLE", name: "Couple", description: null, isActive: true, isBuiltIn: false, sortOrder: 1 },
       ],
       fees: [
         // An invoiced fee on the target with a different amount and one component.
@@ -263,7 +263,7 @@ describe("config transfer — subscription categories (#5248)", () => {
     expect(await planErrors(files, target.db)).toEqual([]);
     await subscriptionCategoriesImporter.apply(applyCtx(files, target.db));
 
-    expect(target.categories.find((c) => c.key === "couple")).toMatchObject({ id: "tgt-couple", description: "Two adults" });
+    expect(target.categories.find((c) => c.key === "COUPLE")).toMatchObject({ id: "tgt-couple", description: "Two adults" });
     expect(target.fees.find((f) => f.id === "tgt-f2")).toMatchObject({ prorationRule: "REMAINING_MONTHS_INCLUSIVE" });
     expect(target.fees.filter((f) => f.subscriptionCategoryId === "tgt-couple")).toHaveLength(2);
     expect(target.forbidden).not.toHaveBeenCalled();
@@ -286,15 +286,38 @@ describe("config transfer — subscription categories (#5248)", () => {
     expect((await planErrors(files, makeStore().db)).join("\n")).toMatch(/built-in Individual/);
   });
 
+  it.each(["couple", "Old-Family", "_COUPLE", "COUPLE__TWO", "A".repeat(81)])(
+    "refuses a new category key %s that the Subscription Categories page could not create",
+    async (key) => {
+      const files = new Map([
+        [CATEGORIES_FILE, csv(["key,name,description,isActive,sortOrder", `${key},Couple,,true,0`])],
+      ]);
+      expect((await planErrors(files, makeStore().db)).join("\n")).toMatch(/not a valid new category key/);
+    },
+  );
+
+  it("accepts an existing target key as-is, even one the page would not mint today", async () => {
+    const target = makeStore({
+      categories: [
+        BUILT_IN,
+        { id: "tgt-legacy", key: "legacy-pair", name: "Pair", description: null, isActive: true, isBuiltIn: false, sortOrder: 0 },
+      ],
+    });
+    const files = new Map([
+      [CATEGORIES_FILE, csv(["key,name,description,isActive,sortOrder", "legacy-pair,Pair,Renamed note,true,0"])],
+    ]);
+    expect(await planErrors(files, target.db)).toEqual([]);
+  });
+
   it("refuses a name another key already uses on the target, case-insensitively", async () => {
     const target = makeStore({
       categories: [
         BUILT_IN,
-        { id: "tgt-pair", key: "pair", name: "Couple", description: null, isActive: true, isBuiltIn: false, sortOrder: 0 },
+        { id: "tgt-pair", key: "PAIR", name: "Couple", description: null, isActive: true, isBuiltIn: false, sortOrder: 0 },
       ],
     });
     const files = new Map([
-      [CATEGORIES_FILE, csv(["key,name,description,isActive,sortOrder", "couple,COUPLE,,true,0"])],
+      [CATEGORIES_FILE, csv(["key,name,description,isActive,sortOrder", "COUPLE,COUPLE,,true,0"])],
     ]);
     expect((await planErrors(files, target.db)).join("\n")).toMatch(/already uses/);
   });
@@ -309,9 +332,9 @@ describe("config transfer — subscription categories (#5248)", () => {
 
   it("refuses components that do not sum to the fee amount in the bundle", async () => {
     const files = new Map([
-      [CATEGORIES_FILE, csv(["key,name,description,isActive,sortOrder", "couple,Couple,,true,0"])],
-      [FEES_FILE, csv(["categoryKey,effectiveFrom,effectiveTo,amountCents,prorationRule", "couple,2026-04-01,,30000,NONE"])],
-      [COMPONENTS_FILE, csv(["categoryKey,effectiveFrom,label,amountCents,prorate,xeroAccountCode,xeroItemCode,sortOrder", "couple,2026-04-01,Fee,25000,true,,,0"])],
+      [CATEGORIES_FILE, csv(["key,name,description,isActive,sortOrder", "COUPLE,Couple,,true,0"])],
+      [FEES_FILE, csv(["categoryKey,effectiveFrom,effectiveTo,amountCents,prorationRule", "COUPLE,2026-04-01,,30000,NONE"])],
+      [COMPONENTS_FILE, csv(["categoryKey,effectiveFrom,label,amountCents,prorate,xeroAccountCode,xeroItemCode,sortOrder", "COUPLE,2026-04-01,Fee,25000,true,,,0"])],
     ]);
     expect((await planErrors(files, makeStore().db)).join("\n")).toMatch(/must sum to the fee amount/);
   });
@@ -320,7 +343,7 @@ describe("config transfer — subscription categories (#5248)", () => {
     // The target's fee has an extra component the bundle does not carry; an
     // upsert-only import would leave it in place and over-bill.
     const target = makeStore({
-      categories: [BUILT_IN, { id: "tgt-couple", key: "couple", name: "Couple", description: null, isActive: true, isBuiltIn: false, sortOrder: 0 }],
+      categories: [BUILT_IN, { id: "tgt-couple", key: "COUPLE", name: "Couple", description: null, isActive: true, isBuiltIn: false, sortOrder: 0 }],
       fees: [{ id: "tgt-f", subscriptionCategoryId: "tgt-couple", effectiveFrom: d("2026-04-01"), effectiveTo: null, amountCents: 30000, prorationRule: "NONE" }],
       components: [
         { id: "tgt-c1", subscriptionCategoryFeeId: "tgt-f", label: "Fee", amountCents: 25000, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 },
@@ -328,22 +351,22 @@ describe("config transfer — subscription categories (#5248)", () => {
       ],
     });
     const files = new Map([
-      [FEES_FILE, csv(["categoryKey,effectiveFrom,effectiveTo,amountCents,prorationRule", "couple,2026-04-01,,30000,NONE"])],
-      [COMPONENTS_FILE, csv(["categoryKey,effectiveFrom,label,amountCents,prorate,xeroAccountCode,xeroItemCode,sortOrder", "couple,2026-04-01,Fee,30000,true,,,0"])],
+      [FEES_FILE, csv(["categoryKey,effectiveFrom,effectiveTo,amountCents,prorationRule", "COUPLE,2026-04-01,,30000,NONE"])],
+      [COMPONENTS_FILE, csv(["categoryKey,effectiveFrom,label,amountCents,prorate,xeroAccountCode,xeroItemCode,sortOrder", "COUPLE,2026-04-01,Fee,30000,true,,,0"])],
     ]);
     expect((await planErrors(files, target.db)).join("\n")).toMatch(/after merging into the target's fee/);
   });
 
   it("refuses fee windows that would overlap after the merge", async () => {
     const target = makeStore({
-      categories: [BUILT_IN, { id: "tgt-couple", key: "couple", name: "Couple", description: null, isActive: true, isBuiltIn: false, sortOrder: 0 }],
+      categories: [BUILT_IN, { id: "tgt-couple", key: "COUPLE", name: "Couple", description: null, isActive: true, isBuiltIn: false, sortOrder: 0 }],
       // An open-ended target fee from 2025; the bundle adds one from 2026.
       fees: [{ id: "tgt-f", subscriptionCategoryId: "tgt-couple", effectiveFrom: d("2025-04-01"), effectiveTo: null, amountCents: 30000, prorationRule: "NONE" }],
       components: [{ id: "tgt-c", subscriptionCategoryFeeId: "tgt-f", label: "Fee", amountCents: 30000, prorate: true, xeroAccountCode: null, xeroItemCode: null, sortOrder: 0 }],
     });
     const files = new Map([
-      [FEES_FILE, csv(["categoryKey,effectiveFrom,effectiveTo,amountCents,prorationRule", "couple,2026-04-01,,32000,NONE"])],
-      [COMPONENTS_FILE, csv(["categoryKey,effectiveFrom,label,amountCents,prorate,xeroAccountCode,xeroItemCode,sortOrder", "couple,2026-04-01,Fee,32000,true,,,0"])],
+      [FEES_FILE, csv(["categoryKey,effectiveFrom,effectiveTo,amountCents,prorationRule", "COUPLE,2026-04-01,,32000,NONE"])],
+      [COMPONENTS_FILE, csv(["categoryKey,effectiveFrom,label,amountCents,prorate,xeroAccountCode,xeroItemCode,sortOrder", "COUPLE,2026-04-01,Fee,32000,true,,,0"])],
     ]);
     expect((await planErrors(files, target.db)).join("\n")).toMatch(/overlapping fee windows 2025-04-01\.\.open and 2026-04-01\.\.open/);
 
@@ -351,13 +374,13 @@ describe("config transfer — subscription categories (#5248)", () => {
     const closed = new Map([
       [FEES_FILE, csv([
         "categoryKey,effectiveFrom,effectiveTo,amountCents,prorationRule",
-        "couple,2025-04-01,2026-03-31,30000,NONE",
-        "couple,2026-04-01,,32000,NONE",
+        "COUPLE,2025-04-01,2026-03-31,30000,NONE",
+        "COUPLE,2026-04-01,,32000,NONE",
       ])],
       [COMPONENTS_FILE, csv([
         "categoryKey,effectiveFrom,label,amountCents,prorate,xeroAccountCode,xeroItemCode,sortOrder",
-        "couple,2025-04-01,Fee,30000,true,,,0",
-        "couple,2026-04-01,Fee,32000,true,,,0",
+        "COUPLE,2025-04-01,Fee,30000,true,,,0",
+        "COUPLE,2026-04-01,Fee,32000,true,,,0",
       ])],
     ]);
     expect(await planErrors(closed, target.db)).toEqual([]);
