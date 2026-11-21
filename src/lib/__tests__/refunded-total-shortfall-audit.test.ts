@@ -112,6 +112,16 @@ describe("deriveRefundedTotalShortfall (#3640)", () => {
     ).toBeNull();
   });
 
+  it("#4488: the cap binds with shortfall cash in the sum: $150 card + $100 closed + $100 paid back on a $300 capture is a $300 floor", () => {
+    // Card refunds plus the close fall short of the capture ($250), so only a
+    // shortfall term kept inside min(captured, ...) holds the floor at $300.
+    expect(
+      deriveRefundedTotalShortfall(
+        row({ amountCents: 30000, refundedAmountCents: 20000, cardRefundCents: 15000, accountCreditCents: 0, paidAnotherWayCents: 10000, shortfallPaybackCents: 10000 }),
+      ),
+    ).toMatchObject({ expectedFloorCents: 30000, shortfallCents: 10000 });
+  });
+
   it("#4488: what only a shortfall's bank cash explains is never attributed to the old arithmetic", () => {
     // As #4280's close above: $50 card + $100 credit stored as $300 with a $200 shortfall paid back.
     expect(
