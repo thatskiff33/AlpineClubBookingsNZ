@@ -1825,7 +1825,12 @@ invoice resolved before the app sent it, and a close whose note row exists.
 Record those by hand in Xero, except a card note sent with no reply, which it
 names apart for you to check in Xero first (round 14), as the kept invoice's
 finding does. Each capture is named by one record-by-hand finding at most, and
-by none when the app raises its card note. Each record-by-hand finding keeps
+by none when the app raises its card note. One exception (#4383): where the
+app recorded only part of a late card payment in Xero (its invoice had less
+room than the payment, and the receipt's alert told you about the rest), its
+refund note stops at that part, and the same finding names the refund above it
+with its own sentence. Record that amount by hand only if you recorded the rest
+of the payment by hand; otherwise record nothing. Each record-by-hand finding keeps
 appearing after the refund is recorded by hand, and that is expected: recording
 a refund by hand in Xero writes no row the app can read, and the tool has no
 way to acknowledge a finding.
