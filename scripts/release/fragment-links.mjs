@@ -6,14 +6,10 @@
  */
 import path from "node:path";
 
+import { FENCE_TOGGLE, INLINE_LINK, REF_DEF } from "../lib/markdown-links.mjs";
+
 /** Directory holding one Markdown fragment per merged PR. */
 export const FRAGMENTS_DIRNAME = "changelog.d";
-
-// The link shapes `scripts/check-doc-links.mjs` checks: inline links and
-// images, and reference definitions at the start of a line.
-const INLINE_LINK = /(!?\[[^\]]*\]\(\s*)(<[^>]+>|[^)\s]+)/g;
-const REF_DEF = /^(\s*\[[^\]]+\]:\s*)(\S+)/;
-const FENCE = /^\s*(```|~~~)/;
 
 /**
  * A fragment is written in `changelog.d/`, so a relative link in it resolves
@@ -54,7 +50,7 @@ export function rebaseFragmentLinks(body, fragmentName) {
   return body
     .split("\n")
     .map((line) => {
-      if (FENCE.test(line)) {
+      if (FENCE_TOGGLE.test(line)) {
         inFence = !inFence;
         return line;
       }
