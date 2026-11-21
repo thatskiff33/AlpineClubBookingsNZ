@@ -1232,7 +1232,19 @@ note.
    and raises no repeated-failure alert. The FAILED refund-note repair claims
    its row too (FAILED mode), stamping `REFUND_NOTE_REPAIR_RUNNING`
    (`XERO_REFUND_NOTE_REPAIR_RUNNING_CODE`, #4356); a stale reset returns it
-   to FAILED. While either marker is on the claim, no other caller's outcome
+   to FAILED. Either refund-note repair makes its note the payment's refund
+   note (`Payment.xeroRefundCreditNoteId`) only inside its completion, after
+   the claim wins (#4279): the completion takes the Payment row first, then
+   the claim, re-checks under that row that the note is neither per-refund nor
+   recorded VOIDED or DELETED, writes the pointer, then the links
+   (`completeAdoptingCanonicalRefundNote`, the create's record order). A repair
+   whose claim a stale reset took writes no pointer and no link, so a void that
+   landed meanwhile is never undone by it; before #4279 its own earlier
+   pointer write could leave the payment naming the voided note. A completion
+   that fails after the refund payment was sent (the Payment row not got in
+   time) still records the payment's manifest, and the next retry reads the
+   payment back as already settled and closes on it with no second payment.
+   While either marker is on the claim, no other caller's outcome
    but SUCCEEDED lands on the row (`INV-INT-029`). And since #4373 no outcome
    at all lands on a RUNNING row another claim stamped: every complete and
    fail carries the claim (`startedAt`) it was made under, so a stale-reset

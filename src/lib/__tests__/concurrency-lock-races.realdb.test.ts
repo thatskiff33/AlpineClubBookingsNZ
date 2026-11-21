@@ -624,6 +624,13 @@ import "./refund-gap-prefilter.realdb.test";
 // failed write gives the row back PARTIAL. Skipped unless
 // RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4256-` fixtures.
 import "./xero-partial-repair-claim.realdb.test";
+// #4279 reuses it to prove a refund credit-note repair that loses its claim
+// after Xero voids or deletes the note leaves the payment pointing at no
+// voided note and no live link to it, through the real retry, inbound void and
+// stale reset; the pointer is adopted only inside a completion that wins its
+// claim. Skipped unless RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its
+// own `race-4279-` fixtures.
+import "./xero-refund-repair-lost-claim-void.realdb.test";
 // #4259 reuses it to prove the PARTIAL modification credit-note repair claims
 // its row the same way and closes it: a resolve or a mark committed while it
 // waits wins, two retries make one allocation and close the row once SUCCEEDED,

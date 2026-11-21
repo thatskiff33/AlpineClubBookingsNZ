@@ -90,7 +90,7 @@ export const PARTIAL_REPAIR_CLAIM_LOST_MESSAGE =
 // allocations were all already linked) - or, below, a credit note allocation.
 export const REPAIR_RESET_NOT_CLOSED_MESSAGE = "This operation was reset while the repair ran, so it was not closed. Retry it once to close it.";
 export const MODIFICATION_NOTE_REPAIR_CLAIM_LOST_MESSAGE = "The credit note allocation was sent to Xero, but this operation was reset while it ran. Retry it once to close it.";
-import { isRetryOfVoidedRefundRequestNote, mayRecordAsCanonicalRefundNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
+import { isRetryOfVoidedRefundRequestNote, VOIDED_REQUEST_NOTE_RETRY_REASON } from "@/lib/xero-refund-note-status";
 import type { CashRefundMethod } from "@/lib/xero-refund-method";
 import { NOTE_ALLOCATION_ROLE, readBookingClearingNoteRetryInput, recordedClearingTargets, RedactedClearingPlanError, unallocatedClearingTargets, type ClearingAllocationTarget } from "@/lib/xero-clearing-allocations";
 import {
@@ -836,18 +836,11 @@ async function repairRefundCreditNoteFollowUpActions(
   const result = (claimLost: boolean) => ({
     message: claimLost ? PARTIAL_REPAIR_CLAIM_LOST_MESSAGE : "Repaired Xero refund credit note follow-up actions.",
   });
-  // #3827 (D-3813-8): a refund request's own note is an allowed extra, never
-  // the payment's one refund note, so it never takes the payment's pointer.
-  // #3880 F1: a per-refund note is repaired, never made the payment's canonical one.
+  // #4279: the note becomes the payment's refund note only in the completion, once its claim wins
+  // (`completeAdoptingCanonicalRefundNote`), never in a write of its own before it. Never a refund
+  // request's own note (#3827, `refundCreditNoteCompletion`), nor a per-refund or voided one (#3880 F1,
+  // `INV-ADDPAY-041`, re-checked under the Payment row).
   const refundRequestId = readRefundRequestIdFromPayload(operation.requestPayload);
-  if (!refundRequestId && (await mayRecordAsCanonicalRefundNote(operation.localId!, repair.creditNoteId, prisma))) {
-    await prisma.payment.update({
-      where: { id: operation.localId! },
-      data: {
-        xeroRefundCreditNoteId: repair.creditNoteId,
-      },
-    });
-  }
 
   // `INV-PAY-101`: the SAME decision the inline leg makes. A row that recorded
   // its method settles as it said; a row from before #3529 carries none, so
@@ -880,6 +873,7 @@ async function repairRefundCreditNoteFollowUpActions(
       priorResponse,
       refundRequestId,
       retryClaim: true,
+      adoptAsCanonicalRefundNote: true,
     });
     if (outcome.refundPaymentErr) throw outcome.refundPaymentErr;
     return result(outcome.completionClaimLost);
@@ -896,6 +890,7 @@ async function repairRefundCreditNoteFollowUpActions(
       outcome: recordedRefundNoteOutcome(priorResponse),
       priorResponse,
       refundRequestId,
+      adoptAsCanonicalRefundNote: true,
     }),
     { retryClaim: true },
   );

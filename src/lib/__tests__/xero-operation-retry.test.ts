@@ -2799,9 +2799,12 @@ describe("retryXeroSyncOperation", () => {
       expect.objectContaining({
         status: "SUCCEEDED",
         responsePayload: expect.objectContaining({ refundPaymentSkipped: true, refundPaymentSkipReason: "unset" }),
+        // #4279: the note is adopted inside that completion, only if its claim wins.
+        canonicalRefundNote: { paymentId: "pay_123", creditNoteId: "cn_123" },
       }),
       { retryClaim: true },
     );
+    expect(mocks.updatePayment).not.toHaveBeenCalledWith(expect.objectContaining({ data: { xeroRefundCreditNoteId: "cn_123" } }));
   });
 
   it("MUTATION (INV-ADDPAY-041): a PARTIAL row's repair never writes a note Xero voided into the payment's pointer", async () => {
@@ -2856,16 +2859,15 @@ describe("retryXeroSyncOperation", () => {
     });
 
     expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
-    expect(mocks.updatePayment).toHaveBeenCalledWith({
-      where: { id: "pay_123" },
-      data: { xeroRefundCreditNoteId: "cn_123" },
-    });
+    // #4279: no pointer write of its own; the completion adopts the note once its claim wins.
+    expect(mocks.updatePayment).not.toHaveBeenCalledWith(expect.objectContaining({ data: { xeroRefundCreditNoteId: "cn_123" } }));
     expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: expect.objectContaining({ id: "op_123" }),
         paymentId: "pay_123",
         originalInvoiceId: "inv_123",
         creditNoteId: "cn_123",
+        adoptAsCanonicalRefundNote: true,
         // `INV-PAY-101`: a pre-#3529 row carries no method, and this payment's
         // source is Stripe, so the repair settles it as the card refund it was.
         refundMethod: "card",
@@ -2920,16 +2922,15 @@ describe("retryXeroSyncOperation", () => {
 
     expect(mocks.createXeroCreditNote).not.toHaveBeenCalled();
     expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
-    expect(mocks.updatePayment).toHaveBeenCalledWith({
-      where: { id: "pay_123" },
-      data: { xeroRefundCreditNoteId: "cn_legacy_123" },
-    });
+    // #4279: the FAILED arm hands the adoption to the completion too.
+    expect(mocks.updatePayment).not.toHaveBeenCalledWith(expect.objectContaining({ data: { xeroRefundCreditNoteId: "cn_legacy_123" } }));
     expect(mocks.finishRefundCreditNoteSettlement).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: expect.objectContaining({ id: "op_123" }),
         paymentId: "pay_123",
         originalInvoiceId: "inv_legacy_123",
         creditNoteId: "cn_legacy_123",
+        adoptAsCanonicalRefundNote: true,
         refundMethod: "card",
       })
     );
