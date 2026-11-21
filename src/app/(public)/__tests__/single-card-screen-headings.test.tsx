@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 
 /**
  * #4951 — every render state of a single-card public screen has exactly one
@@ -62,12 +62,7 @@ import VerifyEmailPage from "../verify-email/page";
 import ConfirmEmailChangePage from "../confirm-email-change/page";
 import ChangePasswordPage from "../change-password/page";
 import { LodgeMaintenanceReportClient } from "../lodge-maintenance/[token]/lodge-maintenance-report-client";
-
-function expectOneLevelOneHeading(name: string | RegExp) {
-  const headings = screen.getAllByRole("heading", { level: 1 });
-  expect(headings).toHaveLength(1);
-  expect(headings[0]).toHaveAccessibleName(name);
-}
+import { expectOneLevelOneHeading } from "@/lib/__tests__/support/heading-outline";
 
 beforeEach(() => {
   nav.searchParams = new URLSearchParams();
