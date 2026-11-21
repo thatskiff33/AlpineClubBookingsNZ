@@ -395,6 +395,7 @@ import { XERO_REFUND_NOTE_AWAITING_RESOLVE_CODE } from "@/lib/xero-operation-err
 import { REFUND_NOTE_AWAITING_RESOLVE_RECHECK_MS } from "@/lib/xero-refund-note-in-flight";
 import { matchesWhere } from "./support/prisma-where";
 import { NOT_A_XERO_REPAIR_CLAIM } from "@/lib/xero-operation-outcome-guard";
+import { SUPPLEMENTARY_INVOICE_CREATE_WHERE } from "@/lib/xero-supplementary-invoice-statuses";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 import { TEST_XERO_CLAIMED_AT, xeroClaim } from "@/lib/__tests__/helpers/xero-claim";
 
@@ -5173,6 +5174,8 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     expect(reviveCalls()).toEqual([
       {
         where: {
+          // #5228: only a supplementary-invoice row, by its immutable column.
+          ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
           id: "op_retired",
           status: "CANCELLED",
           lastErrorCode: "STALE_WAITING_PAYMENT",
@@ -5214,7 +5217,7 @@ describe("releaseXeroSupplementaryInvoiceForCapturedPaymentIntent (#3641)", () =
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.anchorCaptureHasReceipt.mock.invocationCallOrder[0]!);
     expect(reviveCalls()).toEqual([
       {
-        where: { id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
+        where: { ...SUPPLEMENTARY_INVOICE_CREATE_WHERE, id: "op_retired", status: "CANCELLED", lastErrorCode: "STALE_WAITING_PAYMENT" },
         data: expect.objectContaining({
           status: "PENDING",
           requestPayload: { ...payload(12000), recordPayment: false },

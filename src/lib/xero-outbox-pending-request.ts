@@ -17,12 +17,12 @@
  * a request changed in between is never overwritten and the caller learns it
  * lost. Callers keep their locks and guards as they were.
  */
-import { Prisma, type PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { readQueuedOutboxRequestFor } from "@/lib/xero-operation-outbox-payload";
 
-type OperationStore = Pick<PrismaClient, "xeroSyncOperation"> | Prisma.TransactionClient;
+type OperationStore = Pick<Prisma.TransactionClient, "xeroSyncOperation">;
 
 /** What the write did. `unclaimable` and `lost` wrote nothing. */
 export type OutboxPendingWrite =

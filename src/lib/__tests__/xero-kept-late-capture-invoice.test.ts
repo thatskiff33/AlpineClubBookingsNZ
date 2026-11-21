@@ -295,12 +295,16 @@ describe("enqueueXeroKeptLateCaptureInvoiceOperation", () => {
       requestPayload: { ...QUEUED },
     };
     const linked = (...roles: string[]) => mocks.linkFindMany.mockResolvedValue(roles.map((role) => ({ role })));
+    // #5228: the requeue reads the row's queue type and request before it writes.
+    beforeEach(() => {
+      mocks.operationFindUnique.mockResolvedValue(failed);
+    });
 
     it("MUTATION: puts a FAILED row whose invoice never reached Xero back to PENDING, status-guarded", async () => {
       mocks.operationFindMany.mockResolvedValue([failed]);
       await expect(enqueue({ requeueFailedUnsent: true })).resolves.toMatchObject({ queueOperationId: "op_failed" });
       expect(mocks.operationUpdateMany).toHaveBeenCalledWith({
-        where: { id: "op_failed", status: "FAILED", manuallyResolvedAt: null },
+        where: { AND: [{ status: "FAILED", manuallyResolvedAt: null }, { id: "op_failed", requestPayload: { equals: QUEUED } }] },
         data: expect.objectContaining({ status: "PENDING", completedAt: null, lastErrorMessage: null }),
       });
       expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
@@ -352,12 +356,21 @@ describe("enqueueXeroKeptLateCaptureInvoiceOperation", () => {
       await expect(keptReceiptHeldForOfficer(db as never, "task_kept")).resolves.toBe(false);
     });
 
+    it("MUTATION (#5228): never puts it back to run without a request the outbox can claim; it is held for an officer", async () => {
+      const overwritten = { ...failed, requestPayload: { manualRefundTaskId: "task_kept" } };
+      mocks.operationFindMany.mockResolvedValue([failed]);
+      mocks.operationFindUnique.mockResolvedValue(overwritten);
+      const result = await enqueue({ requeueFailedUnsent: true });
+      expect(result).toMatchObject({ queueOperationId: "op_failed", awaitingOfficerRetry: true });
+      expect(mocks.operationUpdateMany).not.toHaveBeenCalled();
+    });
+
     // #3924 round 8 (concurrency): an officer acted on the row after the read.
     describe("MUTATION: a requeue that claims nothing answers what the row is now", () => {
       it("an officer resolved it by hand: nothing is queued, and the caller is told it changed", async () => {
         mocks.operationFindMany.mockResolvedValue([failed]);
         mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
-        mocks.operationFindUnique.mockResolvedValue({ status: "FAILED", manuallyResolvedAt: new Date("2026-06-21T00:00:00.000Z") });
+        mocks.operationFindUnique.mockResolvedValueOnce(failed).mockResolvedValue({ status: "FAILED", manuallyResolvedAt: new Date("2026-06-21T00:00:00.000Z") });
         await expect(enqueue({ requeueFailedUnsent: true })).resolves.toMatchObject({
           queueOperationId: null,
           changedByOfficer: true,
@@ -367,7 +380,7 @@ describe("enqueueXeroKeptLateCaptureInvoiceOperation", () => {
       it("an officer retried it: the row is live", async () => {
         mocks.operationFindMany.mockResolvedValue([failed]);
         mocks.operationUpdateMany.mockResolvedValue({ count: 0 });
-        mocks.operationFindUnique.mockResolvedValue({ status: "RUNNING", manuallyResolvedAt: null });
+        mocks.operationFindUnique.mockResolvedValueOnce(failed).mockResolvedValue({ status: "RUNNING", manuallyResolvedAt: null });
         const result = await enqueue({ requeueFailedUnsent: true });
         expect(result).toMatchObject({ queueOperationId: "op_failed" });
         expect(result.message).toBe("The Xero invoice for this payment is already queued or sent.");
