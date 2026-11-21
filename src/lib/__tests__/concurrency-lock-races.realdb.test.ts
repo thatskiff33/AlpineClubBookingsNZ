@@ -863,6 +863,11 @@ import "./edit-quoted-figures.realdb.test";
 // changed underneath it (no side effect, retried), and two writers forced to meet
 // at the claim. It owns and cleans its own `race-4456` credential rows.
 import "./data-encryption-key-ring.realdb.test";
+// #4988 reuses it to prove an opening-credit file posts once when two officers
+// confirm it together, queues behind a member's credit-ledger lock, and
+// reverses only while every credit in it is unspent. Skipped unless
+// RUN_CONCURRENCY_RACE_TESTS=1; it owns and cleans its own `race-4988-` fixtures.
+import "./opening-credit-batch.realdb.test";
 // #4911 reuses it to prove a paid cancel of a booking whose card capture the
 // cardholder disputes (a lost dispute) issues no card refund and no account
 // credit, by either refund method, and raises one treasurer task naming the

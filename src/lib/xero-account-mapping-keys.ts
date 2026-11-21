@@ -118,6 +118,21 @@ export const XERO_ACCOUNT_MAPPING_DEFINITIONS = [
     unsetEntriesLabel: "goodwill entries",
   },
   {
+    // Owner decision on #4988 (16 Nov 2026): optional, falling back to
+    // `hutFeeRefunds` while unset, so a club that never carried its members'
+    // old credit in Xero posts exactly where it did before (`INV-PAY-162`).
+    key: "openingCredits",
+    label: "Opening Credits",
+    description:
+      "Liability account for credit brought across from your old system with an opening-credit import, for example a member credits held account. When a member spends that credit on an internet banking booking, the Xero credit note line is coded here, so spending it reduces the balance your club already carries in Xero. Leave it unset if the old credit was never recorded in Xero: it then posts to the refund account. Check the choice with your treasurer or accountant.",
+    // The whole liability class: charts name and type this account in more
+    // than one way (current liability, or a plain liability).
+    accountClass: "LIABILITY",
+    defaultCode: null,
+    fallbackKey: "hutFeeRefunds",
+    unsetEntriesLabel: "spent opening credits",
+  },
+  {
     key: "stripeBankAccount",
     label: "Stripe Bank Account",
     description: "Bank account used to record Stripe payments",

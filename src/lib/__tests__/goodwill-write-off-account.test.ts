@@ -31,6 +31,7 @@ const h = vi.hoisted(() => {
       amountCents: number;
       type: CreditType;
       xeroCreditNoteId: string | null;
+      openingCreditBatchId: string | null;
     }>,
     appliedCents: 0,
   };
@@ -61,6 +62,7 @@ const h = vi.hoisted(() => {
           amountCents: l.amountCents,
           type: l.type,
           xeroCreditNoteId: l.xeroCreditNoteId,
+          openingCreditBatchId: l.openingCreditBatchId,
         })),
       updateMany: async () => ({ count: 1 }),
     },
@@ -136,7 +138,12 @@ beforeEach(() => {
  * the credit note it would send to Xero.
  */
 async function mintedLines(
-  lots: Array<{ id: string; amountCents: number; type: CreditType }>,
+  lots: Array<{
+    id: string;
+    amountCents: number;
+    type: CreditType;
+    openingCreditBatchId?: string;
+  }>,
 ): Promise<LineItem[]> {
   h.state.appliedCents = lots.reduce((sum, lot) => sum + lot.amountCents, 0);
   h.state.lots = lots.map((lot) => ({
@@ -145,6 +152,7 @@ async function mintedLines(
     amountCents: lot.amountCents,
     type: lot.type,
     xeroCreditNoteId: null,
+    openingCreditBatchId: lot.openingCreditBatchId ?? null,
   }));
 
   let sent: CreditNote | undefined;
@@ -283,6 +291,21 @@ describe("a noteless lot that is NOT goodwill stays on hutFeeRefunds (#2717)", (
     expect(lines[0].accountCode).toBe("200");
   });
 
+  it("posts a spent opening credit to the refund account, though it is an ADMIN_ADJUSTMENT (#4988)", async () => {
+    // An opening credit is money the member already held in the club's old
+    // system (INV-PAY-162), not a grant the club chose to give.
+    const lines = await mintedLines([
+      {
+        id: "c1",
+        amountCents: 3000,
+        type: CreditType.ADMIN_ADJUSTMENT,
+        openingCreditBatchId: "batch-1",
+      },
+    ]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].accountCode).toBe("200");
+  });
+
   it("splits a mixed remainder across two lines on ONE note", async () => {
     const lines = await mintedLines([
       { id: "c1", amountCents: 2000, type: CreditType.CANCELLATION_REFUND },
@@ -296,6 +319,69 @@ describe("a noteless lot that is NOT goodwill stays on hutFeeRefunds (#2717)", (
     // One note, one allocation, the same total: only the coding is split.
     const total = lines.reduce((sum, line) => sum + (line.unitAmount ?? 0), 0);
     expect(total).toBe(35);
+  });
+});
+
+/**
+ * The owner's 16 Nov 2026 decision on #4988: spent opening credit posts to the
+ * optional `openingCredits` mapping (a club's member-credits-held liability,
+ * say), and to exactly where it posted before while that mapping is unset.
+ */
+describe("opening credit spent on a booking (#4988, INV-PAY-162)", () => {
+  const openingLot = {
+    id: "c1",
+    amountCents: 3000,
+    type: CreditType.ADMIN_ADJUSTMENT,
+    openingCreditBatchId: "batch-1",
+  };
+
+  it("posts to the club's chosen opening-credits account once it is set", async () => {
+    h.mappingRows.set("hutFeeRefunds", { code: "200", itemCode: "REFUND-ITEM" });
+    h.mappingRows.set("goodwillWriteOffs", { code: "404", itemCode: null });
+    h.mappingRows.set("openingCredits", { code: "2100", itemCode: null });
+    const lines = await mintedLines([openingLot]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].accountCode).toBe("2100");
+    // The refund ITEM would carry its own account and undo the choice.
+    expect(lines[0].itemCode).toBeUndefined();
+    expect(lines[0].unitAmount).toBe(30);
+  });
+
+  it("while unset, codes the line exactly as the refund account, item and all", async () => {
+    h.mappingRows.set("hutFeeRefunds", { code: null, itemCode: "REFUND-ITEM" });
+    h.mappingRows.set("openingCredits", { code: null, itemCode: null });
+    const lines = await mintedLines([openingLot]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].itemCode).toBe("REFUND-ITEM");
+    expect(lines[0].accountCode).toBeUndefined();
+  });
+
+  it("while unset, merges with the refund share into the one line clubs had before", async () => {
+    h.mappingRows.set("hutFeeRefunds", { code: "202", itemCode: null });
+    const lines = await mintedLines([
+      openingLot,
+      { id: "c2", amountCents: 1500, type: CreditType.CANCELLATION_REFUND },
+    ]);
+    expect(lines.map((line) => [line.accountCode, line.unitAmount])).toEqual([["202", 45]]);
+  });
+
+  it("leaves every other credit kind where it was once the mapping is set", async () => {
+    h.mappingRows.set("hutFeeRefunds", { code: "200", itemCode: null });
+    h.mappingRows.set("goodwillWriteOffs", { code: "404", itemCode: null });
+    h.mappingRows.set("openingCredits", { code: "2100", itemCode: null });
+    const lines = await mintedLines([
+      { id: "c1", amountCents: 1000, type: CreditType.CANCELLATION_REFUND },
+      { id: "c2", amountCents: 700, type: CreditType.BOOKING_MODIFICATION_REFUND },
+      { id: "c3", amountCents: 500, type: CreditType.BOOKING_APPLIED },
+      { id: "c4", amountCents: 300, type: CreditType.ADMIN_ADJUSTMENT },
+      { id: "c5", amountCents: 3000, type: CreditType.ADMIN_ADJUSTMENT, openingCreditBatchId: "batch-1" },
+    ]);
+    // One note, one line per destination, in the fixed order; integer cents.
+    expect(lines.map((line) => [line.accountCode, line.unitAmount])).toEqual([
+      ["200", 22],
+      ["2100", 30],
+      ["404", 3],
+    ]);
   });
 });
 

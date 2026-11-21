@@ -193,6 +193,8 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   MemberCredit: "personal",
   MemberCreditNoteAllocation: "personal",
   AdminCreditAdjustmentRequest: "personal",
+  // #4988: names the officer who posted and reversed the batch, and a free-text reversal reason.
+  OpeningCreditBatch: "personal",
   GroupDiscountSetting: "non-personal",
   PublicContentSettings: "personal",
   ClubTheme: "non-personal",

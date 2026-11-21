@@ -261,6 +261,7 @@ What the file contains, and what it leaves out:
 | `MemberCredit` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `MemberCreditNoteAllocation` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `AdminCreditAdjustmentRequest` | Member credit ledger, allocations and reviewer decisions | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
+| `OpeningCreditBatch` | Opening-credit batch: the posting and reversing officer, totals and the reversal reason (#4988) | Kept with the credit rows it tags, for reconciliation and evidence; no new automatic deletion | Keep |
 | `PublicContentSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `RefundRequest` | Payment, refund, recovery and officer decision evidence | Kept with booking / financial records for reconciliation and evidence; no new automatic deletion | Keep |
 | `CommitteeRole` | Committee contact details, member roles and public biographies | While committee / contact administration and role history requires it | Keep |
