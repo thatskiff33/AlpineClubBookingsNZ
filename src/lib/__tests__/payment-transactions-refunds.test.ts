@@ -88,7 +88,7 @@ import { checkCardRefundResend } from "@/lib/card-refund-resend-preflight";
 import { disputedCaptureRefusal } from "@/lib/stripe-dispute-hold";
 import { refundPlanOrRetryRefusals } from "@/lib/refused-card-refund-retry";
 import { predatesRefundLedger } from "@/lib/payment-transaction-status";
-import { CARD_REFUND_BANK_RECORD_TASK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
+import { CARD_REFUND_BANK_RECORD_TASK_WHERE } from "@/lib/card-refund-bank-record";
 import {
   cancelRefundableBaseCents,
   getRemainingRefundableCents,

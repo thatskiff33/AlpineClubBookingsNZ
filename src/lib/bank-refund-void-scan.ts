@@ -57,10 +57,10 @@ import { liveLines } from "@/lib/booking-ledger-modification-posting";
 import { findPostedSettlementLines } from "@/lib/booking-ledger-read";
 import type { PostedSettlementLine } from "@/lib/booking-ledger-settlement-posting";
 import {
-  isCardRefundBankRecordTask,
   isEditRefundHandBackTask,
   isRefundRequestHandBackTask,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { isCardRefundBankRecordTask } from "@/lib/card-refund-bank-record";
 import {
   BANK_REFUND_VOID_FOLLOW_UP_KEY_PREFIX,
   BANK_REFUND_VOID_FOLLOW_UP_TASK_WHERE,

@@ -49,8 +49,7 @@ import {
   isRefusedRefundStatus,
   LEGACY_ADDITIONAL_BACKFILL_REASON,
   LEGACY_PRIMARY_BACKFILL_REASON,
-  latestTransactionOfKind, STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE,
-  NO_CARD_REFUND_BANK_CASH,
+  latestTransactionOfKind, NO_CARD_REFUND_BANK_CASH, STRIPE_REFUND_EXCEEDS_CAPTURED_MESSAGE,
 } from "@/lib/payment-transaction-status";
 
 export { isCapturedTransactionStatus };
@@ -677,9 +676,7 @@ export async function lockPaymentForRefundedTotal(
  * #3640 (delta review, D2): the lowest a counted -> failed subtraction may take
  * one transaction's mirror to. The payment as a whole must still hold its
  * account-credit dispositions plus the card refunds still counted plus the
- * bank cash its card refund's bank records hold ("Paid another way" closes,
- * #4280, and completed card refund shortfalls, #4488,
- * `readCardRefundBankCashByPayment`) - the same floor the
+ * bank cash of its card refund's bank records (#4280, #4488) - the same floor the
  * refunded-total audit reports against (`expectedRefundedFloorCents`), capped
  * at what it captured - less what its other transactions already carry.
  *
@@ -696,16 +693,8 @@ export async function lockPaymentForRefundedTotal(
  * of headroom. The close's cash is read payment-wide, like the rest - a close
  * records no per-charge link the floor could trust - so the other charges'
  * mirrors, which may already hold it, come off it rather than count it twice.
- * Read on the caller's client, under the Payment row it holds: a close takes
- * that row before it writes its record.
- *
- * #4488: likewise a completed card refund shortfall's bank cash. $200 by card
- * on A and $100 by bank on B, cancelled: A's dead card refund closed as paid
- * another way for $200, the $100 shortfall paid back on B. The lost card
- * refund recorded late is capped; when it fails, a floor of the close's $200
- * less B's $100 would take A to $100 while $300 went back. Counted beside the
- * close, the floor is $300 less B's $100, and A keeps its $200. A completion
- * also takes the Payment row before its claim, so this read sees it whole.
+ * Read under the Payment row the caller holds, which a close (and, #4488, a
+ * shortfall's completion) takes before writing its record (`INV-PAY-141`).
  */
 async function reversalFloorForTransaction(
   db: PaymentStore,
@@ -806,9 +795,8 @@ async function resolveCardRefundJournalBeforeTransaction(store: PaymentStore, gi
  *   no money went back after all. Exactly one writer sees the transition (a
  *   guarded write in `recordStripeRefundLedgerEntry`), and the subtraction never
  *   takes the payment below its account credit plus the card refunds still
- *   counted plus the bank cash its card refund's bank records hold - closes
- *   and completed shortfalls (`reversalFloorForTransaction`, #4280, #4488) -
- *   so a refund the OLD arithmetic,
+ *   counted plus its card refund's bank cash (`reversalFloorForTransaction`,
+ *   #4280, #4488) - so a refund the OLD arithmetic,
  *   or the cap, never added cannot be taken out of money that was never its.
  *
  * The card refunds on record remain a FLOOR, never the value (#4104: Stripe's

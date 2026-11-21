@@ -12,7 +12,7 @@ vi.mock("@/lib/xero-resolved-in-xero-fences", () => ({ sumRefundCreditNoteCovera
 vi.mock("@/lib/xero-sync", () => ({ sumCoveredRefundCreditNoteCents: vi.fn(async (_p: string, _db: unknown, ids?: string[]) => (ids?.length ? 2_000 : 0)) }));
 
 import { readCardRefundBankCashByPayment, readPaidAnotherWayCash, readPaidAnotherWayCloseShare } from "@/lib/card-refund-paid-another-way-cash";
-import { CARD_REFUND_BANK_RECORD_TASK_WHERE, isCardRefundBankRecordTask } from "@/lib/manual-refund-task-settlement-rules";
+import { CARD_REFUND_BANK_RECORD_TASK_WHERE, isCardRefundBankRecordTask } from "@/lib/card-refund-bank-record";
 
 const RACE_KEY = "cancel-card-shortfall:booking-1:capacity-race:pi_race:check";
 

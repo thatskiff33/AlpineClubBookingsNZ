@@ -9,7 +9,7 @@ import {
   type RefundedTotalShortfallRow,
 } from "@/lib/refunded-total-shortfall-audit";
 import { ACCOUNT_CREDIT_DISPOSITION_WHERE } from "@/lib/stripe-cash-refund-evidence";
-import { CARD_REFUND_BANK_RECORD_TASK_WHERE } from "@/lib/manual-refund-task-settlement-rules";
+import { CARD_REFUND_BANK_RECORD_TASK_WHERE } from "@/lib/card-refund-bank-record";
 import { CLUB_FORMAT_TEST } from "./support/club-format-fixture";
 
 function row(overrides: Partial<RefundedTotalShortfallRow> = {}): RefundedTotalShortfallRow {
