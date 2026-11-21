@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { MemberMoneySide, Prisma } from "@prisma/client";
 import { compareOrdinal } from "@/lib/ordinal-order";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { readMemberMoneyApplicationState } from "./application-read";
@@ -76,8 +76,7 @@ export async function refundFamilyTip(tx: Db, context: MemberMoneyPostingContext
   owner: MemberMoneyDebtor): Promise<ApplicationObligation | null> {
   const { tip } = refundFamily(await readMemberMoneyApplicationState(tx, booking.bookingId), rootKey);
   if (!tip || ownedBy(tip, owner)) return tip;
-  const lines = await tx.memberMoneyLine.findMany({ where: { obligationId: tip.id, account: "REFUND_PAYABLE" }, select: { side: true, amountCents: true } });
-  const remaining = lines.reduce((sum, line) => sum + (line.side === "CREDIT" ? line.amountCents : -line.amountCents), 0);
+  const remaining = refundPayableOpenCents(await tx.memberMoneyLine.findMany({ where: { obligationId: tip.id, account: "REFUND_PAYABLE" }, select: { side: true, amountCents: true } }));
   if (remaining <= 0) return tip;
   const from = lineDebtor(tip);
   const eventKey = memberMoneyEventKeys.successor(tip.key, debtorId(from), debtorId(owner));
@@ -90,6 +89,13 @@ export async function refundFamilyTip(tx: Db, context: MemberMoneyPostingContext
       legs: [{ ...leg, side: "DEBIT", debtor: from, obligationKey: tip.key }, { ...leg, side: "CREDIT", debtor: owner, obligationKey: successor }] });
   }
   return refundFamily(await readMemberMoneyApplicationState(tx, booking.bookingId), rootKey).tip;
+}
+
+/** What refund-payable lines leave owed: their credits less their debits. The one reading of a debt's balance from its lines. */
+export function refundPayableOpenCents(lines: Iterable<{ side: MemberMoneySide; amountCents: number }>): number {
+  let open = 0;
+  for (const line of lines) open += line.side === "CREDIT" ? line.amountCents : -line.amountCents;
+  return open;
 }
 
 /** The live receivable credit of one receipt event, or null when that event is missing or reversed. */

@@ -1,11 +1,11 @@
-import type { ManualRefundTaskKind, ManualRefundTaskStatus, MemberMoneySide, Prisma } from "@prisma/client";
+import type { ManualRefundTaskKind, ManualRefundTaskStatus, Prisma } from "@prisma/client";
 import { isJournalHandBackTask } from "../../manual-refund-task-hand-back-population";
 import { openHandBackOwedCents } from "../../manual-refund-task-settlement-rules";
 import { isOwedCardRefundOperation, OPEN_CARD_REFUND_OPERATION_WHERE } from "../../open-card-refund-owed";
 import { exactPrefix } from "../../prisma-exact-prefix";
 import { eventPosted } from "./booking-journal-read";
 import { memberMoneyEventKeys, type MemberMoneyEventKey } from "./keys";
-import { memberMoneyChainTip } from "./refund-family";
+import { memberMoneyChainTip, refundPayableOpenCents } from "./refund-family";
 import { refundDoorOfObligationKey, resolveCardRefundObligation } from "./refund-obligation-map";
 import type { HandBackCensusClass } from "./refund-census";
 
@@ -30,7 +30,9 @@ import type { HandBackCensusClass } from "./refund-census";
  * The hand-back era starts at the journal's first M4d event (a hand-back R05 or R14, or a keep), as the charge
  * comparison's starts at the first R01 (`readJournalSince`). What is open of a debt is its refund-payable lines'
  * balance: a hand-back takes no card reservation, so that is its family's open cents (`refundFamilyOpenCents`).
- * Nothing is matched by amount or time, nothing is repaired, and no provider is read.
+ * Nothing is matched by amount or time, nothing is repaired, and no provider is read. A stated limit: during the
+ * blue/green switch that deploys M4d, the old colour can still raise or pay a hand-back after the new one's first
+ * event, and such a task is listed as if its door had skipped the journal.
  */
 
 type Db = Pick<Prisma.TransactionClient, "manualRefundTask" | "memberMoneyEvent" | "memberMoneyLine" | "paymentRecoveryOperation" | "paymentTransaction">;
@@ -88,7 +90,6 @@ const TASK_SELECT = {
   partPaymentReviewPaymentId: true, reason: true, lateCaptureApprovalIntentId: true, createdAt: true, completedAt: true,
 } as const;
 
-const balance = (side: MemberMoneySide, cents: number) => (side === "CREDIT" ? cents : -cents);
 const isPopulationTask = (task: HandBackCensusTask) => task.paymentId !== null && isJournalHandBackTask(task);
 
 /** The live tip of an event chain, if posted, with whether it applied anything. */
@@ -130,13 +131,14 @@ export async function readBookingHandBackJournal(db: Db, bookingIds: readonly st
 
   for (const bookingId of ids) {
     const own = tasks.filter((task) => task.bookingId === bookingId);
-    const debts = new Map<string, number>();
-    let openRefundPayableCents = 0;
-    for (const line of lines.filter((candidate) => candidate.bookingId === bookingId)) {
-      openRefundPayableCents += balance(line.side, line.amountCents);
+    const bookingLines = lines.filter((candidate) => candidate.bookingId === bookingId);
+    const debtLines = new Map<string, typeof bookingLines>();
+    for (const line of bookingLines) {
       const door = line.obligation ? refundDoorOfObligationKey(line.obligation.obligationKey) : null;
-      if (door?.scope === "hand-back") debts.set(door.id, (debts.get(door.id) ?? 0) + balance(line.side, line.amountCents));
+      if (door?.scope === "hand-back") debtLines.set(door.id, [...(debtLines.get(door.id) ?? []), line]);
     }
+    const debts = new Map([...debtLines].map(([taskId, own]) => [taskId, refundPayableOpenCents(own)]));
+    const openRefundPayableCents = refundPayableOpenCents(bookingLines);
     const payments = new Map<string, { applied: boolean }>();
     for (const task of own.filter((candidate) => candidate.status === "COMPLETED" && isPopulationTask(candidate))) {
       const event = await liveEvent(db, memberMoneyEventKeys.handBackPaid(task.id));
@@ -170,6 +172,7 @@ export function classifyHandBacks(bookingId: string, facts: BookingHandBackJourn
   const findings: HandBackCensusFinding[] = [];
   const add = (kind: HandBackCensusClass, identity: string, cents: number, detail: string) => findings.push({ bookingId, identity, kind, cents, detail });
   const since = facts.handBackSince;
+  // On or after: the first M4d event's own task is written in the same transaction, so its time can equal the era's start.
   const inEra = (at: Date | null) => since !== null && at !== null && at.getTime() >= since.getTime();
   const journalTasks = new Set<string>();
   for (const task of facts.tasks) {
@@ -184,7 +187,7 @@ export function classifyHandBacks(bookingId: string, facts: BookingHandBackJourn
     if (open !== undefined && open !== owedCents(task)) {
       add("HAND_BACK_OBLIGATION_DRIFT", task.id, open - owedCents(task), `the journal holds ${open} open of its debt; the ${task.status} task owes ${owedCents(task)}`);
     }
-    if (task.paymentId === null) continue;
+    if (!isPopulationTask(task)) continue;
     if (open === undefined && inEra(task.createdAt)) add("HAND_BACK_WITHOUT_EVENT", task.id, amount, "raised in the hand-back era with no refund debt (R05) in the journal");
     const paid = facts.payments.get(task.id);
     if (task.status === "COMPLETED" && amount > 0 && !paid && inEra(task.completedAt ?? task.createdAt)) {

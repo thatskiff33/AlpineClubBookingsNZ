@@ -2210,9 +2210,14 @@ that paid no debt although the task's debt is the journal's;
 `HAND_BACK_OBLIGATION_DRIFT`, a debt whose open cents differ from what its task
 still owes (open while the task is closed, closed while it is open, or open
 with no task row behind it); and `KEEP_WITHOUT_EVENT`, a late capture the
-treasurer kept with no keep in the journal. Each names a door that skipped the
-journal or a row changed outside one: report it as a defect; nothing here
-repairs it.
+treasurer kept with no keep in the journal. Each is a journal that no longer
+says what the task says: a door that skipped the journal, a row changed outside
+one, or a door that does not yet post its step (two are known: a hand-back paid
+onto a group organiser's settlement mirror posts no R14, and putting a dismissed
+hand-back back on the queue posts no fresh R05). Report each as a defect;
+nothing here repairs it. During the blue/green switch that deploys M4d, the old
+colour can still raise or pay a hand-back after the new one's first event, and
+such a task is listed too: acknowledge those once the old colour has drained.
 
 Expected until the milestone that answers unapplied refunds: a refund that
 posted unapplied (a debt raised before M4c, a Stripe dashboard refund, a merged
@@ -2254,7 +2259,10 @@ it still owes; each open card refund row whose debt posted, at its slices not
 yet made). A card refund that went back without paying its debt (listed by the
 refund reservations command as `UNAPPLIED_CARD_REFUND` or
 `RESERVATION_SKIPPED_NO_RECEIPT`) disagrees here until the milestone that
-answers unapplied refunds; acknowledge it to the cent. It prints:
+answers unapplied refunds; acknowledge it to the cent. So, for a while, does a
+card refund row whose slice Stripe made without answering the attempt: the row
+marks the slice made only on its next run, or on "Paid another way" once dead.
+It prints:
 
 - per identity, how many bookings it applies to, agree, disagree, are
   classified, or are a coverage gap;

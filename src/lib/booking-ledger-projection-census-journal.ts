@@ -50,7 +50,7 @@ import {
   refundCloseOutRecordOfIdentity,
 } from "@/lib/member-money";
 import { paidAnotherWayUnpaidCents } from "@/lib/manual-refund-task-settlement-rules";
-import { cardRefundOperationUnmadeCents, isOpenCardRefundOperationStatus, isOwedCardRefundOperation } from "@/lib/open-card-refund-owed";
+import { cardRefundOperationUnmadeCents } from "@/lib/open-card-refund-owed";
 import type { BookingLedgerEvaluation, BookingLedgerIdentityResult, BookingLedgerIntegrityFinding } from "@/lib/booking-ledger-projection-census";
 import type { BookingLedgerCensusRow } from "@/lib/booking-ledger-projection-census-row";
 import type { BookingLedgerCensusReport } from "@/lib/booking-ledger-projection-census-report";
@@ -175,8 +175,8 @@ export function journalRefundPayableComparison(row: BookingLedgerCensusRow): {
   if (!facts) {
     return { identity: { identity: "JOURNAL_REFUND_PAYABLE", status: "NOT_APPLICABLE", columnCents: 0, ledgerCents: 0, deltaCents: 0, explainedBy: [] }, integrity: [] };
   }
-  const cardCents = row.recoveryOperations
-    .filter((operation) => isOwedCardRefundOperation(operation) && isOpenCardRefundOperationStatus(operation.status) && facts.journalCardRefundKeys.has(operation.idempotencyKey))
+  // The keys are of open card refund rows only (`readBookingHandBackJournal`), read in the same snapshot as these rows.
+  const cardCents = row.recoveryOperations.filter((operation) => facts.journalCardRefundKeys.has(operation.idempotencyKey))
     .reduce((sum, operation) => sum + cardRefundOperationUnmadeCents(operation), 0);
   const columnCents = facts.openRefundPayableCents;
   const ledgerCents = heldHandBackOwedCents(facts) + cardCents;
