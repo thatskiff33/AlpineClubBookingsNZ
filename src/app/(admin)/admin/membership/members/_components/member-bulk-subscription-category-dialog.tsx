@@ -193,7 +193,13 @@ function BulkCategoryPreview({
         </Alert>
       )}
       {(changingMembers.length > 0 || preview.skipped.length > 0) && (
-        <div className="max-h-48 overflow-y-auto rounded-md border p-2 text-xs">
+        <div
+          className="max-h-48 overflow-y-auto rounded-md border p-2 text-xs"
+          role="region"
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a scroll container with no focusable content is the exception the rule's own docs name (axe scrollable-region-focusable)
+          tabIndex={0}
+          aria-label="Members in this change"
+        >
           {changingMembers.map((member) => (
             <div key={member.memberId} className="py-0.5">
               <div>
@@ -260,7 +266,13 @@ function BulkCategoryResults({
         )}
       </div>
       {saveResult.results.some((result) => ATTENTION_OUTCOMES.has(result.outcome)) && (
-        <div className="max-h-40 overflow-y-auto rounded-md border p-2 text-xs">
+        <div
+          className="max-h-40 overflow-y-auto rounded-md border p-2 text-xs"
+          role="region"
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- a scroll container with no focusable content is the exception the rule's own docs name (axe scrollable-region-focusable)
+          tabIndex={0}
+          aria-label="Members needing attention"
+        >
           {saveResult.results
             .filter((result) => ATTENTION_OUTCOMES.has(result.outcome))
             .map((result) => (

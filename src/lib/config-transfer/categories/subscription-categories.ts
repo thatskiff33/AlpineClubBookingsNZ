@@ -1,6 +1,7 @@
 import { strToU8 } from "fflate";
 
 import { lockFeeSchedule } from "@/lib/authoritative-fees";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import type { BundleEntry } from "../bundle";
 import { serialiseCsv } from "../csv";
 import { registerEntity } from "../registry";
@@ -33,7 +34,6 @@ import {
   FEE_FIELDS,
   loadState,
   parseBundle,
-  toDateStr,
   validateCategoryRows,
   validateFeeCategories,
   validateFeeComponents,
@@ -135,7 +135,9 @@ export const subscriptionCategoriesExporter: CategoryExporter = {
       .sort(
         (a, b) =>
           a.categoryKey.localeCompare(b.categoryKey) ||
-          toDateStr(a.effectiveFrom).localeCompare(toDateStr(b.effectiveFrom)),
+          calendarDateOfDateOnlyInstant(a.effectiveFrom).localeCompare(
+            calendarDateOfDateOnlyInstant(b.effectiveFrom),
+          ),
       );
 
     const categoryRows = categories.map((category) => ({
@@ -150,8 +152,8 @@ export const subscriptionCategoriesExporter: CategoryExporter = {
     for (const fee of fees) {
       feeRows.push({
         categoryKey: fee.categoryKey,
-        effectiveFrom: toDateStr(fee.effectiveFrom),
-        effectiveTo: toDateStr(fee.effectiveTo),
+        effectiveFrom: calendarDateOfDateOnlyInstant(fee.effectiveFrom),
+        effectiveTo: fee.effectiveTo ? calendarDateOfDateOnlyInstant(fee.effectiveTo) : "",
         amountCents: fee.amountCents,
         prorationRule: fee.prorationRule,
       });
@@ -161,7 +163,7 @@ export const subscriptionCategoriesExporter: CategoryExporter = {
       for (const component of components) {
         componentRows.push({
           categoryKey: fee.categoryKey,
-          effectiveFrom: toDateStr(fee.effectiveFrom),
+          effectiveFrom: calendarDateOfDateOnlyInstant(fee.effectiveFrom),
           label: component.label,
           amountCents: component.amountCents,
           prorate: component.prorate,

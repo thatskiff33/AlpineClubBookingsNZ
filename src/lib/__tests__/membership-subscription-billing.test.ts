@@ -2630,7 +2630,7 @@ describe("membership subscription billing", () => {
     // has already ended. The lookup is asked about the decision date, finds no
     // window containing it, and the run must still say so rather than bill.
     it("raises MISSING_CATEGORY_FEE_SCHEDULE when the category's only fee window has ended", async () => {
-      const ended = categoryFee({ effectiveFrom: new Date("2025-04-01T00:00:00.000Z"), effectiveTo: new Date("2026-03-31T00:00:00.000Z") });
+      const ended: Omit<ReturnType<typeof categoryFee>, "effectiveTo"> & { effectiveTo: Date | null } = categoryFee({ effectiveFrom: new Date("2025-04-01T00:00:00.000Z"), effectiveTo: new Date("2026-03-31T00:00:00.000Z") });
       mocks.effectiveCategoryFee.mockImplementation(async (_params: unknown, asOf: Date) =>
         ended.effectiveFrom <= asOf && (ended.effectiveTo === null || ended.effectiveTo >= asOf) ? ended : null);
       mocks.members.findMany.mockResolvedValue([categoryMember("ended-fee")]);

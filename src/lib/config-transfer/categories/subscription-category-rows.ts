@@ -53,12 +53,8 @@ const MAX_DESCRIPTION_LENGTH = 1000;
 const MAX_SORT_ORDER = 100000;
 const DEFAULT_PRORATION_RULE = "NONE";
 
-export function toDateStr(value: Date | null): string {
-  return value ? calendarDateOfDateOnlyInstant(value) : "";
-}
-
 function feeKey(categoryKey: string, effectiveFrom: Date): string {
-  return `${categoryKey}/${toDateStr(effectiveFrom)}`;
+  return `${categoryKey}/${calendarDateOfDateOnlyInstant(effectiveFrom)}`;
 }
 
 // ---- Current-state loading (shared by export, plan and apply) ----------------

@@ -152,6 +152,9 @@ vi.mock("@/app/(admin)/admin/membership/members/_components/member-bulk-dialog",
 vi.mock("@/app/(admin)/admin/membership/members/_components/member-bulk-membership-dialog", () => ({
   MemberBulkMembershipDialog: () => null,
 }));
+vi.mock("@/app/(admin)/admin/membership/members/_components/member-bulk-subscription-category-dialog", () => ({
+  MemberBulkSubscriptionCategoryDialog: () => null,
+}));
 vi.mock("@/app/(admin)/admin/membership/members/_components/member-filter-toolbar", () => ({
   MemberFilterToolbar: () => null,
 }));
@@ -177,6 +180,12 @@ vi.mock("@/app/(admin)/admin/membership/members/_components/member-table", () =>
 // Xero recovery alert, not where the type names come from.
 vi.mock("@/hooks/use-membership-type-options", () => ({
   useMembershipTypeOptions: () => [],
+}));
+// #5248: the same applies to the subscription-category options the filter
+// toolbar and bulk dialog read.
+vi.mock("@/hooks/use-subscription-category-options", () => ({
+  useSubscriptionCategoryOptions: () => [],
+  subscriptionCategoryOptionLabel: (option: { name: string }) => option.name,
 }));
 
 describe("members-list Xero partial-success recovery", () => {

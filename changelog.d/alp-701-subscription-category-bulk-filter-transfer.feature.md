@@ -4,8 +4,9 @@
   to set or clear their category for a season. A preview shows who moves from
   which category to which and who is skipped and why; each member keeps their
   membership type, and each change is written to that member's audit trail.
-  Members already paid or invoiced for the season are flagged: the new
-  category takes effect from their next invoice.
+  Members already paid or invoiced for the season are flagged: their invoice
+  for that season does not change. A category is set per season and is not
+  carried into the next one.
 
   The members list has a **Subscription Category** filter, including
   **Individual (no category)**, and shows each member's category under their
