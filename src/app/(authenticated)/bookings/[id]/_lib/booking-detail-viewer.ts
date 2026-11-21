@@ -9,7 +9,7 @@ import {
 } from "@/lib/admin-permissions";
 import type { BookingDetailRecord } from "./load-booking-detail";
 
-type BookingDetailSession = NonNullable<Awaited<ReturnType<typeof auth>>>;
+export type BookingDetailSession = NonNullable<Awaited<ReturnType<typeof auth>>>;
 
 /**
  * WHO IS LOOKING, and what that lets them do on this booking (#2958).

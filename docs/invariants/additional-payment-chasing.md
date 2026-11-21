@@ -778,11 +778,11 @@ the ordering has to be read. Reordered in #2674 and pinned by
 `src/app/api/bookings/[id]/send-guest-payment-link/__tests__/deleted-booking-ordering.test.ts`.
 
 **The byte-identical-body half now has one named carve-out, and only that
-half.** `INV-ADDPAY-034` lets five surfaces — three APIs and two pages — say the
-booking was cancelled or removed instead. The **ordering** half — after the authorisation check, always —
+half.** `INV-ADDPAY-034` lets five surfaces say the booking was cancelled or
+removed instead. The **ordering** half — after the authorisation check, always —
 has no carve-out anywhere and is what keeps the carve-out safe: every surface
-that departs from the body rule still answers `403` to a caller with no claim,
-so nothing is disclosed to anyone not already entitled to the record. Read the
+that departs from the body rule still refuses a caller with no claim (`403`, or
+a page's plain "not found"), so nothing is disclosed to anyone not already entitled to the record. Read the
 two halves separately; a future exception to one is not an exception to the
 other.
 

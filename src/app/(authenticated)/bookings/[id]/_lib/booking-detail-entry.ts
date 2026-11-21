@@ -1,10 +1,10 @@
-import type { auth } from "@/lib/auth";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 import { loadBookingDetail, type BookingDetailRecord } from "./load-booking-detail";
-import { removedBookingEntitledViewerWhere } from "./booking-detail-viewer";
-
-type BookingDetailSession = NonNullable<Awaited<ReturnType<typeof auth>>>;
+import {
+  removedBookingEntitledViewerWhere,
+  type BookingDetailSession,
+} from "./booking-detail-viewer";
 
 export type BookingDetailEntry =
   /** The booking to render; the page's own viewer guard still runs on it. */
