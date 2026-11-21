@@ -1978,9 +1978,9 @@ officer queue screen that reads it for that list pages through `useAdminQueuePag
 page. The officer queues — member applications, refund appeals, booking
 approvals, change requests, public requests, policy exceptions, the
 membership cancellation and archive queues, both deletion-request
-queues, the maintenance queue and the communications send history — do so
-today: pending filters read
-oldest first, a filter change returns to page 1, the page is kept in the URL
+queues, the maintenance queue and the communications send history (which has
+no filter, and returns to page 1 after a send, where the new send is) — do so
+today: pending filters (the maintenance queue's is Open) read oldest first, a filter change returns to page 1, the page is kept in the URL
 wherever the screen keeps its filter there (not the deletion-request queues,
 the policy exceptions tab, the maintenance queue or the send history, which keep
 it in memory), a slower read for a page
@@ -2000,8 +2000,7 @@ share `formatAdminListRange` for the range text and
 census fails hand-rolled range arithmetic, an unparsed page read or a
 hand-written page write. Three capped lists sit outside this: system issue
 reports, messages notice reads and the privacy retention preview keep their own
-pagers until next changed. The send history returns to page 1 after a send,
-where the new send is.
+pagers until next changed.
 
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders; the member `/book` wizard follows the same

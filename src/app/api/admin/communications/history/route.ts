@@ -34,7 +34,8 @@ export async function GET(request: NextRequest) {
   const [auditEntries, total] = await Promise.all([
     prisma.auditLog.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      // `id` breaks createdAt ties so a send never repeats or vanishes between pages.
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: pageSize,
       skip: (page - 1) * pageSize,
       select: {
