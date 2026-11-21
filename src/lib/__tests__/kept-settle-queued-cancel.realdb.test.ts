@@ -2,7 +2,12 @@
  * Real-PostgreSQL proof that a cancel queued behind a KEPT bank-transfer settle
  * reads the net the cash supports (#4449, `INV-PAY-126`), through the REAL
  * inbound settle (`syncInternetBankingPaymentsForPaidInvoice`), the REAL
- * allocation write of the inbound credit-note sync and the REAL cancel.
+ * inbound credit-note sync (`reconcileXeroCreditNote` against a fake Xero,
+ * #5289 G) with its allocation write and removal, and the REAL cancel.
+ *
+ * #5289 C: the allocation write locks and decides the payment the settle finds,
+ * one named only by its invoice link included (LINK-ONLY), and a payment's
+ * total counts one invoice's allocations, the one the settle decides with.
  *
  * A kept settle records the receipt at the stored figure, which still includes
  * every invoice-correction note applied to the invoice, so each such note must
@@ -36,6 +41,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { Invoice } from "xero-node";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { releaseBookingJournalForTeardown } from "./support/booking-financial-history-teardown";
+import { syncFakeXeroCreditNote } from "./support/fake-xero-credit-note-sync";
 
 import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
@@ -50,9 +56,13 @@ const PAYMENT_ID = "race-4449-payment";
 const PRIMARY_ID = "race-4449-primary";
 const GUEST_ID = "race-4449-guest";
 const INVOICE_ID = "race-4449-invoice";
+// #5289 C: an older invoice the payment is still linked to, besides its own.
+const OLD_INVOICE_ID = "race-4449-old-invoice";
 // The edit's invoice correction, and an older edit's note worded as a refund.
 const CORRECTION = { noteId: "race-4449-correction", modificationId: "race-4449-modification" };
 const REFUND = { noteId: "race-4449-refund", modificationId: "race-4449-modification-refund" };
+// #5289 C: a correction allocated to the older invoice.
+const OLD_CORRECTION = { noteId: "race-4449-old-correction", modificationId: "race-4449-modification-old" };
 const CHECK_IN = new Date("2027-09-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2027-09-02T00:00:00.000Z");
 
@@ -84,13 +94,11 @@ export function assertSafeKeptSettleQueuedCancelRaceDbUrl(url: string): void {
 
 let prisma: PrismaClient;
 let paidEffects: typeof import("@/lib/xero-inbound/invoice-paid-effects");
-let creditNoteRepairs: typeof import("@/lib/xero-inbound/credit-note-repairs");
-let noteRefunds: typeof import("@/lib/xero-inbound/modification-note-refunds");
-let allocations: typeof import("@/lib/xero-inbound/retire-unlisted-credit-note-allocations");
 let bookingCancel: typeof import("@/lib/booking-cancel");
+let amounts: typeof import("@/lib/xero-inbound/amounts");
 
 async function clean(): Promise<void> {
-  const modificationIds = [CORRECTION.modificationId, REFUND.modificationId];
+  const modificationIds = [CORRECTION.modificationId, REFUND.modificationId, OLD_CORRECTION.modificationId];
   await releaseBookingJournalForTeardown(prisma, [BOOKING_ID]);
   await prisma.bookingLedgerLine.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.bookingEvent.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -98,12 +106,20 @@ async function clean(): Promise<void> {
     where: {
       OR: [
         { localId: { in: [PAYMENT_ID, BOOKING_ID, ...modificationIds] } },
-        { xeroObjectId: { in: [INVOICE_ID, CORRECTION.noteId, REFUND.noteId] } },
+        { xeroObjectId: { in: [INVOICE_ID, OLD_INVOICE_ID, CORRECTION.noteId, REFUND.noteId, OLD_CORRECTION.noteId] } },
       ],
     },
   });
   await prisma.xeroSyncOperation.deleteMany({ where: { localId: { in: [PAYMENT_ID, BOOKING_ID, ...modificationIds] } } });
-  await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: { in: [BOOKING_ID, PAYMENT_ID] } }, { targetId: BOOKING_ID }] } });
+  await prisma.auditLog.deleteMany({
+    where: {
+      OR: [
+        { entityId: { in: [BOOKING_ID, PAYMENT_ID] } },
+        { targetId: BOOKING_ID },
+        ...[CORRECTION.noteId, REFUND.noteId, OLD_CORRECTION.noteId].map((noteId) => ({ metadata: { path: ["creditNoteId"], equals: noteId } })),
+      ],
+    },
+  });
   await prisma.memberCredit.deleteMany({ where: { memberId: MEMBER_ID } });
   await prisma.manualRefundTask.deleteMany({ where: { bookingId: BOOKING_ID } });
   await prisma.paymentRecoveryOperation.deleteMany({ where: { bookingId: BOOKING_ID } });
@@ -118,8 +134,11 @@ async function clean(): Promise<void> {
 /**
  * A held Internet Banking booking at $300 as `booking-create.ts` writes it, its
  * invoice linked as the invoice job links it, and its price then cut to `priceCents`.
+ * #5289 C: `stamped: false` leaves the invoice id unstamped on the payment and its
+ * receipt, so only the link names the payment, as the settle can still find it.
  */
-async function bookInvoicedAndCutTo(priceCents: number): Promise<void> {
+async function bookInvoicedAndCutTo(priceCents: number, options: { stamped?: boolean } = {}): Promise<void> {
+  const invoice = options.stamped === false ? { xeroInvoiceId: null, xeroInvoiceNumber: null } : { xeroInvoiceId: INVOICE_ID, xeroInvoiceNumber: "INV-4449" };
   await prisma.booking.create({
     data: {
       id: BOOKING_ID,
@@ -155,8 +174,7 @@ async function bookInvoicedAndCutTo(priceCents: number): Promise<void> {
       status: "PENDING",
       reference: "BOOKING-RACE4449",
       internetBankingHoldSlots: true,
-      xeroInvoiceId: INVOICE_ID,
-      xeroInvoiceNumber: "INV-4449",
+      ...invoice,
       transactions: {
         create: {
           id: PRIMARY_ID,
@@ -166,8 +184,7 @@ async function bookInvoicedAndCutTo(priceCents: number): Promise<void> {
           status: "PENDING",
           reference: "BOOKING-RACE4449",
           reason: "internet_banking_booking_payment",
-          xeroInvoiceId: INVOICE_ID,
-          xeroInvoiceNumber: "INV-4449",
+          ...invoice,
         },
       },
     },
@@ -178,7 +195,7 @@ async function bookInvoicedAndCutTo(priceCents: number): Promise<void> {
 }
 
 /** An edit's modification note, in the rows its builder leaves: the outbound operation and the note's link to the edit. */
-async function queueModificationNote(ids: NoteIds, noteCents: number, wording: Record<string, unknown>): Promise<void> {
+async function queueModificationNote(ids: NoteIds, noteCents: number, wording: Record<string, unknown>, invoiceId = INVOICE_ID): Promise<void> {
   await prisma.bookingModification.create({
     data: {
       id: ids.modificationId,
@@ -203,7 +220,7 @@ async function queueModificationNote(ids: NoteIds, noteCents: number, wording: R
       status: "SUCCEEDED",
       xeroObjectType: "CREDIT_NOTE",
       xeroObjectId: ids.noteId,
-      requestPayload: { invoiceId: INVOICE_ID, refundAmountCents: noteCents, ...wording },
+      requestPayload: { invoiceId, refundAmountCents: noteCents, ...wording },
     },
   });
   await prisma.xeroObjectLink.create({
@@ -211,58 +228,67 @@ async function queueModificationNote(ids: NoteIds, noteCents: number, wording: R
   });
 }
 
+/** The allocation link the sync writes for the note on the edit (`buildSyntheticAllocationLinkId`). */
 function allocationLink(ids: NoteIds, noteCents: number) {
   return {
     localModel: "BookingModification",
     localId: ids.modificationId,
     xeroObjectType: "ALLOCATION",
-    xeroObjectId: `${ids.noteId}:${INVOICE_ID}:${noteCents}`,
+    xeroObjectId: amounts.buildSyntheticAllocationLinkId(ids.noteId, INVOICE_ID, noteCents),
     role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
     metadata: { creditNoteId: ids.noteId, invoiceId: INVOICE_ID, amountCents: noteCents },
   };
 }
 
 /**
- * The inbound credit-note sync after its Xero read of the AUTHORISED note,
- * fully allocated to the invoice, in `reconcileXeroCreditNote`'s order: the
- * note's own link, its allocation through the REAL allocation write, then the
- * current note's contribution and the refunded-total recount.
+ * The REAL inbound credit-note sync (`reconcileXeroCreditNote`, #5289 G) of the
+ * AUTHORISED note, fully allocated to `invoiceId`, against a fake Xero (no
+ * provider call): the note's own link, its allocation through the allocation
+ * write, then the current note's contribution and the refunded-total recount.
  */
-async function syncNote(ids: NoteIds, noteCents: number): Promise<void> {
-  await prisma.xeroObjectLink.updateMany({
-    where: { xeroObjectType: "CREDIT_NOTE", xeroObjectId: ids.noteId, role: "MODIFICATION_CREDIT_NOTE" },
-    data: { metadata: { status: "AUTHORISED", total: noteCents / 100 } },
-  });
-  const allocationTargets = [{ invoiceId: INVOICE_ID, amountCents: noteCents }];
-  await allocations.writeCurrentCreditNoteAllocations([allocationLink(ids, noteCents)], { isModificationNote: true });
-  const modificationRefundAmountsByPaymentId = await noteRefunds.resolveModificationRefundAmountsByPaymentId({
-    creditNoteId: ids.noteId,
-    isModificationNote: true,
-    allocationTargets,
-  });
-  await creditNoteRepairs.repairRefundedPaymentBusinessState({
-    creditNoteId: ids.noteId,
-    creditNote: { status: "AUTHORISED" as never, total: noteCents / 100, appliedAmount: noteCents / 100, remainingCredit: 0 },
-    directPaymentIds: [],
-    modificationRefundAmountsByPaymentId,
+async function syncNote(ids: NoteIds, noteCents: number, invoiceId = INVOICE_ID): Promise<void> {
+  await syncFakeXeroCreditNote({
+    creditNoteID: ids.noteId,
+    creditNoteNumber: `CN-${ids.noteId}`,
+    status: "AUTHORISED",
+    total: noteCents / 100,
+    appliedAmount: noteCents / 100,
+    remainingCredit: 0,
+    updatedDateUTC: new Date("2026-06-30T11:00:00.000Z"),
+    allocations: [{ invoice: { invoiceID: invoiceId }, amount: noteCents / 100 }],
+    payments: [],
   });
 }
 
 /**
- * The inbound credit-note sync of a newer reading of the AUTHORISED note that
- * no longer lists the invoice: the REAL removal (`retireUnlistedCreditNoteAllocations`),
- * which turns the allocation off under the payment's Payment row (#4449 verify).
+ * The REAL inbound credit-note sync (#5289 G) of a newer reading of the
+ * AUTHORISED note that no longer lists the invoice: its removal
+ * (`retireUnlistedCreditNoteAllocations`) turns the allocation off under the
+ * payment's Payment row (#4449 verify).
  */
-async function removeAllocation(ids: NoteIds, noteCents: number): Promise<number> {
-  const { xeroCreditNoteSnapshotMetadata } = await import("@/lib/xero-refund-note-status");
-  return allocations.retireUnlistedCreditNoteAllocations({
-    creditNoteId: ids.noteId,
-    isModificationNote: true,
+async function removeAllocation(ids: NoteIds, noteCents: number): Promise<void> {
+  await syncFakeXeroCreditNote({
+    creditNoteID: ids.noteId,
+    creditNoteNumber: `CN-${ids.noteId}`,
     status: "AUTHORISED",
-    readingMetadata: xeroCreditNoteSnapshotMetadata({ status: "AUTHORISED", updatedDateUTC: new Date("2026-06-30T12:00:00.000Z"), total: noteCents / 100 }),
-    priorSnapshots: [],
-    listedInvoiceIds: new Set(),
+    total: noteCents / 100,
+    appliedAmount: 0,
+    remainingCredit: noteCents / 100,
+    updatedDateUTC: new Date("2026-06-30T12:00:00.000Z"),
+    allocations: [],
+    payments: [],
   });
+}
+
+/** Whether the note's allocation link on the invoice is active. */
+async function allocationActive(ids: NoteIds, noteCents: number): Promise<boolean | null> {
+  const link = allocationLink(ids, noteCents);
+  return (
+    (await prisma.xeroObjectLink.findFirst({
+      where: { localModel: link.localModel, localId: link.localId, xeroObjectType: link.xeroObjectType, xeroObjectId: link.xeroObjectId, role: link.role },
+      select: { active: true },
+    }))?.active ?? null
+  );
 }
 
 /**
@@ -381,10 +407,8 @@ async function paymentFigures() {
     process.env.DATABASE_URL = RACE_DB_URL;
     ({ prisma } = await import("@/lib/prisma"));
     paidEffects = await import("@/lib/xero-inbound/invoice-paid-effects");
-    creditNoteRepairs = await import("@/lib/xero-inbound/credit-note-repairs");
-    noteRefunds = await import("@/lib/xero-inbound/modification-note-refunds");
-    allocations = await import("@/lib/xero-inbound/retire-unlisted-credit-note-allocations");
     bookingCancel = await import("@/lib/booking-cancel");
+    amounts = await import("@/lib/xero-inbound/amounts");
 
     await clean();
     await prisma.cancellationPolicy.deleteMany({ where: { lodgeId: LODGE_ID } });
@@ -517,7 +541,7 @@ async function paymentFigures() {
 
     const receipt = await holdReceiptRow();
     const settling = settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
-    let removing: Promise<number> | null = null;
+    let removing: Promise<void> | null = null;
     let reading: Promise<number> | null = null;
     try {
       const [settlePid] = await untilQueuedBehind(receipt.pid);
@@ -532,7 +556,8 @@ async function paymentFigures() {
       receipt.release();
       // The settle committed $100; the removal, second on the Payment row, set nothing refunded.
       expect(await reading).toBe(0);
-      expect(await removing).toBe(1);
+      await removing;
+      expect(await allocationActive(CORRECTION, 10_000)).toBe(false);
     } finally {
       receipt.release();
       await receipt.done;
@@ -568,7 +593,8 @@ async function paymentFigures() {
       await untilQueuedBehind(settlePid);
       allocationRow.release();
       expect(await reading).toBe(0);
-      expect(await removing).toBe(1);
+      await removing;
+      expect(await allocationActive(CORRECTION, 10_000)).toBe(false);
     } finally {
       allocationRow.release();
       await allocationRow.done;
@@ -603,5 +629,89 @@ async function paymentFigures() {
     }
 
     await expectCancelCredits(20_000);
+  }, 60_000);
+  // #5289 C: the allocation write locks and decides the payment the settle finds, one named only by its invoice link included.
+  it("LINK-ONLY, SETTLE FIRST: a payment with no invoice id stamped, found by its invoice link: the correction's allocation waits on the settle's Payment row and counts it before a writer queued on lock(1) reads it", async () => {
+    await bookInvoicedAndCutTo(20_000, { stamped: false });
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+
+    const receipt = await holdReceiptRow();
+    const settling = settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
+    let syncing: Promise<void> | null = null;
+    let reading: Promise<number> | null = null;
+    try {
+      const [settlePid] = await untilQueuedBehind(receipt.pid);
+      let synced = false;
+      syncing = syncNote(CORRECTION, 10_000).finally(() => {
+        synced = true;
+      });
+      // Before #5289 the write found no payment by the invoice id and took no lock, so this never queued.
+      await untilQueuedBehind(settlePid, { unless: () => synced });
+      reading = readQueuedOnCancelLocks();
+      await untilQueuedBehind(settlePid, { count: synced ? 1 : 2 });
+      receipt.release();
+      expect(await reading).toBe(10_000);
+    } finally {
+      receipt.release();
+      await receipt.done;
+      await settling;
+      await syncing?.catch(() => undefined);
+      await reading?.catch(() => undefined);
+    }
+
+    await expectCancelCredits(20_000);
+  }, 60_000);
+
+  it("LINK-ONLY, SYNC FIRST: the allocation write holds the link-only payment's Payment row while the settle waits on it, and the keep counts the correction before a writer queued on lock(1) reads it", async () => {
+    await bookInvoicedAndCutTo(20_000, { stamped: false });
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+    const link = allocationLink(CORRECTION, 10_000);
+
+    const reservation = await holdLocks(
+      (tx) =>
+        tx.xeroObjectLink.create({
+          data: { localModel: link.localModel, localId: link.localId, xeroObjectType: link.xeroObjectType, xeroObjectId: link.xeroObjectId, role: link.role, active: false },
+        }),
+      { rollback: true },
+    );
+    let settling: ReturnType<typeof settleKept> | null = null;
+    let reading: Promise<number> | null = null;
+    const syncing = syncNote(CORRECTION, 10_000);
+    try {
+      const [syncPid] = await untilQueuedBehind(reservation.pid);
+      settling = settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
+      const [settlePid] = await untilQueuedBehind(syncPid);
+      reading = readQueuedOnCancelLocks();
+      await untilQueuedBehind(settlePid);
+      reservation.release();
+      expect(await reading).toBe(10_000);
+    } finally {
+      reservation.release();
+      await reservation.done;
+      await syncing.catch(() => undefined);
+      await settling;
+      await reading?.catch(() => undefined);
+    }
+
+    await expectCancelCredits(20_000);
+  }, 60_000);
+
+  it("ONE INVOICE PER PAYMENT: a payment linked to an older invoice besides its own counts only its own invoice's correction, the one the settle decides with, whichever note syncs after the settle", async () => {
+    await bookInvoicedAndCutTo(15_000);
+    await prisma.xeroObjectLink.create({
+      data: { localModel: "Payment", localId: PAYMENT_ID, xeroObjectType: "INVOICE", xeroObjectId: OLD_INVOICE_ID, role: "PRIMARY_INVOICE", active: true },
+    });
+    await queueModificationNote(CORRECTION, 10_000, { noteWording: "invoice-correction" });
+    await queueModificationNote(OLD_CORRECTION, 5_000, { noteWording: "invoice-correction" }, OLD_INVOICE_ID);
+    await syncNote(CORRECTION, 10_000);
+    await syncNote(OLD_CORRECTION, 5_000, OLD_INVOICE_ID);
+
+    await settleKept([{ id: CORRECTION.noteId, cents: 10_000 }]);
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 10_000 });
+    // The older invoice's note syncs again: its allocation write and recount add nothing on top.
+    await syncNote(OLD_CORRECTION, 5_000, OLD_INVOICE_ID);
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED" });
+    await syncNote(CORRECTION, 10_000);
+    expect(await paymentFigures()).toMatchObject({ refundedAmountCents: 10_000, status: "PARTIALLY_REFUNDED" });
   }, 60_000);
 });

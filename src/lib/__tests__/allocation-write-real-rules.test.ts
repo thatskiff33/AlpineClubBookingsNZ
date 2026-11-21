@@ -12,7 +12,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
-  paymentFindMany: vi.fn(),
   linkFindMany: vi.fn(),
   upsert: vi.fn(),
   decideLinked: vi.fn(),
@@ -20,13 +19,18 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { $transaction: mocks.transaction, payment: { findMany: mocks.paymentFindMany }, xeroObjectLink: { findMany: mocks.linkFindMany } },
+  prisma: { $transaction: mocks.transaction, xeroObjectLink: { findMany: mocks.linkFindMany } },
 }));
 vi.mock("@/lib/xero-sync", () => ({ upsertXeroObjectLink: mocks.upsert }));
 vi.mock("@/lib/xero-inbound/linked-refunded-total", () => ({ decideLinkedRefundedTotalCents: mocks.decideLinked }));
 vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/xero-inbound/credit-note-bank-transfer-floor")),
   sendBankTransferFloorAlert: mocks.sendFloorAlert,
+}));
+// #5289 C: the invoice names pay-1 by the settle's rule (pinned in its own suite), before the lock and under it.
+vi.mock("@/lib/xero-inbound/bank-transfer-payment-of-invoice", () => ({
+  bankTransferPaymentIdsOfInvoices: async (invoiceIds: string[]) => new Map(invoiceIds.filter((id) => id === "inv-1").map((id) => [id, "pay-1"])),
+  bankTransferPaymentsOfNoteAllocations: async () => [{ link: allocation, invoiceId: "inv-1", paymentId: "pay-1" }],
 }));
 vi.mock("@/lib/club-format-settings", () => ({ getClubFormat: vi.fn(async () => ({ timeZone: "Pacific/Auckland" })) }));
 vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
@@ -68,14 +72,13 @@ function arrange(input: { refundedAmountCents: number; status: string; detailCen
       // The floor's voided-note check: no refund note on the payment.
       findMany: vi.fn().mockResolvedValue([]),
     },
-    payment: { findUnique: vi.fn().mockResolvedValue(payment), count: vi.fn().mockResolvedValue(1), updateMany },
+    payment: { findUnique: vi.fn().mockResolvedValue(payment), updateMany },
     paymentTransaction: {
       aggregate: vi.fn().mockResolvedValue({ _sum: { refundedAmountCents: input.detailCents } }),
       findMany: vi.fn().mockResolvedValue([{ kind: "PRIMARY", status: "PENDING", createdAt: new Date("2026-06-01T00:00:00.000Z"), insertionSeq: 1 }]),
     },
   };
   mocks.transaction.mockImplementation(async (fn: (client: unknown) => Promise<unknown>) => fn(tx));
-  mocks.paymentFindMany.mockResolvedValue([{ id: "pay-1", xeroInvoiceId: "inv-1", source: "INTERNET_BANKING" }]);
   mocks.linkFindMany.mockImplementation(async ({ where }: { where: { xeroObjectType?: string } }) =>
     where.xeroObjectType === "CREDIT_NOTE" ? [] : [allocation],
   );
@@ -101,7 +104,7 @@ describe("the allocation write and its removal through the real floor and status
         priorSnapshots: [],
         listedInvoiceIds: new Set(),
       }),
-    ).resolves.toBe(1);
+    ).resolves.toEqual({ retired: 1, decidedPaymentIds: ["pay-1"] });
 
     expect(updateMany).toHaveBeenCalledWith({
       where: { id: "pay-1", status: "PARTIALLY_REFUNDED", refundedAmountCents: 3_000, updatedAt: STORED_AT },

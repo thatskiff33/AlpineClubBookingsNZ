@@ -14,6 +14,7 @@ import { getNextRefundedPaymentStatus } from "./amounts";
 import { invoiceCorrectionNoteIds, noCashModificationNoteIds } from "./account-credit-modification-notes";
 import { paymentsCountingInvoiceCorrections } from "./linked-refunded-total";
 import { NOT_CARD_REFUND_REVERSAL_INVOICE_LINK } from "@/lib/xero-card-refund-reversal-outbox";
+import { decisionInvoiceIdsOf } from "./bank-transfer-payment-of-invoice";
 
 async function resolvePaymentIdsByInvoiceTargets(
   creditNoteId: string,
@@ -73,7 +74,17 @@ async function resolvePaymentIdsByInvoiceTargets(
       },
     });
 
+    // #5289 C: a bank-transfer payment found by its link counts the note only on its one invoice
+    // (`decisionInvoiceIdsOf`), as `decideLinkedRefundedTotalCents` counts its earlier notes, never
+    // on an older invoice it is still linked to. One found by its own invoice id already is.
+    const linkedPayments = linkedMatches.length === 0 ? [] : await prisma.payment.findMany({
+      where: { id: { in: [...new Set(linkedMatches.map((link) => link.localId))] } },
+      select: { id: true, source: true, xeroInvoiceId: true },
+    });
+    const decisionInvoiceIds = await decisionInvoiceIdsOf(linkedPayments);
     for (const link of linkedMatches) {
+      const decisionInvoiceId = decisionInvoiceIds.get(link.localId);
+      if (decisionInvoiceId !== undefined && decisionInvoiceId !== link.xeroObjectId) continue;
       const ids = paymentIdsByInvoiceId.get(link.xeroObjectId) ?? new Set<string>();
       ids.add(link.localId);
       paymentIdsByInvoiceId.set(link.xeroObjectId, ids);

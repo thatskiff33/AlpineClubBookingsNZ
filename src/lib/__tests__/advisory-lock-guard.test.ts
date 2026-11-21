@@ -2102,12 +2102,13 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
       "tx.xeroObjectLink.findUnique(",
       "upsertXeroObjectLink(link, { store: tx })",
     ]);
-    // #4449 review: re-read under the lock, the one payment of the invoice re-counted there, the
-    // shared columns step, and a claim on the row as re-read that also moves updatedAt.
+    // #4449 review: re-read under the lock, the one payment of the invoice re-counted there (#5289 C:
+    // by the settle's own rule, on this transaction), the shared columns step, and a claim on the row
+    // as re-read that also moves updatedAt.
     const decide = between("async function decideBankTransferRefundedTotal(", "async function bankTransferPaymentIdsByInvoiceId(");
     inOrder(decide, [
       "tx.payment.findUnique(",
-      "tx.payment.count({ where: { xeroInvoiceId: target.invoiceId } })",
+      "bankTransferPaymentIdsOfInvoices([target.invoiceId], tx)",
       "decideLinkedRefundedTotalCents(tx, [payment])",
       "decideXeroRefundedColumns(tx,",
       "tx.payment.updateMany(",
@@ -2116,15 +2117,18 @@ describe("advisory lock guard (#182 / H1 regression class)", () => {
     expect(decide).toContain("status: payment.status, refundedAmountCents: payment.refundedAmountCents, updatedAt: payment.updatedAt");
     expect(decide).not.toMatch(/tx\.payment\.update\(|sendBankTransferFloorAlert|notifyXeroSyncError/);
     // The floor alerts go out after every write's commit, outside any transaction: additions and removals.
-    const afterTheWrites = ["bankTransferPaymentIdsByInvoiceId(", "writeCurrentCreditNoteAllocation(", "decidedPaymentOf(link, byInvoiceId)", "holdOrCollect(floorAlert, input.heldFloorAlerts, floorAlerts)", "sendFloorAlerts(floorAlerts)"];
-    inOrder(between("export async function writeCurrentCreditNoteAllocations(", "export async function retireUnlistedCreditNoteAllocations("), afterTheWrites);
-    inOrder(text.slice(text.indexOf("export async function retireUnlistedCreditNoteAllocations(")), afterTheWrites);
+    const afterTheWrites = ["writeCurrentCreditNoteAllocation(", "holdOrCollect(floorAlert, input.heldFloorAlerts, floorAlerts)", "sendFloorAlerts(floorAlerts)"];
+    inOrder(between("export async function writeCurrentCreditNoteAllocations(", "export type RetiredAllocations"), ["bankTransferPaymentIdsByInvoiceId(", "writeCurrentCreditNoteAllocation(link, decidedPaymentOf(link, byInvoiceId))", ...afterTheWrites.slice(1)]);
+    // #5289 A, C: a removal (a cancelled reading's included) finds each link's payment by the settle's rule.
+    inOrder(text.slice(text.indexOf("export async function retireUnlistedCreditNoteAllocations(")), ["bankTransferPaymentsOfNoteAllocations(input.creditNoteId)", ...afterTheWrites]);
     // #4449 verify, low 2: the sync holds the writes' and removals' alerts and sends them after its recount, outside any transaction.
     const sync = stripComments(sources.find(({ rel }) => rel === "src/lib/xero-inbound/credit-note.ts")?.text ?? "");
     inOrder(sync, [
       "await withHeldFloorAlerts(async (held) => {",
       "writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote, heldFloorAlerts: held.alerts })",
+      "const removal = await retireUnlistedCreditNoteAllocations({",
       "heldFloorAlerts: held.alerts,",
+      "removal.decidedPaymentIds",
       "held.recountedPaymentIds = new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()])",
       "repairRefundedPaymentBusinessState(",
       "return { refundedPaymentRepair, voidedMirrorAuditLinks };",

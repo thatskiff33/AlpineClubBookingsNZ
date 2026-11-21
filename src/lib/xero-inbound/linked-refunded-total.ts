@@ -12,7 +12,7 @@
  * rule. It writes nothing and takes no lock; callers clamp and floor what it
  * returns.
  */
-import { PaymentSource, PaymentTransactionKind, type PaymentStatus, type Prisma } from "@prisma/client";
+import { type PaymentSource, PaymentTransactionKind, type PaymentStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { type CreditNoteAllocationCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata, sumAppliedCentsByCreditNote } from "./amounts";
 import { isIncludedRefundCreditNoteStatus } from "@/lib/xero-refund-note-status";
@@ -21,6 +21,7 @@ import { readRefundRequestPaidBackCentsByPaymentId } from "./refund-request-paid
 import { readFailedCardRefundRecountCentsByPayment, readFailedCardRefundRecountCentsIn } from "./failed-card-refund-recount";
 import { receiptCountsInvoiceCorrections } from "./ib-receipt-reasons";
 import { CLEARING_ALLOCATION_LINK_WHERE, distinctClearingAllocations, NOTE_ALLOCATION_ROLE } from "@/lib/xero-clearing-allocations";
+import { decisionInvoiceIdsOf } from "./bank-transfer-payment-of-invoice";
 
 type Store = Prisma.TransactionClient;
 
@@ -108,12 +109,11 @@ export async function decideLinkedRefundedTotalCents(
   // allocation to the edit, not the payment, so a recount triggered by any
   // later note used to drop every earlier modification note from the total -
   // overstating the net of a payment whose receipt kept the stored figure.
+  // #5289 C: one invoice per payment (`decisionInvoiceIdsOf`): its own, or the one its only
+  // link names while none is stamped; a caller deciding with the settle's invoice passes it as
+  // `xeroInvoiceId` (the keep). An older invoice it is still linked to is never added.
   const invoicePaymentIds = new Map(
-    payments.flatMap((payment) =>
-      payment.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId
-        ? [[payment.xeroInvoiceId, payment.id] as const]
-        : [],
-    ),
+    [...(await decisionInvoiceIdsOf(payments, store))].map(([paymentId, invoiceId]) => [invoiceId, paymentId] as const),
   );
   // #4786: by invoice, also a role-less link an older repair wrote on the note's anchor.
   const invoiceAllocationLinks =

@@ -352,8 +352,9 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
     await writeCurrentCreditNoteAllocations(allocationLinks, { isModificationNote, heldFloorAlerts: held.alerts });
     // #4447: the invoices this reading no longer lists, in the same pass as the
     // writes above and before the recount. A stored snapshot that refuses the
-    // reading turns nothing off.
-    await retireUnlistedCreditNoteAllocations({
+    // reading turns nothing off. #5289 A: a cancelled reading of a modification
+    // note lists nothing, so all its allocations go off, each payment decided.
+    const removal = await retireUnlistedCreditNoteAllocations({
       creditNoteId: creditNote.creditNoteID!,
       isModificationNote,
       heldFloorAlerts: held.alerts,
@@ -389,7 +390,10 @@ export async function reconcileXeroCreditNote(creditNoteId: string) {
         role: "REFUND_CREDIT_NOTE",
       }));
 
-    const directPaymentIds = [...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id).concat(voidedMirrorPaymentIds);
+    // #5289 A: a cancelled reading lists no invoice, so the payments its removal decided are found
+    // nowhere else; the recount decides them again after those commits, and alerts each once.
+    const cancelledRemovalPaymentIds = isIncludedRefundCreditNoteStatus(creditNote.status) ? [] : removal.decidedPaymentIds;
+    const directPaymentIds = [...new Set([...paymentCandidates, ...accountCreditPayments].map((payment) => payment.id).concat(voidedMirrorPaymentIds, cancelledRemovalPaymentIds))];
     held.recountedPaymentIds = new Set([...directPaymentIds, ...modificationRefundAmountsByPaymentId.keys()]);
     const refundedPaymentRepair = await repairRefundedPaymentBusinessState({
       creditNoteId: creditNote.creditNoteID!,

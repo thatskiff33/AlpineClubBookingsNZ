@@ -67,6 +67,7 @@ import {
   readCashSettlementNotice,
   type CashSettlementMarker,
 } from "@/lib/xero-inbound/settle-from-cash-notice";
+import { bankTransferPaymentsOfInvoiceWhere } from "@/lib/xero-inbound/bank-transfer-payment-of-invoice";
 import { exactPrefix } from "@/lib/prisma-exact-prefix";
 import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
 import { groupSettlementMismatchMessage } from "@/lib/xero-inbound/group-settlement-mismatch-message";
@@ -170,24 +171,9 @@ export async function syncInternetBankingPaymentsForPaidInvoice(
     return result;
   }
 
-  const paymentWhere = [
-    {
-      xeroInvoiceId: invoiceId,
-    },
-    ...(linkedPaymentIds.length > 0
-      ? [
-          {
-            id: {
-              in: linkedPaymentIds,
-            },
-          },
-        ]
-      : []),
-  ];
-  const paymentFilter = {
-    source: PaymentSource.INTERNET_BANKING,
-    OR: paymentWhere,
-  };
+  // #5289 C (`INV-SSOT`): the one rule for an invoice's bank-transfer payment, which the
+  // note sync's allocation write and the outbound allocation completion lock by too.
+  const paymentFilter = bankTransferPaymentsOfInvoiceWhere(invoiceId, linkedPaymentIds);
 
   // #1435: settlement itself is cash-gated, not just credit minting (#1357).
   // Without positive cash evidence the loop settles NOTHING — no
