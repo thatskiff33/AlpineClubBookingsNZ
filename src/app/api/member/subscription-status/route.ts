@@ -11,7 +11,7 @@ import {
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import { formatUnpaidSubscriptionRateReason } from "@/lib/policies/subscription-lockout-pricing";
 import { servingMcpConnection } from "@/lib/mcp-connection-request";
-import { SUBSCRIPTION_FIELDS_WITHHELD_FROM_CONNECTIONS } from "@/lib/member-self-read";
+import { subscriptionStatusForConnection } from "@/lib/member-self-read";
 
 export async function GET() {
   const session = await auth();
@@ -115,10 +115,8 @@ export async function GET() {
      */
     subscriptionLockoutMode,
   };
-  // ALP-653: an AI app connection is not sent the invoice links; the website's
-  // answer is unchanged.
-  if (await servingMcpConnection()) {
-    for (const field of SUBSCRIPTION_FIELDS_WITHHELD_FROM_CONNECTIONS) delete body[field];
-  }
+  // ALP-653: an AI app connection is sent only the named fields (no invoice
+  // links); the website's answer is unchanged.
+  if (await servingMcpConnection()) return NextResponse.json(subscriptionStatusForConnection(body));
   return NextResponse.json(body);
 }

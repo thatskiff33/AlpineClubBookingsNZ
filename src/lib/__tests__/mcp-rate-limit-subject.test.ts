@@ -147,6 +147,39 @@ describe("route limiters on an AI app loopback call", () => {
  * still read for audit rows (`cancelBooking`'s ip argument); only a limiter's
  * key is checked here.
  */
+/**
+ * Limiter calls in `source` whose key is the bare client address: read inline
+ * (`checkRateLimit(cfg, getClientIp(req))`, a template around it included) or
+ * through a variable first assigned from it (`const ip = getClientIp(req);
+ * checkRateLimit(cfg, ip)`). Any `checkRateLimitInMemory` call counts too.
+ * Stated limit: it reads the route file only, not helpers the route calls.
+ */
+function addressKeyedLimiters(source: string): string[] {
+  const found: string[] = [];
+  const addressVariables = [...source.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=\s*getClientIp\(/g)].map((m) => m[1]!);
+  for (const call of source.matchAll(/\bcheckRateLimit(?:InMemory)?\(([^;]*?)\)\s*;/gs)) {
+    const args = call[1]!;
+    if (call[0].startsWith("checkRateLimitInMemory")) found.push(call[0]);
+    else if (/getClientIp/.test(args)) found.push(call[0]);
+    else if (addressVariables.some((name) => new RegExp(`\\b${name}\\b`).test(args.split(",").slice(1).join(",")))) {
+      found.push(call[0]);
+    }
+  }
+  return found;
+}
+
+describe("the address-keyed limiter detector", () => {
+  it("catches the inline, template and two-step forms, and passes keyed ones", () => {
+    expect(addressKeyedLimiters("await checkRateLimit(cfg, getClientIp(request));")).toHaveLength(1);
+    expect(addressKeyedLimiters("await checkRateLimit(cfg, `x:${getClientIp(request)}`);")).toHaveLength(1);
+    expect(addressKeyedLimiters("const ip = getClientIp(req);\nconst r = await checkRateLimit(cfg, ip);")).toHaveLength(1);
+    expect(addressKeyedLimiters("const ipAddress = getClientIp(req);\nawait checkRateLimit(cfg, `k:${ipAddress}`);")).toHaveLength(1);
+    expect(addressKeyedLimiters("checkRateLimitInMemory(cfg, key);")).toHaveLength(1);
+    expect(addressKeyedLimiters("const ip = getClientIp(req);\nawait checkRateLimit(cfg, `cancel-preview:${user.id}`);\naudit({ ip });")).toEqual([]);
+    expect(addressKeyedLimiters("await applyRateLimit(cfg, request);")).toEqual([]);
+  });
+});
+
 describe("the routes AI app actions call", () => {
   it("never key a limiter on the bare client address", async () => {
     const { readFileSync } = await import("node:fs");
@@ -156,9 +189,7 @@ describe("the routes AI app actions call", () => {
     const limitedByHelper: string[] = [];
     for (const file of files) {
       const source = readFileSync(file, "utf8");
-      // A `checkRateLimit(config, key)` call whose key reads the address.
-      expect(source, file).not.toMatch(/checkRateLimit\([^;]*getClientIp/s);
-      expect(source, file).not.toMatch(/checkRateLimitInMemory\(/);
+      expect(addressKeyedLimiters(source), file).toEqual([]);
       if (/applyRateLimit\(|applyMemberScopedRateLimit\(/.test(source)) limitedByHelper.push(file);
     }
     // The two the review named (#5286): bookingCreate and bookingQuery.

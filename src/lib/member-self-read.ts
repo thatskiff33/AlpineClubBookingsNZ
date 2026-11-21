@@ -213,5 +213,31 @@ export function familyForConnection(body: {
   };
 }
 
-/** Subscription-status fields a connection is not sent: the invoice links open the invoice for anyone holding them. */
-export const SUBSCRIPTION_FIELDS_WITHHELD_FROM_CONNECTIONS = ["invoiceUrl", "rawInvoiceUrl"] as const;
+/**
+ * The subscription-status fields a connection is sent, by name: an allow-list,
+ * so a field the website's answer gains later does not reach an AI app by
+ * default. The invoice links are left out: they open the invoice for anyone
+ * holding them.
+ */
+const SUBSCRIPTION_FIELDS_SENT_TO_CONNECTIONS = [
+  "status",
+  "rawStatus",
+  "subscriptionRequired",
+  "effectiveStatusReason",
+  "seasonDisplay",
+  "invoiceNumber",
+  "rawInvoiceNumber",
+  "membershipTypeKey",
+  "membershipTypeName",
+  "membershipTypeSubscriptionBehavior",
+  "memberRateNotice",
+  "subscriptionLockoutMode",
+] as const;
+
+export function subscriptionStatusForConnection(
+  body: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    SUBSCRIPTION_FIELDS_SENT_TO_CONNECTIONS.filter((field) => field in body).map((field) => [field, body[field]]),
+  );
+}

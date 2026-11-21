@@ -58,6 +58,7 @@ import { GET as getDrafts } from "@/app/api/bookings/drafts/route";
 import { GET as getCreditBalance } from "@/app/api/member/credit-balance/route";
 import { GET as getSubscriptionStatus } from "@/app/api/member/subscription-status/route";
 import { GET as getFamily } from "@/app/api/members/family/route";
+import { subscriptionStatusForConnection } from "@/lib/member-self-read";
 
 /** Every key anywhere in a JSON value, so a withheld field cannot hide in a nested object. */
 function allKeys(value: unknown, keys = new Set<string>()): Set<string> {
@@ -215,6 +216,12 @@ describe("GET /api/member/subscription-status", () => {
     expect(allKeys(body).has("invoiceUrl")).toBe(false);
     expect(allKeys(body).has("rawInvoiceUrl")).toBe(false);
     expect(JSON.stringify(body)).not.toContain("in.xero.com");
+  });
+
+  it("sends only named fields, so a field the website gains later does not reach a connection", () => {
+    expect(subscriptionStatusForConnection({ status: "PAID", invoiceUrl: "https://x", someNewField: "secret" })).toEqual({
+      status: "PAID",
+    });
   });
 
   it("answers the website exactly as before", async () => {

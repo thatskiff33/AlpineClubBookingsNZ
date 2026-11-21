@@ -459,7 +459,7 @@ describe("POST /api/member/mcp-grants", () => {
     // approval before the body is read or anything is written.
     const actual = (await vi.importActual("@/lib/session-guards")) as typeof import("@/lib/session-guards");
     requireActiveSession.mockImplementation(actual.requireActiveSession);
-    authMock.mockResolvedValue({ user: { ...memberUser, forcePasswordChange: true } });
+    authMock.mockResolvedValue({ user: { ...(memberUser as object), forcePasswordChange: true } });
     (db.member as { findUnique: ReturnType<typeof vi.fn> }).findUnique = vi.fn(async () => ({
       active: true,
       canLogin: true,

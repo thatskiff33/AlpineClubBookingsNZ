@@ -125,7 +125,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
   {
     id: "get_my_profile",
     title: "Read my profile",
-    summary: "The signed-in member's own name, contact details, address and age group.",
+    summary: "The signed-in member's own name, contact details, address and age group, and whether two-step sign-in is on.",
     method: "GET",
     path: "/api/profile/summary",
     kind: "read",
@@ -158,7 +158,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "preview_cancel_booking",
     title: "Preview cancelling a booking",
     summary:
-      "What cancelling a booking would refund, and by which method, without cancelling it. Run this before `cancel_my_booking`.",
+      "What cancelling one of the signed-in member's own bookings would refund, and by which method, without cancelling it. Run this before `cancel_my_booking`.",
     method: "GET",
     path: "/api/bookings/[id]/cancel-preview",
     params: bookingIdParams,
@@ -169,7 +169,7 @@ export const MCP_ACTIONS: readonly McpAction[] = [
     id: "cancel_my_booking",
     title: "Cancel a booking",
     summary:
-      "Cancels a booking and refunds it under the club's cancellation policy. This cannot be undone. `refundMethod` is `card` or `credit`. The website's rule decides whose booking it may be: the member's own, or any member's for an officer who may cancel bookings there.",
+      "Cancels one of the signed-in member's own bookings and refunds it under the club's cancellation policy. This cannot be undone. `refundMethod` is `card` or `credit`. Only a booking the member made can be cancelled here, whatever the member's role on the website.",
     method: "POST",
     path: "/api/bookings/[id]/cancel",
     params: bookingIdParams,
