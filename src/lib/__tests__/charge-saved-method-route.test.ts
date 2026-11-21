@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 import { stripeSdkError } from "./support/stripe-sdk-error";
 import { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } from "@/lib/saved-card-charge-claim";
-import { describeUnsettledPaymentIntent } from "@/lib/saved-card-charge-settle";
 
 const {
   mockAuth,
@@ -1312,11 +1311,14 @@ describe("POST /api/payments/charge-saved-method", () => {
 
       expect(response.status).toBe(409);
       expect(response.headers.get("Retry-After")).toBeNull();
-      // The retry landed, so the booking IS pending and today's wording stands (#5279).
+      // The retry landed, so the booking IS pending and today's wording stands
+      // (#5279). Pinned as text (#5346): comparing against the function that
+      // words it would pass whatever it said.
       expect(await response.json()).toMatchObject({
         success: false,
         paymentIntentId: "pi_3ds_contended",
-        error: describeUnsettledPaymentIntent("requires_action"),
+        error:
+          "The saved card needs the cardholder to complete authentication (3D Secure), which cannot be done automatically; the booking stays pending until they do, or until the member saves a different card.",
       });
       const releases = mockPrismaTransaction.mock.calls.slice(1);
       expect(releases).toHaveLength(2);
