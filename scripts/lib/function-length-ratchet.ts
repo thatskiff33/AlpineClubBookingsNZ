@@ -31,6 +31,10 @@
  * from a deletion plus a new function, and the remedy (split it while you are
  * there, or keep the name) is cheap.
  *
+ * A deployment fork syncing down may name a trusted upstream commit (#5196);
+ * the rule for what it vouches for lives in `budget-upstream-ref.ts`, shared
+ * with the file-size ratchet, and only its same-path functions are matched.
+ *
  * Reads `git` and the working tree only: no network, no build, no database.
  */
 import { readFileSync } from "node:fs";
