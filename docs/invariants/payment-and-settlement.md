@@ -1444,16 +1444,18 @@ one, check the other.
   - **Paid another way** queues a Stripe reversal for the cents a card note
     still covers, and a bank note for the whole close (`INV-PAY-151`).
   - **Inbound recount**: `INV-PAY-155`.
+  - **Neither reads a capped late capture's pre-#4383 over-note as cover**
+    (`readLateCapturePreCapOverNoteCents`).
   - **Officers hear once per refused slice or failed-later decision**, and
     again if retries run out.
   - **Deploy window**: an older release closes a refused row as paid and drops
     `refund.failed`; the read-back finds a dropped one pending.
   - **Every other door**: `INV-PAY-130` (#4103).
-  - Proven by `refused-card-refund-retry.test.ts`, `payment-recovery.test.ts`,
-    `own-card-refund-outcome`, `booking-cancel.test.ts`,
-    `admin-refund-request-review-route.test.ts`,
-    `refunds-and-credits-owed.test.ts`, `card-refund-failed-later.test.ts`,
-    `card-refund-paid-another-way-xero.test.ts` and both `.realdb` twins.
+  - Proven by `refused-card-refund-retry`, `payment-recovery`,
+    `own-card-refund-outcome`, `booking-cancel`,
+    `admin-refund-request-review-route`, `refunds-and-credits-owed`,
+    `card-refund-failed-later`, `card-refund-paid-another-way-xero` and both
+    `.realdb` twins.
 
 ## INV-PAY-129
 

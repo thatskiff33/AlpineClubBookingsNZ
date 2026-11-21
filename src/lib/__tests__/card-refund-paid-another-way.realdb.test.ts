@@ -97,6 +97,8 @@ let realElapsedMs: (typeof import("@/lib/__tests__/helpers/clock"))["realElapsed
 let resolveRefundNoteEligibleCash: (typeof import("@/lib/refund-note-eligible-cash"))["resolveRefundNoteEligibleCash"];
 let readRefundCreditNoteGap: (typeof import("@/lib/xero-admin-health"))["readRefundCreditNoteGap"];
 let failedLaterCardNoteCoverCents: (typeof import("@/lib/card-refund-paid-another-way-xero"))["failedLaterCardNoteCoverCents"];
+let readRefundNoteCoverageAboveCashCents: (typeof import("@/lib/refund-note-coverage-above-cash"))["readRefundNoteCoverageAboveCashCents"];
+let readFailedCardRefundRecountCentsByPayment: (typeof import("@/lib/xero-inbound/failed-card-refund-recount"))["readFailedCardRefundRecountCentsByPayment"];
 let readPendingCardRefundReversalCents: (typeof import("@/lib/xero-card-refund-reversal-outbox"))["readPendingCardRefundReversalCents"];
 let getRefundsMissingXeroCreditNotes: (typeof import("@/lib/xero-admin-health"))["getRefundsMissingXeroCreditNotes"];
 let enqueueXeroRefundCreditNoteOperation: (typeof import("@/lib/xero-operation-outbox"))["enqueueXeroRefundCreditNoteOperation"];
@@ -172,6 +174,8 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       ({ resolveCardRefundPaidTwice, listCardRefundsPaidTwice } = await import("@/lib/card-refund-paid-twice"));
       ({ failedLaterCardNoteCoverCents } = await import("@/lib/card-refund-paid-another-way-xero"));
       ({ readPendingCardRefundReversalCents } = await import("@/lib/xero-card-refund-reversal-outbox"));
+      ({ readRefundNoteCoverageAboveCashCents } = await import("@/lib/refund-note-coverage-above-cash"));
+      ({ readFailedCardRefundRecountCentsByPayment } = await import("@/lib/xero-inbound/failed-card-refund-recount"));
       const [{ PrismaClient: SeparatePrismaClient }, { createPrismaPgAdapter }] = await Promise.all([
         import("@prisma/client"),
         import("@/lib/prisma-adapter"),
@@ -978,12 +982,11 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
       const runWorker = async (operationId: string, paused?: Promise<void>, invoicesCalled?: () => void) =>
         createXeroKeptLateCaptureInvoice({ syncOperation: await currentXeroClaim(prisma, operationId) }, providers(paused, invoicesCalled));
 
-      // #4383 watchpoint (`INV-PAY-122`): the capture's own receipt recorded
-      // $150 of its $200 (its invoice had room for no more), so its card note
-      // stops at $150. A close of its refund that failed later is answered by
-      // that card note for the $150 it credits - never the $200 refunded.
-      it("MUTATION #4383: a capped capture's card note answers a failed-later close for what the receipt recorded", async () => {
-        const RECORDED_CENTS = 15_000;
+      /**
+       * #4383: the capture's own receipt, capped at its invoice's room
+       * (`INV-PAY-139`): it recorded `recordedCents` of the $200 capture.
+       */
+      async function recordCappedReceipt(recordedCents: number) {
         await prisma.xeroSyncOperation.create({
           data: {
             direction: "OUTBOUND",
@@ -1002,10 +1005,10 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
               plan: {
                 target: "PRIMARY_INVOICE",
                 invoiceId: "inv_race_3372_paw",
-                amountCents: RECORDED_CENTS,
+                amountCents: recordedCents,
                 capturedCents: PAID_CENTS,
                 date: "2026-08-01",
-                legs: [{ target: "PRIMARY_INVOICE", invoiceId: "inv_race_3372_paw", amountCents: RECORDED_CENTS }],
+                legs: [{ target: "PRIMARY_INVOICE", invoiceId: "inv_race_3372_paw", amountCents: recordedCents }],
               },
             },
           },
@@ -1021,6 +1024,15 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
             metadata: { invoiceId: "inv_race_3372_paw", leg: 0 },
           },
         });
+      }
+
+      // #4383 watchpoint (`INV-PAY-122`): the capture's own receipt recorded
+      // $150 of its $200 (its invoice had room for no more), so its card note
+      // stops at $150. A close of its refund that failed later is answered by
+      // that card note for the $150 it credits - never the $200 refunded.
+      it("MUTATION #4383: a capped capture's card note answers a failed-later close for what the receipt recorded", async () => {
+        const RECORDED_CENTS = 15_000;
+        await recordCappedReceipt(RECORDED_CENTS);
         const refund = await prisma.paymentRefund.create({
           data: {
             paymentId: PAYMENT_ID,
@@ -1057,6 +1069,78 @@ const LOCK_POLL_TIMEOUT_MS = 5_000;
         // Stripe fails the refund later: the note now answers the close, for what it credited.
         await prisma.paymentRefund.update({ where: { id: refund.id }, data: { status: "failed" } });
         expect(await failedLaterCardNoteCoverCents(prisma as never, failedLater, PAYMENT_ID)).toBe(RECORDED_CENTS);
+      });
+
+      // #4383 review (money M1, `INV-PAY-128`): before #4383 a capped
+      // capture's note answered its whole refund. Since then the eligible cash
+      // counts only what the receipt recorded, so that old note's part above it
+      // would read as coverage above cash - refunds that failed later - and a
+      // close would reverse it and the recount take it off, while
+      // `docs/MAINTENANCE.md` has the officer reduce the note in Xero too.
+      it("MUTATION #4383 review M1: a pre-#4383 whole-refund note on a capped receipt is never cover for a refund that failed later", async () => {
+        const RECORDED_CENTS = 10_000;
+        const REFUNDED_CENTS = 15_000;
+        await recordCappedReceipt(RECORDED_CENTS);
+        await prisma.paymentRefund.create({
+          data: {
+            paymentId: PAYMENT_ID,
+            paymentTransactionId: TRANSACTION_ID,
+            stripeRefundId: "re_race_4383_m1_kept",
+            stripePaymentIntentId: LATE_INTENT,
+            amountCents: REFUNDED_CENTS,
+            currency: "nzd",
+            status: "succeeded",
+          },
+        });
+        // A second refund Stripe failed after it counted, before any note was raised for it.
+        const failed = await prisma.paymentRefund.create({
+          data: {
+            paymentId: PAYMENT_ID,
+            paymentTransactionId: TRANSACTION_ID,
+            stripeRefundId: "re_race_4383_m1_failed",
+            stripePaymentIntentId: LATE_INTENT,
+            amountCents: REFUND_CENTS,
+            currency: "nzd",
+            status: "failed",
+          },
+        });
+        await prisma.payment.update({ where: { id: PAYMENT_ID }, data: { refundedAmountCents: REFUNDED_CENTS } });
+        await prisma.paymentRecoveryOperation.update({
+          where: { id: OPERATION_ID },
+          data: {
+            allocationPlan: [{ paymentTransactionId: TRANSACTION_ID, amountCents: REFUND_CENTS, failedRefundIds: [failed.stripeRefundId] }],
+          },
+        });
+        // The note raised before #4383, for the whole $150 refund: $50 above the $100 recorded.
+        await prisma.xeroObjectLink.create({
+          data: {
+            localModel: "Payment",
+            localId: PAYMENT_ID,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: "cn_race_4383_m1_whole",
+            role: "REFUND_CREDIT_NOTE",
+            active: true,
+            metadata: { amountCents: REFUNDED_CENTS, paymentIntentId: LATE_INTENT },
+          },
+        });
+        const payment = { id: PAYMENT_ID, bookingId: BOOKING_ID, refundedAmountCents: REFUNDED_CENTS };
+        await expect(resolveRefundNoteEligibleCash(payment)).resolves.toMatchObject({ eligibleCashCents: RECORDED_CENTS });
+        // Without the exclusion: $50 above cash, read as the failed refund's note.
+        expect(await readRefundNoteCoverageAboveCashCents(payment)).toBe(0);
+
+        // The inbound recount takes nothing off for the failure: no note answers it.
+        const recount = await readFailedCardRefundRecountCentsByPayment([payment], async () => null);
+        expect(recount.centsByPayment.has(PAYMENT_ID)).toBe(false);
+
+        // The close of the failed refund: no card note answers it, so no Stripe reversal is queued.
+        const failedLater = await prisma.paymentRecoveryOperation.findUniqueOrThrow({ where: { id: OPERATION_ID } });
+        expect(await failedLaterCardNoteCoverCents(prisma as never, failedLater, PAYMENT_ID)).toBe(0);
+        const result = await close();
+        expect(result.xeroQueued).not.toBe("stripe-reversal-and-bank-note");
+        const reversals = await prisma.xeroSyncOperation.count({
+          where: { localModel: "Payment", localId: PAYMENT_ID, queueType: "CARD_REFUND_REVERSAL_INVOICE" },
+        });
+        expect(reversals).toBe(0);
       });
 
       it("a close that waits on the approval task's row behind the REAL receipt worker reads the receipt recorded and queues its own note", async () => {

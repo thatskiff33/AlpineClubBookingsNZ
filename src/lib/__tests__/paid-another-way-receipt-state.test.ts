@@ -51,10 +51,10 @@ vi.mock("@/lib/xero-kept-late-capture-invoice", () => ({ lockKeptLateCaptureTask
 
 import { readPaidAnotherWayReceiptState } from "@/lib/paid-another-way-receipt-note";
 import {
-  classifyLateCaptureCardNote,
   readUnnotedLateCaptureCardRefunds,
   sumLateCaptureNotedCents,
 } from "@/lib/late-capture-refund-credit-note";
+import { classifyLateCaptureCardNote } from "@/lib/late-capture-card-notes-in-xero";
 import { XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 
 const cardNote = (amountCents: number) => ({
