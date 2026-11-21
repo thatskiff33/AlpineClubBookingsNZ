@@ -52,6 +52,7 @@ import {
   renamedGuestsForDependantCheck,
 } from "@/lib/booking-dependant-identity-doors";
 import { PriceSummaryCard } from "@/components/edit-booking/price-summary-card";
+import { LinkedMoveSettlementMethod } from "@/components/edit-booking/linked-move-settlement-method";
 import {
   editPriceChangedMessage,
   readEditPriceChangedFigures,
@@ -1909,40 +1910,12 @@ export function EditBookingPanel({
         <>
           {linkedMoveSettlementRequired &&
           linkedMoveChoice !== "LEAVE_UNCOVERED" ? (
-            <div
-              className="space-y-2 rounded-md border p-3 text-sm"
-              role="status"
-              data-testid="linked-move-settlement-method"
-            >
-              <p className="font-medium">Return method</p>
-              <p className="text-xs text-muted-foreground">
-                Moving both bookings brings money back on the other booking.{(activeLinkedMoveState?.prompt.combinedOrganiserRefundCents ?? 0) > 0 ? " Choose where yours goes; the same choice covers every booking you paid for. A group organiser's refund goes back to them." : " Choose where it goes; the same choice covers both."}
-              </p>
-              <label className="flex cursor-pointer items-start gap-2">
-                <input
-                  type="radio"
-                  name="linkedMoveSettlementMethod"
-                  value="card"
-                  className="mt-1"
-                  checked={linkedMoveSettlementMethod === "card"}
-                  disabled={saving}
-                  onChange={() => setLinkedMoveSettlementMethod("card")}
-                />
-                <span>Refund to the original card</span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2">
-                <input
-                  type="radio"
-                  name="linkedMoveSettlementMethod"
-                  value="credit"
-                  className="mt-1"
-                  checked={linkedMoveSettlementMethod === "credit"}
-                  disabled={saving}
-                  onChange={() => setLinkedMoveSettlementMethod("credit")}
-                />
-                <span>Hold as account credit</span>
-              </label>
-            </div>
+            <LinkedMoveSettlementMethod
+              prompt={activeLinkedMoveState?.prompt ?? null}
+              method={linkedMoveSettlementMethod}
+              disabled={saving}
+              onChange={setLinkedMoveSettlementMethod}
+            />
           ) : null}
           <HostingCoverageLinkedMovePrompt
             prompt={activeLinkedMoveState ? activeLinkedMoveState.prompt : null}

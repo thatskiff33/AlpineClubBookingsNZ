@@ -8,6 +8,7 @@ import {
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
 import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
+import { editRefundRouteOf, type EditRefundRoute } from "@/lib/edit-refund-route";
 import { formatBookingReference } from "@/lib/booking-reference";
 import { bookingsOverlap } from "@/lib/booking-night-overlap";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -18,6 +19,7 @@ import {
 import {
   formatLinkedMoveMoneySentence,
   linkedMoveAllBookingsPhrase,
+  linkedMoveCombinedMoney,
   type HostingCoverageLinkedMoveBooking,
 } from "@/lib/hosting-coverage-linked-move-client";
 import type { ClubFormat } from "@/lib/club-format";
@@ -142,6 +144,8 @@ export interface LinkedMoveQuote {
    * every booking the member paid for - see `formatLinkedMoveOfferMessage`.
    */
   settlementMethodRequired: boolean;
+  /** #5303: where that choice's refund goes, over the bookings it covers (`editRefundRouteOf`). */
+  refundRoute: EditRefundRoute;
   /** True when the request that produced this quote already carried that choice. */
   settlementMethodChosen: boolean;
   /**
@@ -358,17 +362,7 @@ export function formatLinkedMoveOfferMessage(quote: LinkedMoveQuote, format: Clu
   // ONE HOME FOR THE MONEY SENTENCE, shared with the radio labels the member reads
   // beside this very paragraph (`INV-SSOT-001`). It was written twice, in two
   // wordings, and had already drifted on the waiver clause.
-  const moneySentence = formatLinkedMoveMoneySentence({
-    combinedAmountDueCents: quote.combinedAmountDueCents,
-    combinedRefundCents: quote.combinedRefundCents, combinedFreedCreditCents: quote.combinedFreedCreditCents,
-    combinedChangeFeeCents: quote.combinedChangeFeeCents,
-    combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
-    combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
-    settlementMethodRequired: quote.settlementMethodRequired,
-    settlementMethodChosen: quote.settlementMethodChosen,
-    bothChangeFeesCharged: quote.bothChangeFeesCharged,
-    linkedCount: count,
-  }, format);
+  const moneySentence = formatLinkedMoveMoneySentence({ ...linkedMoveCombinedMoney(quote), linkedCount: count }, format);
 
   return (
     `${opening} Move ${linkedMoveAllBookingsPhrase(count)} together? ` +
@@ -398,6 +392,8 @@ export interface LinkedMoveSettledBooking {
   refundedExcessCreditCents: number; // F20 (#1887): an UNPAID booking's applied credit the lower price freed (fork #132)
   /** The WRITE's own answer, never inferred from the amounts — see `combineLinkedMoveQuote`. */
   requiresSettlementMethod: boolean;
+  /** #5303 (`INV-PAY-160`): the settlement's own answer that a reduction's refund goes to the card. */
+  reductionRefundsToCard: boolean;
   /** What the cancellation policy KEPT of this booking's reduction, in cents. */
   policyRetainedAmountCents: number;
 }
@@ -612,6 +608,7 @@ export function combineLinkedMoveQuote(input: {
     // asked for no choice over a write that demanded one — and the re-quote was
     // byte-identical, so NEITHER booking could ever move (`INV-SSOT-001`).
     settlementMethodRequired: all.some((r) => r.requiresSettlementMethod),
+    refundRoute: editRefundRouteOf(all.filter((r) => r.requiresSettlementMethod).map((r) => !r.reductionRefundsToCard)),
     settlementMethodChosen: input.settlementMethodChosen,
     // TRUE TO THE MONEY ABOVE, not a separate claim about it: when the club has
     // waived it, the dependent's `modifyBookingBatch` call was given
@@ -688,13 +685,6 @@ export function buildSameOwnerCoverageLinkedMoveBody(
     primary: quote.primary,
     linkedBookings: quote.linked,
     combinedPriceDiffCents: quote.combinedPriceDiffCents,
-    combinedChangeFeeCents: quote.combinedChangeFeeCents,
-    combinedAmountDueCents: quote.combinedAmountDueCents,
-    combinedRefundCents: quote.combinedRefundCents, combinedFreedCreditCents: quote.combinedFreedCreditCents,
-    combinedPolicyRetainedCents: quote.combinedPolicyRetainedCents,
-    combinedOrganiserRefundCents: quote.combinedOrganiserRefundCents, combinedOrganiserBankTransferRefundCents: quote.combinedOrganiserBankTransferRefundCents,
-    settlementMethodRequired: quote.settlementMethodRequired,
-    settlementMethodChosen: quote.settlementMethodChosen,
-    bothChangeFeesCharged: quote.bothChangeFeesCharged,
+    ...linkedMoveCombinedMoney(quote),
   };
 }

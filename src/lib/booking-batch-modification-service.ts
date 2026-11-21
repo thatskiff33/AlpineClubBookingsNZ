@@ -132,7 +132,7 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
-import { calculateFullReductionSettlementOptions, editReductionDisputeHold, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
+import { calculateFullReductionSettlementOptions, fullReductionLockedReads, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { buildIdentityOnlyPricing } from "@/lib/booking-identity-only-pricing";
 import { assertOfficerWorkPartyCorrectionCall, workPartyCorrectionCodeDay, workPartyCorrectionRecord, workPartyCorrectionSkipsBedCheck, type OfficerWorkPartyCorrection } from "@/lib/booking-batch-work-party-correction";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
@@ -1411,8 +1411,8 @@ export async function modifyBookingBatch({
             netChargeCents: reduction.netChargeLeftCents,
             refundableCashCents: await refundableCashForModification(tx, booking.payment, reduction),
             todayAtClub: moneyTierDay,
-            // #5061 follow-up (`INV-PAY-154`): read under this edit's locks.
-            refundHeldForDispute: (await editReductionDisputeHold(tx, booking)).cents > 0,
+            // #5061 follow-up (`INV-PAY-154`), #5303: read under this edit's locks.
+            ...(await fullReductionLockedReads(tx, booking)),
           })
         : await calculateModificationSettlementOptions({
       booking,

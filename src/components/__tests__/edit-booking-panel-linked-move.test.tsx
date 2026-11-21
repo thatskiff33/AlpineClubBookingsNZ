@@ -343,6 +343,40 @@ describe("EditBookingPanel — the linked-move offer (#3232)", () => {
     });
   });
 
+  /**
+   * #5303: the Return-method choice names where the refund really goes - each
+   * booking's own settlement route, carried on the offer as `refundRoute` - so a
+   * refund the treasurer sends by bank transfer (Internet Banking, or a card
+   * payment Stripe holds no record of) is never offered as the original card.
+   */
+  async function returnMethodLabels(overrides: Record<string, unknown>) {
+    modifyResponse = () =>
+      jsonResponse(linkedMoveOffer({ combinedRefundCents: 1_200, settlementMethodRequired: true, ...overrides }), 409);
+    render(<EditBookingPanel booking={makeBooking()} onDone={vi.fn()} />);
+    await saveIntoTheOffer();
+    const chooser = screen.getByTestId("linked-move-settlement-method");
+    return Array.from(chooser.querySelectorAll("label")).map((label) => label.textContent);
+  }
+
+  it("#5303: offers a bank-transfer refund as a bank transfer, never the card", async () => {
+    const labels = await returnMethodLabels({ refundRoute: "BANK_TRANSFER" });
+    expect(labels).toEqual(["Refund by bank transfer", "Hold as account credit"]);
+    expect(screen.getByTestId("linked-move-settlement-method").textContent).not.toMatch(/card/);
+  });
+
+  it("#5303: names both routes where the one choice covers a card and a bank transfer", async () => {
+    const labels = await returnMethodLabels({ refundRoute: "CARD_AND_BANK_TRANSFER" });
+    expect(labels[0]).toBe("Refund to original card, or by bank transfer where there is no card");
+  });
+
+  it("#5303 control: a refund Stripe can return still goes to the card", async () => {
+    expect(await returnMethodLabels({ refundRoute: "CARD" })).toEqual(["Refund to original card", "Hold as account credit"]);
+  });
+
+  it("#5303: an older server that omits the route reads as the card, as before", async () => {
+    expect((await returnMethodLabels({}))[0]).toBe("Refund to original card");
+  });
+
   it("does not ask where money goes on the arm where none moves", async () => {
     /*
       #3232 fix round. The Return-method question belongs to the OTHER booking's

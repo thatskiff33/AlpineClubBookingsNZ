@@ -1211,11 +1211,6 @@
       "count": 4
     }
   },
-  "src/components/edit-booking-panel.tsx": {
-    "design-system/no-raw-input": {
-      "count": 2
-    }
-  },
   "src/components/edit-booking/account-credit-card.tsx": {
     "design-system/no-raw-input": {
       "count": 1
