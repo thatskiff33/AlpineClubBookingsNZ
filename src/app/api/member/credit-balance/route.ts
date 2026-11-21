@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { getMemberCreditBalance, getMemberCreditHistory } from "@/lib/member-credit";
 import logger from "@/lib/logger";
+import { servingMcpConnection } from "@/lib/mcp-connection-request";
 
 /**
  * GET /api/member/credit-balance
@@ -24,6 +25,9 @@ export async function GET() {
       getMemberCreditHistory(session.user.id),
     ]);
 
+    // ALP-653: an AI app connection is sent the balance only, which is what
+    // `get_my_credit_balance` offers; the website's answer is unchanged.
+    if (await servingMcpConnection()) return NextResponse.json({ balanceCents });
     return NextResponse.json({ balanceCents, history });
   } catch (error) {
     logger.error({ err: error }, "Error fetching credit balance");

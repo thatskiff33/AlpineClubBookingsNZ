@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { bookingIdParamsSchema } from "@/lib/booking-cancel-schema";
 import { deleteBooking } from "@/lib/booking-delete";
 import logger from "@/lib/logger";
+import { mcpModuleOffResponse } from "@/lib/mcp/http";
+import { getMemberBookingSummary } from "@/lib/member-self-read";
 import { getClientIp } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { authorizationRoleFromAccessRoles } from "@/lib/access-roles";
 import { transactionContendedResponse } from "@/lib/transaction-contended-response";
-
-const deleteBookingParamsSchema = z.object({
-  id: z.string().min(1),
-});
 
 const deleteBookingBodySchema = z
   .object({
@@ -31,12 +30,48 @@ async function readDeleteBody(request: NextRequest) {
   }
 }
 
+/**
+ * GET /api/bookings/[id]
+ *
+ * One booking the signed-in member made or is a guest on. A booking that is
+ * someone else's answers exactly as one that does not exist.
+ *
+ * Added for AI app connections (ALP-653), so it is absent while that module is
+ * off (`INV-MCP-001`). DELETE below is older and is not.
+ */
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const off = await mcpModuleOffResponse();
+  if (off) return off;
+
+  const parsedParams = bookingIdParamsSchema.safeParse(await params);
+  if (!parsedParams.success) {
+    return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+  }
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
+  }
+
+  const booking = await getMemberBookingSummary(session.user.id, parsedParams.data.id);
+  if (!booking) {
+    return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+  }
+  return NextResponse.json({ booking });
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const parsedParams = deleteBookingParamsSchema.safeParse(await params);
+    const parsedParams = bookingIdParamsSchema.safeParse(await params);
     if (!parsedParams.success) {
       return NextResponse.json(
         { error: "Invalid input", details: parsedParams.error.flatten() },

@@ -772,6 +772,8 @@ describe("club-settings exports effective defaults for an unsaved singleton (#21
       shortName: null,
       hutLeaderLabel: null,
       facebookUrl: null,
+      legalName: null,
+      postalAddress: null,
     });
     expect(readJson(files, "email-message-setting")).toEqual({
       clubName: null,
@@ -1588,6 +1590,24 @@ describe("#2200 singleton dry-run validation (bounds, required, enum)", () => {
     expect(plan.errors.join(" ")).toMatch(
       /nonMemberHoldDays — .*out of range.*1–365/,
     );
+  });
+
+  // #5066: the invoice supplier fields carry the admin save's rules.
+  it("refuses a multi-line or over-long legal name and an over-long postal address, and accepts good ones", async () => {
+    const identity = (values: Record<string, unknown>) =>
+      singletonBundle("club-identity-settings", { name: null, shortName: null, hutLeaderLabel: null, facebookUrl: null, ...values });
+    for (const bad of [{ legalName: "Alpine Club\nIncorporated" }, { legalName: "x".repeat(201) }, { postalAddress: "x".repeat(501) }]) {
+      const plan = await buildImportPlan(stubDb({}), identity(bad), { format: CLUB_FORMAT_TEST, mode: "merge" });
+      expect(plan.errors.join(" ")).toMatch(new RegExp(`${Object.keys(bad)[0]} - Legal name: one line, at most 200 characters`));
+    }
+    const plan = await buildImportPlan(
+      stubDb({}),
+      identity({ legalName: "Alpine Club Incorporated", postalAddress: "PO Box 7\nOhakune" }),
+      { format: CLUB_FORMAT_TEST, mode: "merge" },
+    );
+    expect(plan.errors).toEqual([]);
+    const cleared = await buildImportPlan(stubDb({}), identity({ legalName: null, postalAddress: null }), { format: CLUB_FORMAT_TEST, mode: "merge" });
+    expect(cleared.errors).toEqual([]);
   });
 
   // #4932: the three booking timings carry the admin form's 1–30 bound.

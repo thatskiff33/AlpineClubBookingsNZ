@@ -103,7 +103,7 @@ export function FinishedStayPromoCorrectionCard({
   return (
     <Card data-testid="finished-stay-promo-correction">
       <CardHeader>
-        <CardTitle>{FINISHED_STAY_SAVE_LOCKED_MESSAGE}</CardTitle>
+        <CardTitle headingLevel={2}>{FINISHED_STAY_SAVE_LOCKED_MESSAGE}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <p className="text-muted-foreground">

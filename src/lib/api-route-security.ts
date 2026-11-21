@@ -199,6 +199,26 @@ export const explicitPublicApiRoutes = {
     reason:
       "Serves Image Manager uploads from the shared images volume at runtime.",
   },
+  "src/app/api/mcp/route.ts": {
+    boundary: "public",
+    reason:
+      "AI app endpoint (ALP-653). No cookie session: the caller presents an access token issued by a member's approval, checked against a connection that is still ACTIVE and still allowed on every request. Each tool call then runs the target route's own guards over a loopback request (INV-MCP-005); nothing here reads member data itself.",
+  },
+  "src/app/api/mcp/oauth/register/route.ts": {
+    boundary: "public",
+    reason:
+      "AI app self-registration (ALP-653, RFC 7591). Anonymous by necessity: an app registers before any member signs in. Grants nothing; redirect addresses are limited to the club's approved-app list or loopback; rate limited.",
+  },
+  "src/app/api/mcp/oauth/revoke/route.ts": {
+    boundary: "public",
+    reason:
+      "AI app token revocation (ALP-653, RFC 7009). The presented 256-bit token is the credential; the answer is the same for a known and an unknown token; rate limited.",
+  },
+  "src/app/api/mcp/oauth/token/route.ts": {
+    boundary: "public",
+    reason:
+      "AI app token exchange and renewal (ALP-653). The PKCE verifier or the single-use refresh token is the credential, checked against a connection that is still ACTIVE and still allowed; rate limited.",
+  },
   "src/app/api/lodge-maintenance/[token]/route.ts": {
     boundary: "public",
     reason:

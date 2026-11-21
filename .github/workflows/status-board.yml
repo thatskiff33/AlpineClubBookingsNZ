@@ -40,7 +40,7 @@ concurrency:
 jobs:
   board:
     name: Overwrite the status board issue
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     # A manual run from another branch would run that branch's script with an
     # `issues: write` token, so only the default branch may. A scheduled run is
