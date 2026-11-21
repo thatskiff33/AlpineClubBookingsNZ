@@ -95,6 +95,13 @@ describe("MCP approval destination and proof", () => {
     }, DEFAULT_MCP_SETTINGS)).toMatchObject({ ok: false, kind: "refuse" });
   });
 
+  it("tells the member to re-add an app whose registration was dropped", async () => {
+    db.mcpClient.findUnique.mockResolvedValue(null);
+    const check = await checkMcpAuthorizeRequest(authorize, DEFAULT_MCP_SETTINGS);
+    expect(check).toMatchObject({ ok: false, kind: "refuse" });
+    expect(!check.ok && check.kind === "refuse" ? check.message : "").toMatch(/remove the club's connector and add it again/);
+  });
+
   it("rechecks the club's approved hosts after registration", async () => {
     expect(await checkMcpAuthorizeRequest(authorize, {
       ...DEFAULT_MCP_SETTINGS, allowedRedirectHosts: [],

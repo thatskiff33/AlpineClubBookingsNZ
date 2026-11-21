@@ -24,6 +24,9 @@ import { loadMcpSettings, type McpSettingsValues } from "./settings";
 
 const authorizeParam = z.string().max(2048).optional();
 
+/** The refusal for a sign-in that cannot carry a connection, or an account that changed meanwhile. */
+export const MCP_SIGN_IN_AGAIN_MESSAGE = "Sign out, sign in again, and then connect the app.";
+
 export const mcpApprovalDecisionSchema = z.object({
   decision: z.enum(["approve", "deny"]),
   /** What the member chose. The club's limit is applied when it is recorded. */
@@ -109,7 +112,7 @@ export async function resolveMcpApproval(
 
   const signIn = mcpApprovingSignIn(user);
   if (!signIn) {
-    return { kind: "refuse", message: "Sign out, sign in again, and then connect the app." };
+    return { kind: "refuse", message: MCP_SIGN_IN_AGAIN_MESSAGE };
   }
 
   // The connection is tried on before it exists: built from the member's row
@@ -127,7 +130,7 @@ export async function resolveMcpApproval(
     member: { email: user.email ?? "", firstName: user.name ?? "", lastName: "" },
   });
   if (!preview.ok) {
-    return { kind: "refuse", message: "Sign out, sign in again, and then connect the app." };
+    return { kind: "refuse", message: MCP_SIGN_IN_AGAIN_MESSAGE };
   }
   const refusal = mcpConnectionRefusal({
     user: preview.session.user,

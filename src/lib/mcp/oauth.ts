@@ -16,7 +16,6 @@
  * only issues and renews credentials for a connection that is still ACTIVE
  * and still allowed (`resolveMcpGrantUse`).
  */
-import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import "server-only";
 
 import { createHash, timingSafeEqual } from "crypto";
@@ -26,6 +25,7 @@ import { z } from "zod";
 
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import { prisma } from "@/lib/prisma";
 
 import { resolveMcpGrantUse } from "./connection-gate";
@@ -294,7 +294,13 @@ export async function checkMcpAuthorizeRequest(
     select: { id: true, name: true, redirectUris: true },
   });
   if (!client) {
-    return refuse("This app is not registered with the club. Start the connection again from the app.");
+    // An app that registered and was never approved is dropped after a day,
+    // and the app may keep offering its old registration. This refusal shows
+    // in the browser, so the app never learns to register again: the member
+    // has to remove the club from the app and add it again.
+    return refuse(
+      "This app's registration with the club has expired or was never made. In the app, remove the club's connector and add it again, then connect.",
+    );
   }
   if (!isRegisteredRedirectUri(params.redirect_uri, client.redirectUris)) {
     return refuse("This app asked to be sent to an address it did not register.");
@@ -354,6 +360,17 @@ export function buildMcpDenyRedirect(request: McpAuthorizeRequest): string {
 }
 
 /**
+ * The member's account was erased, merged away or lost its login between the
+ * approval check and the approval's lock. Nothing was written.
+ */
+export class McpApprovalAccountChangedError extends Error {
+  constructor() {
+    super("The member's account changed before the approval was recorded");
+    this.name = "McpApprovalAccountChangedError";
+  }
+}
+
+/**
  * Records a member's approval: one new ACTIVE connection carrying the sign-in
  * that approved it, and a single-use code for the app to collect. An earlier
  * connection of the same member to the same app is replaced, and any approval
@@ -376,6 +393,16 @@ export async function approveMcpConnection(input: {
     // Serialize approvals before reading the grants to replace. This is the
     // existing member tier, also used by merge and deletion (INV-LOCK-001/002).
     await acquireMemberLifecycleLocks(tx, [memberId]);
+    // The account check the route ran happened before the lock. An erasure,
+    // merge or disabled login that committed while this waited would
+    // otherwise leave a new connection on an account meant to have none.
+    const member = await tx.member.findUnique({
+      where: { id: memberId },
+      select: { deletedAt: true, canLogin: true },
+    });
+    if (!member || member.deletedAt !== null || !member.canLogin) {
+      throw new McpApprovalAccountChangedError();
+    }
     await endMcpGrants(
       { memberId, clientId: request.clientId },
       MCP_GRANT_END_REASONS.replaced,

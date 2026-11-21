@@ -124,7 +124,9 @@ the legacy `hashtext(<memberId>)` contact-link key's in
 
 `approveMcpConnection` takes the existing member lifecycle key through
 `acquireMemberLifecycleLocks` before reading or replacing grants, so two
-approvals cannot leave two active connections to the same app. It takes no
+approvals cannot leave two active connections to the same app. Under that
+lock it re-reads the member (`deletedAt`, `canLogin`) and writes nothing if
+an erasure, merge or disabled login committed while it waited. It takes no
 booking, lodge or money key: member lifecycle precedes grant rows and the
 new grant's member foreign-key reference, matching merge and deletion's
 member-before-grant order (`INV-LOCK-001`, `INV-LOCK-002`). Token issuance

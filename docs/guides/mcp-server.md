@@ -257,6 +257,9 @@ providers are acceptable.
   keeps sending data. A result is cut at 100,000 characters with a note saying so.
 - An app may make 120 requests a minute per connection; the rest of the rate
   limits are in [`SECURITY.md`](../SECURITY.md#ai-app-connections-alp-653).
+- The site's own limits on the routes an action reaches (for example 20 new
+  bookings an hour) count per connection too, not per address, so members
+  using the same AI app do not use up each other's allowance.
 
 ## The roadmap
 
@@ -305,6 +308,7 @@ is given a catalogue entry or a reason.
 | The app says it cannot find the server, or `/api/mcp` answers 404 | The module is off | Switch on **AI app connections (MCP)** in Modules |
 | "… is not on this club's list of approved AI apps" | The app returns to a host not on **Approved AI apps** | Add the host, if the club accepts that app |
 | "This club does not allow your account to connect an AI app" | The member's group (members or officers) is switched off | Change the setting, or explain the club's choice |
+| "This app's registration with the club has expired or was never made" | The app registered, nobody approved it for a day, and the app reused its old registration | In the app, remove the club's connector and add it again |
 | "Verify your email address before connecting an AI app" | The member's email is not verified | The member verifies their email first |
 | A connected app suddenly asks the member to connect again | The connection ended: the member's sign-in expired, their password changed, a refresh token was reused, or someone disconnected it | The member connects again |
 | Every action answers "The club website did not answer" | The server cannot reach itself on `127.0.0.1:$PORT` | Check `PORT` and that the server listens on loopback |

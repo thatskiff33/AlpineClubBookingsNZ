@@ -721,7 +721,11 @@ rules are `INV-MCP-001` … `INV-MCP-008`
   `mcpUnauthenticated` 60 a minute per address for a request without a valid
   token; `mcpCall` 120 a minute per connection; `mcpApprove` 20 an hour per
   member. Calls are limited per connection, not per address, because every
-  member of one AI provider arrives from that provider's addresses.
+  member of one AI provider arrives from that provider's addresses. For the
+  same reason the route limiters an action reaches (`applyRateLimit` and the
+  address backstop of `applyMemberScopedRateLimit`) key a loopback call by
+  `mcp:<connection id>` once its principal header verifies
+  (`rateLimitSubject`); an unverified header is counted by address.
 - **Audit** (`INV-MCP-008`, category `security`): approvals, member and
   officer disconnects, policy saves, and every call of a change action, never
   its arguments or result.

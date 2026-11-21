@@ -11,13 +11,14 @@
  */
 
 import { z } from "zod";
-import { getClientIp, rateLimitedResponse } from "./rate-limit-http";
+import { rateLimitedResponse } from "./rate-limit-http";
 export { getClientIp, rateLimitedResponse } from "./rate-limit-http";
 
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { decodeRawRows, rawIntColumn } from "@/lib/raw-sql-rows";
 import { DEGRADED_AUTH_LIMIT_DIVISOR } from "@/lib/degraded-auth-limit";
+import { rateLimitSubject } from "@/lib/rate-limit-subject";
 
 interface RateLimitEntry {
   count: number;
@@ -274,8 +275,7 @@ export async function applyRateLimit(
   config: RateLimitConfig,
   request: Request
 ): Promise<Response | null> {
-  const ip = getClientIp(request);
-  const result = await checkRateLimit(config, ip);
+  const result = await checkRateLimit(config, rateLimitSubject(request));
 
   if (!result.success) {
     return rateLimitedResponse(result);
@@ -344,7 +344,7 @@ export async function applyMemberScopedRateLimit(
     // Same limiter id, so the counter row is the same one it always was — only
     // the threshold this key is judged against changes.
     { ...config, limit: config.limit * MEMBER_SCOPED_IP_LIMIT_MULTIPLIER },
-    `ip:${getClientIp(request)}`,
+    `ip:${rateLimitSubject(request)}`,
   );
   if (!ipResult.success) {
     return rateLimitedResponse(ipResult);

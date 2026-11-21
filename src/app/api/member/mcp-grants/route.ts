@@ -3,13 +3,18 @@ import { NextResponse } from "next/server";
 import { getAuditRequestContext } from "@/lib/audit";
 import {
   approvedMcpScope,
+  MCP_SIGN_IN_AGAIN_MESSAGE,
   mcpApprovalDecisionSchema,
   resolveMcpApproval,
 } from "@/lib/mcp/approval";
 import { recordMcpAudit } from "@/lib/mcp/audit";
 import { listMcpConnectionsForMember } from "@/lib/mcp/grants";
 import { mcpConnectionMayNotManage, mcpModuleOffResponse } from "@/lib/mcp/http";
-import { approveMcpConnection, buildMcpDenyRedirect } from "@/lib/mcp/oauth";
+import {
+  approveMcpConnection,
+  buildMcpDenyRedirect,
+  McpApprovalAccountChangedError,
+} from "@/lib/mcp/oauth";
 import { checkRateLimit, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
 
@@ -74,14 +79,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ redirectTo: buildMcpDenyRedirect(approval.request) });
   }
 
-  const approved = await approveMcpConnection({
-    request: approval.request,
-    memberId: user.id,
-    scope: approvedMcpScope(parsed.data.scope, approval),
-    settings: approval.settings,
-    sessionIssuedAt: approval.signIn.sessionIssuedAt,
-    twoFactorVerified: approval.signIn.twoFactorVerified,
-  });
+  let approved: Awaited<ReturnType<typeof approveMcpConnection>>;
+  try {
+    approved = await approveMcpConnection({
+      request: approval.request,
+      memberId: user.id,
+      scope: approvedMcpScope(parsed.data.scope, approval),
+      settings: approval.settings,
+      sessionIssuedAt: approval.signIn.sessionIssuedAt,
+      twoFactorVerified: approval.signIn.twoFactorVerified,
+    });
+  } catch (err) {
+    if (err instanceof McpApprovalAccountChangedError) {
+      return NextResponse.json({ error: MCP_SIGN_IN_AGAIN_MESSAGE }, { status: 403 });
+    }
+    throw err;
+  }
   await recordMcpAudit({
     action: "MCP_CONNECTION_APPROVED",
     actorMemberId: user.id,

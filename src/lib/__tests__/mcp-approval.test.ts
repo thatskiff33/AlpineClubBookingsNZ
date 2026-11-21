@@ -46,6 +46,7 @@ import { GET, POST } from "@/app/api/member/mcp-grants/route";
 import { hashActionToken } from "@/lib/action-tokens";
 import {
   approvedMcpScope,
+  MCP_SIGN_IN_AGAIN_MESSAGE,
   mcpApprovingSignIn,
   mcpAuthorizeParamsFromQuery,
   resolveMcpApproval,
@@ -87,12 +88,15 @@ let store: McpGrantStore;
 let clubSettings: McpSettingsValues;
 let previewUser: Record<string, unknown>;
 let kioskAccount: boolean;
+/** The member row as the approval transaction reads it after taking the lock. */
+let lockedMember: { deletedAt: Date | null; canLogin: boolean } | null;
 
 beforeEach(() => {
   store = createMcpGrantStore({});
   clubSettings = { ...DEFAULT_MCP_SETTINGS };
   previewUser = { id: "member-1", accessRoles: [], isEmailVerified: true };
   kioskAccount = false;
+  lockedMember = { deletedAt: null, canLogin: true };
 
   for (const key of Object.keys(db)) delete db[key];
   Object.assign(db, store.db, {
@@ -104,6 +108,7 @@ beforeEach(() => {
           : null,
       ),
     },
+    member: { findUnique: vi.fn(async () => lockedMember) },
     $executeRaw: vi.fn(async () => 1),
     $transaction: vi.fn(async (work: (tx: unknown) => unknown) => work(db)),
   });
@@ -365,6 +370,32 @@ describe("POST /api/member/mcp-grants", () => {
     ]);
     expect(store.state.grants.find((grant) => grant.id === "racing-grant")?.status).toBe("REVOKED");
   });
+
+  it.each([
+    ["erased", { deletedAt: new Date("2026-06-30T23:00:00.000Z"), canLogin: false }],
+    ["merged away or had their login turned off", { deletedAt: null, canLogin: false }],
+    ["removed", null],
+  ] as const)(
+    "records nothing when the member was %s while the approval waited for the lock",
+    async (_name, afterwards) => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      let entered!: () => void;
+      const waiting = new Promise<void>((resolve) => { entered = resolve; });
+      db.$executeRaw = vi.fn<(...args: unknown[]) => Promise<void>>(() => { entered(); return held; });
+      const pending = POST(decisionRequest(approve()));
+      await waiting;
+      // The deletion, merge or login change commits while the approval waits.
+      lockedMember = afterwards;
+      release();
+      const response = await pending;
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: MCP_SIGN_IN_AGAIN_MESSAGE });
+      expect(store.state.grants).toEqual([]);
+      expect(store.state.codes).toEqual([]);
+      expect(audit).not.toHaveBeenCalled();
+    },
+  );
 
   it("replaces the member's earlier connection to the same app", async () => {
     store.state.grants.push(mcpGrant({ id: "grant-old" }));

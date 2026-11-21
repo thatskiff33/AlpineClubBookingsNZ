@@ -298,7 +298,7 @@ What the file contains, and what it leaves out:
 | `MemberMoneyExportManifest` | Booking, sent Xero invoice id and what its lines cover | Kept for financial records | Keep |
 | `MemberMoneyExportCoverage` | Journal components a sent invoice bills | Kept for financial records | Keep |
 | `McpGrant` | A member's connection to an AI app: which app, what it may do, when it was approved and last used | While the connection is in use, and after it ends as the member's connection history; deleted with the member | Delete on member erasure or merge |
-| `McpAuthCode` | Single-use sign-in code for an AI app connection, stored as a hash | Five minutes; deleted at the connection's next token issue or when it ends. No scheduled sweep | Delete with the connection |
+| `McpAuthCode` | Single-use sign-in code for an AI app connection, stored as a hash, with its PKCE challenge and return address | Usable for five minutes, then kept, marked used, for the life of the connection (it records the approved return address shown on the connection lists); deleted when the connection ends or with the member. No scheduled sweep | Delete with the connection |
 | `McpToken` | Access and refresh tokens for an AI app connection, stored as hashes | Until expired (one hour, or the life of the approving sign-in); deleted at the connection's next token issue or when it ends. No scheduled sweep | Delete with the connection |
 | `McpSettings` | Club configuration and last updating officer | While configuration is in use; keep updater attribution for administration | Keep |
 | `StripeBalanceTransactionEvidence` | Stripe balance-transaction figures and the payment intent, refund and payout they belong to | Kept for financial records | Keep |
