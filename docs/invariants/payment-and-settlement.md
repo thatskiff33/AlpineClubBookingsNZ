@@ -4045,8 +4045,8 @@ _Split from `INV-PAY-057` (#3220)._
   from an allowlist of the reasons a receipt is born with. Any other receipt,
   a part payment recognised at cancel included, is cash-sized. That receipt
   still includes the corrected amount, so the correction keeps counting and the
-  net stays the cash. A recount finds a bank-transfer payment's
-  modification notes by its invoice, so a later note never drops an earlier one.
+  net stays the cash. A recount finds any payment's modification notes by its
+  invoice (#4444): a later note drops none, and none counts twice.
   A keep sets the whole refunded total its links record under the `Payment`
   row (`decideLinkedRefundedTotalCents`, floored), never an increment; the
   note's allocation write or removal locks that row first and decides it too,
@@ -4064,8 +4064,9 @@ _Split from `INV-PAY-057` (#3220)._
   `xero-repair-known-modification-refund.test.ts`,
   `kept-settle-correction-recount.test.ts`,
   `retire-unlisted-credit-note-allocations.test.ts`,
-  `ib-settle-from-cash.realdb.test.ts` and
-  `kept-settle-queued-cancel.realdb.test.ts`.
+  `ib-settle-from-cash.realdb.test.ts`,
+  `kept-settle-queued-cancel.realdb.test.ts` and
+  `card-recount-earlier-edit-note.realdb.test.ts`.
 
 ## INV-PAY-148
 

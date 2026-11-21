@@ -2,17 +2,18 @@
  * THE REFUNDED TOTAL A PAYMENT'S LINKS RECORD (#4449, `INV-PAY-126`): its
  * refund and account credit notes, the modification notes allocated to it or
  * to its invoice, and its refund requests' paid-back cash, read on the
- * caller's client. The one decision behind every writer of a bank-transfer
- * payment's refunded total from Xero: the inbound credit-note recount
- * (`repairRefundedPaymentBusinessState`, which adds the note being synced),
- * the kept settle (`decideInternetBankingReceiptFigure`) and the note sync's
- * allocation write (`writeCurrentCreditNoteAllocation`), the last two inside
- * their own locked transactions. #4370 (`INV-PAY-155`): what card refunds
+ * caller's client. The one decision behind every writer of a payment's
+ * refunded total from Xero: the inbound credit-note recount
+ * (`repairRefundedPaymentBusinessState`, which adds the note being synced, for
+ * any payment with a Xero invoice, #4444), and for a bank transfer the kept
+ * settle (`decideInternetBankingReceiptFigure`) and the note sync's allocation
+ * write (`writeCurrentCreditNoteAllocation`), the last two inside their own
+ * locked transactions. #4370 (`INV-PAY-155`): what card refunds
  * Stripe failed later take off is subtracted here, so every writer keeps that
  * rule. It writes nothing and takes no lock; callers clamp and floor what it
  * returns.
  */
-import { PaymentSource, PaymentTransactionKind, type PaymentStatus, type Prisma } from "@prisma/client";
+import { PaymentTransactionKind, type PaymentSource, type PaymentStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { type CreditNoteAllocationCents, getJsonRecord, getRefundContributionCentsFromCreditNoteMetadata, sumAppliedCentsByCreditNote } from "./amounts";
 import { isIncludedRefundCreditNoteStatus } from "@/lib/xero-refund-note-status";
@@ -56,7 +57,7 @@ export async function paymentsCountingInvoiceCorrections(
 /**
  * Each payment's refunded total as its links record it, before any clamp or
  * floor: its direct refund and account notes, each modification note applied
- * to it or (#3979) to its bank-transfer invoice once (`distinctClearingAllocations`,
+ * to it or (#3979, #4444) to its Xero invoice once (`distinctClearingAllocations`,
  * summed per note by `sumAppliedCentsByCreditNote`) that moved cash, or is an
  * invoice correction against a receipt still at the stored figure, and (#4215,
  * `INV-PAY-118`) its refund requests' paid-back cash, less (#4370,
@@ -103,17 +104,15 @@ export async function decideLinkedRefundedTotalCents(
     readRefundRequestPaidBackCentsByPaymentId(paymentIds, store),
   ]);
 
-  // #3979 (`INV-PAY-126`): a bank-transfer payment's modification notes are
-  // found by its invoice too. The inbound sync links an edit's note and its
-  // allocation to the edit, not the payment, so a recount triggered by any
-  // later note used to drop every earlier modification note from the total -
-  // overstating the net of a payment whose receipt kept the stored figure.
+  // #3979, #4444 (`INV-PAY-126`): any payment's modification notes are found by
+  // its Xero invoice too, whatever its source - which notes belong to a payment
+  // is one rule; only the floors differ by source. The inbound sync links an
+  // edit's note and its allocation to the edit, not the payment, so a recount
+  // triggered by any later note used to drop every earlier modification note
+  // from a card payment's total. `Payment.xeroInvoiceId` is unique, so an
+  // invoice here is one payment's.
   const invoicePaymentIds = new Map(
-    payments.flatMap((payment) =>
-      payment.source === PaymentSource.INTERNET_BANKING && payment.xeroInvoiceId
-        ? [[payment.xeroInvoiceId, payment.id] as const]
-        : [],
-    ),
+    payments.flatMap((payment) => (payment.xeroInvoiceId ? [[payment.xeroInvoiceId, payment.id] as const] : [])),
   );
   // #4786: by invoice, also a role-less link an older repair wrote on the note's anchor.
   const invoiceAllocationLinks =
@@ -214,8 +213,16 @@ export async function decideLinkedRefundedTotalCents(
   // above), summed per note by the rule the kept settle applies
   // (`sumAppliedCentsByCreditNote`).
   const modificationAllocationsByPaymentId = new Map<string, CreditNoteAllocationCents[]>();
+  // #4444: a note the payment also links as its own refund or account note is
+  // counted there, by its direct link; its allocation never adds it again. Only
+  // a direct link that was counted (its amount read) suppresses the allocation.
+  const directNoteKeys = new Set(
+    [...directRefundCentsByPaymentId].flatMap(([paymentId, refunds]) =>
+      [...refunds.keys()].map((creditNoteId) => `${paymentId}|${creditNoteId}`),
+    ),
+  );
   for (const { creditNoteId, paymentId, amountCents } of existingModificationAllocations) {
-    if (creditNoteId === excluded) continue;
+    if (creditNoteId === excluded || directNoteKeys.has(`${paymentId}|${creditNoteId}`)) continue;
     if (
       !validModificationCreditNoteIds.has(creditNoteId) &&
       !(validCorrectionNoteIds.has(creditNoteId) && paymentsCountingCorrections.has(paymentId))
