@@ -18,6 +18,7 @@ import {
   releaseDateToday,
   toLines,
 } from "./compile-changelog.mjs";
+import { rebaseFragmentLink, rebaseFragmentLinks } from "./fragment-links.mjs";
 
 const NOTE_BODY = "Entries for the next release live in `changelog.d/` — one file per PR.";
 /** The note exactly as CHANGELOG.md carries it: prose inside its sentinels. */
@@ -738,6 +739,81 @@ describe("compile-changelog", () => {
     expect(log.text()).toContain("changelog.d/2452-fragments.md (would be deleted)");
     expect(log.text()).toContain('the entries currently written directly under "## Unreleased"');
     expect(log.text()).toContain("No files were changed");
+  });
+
+  it("rewrites a fragment's relative links so they resolve from the repository root (#5214)", () => {
+    const root = makeRepo({
+      fragments: {
+        "5214-links.md": [
+          "- **Links survive compiling (#5214).** See [the guide](../docs/guides/club-time.md#setup),",
+          "  the ![diagram](<../docs/images/flow chart.png>) and [the changelog README](README.md).",
+          "",
+          "  [ref]: ../CONFIGURATION.md",
+          "",
+        ].join("\n"),
+      },
+    });
+    for (const file of ["docs/guides/club-time.md", "docs/images/flow chart.png", "CONFIGURATION.md"]) {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), "");
+    }
+
+    compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() });
+
+    const compiled = read(root);
+    expect(compiled).toContain("[the guide](docs/guides/club-time.md#setup)");
+    expect(compiled).toContain("![diagram](<docs/images/flow chart.png>)");
+    expect(compiled).toContain("[the changelog README](changelog.d/README.md)");
+    expect(compiled).toContain("  [ref]: CONFIGURATION.md");
+    // Each rewritten target names a real file relative to CHANGELOG.md's directory.
+    for (const target of ["docs/guides/club-time.md", "docs/images/flow chart.png", "CONFIGURATION.md"]) {
+      expect(fs.existsSync(path.join(root, target))).toBe(true);
+    }
+  });
+
+  it("leaves external, absolute, same-page and example links alone when rebasing (#5214)", () => {
+    for (const target of ["https://example.test/a.md", "mailto:x@example.test", "//cdn.example.test/x", "/docs/A.md", "#heading", ""]) {
+      expect(rebaseFragmentLink(target)).toBe(target);
+    }
+    expect(rebaseFragmentLink("../docs/A.md?plain=1#L3")).toBe("docs/A.md?plain=1#L3");
+    expect(rebaseFragmentLink("./other.md")).toBe("changelog.d/other.md");
+
+    const body = [
+      "- Prose [real](../docs/A.md), code `[example](../docs/B.md)`, and [`code text`](../docs/C.md).",
+      "",
+      "  ```markdown",
+      "  [fenced example](../docs/D.md)",
+      "  ```",
+    ].join("\n");
+    expect(rebaseFragmentLinks(body, "x.md")).toBe(
+      [
+        "- Prose [real](docs/A.md), code `[example](../docs/B.md)`, and [`code text`](docs/C.md).",
+        "",
+        "  ```markdown",
+        "  [fenced example](../docs/D.md)",
+        "  ```",
+      ].join("\n"),
+    );
+  });
+
+  it("rebases both targets of an image wrapped in a link (#5214)", () => {
+    expect(rebaseFragmentLinks("- Badge [![alt](../img/a.png)](../docs/A.md).", "x.md")).toBe(
+      "- Badge [![alt](img/a.png)](docs/A.md).",
+    );
+  });
+
+  it("refuses a fragment link that points outside the repository, before writing anything (#5214)", () => {
+    const changelog = changelogWith("");
+    const root = makeRepo({
+      changelog,
+      fragments: { "5214-escape.md": "- **Bad link (#5214).** See [it](../../elsewhere.md).\n" },
+    });
+
+    expect(() => compileChangelog({ repoRoot: root, version: "0.14.0", date: "2026-08-04", log: silentLog() })).toThrow(
+      /changelog\.d\/5214-escape\.md links "\.\.\/\.\.\/elsewhere\.md", which points outside the repository/,
+    );
+    expect(read(root)).toBe(changelog);
+    expect(fragmentFiles(root)).toEqual(["5214-escape.md"]);
   });
 
   it("normalises a CRLF fragment written by a Windows editor", () => {

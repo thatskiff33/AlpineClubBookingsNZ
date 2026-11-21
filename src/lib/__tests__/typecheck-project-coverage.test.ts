@@ -113,6 +113,10 @@ const JAVASCRIPT_VITEST_TESTS = [
   // ALP-4 (#4024): the fragility audit is a set of bare-node `.mjs` tools;
   // their shared suite stays JavaScript under the same convention.
   "scripts/audit/fragility.test.mjs",
+  // #5214: the bare-node docs link check and the Markdown link patterns it
+  // shares with the `.mjs` changelog compiler; their suites stay JavaScript
+  // beside the compiler's.
+  "scripts/check-doc-links.test.mjs",
   "scripts/issue-thread.test.mjs",
   // #4452: `lanes:stale` is a read-only `.mjs` tool run with bare node; its
   // suite stays JavaScript like the other script suites here.
@@ -122,6 +126,7 @@ const JAVASCRIPT_VITEST_TESTS = [
   // surfaces (cut-release.mjs alone has 17) other lanes change, so it stays
   // JavaScript beside their suites rather than needing a declaration for each.
   "scripts/lib/github-heading-anchor.test.mjs",
+  "scripts/lib/markdown-links.test.mjs",
   "scripts/release/compile-changelog.test.mjs",
   // #4465: `release:cut` drives the `.mjs` compiler under bare node, so its
   // suite stays JavaScript beside the compiler's.
@@ -203,6 +208,11 @@ const DECLARED_JAVASCRIPT_MODULES = [
     module: "scripts/lib/budget-base-ref.mjs",
     declaration: "scripts/lib/budget-base-ref.d.mts",
     load: () => import("../../../scripts/lib/budget-base-ref.mjs"),
+  },
+  {
+    module: "scripts/release/fragment-links.mjs",
+    declaration: "scripts/release/fragment-links.d.mts",
+    load: () => import("../../../scripts/release/fragment-links.mjs"),
   },
   {
     module: "scripts/release/upgrade-docs.mjs",

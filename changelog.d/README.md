@@ -63,6 +63,19 @@ routing row are for.
 3. Commit it with the rest of the pull request. The `verify` job checks that a
    code-bearing pull request carries one.
 
+### Linking a doc from a fragment
+
+Write a relative link the way it works from this directory, so it is correct
+where you write it: `[the guide](../docs/guides/club-time.md)`. When the
+compiler copies the fragment into `CHANGELOG.md` at the repository root, it
+rewrites each relative link — both targets of an image used as a link,
+`[![alt](../img.png)](../docs/A.md)`, included — to resolve from there instead
+(`docs/guides/club-time.md`), so `docs:linkcheck` passes both before and after
+a release (#5214). Absolute URLs, `#anchor` links and links shown inside code
+are left alone. A link that climbs out of the repository (`../../x.md`) has no
+root-relative form; `changelog-fragment-shape` refuses it, and so does the
+compiler.
+
 ## Patch or minor: the `.feature.md` suffix
 
 The fragment's filename is the only type it carries, and it decides the next
@@ -172,6 +185,12 @@ sections are never rewritten. A failed removal restores the original changelog
 and fragments for a safe retry; if restoration itself fails, stop and inspect
 the files named by the error. The compiler cannot prove an unfetched remote
 update does not exist, so refresh `origin/main` before running it.
+
+Straight after a release, this directory and `size-allowances.d/` hold only
+their `README.md`. That is their normal state, so a check that reads either
+directory must pass when it is empty: assert that it read the right directory,
+never that it found a fragment. #5214 ran every such check with both
+directories emptied and all of them passed.
 
 A version that already has a section is refused — except with `--append`,
 which adds the fragments (and any direct `## Unreleased` entries) to the end of

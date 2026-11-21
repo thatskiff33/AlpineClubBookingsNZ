@@ -33,6 +33,7 @@ import process from "node:process";
 
 import { githubHeadingAnchor } from "./lib/github-heading-anchor.mjs";
 import { isMainModule } from "./lib/is-main-module.mjs";
+import { FENCE_TOGGLE, inlineLinkTargets, REF_DEF } from "./lib/markdown-links.mjs";
 
 const REPO_ROOT = path.resolve(path.join(import.meta.dirname, ".."));
 
@@ -60,12 +61,6 @@ function collectMarkdown(dir, out = []) {
   }
   return out;
 }
-
-// Inline links/images: ![alt](target) and [text](target). The target group
-// stops at whitespace or ')', so `[x](a.md "title")` yields `a.md`.
-const INLINE_LINK = /!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)/g;
-// Reference definitions at line start: [label]: target
-const REF_DEF = /^\s*\[[^\]]+\]:\s*(\S+)/;
 
 function isExternal(target) {
   if (!target) return true;
@@ -151,14 +146,14 @@ export function collectAnchors(mdPath) {
 
 // -----------------------------------------------------------------------------
 
-function checkFile(mdPath, anchorsByFile, problems) {
+export function checkFile(mdPath, anchorsByFile, problems) {
   const rel = path.relative(REPO_ROOT, mdPath);
   const lines = fs.readFileSync(mdPath, "utf8").split(/\r?\n/);
   const dir = path.dirname(mdPath);
 
   let inFence = false;
   lines.forEach((line, i) => {
-    const fenceToggle = /^\s*(```|~~~)/.test(line);
+    const fenceToggle = FENCE_TOGGLE.test(line);
     if (fenceToggle) {
       inFence = !inFence;
       return;
@@ -169,10 +164,9 @@ function checkFile(mdPath, anchorsByFile, problems) {
     // `![alt](images/x.png)` in a style guide — is not treated as a real link.
     const scannable = line.replace(/`[^`]*`/g, " ");
 
-    const targets = [];
-    for (const m of scannable.matchAll(INLINE_LINK)) targets.push(m[1]);
+    const targets = inlineLinkTargets(scannable).map(({ target }) => target);
     const refMatch = scannable.match(REF_DEF);
-    if (refMatch) targets.push(refMatch[1]);
+    if (refMatch) targets.push(refMatch[2]);
 
     for (const raw of targets) {
       if (isExternal(raw)) continue;
