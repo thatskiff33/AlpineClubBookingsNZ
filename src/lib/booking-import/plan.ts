@@ -28,6 +28,7 @@ import { formatStayDate, type ClubDateFormat } from "@/lib/club-time";
 import { expandStayEnvelopeToNightKeys } from "@/lib/booking-guest-stay-ranges";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { loadBookingImportLodge, loadBookingImportMembers, resolveImportBooking } from "@/lib/booking-import/resolve";
+import { overCapacityNights, wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import { stableDigest } from "@/lib/stable-digest";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { memberImportIdentityKey } from "@/lib/member-import-identity";
@@ -256,6 +257,10 @@ export async function checkImportBooking(
   const held: string[] = [];
   const full: { night: string; people: number; beds: number }[] = [];
   const nights: ImportCapacityNight[] = [];
+  // `INV-SSOT-001`: which nights are held and which are over capacity is the
+  // admin override's one decision (held nights excluded from the over set).
+  const heldNights = new Set(wholeLodgeBlockedNights(capacity));
+  const overNights = new Map(overCapacityNights(capacity).map((over) => [over.date, over.availableBeds]));
   for (const detail of capacity.nightDetails) {
     const night = formatDateOnly(detail.date);
     const beds = booking.guests.filter(
@@ -268,15 +273,16 @@ export async function checkImportBooking(
     // row already imported, so resuming cannot move the digest.
     if (beds === 0) continue;
     nights.push({ night, beds });
-    if (detail.wholeLodgeHeld) {
+    if (heldNights.has(night)) {
       held.push(night);
       continue;
     }
-    if (detail.availableBeds < 0) {
+    const availableBeds = overNights.get(night);
+    if (availableBeds !== undefined) {
       full.push({
         night,
         people: detail.occupiedBeds,
-        beds: detail.occupiedBeds + detail.availableBeds,
+        beds: detail.occupiedBeds + availableBeds,
       });
     }
   }
