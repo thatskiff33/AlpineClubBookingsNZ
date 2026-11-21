@@ -4,6 +4,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
 import {
   MAPPING_LABELS,
+  OPENING_CREDITS_MAPPING_KEY,
   isCodeExplicitlyConfigured,
   normalizeMappingCode,
 } from "@/lib/xero-account-mapping-keys";
@@ -13,7 +14,6 @@ import {
   type XeroTaxCategoryMappings,
 } from "@/lib/xero-tax-category-mappings";
 import {
-  OPENING_CREDITS_MAPPING_KEY,
   exemptPrerequisiteProblem,
   openingCreditsAccountConflicts,
   registeredNowOrLater,
@@ -139,7 +139,10 @@ export async function openingCreditsMappingSaveRefusal({
     normalizeMappingCode(rows.find((row) => row.key === OPENING_CREDITS_MAPPING_KEY)?.code);
   const next = codeOf(after);
   if (next === null || next === codeOf(stored)) return null;
-  return readExemptPrerequisiteProblem();
+  // Named, because the screen saves every mapping at once: the officer must be
+  // told which one was refused. The route refuses before its first write.
+  const problem = await readExemptPrerequisiteProblem();
+  return problem === null ? null : `Opening Credits needs the Exempt tax category. ${problem} Nothing was saved.`;
 }
 
 /** Whether the club chose an Opening Credits account: the one read the checks below share. */

@@ -165,8 +165,8 @@ in one batch ([Moving in from your old system](moving-in.md#6-credit-post-the-op
    is refused, and nothing changes, if any member has spent any of their
    opening credit or had any credit deducted since the batch posted.
 
-When a member later spends an opening credit on an Internet Banking booking,
-the app raises a Xero credit note for the amount spent. Its line is coded to
+When a member later spends an opening credit on a booking, the app raises a
+Xero credit note for the amount spent. Its line is coded to
 the optional **Opening Credits** account in **Xero Setup → Account mapping**,
 never to goodwill (`INV-PAY-162`):
 

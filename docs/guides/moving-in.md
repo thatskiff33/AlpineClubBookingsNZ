@@ -129,9 +129,9 @@ a corrected file cannot credit anyone twice: reverse the wrong batch first, or
 leave those members out of the new file.
 
 **Xero clubs: choose where spent opening credit is coded, before you post.**
-Posting sends nothing to Xero. When a member later spends opening credit on an
-Internet Banking booking, the app raises a Xero credit note against that
-booking's invoice for the amount spent. The optional **Opening Credits**
+Posting sends nothing to Xero. When a member later spends opening credit on a
+booking, the app raises a Xero credit note against that booking's invoice for
+the amount spent. The optional **Opening Credits**
 mapping in **Xero Setup → Account mapping** decides which account that credit
 note's line is coded to. It offers liability accounts only. Ask your treasurer
 or accountant which of these fits your club:
@@ -171,7 +171,9 @@ Three more things the app does to keep that line sendable:
   0% in Xero, or you connect a different Xero organisation), a spent opening
   credit is never sent with another rate. Its Xero operation waits, saying
   which category to map, and is tried again by itself every few minutes, so it
-  goes once a Full Admin has mapped the category. The Xero health check shows
+  goes once a Full Admin has mapped the category. On a card booking, the
+  booking's Xero invoice operation fails instead; retry it from the **Xero
+  Operations** list once Exempt is mapped. The Xero health check shows
   the problem while it lasts, and says to map Exempt or unset **Opening
   Credits**. The same happens if a club that set **Opening Credits** while it
   was not GST-registered schedules a registration later: the registration is

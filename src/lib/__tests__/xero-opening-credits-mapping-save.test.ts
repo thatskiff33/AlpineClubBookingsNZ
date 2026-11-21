@@ -190,10 +190,24 @@ describe("a GST-registered club maps Exempt before it maps Opening Credits (#498
   it("MUTATION: refuses the account while the Exempt tax category is not mapped", async () => {
     const { status, error } = await save({ openingCredits: { code: "2100" } });
     expect(status).toBe(409);
+    // Named, so an officer saving every mapping at once knows which one was refused.
     expect(error).toBe(
-      "The club is, or is scheduled to be, GST-registered: map the Exempt tax category on the Xero setup screen first.",
+      "Opening Credits needs the Exempt tax category. The club is, or is scheduled to be, GST-registered: map the Exempt tax category on the Xero setup screen first. Nothing was saved.",
     );
     expect(h.upsert).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: 'Nothing was saved' is true: a refused save of several mappings writes none of them", async () => {
+    const before = JSON.stringify(h.state.rows);
+    const { status, error } = await save({
+      hutFeesIncome: { code: "205" },
+      stripeFees: { code: "490" },
+      openingCredits: { code: "2100" },
+    });
+    expect(status).toBe(409);
+    expect(error).toMatch(/^Opening Credits needs the Exempt tax category\. .* Nothing was saved\.$/);
+    expect(h.upsert).not.toHaveBeenCalled();
+    expect(JSON.stringify(h.state.rows)).toBe(before);
   });
 
   it("holds a club that is only scheduled to register to the same rule", async () => {

@@ -386,7 +386,9 @@ never change; only how much of each price is GST does.
    cannot be read, the change waits until the connection works. A
    registration is saved even while the **Opening Credits** account is mapped
    and **Exempt** has no usable rate; the health check then warns, and spent
-   opening credits wait until Exempt is mapped.
+   opening credits wait until Exempt is mapped. On a card booking, the
+   booking's Xero invoice operation fails instead; retry it from the **Xero
+   Operations** list once Exempt is mapped.
 3. Bookings, subscriptions and entrance fees made on or after the date use the
    new treatment. A booking already made keeps the treatment in force when it
    was made for its whole life, including later edits, credit notes and

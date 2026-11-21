@@ -3,6 +3,7 @@ import { compareCalendarDates, type CalendarDate } from "@/lib/club-time";
 import {
   ACCOUNT_MAPPING_DEFAULTS,
   ACCOUNT_MAPPING_KEYS,
+  OPENING_CREDITS_MAPPING_KEY,
   normalizeMappingCode,
   type AccountMappingKey,
 } from "@/lib/xero-account-mapping-keys";
@@ -53,9 +54,6 @@ export function exemptPrerequisiteProblem({
   if (rates === null) return "Xero's tax rates could not be read, so the Exempt tax category cannot be checked. Try again.";
   return xeroTaxCategoryRateProblem(rates, "EXEMPT", exemptTaxType);
 }
-
-/** The Opening Credits account mapping's key (#4988), spelt once for the rules about it. */
-export const OPENING_CREDITS_MAPPING_KEY = "openingCredits" satisfies AccountMappingKey;
 
 /**
  * The OTHER account-mapping keys whose effective code is the Opening Credits

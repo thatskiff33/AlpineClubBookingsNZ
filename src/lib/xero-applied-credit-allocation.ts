@@ -51,6 +51,7 @@ import { bookingOwner } from "@/lib/booking-owner";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { resolveXeroCategoryLineTax } from "@/lib/xero-tax-category-mappings";
+import { OPENING_CREDITS_MAPPING_KEY } from "@/lib/xero-account-mapping-keys";
 import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import logger from "@/lib/logger";
 import { getClubFormat } from "@/lib/club-format-settings";
@@ -168,7 +169,7 @@ async function assertMintMayProceed(
 ): Promise<void> {
   await assertMintSlicesWaitForAdminGrantNotes(mintSlices);
   const mintGroups = planMintGroups(mintSlices);
-  if (!mintGroups.some((group) => group.mappingKey === "openingCredits")) return;
+  if (!mintGroups.some((group) => group.mappingKey === OPENING_CREDITS_MAPPING_KEY)) return;
   if (await existingRemainderNoteId(paymentId)) return;
   await resolveMintLines(bookingId, mintGroups);
 }

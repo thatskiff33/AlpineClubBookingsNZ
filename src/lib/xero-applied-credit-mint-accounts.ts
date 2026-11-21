@@ -14,6 +14,7 @@ import { CreditType } from "@prisma/client";
 import type { LineItem } from "xero-node";
 import { xeroLineTax, type XeroTaxRendering } from "./xero-tax-rendering";
 import type { XeroTaxCategoryKey } from "./xero-tax-categories";
+import { OPENING_CREDITS_MAPPING_KEY } from "./xero-account-mapping-keys";
 import type { ResolvedAccountMappingWithFallback } from "./xero-mappings";
 
 /**
@@ -27,7 +28,7 @@ import type { ResolvedAccountMappingWithFallback } from "./xero-mappings";
 export type MintSliceMappingKey =
   | "goodwillWriteOffs"
   | "hutFeeRefunds"
-  | "openingCredits";
+  | typeof OPENING_CREDITS_MAPPING_KEY;
 
 /**
  * The order minted lines are emitted in. Fixed and independent of ledger order,
@@ -35,7 +36,7 @@ export type MintSliceMappingKey =
  */
 const MINT_SLICE_MAPPING_KEY_ORDER: readonly MintSliceMappingKey[] = [
   "hutFeeRefunds",
-  "openingCredits",
+  OPENING_CREDITS_MAPPING_KEY,
   "goodwillWriteOffs",
 ];
 
@@ -78,7 +79,7 @@ export function mintSliceMappingKey(slice: {
   creditType: CreditType;
   openingCredit: boolean;
 }): MintSliceMappingKey {
-  if (slice.openingCredit) return "openingCredits";
+  if (slice.openingCredit) return OPENING_CREDITS_MAPPING_KEY;
   return slice.creditType === CreditType.ADMIN_ADJUSTMENT
     ? "goodwillWriteOffs"
     : "hutFeeRefunds";
@@ -166,7 +167,7 @@ export function codeMintLine(
   ) {
     coding.accountCode = accountCode;
   }
-  if (mapping.sourceKey === "openingCredits") {
+  if (mapping.sourceKey === OPENING_CREDITS_MAPPING_KEY) {
     coding.taxCategory = "EXEMPT";
   }
   return coding;
