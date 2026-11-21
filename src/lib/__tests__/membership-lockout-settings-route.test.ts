@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   auditLogCreate: vi.fn(),
   getFinancialYearResolution: vi.fn(),
   refreshFinancialYearConfig: vi.fn(),
+  transaction: vi.fn(),
+  lockSeason: vi.fn(),
+  clearStale: vi.fn(),
+  order: [] as string[],
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
@@ -23,7 +27,17 @@ vi.mock("@/lib/prisma", () => ({
       upsert: mocks.upsert,
     },
     auditLog: { create: mocks.auditLogCreate },
+    $transaction: mocks.transaction,
   },
+}));
+
+// #5190: the liability clear-up and its season key.
+vi.mock("@/lib/club-time/server", () => ({ clubTimeZone: async () => "Pacific/Auckland" }));
+vi.mock("@/lib/subscription-billing-season-lock", () => ({
+  lockSubscriptionBillingSeason: mocks.lockSeason,
+}));
+vi.mock("@/lib/member-subscription-defaults", () => ({
+  clearStaleNotRequiredRows: mocks.clearStale,
 }));
 
 vi.mock("@/lib/financial-year-server", () => ({
@@ -57,22 +71,43 @@ function request(body: unknown) {
   );
 }
 
-describe("membership lockout settings route guards (#1940)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.requireAdmin.mockResolvedValue({ ok: true, session });
-    mocks.findUnique.mockResolvedValue(null);
-    mocks.upsert.mockResolvedValue({
-      id: "default",
-      mode: "HARD_BLOCK",
-      financialYearEndMonthOverride: null,
-      textFallbackEnabled: true,
-      useFeeScheduleItemCodes: false,
-    });
-    mocks.auditLogCreate.mockResolvedValue({});
-    mocks.getFinancialYearResolution.mockResolvedValue({});
-    mocks.refreshFinancialYearConfig.mockResolvedValue(3);
+function setUpMocks() {
+  vi.clearAllMocks();
+  mocks.requireAdmin.mockResolvedValue({ ok: true, session });
+  mocks.findUnique.mockResolvedValue(null);
+  mocks.upsert.mockResolvedValue({
+    id: "default",
+    mode: "HARD_BLOCK",
+    financialYearEndMonthOverride: null,
+    textFallbackEnabled: true,
+    useFeeScheduleItemCodes: false,
   });
+  mocks.auditLogCreate.mockResolvedValue({});
+  mocks.getFinancialYearResolution.mockResolvedValue({});
+  mocks.refreshFinancialYearConfig.mockResolvedValue(3);
+  mocks.order.length = 0;
+  const tx = {
+    membershipLockoutSettings: {
+      upsert: async (args: unknown) => {
+        mocks.order.push("upsert");
+        return mocks.upsert(args);
+      },
+    },
+  };
+  mocks.transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) =>
+    callback(tx),
+  );
+  mocks.lockSeason.mockImplementation(async (_tx: unknown, seasonYear: number) => {
+    mocks.order.push(`lock:${seasonYear}`);
+  });
+  mocks.clearStale.mockImplementation(async (_tx: unknown, seasonYear: number) => {
+    mocks.order.push(`clear:${seasonYear}`);
+    return { clearedCount: 3 };
+  });
+}
+
+describe("membership lockout settings route guards (#1940)", () => {
+  beforeEach(setUpMocks);
 
   it("requires membership view for reads", async () => {
     const forbidden = NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -220,5 +255,77 @@ describe("membership lockout settings route guards (#1940)", () => {
     expect(body.settings).toBeDefined();
     expect(body.feeScheduleItemCodes).toBeUndefined();
     expect(body.overlappingCodes).toBeUndefined();
+  });
+});
+
+describe("membership lockout settings route: the subscription liability rule (#5190)", () => {
+  beforeEach(() => {
+    setUpMocks();
+    mocks.requireAdmin.mockResolvedValue({ ok: true, session });
+    mocks.findUnique.mockResolvedValue(null);
+    mocks.upsert.mockImplementation(async (args: { update: object }) => ({
+      id: "default",
+      ...args.update,
+    }));
+  });
+
+  const chosen = { requiredTypeAgeRule: "AGE_TIER_EXEMPTS", liabilityAgeSource: "SEASON_START" };
+
+  it.each([
+    ["only one answer", { requiredTypeAgeRule: "ALWAYS_OWES" }],
+    ["the other answer alone", { liabilityAgeSource: "SEASON_END" }],
+    ["half not chosen", { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "NOT_CHOSEN" }],
+    ["age today, until part-season invoices ship", { requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "CURRENT_AGE" }],
+  ])("refuses %s, writing nothing", async (_label, body) => {
+    const response = await putLockoutSettings(request(body));
+    expect(response.status).toBe(400);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.clearStale).not.toHaveBeenCalled();
+  });
+
+  it("refuses to move a chosen club back to NOT_CHOSEN", async () => {
+    mocks.findUnique.mockResolvedValue({ id: "default", mode: "HARD_BLOCK", ...chosen });
+    const response = await putLockoutSettings(
+      request({ requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" }),
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("accepts an unchanged NOT_CHOSEN pair from a club still on it, without writing the columns", async () => {
+    const response = await putLockoutSettings(
+      request({ requiredTypeAgeRule: "NOT_CHOSEN", liabilityAgeSource: "NOT_CHOSEN" }),
+    );
+    expect(response.status).toBe(200);
+    const update = mocks.upsert.mock.calls[0]?.[0]?.update as Record<string, unknown>;
+    expect(update).not.toHaveProperty("requiredTypeAgeRule");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("opts in inside one transaction: season lock, then the settings, then the clear-up", async () => {
+    const response = await putLockoutSettings(request(chosen));
+    expect(response.status).toBe(200);
+    // The frozen test clock is 1 July 2026: season 2026.
+    expect(mocks.order).toEqual(["lock:2026", "upsert", "clear:2026"]);
+    expect(mocks.upsert.mock.calls[0]?.[0]?.update).toMatchObject(chosen);
+    const audit = mocks.auditLogCreate.mock.calls[0]?.[0] as { data: { metadata: unknown } };
+    expect(JSON.stringify(audit)).toContain("clearedStaleNotRequiredRows");
+  });
+
+  it("a save that omits the pair leaves it out of the write, and re-runs the clear-up for a chosen club", async () => {
+    mocks.findUnique.mockResolvedValue({ id: "default", mode: "HARD_BLOCK", ...chosen });
+    const response = await putLockoutSettings(request({ mode: "NO_BLOCK" }));
+    expect(response.status).toBe(200);
+    const update = mocks.upsert.mock.calls[0]?.[0]?.update as Record<string, unknown>;
+    expect(update).not.toHaveProperty("requiredTypeAgeRule");
+    expect(update).not.toHaveProperty("liabilityAgeSource");
+    expect(mocks.order).toEqual(["lock:2026", "upsert", "clear:2026"]);
+  });
+
+  it("a save on a NOT_CHOSEN club runs no clear-up and opens no transaction", async () => {
+    const response = await putLockoutSettings(request({ mode: "NO_BLOCK" }));
+    expect(response.status).toBe(200);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(mocks.clearStale).not.toHaveBeenCalled();
   });
 });

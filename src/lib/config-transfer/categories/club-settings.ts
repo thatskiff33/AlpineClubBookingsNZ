@@ -933,23 +933,6 @@ function fileFor(entity: string): string {
   return `club-settings/${entity}.json`;
 }
 
-/**
- * True when the incoming file carries no allowlisted value at all — every field
- * present is `null` (or none is present). In practice this is only the
- * `DEFAULTS_INTENTIONALLY_PARTIAL` pair exported from a club that never saved
- * an override; every other singleton exports concrete defaults.
- *
- * Such a file must NOT create a row on a target that has none (#2171 review):
- * `clubIdentitySelfHealStep.isPresent` (`src/lib/config-self-heal.ts`) keys
- * purely on the `ClubIdentitySettings` row EXISTING, and the whole self-heal
- * runner is skipped while `clubConfigSource !== "primary"` on the promise that
- * it repairs itself on the next boot with a valid `config/club.json`. An import
- * onto a SAFE_DEFAULT install would otherwise plant an all-null row that
- * permanently satisfies that presence check, so identity would never be healed
- * from the file — and `clubIdentityName` in the setup snapshot would stay null
- * forever. Skipping restores the exact pre-#2171 behaviour for the no-row case
- * at no cost: an all-null file carries nothing to write.
- */
 /** `mode` from a pre-#2543 bundle's `enabled` key (#2543/#2561); see the spec. */
 function reconcileLockoutMode(
   incoming: Record<string, unknown>,
@@ -996,6 +979,23 @@ function reconcileLiabilityPair(
   return rest;
 }
 
+/**
+ * True when the incoming file carries no allowlisted value at all — every field
+ * present is `null` (or none is present). In practice this is only the
+ * `DEFAULTS_INTENTIONALLY_PARTIAL` pair exported from a club that never saved
+ * an override; every other singleton exports concrete defaults.
+ *
+ * Such a file must NOT create a row on a target that has none (#2171 review):
+ * `clubIdentitySelfHealStep.isPresent` (`src/lib/config-self-heal.ts`) keys
+ * purely on the `ClubIdentitySettings` row EXISTING, and the whole self-heal
+ * runner is skipped while `clubConfigSource !== "primary"` on the promise that
+ * it repairs itself on the next boot with a valid `config/club.json`. An import
+ * onto a SAFE_DEFAULT install would otherwise plant an all-null row that
+ * permanently satisfies that presence check, so identity would never be healed
+ * from the file — and `clubIdentityName` in the setup snapshot would stay null
+ * forever. Skipping restores the exact pre-#2171 behaviour for the no-row case
+ * at no cost: an all-null file carries nothing to write.
+ */
 function carriesNoValue(
   spec: SingletonSpec,
   incoming: Record<string, unknown>,

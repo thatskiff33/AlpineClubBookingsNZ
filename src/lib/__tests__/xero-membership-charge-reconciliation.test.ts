@@ -50,9 +50,6 @@ vi.mock("@/lib/prisma", () => ({
     $transaction: mocks.transaction,
   },
 }));
-vi.mock("@/lib/member-subscription-eligibility", () => ({
-  requiresPaidSubscriptionForAgeTierFromSettings: vi.fn().mockResolvedValue(true),
-}));
 vi.mock("@/lib/member-subscription-defaults", () => ({
   roleNeverRequiresSubscription: vi.fn().mockReturnValue(false),
 }));

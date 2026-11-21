@@ -29,6 +29,7 @@ import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { seasonYearsLabel } from "@/lib/season-label";
 import { loadMembershipLockoutSettingsStrict } from "@/lib/membership-lockout-settings";
 import { liabilityRuleFor, resolveMemberSubscriptionLiability } from "@/lib/policies/subscription";
+import { lockSubscriptionBillingSeason } from "@/lib/subscription-billing-season-lock";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole, storedRoleDefaultMembershipTypeWhere } from "@/lib/membership-types";
 import { getResolvedAccountMapping } from "@/lib/xero-mappings";
@@ -2193,7 +2194,7 @@ export async function reconcileSubscriptionBillingExceptions(input: {
   yearEndMonth: number;
 }): Promise<{ resolvedCount: number }> {
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`membership-subscription-billing:${input.seasonYear}`}))`;
+    await lockSubscriptionBillingSeason(tx, input.seasonYear);
     const preview = await buildSubscriptionBillingPreview({
       seasonYear: input.seasonYear,
       decisionDate: input.decisionDate,
@@ -2221,7 +2222,7 @@ export async function confirmSubscriptionBillingPreview(input: {
   }
   const chargeIds: string[] = [];
   await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`membership-subscription-billing:${input.preview.seasonYear}`}))`;
+    await lockSubscriptionBillingSeason(tx, input.preview.seasonYear);
     const preview = await buildSubscriptionBillingPreview({
       seasonYear: input.preview.seasonYear,
       decisionDate: parseDateOnly(input.preview.decisionDate),

@@ -215,6 +215,8 @@ function makeBulkDb(members: Record<string, MemberConfig>) {
       findUnique: vi.fn().mockResolvedValue(null),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #5190: the club's liability rule; a missing row is NOT_CHOSEN.
+    membershipLockoutSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
     },
