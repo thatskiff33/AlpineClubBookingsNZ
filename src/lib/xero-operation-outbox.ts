@@ -66,7 +66,6 @@ import { createAdminGrantCreditNote } from "@/lib/xero-admin-grant-credit-note";
 import { unallocatedAppliedCreditCentsByBooking } from "@/lib/xero-applied-credit-ledger-state";
 import { deallocateExcessAppliedCreditForBooking } from "@/lib/xero-applied-credit-deallocation";
 import { outboxScanLeavesAwaitingOwnNote, OWN_NOTE_EXPECTED_KEY } from "@/lib/unpaid-ask-billed-offset-order";
-import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import {
   findResolvedBookingInvoiceCreate,
   findResolvedSiblingSince,
@@ -81,7 +80,7 @@ import { XERO_OUTBOX_CARD_REFUND_REVERSAL_INVOICE_TYPE } from "@/lib/xero-card-r
 import { recordAdditionalCaptureReceipt } from "@/lib/additional-capture-xero-receipt";
 import { outboxScanSpacesWaitingReceipts } from "@/lib/additional-capture-receipt-gate";
 import { scanSpacesRefundNotesAwaitingResolve } from "@/lib/xero-refund-note-in-flight";
-import { scanSpacesTaxCategoriesAwaitingMapping, xeroTaxCategoryHoldOf } from "@/lib/xero-tax-category-hold";
+import { scanSpacesTaxCategoriesAwaitingMapping, xeroOutboxWaitOf } from "@/lib/xero-tax-category-hold";
 import { XERO_OUTBOX_ADMIN_GRANT_CREDIT_NOTE_TYPE } from "@/lib/admin-grant-credit-note-payload";
 import { isXeroConnected } from "@/lib/xero-token-store";
 import { returnOutboxRowToPending, UNCLAIMED } from "@/lib/xero-outbox-pending-request";
@@ -2470,18 +2469,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
         result.skipped += 1;
         continue;
       }
-      // #4988: a line in a tax category Xero cannot carry yet is a wait too.
-      // Nothing was sent; the row is held until the category is mapped.
-      const wait = isXeroAppliedCreditOperationBusyError(error)
-        ? { code: error.waitCode, message: error.message }
-        : xeroTaxCategoryHoldOf(error);
+      const wait = xeroOutboxWaitOf(error);
       if (wait) {
         // Two independent outbox runners can claim allocation and deallocation
         // for the same Payment before either handler observes the other. That
         // collision is transient: return this row to PENDING so the next scan
-        // serializes them, rather than stranding both rows as FAILED.
-        // #3791: the reason stays on the row, so a note waiting on a
-        // deallocation says what it is waiting for.
+        // serializes them, rather than stranding both rows as FAILED. #3791: the
+        // reason stays on the row. #4988: a tax category Xero cannot carry yet waits the same way.
         // #5228: with a request the next pass can claim, else it fails below.
         const busy = await returnOutboxRowToPending({
           operationId: queuedOperation.id,

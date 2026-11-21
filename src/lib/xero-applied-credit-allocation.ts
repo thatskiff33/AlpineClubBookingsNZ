@@ -147,19 +147,27 @@ async function resolveMintLines(bookingId: string, mintGroups: readonly PlannedM
 }
 
 /**
- * #4988: ask for the Exempt line's tax before the operation's FIRST provider
- * write, not only before the mint. Without this a booking that also spends a
- * credit holding its own floating note would allocate that note, then stop at
- * the mint, and sit part-allocated for as long as the Exempt category stays
- * unavailable. Asked only when an opening-credit share is planned and its note
- * is not minted yet, so every other operation reads nothing extra and a retry
- * that already holds its note is never stopped here.
+ * What must hold before the operation's FIRST provider write for a plan that
+ * mints. Either refusal leaves Xero untouched and the operation waiting.
+ *
+ * A grant queued at approval is not minted again, even before its note id
+ * lands (`assertMintSlicesWaitForAdminGrantNotes`, #4431).
+ *
+ * #4988: the Exempt line's tax is asked for here, not only at the mint.
+ * Without this a booking that also spends a credit holding its own floating
+ * note would allocate that note, then stop at the mint, and sit part-allocated
+ * for as long as the Exempt category stays unavailable. Asked only when an
+ * opening-credit share is planned and its note is not minted yet, so every
+ * other operation reads nothing extra and a retry that already holds its note
+ * is never stopped here.
  */
-async function assertMintExemptLineSendable(
+async function assertMintMayProceed(
   bookingId: string,
   paymentId: string,
-  mintGroups: readonly PlannedMintGroup[],
+  mintSlices: Parameters<typeof planMintGroups>[0] & Parameters<typeof assertMintSlicesWaitForAdminGrantNotes>[0],
 ): Promise<void> {
+  await assertMintSlicesWaitForAdminGrantNotes(mintSlices);
+  const mintGroups = planMintGroups(mintSlices);
   if (!mintGroups.some((group) => group.mappingKey === "openingCredits")) return;
   if (await existingRemainderNoteId(paymentId)) return;
   await resolveMintLines(bookingId, mintGroups);
@@ -486,10 +494,8 @@ export async function allocateAppliedCreditForBooking(
     return;
   }
 
-  // A grant queued at approval is not minted again, even before its note id lands.
-  await assertMintSlicesWaitForAdminGrantNotes(plan.mintSlices);
-  // #4988: an Exempt line Xero cannot carry stops the operation here, whole.
-  await assertMintExemptLineSendable(bookingId, payment.id, planMintGroups(plan.mintSlices));
+  // A queued grant note (#4431), or an Exempt line Xero cannot carry (#4988), stops the operation here, whole.
+  await assertMintMayProceed(bookingId, payment.id, plan.mintSlices);
 
   // 2) Allocate each existing floating note against the invoice (idempotent per
   // join row via its completion link).

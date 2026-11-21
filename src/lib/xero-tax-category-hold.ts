@@ -1,3 +1,4 @@
+import { isXeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 import { XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE } from "@/lib/xero-operation-error-codes";
 import { scanSpacesWaitCode } from "@/lib/xero-operation-wait-spacing";
 import { XeroTaxCategoryUnavailableError } from "@/lib/xero-tax-categories";
@@ -8,10 +9,17 @@ import { XeroTaxCategoryUnavailableError } from "@/lib/xero-tax-categories";
  * has written nothing to Xero, and no fallback code exists, so its outbox row
  * is not a failure: it goes back to PENDING under a code naming the wait, with
  * the error's own sentence telling the officer what to map, and is asked again
- * once a Full Admin has mapped the category on the Xero setup screen.
+ * every five minutes, so it is sent soon after a Full Admin maps the category
+ * on the Xero setup screen.
  *
  * First sender: the applied-credit allocation, whose spent opening credit
  * coded to the mapped Opening Credits account is an Exempt line.
+ *
+ * The outbox returns a row only under the claim it took, still RUNNING. The
+ * allocation's own operation is left RUNNING by its handler, so it is held.
+ * The same error raised inside a card booking's invoice operation, which fails
+ * its own row first, ends FAILED with this sentence and is retried by an
+ * officer, as every other wait raised there does.
  */
 
 /** Same spacing as a refund note waiting to be resolved: five minutes. */
@@ -31,8 +39,17 @@ export function scanSpacesTaxCategoriesAwaitingMapping(now: Date) {
   );
 }
 
-/** What the outbox records as it holds the row, or null when the error is no such hold. */
-export function xeroTaxCategoryHoldOf(error: unknown): { code: string; message: string } | null {
-  if (!(error instanceof XeroTaxCategoryUnavailableError)) return null;
-  return { code: XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE, message: error.message };
+/**
+ * What the outbox records on a row it returns to PENDING to wait, or null when
+ * the error is not a wait. Two kinds: the applied-credit busy error and its
+ * subclasses, each naming its own wait code or none (#3954 round 8), and a tax
+ * category Xero cannot carry yet (#4988), under the code above. The one test
+ * the outbox's catch asks, so a wait is recognised in one place.
+ */
+export function xeroOutboxWaitOf(error: unknown): { code: string | null; message: string } | null {
+  if (isXeroAppliedCreditOperationBusyError(error)) return { code: error.waitCode, message: error.message };
+  if (error instanceof XeroTaxCategoryUnavailableError) {
+    return { code: XERO_TAX_CATEGORY_AWAITING_MAPPING_CODE, message: error.message };
+  }
+  return null;
 }

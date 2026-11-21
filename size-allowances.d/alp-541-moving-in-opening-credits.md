@@ -9,7 +9,7 @@ no allowance: its request schema moved to `member-import-request-schema.ts`,
 so it ends shorter than on `main` (#4926's hard ceiling).
 
 file: src/lib/member-csv-import.ts
-lines: 1184
+lines: 1177
 reason: two field definitions, Membership Type and Family Key, with their
   aliases and the note on why none collides with a lastName alias.
   `MEMBER_IMPORT_FIELD_DEFINITIONS` is the one list that column mapping, the
@@ -33,9 +33,3 @@ reason: renders the new Opening credits card with the page's existing
 file: src/app/(admin)/admin/membership/members/page.tsx
 lines: 607
 reason: passes the already-loaded membership types to the import dialog.
-
-file: src/lib/admin-permissions.ts
-lines: 949
-reason: `/api/admin/opening-credits` in the finance area's prefix list.
-  `ROUTE_AREA_PREFIXES` is the single table the drift guard compares the
-  route tree against.
