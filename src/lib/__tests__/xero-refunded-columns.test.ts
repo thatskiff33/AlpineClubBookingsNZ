@@ -4,12 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // that the inbound recount, the kept settle and the allocation write all take.
 // Each caller's own suite pins that it calls this; this pins the step itself.
 
-const mocks = vi.hoisted(() => ({ floor: vi.fn(), rows: vi.fn() }));
+const mocks = vi.hoisted(() => ({ floor: vi.fn(), rows: vi.fn(), cap: vi.fn(), warn: vi.fn(), notify: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/lib/xero-inbound/credit-note-bank-transfer-floor", () => ({ bankTransferFloorCents: mocks.floor }));
+vi.mock("@/lib/organiser-child-refund", () => ({ capOrganiserChildMirrorAtStripeRefunds: mocks.cap }));
+vi.mock("@/lib/logger", () => ({ default: { warn: mocks.warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
+vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: mocks.notify }));
 // The status rule is the real one (`refundedTotalStatus`), reading the payment's rows on the caller's client.
 
-import { decideXeroRefundedColumns } from "@/lib/xero-inbound/xero-refunded-columns";
+import { decideXeroRefundedColumns, sendCardLedgerFloorAlert } from "@/lib/xero-inbound/xero-refunded-columns";
+import { CLUB_FORMAT_TEST } from "@/lib/__tests__/support/club-format-fixture";
 
 const store = { paymentTransaction: { findMany: mocks.rows } } as never;
 const pendingPrimary = [{ kind: "PRIMARY", status: "PENDING", createdAt: new Date("2026-06-01T00:00:00.000Z"), insertionSeq: 1 }];
@@ -49,7 +53,7 @@ describe("decideXeroRefundedColumns (#4449)", () => {
   it("MUTATION (floor): the bank-transfer floor's figure and alert are what it returns, on the caller's client", async () => {
     const alert = { paymentId: "pay-1", bookingId: "booking-1", creditNoteId: "cn-1", creditNoteNumber: null, xeroDerivedCents: 1_000, floorCents: 4_000 };
     mocks.floor.mockResolvedValueOnce({ cents: 4_000, alert });
-    await expect(decide(1_000)).resolves.toEqual({ refundedAmountCents: 4_000, status: "PARTIALLY_REFUNDED", floorAlert: alert });
+    await expect(decide(1_000)).resolves.toEqual({ refundedAmountCents: 4_000, status: "PARTIALLY_REFUNDED", floorAlert: alert, cardFloorAlert: null });
   });
 
   it("the status the total implies, from the status the writer leaves", async () => {
@@ -70,7 +74,48 @@ describe("decideXeroRefundedColumns (#4449)", () => {
   });
 
   it("MUTATION (F5, #1353): never un-refunds a card payment", async () => {
-    await expect(decide(0, { source: "STRIPE" })).resolves.toMatchObject({ status: null });
+    // A refunded status with nothing on the ledger: the raise-only floor keeps nothing, and the status stays.
+    await expect(decide(0, { source: "STRIPE", refundedAmountCents: 0 })).resolves.toMatchObject({ refundedAmountCents: 0, status: null });
     expect(mocks.rows).not.toHaveBeenCalled();
+  });
+
+  describe("a card ledger is never lowered (#5289 E, owner decision D3, F5 #1353)", () => {
+    const card = { source: "STRIPE", amountCents: 10_000, refundedAmountCents: 15_000, status: "REFUNDED" };
+
+    it("MUTATION (clamp only Xero's figure): a card total stored above the amount stays, its divergence logged and its alert returned", async () => {
+      const decided = await decide(15_000, card);
+      expect(decided).toEqual({
+        refundedAmountCents: 15_000,
+        status: "REFUNDED",
+        floorAlert: null,
+        cardFloorAlert: { paymentId: "pay-1", creditNoteId: "cn-1", xeroDerivedCents: 10_000, ledgerCents: 15_000 },
+      });
+      expect(mocks.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentId: "pay-1", localRefundedAmountCents: 15_000, xeroDerivedRefundedTotalCents: 10_000 }),
+        expect.stringContaining("raise-only floor"),
+      );
+      // Returned, never sent here: the writer sends it after its commit.
+      expect(mocks.notify).not.toHaveBeenCalled();
+    });
+
+    it("MUTATION (raise-only): a lower Xero figure keeps the card ledger; a higher one raises it, with no alert", async () => {
+      await expect(decide(2_000, { ...card, amountCents: 30_000, refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED" })).resolves.toMatchObject({ refundedAmountCents: 5_000, cardFloorAlert: { xeroDerivedCents: 2_000, ledgerCents: 5_000 } });
+      await expect(decide(8_000, { ...card, amountCents: 30_000, refundedAmountCents: 5_000, status: "PARTIALLY_REFUNDED" })).resolves.toMatchObject({ refundedAmountCents: 8_000, cardFloorAlert: null });
+    });
+
+    it("#3653: an organiser child's mirror is capped at Stripe's refunds after the floor", async () => {
+      mocks.cap.mockResolvedValue(3_000);
+      await expect(decide(8_000, { ...card, amountCents: 30_000, refundedAmountCents: 1_000, status: "PARTIALLY_REFUNDED" }, true)).resolves.toMatchObject({ refundedAmountCents: 3_000 });
+      expect(mocks.cap).toHaveBeenCalledWith(store, expect.objectContaining({ id: "pay-1" }), 8_000);
+    });
+
+    it("the floor's alert, sent by the writer, names the payment, both figures and #1353", async () => {
+      await sendCardLedgerFloorAlert({ paymentId: "pay-1", creditNoteId: null, xeroDerivedCents: 10_000, ledgerCents: 15_000 }, CLUB_FORMAT_TEST);
+      expect(mocks.notify).toHaveBeenCalledWith({
+        errorType: "refund-ledger-divergence",
+        operation: "inbound-credit-note-repair:recount:pay-1",
+        errorMessage: expect.stringMatching(/payment pay-1 .*raise-only floor, #1353/),
+      });
+    });
   });
 });
