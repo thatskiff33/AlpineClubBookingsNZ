@@ -93,6 +93,9 @@ const mocks = vi.hoisted(() => {
     transactionDepth: 0,
     // #4919: the owed-email marker written to the RUNNING row.
     opUpdateMany: vi.fn(),
+    // #4525 (ALP-437): the combined invoice's export manifest, recorded and released.
+    recordManifest: vi.fn(),
+    releaseManifest: vi.fn(),
   };
 });
 
@@ -197,6 +200,10 @@ vi.mock("@/lib/club-format-server", async () => ({
   clubFormatValues: vi.fn(
     async () => (await import("./support/club-format-fixture")).CLUB_FORMAT_TEST
   ),
+}));
+vi.mock("@/lib/member-money/doors", () => ({
+  recordCombinedGroupInvoiceManifest: mocks.recordManifest,
+  releaseCombinedGroupInvoiceManifest: mocks.releaseManifest,
 }));
 vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
   enqueueXeroGroupSettlementInvoiceVoidOperation: mocks.enqueueVoid,
@@ -1772,6 +1779,111 @@ describe("the bound-invoice rule in the create worker (#3642)", () => {
     expect(mocks.completeSync).toHaveBeenCalledWith(expect.objectContaining({ id: "void-op-9" }), {
       status: "SUCCEEDED",
       responsePayload: { skippedInvoiceStillLinkedToSettlement: true },
+    });
+  });
+
+  // #4525 (ALP-437): the export manifest records only an invoice the settlement
+  // kept, never changes what is sent, and is released only once Xero holds the
+  // invoice void or holds no such invoice.
+  describe("the combined invoice's export manifest (#4525)", () => {
+    const target = (providerInvoiceId: string) =>
+      ({ settlementId: "settle-1", organiserBookingId: "organiser-booking-1", providerInvoiceId });
+    // The transient-failure case above leaves Xero suppressed for this process.
+    beforeEach(() => resetXeroRateLimitStateForTests());
+
+    it("records a kept invoice once, from the very lines it sent, after the bind and before the email", async () => {
+      mocks.settlementFindUnique.mockResolvedValue(settlement(GroupBookingStatus.OPEN));
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.recordManifest).toHaveBeenCalledTimes(1);
+      const [source, recorded] = mocks.recordManifest.mock.calls[0];
+      expect(recorded).toEqual(target("inv-1"));
+      expect(source).toMatchObject({ kind: "BUILT", attempt: 0 });
+      const sent = mocks.accountingApi.createInvoices.mock.calls[0][1].invoices[0].lineItems;
+      expect(source.lines.lineItems).toBe(sent);
+      expect(source.lines.byChild.map((child: { bookingId: string }) => child.bookingId)).toEqual(["child-1"]);
+      expect(mocks.settlementUpdate.mock.invocationCallOrder[0]).toBeLessThan(mocks.recordManifest.mock.invocationCallOrder[0]);
+      expect(mocks.recordManifest.mock.invocationCallOrder[0]).toBeLessThan(mocks.accountingApi.emailInvoice.mock.invocationCallOrder[0]);
+      expect(mocks.completeSync).toHaveBeenCalledWith(expect.objectContaining({ id: "op-1" }), expect.objectContaining({ status: "SUCCEEDED" }));
+    });
+
+    it("records nothing for an invoice the settlement abandoned on arrival", async () => {
+      mocks.settlementFindUnique
+        .mockResolvedValueOnce(settlement(GroupBookingStatus.OPEN))
+        .mockResolvedValueOnce({ status: "FAILED", groupBooking: { status: GroupBookingStatus.OPEN } });
+
+      await createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") });
+
+      expect(mocks.recordManifest).not.toHaveBeenCalled();
+      expect(mocks.releaseManifest).not.toHaveBeenCalled();
+    });
+
+    it("records nothing, and releases, when the group was cancelled while Xero raised the invoice", async () => {
+      mocks.settlementFindUnique
+        .mockResolvedValueOnce(settlement(GroupBookingStatus.OPEN))
+        .mockResolvedValueOnce({ ...settlement(GroupBookingStatus.CANCELLED) });
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBeNull();
+
+      expect(mocks.recordManifest).not.toHaveBeenCalled();
+      expect(mocks.releaseManifest).toHaveBeenCalledWith({ settlementId: "settle-1", invoiceId: "inv-1", reason: "VOIDED" });
+    });
+
+    it("records nothing when the committed children no longer total the settlement", async () => {
+      mocks.settlementFindUnique.mockResolvedValue({ ...settlement(GroupBookingStatus.OPEN), amountCents: 9000 });
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).rejects.toThrow(/no invoice was raised/);
+      expect(mocks.recordManifest).not.toHaveBeenCalled();
+    });
+
+    it("replays the record from the stored request on an already-bound return, sending nothing", async () => {
+      mocks.settlementFindUnique.mockResolvedValue(settlementWithInvoice(GroupBookingStatus.OPEN));
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", { syncOperation: xeroClaim("op-1") })
+      ).resolves.toBe("inv-existing");
+
+      expect(mocks.recordManifest).toHaveBeenCalledWith({ kind: "REPLAY", operationId: "op-1" }, target("inv-existing"));
+      expect(mocks.accountingApi.createInvoices).not.toHaveBeenCalled();
+    });
+
+    it("releases an abandoned invoice's coverage once it is voided, and once it is found void", async () => {
+      mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: null });
+      await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", { syncOperation: xeroClaim("void-op-9") });
+      expect(mocks.accountingApi.updateInvoice).toHaveBeenCalledTimes(1);
+      expect(mocks.releaseManifest).toHaveBeenCalledWith({ settlementId: "settle-1", invoiceId: "inv-old", reason: "VOIDED" });
+
+      mocks.releaseManifest.mockClear();
+      mocks.accountingApi.getInvoice.mockResolvedValue({ body: { invoices: [{ invoiceID: "inv-old", status: "VOIDED" }] } });
+      await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", { syncOperation: xeroClaim("void-op-9") });
+      expect(mocks.releaseManifest).toHaveBeenCalledWith({ settlementId: "settle-1", invoiceId: "inv-old", reason: "VOIDED" });
+    });
+
+    it("releases the coverage of an invoice Xero does not have", async () => {
+      mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: null });
+      mocks.accountingApi.getInvoice.mockRejectedValue(Object.assign(new Error("Not Found"), { response: { statusCode: 404 } }));
+
+      await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", { syncOperation: xeroClaim("void-op-9") });
+
+      expect(mocks.releaseManifest).toHaveBeenCalledWith({ settlementId: "settle-1", invoiceId: "inv-old", reason: "NOT_FOUND" });
+    });
+
+    it("keeps the coverage of an invoice carrying money, which is never voided", async () => {
+      mocks.settlementFindUnique.mockResolvedValue({ id: "settle-1", xeroInvoiceId: null });
+      mocks.accountingApi.getInvoice.mockResolvedValue({
+        body: { invoices: [{ invoiceID: "inv-old", status: "AUTHORISED", amountPaid: 500 }] },
+      });
+
+      await voidXeroInvoiceForAbandonedGroupSettlement("settle-1", "inv-old", { syncOperation: xeroClaim("void-op-9") });
+
+      expect(mocks.releaseManifest).not.toHaveBeenCalled();
     });
   });
 });
