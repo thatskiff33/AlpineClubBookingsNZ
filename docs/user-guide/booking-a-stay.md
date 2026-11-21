@@ -56,6 +56,11 @@ It is not a confirmed booking.
    re-checked when you submit, and nothing is booked or charged until then.
 4. If the nights you want are **Full**, you can join the waitlist instead of
    booking — see [The waitlist & offers](waitlist-and-offers.md).
+5. Coming to a **working bee**? Open it from the **Work Parties** card on your
+   dashboard and choose **Join Work Party**. The wizard opens with its nights,
+   its lodge and "I am attending a working bee" already filled in; you still add
+   your guests and pay as usual. See
+   [Work Parties](../guides/work-parties.md#members-join-a-work-party).
 
 ### 2. Add your guests
 
@@ -406,10 +411,11 @@ open and just want to move it, replace it.
 
 When an officer approves, the thing you asked for happens straight away: the
 booking is created, or the change is applied. If it was a new booking, you get an
-email telling you it was approved and what is left to pay — pay it from your
-account, because the beds are not held until you do. Your request row says the same
-thing: it reads "not holding any beds yet" until the payment lands, and then changes
-to "holding its beds". If that booking is later cancelled, or lapses because it was
+email telling you it was approved, what is left to pay (if anything), and whether
+your beds are held while it waits. Usually they are not held until you pay, so pay
+from your account straight away. Your request row says the same thing: it reads
+"not holding any beds yet" until the booking holds them, and then changes to
+"holding its beds". If that booking is later cancelled, or lapses because it was
 never paid, the row says it is no longer live and stops telling you to pay it. If it
 was a change to a booking you already had, you get the
 usual "your booking was changed" email and the row says the change has been applied.

@@ -8,8 +8,8 @@ import {
 import { ApiError } from "@/lib/api-error";
 import { isRootPrismaClient } from "@/lib/db-transaction";
 import logger from "@/lib/logger";
+import { isNonNegativeIntegerCents } from "@/lib/cents-schema";
 import {
-  isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
   type EditFinancialReviewContext,
   type EditFinancialReviewOccurrence,

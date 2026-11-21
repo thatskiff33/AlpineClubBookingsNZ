@@ -71,6 +71,7 @@ import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { xeroLineTax } from "@/lib/xero-tax-rendering";
 import { resolveXeroTaxRendering } from "@/lib/xero-tax-anchors";
 import { createXeroPaymentForInvoice } from "@/lib/xero-invoice-payments";
+import { recordCaptureReceiptManifest } from "@/lib/member-money/doors";
 import type { ClubTimeZone } from "@/lib/club-time";
 import { findLateCaptureRefundPaidAnotherWay } from "@/lib/late-capture-paid-another-way";
 import {
@@ -613,7 +614,9 @@ export async function createXeroKeptLateCaptureInvoice(
     // the capture day; it writes the task's payment link itself.
     let paymentId: string | null = null;
     let paymentError: unknown = null;
-    if (!(await linkFor(KEPT_LATE_CAPTURE_PAYMENT_ROLE))) {
+    const paymentReference = `Stripe ${paymentIntentId}`;
+    const paymentLink = await linkFor(KEPT_LATE_CAPTURE_PAYMENT_ROLE);
+    if (!paymentLink) {
       try {
         paymentId = await providers.createXeroPaymentForInvoice({
           localModel: "ManualRefundTask",
@@ -621,7 +624,7 @@ export async function createXeroKeptLateCaptureInvoice(
           invoiceId: invoiceId!,
           amountCents: capturedCents,
           idempotencyKey: paymentKey(taskId),
-          reference: `Stripe ${paymentIntentId}`,
+          reference: paymentReference,
           role: KEPT_LATE_CAPTURE_PAYMENT_ROLE,
           createdByMemberId: params.createdByMemberId,
           metadata: { invoiceId, amountCents: capturedCents },
@@ -664,6 +667,20 @@ export async function createXeroKeptLateCaptureInvoice(
       xeroObjectUrl: buildXeroInvoiceUrl(invoiceId!),
       extraLinks: [receiptLink],
     });
+    // #4525 (Ledger M13): the payment's capture receipt, once its id is stored - this run's,
+    // or the link an earlier run left. Nothing when the payment failed. Never throws.
+    const storedPaymentId = paymentId ?? paymentLink?.xeroObjectId ?? null;
+    if (storedPaymentId) {
+      await recordCaptureReceiptManifest({
+        bookingId,
+        paymentIntentId,
+        paymentKey: paymentKey(taskId),
+        amountCents: capturedCents,
+        providerPaymentId: storedPaymentId,
+        invoiceId: invoiceId!,
+        reference: paymentReference,
+      });
+    }
 
     // Imported here, not at the top: that module reaches the outbox, which
     // dispatches to this worker.

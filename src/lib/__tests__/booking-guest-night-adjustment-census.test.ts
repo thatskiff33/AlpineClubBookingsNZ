@@ -234,6 +234,10 @@ const NIGHT_WRITERS_WITHOUT_PROMOTION = new Map<string, string>([
     "src/lib/stored-night-price-repair-store.ts",
     "an officer prices a night; the settle re-base that follows records the engine's figure over it",
   ],
+  [
+    "src/lib/rate-derived-night-price-store.ts",
+    "the rate-derived backfill rewrites a strand's night split only where the rate table reproduces its stored total to the cent; the booking's money does not move",
+  ],
   ["src/lib/booking-create-guests.ts", "nested create helper; its callers in booking-create.ts record"],
   ["e2e/setup/seed-second-lodge.ts", "test seed"],
   [
