@@ -477,7 +477,7 @@ home for that explanation and is not repeated here.
   `PUT` and config import refuse a half pair, a move back and `CURRENT_AGE`
   (age today waits for part-season invoices); an omitted pair is never written.
   A save or import that leaves the club chosen runs `clearStaleNotRequiredRows`
-  under the billing season key; read the impact list
+  under the billing season key and audits the members it moved; read the impact list
   (`GET /api/admin/membership-lockout-settings/liability-impact`) first.
 - **A no-invoice fee settles its member for booking** (all clubs, not gated by
   the choice): an active coverage claim on a `NO_INVOICE` charge counts as paid

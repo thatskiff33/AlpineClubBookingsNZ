@@ -36,7 +36,11 @@ vi.mock("@/lib/club-time/server", () => ({ clubTimeZone: async () => "Pacific/Au
 vi.mock("@/lib/subscription-billing-season-lock", () => ({
   lockSubscriptionBillingSeason: mocks.lockSeason,
 }));
-vi.mock("@/lib/member-subscription-defaults", () => ({
+vi.mock("@/lib/member-subscription-defaults", async (importOriginal) => ({
+  // The real audit shaper, so the route's audit row is checked as written.
+  clearedRowsAuditMetadata: (
+    (await importOriginal()) as typeof import("@/lib/member-subscription-defaults")
+  ).clearedRowsAuditMetadata,
   clearStaleNotRequiredRows: mocks.clearStale,
 }));
 
@@ -102,7 +106,7 @@ function setUpMocks() {
   });
   mocks.clearStale.mockImplementation(async (_tx: unknown, seasonYear: number) => {
     mocks.order.push(`clear:${seasonYear}`);
-    return { clearedCount: 3 };
+    return { clearedCount: 3, clearedMemberIds: ["m1", "m2", "m3"] };
   });
 }
 
@@ -310,6 +314,10 @@ describe("membership lockout settings route: the subscription liability rule (#5
     expect(mocks.upsert.mock.calls[0]?.[0]?.update).toMatchObject(chosen);
     const audit = mocks.auditLogCreate.mock.calls[0]?.[0] as { data: { metadata: unknown } };
     expect(JSON.stringify(audit)).toContain("clearedStaleNotRequiredRows");
+    // The audit names the members the clear-up moved, not just a count.
+    expect(JSON.stringify(audit)).toContain(
+      JSON.stringify({ seasonYear: 2026, total: 3, memberIds: ["m1", "m2", "m3"], memberIdsTruncated: false }),
+    );
   });
 
   it("a save that omits the pair leaves it out of the write, and re-runs the clear-up for a chosen club", async () => {

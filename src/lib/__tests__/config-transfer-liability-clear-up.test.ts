@@ -5,7 +5,10 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/backup", () => ({ runDatabaseBackup: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: vi.fn(), logAudit: vi.fn() }));
 const clearUp = vi.hoisted(() => ({ clearStaleNotRequiredRows: vi.fn() }));
-vi.mock("@/lib/member-subscription-defaults", () => ({
+vi.mock("@/lib/member-subscription-defaults", async (importOriginal) => ({
+  clearedRowsAuditMetadata: (
+    (await importOriginal()) as typeof import("@/lib/member-subscription-defaults")
+  ).clearedRowsAuditMetadata,
   clearStaleNotRequiredRows: (...a: unknown[]) => clearUp.clearStaleNotRequiredRows(...a),
 }));
 vi.mock("@/lib/club-time-zone-runtime", () => ({
@@ -13,6 +16,7 @@ vi.mock("@/lib/club-time-zone-runtime", () => ({
 }));
 
 import type { PrismaClient } from "@prisma/client";
+import { createAuditLog } from "@/lib/audit";
 import { runDatabaseBackup, type BackupResult } from "@/lib/backup";
 import { applyConfigImport } from "@/lib/config-transfer/apply";
 import { buildBundle } from "@/lib/config-transfer/bundle";
@@ -103,7 +107,7 @@ async function importIt(settings: Record<string, unknown>) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(runDatabaseBackup).mockResolvedValue(DURABLE_BACKUP);
-  clearUp.clearStaleNotRequiredRows.mockResolvedValue({ clearedCount: 0 });
+  clearUp.clearStaleNotRequiredRows.mockResolvedValue({ clearedCount: 0, clearedMemberIds: [] });
 });
 
 describe("config-transfer import of the subscription-liability rule (#5190)", () => {
@@ -122,6 +126,27 @@ describe("config-transfer import of the subscription-liability rule (#5190)", ()
     expect(db.membershipLockoutSettings.upsert.mock.invocationCallOrder[0]).toBeLessThan(
       clearUp.clearStaleNotRequiredRows.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("audits the members the clear-up moved, bounded, and writes no extra row when it moved none", async () => {
+    clearUp.clearStaleNotRequiredRows.mockResolvedValueOnce({
+      clearedCount: 2,
+      clearedMemberIds: ["m1", "m2"],
+    });
+    await importIt({ ...STORED, requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_END" });
+    const clearUpAudit = vi
+      .mocked(createAuditLog)
+      .mock.calls.map(([entry]) => entry)
+      .find((entry) => entry.action === "configuration.imported.liability_clear_up");
+    expect(clearUpAudit?.metadata).toMatchObject({
+      clearedStaleNotRequiredRows: { seasonYear: 2026, total: 2, memberIds: ["m1", "m2"], memberIdsTruncated: false },
+    });
+
+    vi.mocked(createAuditLog).mockClear();
+    await importIt({ ...STORED, requiredTypeAgeRule: "ALWAYS_OWES", liabilityAgeSource: "SEASON_END" });
+    expect(
+      vi.mocked(createAuditLog).mock.calls.map(([entry]) => entry.action),
+    ).not.toContain("configuration.imported.liability_clear_up");
   });
 
   it("runs no clear-up when the import leaves the lockout settings unchanged", async () => {

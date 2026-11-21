@@ -1,6 +1,9 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 
-import { clearStaleNotRequiredRows } from "@/lib/member-subscription-defaults";
+import {
+  clearStaleNotRequiredRows,
+  type StaleNotRequiredClearUp,
+} from "@/lib/member-subscription-defaults";
 import { MEMBERSHIP_LOCKOUT_SETTINGS_ID } from "@/lib/membership-lockout-settings";
 import {
   hasChosenLiabilityRule,
@@ -89,13 +92,17 @@ export async function saveLockoutSettings(
     update: input.data,
   };
   if (!hasChosenLiabilityRule(input.liabilityAfterSave)) {
-    return { record: await db.membershipLockoutSettings.upsert(upsert), clearedStaleRows: null };
+    return {
+      record: await db.membershipLockoutSettings.upsert(upsert),
+      clearedStaleRows: null as StaleNotRequiredClearUp | null,
+    };
   }
   const { seasonYear } = input;
   return db.$transaction(async (tx) => {
     await lockSubscriptionBillingSeason(tx, seasonYear);
     const record = await tx.membershipLockoutSettings.upsert(upsert);
-    const { clearedCount } = await clearStaleNotRequiredRows(tx, seasonYear);
-    return { record, clearedStaleRows: clearedCount as number | null };
+    const clearedStaleRows: StaleNotRequiredClearUp | null =
+      await clearStaleNotRequiredRows(tx, seasonYear);
+    return { record, clearedStaleRows };
   });
 }

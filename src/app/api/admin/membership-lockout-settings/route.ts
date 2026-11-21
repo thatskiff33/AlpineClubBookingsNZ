@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { clearedRowsAuditMetadata } from "@/lib/member-subscription-defaults";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
@@ -178,10 +179,11 @@ export async function PUT(request: NextRequest) {
   };
   // #5190: a save that leaves the club on a chosen rule also runs the stale-row
   // clear-up, in the same transaction (`saveLockoutSettings`).
+  const seasonYear = clubSeasonYear(await clubTimeZone());
   const { record, clearedStaleRows } = await saveLockoutSettings(prisma, {
     data,
     liabilityAfterSave: liabilityChoice ?? stored,
-    seasonYear: clubSeasonYear(await clubTimeZone()),
+    seasonYear,
   });
 
   // Reseed the financial-year cache so the change takes effect immediately on
@@ -203,7 +205,14 @@ export async function PUT(request: NextRequest) {
       metadata: {
         previousSettings: before,
         newSettings: data,
-        ...(clearedStaleRows === null ? {} : { clearedStaleNotRequiredRows: clearedStaleRows }),
+        ...(clearedStaleRows === null
+          ? {}
+          : {
+              clearedStaleNotRequiredRows: clearedRowsAuditMetadata(
+                clearedStaleRows,
+                seasonYear,
+              ),
+            }),
       },
       request: getAuditRequestContext(request),
     })

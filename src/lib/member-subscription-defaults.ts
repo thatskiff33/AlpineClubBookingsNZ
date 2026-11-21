@@ -279,18 +279,19 @@ export async function reconcileSeasonSubscriptionForAssignment(
 export async function clearStaleNotRequiredRows(
   tx: Prisma.TransactionClient,
   seasonYear: number,
-): Promise<{ clearedCount: number }> {
+): Promise<StaleNotRequiredClearUp> {
+  const nothingCleared: StaleNotRequiredClearUp = { clearedCount: 0, clearedMemberIds: [] };
   await lockSubscriptionBillingSeason(tx, seasonYear);
   const settings = await loadMembershipLockoutSettingsStrict(tx);
   if (!hasChosenLiabilityRule(settings)) {
-    return { clearedCount: 0 };
+    return nothingCleared;
   }
   const rows = await tx.memberSubscription.findMany({
     where: { seasonYear, ...UNTOUCHED_NOT_REQUIRED_ROW },
     select: { memberId: true },
   });
   if (rows.length === 0) {
-    return { clearedCount: 0 };
+    return nothingCleared;
   }
   const memberIds = rows.map((row) => row.memberId);
   const [policies, members, ageTierSettings] = await Promise.all([
@@ -320,15 +321,50 @@ export async function clearStaleNotRequiredRows(
     );
   });
   if (owingMemberIds.length === 0) {
-    return { clearedCount: 0 };
+    return nothingCleared;
   }
-  const result = await tx.memberSubscription.updateMany({
+  // `AndReturn` so the audit names the rows the guarded write actually moved,
+  // not the ones the read proposed: a writer outside the season key (the Xero
+  // sync, an invoice write) can move a row in between.
+  const flipped = await tx.memberSubscription.updateManyAndReturn({
     where: {
       seasonYear,
       memberId: { in: owingMemberIds },
       ...UNTOUCHED_NOT_REQUIRED_ROW,
     },
     data: { status: "NOT_INVOICED" },
+    select: { memberId: true },
   });
-  return { clearedCount: result.count };
+  return {
+    clearedCount: flipped.length,
+    clearedMemberIds: flipped.map((row) => row.memberId).sort(),
+  };
+}
+
+/** What one clear-up moved. `clearedMemberIds` is every flipped member, sorted. */
+export interface StaleNotRequiredClearUp {
+  clearedCount: number;
+  clearedMemberIds: string[];
+}
+
+/** The most member ids one clear-up audit row names; the total is always kept. */
+export const CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT = 50;
+
+/**
+ * The audit metadata for one clear-up (#5190): the total, and the flipped
+ * member ids capped at {@link CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT} so one row
+ * stays bounded however large the club. The settings `PUT` and the config
+ * import both record it, so either path can be traced to the members it moved.
+ */
+export function clearedRowsAuditMetadata(
+  clearUp: StaleNotRequiredClearUp,
+  seasonYear: number,
+) {
+  return {
+    seasonYear,
+    total: clearUp.clearedCount,
+    memberIds: clearUp.clearedMemberIds.slice(0, CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT),
+    memberIdsTruncated:
+      clearUp.clearedMemberIds.length > CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT,
+  };
 }

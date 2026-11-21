@@ -130,7 +130,9 @@ deeper reference for what each category contains and the import safety model.
   and chosen: a bundle naming `NOT_CHOSEN`, or only one of the two, carries
   nothing for them, so it never moves a chosen target back. A bundle naming
   `CURRENT_AGE` fails the dry-run. An import that changes the singleton runs the
-  stale-row clear-up in its own transaction once the import commits.
+  stale-row clear-up in its own transaction once the import commits; when it
+  moves any row it writes a `configuration.imported.liability_clear_up` audit
+  row with the total and up to 50 of the member ids.
 
   **Model-level completeness is audited too (#2200).** The field-level guard
   above proves no COLUMN inside a registered singleton is dropped; a second guard

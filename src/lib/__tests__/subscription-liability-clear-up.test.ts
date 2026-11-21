@@ -20,9 +20,14 @@ vi.mock("@/lib/membership-type-policy", () => ({
   ),
 }));
 
-import { clearStaleNotRequiredRows } from "@/lib/member-subscription-defaults";
+import {
+  CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT,
+  clearStaleNotRequiredRows,
+  clearedRowsAuditMetadata,
+} from "@/lib/member-subscription-defaults";
 
 const SEASON = 2026;
+const NOTHING_CLEARED = { clearedCount: 0, clearedMemberIds: [] };
 
 type Row = {
   memberId: string;
@@ -73,11 +78,11 @@ function makeTx(input: {
           .filter((candidate) => matchesWhere(candidate, args.where))
           .map((candidate) => ({ memberId: candidate.memberId })),
       ),
-      updateMany: vi.fn(
+      updateManyAndReturn: vi.fn(
         async (args: { where: Record<string, unknown>; data: { status: string } }) => {
           const matched = input.rows.filter((candidate) => matchesWhere(candidate, args.where));
           for (const candidate of matched) candidate.status = args.data.status;
-          return { count: matched.length };
+          return matched.map((candidate) => ({ memberId: candidate.memberId }));
         },
       ),
     },
@@ -111,9 +116,9 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
       members: [member("youth", "BASED_ON_AGE_TIER", "YOUTH")],
     });
 
-    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual({ clearedCount: 0 });
+    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual(NOTHING_CLEARED);
     expect(rows[0]!.status).toBe("NOT_REQUIRED");
-    expect(tx.memberSubscription.updateMany).not.toHaveBeenCalled();
+    expect(tx.memberSubscription.updateManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("takes the billing season key before it reads anything", async () => {
@@ -149,7 +154,10 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
     ];
     const { tx } = makeTx({ settings: CHOSEN, rows, members });
 
-    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual({ clearedCount: 2 });
+    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual({
+      clearedCount: 2,
+      clearedMemberIds: ["re-billable", "youth"],
+    });
     expect(
       Object.fromEntries(rows.map((candidate) => [candidate.memberId, candidate.status])),
     ).toEqual({
@@ -164,7 +172,7 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
       "other-season": "NOT_REQUIRED",
     });
 
-    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual({ clearedCount: 0 });
+    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual(NOTHING_CLEARED);
   });
 
   it("re-asserts the guards at write time, so a claim landing after the read keeps the row", async () => {
@@ -180,7 +188,25 @@ describe("clearStaleNotRequiredRows (#5190)", () => {
       return [{ id: "youth", ageTier: "YOUTH", dateOfBirth: null }];
     });
 
-    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual({ clearedCount: 0 });
+    await expect(clearStaleNotRequiredRows(tx as never, SEASON)).resolves.toEqual(NOTHING_CLEARED);
     expect(rows[0]!.status).toBe("NOT_REQUIRED");
+  });
+
+  it("audits the total and at most the capped number of flipped member ids", () => {
+    const ids = Array.from(
+      { length: CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT + 1 },
+      (_, index) => `m${String(index).padStart(3, "0")}`,
+    );
+    expect(
+      clearedRowsAuditMetadata({ clearedCount: ids.length, clearedMemberIds: ids }, SEASON),
+    ).toEqual({
+      seasonYear: SEASON,
+      total: ids.length,
+      memberIds: ids.slice(0, CLEARED_ROWS_AUDIT_MEMBER_ID_LIMIT),
+      memberIdsTruncated: true,
+    });
+    expect(
+      clearedRowsAuditMetadata({ clearedCount: 1, clearedMemberIds: ["m1"] }, SEASON),
+    ).toEqual({ seasonYear: SEASON, total: 1, memberIds: ["m1"], memberIdsTruncated: false });
   });
 });
