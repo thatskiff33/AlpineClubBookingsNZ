@@ -88,9 +88,13 @@ export async function breakerRefusal(): Promise<() => Error> {
   return () => new XeroTransientOutageError(60, true);
 }
 
+/** Each run's row is dated a second before the last one's, so it is always the oldest. */
+let runs = 0;
+
 /** The outbox worker running `operationId` alone: made the oldest row, so the scan takes it first (after 2010, where the tax schedule starts). */
 export async function runOutboxRow(prisma: PrismaClient, operationId: string) {
-  await prisma.$executeRaw`UPDATE "XeroSyncOperation" SET "createdAt" = ${new Date("2020-01-01T00:00:00.000Z")}, "updatedAt" = ${new Date("2020-01-01T00:00:00.000Z")} WHERE "id" = ${operationId}`;
+  const oldest = new Date(Date.UTC(2020, 0, 1) - ++runs * 1_000);
+  await prisma.$executeRaw`UPDATE "XeroSyncOperation" SET "createdAt" = ${oldest}, "updatedAt" = ${oldest} WHERE "id" = ${operationId}`;
   const { processQueuedXeroOutboxOperations } = await import("@/lib/xero-operation-outbox");
   return processQueuedXeroOutboxOperations({ limit: 1 });
 }
