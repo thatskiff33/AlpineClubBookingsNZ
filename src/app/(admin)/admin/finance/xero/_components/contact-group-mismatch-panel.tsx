@@ -133,7 +133,7 @@ export function ContactGroupMismatchPanel({
         <div className="space-y-4">
           <div className="flex flex-col gap-3 rounded-lg border p-4 md:flex-row md:items-start md:justify-between">
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-semibold">Grouping status</h3>
                 <Badge variant="outline">{formatGroupingMode(data.mode)}</Badge>
                 {!data.cacheReady ? (
