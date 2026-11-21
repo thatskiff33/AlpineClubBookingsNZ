@@ -31,7 +31,11 @@ import {
 // both (docs/TESTING.md, "Census tests and the merge hazard"). Re-derive it from
 // the scanner, never by incrementing.
 
-type Classification = "chosen" | "exempt";
+// "reencoded": the member's existing password, just proved, stored again at
+// the current bcrypt cost (#5261). Nobody chooses it, so there is nothing to
+// screen; it is no generated value either, so it is held to one writer and
+// its callers below.
+type Classification = "chosen" | "exempt" | "reencoded";
 
 type ReviewedWriter = {
   file: string;
@@ -109,6 +113,14 @@ const REVIEWED_PASSWORD_HASH_WRITERS: readonly ReviewedWriter[] = [
     count: 2,
     classification: "chosen",
     reason: "The operator chooses SEED_ADMIN_PASSWORD and SEED_LODGE_PASSWORD; the install-time seed screens each and stops on a breached one.",
+  },
+  // The proved password re-hashed at the current cost.
+  {
+    file: "src/lib/password-rehash.ts",
+    scope: "upgradePasswordHashAfterProof",
+    count: 2,
+    classification: "reencoded",
+    reason: "After a proved sign-in or step-up, the same password is stored again at the current cost; the second site is the compare-and-swap guard on the proved hash.",
   },
   // Generated or unusable hashes: nobody chooses these.
   {
@@ -413,6 +425,19 @@ describe("passwordHash writer census (#4610, INV-AUTH-006)", () => {
     expect(scanPasswordHashWriters(file, source).map((site) => site.source)).toEqual(["placeholder"]);
     const fromBody = source.replace("passwordHash: UNUSABLE_PLACEHOLDER_PASSWORD_HASH,", "passwordHash: parsedBody.passwordHash,");
     expect(scanPasswordHashWriters(file, fromBody).map((site) => site.source)).toEqual(["unknown"]);
+  });
+
+  it("re-encodes a proved password in one writer, called only after a password proof (#5261)", () => {
+    const reencoded = REVIEWED_PASSWORD_HASH_WRITERS.filter((w) => w.classification === "reencoded");
+    expect(reencoded.map((w) => key(w.file, w.scope, w.kind))).toEqual([
+      "src/lib/password-rehash.ts#upgradePasswordHashAfterProof",
+    ]);
+    const callers = passwordHashScanFiles().filter(
+      (file) =>
+        file !== "src/lib/password-rehash.ts" &&
+        /\bupgradePasswordHashAfterProof\s*\(/.test(fs.readFileSync(file, "utf8")),
+    );
+    expect(callers.sort()).toEqual(["src/lib/auth.ts", "src/lib/session-reauth.ts"]);
   });
 
   it("allows an untraced exempt value only for the local demo seed", () => {

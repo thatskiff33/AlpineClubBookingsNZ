@@ -5,9 +5,9 @@ import { requireAdmin, requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import {
+  cleanImageForStorage,
   detectImageContentType,
   extractImageDimensions,
-  stripImageMetadata,
 } from "@/lib/media-image";
 import {
   MAX_MEMBER_PHOTO_BYTES,
@@ -348,17 +348,13 @@ export async function POST(
   // JPEG missing its trailing EOI that would otherwise sail past the byte
   // sniffer with EXIF/GPS intact), reject the upload BEFORE the transaction
   // rather than store bytes we could not prove were scrubbed.
-  const stripped = stripImageMetadata(bytes, detected);
-  if (!stripped.ok) {
-    return NextResponse.json(
-      {
-        error:
-          "Unsupported or invalid image. Allowed photo types: JPEG, PNG, WebP.",
-      },
-      { status: 400 },
-    );
+  const cleaned = cleanImageForStorage(bytes, detected);
+  if (!cleaned.ok) {
+    return NextResponse.json({ error: cleaned.message }, { status: 400 });
   }
-  const storedBytes = stripped.bytes;
+  const storedBytes = cleaned.bytes;
+  // Recorded from the bytes actually stored, as `cleanImageForStorage` requires.
+  const storedDimensions = extractImageDimensions(storedBytes, detected);
 
   const now = new Date();
 
@@ -394,8 +390,8 @@ export async function POST(
         contentType: detected,
         byteSize: storedBytes.length,
         data: new Uint8Array(storedBytes),
-        width: dimensions?.width ?? null,
-        height: dimensions?.height ?? null,
+        width: storedDimensions?.width ?? null,
+        height: storedDimensions?.height ?? null,
         uploadedByMemberId: actor.actorId,
         kind: "MEMBER_PHOTO",
       },

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Prisma } from "@prisma/client";
 import { matchesWhere, type WhereRow } from "./prisma-where";
 
 // Fixtures sit relative to the frozen clock (2026-07-01T00:00Z): August is
@@ -144,6 +145,17 @@ describe("matchesWhere — scalar conditions", () => {
     expect(() =>
       matchesWhere(op({}), { requestPayload: { path: ["x"], equals: { y: 1 } } }),
     ).toThrow(/only a scalar/);
+  });
+
+  it("reads a Json path equals Prisma.AnyNull as PostgreSQL does: IS NULL at the path, two-valued under NOT (#5228)", () => {
+    const op = (requestPayload: unknown): WhereRow => ({ id: "op-1", requestPayload });
+    const namesNone = { requestPayload: { path: ["queueType"], equals: Prisma.AnyNull } };
+    expect(matchesWhere(op({ invoices: [] }), namesNone)).toBe(true);
+    expect(matchesWhere(op({ queueType: null }), namesNone)).toBe(true);
+    expect(matchesWhere(op(null), namesNone)).toBe(true);
+    expect(matchesWhere(op({ queueType: "BOOKING_INVOICE" }), namesNone)).toBe(false);
+    expect(matchesWhere(op({ queueType: "BOOKING_INVOICE" }), { NOT: namesNone })).toBe(true);
+    expect(matchesWhere(op({ invoices: [] }), { NOT: namesNone })).toBe(false);
   });
 
   it("drops a condition of undefined, as Prisma does", () => {

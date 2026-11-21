@@ -1,13 +1,14 @@
 import type { Prisma } from "@prisma/client";
 
 import { paidAnotherWayCloseReceiptRecorded } from "@/lib/late-capture-paid-another-way";
+import { NO_CARD_REFUND_BANK_CASH, type CardRefundBankCash } from "@/lib/payment-transaction-status";
 import {
-  CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE,
-  COMPLETED_CANCEL_CARD_SHORTFALL_TASK_WHERE,
   isCancelCardShortfallTask,
+  isCardRefundPaidAnotherWayTask,
   NOT_NON_CANCELLATION_HAND_BACK_WHERE,
   paidAnotherWayCloseXeroNote,
 } from "@/lib/manual-refund-task-settlement-rules";
+import { CARD_REFUND_BANK_RECORD_TASK_WHERE } from "@/lib/card-refund-bank-record";
 import { BANK_REFUND_VOID_FOLLOW_UP_TASK_WHERE, isBankRefundVoidFollowUpTask } from "@/lib/bank-refund-void-follow-up-key";
 import { BANK_REFUND_VOID_FOLLOW_UP_CONTEXT_KEY } from "@/lib/bank-refund-void-follow-up-copy";
 import { sumRefundCreditNoteCoverageOfRowsCents } from "@/lib/xero-resolved-in-xero-fences";
@@ -124,7 +125,7 @@ const COMPLETED_BANK_REFUND_VOID_FOLLOW_UP_WHERE = { ...BANK_REFUND_VOID_FOLLOW_
 
 /** The records whose bank cash this module reads: paid-another-way closes, (#4097) paid-back card refund shortfalls, (#4287) hand-backs noted on their own record and re-confirmed bank refunds. */
 const BANK_CASH_RECORD_WHERE = {
-  OR: [CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, COMPLETED_CANCEL_CARD_SHORTFALL_TASK_WHERE, COMPLETED_CANCELLATION_HAND_BACK_WHERE, COMPLETED_BANK_REFUND_VOID_FOLLOW_UP_WHERE],
+  OR: [...CARD_REFUND_BANK_RECORD_TASK_WHERE.OR, COMPLETED_CANCELLATION_HAND_BACK_WHERE, COMPLETED_BANK_REFUND_VOID_FOLLOW_UP_WHERE],
 };
 
 export interface PaidAnotherWayCash {
@@ -138,7 +139,7 @@ export interface PaidAnotherWayCash {
 
 type CashStore = Pick<
   Prisma.TransactionClient,
-  "manualRefundTask" | "paymentRecoveryOperation" | "xeroObjectLink" | "xeroSyncOperation"
+  "manualRefundTask" | "paymentRecoveryOperation" | "paymentTransaction" | "xeroObjectLink" | "xeroSyncOperation"
 >;
 
 /** One close on the payment, and how its bank cash counts (see the module comment). */
@@ -266,43 +267,47 @@ export async function readPaidAnotherWayCash(db: CashStore, paymentId: string): 
 }
 
 /**
- * #4280 (`INV-PAY-103`; owner, 22 and 26 Oct 2026): THE BANK CASH "PAID
- * ANOTHER WAY" CLOSES RECORDED, PER PAYMENT - what a card refund's reversal
- * may never take the refunded total below, beside the card refunds still
- * counted and the account credit (`expectedRefundedFloorCents`).
+ * #4280, #4488 (`INV-PAY-141`; owner, 22 and 26 Oct and 11 Nov 2026): THE BANK
+ * CASH A CARD REFUND'S BANK RECORDS HOLD, PER PAYMENT - what a card refund's
+ * reversal may never take the refunded total below, beside the card refunds
+ * still counted and the account credit (`expectedRefundedFloorCents`).
  *
- * The one reader of that cash. It reads the closes' own records
- * (`CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE`), at the `amountCents` each paid
- * back - for a part close, what was paid, never what was given up - whether
- * its note was raised, waits for a receipt or has no invoice: that only says
- * how Xero hears of it (`readPaidAnotherWayCash`), not whether the money went.
- * A close is final: nothing undoes it (#4162 leaves a card refund's record to
- * the card pipeline), and one close per refund operation (its claim).
+ * The one reader of that cash. It reads the records themselves
+ * (`CARD_REFUND_BANK_RECORD_TASK_WHERE`), each at the `amountCents` it paid
+ * back, split by kind:
+ * - a "Paid another way" close: for a part close, what was paid, never what
+ *   was given up - whether its note was raised, waits for a receipt or has no
+ *   invoice, which only says how Xero hears of it (`readPaidAnotherWayCash`);
+ * - a COMPLETED card refund shortfall, a cancel's or a capacity race's: its
+ *   completion put that amount on the payment in the same transaction. An open
+ *   or dismissed one moved no money.
+ * Each is final: #4162 leaves a card refund's bank record to the card pipeline,
+ * only a dismissed task reopens, and there is one close per refund operation
+ * (its claim) and one shortfall per part.
  *
- * NOT read here, so neither raises the floor:
- * - a card or capacity refund shortfall paid back: outside this bounded
- *   repair (owner, 26 Oct 2026), though #4162 never undoes one;
- * - an ordinary bank hand-back: #4162 can undo its refund while its task still
- *   reads completed, so its record is no proof the money stands.
- * The cost of the first, on a payment with several charges, is #4488.
+ * NOT read here, so it never raises the floor: an ordinary bank hand-back.
+ * #4162 can undo its refund while its task still reads completed, so its
+ * record is no proof the money stands.
  *
  * `scope` is one payment - read on the caller's transaction client, under the
  * Payment row its writer holds - or every payment, for the audit's one
- * snapshot. A payment with no close is absent from the map.
+ * snapshot. A payment with no record holding cash is absent from the map.
  */
-export async function readPaidAnotherWayCloseBankCashByPayment(
+export async function readCardRefundBankCashByPayment(
   db: Pick<Prisma.TransactionClient, "manualRefundTask">,
   scope: { paymentId: string } | "all",
-): Promise<Map<string, number>> {
-  const groups = await db.manualRefundTask.groupBy({
-    by: ["paymentId"],
-    where: { ...CARD_REFUND_PAID_ANOTHER_WAY_TASK_WHERE, paymentId: scope === "all" ? { not: null } : scope.paymentId },
-    _sum: { amountCents: true },
+): Promise<Map<string, CardRefundBankCash>> {
+  const records = await db.manualRefundTask.findMany({
+    where: { ...CARD_REFUND_BANK_RECORD_TASK_WHERE, paymentId: scope === "all" ? { not: null } : scope.paymentId },
+    select: { paymentId: true, kind: true, occurrenceKey: true, amountCents: true },
   });
-  const cash = new Map<string, number>();
-  for (const group of groups) {
-    const cents = Math.max(0, group._sum.amountCents ?? 0);
-    if (group.paymentId !== null && cents > 0) cash.set(group.paymentId, cents);
+  const cash = new Map<string, CardRefundBankCash>();
+  for (const record of records) {
+    const cents = Math.max(0, record.amountCents ?? 0);
+    if (record.paymentId === null || cents === 0) continue;
+    const payment = cash.get(record.paymentId) ?? { ...NO_CARD_REFUND_BANK_CASH };
+    payment[isCardRefundPaidAnotherWayTask(record) ? "paidAnotherWayCents" : "shortfallPaybackCents"] += cents;
+    cash.set(record.paymentId, payment);
   }
   return cash;
 }

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   changeLinkFindFirst: vi.fn(),
   keptResolvedFindMany: vi.fn(),
   operationFindMany: vi.fn(),
+  captureFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -19,6 +20,9 @@ vi.mock("@/lib/prisma", () => ({
       // Round 10: a change's own invoice link is asked apart from the task's.
       findFirst: (args: { where: { role?: string } }) =>
         args.where.role === "SUPPLEMENTARY_INVOICE" ? mocks.changeLinkFindFirst(args) : mocks.linkFindFirst(args),
+    },
+    paymentTransaction: {
+      findUnique: (...a: unknown[]) => mocks.captureFindUnique(...a),
     },
     xeroSyncOperation: {
       findMany: (args: { where: { queueType?: string } }) =>
@@ -33,7 +37,7 @@ import {
   findKeptLateCaptureInvoiceIdForPayment,
   findClosedLateCaptureRecords,
   findLateCapturePaymentIntents,
-  hasXeroReceiptForLateCapture,
+  lateCaptureNotableRefundCents,
   readLateCaptureXeroReceipt,
   readPaidAnotherWayLateCaptureXeroReceipt,
 } from "@/lib/late-capture-xero-receipt";
@@ -56,6 +60,7 @@ beforeEach(() => {
   mocks.keptResolvedFindMany.mockResolvedValue([]);
   mocks.operationFindMany.mockResolvedValue([]);
   mocks.taskFindMany.mockResolvedValue([{ id: "task_kept" }]);
+  mocks.captureFindUnique.mockResolvedValue({ amountCents: 8000 });
 });
 
 describe("readLateCaptureXeroReceipt", () => {
@@ -64,6 +69,7 @@ describe("readLateCaptureXeroReceipt", () => {
     mocks.linkFindFirst.mockResolvedValue({ xeroObjectId: "inv_kept" });
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
       kind: "recorded",
+      recordedCents: 8000,
       invoiceId: "inv_kept",
     });
     expect(mocks.linkFindFirst).toHaveBeenCalledWith(
@@ -81,7 +87,6 @@ describe("readLateCaptureXeroReceipt", () => {
   it("is resolved by hand once an officer recorded the kept invoice and resolved it in Xero, so no automatic note is owed", async () => {
     mocks.keptResolvedFindMany.mockResolvedValue([{ xeroObjectId: null }]);
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "resolved-by-hand" });
-    await expect(hasXeroReceiptForLateCapture("pi_late")).resolves.toBe(false);
     expect(mocks.keptResolvedFindMany).toHaveBeenCalledWith({
       where: expect.objectContaining({
         localModel: "ManualRefundTask",
@@ -101,14 +106,14 @@ describe("readLateCaptureXeroReceipt", () => {
   // record (`late-capture-xero-receipt-verdicts.test.ts`).
   it("MUTATION: round 10: a row resolved by hand after the app sent it is recorded against its invoice id when paid another way", async () => {
     mocks.keptResolvedFindMany.mockResolvedValue([{ xeroObjectId: "inv_kept" }]);
-    await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_kept" });
+    await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", recordedCents: 8000, invoiceId: "inv_kept" });
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "resolved-by-hand" });
     mocks.keptResolvedFindMany.mockResolvedValue([]);
     // PARTIAL (its payment failed) and then resolved by hand.
     mocks.operationFindMany.mockResolvedValue([
       { status: "PARTIAL", xeroObjectId: "inv_change", manuallyResolvedAt: new Date("2026-06-20T00:00:00Z") },
     ]);
-    await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_change" });
+    await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", recordedCents: 8000, invoiceId: "inv_change" });
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "resolved-by-hand" });
   });
 
@@ -120,9 +125,9 @@ describe("readLateCaptureXeroReceipt", () => {
       { status: "FAILED", xeroObjectId: null, manuallyResolvedAt: null, localModel: "BookingModification", localId: "mod_1" },
     ]);
     mocks.changeLinkFindFirst.mockResolvedValue({ xeroObjectId: "inv_linked" });
-    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: null, invoiceFailed: true });
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", recordedCents: 8000, invoiceId: null, invoiceFailed: true });
     expect(mocks.changeLinkFindFirst).not.toHaveBeenCalled();
-    await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_linked" });
+    await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", recordedCents: 8000, invoiceId: "inv_linked" });
     expect(mocks.changeLinkFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -141,6 +146,7 @@ describe("readLateCaptureXeroReceipt", () => {
     ]);
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
       kind: "recorded",
+      recordedCents: 8000,
       invoiceId: null,
     });
     mocks.operationFindMany.mockResolvedValue([
@@ -148,6 +154,7 @@ describe("readLateCaptureXeroReceipt", () => {
     ]);
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
       kind: "recorded",
+      recordedCents: 8000,
       invoiceId: "inv_change",
     });
     expect(mocks.operationFindMany).toHaveBeenCalledWith(
@@ -173,13 +180,14 @@ describe("readLateCaptureXeroReceipt", () => {
     mocks.operationFindMany.mockResolvedValue([failed]);
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
       kind: "recorded",
+      recordedCents: 8000,
       invoiceId: null,
       invoiceFailed: true,
     });
     mocks.operationFindMany.mockResolvedValue([failed, { ...failed, status: "RUNNING" }]);
-    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: null });
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", recordedCents: 8000, invoiceId: null });
     mocks.operationFindMany.mockResolvedValue([failed, { status: "SUCCEEDED", xeroObjectId: "inv_change", manuallyResolvedAt: null }]);
-    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_change" });
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", recordedCents: 8000, invoiceId: "inv_change" });
   });
 
   // #3924 round 10 (finding 2): a FAILED change invoice that attempted
@@ -190,6 +198,7 @@ describe("readLateCaptureXeroReceipt", () => {
     ]);
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
       kind: "recorded",
+      recordedCents: 8000,
       invoiceId: null,
       invoiceFailed: true,
       invoiceMayBeInXero: true,
@@ -217,7 +226,7 @@ describe("#4324: a kept change capture's own receipt (review M-F4, `INV-SSOT`)",
         ? { metadata: { invoiceId: "inv_primary" } }
         : null,
     );
-    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_primary" });
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", recordedCents: 8000, invoiceId: "inv_primary" });
   });
 
   it("classifies its rows where no link exists: decided and FAILED may be in Xero; resolved by hand is the officer's", async () => {
@@ -226,6 +235,7 @@ describe("#4324: a kept change capture's own receipt (review M-F4, `INV-SSOT`)",
     );
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
       kind: "recorded",
+      recordedCents: 8000,
       invoiceId: null,
       invoiceFailed: true,
       invoiceMayBeInXero: true,
@@ -241,6 +251,93 @@ describe("#4324: a kept change capture's own receipt (review M-F4, `INV-SSOT`)",
       args.where.queueType === "ADDITIONAL_CAPTURE_RECEIPT" ? [receiptRow("PENDING"), receiptRow("CANCELLED", { requestPayload: { plan: {} } })] : [],
     );
     await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "none" });
+  });
+});
+
+/**
+ * #4383 (`INV-PAY-110`, `INV-PAY-139`): the capture's own receipt is capped at
+ * its invoices' room, so its verdict says how much of the capture Xero holds:
+ * the gross capture less what its stored plan put on no invoice.
+ */
+describe("#4383: how much of the capture the receipt recorded", () => {
+  const plan = (capturedCents: number, legs: number[]) => ({
+    target: "PRIMARY_INVOICE",
+    invoiceId: "inv_0",
+    amountCents: legs[0],
+    capturedCents,
+    date: "2026-06-20",
+    legs: legs.map((amountCents, index) => ({ target: index === 0 ? "PRIMARY_INVOICE" : "CHANGE_INVOICE", invoiceId: `inv_${index}`, amountCents })),
+  });
+  const queued = { queueType: "ADDITIONAL_CAPTURE_RECEIPT", bookingId: "b1", paymentId: "p1", paymentTransactionId: "ptx_change", paymentIntentId: "pi_late" };
+  const receiptRows = (rows: Array<Record<string, unknown>>) =>
+    mocks.operationFindMany.mockImplementation(async (args: { where: { queueType?: string } }) =>
+      args.where.queueType === "ADDITIONAL_CAPTURE_RECEIPT"
+        ? rows.map((row) => ({ localId: "ptx_change", manuallyResolvedAt: null, responsePayload: null, ...row }))
+        : [],
+    );
+  const linked = () =>
+    mocks.linkFindFirst.mockImplementation(async (args: { where: { role?: string } }) =>
+      args.where.role === "ADDITIONAL_CAPTURE_PAYMENT" ? { metadata: { invoiceId: "inv_0" } } : null,
+    );
+
+  it("MUTATION: an 8000 capture its receipt recorded as 5000 is recorded for 5000, linked or decided and not yet linked", async () => {
+    receiptRows([{ status: "SUCCEEDED", requestPayload: { ...queued, plan: plan(8000, [5000]) } }]);
+    linked();
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_0", recordedCents: 5000 });
+    await expect(readPaidAnotherWayLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_0", recordedCents: 5000 });
+    mocks.linkFindFirst.mockResolvedValue(null);
+    receiptRows([{ status: "RUNNING", requestPayload: { ...queued, plan: plan(8000, [5000]) } }]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: null, recordedCents: 5000 });
+    receiptRows([{ status: "FAILED", requestPayload: { ...queued, plan: plan(8000, [5000]) } }]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({
+      kind: "recorded",
+      invoiceId: null,
+      recordedCents: 5000,
+      invoiceFailed: true,
+      invoiceMayBeInXero: true,
+    });
+  });
+
+  it("counts every planned leg, linked yet or not, and what another writer recorded of the capture", async () => {
+    linked();
+    receiptRows([{ status: "RUNNING", requestPayload: { ...queued, plan: plan(8000, [3000, 2000]) } }]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toMatchObject({ recordedCents: 5000 });
+    // 2000 of the 8000 another writer recorded: the receipt's plan captured 6000, and placed 4000.
+    receiptRows([{ status: "SUCCEEDED", requestPayload: { ...queued, plan: plan(6000, [4000]) } }]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toMatchObject({ recordedCents: 6000 });
+    // Uncapped: the whole capture.
+    receiptRows([{ status: "SUCCEEDED", requestPayload: { ...queued, plan: plan(8000, [8000]) } }]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toMatchObject({ recordedCents: 8000 });
+  });
+
+  it("reads the plan its completion copied to the response when the request carries none, and the gross with no plan at all", async () => {
+    linked();
+    receiptRows([{ status: "SUCCEEDED", requestPayload: queued, responsePayload: { plan: plan(8000, [5000]) } }]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toMatchObject({ recordedCents: 5000 });
+    receiptRows([{ status: "SUCCEEDED", requestPayload: queued }]);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toMatchObject({ recordedCents: 8000 });
+  });
+
+  it("is the gross capture for a kept invoice or a released change invoice, and caps nothing where the capture's row is missing", async () => {
+    mocks.operationFindMany.mockImplementation(async (args: { where: { queueType?: string } }) =>
+      args.where.queueType === "SUPPLEMENTARY_INVOICE" ? [{ status: "SUCCEEDED", xeroObjectId: "inv_change", manuallyResolvedAt: null }] : [],
+    );
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_change", recordedCents: 8000 });
+    mocks.linkFindFirst.mockResolvedValue({ xeroObjectId: "inv_kept" });
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_kept", recordedCents: 8000 });
+    mocks.captureFindUnique.mockResolvedValue(null);
+    await expect(readLateCaptureXeroReceipt("pi_late")).resolves.toEqual({ kind: "recorded", invoiceId: "inv_kept", recordedCents: null });
+  });
+});
+
+describe("lateCaptureNotableRefundCents (#4383)", () => {
+  it("is the refund capped at what the receipt recorded, and nothing without a recorded receipt", () => {
+    const capped = { kind: "recorded", invoiceId: "inv_0", recordedCents: 5000 } as const;
+    expect(lateCaptureNotableRefundCents(capped, 8000)).toBe(5000);
+    expect(lateCaptureNotableRefundCents(capped, 3000)).toBe(3000);
+    expect(lateCaptureNotableRefundCents({ ...capped, recordedCents: null }, 8000)).toBe(8000);
+    expect(lateCaptureNotableRefundCents({ kind: "resolved-by-hand" }, 8000)).toBe(0);
+    expect(lateCaptureNotableRefundCents({ kind: "none" }, 8000)).toBe(0);
   });
 });
 

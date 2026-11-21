@@ -1,0 +1,2 @@
+- **A slow runner queue no longer turns `verify` red over a passing run (#5222).**
+  `verify` now waits for a runner queue of up to 60 minutes plus the longest time limit of any job it waits for, instead of a flat 45 minutes, so `Real-PostgreSQL suites (all)` can queue and still finish. A job that fails or is cancelled still fails `verify` straight away. `CONTRIBUTING.md` lists each gate's limits, and a test keeps them matched to the workflows.

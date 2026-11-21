@@ -61,6 +61,10 @@ const h = vi.hoisted(() => {
     sessionReauthChallenge: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // ALP-653: erasure ends the member's AI app connections in the same transaction.
+    mcpGrant: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     // #4617: erasure reads the passkey count, then deletes the credentials
     // and their challenges, on this same transaction.
     webAuthnCredential: {

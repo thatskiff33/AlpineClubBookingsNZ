@@ -377,6 +377,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/other-lodges": "lodge",
   "/api/admin/other-lodges/[id]": "lodge",
   "/api/admin/other-lodges/[id]/hide": "lodge",
+  "/api/admin/mcp/grants": "support",
+  "/api/admin/mcp/grants/[id]": "support",
+  "/api/admin/mcp/settings": "support",
   "/api/admin/member-applications": "membership",
   "/api/admin/member-applications/[id]": "membership",
   "/api/admin/member-applications/[id]/approval-preview": "membership",
@@ -513,6 +516,9 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/work-parties/[id]/calendar": "lodge",
   "/api/admin/xero/account-mappings": "finance",
   "/api/admin/xero/callback": "finance",
+  // #5204: the overpayment and prepayment queue (GET, finance:view) and its
+  // Xero refresh (POST, finance:edit).
+  "/api/admin/xero/cash-credits": "finance",
   "/api/admin/xero/chart-of-accounts": "finance",
   "/api/admin/xero/connect": "finance",
   "/api/admin/xero/contact-group-mismatches": "finance",
@@ -640,6 +646,7 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/access-roles": "support",
   "/admin/age-tier-settings": "bookings",
   "/admin/ai-assistant": "support",
+  "/admin/ai-connections": "support",
   "/admin/ai-diagnostics": "overview",
   "/admin/alpine-server/setup": "finance",
   "/admin/appearance": "content",
@@ -755,6 +762,7 @@ const EXPECTED_PAGE_AREAS: Record<string, AdminPermissionArea> = {
   "/admin/xero/member-grouping": "finance",
   "/admin/xero/records/[localModel]/[localId]": "finance",
   "/admin/xero/setup": "finance",
+  "/admin/xero/unallocated-payments": "finance",
 };
 
 /**

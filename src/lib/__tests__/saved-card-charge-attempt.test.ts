@@ -295,6 +295,7 @@ const {
   ledgerStatusForPaymentIntent,
   settleSavedCardChargeAttempt,
 } = await import("../saved-card-charge-settle");
+const { SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE } = await import("../saved-card-charge-claim");
 
 const tx = ledger as unknown as Prisma.TransactionClient;
 const BOOKING = "bk_1";
@@ -1749,5 +1750,17 @@ describe("ledgerStatusForPaymentIntent / describeUnsettledPaymentIntent", () => 
     expect(describeUnsettledPaymentIntent("canceled")).toContain("cancelled");
     expect(describeUnsettledPaymentIntent("requires_payment_method")).toContain("failed at the card issuer");
     expect(describeUnsettledPaymentIntent("requires_capture")).toContain('"requires_capture"');
+  });
+
+  it("#5279: a processing payment whose release lost is not promised a return to pending — it may yet be paid", () => {
+    const text = describeUnsettledPaymentIntent("processing", { claimReleased: false });
+    expect(text).toBe(
+      "The charge is still being processed by the card network, and the booking could not be returned to pending just now. It stays confirmed until the payment finishes: if it succeeds the booking is paid; if it fails, the next scheduled pending-booking run returns it to pending automatically."
+    );
+    expect(text).not.toContain(SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE);
+    // Other statuses after a lost release keep the general deferred notice.
+    expect(describeUnsettledPaymentIntent("requires_action", { claimReleased: false })).toContain(
+      SAVED_CARD_CLAIM_RELEASE_DEFERRED_NOTICE
+    );
   });
 });
