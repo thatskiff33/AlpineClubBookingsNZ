@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 
+import { OUTSTANDING_WITHDRAWAL_WHERE, recordedShareAwaitsWithdrawal } from "@/lib/club-post-share-problem";
 import logger from "@/lib/logger";
 import { deletePostImage, readPostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
@@ -40,30 +41,6 @@ export const MAX_SHARE_ATTEMPTS = 8;
  * one constant once, which made the cap a page size that capped nothing.
  */
 export const SHARE_SWEEP_PAGE_SIZE = 8;
-
-/**
- * How long a claimed send may go unrecorded before the admin screen calls its
- * outcome unknown (#5246). Far longer than any send and its recording take
- * (the API client's own timeouts are seconds), so a share still in flight is
- * never reported as a problem.
- */
-export const SHARE_OUTCOME_GRACE_MS = 15 * 60_000;
-
-/**
- * This club's posts with a copy on the central server still to withdraw
- * (#3091 review 1, #5246): removed here, and either their recorded share is
- * not yet confirmed down, or an accepted copy that was never recorded as the
- * share is still held. Own-club only: a mirror's copy belongs to the club
- * that wrote it, and the server refuses another club's withdrawal anyway.
- */
-export const OUTSTANDING_WITHDRAWAL_WHERE = {
-  removedAt: { not: null },
-  originClubCode: null,
-  OR: [
-    { serverPostId: { not: null }, withdrawnAt: null },
-    { unrecordedServerPostId: { not: null } },
-  ],
-} satisfies Prisma.ClubPostWhereInput;
 
 export type ShareOutcome =
   | { status: "shared"; serverPostId: string }
@@ -485,7 +462,7 @@ export const OUTSTANDING_COPY_SELECT = {
   originClubCode: true,
 } satisfies Prisma.ClubPostSelect;
 
-export type OutstandingCopyPost = Prisma.ClubPostGetPayload<{ select: typeof OUTSTANDING_COPY_SELECT }>;
+type OutstandingCopyPost = Prisma.ClubPostGetPayload<{ select: typeof OUTSTANDING_COPY_SELECT }>;
 
 /**
  * Withdraw every copy of this club's post the central server may still show
@@ -527,7 +504,7 @@ export async function withdrawOutstandingCopies(post: OutstandingCopyPost): Prom
 
   // The pause answers for both copies: the second is not asked.
   const paused = firstError instanceof ServerNzVersionMismatchError;
-  if (!paused && post.serverPostId && post.removedAt && !post.withdrawnAt) {
+  if (!paused && recordedShareAwaitsWithdrawal(post)) {
     try {
       await withdrawClubPost(post.serverPostId);
       // CONFIRMED down everywhere (#3091 review 1). Without this stamp the

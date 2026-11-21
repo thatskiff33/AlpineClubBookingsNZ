@@ -126,8 +126,8 @@ export function ClubPostsAdmin({
   return (
     <div>
       <AdminViewOnlySectionBanner canEdit={canEdit} className="mb-4">
-        You can read the message board but not hide, edit or remove posts. Ask an
-        administrator with membership access.
+        You can read the message board but not hide, edit or remove posts, or
+        withdraw shared copies. Ask an administrator with membership access.
       </AdminViewOnlySectionBanner>
 
       {error ? (
@@ -142,6 +142,7 @@ export function ClubPostsAdmin({
         busyId={busyId}
         pending={pending}
         inlineError={panelError}
+        ancestorRendersViewOnlyBanner
         onWithdraw={(id) =>
           void act(
             id,

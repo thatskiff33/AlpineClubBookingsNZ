@@ -66,12 +66,39 @@ export const SHARE_PROBLEM_SELECT = {
   unrecordedServerPostId: true,
 } satisfies Record<keyof ShareProblemRow, true>;
 
+/**
+ * A removed post's recorded share that the central server has not yet
+ * confirmed taken down (#3091 review 1). A live post's own share never
+ * qualifies: it is never withdrawn from the admin screen.
+ */
+export function recordedShareAwaitsWithdrawal(
+  row: Pick<ShareProblemRow, "removedAt" | "serverPostId" | "withdrawnAt">,
+): row is typeof row & { serverPostId: string } {
+  return Boolean(row.removedAt && row.serverPostId && !row.withdrawnAt);
+}
+
+/**
+ * This club's posts with a copy on the central server for the withdrawal
+ * sweep to take down (#3091 review 1, #5246): removed here, and either
+ * {@link recordedShareAwaitsWithdrawal} or an unrecorded copy still held.
+ * Own-club only: a mirror's copy belongs to the club that wrote it, and the
+ * server refuses another club's withdrawal anyway.
+ */
+export const OUTSTANDING_WITHDRAWAL_WHERE = {
+  removedAt: { not: null },
+  originClubCode: null,
+  OR: [
+    { serverPostId: { not: null }, withdrawnAt: null },
+    { unrecordedServerPostId: { not: null } },
+  ],
+} satisfies Prisma.ClubPostWhereInput;
+
 export function classifyShareProblem(row: ShareProblemRow, now: Date): ShareProblem | null {
   if (row.originClubCode !== null) return null;
   if (row.unrecordedServerPostId) {
     return { kind: "copy-not-recorded", shareError: row.shareError, serverPostId: row.unrecordedServerPostId };
   }
-  if (row.removedAt && row.serverPostId && !row.withdrawnAt) {
+  if (recordedShareAwaitsWithdrawal(row)) {
     return { kind: "withdrawal-pending", shareError: row.shareError, serverPostId: row.serverPostId };
   }
   if (row.sharedAt || row.serverPostId) return null;
@@ -96,8 +123,9 @@ export function strayCopyWhere(now: Date): Prisma.ClubPostWhereInput {
   return {
     originClubCode: null,
     OR: [
+      OUTSTANDING_WITHDRAWAL_WHERE,
+      // A live post's stray copy too: the admin decides when it comes down.
       { unrecordedServerPostId: { not: null } },
-      { removedAt: { not: null }, serverPostId: { not: null }, withdrawnAt: null },
       {
         shareSentAt: { lt: new Date(now.getTime() - SHARE_OUTCOME_GRACE_MS) },
         sharedAt: null,

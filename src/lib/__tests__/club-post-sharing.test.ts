@@ -98,7 +98,8 @@ vi.mock("@/lib/post-image-storage", () => ({
   deletePostImage: mocks.deletePostImage,
 }));
 
-import { OUTSTANDING_WITHDRAWAL_WHERE, retryPendingShares, shareOnePost } from "@/lib/club-post-sharing";
+import { OUTSTANDING_WITHDRAWAL_WHERE } from "@/lib/club-post-share-problem";
+import { retryPendingShares, shareOnePost } from "@/lib/club-post-sharing";
 
 const REQUESTED = new Date("2026-07-01T00:00:00.000Z");
 

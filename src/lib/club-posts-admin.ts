@@ -9,6 +9,7 @@ import {
   STRAY_COPY_KINDS,
   type ShareProblem,
   classifyShareProblem,
+  recordedShareAwaitsWithdrawal,
   strayCopyWhere,
 } from "@/lib/club-post-share-problem";
 import logger from "@/lib/logger";
@@ -365,7 +366,7 @@ export async function withdrawSharedCopy(postId: string): Promise<{ serverPostId
   if (!post) throw new ClubPostNotFoundError();
   const serverPostIds = [
     ...(post.unrecordedServerPostId ? [post.unrecordedServerPostId] : []),
-    ...(post.serverPostId && post.removedAt && !post.withdrawnAt ? [post.serverPostId] : []),
+    ...(recordedShareAwaitsWithdrawal(post) ? [post.serverPostId] : []),
   ];
   if (post.originClubCode !== null || serverPostIds.length === 0) throw new ClubPostNoShareProblemError();
   try {

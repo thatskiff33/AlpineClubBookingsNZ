@@ -48,6 +48,7 @@ export function ClubPostShareProblems({
   inlineError,
   onWithdraw,
   onDismiss,
+  ancestorRendersViewOnlyBanner = false,
 }: {
   posts: AdminShareProblemPost[];
   canEdit: boolean | undefined;
@@ -57,6 +58,11 @@ export function ClubPostShareProblems({
   inlineError: { postId: string; message: string } | null;
   onWithdraw: (postId: string) => void;
   onDismiss: (postId: string) => void;
+  /**
+   * True only where the parent renders the section's view-only banner above
+   * this panel, so the buttons need not repeat its reason (#2168).
+   */
+  ancestorRendersViewOnlyBanner?: boolean;
 }) {
   const club = useClubTime();
   if (posts.length === 0) return null;
@@ -100,7 +106,7 @@ export function ClubPostShareProblems({
                   <CopyField label="Central server id" value={serverPostId} />
                   <ViewOnlyActionButton
                     canEdit={canEdit}
-                    describeReason={false}
+                    describeReason={!ancestorRendersViewOnlyBanner}
                     size="sm"
                     disabled={busy}
                     onClick={() => onWithdraw(post.id)}
@@ -114,7 +120,7 @@ export function ClubPostShareProblems({
                   <CopyField label="Post reference" value={post.id} />
                   <ViewOnlyActionButton
                     canEdit={canEdit}
-                    describeReason={false}
+                    describeReason={!ancestorRendersViewOnlyBanner}
                     variant="outline"
                     size="sm"
                     disabled={busy}
