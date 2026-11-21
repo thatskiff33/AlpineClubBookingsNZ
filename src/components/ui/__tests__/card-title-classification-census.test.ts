@@ -43,6 +43,9 @@ import {
  */
 const SWEPT_ROOTS = ["src/app/(website)/"];
 
+/** Every root where an unclassified `CardTitle` is never allowed. */
+const FORBIDDEN_ROOTS = [...MEMBER_FACING_ROOTS, ...SWEPT_ROOTS];
+
 /**
  * Shared member screens that live outside `MEMBER_FACING_ROOTS`, the roots
  * where an unclassified `CardTitle` is never allowed (#4951 §2): the cards
@@ -92,7 +95,7 @@ const UNCLASSIFIED_BASELINE = 232;
 
 function isMemberFacing(file: string) {
   return (
-    [...MEMBER_FACING_ROOTS, ...SWEPT_ROOTS].some((root) => file.startsWith(root)) ||
+    FORBIDDEN_ROOTS.some((root) => file.startsWith(root)) ||
     MEMBER_FACING_SHARED_FILES.includes(file)
   );
 }
@@ -142,7 +145,7 @@ describe("every CardTitle declares a heading level or \"none\" (#4951)", () => {
   it("scans a tree that actually contains what it claims to", () => {
     // A census that silently finds nothing passes for the wrong reason.
     expect(SOURCE_FILES.length).toBeGreaterThan(100);
-    for (const root of [...MEMBER_FACING_ROOTS, ...SWEPT_ROOTS]) {
+    for (const root of FORBIDDEN_ROOTS) {
       expect(SOURCE_FILES.some((file) => file.startsWith(root))).toBe(true);
     }
     for (const file of MEMBER_FACING_SHARED_FILES) {
