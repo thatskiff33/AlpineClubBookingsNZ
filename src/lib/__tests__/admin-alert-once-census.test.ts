@@ -66,11 +66,23 @@ function readCensus(): Map<string, string[]> {
   return groups;
 }
 
+let productionSources: Map<string, string> | null = null;
+
+/** Every production file under `src/` but the helpers, comments stripped, read once per run. */
+function readProductionSources(): Map<string, string> {
+  productionSources ??= new Map(
+    walk(path.join(ROOT, "src"))
+      .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
+      .filter((file) => !HELPERS.has(file))
+      .map((file) => [file, stripComments(readFileSync(path.join(ROOT, file), "utf8"))]),
+  );
+  return productionSources;
+}
+
 function callersNaming(name: RegExp): string[] {
-  return walk(path.join(ROOT, "src"))
-    .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
-    .filter((file) => !HELPERS.has(file))
-    .filter((file) => name.test(stripComments(readFileSync(path.join(ROOT, file), "utf8"))))
+  return [...readProductionSources()]
+    .filter(([, source]) => name.test(source))
+    .map(([file]) => file)
     .sort();
 }
 
@@ -90,7 +102,8 @@ describe("#4696, #5255: the once-ever helpers' caller census matches the code", 
   });
 
   it("finds no file calling both helpers, so each caller's retry is one answer", () => {
-    const both = callersNaming(NAMES[RETRIED]).filter((file) => callersNaming(NAMES[REPLAYED]).includes(file));
+    const replayed = new Set(callersNaming(NAMES[REPLAYED]));
+    const both = callersNaming(NAMES[RETRIED]).filter((file) => replayed.has(file));
     expect(both).toEqual([]);
   });
 });
