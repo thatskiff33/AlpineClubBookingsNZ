@@ -9,6 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { anchorCaptureHasReceipt } from "@/lib/additional-capture-receipt-link";
 import { asRecord } from "@/lib/xero-json";
 import { OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES } from "@/lib/xero-operation-outbox";
+import { readQueuedOutboxRequestFor, XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import {
   SUPPLEMENTARY_INVOICE_CREATE_WHERE,
   supplementaryInvoicesNamingIntentWhere,
@@ -103,7 +104,11 @@ export async function reviveRetiredSupplementaryInvoice(
     where: { ...supplementaryInvoicesNamingIntentWhere(paymentIntentId), id: { notIn: retiredIds } },
     select: { requestPayload: true },
   });
-  let refusal: IssueRefusal | null = captureRefusalFor(transaction, operation.requestPayload, billedByOthers(others));
+  // #5228 (`INV-INT-025`): revived only with a request the outbox can claim
+  // under the row's column, which the revive's own write matches below.
+  let refusal: IssueRefusal | null = readQueuedOutboxRequestFor(XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE, operation.requestPayload)
+    ? captureRefusalFor(transaction, operation.requestPayload, billedByOthers(others))
+    : "unreadable-invoice";
   if (!refusal) {
     const existingLink = await tx.xeroObjectLink.findFirst({
       where: {
@@ -168,6 +173,7 @@ export async function reviveRetiredSupplementaryInvoice(
     }));
   const revived = await tx.xeroSyncOperation.updateMany({
     where: {
+      ...SUPPLEMENTARY_INVOICE_CREATE_WHERE,
       id: operation.id,
       status: "CANCELLED",
       lastErrorCode: STALE_WAITING_PAYMENT_ERROR_CODE,

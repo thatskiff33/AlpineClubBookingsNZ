@@ -4351,6 +4351,15 @@ two callers on one row (the hand-off above) each record their own outcome of
   reset row's `startedAt`, so a stalled first run's late failure can still
   replace that retry's own failure (an error refreshed, the row FAILED either way)
 worker claims operation -> provider call -> success or retryable failure
+  the claim is built from the row's immutable queueType column, and the stored
+  request is read only as a queued request for it (#5228, INV-INT-041); a
+  PENDING row whose request names no queue type is left out of the scan
+  (never fills a batch), counted unclaimableRequest, the cron run warns
+pre-HTTP refusal (outage cooldown, daily limit, environment gate) -> the
+  claim's RUNNING, or the handler's self-failed FAILED, row -> PENDING, its
+  request the stored one if still a queued request, else the queued request
+  the dispatch claimed, in one compare-and-set (#2423, #5228); none to leave,
+  or the row changed -> it fails as any error does
 success -> SUCCEEDED clears lastErrorCode and lastErrorMessage, so an earlier
   wait's or failure's code is not shown on it (#4049); PARTIAL keeps them
 worker finds the operation must wait (busy) -> RUNNING -> PENDING: returns
@@ -4554,14 +4563,18 @@ mark non-replayable on FAILED/PARTIAL only, status-guarded: a retry that
 queued retry (REQUEUE) of an operation marked not replayable -> CANCELLED,
   skipped "not-replayable"; nothing ran
 stale RUNNING (> 15 min) -> FAILED by an officer's Mark failed (one row) or
-  Reset stale running (all), code ORPHANED_STALE_RUNNING; then retryable
+  Reset stale running (all), code ORPHANED_STALE_RUNNING; then retryable;
+  never PENDING, so an execution request a dead run saved is never left there
+  (#5228)
   a PARTIAL repair's claim (code PARTIAL_REPAIR_RUNNING) -> PARTIAL instead,
   payload kept, code ORPHANED_STALE_RUNNING; Retry repairs it again (#4256)
 retry of an outbox-run row (group invoice and its VOIDs, kept late capture,
   membership subscription invoice, a change capture's receipt) -> the SAME row back to PENDING, same
   correlation key, status-guarded; the outbox claim runs it. Refused (409, no
   write) when a sibling for the same document was resolved in Xero after the
-  row was queued, which the outbox would cancel unsent (#3994). A subscription
+  row was queued, which the outbox would cancel unsent (#3994), and (#5228)
+  when the request it would leave is not a queued request for the row's
+  column: the row stays FAILED or PARTIAL for an officer. A subscription
   invoice is also refused when its charge already has a Xero invoice or needs
   none (#3971)
   the organiser adjustment, the applied-credit allocation and deallocation and
@@ -4577,6 +4590,11 @@ retry of an outbox-run row (group invoice and its VOIDs, kept late capture,
   for the queued run, and a PARTIAL's Xero object is audited per delivery and
   alerted once, not recorded; a queued group invoice whose settlement already
   points at an invoice closes SUCCEEDED on it (#4710), never left RUNNING
+PENDING, never claimed, unresolved, request naming no queue type (left by a
+  give-back before #5228) -> FAILED, code QUEUED_REQUEST_RELEASED, by the
+  owner's `pnpm run xero:stuck-queued-report --release`, only while still as
+  listed; request, response, Xero ids and keys kept; then Retry, which sizes a
+  refund note on today's cover
 primary booking invoice create saves its link -> worth gap check (#3980,
   INV-PAY-136), and again on its "invoice already exists" replay
   a second save of the same invoice stores nothing -> re-check from the first's
@@ -4756,6 +4774,7 @@ credit-sync pass already ran this interval (skipped: true)                     -
 credit-note mirror with nothing to read (skipped: true)                        -> SKIPPED
 batch worked, some rows passed over (skipped: <count>)                        -> SUCCESS
 outbox rows refused before any call (cooldownDeferred > 0)                    -> SUCCESS + warning
+outbox rows holding no request it can send (unclaimableRequest > 0, #5228)    -> SUCCESS + warning
 outbox or replay rows failed (failed > 0)                                     -> SUCCESS + warning
 heal or void follow-up with a failed note                                      -> FAILURE
 ```
