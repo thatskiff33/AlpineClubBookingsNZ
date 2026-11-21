@@ -50,7 +50,7 @@ describe("Xero cash-credit queue route (#5204)", () => {
   it("returns 429 without reading Xero or auditing when the officer's limit is reached", async () => {
     h.rate.mockResolvedValue({ success: false });
     expect((await POST()).status).toBe(429);
-    expect(h.rate).toHaveBeenCalledWith(expect.objectContaining({ id: "xero-cash-credit-refresh", limit: 3 }), "officer");
+    expect(h.rate).toHaveBeenCalledWith(expect.objectContaining({ id: "xero-cash-credits-refresh-post", limit: 3 }), "officer");
     expect(h.refresh).not.toHaveBeenCalled();
     expect(h.audit).not.toHaveBeenCalled();
   });

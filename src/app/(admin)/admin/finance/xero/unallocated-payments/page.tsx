@@ -16,7 +16,8 @@ import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code";
 import { adminHref } from "@/lib/admin-hubs";
 import { apiErrorMessageFromBody, readApiObjectOrEmpty } from "@/lib/api-error-message";
-import { formatClubDate, requireCalendarDate, requireInstant } from "@/lib/club-time";
+import { formatStayDateOrNull, requireInstant } from "@/lib/club-time";
+import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { formatCents } from "@/lib/utils";
 import { buildXeroContactUrl } from "@/lib/xero-links";
 import type { XeroCashCreditQueue, XeroCashCreditQueueRow } from "@/lib/xero-cash-credits";
@@ -68,13 +69,14 @@ export default function XeroUnallocatedPaymentsPage() {
       const res = await fetch("/api/admin/xero/cash-credits", { method: "POST" });
       const body = await readApiObjectOrEmpty(res);
       if (!res.ok) {
-        failAction(apiErrorMessageFromBody(body, "Could not refresh from Xero. Nothing was changed."));
+        failAction(apiErrorMessageFromBody(body, "Could not refresh from Xero."));
         return;
       }
       setQueue(body.queue as Queue);
       setRefreshStatus("Refreshed from Xero.");
     } catch {
-      failAction("Could not refresh from Xero. Nothing was changed.");
+      // The server may have saved the refresh before the reply was lost (#2668).
+      failAction(unverifiedWriteMessage("the refresh from Xero was saved", "Reload the page to see the list as it is now."));
     } finally {
       setRefreshing(false);
     }
@@ -134,7 +136,7 @@ export default function XeroUnallocatedPaymentsPage() {
                   {queue.rows.map((row) => (
                     <TableRow key={row.id}>
                       <TableCell>{KIND_LABEL[row.kind]}</TableCell>
-                      <TableCell className="whitespace-nowrap">{row.documentDate ? formatClubDate(requireCalendarDate(row.documentDate), format) : "No date"}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatStayDateOrNull(row.documentDate, format) ?? "No date"}</TableCell>
                       <TableCell className="whitespace-nowrap text-right">
                         <span className="font-medium">{formatCents(row.remainingCents, format)}</span>
                         {row.currencyCode !== format.currencyCode ? (

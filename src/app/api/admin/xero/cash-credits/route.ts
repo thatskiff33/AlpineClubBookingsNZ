@@ -12,7 +12,7 @@ import {
 // #5204: the finance queue of unallocated Xero overpayments and prepayments.
 // Reading it is finance:view and touches no provider; Refresh reads Xero and is
 // finance:edit, like the other officer-run Xero reads.
-const limiter = { id: "xero-cash-credit-refresh", limit: 3, windowSeconds: 60 };
+const limiter = { id: "xero-cash-credits-refresh-post", limit: 3, windowSeconds: 60 };
 
 export async function GET() {
   const guard = await requireAdmin({ permission: { area: "finance", level: "view" } });

@@ -55,6 +55,7 @@ let dietary: typeof import("@/lib/member-dietary");
 const night = (day: number) => new Date(Date.UTC(2026, 7, day));
 
 async function teardown() {
+  await prisma.xeroCashCredit.deleteMany({ where: { xeroDocumentId: { startsWith: P } } });
   await prisma.auditLog.deleteMany({ where: { action: { startsWith: P } } });
   await prisma.memberInduction.deleteMany({ where: { memberId: { startsWith: P } } });
   await prisma.inductionChecklistTemplate.deleteMany({ where: { id: P } });
@@ -87,7 +88,7 @@ async function teardown() {
     await prisma.member.createMany({
       data: ([
         { id: SUBJECT, email: SUBJECT_EMAIL, firstName: "Subjecta", lastName: "Own", canLogin: true,
-          dietaryRequirements: "Subject's own vegetarian note" },
+          xeroContactId: `${P}-contact-subject`, dietaryRequirements: "Subject's own vegetarian note" },
         { id: BOOKER, email: BOOKER_EMAIL, firstName: BOOKER_NAME, lastName: "Host", canLogin: true,
           dateOfBirth: new Date(`${BOOKER_DATE_OF_BIRTH}T00:00:00.000Z`), dietaryRequirements: BOOKER_DIETARY },
         { id: OFFICER, email: `${P}-officer@example.invalid`, firstName: "Privacy", lastName: "Officer",
@@ -123,6 +124,15 @@ async function teardown() {
       data: [
         { memberId: SUBJECT, amountCents: 12000, type: "ADMIN_ADJUSTMENT", description: "Weather cancellation" },
         { memberId: SUBJECT, amountCents: -4500, type: "BOOKING_APPLIED", description: "Used on a booking" },
+      ],
+    });
+    // #5204: one open Xero overpayment on the subject's contact, one on someone else's.
+    await prisma.xeroCashCredit.createMany({
+      data: [
+        { kind: "OVERPAYMENT", xeroDocumentId: `${P}-op-subject`, xeroContactId: `${P}-contact-subject`, currencyCode: "NZD",
+          documentDate: night(5), totalCents: 7_500, remainingCents: 5_000, syncedAt: night(6) },
+        { kind: "PREPAYMENT", xeroDocumentId: `${P}-pp-other`, xeroContactId: `${P}-contact-other`, currencyCode: "NZD",
+          documentDate: night(5), totalCents: 9_900, remainingCents: 9_900, syncedAt: night(6) },
       ],
     });
     await prisma.familyGroup.create({ data: { id: FAMILY, name: "Own family" } });
@@ -264,6 +274,17 @@ async function teardown() {
     expect(file.additionalRecords?.MemberInductionAssignedSigner).toEqual([
       { emailSentAt: null, createdAt: expect.any(Date) },
     ]);
+  });
+
+  it("includes the open Xero overpayments on the subject's own contact only, without Xero's ids", async () => {
+    const { file, text } = await ownFile();
+    expect(file.additionalRecords?.XeroCashCredit).toEqual([
+      { kind: "OVERPAYMENT", currencyCode: "NZD", documentDate: night(5), totalCents: 7_500, remainingCents: 5_000, syncedAt: night(6) },
+    ]);
+    expect(text).not.toContain(`${P}-op-subject`);
+    expect(text).not.toContain(`${P}-pp-other`);
+    const booker = await officerFile({ memberId: BOOKER });
+    expect(booker.file.additionalRecords?.XeroCashCredit).toEqual([]);
   });
 
   it("includes the subject's sign-offs on other people's inductions", async () => {
