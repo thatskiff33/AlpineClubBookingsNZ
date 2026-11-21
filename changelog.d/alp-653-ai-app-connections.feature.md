@@ -12,8 +12,15 @@
   with) and which AI apps are approved, at **Admin → Help & system → AI app
   connections**, where they can also disconnect any member's app. Whatever a
   member asks about is sent to their AI app's provider, so cover this in the
-  club's privacy notice before turning it on. The AI app connections guide
-  (`docs/guides/mcp-server.md`) explains the settings and the risks.
+  club's privacy notice before turning it on. The recipient register gains an
+  `ai-apps` row, and an unedited starter privacy policy gains an **AI apps you
+  connect** entry in section 5 (#5305). The AI app connections guide
+  (`docs/guides/mcp-server.md`) explains the settings, what each action sends
+  and the risks.
+
+  Removing an app from the approved list stops its existing connections on
+  their next use. An officer's connection acts as a member in this release: it
+  cannot cancel or preview anyone else's booking.
 
   Connection events and change actions use a new `security` audit writer,
   visible to officers with support view permission. No existing audit rows
