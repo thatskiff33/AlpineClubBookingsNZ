@@ -19,19 +19,11 @@ import { apiErrorMessageFromBody, readApiObjectOrEmpty } from "@/lib/api-error-m
 import { formatClubDate, requireCalendarDate, requireInstant } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { buildXeroContactUrl } from "@/lib/xero-links";
+import type { XeroCashCreditQueue, XeroCashCreditQueueRow } from "@/lib/xero-cash-credits";
 
-/** One row as `GET /api/admin/xero/cash-credits` sends it (`XeroCashCreditQueueRow`). */
-type QueueRow = {
-  id: string;
-  kind: "OVERPAYMENT" | "PREPAYMENT";
-  xeroDocumentId: string;
-  xeroContactId: string;
-  documentDate: string | null;
-  totalCents: number;
-  remainingCents: number;
-  member: { id: string; name: string } | null;
-};
-type Queue = { rows: QueueRow[]; refreshedAt: string | null };
+/** What `GET /api/admin/xero/cash-credits` sends: the server's own shapes, with the instant as JSON text. */
+type QueueRow = XeroCashCreditQueueRow;
+type Queue = Omit<XeroCashCreditQueue, "refreshedAt"> & { refreshedAt: string | null };
 
 const KIND_LABEL: Record<QueueRow["kind"], string> = { OVERPAYMENT: "Overpayment", PREPAYMENT: "Prepayment" };
 
@@ -145,6 +137,10 @@ export default function XeroUnallocatedPaymentsPage() {
                       <TableCell className="whitespace-nowrap">{row.documentDate ? formatClubDate(requireCalendarDate(row.documentDate), format) : "No date"}</TableCell>
                       <TableCell className="whitespace-nowrap text-right">
                         <span className="font-medium">{formatCents(row.remainingCents, format)}</span>
+                        {row.currencyCode !== format.currencyCode ? (
+                          // Xero holds the cents in the document's own currency.
+                          <span className="block text-xs text-warning">in {row.currencyCode}</span>
+                        ) : null}
                         {row.remainingCents !== row.totalCents ? (
                           <span className="block text-xs text-muted-foreground">of {formatCents(row.totalCents, format)}</span>
                         ) : null}

@@ -680,7 +680,7 @@ export async function register() {
           );
           Sentry.captureCheckIn({ checkInId, monitorSlug: XERO_CRON_JOB_NAMES["credit-sync"], status: "ok" });
         } catch (err) {
-          reportCronError({ tag: XERO_CRON_JOB_NAMES["credit-sync"], err, message: "Error reconciling Xero credit sync" });
+          reportCronError({ tag: XERO_CRON_JOB_NAMES["credit-sync"], err, message: "Error in the Xero credit-sync check or cash-credit refresh" });
           Sentry.captureCheckIn({ checkInId, monitorSlug: XERO_CRON_JOB_NAMES["credit-sync"], status: "error" });
         } finally {
           isXeroCreditSyncCronRunning = false;

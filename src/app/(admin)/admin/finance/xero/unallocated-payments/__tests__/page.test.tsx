@@ -20,8 +20,8 @@ import XeroUnallocatedPaymentsPage from "@/app/(admin)/admin/finance/xero/unallo
 const QUEUE = {
   refreshedAt: "2026-06-30T14:00:00.000Z",
   rows: [
-    { id: "a", kind: "OVERPAYMENT", xeroDocumentId: "op-1", xeroContactId: "contact-1", documentDate: "2026-06-20", totalCents: 20_000, remainingCents: 12_345, member: { id: "member-1", name: "Cash Credit" } },
-    { id: "b", kind: "PREPAYMENT", xeroDocumentId: "pp-1", xeroContactId: "contact-2", documentDate: null, totalCents: 5_000, remainingCents: 5_000, member: null },
+    { id: "a", kind: "OVERPAYMENT", xeroDocumentId: "op-1", xeroContactId: "contact-1", currencyCode: "NZD", documentDate: "2026-06-20", totalCents: 20_000, remainingCents: 12_345, member: { id: "member-1", name: "Cash Credit" } },
+    { id: "b", kind: "PREPAYMENT", xeroDocumentId: "pp-1", xeroContactId: "contact-2", currencyCode: "AUD", documentDate: null, totalCents: 5_000, remainingCents: 5_000, member: null },
   ],
 };
 
@@ -52,6 +52,8 @@ describe("XeroUnallocatedPaymentsPage", () => {
     expect(within(second!).getByText("Prepayment")).toBeInTheDocument();
     expect(within(second!).getByText("No member linked")).toBeInTheDocument();
     expect(within(second!).getByText("No date")).toBeInTheDocument();
+    expect(within(first!).queryByText(/^in /)).not.toBeInTheDocument();
+    expect(within(second!).getByText("in AUD")).toBeInTheDocument();
     expect(within(second!).queryByText(/^of /)).not.toBeInTheDocument();
     expect(within(second!).getByRole("link", { name: "Open contact in Xero" })).toHaveAttribute("href", expect.stringContaining("contact-2"));
   });

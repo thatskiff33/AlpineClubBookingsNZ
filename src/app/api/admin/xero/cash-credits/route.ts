@@ -25,17 +25,9 @@ export async function POST() {
   if (!guard.ok) return guard.response;
   const limit = await checkRateLimit(limiter, guard.session.user.id);
   if (!limit.success) return rateLimitedResponse(limit);
+  let result: Awaited<ReturnType<typeof refreshXeroCashCredits>>;
   try {
-    const result = await refreshXeroCashCredits();
-    await createAuditLog({
-      action: "XERO_CASH_CREDITS_REFRESH", category: "xero", memberId: guard.session.user.id,
-      entityType: "Xero", entityId: "cash-credits",
-      summary: result.current
-        ? `Refreshed ${result.open} open Xero overpayment(s) and prepayment(s).`
-        : "A refresh that started later had already been saved; nothing was changed.",
-      metadata: { ...result },
-    });
-    return NextResponse.json({ result, queue: await listXeroCashCreditQueue() });
+    result = await refreshXeroCashCredits();
   } catch (error) {
     const info = getXeroApiErrorInfo(error, "Xero could not be read. Nothing was changed; it is safe to try again.");
     const message = error instanceof XeroCashCreditReadError ? error.message : info.clientMessage;
@@ -45,4 +37,14 @@ export async function POST() {
     });
     return NextResponse.json({ error: message }, { status: error instanceof XeroCashCreditReadError ? 502 : info.handled ? info.status : 500 });
   }
+  // Saved from here on: a later fault is never reported as "nothing was changed".
+  await createAuditLog({
+    action: "XERO_CASH_CREDITS_REFRESH", category: "xero", memberId: guard.session.user.id,
+    entityType: "Xero", entityId: "cash-credits",
+    summary: result.current
+      ? `Refreshed ${result.open} open Xero overpayment(s) and prepayment(s).`
+      : "A refresh that started later had already been saved; nothing was changed.",
+    metadata: { ...result },
+  });
+  return NextResponse.json({ result, queue: await listXeroCashCreditQueue() });
 }

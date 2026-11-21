@@ -30,6 +30,7 @@ let resetRateLimits: () => void;
   let contact: string;
   let otherContact: string;
   let failPage: { kind: string; page: number } | null;
+  let beforePage: { kind: string; page: number; run: () => void } | null;
 
   function install() {
     const session = xeroTransport(fake);
@@ -42,6 +43,7 @@ let resetRateLimits: () => void;
           const kind = name === "getOverpayments" ? "OVERPAYMENT" : "PREPAYMENT";
           // A 400 is not retried, so the injected failure is the page's answer.
           if (failPage?.kind === kind && failPage.page === args[4]) session.failNext({ statusCode: 400, body: { Message: "page failed" } });
+          if (beforePage?.kind === kind && beforePage.page === args[4]) beforePage.run();
           return real(...args);
         };
       },
@@ -53,7 +55,7 @@ let resetRateLimits: () => void;
   const rows = () => db.xeroCashCredit.findMany({
     where: { xeroDocumentId: { startsWith: PREFIX } },
     orderBy: { xeroDocumentId: "asc" },
-    select: { kind: true, xeroDocumentId: true, xeroContactId: true, documentDate: true, totalCents: true, remainingCents: true, syncedAt: true },
+    select: { kind: true, xeroDocumentId: true, xeroContactId: true, currencyCode: true, documentDate: true, totalCents: true, remainingCents: true, syncedAt: true },
   });
   async function clean() {
     await db.xeroCashCredit.deleteMany({ where: { xeroDocumentId: { startsWith: PREFIX } } });
@@ -75,6 +77,7 @@ let resetRateLimits: () => void;
     contact = fake.createContact("contact-a", "Member A").contactID;
     otherContact = fake.createContact("contact-b", "Organisation B").contactID;
     failPage = null;
+    beforePage = null;
     install();
     await db.member.create({ data: {
       id: MEMBER, email: "race-5204@example.invalid", passwordHash: "test-only", firstName: "Cash", lastName: "Credit",
@@ -97,8 +100,8 @@ let resetRateLimits: () => void;
 
     expect(result).toEqual({ open: 2, written: 2, zeroed: 0, current: true });
     expect(await rows()).toEqual([
-      { kind: "OVERPAYMENT", xeroDocumentId: over.cashCreditID, xeroContactId: contact, documentDate: new Date("2026-06-20T00:00:00.000Z"), totalCents: 12_345, remainingCents: 12_345, syncedAt: new Date("2026-07-01T00:00:00.000Z") },
-      { kind: "PREPAYMENT", xeroDocumentId: pre.cashCreditID, xeroContactId: otherContact, documentDate: new Date("2026-06-25T00:00:00.000Z"), totalCents: 50_000, remainingCents: 50_000, syncedAt: new Date("2026-07-01T00:00:00.000Z") },
+      { kind: "OVERPAYMENT", xeroDocumentId: over.cashCreditID, xeroContactId: contact, currencyCode: "NZD", documentDate: new Date("2026-06-20T00:00:00.000Z"), totalCents: 12_345, remainingCents: 12_345, syncedAt: new Date("2026-07-01T00:00:00.000Z") },
+      { kind: "PREPAYMENT", xeroDocumentId: pre.cashCreditID, xeroContactId: otherContact, currencyCode: "NZD", documentDate: new Date("2026-06-25T00:00:00.000Z"), totalCents: 50_000, remainingCents: 50_000, syncedAt: new Date("2026-07-01T00:00:00.000Z") },
     ]);
     const queue = await cash.listXeroCashCreditQueue(db);
     expect(queue.refreshedAt).toEqual(new Date("2026-07-01T00:00:00.000Z"));
@@ -136,6 +139,23 @@ let resetRateLimits: () => void;
     const result = await cash.refreshXeroCashCredits({ now: at("2026-07-01T02:00:00.000Z") });
     expect(result).toMatchObject({ open: cash.XERO_CASH_CREDIT_PAGE_SIZE + 1, zeroed: 1, current: true });
     expect((await cash.listXeroCashCreditQueue(db)).rows).toHaveLength(cash.XERO_CASH_CREDIT_PAGE_SIZE + 1);
+  });
+
+  it("confirms by id a stored open document a multi-page list skipped, rather than zeroing it", async () => {
+    const bulk = Array.from({ length: cash.XERO_CASH_CREDIT_PAGE_SIZE + 1 }, (_, i) =>
+      fake.createCashCredit(`bulk-${i}`, "OVERPAYMENT", otherContact, 100 + i, "2026-06-02"));
+    await cash.refreshXeroCashCredits({ now: at("2026-07-01T00:00:00.000Z") });
+    // Using up a page-1 document between the two page reads shifts the 101st
+    // document onto page 1, so the list never returns it.
+    beforePage = { kind: "OVERPAYMENT", page: 2, run: () => fake.voidCashCredit(bulk[0]!.cashCreditID) };
+
+    const result = await cash.refreshXeroCashCredits({ now: at("2026-07-01T01:00:00.000Z") });
+
+    // The voided document was still open when page 1 was read; the next refresh zeroes it.
+    expect(result).toMatchObject({ open: cash.XERO_CASH_CREDIT_PAGE_SIZE + 1, zeroed: 0, current: true });
+    expect((await cash.listXeroCashCreditQueue(db)).rows.map((row) => row.xeroDocumentId)).toContain(bulk[cash.XERO_CASH_CREDIT_PAGE_SIZE]!.cashCreditID);
+    beforePage = null;
+    expect(await cash.refreshXeroCashCredits({ now: at("2026-07-01T02:00:00.000Z") })).toMatchObject({ open: cash.XERO_CASH_CREDIT_PAGE_SIZE, zeroed: 1 });
   });
 
   it("replaying the same read writes nothing a second time", async () => {

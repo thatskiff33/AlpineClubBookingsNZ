@@ -21,6 +21,7 @@ CREATE TABLE "XeroCashCredit" (
     "kind" "XeroCashCreditKind" NOT NULL,
     "xeroDocumentId" TEXT NOT NULL,
     "xeroContactId" TEXT NOT NULL,
+    "currencyCode" TEXT NOT NULL,
     "documentDate" DATE,
     "totalCents" INTEGER NOT NULL,
     "remainingCents" INTEGER NOT NULL,
@@ -89,6 +90,9 @@ CREATE INDEX "AdminCreditAdjustmentRequest_xeroCashCreditId_idx" ON "AdminCredit
 -- CreateIndex
 CREATE INDEX "MemberCredit_xeroCashCreditId_idx" ON "MemberCredit"("xeroCashCreditId");
 
+-- CreateIndex: the target of a cash slice's (lot, document) foreign key.
+CREATE UNIQUE INDEX "MemberCredit_id_xeroCashCreditId_key" ON "MemberCredit"("id", "xeroCashCreditId");
+
 -- AddForeignKey
 ALTER TABLE "MemberCredit" ADD CONSTRAINT "MemberCredit_xeroCashCreditId_fkey" FOREIGN KEY ("xeroCashCreditId") REFERENCES "XeroCashCredit"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
@@ -96,7 +100,9 @@ ALTER TABLE "MemberCredit" ADD CONSTRAINT "MemberCredit_xeroCashCreditId_fkey" F
 ALTER TABLE "AdminCreditAdjustmentRequest" ADD CONSTRAINT "AdminCreditAdjustmentRequest_xeroCashCreditId_fkey" FOREIGN KEY ("xeroCashCreditId") REFERENCES "XeroCashCredit"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE "MemberCreditCashAllocation" ADD CONSTRAINT "MemberCreditCashAllocation_memberCreditId_fkey" FOREIGN KEY ("memberCreditId") REFERENCES "MemberCredit"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+-- A slice draws on its own lot's document: a slice naming another document,
+-- or hanging off an unbacked lot, cannot be written.
+ALTER TABLE "MemberCreditCashAllocation" ADD CONSTRAINT "MemberCreditCashAllocation_memberCreditId_xeroCashCreditId_fkey" FOREIGN KEY ("memberCreditId", "xeroCashCreditId") REFERENCES "MemberCredit"("id", "xeroCashCreditId") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
 ALTER TABLE "MemberCreditCashAllocation" ADD CONSTRAINT "MemberCreditCashAllocation_xeroCashCreditId_fkey" FOREIGN KEY ("xeroCashCreditId") REFERENCES "XeroCashCredit"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;

@@ -341,7 +341,7 @@ member's contact. **Finance → Xero Unallocated Payments**
 (`/admin/xero/unallocated-payments`) lists every one that still has a balance:
 
 - its type, date and balance left (and the original amount when some has been
-  used);
+  used), marked with its currency when that is not the club's;
 - the member whose Xero contact it is, or **No member linked** when no member is
   linked to that contact (an organisation, or a contact not yet linked);
 - a link to the contact in Xero, where the document is listed.

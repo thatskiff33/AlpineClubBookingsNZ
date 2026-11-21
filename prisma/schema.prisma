@@ -7916,6 +7916,8 @@ model MemberCredit {
   @@index([requestedById])
   @@index([approvedById])
   @@index([xeroCashCreditId])
+  // #5204: the target of a cash slice's (lot, document) foreign key.
+  @@unique([id, xeroCashCreditId], map: "MemberCredit_id_xeroCashCreditId_key")
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
 }
@@ -8015,6 +8017,9 @@ model XeroCashCredit {
   kind           XeroCashCreditKind
   xeroDocumentId String             @unique
   xeroContactId  String
+  /// ISO 4217 code Xero gave the document, e.g. `NZD`. Cents are in this
+  /// currency, which need not be the club's.
+  currencyCode   String
   documentDate   DateTime?          @db.Date
   totalCents     Int
   remainingCents Int
@@ -8050,7 +8055,10 @@ model MemberCreditCashAllocation {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  memberCredit   MemberCredit             @relation("CreditLotCashAllocations", fields: [memberCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // A slice draws on its lot's own document: the lot is referenced by
+  // (id, xeroCashCreditId), so a slice naming another document, or hanging off
+  // an unbacked lot, cannot be written.
+  memberCredit   MemberCredit             @relation("CreditLotCashAllocations", fields: [memberCreditId, xeroCashCreditId], references: [id, xeroCashCreditId], onDelete: Restrict, onUpdate: Restrict)
   xeroCashCredit XeroCashCredit           @relation(fields: [xeroCashCreditId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   returns        MemberCreditCashReturn[]
 

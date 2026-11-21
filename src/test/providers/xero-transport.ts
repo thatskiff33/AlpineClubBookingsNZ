@@ -192,6 +192,10 @@ export function xeroTransport(fake: XeroFake) {
       call("Overpayments", () => ({ Overpayments: paged(cashCredits("OVERPAYMENT").filter(statusWhere(where)), page, pageSize) })),
     getPrepayments: (...[, , where, , page, , pageSize]: Args<"getPrepayments">) =>
       call("Prepayments", () => ({ Prepayments: paged(cashCredits("PREPAYMENT").filter(statusWhere(where)), page, pageSize) })),
+    getOverpayment: (...[, id]: Args<"getOverpayment">) =>
+      call("Overpayments", () => ({ Overpayments: cashCredits("OVERPAYMENT").filter(c => c.OverpaymentID === id) })),
+    getPrepayment: (...[, id]: Args<"getPrepayment">) =>
+      call("Prepayments", () => ({ Prepayments: cashCredits("PREPAYMENT").filter(c => c.PrepaymentID === id) })),
     getCreditNote: (...[, id]: Args<"getCreditNote">) =>
       call("CreditNotes", () => ({ CreditNotes: notes().filter(n => n.CreditNoteID === id) })),
     createCreditNoteAllocation: (...[, id, body, , idempotencyKey]: Args<"createCreditNoteAllocation">) => call("Allocations", () => {

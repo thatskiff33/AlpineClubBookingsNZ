@@ -777,7 +777,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
   ITR marker newer than a server-issued verify-start AND matching the currently
   stored key's fingerprint (so a stale marker or one under a replaced key never
   satisfies a new verify). Any admin may read; the key write is Full-Admin-only.
-- `POST /api/cron/xero?task=memberships|outbox|retries|inbound|backfill|link-cleanup|report|credit-sync|all`
+- `POST /api/cron/xero?task=memberships|outbox|retries|inbound|backfill|link-cleanup|bank-refund-voids|report|credit-sync|credit-note-mirror|cash-credits|all`
   — `CRON_SECRET`-gated; `all` runs the tasks in that order; `backfill` also
   runs `link-cleanup` by default. Tasks needing a connection are skipped (and
   recorded as SKIPPED) when Xero is disconnected or the `xeroIntegration`
@@ -801,7 +801,7 @@ module every provider call goes through (`INV-OPS-013`). Shared JSON-guard micro
 | `ProcessedWebhookEvent` | Provider-scoped processing dedupe (`source`+`eventId` unique); the inbound worker claims a row before reconciling and releases it on failure. |
 | `WebhookValidationReceipt` | One row per provider recording the last valid intent-to-receive (ITR) validation ping (#2081): `validatedAt` + a non-reversible SHA-256 `keyFingerprint` of the webhook key that signed it (never the key). Drives the wizard's freshness-scoped, key-bound webhook Verify and the persistent amber "webhooks not configured" badge. |
 | `XeroSyncCursor` | Incremental checkpoints per (`resourceType`, `scope`) for contact/membership/invoice reconciliation. |
-| `XeroCashCredit` | #5204: one row per Xero receive overpayment or prepayment the refresh has seen, with its contact, date, total and remaining balance in cents and when the read that wrote it began (`syncedAt`). Never deleted; a document Xero no longer lists as open keeps a zero balance. |
+| `XeroCashCredit` | #5204: one row per Xero receive overpayment or prepayment the refresh has seen, with its contact, currency, date, total and remaining balance in cents (in that currency) and when the read that wrote it began (`syncedAt`). Never deleted; a document Xero no longer lists as open keeps a zero balance. |
 | `XeroContactCache`, `XeroContactGroupCache`, `XeroContactGroupMembershipCache` | Local snapshots of Xero contacts and group memberships (feed admin tooling, member import, group sync). |
 | `XeroApiUsageDaily`, `XeroApiUsageEvent` | Metered API usage vs. the daily budget; rate-limit hit tracking. |
 | `XeroAdminCache` | TTL cache of chart-of-accounts and items per tenant. |
@@ -4836,16 +4836,21 @@ unwritten.
 pages `getOverpayments` and `getPrepayments` with `Status=="AUTHORISED"`, 100 a
 page, through `callXeroApi` with `armTransientBreaker: false`, and keeps only
 the `RECEIVE-*` types. It reads **every page of both kinds before any write**.
-A failed page, more than 50 pages, or an open receive document it cannot read
-(no id, no contact, an unreadable amount) throws and changes nothing. Only a
+A failed page, an answer with no list in it, more than 50 pages, or an open
+receive document it cannot read (no id, contact or currency, an unreadable
+amount) throws and changes nothing. A list read over several pages can skip a
+document, because one used up on an earlier page mid-read shifts the rest up a
+place; so when a kind took more than one page, every stored open document of
+that kind the list did not return is read again by id (`getOverpayment` /
+`getPrepayment`) before it may be zeroed. Only a
 complete read reaches the write transaction, which upserts each listed document
-and sets the remaining balance of every stored document the read did not list
-to zero. A zero is what Xero says of a document fully allocated or voided; the
+and sets the remaining balance of every stored open document the read did not
+list to zero. A zero is what Xero says of a document fully allocated or voided; the
 row is kept because backed credit may come to name it.
 
 **An older read never overwrites a newer one.** The read records when it began.
 The write transaction first advances the `XeroSyncCursor` row
-(`XERO_CASH_CREDITS` / `ALL`) only if its stamp is older than this read. That row
+(`XERO_CASH_CREDITS` / `default`) only if its stamp is older than this read. That row
 lock serialises overlapping refreshes (the nightly cron and an officer's
 Refresh), and a read that began before the one already written writes nothing,
 so it cannot re-create a document the newer read found spent. Each row write
@@ -4869,7 +4874,8 @@ address for an overpayment or prepayment by its own id; an overpayment is shown
 through its bank transaction, whose id the list does not return. The owner's
 demo-company pass is where a direct address can be confirmed.
 
-**Stated limits.** The amounts are read as the club's currency; a document in
-another currency in a multi-currency organisation would be shown at its foreign
-amount. No live Xero call was made to build this: the paging, `where` filter and
+**Currency.** Each row records the document's own `currencyCode`, and the queue
+marks a document not in the club's currency. Its cents are in that currency.
+
+**Stated limits.** No live Xero call was made to build this: the paging, `where` filter and
 field shapes rest on the vendored `xero-node` SDK and the in-repo Xero fake.

@@ -74,6 +74,13 @@ describe("Xero cash-credit queue route (#5204)", () => {
     expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "XERO_CASH_CREDITS_REFRESH", outcome: "failure" }));
   });
 
+  it("never reports a fault after the snapshot was saved as a failed refresh", async () => {
+    h.list.mockRejectedValue(new Error("queue read failed"));
+    await expect(POST()).rejects.toThrow("queue read failed");
+    expect(h.audit).toHaveBeenCalledOnce();
+    expect(h.audit.mock.calls[0]?.[0]).not.toHaveProperty("outcome");
+  });
+
   it("reports a provider failure with the shared Xero error answer", async () => {
     h.refresh.mockRejectedValue(new Error("not connected"));
     const response = await POST();
