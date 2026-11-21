@@ -2,6 +2,7 @@ import {
   ALERT_NOBODY_ELIGIBLE_RETRY_MS,
   ALERT_ONCE_EVER_WINDOW_MS,
   claimAlertCooldown,
+  confirmAlertCooldownSend,
   deferAlertCooldown,
   releaseAlertCooldown,
 } from "@/lib/alert-cooldown";
@@ -10,6 +11,7 @@ import {
   type AdminAlertSendResult,
 } from "@/lib/email/admin-alert-send-result";
 import logger from "@/lib/logger";
+import { newOnceEverClaimHandle, runWithOnceEverClaim } from "@/lib/once-ever-claim-context";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -22,16 +24,20 @@ import { prisma } from "@/lib/prisma";
  * - nobody could receive it (the template switched off, nobody opted in,
  *   every recipient suppressed): the claim is held for a day, then the next
  *   run tries again;
- * - the send threw before reaching anyone: the claim is given back, so the
- *   next run retries;
+ * - the send threw before reaching anyone, or wrote no email row under the
+ *   claim (#5255): the claim is given back, so the next run retries;
  * - the claim call threw: nothing is sent, and the stamp it tried to write is
  *   given back (#4696) if the database answers one of two immediate tries: the
- *   write may have committed before the throw (#4679). A no-op when nothing
- *   landed; the next run claims afresh and sends. The claim stays held, and
- *   the alert is lost, when both tries fail on the same outage (logged "Failed
- *   to give back the uncertain ... claim"), or when the write commits only
- *   after the give-back ran (the client dropped while the server was still
- *   inserting; only the failed claim is logged).
+ *   write may have committed before the throw (#4679).
+ *
+ * #5255 (`INV-INT-041`): the claim is written marked "no email yet", and the
+ * alert's own email rows clear that mark in the transaction that writes them
+ * (`once-ever-claim-context.ts`). A claim still marked 15 minutes on - the two
+ * cases #4696 could not reach: both give-backs failed on one outage, or the
+ * write committed only after the give-back ran - is given back by the payments
+ * cron's sweep (`admin-alert-once-sweep.ts`), so the next run sends. An email
+ * row that commits first keeps the claim, so the sweep never makes a second
+ * send.
  * Never throws; returns whether the claim was kept. `context` is logged with
  * every failure, `label` names the alert in those lines.
  */
@@ -45,15 +51,17 @@ export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<b
 
 /*
  * #4696 CENSUS, checked against the real callers by
- * `admin-alert-once-census.test.ts`: every `sendAdminAlertOnceEver` caller in
- * `src/lib`, grouped by whether anything sends its alert again once an
- * uncertain claim is given back. Each caller's own docblock says how it runs.
- * A give-back cannot make a sibling send twice: it deletes only a row under
- * this call's own stamp, this call sent nothing, and a sibling that read that
- * row held sent nothing. Limits: two claims for one key in the same millisecond
- * share a stamp (at worst a duplicate); and the two cases above where the claim
- * stays held, for good here, since these callers have no takeover
- * (`admin-alert-once-takeover.ts` has, and gives back its own claims).
+ * `admin-alert-once-census.test.ts`: every production caller of the once-ever
+ * helpers in `src/lib`, grouped by what sends its alert again once the claim
+ * is given back (#5255). A caller retried by its next run calls
+ * `sendAdminAlertOnceEver`; one that raises its alert only once calls
+ * `sendReplayableAdminAlertOnceEver`, which stores the alert for the sweep to
+ * re-send. Each caller's own docblock says how it runs. A give-back cannot make
+ * a sibling send twice: it deletes only a row under this call's own stamp, this
+ * call sent nothing, and a sibling that read that row held sent nothing.
+ * Limit: two claims for one key in the same millisecond share a stamp (at worst
+ * a duplicate). The takeover callers (`admin-alert-once-takeover.ts`) retry
+ * until sent and give back their own claims.
  *
  * Retried by its next run (cron, or a webhook or request then cron):
  * - internet-banking-payment-cron.ts
@@ -63,13 +71,12 @@ export async function sendAdminAlertOnceEver(args: OnceEverAlertArgs): Promise<b
  * - late-capture-refund-hold.ts
  * - late-capture-unrecorded-refunds.ts
  * - cancelled-booking-late-capture.ts
- * Retried only by a later event on the same subject, on no schedule:
+ * Raised once; the sweep re-sends its stored alert:
+ * - capacity-race-refund-shortfall.ts
+ * - pre-persisted-refund-close.ts
  * - card-refund-cap-overflow.ts
  * - superseded-ask-invoice-return.ts
  * - xero-success-after-resolution-alert.ts
- * Cannot retry (nothing calls again; the logged error is the trace):
- * - pre-persisted-refund-close.ts
- * - capacity-race-refund-shortfall.ts
  */
 
 type OnceEverAlertArgs = {
@@ -110,28 +117,39 @@ export async function sendAdminAlertOnceEverClaim({
       key,
       windowMs: ALERT_ONCE_EVER_WINDOW_MS,
       now: claimedAt,
+      awaitingSend: true,
     });
   } catch (err) {
     logger.error({ ...context, err }, `Failed to claim the ${label}; nothing was sent`);
     return { kept: false, claimedAt, claimUncertain: true };
   }
   if (!claimed) return { kept: false, claimedAt: null, claimUncertain: false };
+  const handle = newOnceEverClaimHandle(key, claimedAt);
   try {
-    const result = await send();
-    if (adminAlertIsDeliveredOrQueued(result)) return { kept: true, claimedAt, claimUncertain: false };
-    logger.error(
-      { ...context, result },
-      `No admin can receive the ${label}; it will be retried in a day`
-    );
-    await deferAlertCooldown({
-      key,
-      claimedAt,
-      windowMs: ALERT_ONCE_EVER_WINDOW_MS,
-      retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
-    }).catch((err) =>
-      logger.error({ ...context, err }, `Failed to defer the ${label} claim`)
-    );
-    return { kept: false, claimedAt, claimUncertain: false };
+    const result = await runWithOnceEverClaim(handle, send);
+    const reported = adminAlertIsDeliveredOrQueued(result);
+    if (!handle.rowWritten && (handle.rowWriteFailed || (handle.taken && reported))) {
+      // #5255: the alert's emails were refused or never recorded, so nothing
+      // went out or waits for the retry cron, whatever the counts say.
+      logger.error({ ...context, result }, `The ${label} recorded no email under its claim; it will be retried`);
+    } else if (reported) {
+      if (!handle.rowWritten) await confirmUntrackedSend(key, claimedAt, label, context);
+      return { kept: true, claimedAt, claimUncertain: false };
+    } else {
+      logger.error(
+        { ...context, result },
+        `No admin can receive the ${label}; it will be retried in a day`
+      );
+      await deferAlertCooldown({
+        key,
+        claimedAt,
+        windowMs: ALERT_ONCE_EVER_WINDOW_MS,
+        retryAfterMs: ALERT_NOBODY_ELIGIBLE_RETRY_MS,
+      }).catch((err) =>
+        logger.error({ ...context, err }, `Failed to defer the ${label} claim`)
+      );
+      return { kept: false, claimedAt, claimUncertain: false };
+    }
   } catch (err) {
     logger.error({ ...context, err }, `Failed to send the ${label}; it will be retried`);
   }
@@ -139,6 +157,23 @@ export async function sendAdminAlertOnceEverClaim({
     logger.error({ ...context, err }, `Failed to release the ${label} claim`)
   );
   return { kept: false, claimedAt, claimUncertain: false };
+}
+
+/**
+ * #5255: a send reported delivered without passing the claim to an email row
+ * (its sender is not one of the admin-alert senders that take it). Clear the
+ * claim's unsent mark here instead, twice if the first try fails. Limit: if
+ * both fail, the sweep may give the claim back and the alert go out again.
+ */
+async function confirmUntrackedSend(key: string, claimedAt: Date, label: string, context: Record<string, unknown>) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await confirmAlertCooldownSend({ key, claimedAt });
+      return;
+    } catch (err) {
+      logger.error({ ...context, err, attempt }, `Failed to confirm the sent ${label} claim`);
+    }
+  }
 }
 
 /**
@@ -188,4 +223,25 @@ export async function readHeldOnceEverAlertTimes(keys: readonly string[], now: D
     select: { key: true, lastAlertedAt: true },
   });
   return new Map(rows.map((row) => [row.key, row.lastAlertedAt]));
+}
+
+/**
+ * #5255: where the once-ever claim for `key` stands at `now`, for the sweep and
+ * the replayable alerts. `none`: no claim holds it, so the next send claims and
+ * sends; `awaiting-send`: claimed, no email recorded yet; `deferred`: nobody
+ * could receive it, held for a day; `kept`: sent or queued, for good. A read,
+ * never a claim.
+ */
+export type OnceEverClaimState = "none" | "awaiting-send" | "deferred" | "kept";
+
+export async function readOnceEverClaimState(key: string, now: Date): Promise<OnceEverClaimState> {
+  const row = await prisma.alertCooldown.findUnique({
+    where: { key },
+    select: { lastAlertedAt: true, awaitingSendSince: true },
+  });
+  const windowStart = now.getTime() - ALERT_ONCE_EVER_WINDOW_MS;
+  if (!row || row.lastAlertedAt.getTime() < windowStart) return "none";
+  if (row.awaitingSendSince) return "awaiting-send";
+  // A deferral moves the stamp to `ALERT_NOBODY_ELIGIBLE_RETRY_MS` past the window's start.
+  return row.lastAlertedAt.getTime() <= windowStart + ALERT_NOBODY_ELIGIBLE_RETRY_MS ? "deferred" : "kept";
 }

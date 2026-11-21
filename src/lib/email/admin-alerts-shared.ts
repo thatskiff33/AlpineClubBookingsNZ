@@ -13,6 +13,7 @@ import {
 } from "@/lib/admin-permissions";
 import { CLUB_SUPPORT_EMAIL } from "@/config/club-identity";
 import logger from "@/lib/logger";
+import { takeOnceEverClaim } from "@/lib/once-ever-claim-context";
 import { prisma } from "@/lib/prisma";
 import { loadEmailMessageSettings } from "@/lib/email-message-settings";
 import { type EmailTemplateData } from "@/lib/email-message-renderer";
@@ -185,6 +186,9 @@ export async function sendAdminAlertTo({
   // A FAILED row is replayed only when it kept its body (`core.ts`); a
   // sensitive template's does not, and goes to the review queue instead.
   const failedRowIsReplayed = shouldPersistEmailHtml(templateName);
+  // #5255: the once-ever claim this alert is sent under, if any; every
+  // recipient's row confirms it, and a later alert in the same send gets none.
+  const onceEverClaim = takeOnceEverClaim();
   const outcomes = await Promise.all(
     emails.map(async (email): Promise<
       AdminAlertRecipientDeliveryOutcome & { queuedForRetry: boolean }
@@ -202,6 +206,7 @@ export async function sendAdminAlertTo({
           templateName,
           templateData,
           attachments,
+          ...(onceEverClaim ? { onceEverClaim } : {}),
         });
 
         // Admin alert recipients are real admin addresses, never walk-in
@@ -395,6 +400,8 @@ export async function sendUnmuteableAdminAlert({
   }
 
   const attemptLogIds: string[] = [];
+  // #5255: as `sendAdminAlertTo`, the once-ever claim goes to this alert's own rows only.
+  const onceEverClaim = takeOnceEverClaim();
   const outcomes = await Promise.all(
     emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome> => {
       try {
@@ -407,6 +414,7 @@ export async function sendUnmuteableAdminAlert({
           templateName,
           templateData,
           onAttemptLogged: (emailLogId) => attemptLogIds.push(emailLogId),
+          ...(onceEverClaim ? { onceEverClaim } : {}),
         });
         // A confirmed copy holds the message back and records that. Nothing is
         // wrong and nothing should retry, so a once-ever caller keeps its claim.

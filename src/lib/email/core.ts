@@ -3,6 +3,7 @@ import { htmlToPlainText } from "../email-text";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { recordEmailAttempt } from "./attempt-log";
+import type { OnceEverClaimHandle } from "@/lib/once-ever-claim-context";
 import {
   formatEmailFromAddressWithSettings,
 } from "@/lib/email-message-settings";
@@ -246,6 +247,7 @@ export async function sendEmail({
   idempotencyKey,
   deferDelivery,
   onAttemptLogged,
+  onceEverClaim,
 }: {
   to: string;
   subject: string;
@@ -266,6 +268,10 @@ export async function sendEmail({
   bookingContext: EmailBookingContext;
   // This attempt's EmailLog id once written, which a throw cannot return (#4669).
   onAttemptLogged?: (emailLogId: string) => void;
+  // #5255: the once-ever claim this admin alert is sent under; its row then
+  // confirms the claim, and is not written (so nothing is sent) once the claim
+  // is gone. Only the admin-alert senders pass it (`takeOnceEverClaim`).
+  onceEverClaim?: OnceEverClaimHandle;
 } & (
   // Stable business-event identity makes logging mandatory before delivery;
   // the EmailLog primary key serializes concurrent re-drives. Deferred mail
@@ -353,6 +359,7 @@ export async function sendEmail({
     hasAttachments: Boolean(attachments?.length),
     idempotencyKey,
     deferDelivery,
+    ...(onceEverClaim ? { onceEverClaim } : {}),
   });
   if (recorded.kind === "already_recorded") {
     return { status: "already_recorded", emailLogId: recorded.emailLogId };
