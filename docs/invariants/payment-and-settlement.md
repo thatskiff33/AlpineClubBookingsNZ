@@ -1868,8 +1868,8 @@ and **`INV-PAY-147`** (slice evidence).
   alerts, and never over-refunds.
 - A planning failure that is not a database error writes the whole debt with
   no plan; the edit still commits and reports `own_card_pending`, as does any
-  incomplete refund. A payment with no Stripe intent writes no row and reports
-  the same. Officers hear of a refusal when it moves the row.
+  incomplete refund. A payment with no Stripe intent is promised no card
+  refund (`INV-PAY-160`). Officers hear of a refusal when it moves the row.
 - Date edits, batch edits, guest removals and guest-acceptance reprice share this
   door.
 - Proven by `modification-refund-replay-reason.test.ts`, `payment-recovery.test.ts`,
@@ -1918,14 +1918,15 @@ and **`INV-PAY-147`** (slice evidence).
 **Related: `INV-PAY-110`** (kept late captures) **and `INV-PAY-139`**.
 
 - **A kept change capture on a cancelled, invoiced booking is recorded by the
-  document the evidence names** (#4324, amending one case
-  of `INV-PAY-110`): a second invoice for a change the primary bills would
-  count the income twice.
-- **One decision** (`keptChangeCaptureRoute`), taken once by the keep or
-  the repair tool, under the task row then the change's anchor lock, after
+  document the evidence names** (#4324, amending one `INV-PAY-110` case),
+  so no income counts twice.
+- **One decision** (`keptChangeCaptureRoute`), taken once, by the keep or
+  repair tool, under the task row then the change's anchor, after
   finding the capture's receipt or kept invoice:
   - a change invoice naming the capture: the late-success release
-    (`INV-PAY-104`), and a `STALE_WAITING_PAYMENT` row re-queued inside the keep, no repair finding;
+    (`INV-PAY-104`); a `STALE_WAITING_PAYMENT` row re-queued in the keep,
+    with its receipt if unpaid, or stamped captured if refused (officer
+    emailed after commit, #5220); no repair finding;
   - a #3980 gap invoice billing it (`primaryInvoiceGapBillsChange`), the
     primary billing it (settled against it, or no supplementary invoice,
     and not raced past it: `primaryInvoiceMissedChange`), or a live
@@ -1939,10 +1940,10 @@ and **`INV-PAY-147`** (slice evidence).
 - **One recorder.** `readCaptureRecorder` and `anchorCaptureHasReceipt` count
   a kept-capture invoice; a replayed release finds the receipt; the receipt
   verdict counts it, so refunds get notes. No gap invoice on a cancelled
-  booking, and no supplementary invoice for a change a kept-capture invoice
+  booking, nor supplementary invoice for a change a kept-capture invoice
   bills; a gap invoice so refused raises the treasurer's UNDERBILLED task.
 - **Reopen.** Its worker re-reads the task under the anchor and, no longer
-  kept, closes its row there; an approval takes the anchor
+  kept, closes its row; an approval takes the anchor
   first and withdraws an undecided receipt. A paid-another-way close plans
   under the task row then the anchor.
 - **Repair.** `KEPT_LATE_CAPTURE_NOT_RECORDED_IN_XERO`, dry run listing the
@@ -2712,8 +2713,8 @@ _Legacy: settles tasks raised before #4317._
 - **A price reduction the club returns by hand raises ONE officer refund
   task** (#3827; owner decision D-3813-6 on #3492). When a batch modify, date
   change, guest removal or acceptance re-price lowers a booking paid outside
-  Stripe (internet banking or cash) and the reduction goes back as money, not
-  credit, the
+  Stripe (internet banking, cash, `INV-PAY-160`'s card) and the reduction goes
+  back as money, not credit, the
   edit raises a `ManualRefundTask` for that refund inside its own transaction,
   under its locks, with no provider call. `raiseEditRefundHandBackIfOwed`
   (`src/lib/edit-refund-hand-back.ts`) is the one writer and
@@ -4449,3 +4450,41 @@ window), **`INV-LOCK-001`** to **`INV-LOCK-003`**.
 - Proven by `booking-cash-evidence.test.ts`, its `.realdb` twin,
   `booking-exception-approved-interleaving.test.ts` and
   `amount-owed-one-home.test.ts`.
+
+## INV-PAY-160
+
+**Related: `INV-PAY-117`** (the edit's by-hand refund), **`INV-PAY-146`** (the
+edit's card refund debt).
+
+- **An edit refunds a card only where Stripe holds a record to refund
+  against** (#5212, owner decision of 18 Nov 2026). When a date change, batch
+  edit, guest removal or acceptance re-price lowers a card-paid booking whose
+  payment names no Stripe intent, on itself or on a captured charge, the
+  reduction goes back as an Internet Banking payment's does. The edit raises
+  `INV-PAY-117`'s officer refund task and the member is told the club will
+  refund them by bank transfer. No card refund is promised: the journal's only
+  refund payable (R05) is the task's own, no recovery row is written and
+  Stripe is not asked. Xero records a refund not made through Stripe.
+- **One read decides it.** `readRefundableCardIntentId`
+  (`src/lib/refundable-card-intent.ts`) answers the settlement
+  (`editRefundHasCardToReturnTo`, in `applyPaymentAdjustments`, under the
+  door's locks) and the debt's writer (`enqueueLedgerRefundRecovery`), so the
+  two cannot disagree about a payment neither has changed.
+- **A reserve that cannot write its debt rolls the edit back.**
+  `reserveBookingModificationCardRefund` lets no edit stand on
+  `NoRefundPaymentIntentError`: a refund payable is posted only with its
+  recovery row behind it.
+- **Unchanged.** A joiner the group organiser paid for by card is refunded from
+  the organiser's combined payment, which holds the intent (`INV-PAY-114`). A
+  reduction taken as account credit is still credit. A price increase is not
+  read.
+- Entries posted before this rule are not rewritten.
+- **Limit.** Marking that task paid is refused where the payment has no
+  captured ledger row or the journal holds the booking: neither can yet record
+  card money going back with no Stripe capture.
+- No new lock, key or order (`INV-LOCK-001` through `INV-LOCK-003`).
+- Proven by `edit-refund-no-stripe-record.test.ts`,
+  `organiser-child-refund-edit.test.ts`,
+  `guest-acceptance-reprice-settlement.test.ts`,
+  `booking-modification-refund.test.ts` and
+  `modification-refund-prepersist.realdb.test.ts`.

@@ -1353,7 +1353,11 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // (`STALE_WAITING_PAYMENT`) on the anchor it already holds, the same
   // guarded `CANCELLED` + code -> `PENDING` update the late-capture re-queue
   // writes, without taking the lock again. The release still takes the lock,
-  // for the webhook, the confirm route and the reaper.
+  // for the webhook, the confirm route and the reaper. #5220: on that same
+  // held key the decision also queues the revived invoice's receipt where it
+  // goes out unpaid (the receipt's enqueue re-taking it) and stamps a refusal
+  // `STALE_WAITING_PAYMENT_CAPTURED` with the release's guarded claim; the
+  // officer's email follows the commit. Same site, no new key, same order.
   // #3403 (`INV-PAY-140`): the superseded-invoice move
   // (`superseded-ask-invoice-carry.ts`) calls the same helper on each change
   // whose waiting invoice it re-points at the request carrying its balance,
