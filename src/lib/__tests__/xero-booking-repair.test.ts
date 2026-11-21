@@ -802,6 +802,7 @@ function createDependencies(state: {
         uncoveredCents: payment.refundedAmountCents,
         paidAnotherWayUncoveredCents: 0,
         unreadableResolvedOperationIds: [],
+        lateCaptureExcludedCents: 0,
       })
     ),
     // #3924 round 8: a waiting paid-another-way close's receipt and note -
@@ -990,7 +991,7 @@ describe("runBookingXeroRepair", () => {
       ];
       const deps = createDependencies({ bookings: [cancelledBank()], links });
       // What the one gap reader answers: the per-refund note counts as cover.
-      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000 - uncoveredCents, resolvedInXeroCents: 0, uncoveredCents, paidAnotherWayUncoveredCents: 0, unreadableResolvedOperationIds: [] });
+      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000 - uncoveredCents, resolvedInXeroCents: 0, uncoveredCents, paidAnotherWayUncoveredCents: 0, unreadableResolvedOperationIds: [], lateCaptureExcludedCents: 0 });
       const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
       return { deps, booking: report.passes[0].bookings[0] };
     };
@@ -1022,7 +1023,7 @@ describe("runBookingXeroRepair", () => {
         ],
       };
       const deps = createDependencies({ bookings: [withCredit], links });
-      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000, resolvedInXeroCents: 0, uncoveredCents: 0, paidAnotherWayUncoveredCents: 0, unreadableResolvedOperationIds: [] });
+      deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 3000, coveredCents: 3000, resolvedInXeroCents: 0, uncoveredCents: 0, paidAnotherWayUncoveredCents: 0, unreadableResolvedOperationIds: [], lateCaptureExcludedCents: 0 });
       const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
       expect(report.passes[0].bookings[0].findings.map((finding) => finding.summary)).not.toContain(
         "The booking appears to have a cash cancellation refund, but the missing Xero refund note amount cannot be derived safely from local history.",
@@ -11664,6 +11665,7 @@ describe("a bank payment's several live refund notes are judged together (#4328,
     links: any[];
     coveredCents: number;
     cashRefundCents?: number;
+    lateCaptureExcludedCents?: number;
     unreadableResolvedOperationIds?: string[];
     apply?: boolean;
     paidBackRefundRequests?: { paymentId: string; amountCents: number; refundRequestId?: string }[];
@@ -11677,6 +11679,7 @@ describe("a bank payment's several live refund notes are judged together (#4328,
       uncoveredCents: Math.max(0, cashRefundCents - state.coveredCents),
       paidAnotherWayUncoveredCents: 0,
       unreadableResolvedOperationIds: state.unreadableResolvedOperationIds ?? [],
+      lateCaptureExcludedCents: state.lateCaptureExcludedCents ?? 0,
     });
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { apply: state.apply, dependencies: deps, scope: { all: true } });
     const booking = report.passes[0].bookings[0];
@@ -11732,7 +11735,20 @@ describe("a bank payment's several live refund notes are judged together (#4328,
   it("notes that cover the cash a note may answer raise nothing, when a late capture's refund Xero never received is left out", async () => {
     // $100 refunded, $20 of it a late capture's refund no note may answer: the
     // notes' $80 is the whole of what they should cover (INV-PAY-110).
-    const { mismatches } = await run({ links: [canonicalNote(4000), perRefundNote("cn_back_1", 4000)], coveredCents: 8000, cashRefundCents: 8000 });
+    const { mismatches } = await run({ links: [canonicalNote(4000), perRefundNote("cn_back_1", 4000)], coveredCents: 8000, cashRefundCents: 8000, lateCaptureExcludedCents: 2000 });
+    expect(mismatches).toEqual([]);
+  });
+
+  it("MUTATION: notes covering a late capture's refund Xero never received are one mismatch against the cash less that refund", async () => {
+    const { mismatches } = await run({ links: [canonicalNote(4000), perRefundNote("cn_back_1", 6000)], coveredCents: 10000, cashRefundCents: 8000, lateCaptureExcludedCents: 2000 });
+    expect(mismatches).toEqual([expect.objectContaining({ details: expect.objectContaining({ expectedAmountCents: 8000, coveredCents: 10000 }) })]);
+  });
+
+  it("notes are judged against the local cash refund, not the reader's note-eligible cash, which leaves out the canonical note's hand-back once a card refund is recorded", async () => {
+    // A card refund row puts the reader on its card ledger: its note-eligible
+    // cash counts the card refund and own-note hand-backs ($50), never the
+    // first hand-back the canonical note answers - so it is not the notes' match.
+    const { mismatches } = await run({ links: [canonicalNote(5000), perRefundNote("cn_back_1", 3000), perRefundNote("cn_card", 2000)], coveredCents: 10000, cashRefundCents: 5000 });
     expect(mismatches).toEqual([]);
   });
 
@@ -11752,7 +11768,7 @@ describe("a bank payment's several live refund notes are judged together (#4328,
       links: severalNotes,
       operations: [makePrimaryInvoiceCreateOperation()],
     });
-    deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 10000, coveredCents: 10000, resolvedInXeroCents: 0, uncoveredCents: 0, paidAnotherWayUncoveredCents: 0, unreadableResolvedOperationIds: [] });
+    deps.readRefundCreditNoteGap = vi.fn().mockResolvedValue({ cashRefundCents: 10000, coveredCents: 10000, resolvedInXeroCents: 0, uncoveredCents: 0, paidAnotherWayUncoveredCents: 0, unreadableResolvedOperationIds: [], lateCaptureExcludedCents: 0 });
     const report = await runBookingXeroRepair(CLUB_FORMAT_TEST, { dependencies: deps, scope: { all: true } });
     expect(deps.readRefundCreditNoteGap).toHaveBeenCalledTimes(1);
     expect(report.passes[0].bookings[0].findings.map((finding) => finding.code)).not.toContain("XERO_AMOUNT_MISMATCH");

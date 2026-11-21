@@ -59,7 +59,7 @@ export async function readRefundNoteGaps(
   cancelledRefundNoteIds: ReadonlySet<string>,
 ) {
   const refundNoteUncoveredCentsByPaymentId = new Map<string, number>();
-  const refundNoteCoverageByPaymentId = new Map<string, { coveredCents: number; cashRefundCents: number } | "unreadable">();
+  const refundNoteCoverageByPaymentId = new Map<string, { coveredCents: number; lateCaptureExcludedCents: number } | "unreadable">();
   for (const booking of bookings) {
     const payment = booking.payment;
     if (!payment || payment.refundedAmountCents <= 0) continue;
@@ -78,7 +78,7 @@ export async function readRefundNoteGaps(
       const readable = gap.cashRefundCents > 0 && gap.unreadableResolvedOperationIds.length === 0;
       refundNoteCoverageByPaymentId.set(
         payment.id,
-        readable ? { coveredCents: gap.coveredCents, cashRefundCents: gap.cashRefundCents } : "unreadable",
+        readable ? { coveredCents: gap.coveredCents, lateCaptureExcludedCents: gap.lateCaptureExcludedCents } : "unreadable",
       );
     } catch (err) {
       refundNoteCoverageByPaymentId.set(payment.id, "unreadable");
@@ -97,8 +97,9 @@ const COVERAGE_UNREADABLE_SUMMARY =
  * Compares the local cash refund (`getCashCancellationRefundCandidateCents`)
  * with the payment's refund notes. A bank payment with a canonical note and at
  * least one other live note, and a cash candidate to judge, is judged by the
- * notes' combined coverage against the cash a note may answer (both from the
- * gap reader, `refundNoteCoverage`); any disagreement, or a coverage that
+ * notes' combined coverage against that candidate less the refunds of late
+ * captures no note may answer (both from the gap reader, `refundNoteCoverage`);
+ * any disagreement, or a coverage that
  * could not be read, is one manual-review finding and never a resize of one
  * note. Every other payment keeps the canonical note's check.
  */
@@ -136,11 +137,15 @@ export function addRefundCreditNoteAmountFindings(params: {
     return;
   }
 
-  // #4328 review (INV-SSOT): the notes are judged against the cash a note may
-  // answer - the figure every note-sizing cap reads - so a refund of a late
-  // capture Xero never received, which no note answers, is not a shortfall.
+  // #4328: coverage sums every live note, the canonical one too, so it is
+  // judged against the whole local cash refund less only the refunds of late
+  // captures Xero never received (the gap reader's own exclusion, `INV-PAY-110`).
+  // Never the reader's note-eligible cash: on a bank payment with a card refund
+  // it counts card refunds and hand-backs with their own notes, never the cash
+  // the canonical note answers.
   const coverage = typeof context.refundNoteCoverage === "object" ? context.refundNoteCoverage : null;
-  if (coverage && coverage.coveredCents === coverage.cashRefundCents) return;
+  const expectedAmountCents = coverage ? refundAmountCents - coverage.lateCaptureExcludedCents : null;
+  if (coverage && coverage.coveredCents === expectedAmountCents) return;
 
   const summary = coverage === null ? COVERAGE_UNREADABLE_SUMMARY : NOTES_DISAGREE_SUMMARY;
   const action = addAction(actionMap, buildManualReviewAction(booking.id, summary));
@@ -151,7 +156,7 @@ export function addRefundCreditNoteAmountFindings(params: {
     safeToAutoApply: false,
     details: {
       paymentId: payment.id,
-      expectedAmountCents: coverage?.cashRefundCents ?? null,
+      expectedAmountCents,
       coveredCents: coverage?.coveredCents ?? null,
       cashRefundCandidateCents: refundAmountCents,
       paymentRefundedAmountCents: payment.refundedAmountCents,
