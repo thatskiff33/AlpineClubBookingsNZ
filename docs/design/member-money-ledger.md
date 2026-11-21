@@ -1091,6 +1091,24 @@ comparison counts a kept-capture component on the ledger side as the gross it
 still carries. No card reservation is taken: the bank payment happens in the
 same transaction as the task. Organiser shares stay M6's.
 
+**Census and comparison report v3 (#5185).** Read-only checks over what M4d
+posts, for bookings whose R01 is in the journal, with history from before the
+journal's first M4d event left to M9. Five classes, defined once with the
+refund census and reported by `booking-ledger:census` as integrity findings
+that hold its gate: `HAND_BACK_WITHOUT_EVENT` (a hand-back raised with no R05),
+`HAND_BACK_PAID_WITHOUT_EVENT` (paid with no R14), `UNAPPLIED_HAND_BACK` (an R14
+that paid no debt although the debt is the journal's), `HAND_BACK_OBLIGATION_DRIFT`
+(a debt open while its task is closed, or the reverse, or open with no task
+behind it) and `KEEP_WITHOUT_EVENT` (a kept late capture with no keep). Report
+v3, identity `JOURNAL_REFUND_PAYABLE`, compares each booking's open refund
+payable with what the legacy records still owe back on the debts the journal
+holds: each hand-back task whose R05 posted, at what it still owes, and each
+open card refund row whose R05 posted, at its slices not yet made. A refund
+that went back without paying its debt (an unapplied R12) disagrees until the
+milestone that answers unapplied refunds. A source census classifies every
+`ManualRefundTask` creation, so a new raise site cannot skip its R05
+(`INV-MONEY-049`).
+
 ## 11. Proposed children, in shipping order
 
 The owner approves this design before these issues are filed or built. Labels

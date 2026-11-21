@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@prisma/client";
 import { postBookingReceipts, postHandBackObligation, withdrawRefundObligation } from "@/lib/member-money/doors";
-import { memberMoneyEventKeys, postMemberMoneyEvent } from "@/lib/member-money";
+import { HAND_BACK_CENSUS_CLASSES, memberMoneyEventKeys, postMemberMoneyEvent, readBookingRefundCensus } from "@/lib/member-money";
 import { readMemberMoneyApplicationState } from "@/lib/member-money/internal/application-read";
 import { memberMoneyApplicationTotals, memberMoneyConservationProblems } from "@/lib/member-money/internal/application-state";
 import { syncBookingLedgerSettlements } from "@/lib/booking-ledger-settlement-sync";
@@ -578,5 +578,86 @@ async function cleanup() {
     expect(await balance(id, "GOODWILL")).toBe(10_000);
     expect(await balance(id, "REFUND_PAYABLE")).toBe(-10_000);
     expect(memberMoneyConservationProblems(await state(id))).toEqual([]);
+  });
+
+  describe("#5185: the hand-back census and report v3 over this file's bookings", () => {
+    const HAND_BACK_KINDS: readonly string[] = HAND_BACK_CENSUS_CLASSES;
+    /** The census's evaluations of this file's bookings, from one read-only repeatable-read snapshot, as the census reads them. */
+    const census = async () => {
+      const { evaluateBookingLedgerPages } = await import("@/lib/booking-ledger-projection-census-store");
+      const evaluations = await db.$transaction(async (tx) => {
+        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+        return evaluateBookingLedgerPages(tx);
+      }, { isolationLevel: "RepeatableRead", timeout: 60_000 });
+      return evaluations.filter((evaluation) => evaluation.bookingId.startsWith(PREFIX));
+    };
+    const handBackFindings = async () => (await census()).flatMap((evaluation) => evaluation.integrity.filter((finding) => HAND_BACK_KINDS.includes(finding.kind)))
+      .map((finding) => `${finding.kind} ${finding.lineId}`);
+    const refundPayable = async (bookingId: string) => (await census()).find((evaluation) => evaluation.bookingId === bookingId)!
+      .identities.find((identity) => identity.identity === "JOURNAL_REFUND_PAYABLE")!;
+    const refundCensusKinds = async (bookingId: string) => db.$transaction((tx) => readBookingRefundCensus(tx, `${bookingId}-payment`))
+      .then((findings) => findings.filter((finding) => HAND_BACK_KINDS.includes(finding.kind)).map((finding) => `${finding.kind} ${finding.identity}`));
+    /** A journal hand-back task written straight to the table, as a door that skipped its R05 would leave it. */
+    const bareTask = (id: string, data: { status?: "OPEN" | "COMPLETED"; completedAt?: Date } = {}) => db.manualRefundTask.create({ data: {
+      bookingId: id, paymentId: `${id}-payment`, amountCents: 3_000, raisedAmountCents: 3_000, kind: "CANCELLED_BOOKING_HAND_BACK",
+      reason: `Booking ${id} cancelled, refund by hand.`, ...data } });
+
+    it("every scenario above reads consistent: no hand-back class, and v3 agrees on every booking whose R01 is in the journal", async () => {
+      expect(await handBackFindings()).toEqual([]);
+      const refunds = (await census()).flatMap((evaluation) => evaluation.identities.filter((identity) => identity.identity === "JOURNAL_REFUND_PAYABLE"));
+      expect(refunds.length).toBeGreaterThan(0);
+      expect(refunds.filter((identity) => identity.status !== "AGREE")).toEqual([]);
+      // A booking holding hand-back debts reads non-zero on both sides, so v3 is no zero-equals-zero comparison.
+      expect(refunds.some((identity) => identity.columnCents > 0)).toBe(true);
+    });
+
+    it("reports a raise that skipped its R05, then its unapplied payment, in the census and the refund command", async () => {
+      const id = await chargedBooking([["INTERNET_BANKING", 10_000]]);
+      const task = await bareTask(id);
+      expect(await handBackFindings()).toEqual([`HAND_BACK_WITHOUT_EVENT ${task.id}`]);
+      await markPaid(task.id); // no debt in the journal, so its R14 posts unapplied
+      expect(await r14Applied(task.id)).toBe(0);
+      expect(await handBackFindings()).toEqual([`HAND_BACK_WITHOUT_EVENT ${task.id}`, `UNAPPLIED_HAND_BACK ${task.id}`]);
+      expect(await refundCensusKinds(id)).toEqual([`HAND_BACK_WITHOUT_EVENT ${task.id}`, `UNAPPLIED_HAND_BACK ${task.id}`]);
+      await db.manualRefundTask.delete({ where: { id: task.id } });
+    });
+
+    it("reports a hand-back completed with no payment in the journal", async () => {
+      const id = await chargedBooking([["INTERNET_BANKING", 10_000]]);
+      const taskId = await raiseHandBack(id);
+      await db.manualRefundTask.update({ where: { id: taskId }, data: { status: "COMPLETED", completedAt: new Date(), completedByMemberId: names.officerId } });
+      const findings = await handBackFindings();
+      expect(findings).toContain(`HAND_BACK_PAID_WITHOUT_EVENT ${taskId}`);
+      // Its debt is still open while its task is closed: drift too, and v3 disagrees by the debt.
+      expect(findings).toContain(`HAND_BACK_OBLIGATION_DRIFT ${taskId}`);
+      expect(await refundPayable(id)).toMatchObject({ status: "DISAGREE", columnCents: 8_000, ledgerCents: 0 });
+      await db.manualRefundTask.update({ where: { id: taskId }, data: { status: "OPEN", completedAt: null, completedByMemberId: null } });
+      expect(await handBackFindings()).toEqual([]);
+    });
+
+    it("reports a debt that drifted from its task's amount, and an open debt whose task row is gone (#5212)", async () => {
+      const id = await chargedBooking([["INTERNET_BANKING", 10_000]]);
+      const taskId = await raiseHandBack(id);
+      await db.manualRefundTask.update({ where: { id: taskId }, data: { amountCents: 5_000 } });
+      expect(await handBackFindings()).toEqual([`HAND_BACK_OBLIGATION_DRIFT ${taskId}`]);
+      expect(await refundPayable(id)).toMatchObject({ status: "DISAGREE", columnCents: 8_000, ledgerCents: 5_000 });
+      await db.manualRefundTask.delete({ where: { id: taskId } }); // as `release_claim` would, without withdrawing the R05
+      expect(await handBackFindings()).toEqual([`HAND_BACK_OBLIGATION_DRIFT ${taskId}`]);
+      expect(await refundPayable(id)).toMatchObject({ status: "DISAGREE", columnCents: 8_000, ledgerCents: 0 });
+      await db.$transaction((tx) => withdrawRefundObligation(tx, context, { bookingId: id, scope: "hand-back", id: taskId, actorMemberId: ADMIN, reason: "census test", senderKeyPrefix: `census-${taskId}` }));
+      expect(await handBackFindings()).toEqual([]);
+    });
+
+    it("reports a late capture kept with no keep in the journal", async () => {
+      const id = await chargedBooking([["STRIPE", 10_000]]);
+      const intent = `pi_${id}_late`;
+      await db.paymentTransaction.create({ data: { paymentId: `${id}-payment`, source: "STRIPE", kind: "ADDITIONAL", status: "SUCCEEDED", amountCents: 2_500, stripePaymentIntentId: intent } });
+      const task = await db.manualRefundTask.create({ data: { bookingId: id, paymentId: `${id}-payment`, amountCents: 2_500, raisedAmountCents: 2_500,
+        kind: "DELETED_BOOKING_LATE_CAPTURE", lateCaptureApprovalIntentId: intent, reason: "A late card charge held for the treasurer.",
+        status: "DISMISSED", completedAt: new Date(), completedByMemberId: names.officerId } });
+      expect(await handBackFindings()).toEqual([`KEEP_WITHOUT_EVENT ${task.id}`]);
+      expect(await refundCensusKinds(id)).toEqual([`KEEP_WITHOUT_EVENT ${task.id}`]);
+      await db.manualRefundTask.delete({ where: { id: task.id } });
+    });
   });
 });
