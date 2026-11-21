@@ -10,8 +10,11 @@ const NOTE = "race-4432-note";
 const LOT = "race-4432-lot";
 let db: (typeof import("@/lib/prisma"))["prisma"];
 const spies: Array<{ mockRestore(): void }> = [];
+// #5254: the first test loads the Xero sync modules on its own; on a fresh database
+// and a busy machine that alone outruns Vitest's 5-second default.
+const REALDB_TIMEOUT_MS = 60_000;
 
-(RUN ? describe : describe.skip)("member sync converges like cron, real PostgreSQL", () => {
+(RUN ? describe : describe.skip)("member sync converges like cron, real PostgreSQL", { timeout: REALDB_TIMEOUT_MS }, () => {
   const note = {
     creditNoteID: NOTE, contact: { contactID: CONTACT }, status: "AUTHORISED", total: 52.50, remainingCredit: 32.50,
     updatedDateUTC: new Date("2026-06-30T23:00:00.000Z"),
@@ -53,10 +56,10 @@ const spies: Array<{ mockRestore(): void }> = [];
     spies.push(vi.spyOn(modules, "isEffectiveModuleEnabled").mockResolvedValue(true));
     spies.push(vi.spyOn(tokens, "isXeroConnected").mockResolvedValue(true));
     spies.push(vi.spyOn(format, "clubFormatValues").mockResolvedValue(CLUB_FORMAT_TEST));
-  });
+  }, REALDB_TIMEOUT_MS);
   afterAll(async () => {
     try { if (db) await clean(); } finally { for (const spy of spies) spy.mockRestore(); await db?.$disconnect(); }
-  });
+  }, REALDB_TIMEOUT_MS);
   it("mirrors an outside allocation exactly as the scheduled credit-note handler and a second sync changes nothing", async () => {
     const inbound = await import("@/lib/xero-inbound/credit-note");
     const service = await import("@/lib/xero-sync-now");
