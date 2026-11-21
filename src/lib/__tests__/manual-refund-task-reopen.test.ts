@@ -68,7 +68,7 @@ vi.mock("@/lib/stripe-dispute-hold", () => ({
   },
 }));
 vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/member-money/doors")>()),
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
   resolveBookingDoorClock: async () => ({ zone: "Pacific/Auckland", journal: { journalActive: true } }),
   restoreHandBackObligation: (...a: unknown[]) => mocks.restoreHandBackObligation(...a),
 }));

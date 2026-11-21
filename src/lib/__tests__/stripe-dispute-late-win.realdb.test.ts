@@ -34,7 +34,7 @@ vi.mock("@/lib/stripe", async (importOriginal) =>
 vi.mock("@/lib/auth", async () => (await import("./support/race-session-double")).raceAuthDouble());
 // The alert's fields, as the treasurer would read them; no email leaves the test.
 vi.mock("@/lib/email", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/email")>()),
+  ...((await importOriginal()) as typeof import("@/lib/email")),
   sendAdminStripeDisputeAlert: async (fields: { stage: string; disputeId: string; disputeNextStep: string }) => {
     sent.alerts.push(fields);
     return "sent";

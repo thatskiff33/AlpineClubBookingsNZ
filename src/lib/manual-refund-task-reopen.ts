@@ -172,9 +172,9 @@ export const REOPEN_EDIT_REVIEW_RETIRED_MESSAGE =
  * reopen is not the app's to make; the alert then names the task for an officer instead.
  */
 export const LATE_WIN_REOPEN_NOT_WON_MESSAGE =
-  "the dispute no longer reads won on this task's card payment";
+  "The dispute no longer reads won on this task's card payment.";
 export const LATE_WIN_REOPEN_NOT_DISPUTE_LOSS_MESSAGE =
-  "it is not a disputed card payment's hand-back";
+  "It is not a disputed card payment's hand-back.";
 
 /** #5197: how long a late win's reopen waits for a lock before it gives up and the alert names the task instead. */
 export const LATE_WIN_REOPEN_LOCK_TIMEOUT = "5s";
