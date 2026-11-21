@@ -1,6 +1,7 @@
 import { getXeroWebhookHealth } from "@/lib/xero-webhook-health";
 import type { BookingStatus } from "@prisma/client";
 import { bookingOwner } from "@/lib/booking-owner";
+import { BOOKING_EXTERNAL_SETTLEMENT_WHERE } from "@/lib/booking-external-settlement";
 import { getXeroMemberGroupingSnapshot } from "@/lib/xero-member-grouping-resync";
 import { prisma } from "@/lib/prisma";
 import { resolveRefundNoteEligibleCash } from "@/lib/refund-note-eligible-cash";
@@ -180,11 +181,8 @@ export async function getMissingXeroInvoiceBookings(options?: {
       // it here would invite an admin to mint an awaiting-payment invoice — and
       // email it to the member — for money the club already holds. Admin UX
       // only: the enforcement point is the enqueue choke fence.
-      // #5005: nor is an imported free stay (`bookingHasExternalSettlement`).
-      NOT: [
-        { payment: { manuallyMarkedPaidAt: { not: null } } },
-        { importRow: { is: { amountCents: 0 } } },
-      ],
+      // #5005: nor is an imported free stay. The filter is the fence's own.
+      NOT: BOOKING_EXTERNAL_SETTLEMENT_WHERE,
     },
     select: {
       id: true,

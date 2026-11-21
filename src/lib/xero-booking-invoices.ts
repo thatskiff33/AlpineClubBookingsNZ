@@ -7,7 +7,7 @@
  * non-zero amount.
  */
 
-import { bookingHasExternalSettlement } from "@/lib/booking-external-settlement";
+import { bookingHasExternalSettlement, externalSettlementSkipReason } from "@/lib/booking-external-settlement";
 import {
   Invoice,
   Invoices,
@@ -234,13 +234,6 @@ async function readStoredPrimaryInvoiceLines(
     logger.error({ err: error, syncOperationId }, "Could not read the stored primary invoice lines");
     return { storedLines: null, storedLineAmountTypes: null };
   }
-}
-
-/** Why an invoice operation on a booking settled outside the app created nothing (#2262, #5005). */
-function externalSettlementSkipReason(payment: { manuallyMarkedPaidAt: Date | null }): string {
-  return payment.manuallyMarkedPaidAt === null
-    ? "Booking was imported as settled outside the app — no Xero invoice is expected, so none was created and nothing was emailed (#5005)."
-    : "Booking was manually marked paid (cash / off-Xero) after this invoice operation was queued — no Xero invoice is expected, so none was created and nothing was emailed (#2262).";
 }
 
 export async function createXeroInvoiceForBooking(
