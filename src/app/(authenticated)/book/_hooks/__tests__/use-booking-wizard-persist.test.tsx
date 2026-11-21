@@ -12,6 +12,7 @@ import { act, renderHook, waitFor } from "@/lib/__tests__/support/club-time-rend
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearWizardWork,
+  loadWizardWork,
   saveWizardWork,
   type SavedWizardWork,
 } from "@/lib/booking-wizard-work";
@@ -118,7 +119,10 @@ function stubFetch({
   rooms = null,
   bookingsReply = null,
   availabilityDelayMs = 0,
+  workPartyJoin = null,
 }: {
+  /** What `GET /api/work-parties/wp-1` answers a Join visit, or null for a 404. */
+  workPartyJoin?: { lodgeId: string; checkIn: string; checkOut: string } | null;
   policyValid?: boolean;
   /** How long the availability check takes to answer. */
   availabilityDelayMs?: number;
@@ -191,6 +195,18 @@ function stubFetch({
     }
     if (u.includes("/api/promo-codes/available")) return jsonResponse([]);
     if (u.includes("/api/work-parties/active")) return jsonResponse({ events: [] });
+    if (u.endsWith("/api/work-parties/wp-1")) {
+      return workPartyJoin
+        ? jsonResponse({
+            workParty: {
+              id: "wp-1",
+              name: "Spring Working Bee",
+              lodgeId: workPartyJoin.lodgeId,
+              join: { checkIn: workPartyJoin.checkIn, checkOut: workPartyJoin.checkOut },
+            },
+          })
+        : jsonResponse({ error: "Not found" }, false);
+    }
     if (u.endsWith("/api/bookings")) {
       return (
         bookingsReply ??
@@ -491,6 +507,56 @@ describe("the booking wizard keeps the member's work in this tab (#4950)", () =>
     expect(result.current.checkIn).toBeNull();
     expect(result.current.guests).not.toContainEqual(FRIEND);
     expect(result.current.restoredWorkNotice).toBeNull();
+  });
+
+  // #5148: "Join Work Party" opens /book?workParty=<id>, a fresh entry. The
+  // kept copy is not brought back over it; a Join that fills nothing in leaves
+  // the kept copy as it was.
+  it("yields to a ?workParty= visit, and leaves the kept copy for a plain visit", async () => {
+    navigation.searchParams = new URLSearchParams("workParty=wp-1");
+    saveWizardWork(savedWork());
+    stubFetch();
+    const { result } = renderHook(() => useBookingWizard());
+
+    await waitFor(() => expect(result.current.familyMembersLoaded).toBe(true));
+    expect(result.current.step).toBe("dates");
+    expect(result.current.checkIn).toBeNull();
+    expect(result.current.guests).not.toContainEqual(FRIEND);
+    expect(result.current.restoredWorkNotice).toBeNull();
+    expect(loadWizardWork("member-1")?.checkIn).toBe(CHECK_IN);
+  });
+
+  // #5148: a Join visit keeps its OWN work, so the profile detour
+  // (PROFILE_FAMILY_GROUP_RETURN_TO_BOOK returns to plain /book) brings back
+  // the Join dates and guests rather than an older kept booking.
+  it("keeps a filled-in Join visit's work, and a plain visit after the detour restores it", async () => {
+    navigation.searchParams = new URLSearchParams("workParty=wp-1");
+    saveWizardWork(savedWork());
+    stubFetch({
+      workPartyJoin: { lodgeId: "lodge-a", checkIn: "2026-09-05", checkOut: "2026-09-08" },
+    });
+    const join = renderHook(() => useBookingWizard());
+
+    await waitFor(() => expect(join.result.current.checkIn).toBe("2026-09-05"));
+    expect(join.result.current.restoredWorkNotice).toBeNull();
+    act(() => {
+      join.result.current.handleGuestsChange([SELF, FRIEND]);
+    });
+    await waitFor(() =>
+      expect(storedRecord()).toMatchObject({
+        lodgeId: "lodge-a",
+        checkIn: "2026-09-05",
+        checkOut: "2026-09-08",
+        guests: [SELF, FRIEND],
+      }),
+    );
+    join.unmount();
+
+    navigation.searchParams = new URLSearchParams();
+    const back = renderHook(() => useBookingWizard());
+    await waitFor(() => expect(back.result.current.checkIn).toBe("2026-09-05"));
+    expect(back.result.current.lodgeId).toBe("lodge-a");
+    expect(back.result.current.guests).toContainEqual(FRIEND);
   });
 
   it("forgets the work when the member chooses to start again", async () => {

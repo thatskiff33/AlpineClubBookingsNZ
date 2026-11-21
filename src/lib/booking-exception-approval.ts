@@ -10,7 +10,7 @@ import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { resolveHostingCoverageIncidents } from "@/lib/adult-member-hosting-coverage-incidents";
 import { recordAdultMemberHostingReviewDecision } from "@/lib/adult-member-hosting-review";
 import { createConfirmedBooking } from "@/lib/booking-create";
-import { readBookingAmountOwed } from "@/lib/booking-amount-owed";
+import { readApprovedBookingEmailDetails, readApprovedBookingSnapshot } from "@/lib/booking-exception-approved-snapshot";
 import {
   modifyBookingBatch,
   type BatchModificationPreTransaction,
@@ -665,38 +665,42 @@ export function buildPolicyExceptionApprovalHooks(
      * review). A MODIFICATION needs nothing here: `modifyBookingBatch` sends the
      * canonical "your booking was changed" email itself, and a second notice
      * would compete with it.
+     *
+     * #4069 (`INV-PAY-159`): what is owed comes from the cash records, never the
+     * booking's status. The member may have switched to a bed-holding bank
+     * transfer while the deferred work ran (CONFIRMED, a pending bank payment),
+     * and an officer may have set the exclusive hold. So the amount
+     * (`readBookingCashCover`) and whether the beds are held
+     * (`bookingHoldsCapacity`) are read in ONE read-only snapshot, and the email
+     * goes after it closes. A snapshot that cannot be read still sends, with the
+     * neutral line in place of an amount.
      */
     async notifyApproved(request) {
       const bookingId = outcome.createdBookingId;
       if (!bookingId) return;
-      const booking = await prisma.booking.findUnique({
-        where: { id: bookingId },
-        select: {
-          id: true,
-          checkIn: true,
-          checkOut: true,
-          finalPriceCents: true,
-          lodgeId: true,
-          status: true,
-          member: { select: { id: true, email: true, firstName: true } },
-          // #3369: the owner may be an Organisation; bookingOwner() reads both.
-          organisation: { select: { name: true, email: true } },
-          guests: { select: { id: true } },
-          payment: { select: { status: true, changeFeeCents: true } },
-        },
-      });
+      let read: Awaited<ReturnType<typeof readApprovedBookingSnapshot>> | undefined;
+      let snapshotFailed = false;
+      try {
+        read = await readApprovedBookingSnapshot(bookingId);
+      } catch (err) {
+        snapshotFailed = true;
+        logger.error(
+          { err, bookingId },
+          "Could not read the approved booking's cash cover; the approval email will say so neutrally",
+        );
+      }
+      // A snapshot that read fine and found no booking is an answer, not a
+      // failure: there is nobody to write to, so no second read outside it.
+      if (!read && !snapshotFailed) return;
+      const booking = read
+        ? read.booking
+        : await readApprovedBookingEmailDetails(prisma, bookingId);
       // #3369: ONE home for "is there an address to send to?".
       // `bookingOwnerEmail()` turns the organisation projection's honest `""`
       // into an explicit null, and carries the named-but-unreadable-member case
       // the hand-written chain here used to spell for itself.
       const ownerEmail = booking ? bookingOwnerEmail(booking) : null;
       if (!booking || !ownerEmail) return;
-      // What is still owed (#4058, `INV-PAY-119`): nothing once the create
-      // settled it; else what the pay step asks, through the one home.
-      const settled =
-        booking.status === "PAID" ||
-        booking.status === "CONFIRMED" ||
-        booking.payment?.status === "SUCCEEDED";
       await sendBookingPolicyExceptionApprovedEmail(
         {
           bookingId: booking.id,
@@ -710,7 +714,8 @@ export function buildPolicyExceptionApprovalHooks(
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guestCount: booking.guests.length,
-          amountDueCents: settled ? 0 : (await readBookingAmountOwed(booking)).dueCents,
+          cover: read?.cover ?? null,
+          bedsHeld: read?.bedsHeld ?? false,
           adminNotes: context.adminNotes ?? null,
           lodgeId: booking.lodgeId,
         },
