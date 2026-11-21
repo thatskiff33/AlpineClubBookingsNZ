@@ -74,6 +74,7 @@ const MEMBER_FACING_SHARED_FILES = [
   // /join/apply's h1, so each is level 2.
   "src/components/admin/admin-booking-tools-card.tsx",
   "src/components/admin/booking-additional-payment-panel.tsx",
+  "src/components/admin/confirm-pending-guests-button.tsx",
   "src/components/booking-editor.tsx",
   "src/components/edit-booking/account-credit-card.tsx",
   "src/components/edit-booking/admin-override-card.tsx",
@@ -91,7 +92,7 @@ const MEMBER_FACING_SHARED_FILES = [
  * The number of production `CardTitle`s that still omit `headingLevel`. Only
  * ever lower it: a sweep that classifies titles sets it to the new count.
  */
-const UNCLASSIFIED_BASELINE = 232;
+const UNCLASSIFIED_BASELINE = 231;
 
 function isMemberFacing(file: string) {
   return (

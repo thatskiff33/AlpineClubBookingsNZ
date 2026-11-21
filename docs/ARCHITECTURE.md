@@ -766,7 +766,7 @@ Four rules, and they are all deliberate:
 fails when any `CardTitle` under `src/app/(public)`, `src/app/(authenticated)`,
 `src/app/(website-dynamic)`, `src/app/(website)` or in the shared member cards
 it lists omits `headingLevel`, and holds the count of unclassified titles
-everywhere else at exactly `UNCLASSIFIED_BASELINE` (253 when #4951 landed, 232
+everywhere else at exactly `UNCLASSIFIED_BASELINE` (253 when #4951 landed, 231
 after the member sweep, #5216). It fails both ways: a new unclassified title
 must be classified rather than raise the number, and a sweep that classifies
 titles lowers the constant in the same change and adds what it swept to the

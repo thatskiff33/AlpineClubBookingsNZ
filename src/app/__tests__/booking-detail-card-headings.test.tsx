@@ -55,7 +55,7 @@ function renderBookingPage(cards: ReactNode) {
   );
 }
 
-function adminToolsCard() {
+function adminToolsCard({ showConfirmPendingGuests = false } = {}) {
   return (
     <AdminBookingToolsCard
       bookingId="bk-5216"
@@ -67,7 +67,7 @@ function adminToolsCard() {
       copyProps={{ sourceCheckIn: "2026-08-03", sourceCheckOut: "2026-08-05", minCheckIn: "2026-07-01" }}
       isDeleted={false}
       paymentId="pay-1"
-      showConfirmPendingGuests={false}
+      showConfirmPendingGuests={showConfirmPendingGuests}
       hasSavedPaymentMethod={false}
       savedCardChargeCents={0}
       features={allFeaturesOn}
@@ -134,6 +134,15 @@ describe("the officer's cards on /bookings/[id] (#5216)", () => {
     expectSoundOutline("Booking Details");
     expect(levelTwoTitles()).toEqual(
       expect.arrayContaining(["Admin tools", "Additional payment outstanding"]),
+    );
+  });
+
+  it("titles Confirm pending guests now at level 2 beside Admin tools", () => {
+    renderBookingPage(adminToolsCard({ showConfirmPendingGuests: true }));
+
+    expectSoundOutline("Booking Details");
+    expect(levelTwoTitles()).toEqual(
+      expect.arrayContaining(["Admin tools", "Confirm pending guests now"]),
     );
   });
 });
