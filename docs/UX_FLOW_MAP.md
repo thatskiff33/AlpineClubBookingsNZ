@@ -76,7 +76,7 @@ Journey: Choose lodge and nights, add guests, review the price and rules, then c
 
 Screen: `/bookings`, `/bookings/[id]`.
 
-Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member.
+Journey: Find a stay and open its detail. Review lodge, status, guests and amounts before paying, requesting a change or cancelling. Stay Details always names the lodge; list rows do once a second lodge is active, and always for a booking at an archived lodge (`INV-CAP-039`). Pending consent appears on the booking for an eligible invited member. With Xero on, **Download invoice** beside Edit Booking gives the booker and officers Xero's PDF of the booking's invoice, and an **Invoice and credits** card under Payment lists each Xero credit note raised against the booking (each downloadable) with a summary from the app's own records and a plain-words line when the invoice in Xero does not show the latest change; a booking that may have more than one invoice asks the booker to contact the club for copies (an officer or admin on someone else's booking is told to check the club's accounts), and a guest on someone else's booking sees none of these.
 
 [Guide](user-guide/changing-or-cancelling-a-booking.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
@@ -150,6 +150,14 @@ Screen: `/message-board`.
 Journey: When enabled, read recent posts, page to older posts, or compose a message. Review whether sharing with other clubs is available and selected before posting.
 
 [Guide](user-guide/the-message-board.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
+
+### Order food and food orders
+
+Screen: `/food-order` and `/food-orders`.
+
+Journey: When enabled, open Order food from the dashboard, choose the lodge (only those the member may book) and needed-by date, add item lines (description, quantity and type, such as 2 Loaves), then send. Food orders lists your orders. Committee and Lodge Operations admins see every order, and a current hut leader the orders at their lodge; hut leaders at that order's lodge and Lodge Operations edit admins tick items received as they arrive (the order closes on the last) or record its price. The totals panel adds a By year breakdown, earlier years collapsed under Previous years. An emailed link pins its order at the top.
+
+[Guide](guides/food-orders.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ## Admin overview
 
@@ -568,6 +576,16 @@ Shows: Lodge faults, their descriptions and resolution state.
 Journey: Filter faults by lodge and status, inspect a report, then record the next action.
 
 [Guide](guides/maintenance-reports.md) · [History](UX_FLOW_HISTORY.md#lodge-maintenance-reports-2780)
+
+### Food Orders — food-orders
+
+Screen: `/admin/food-orders`.
+
+Shows: The food officer email orders go to and the officer label.
+
+Journey: Edit, change the address or label, then save or cancel.
+
+[Guide](guides/food-orders.md) · [History](UX_FLOW_HISTORY.md#journey-inventory)
 
 ### Rooms & Beds — rooms-beds
 

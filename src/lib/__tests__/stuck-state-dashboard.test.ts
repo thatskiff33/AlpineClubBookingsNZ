@@ -52,6 +52,7 @@ const modulesOn: FeatureFlags = {
   commsPortal: false,
   mcpServer: false,
   memberLodgeRoster: false,
+  foodOrders: false,
   multiPromoCodes: false,
 };
 

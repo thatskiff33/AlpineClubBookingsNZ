@@ -167,6 +167,11 @@ export const NON_WEBSITE_ROOT_SEGMENTS: ReadonlySet<string> = new Set([
   // pre-setup, so it redirects to login — and module-gated, off by default.
   "connect",
   "dashboard",
+  // Fork #121: the member Order food page and the food-order history. Like
+  // dashboard/induction, `(authenticated)` routes with no session pre-setup,
+  // and additionally module-gated (foodOrders, off by default).
+  "food-order",
+  "food-orders",
   "induction",
   "lodge-instructions",
   // #2942: the member lodge roster. An `(authenticated)` route like

@@ -1495,6 +1495,11 @@ const ROW_LOCK_SITE_INVENTORY: Record<string, number> = {
   // writer and "Paid another way". See docs/CONCURRENCY_AND_LOCKING.md ->
   // "Member-money applications and refund reservations" and the M4c paragraph.
   "src/lib/member-money/internal/application-read.ts": 1,
+  // #4525 (Ledger M13): the capture-receipt recorder takes the capture's PaymentTransaction
+  // row (`SELECT 1 … FOR NO KEY UPDATE`, by its unique intent) in a short transaction of its
+  // own holding nothing else, so two receipts of one capture plan in turn. No advisory key.
+  // See docs/CONCURRENCY_AND_LOCKING.md -> "Capture-receipt manifest".
+  "src/lib/member-money/internal/capture-receipt-manifest.ts": 1,
   // #4823: member merge re-points `Payment.manuallyMarkedPaidByMemberId` with one
   // sorted `SELECT 1 … ORDER BY "id" FOR NO KEY UPDATE NOWAIT` over every row
   // naming the duplicate, then the update. Merge takes no lock(1) and holds

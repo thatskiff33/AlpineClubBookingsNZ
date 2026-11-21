@@ -125,6 +125,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     commsPortal: false,
     mcpServer: false,
     memberLodgeRoster: false,
+    foodOrders: false,
     multiPromoCodes: false,
   },
   ageTierSettingCount: 4,

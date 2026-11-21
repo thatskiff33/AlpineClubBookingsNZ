@@ -241,6 +241,10 @@ export const SUBJECT_ACCESS_EXPORT_COVERAGE = {
   McpAuthCode: SECRET,
   McpToken: SECRET,
   McpSettings: CLUB_CONFIG,
+  // Food orders (PR #5143): the subject's own orders and their lines.
+  FoodOrderSettings: CLUB_CONFIG,
+  FoodOrder: "additionalRecords.FoodOrder",
+  FoodOrderItem: "additionalRecords.FoodOrderItem",
 } as const satisfies Record<PersonalModel, Placement>;
 
 /** The models that have their own list under `additionalRecords`. */

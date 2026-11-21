@@ -98,6 +98,7 @@ const MODULES_OFF = {
   commsPortal: false,
   mcpServer: false,
   memberLodgeRoster: false,
+  foodOrders: false,
   multiPromoCodes: false,
 };
 
