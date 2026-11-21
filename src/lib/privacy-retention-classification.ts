@@ -146,6 +146,7 @@ export const PRIVACY_RETENTION_CLASSIFICATION = {
   ClubTimeSettings: "personal",
   ClubFormatSettings: "personal",
   ClubTaxSettings: "personal", // #4632: each period records the Full Admin who scheduled it (updatedByMemberId).
+  XeroTaxOverrideMismatch: "personal", // #5208: records the finance officer who cleared it (clearedByMemberId) and their note.
   LoginSecuritySetting: "personal",
   AnalyticsSettings: "personal",
   EmailTemplateOverride: "personal",

@@ -95,6 +95,14 @@ transfer by the Payment's immutable booking id. Receipt legs carry that booking'
 actual lodge; no default-lodge lookup occurs. The owner-run receipt census spans
 all R01 bookings across lodges; each catch-up transaction locks only its Payment.
 
+## Xero GST-override pause (#5208)
+
+`XeroTaxOverrideMismatch` is club-wide: one row records a Xero invoice whose
+returned line tax differs from the journal's tax the app sent, and any
+uncleared row pauses the overrides for every lodge, because the club has one
+Xero organisation and one GST return. A row names its booking, which
+identifies the lodge, but carries no lodge key and is never filtered by one.
+
 ## Club-Wide Defaults With Per-Lodge Overrides
 
 `CancellationPolicy`, `MinimumStayPolicy`, and `BookingPeriod` gain a

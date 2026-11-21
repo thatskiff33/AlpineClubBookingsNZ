@@ -147,6 +147,9 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // #4632: who scheduled a club tax treatment period, the same last-writer note;
   // CLUB_TAX_TREATMENT_SCHEDULED is the full trail.
   "ClubTaxSettings.updatedByMemberId",
+  // #5208: who checked a GST mismatch Xero returned and resumed the overrides;
+  // XERO_TAX_OVERRIDE_PAUSE_CLEARED is the full trail.
+  "XeroTaxOverrideMismatch.clearedByMemberId",
 
   // #2243 review sweep — bespoke-named FK-less member-id columns the detector
   // cannot see (their names appear nowhere in the schema as a Member FK column),
