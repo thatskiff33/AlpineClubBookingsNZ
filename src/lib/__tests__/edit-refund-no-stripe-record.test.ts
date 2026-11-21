@@ -135,6 +135,27 @@ describe("the intent a card refund is owed against", () => {
     expect(paymentFindUnique).not.toHaveBeenCalled();
   });
 
+  it.each<[string, LedgerRow[]]>([
+    ["no ledger rows", []],
+    ["a PENDING charge", [{ ...captured("pi_pending"), status: PaymentStatus.PENDING }]],
+    ["a captured Internet Banking payment", [captured("pi_bank", PaymentSource.INTERNET_BANKING)]],
+    ["a captured charge naming no intent", [captured(null)]],
+    ["a captured charge naming an intent", [captured("pi_capture")]],
+  ])("MUTATION: a payment naming its own intent, with %s, gets the same answer from both", async (_ledger, transactions) => {
+    // #5303: the shortcut answers true without reading, so the read must too.
+    // Tighten `readRefundableCardIntentId` to a captured charge only and every
+    // ledger without one goes red: the edit would promise the card a refund
+    // the debt's writer then refuses (`NoRefundPaymentIntentError`).
+    stored.paymentIntentId = "pi_payment";
+    stored.transactions = transactions;
+
+    const shortcut = await paymentHasRefundableCardIntent(tx, { id: "payment_1", stripePaymentIntentId: "pi_payment" });
+    const read = await readRefundableCardIntentId(tx, "payment_1");
+
+    expect(shortcut).toBe(true);
+    expect(read !== null).toBe(shortcut);
+  });
+
   it("a payment row without one is answered by its captured charges", async () => {
     expect(await paymentHasRefundableCardIntent(tx, { id: "payment_1", stripePaymentIntentId: null })).toBe(false);
     stored.transactions = [captured("pi_capture")];
